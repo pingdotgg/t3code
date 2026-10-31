@@ -13,7 +13,6 @@ export function isOnboardingRelayEnvironment(
   return hasRelayRoute(environment.entry);
 }
 
-/** Keep a directly paired machine pinned while its initial connection completes. */
 export function resolveOnboardingTargetEnvironment<TEnvironment extends OnboardingEnvironment>({
   mode,
   environments,
@@ -48,12 +47,7 @@ export function resolveOnboardingTargetEnvironment<TEnvironment extends Onboardi
   return mode === "local" ? null : (connectedRelayEnvironments[0] ?? null);
 }
 
-/**
- * The computers the wizard sets up from the user's selection. Continue waits
- * only on a first connection attempt, which settles on its own. Selected
- * computers that are switched off, offline, failing, or unsupported are skipped
- * so they can never lock the user out of onboarding.
- */
+/** Waits only for first connection attempts; offline, failing, or unsupported computers cannot block setup. */
 export function resolveOnboardingSetup(
   environments: ReadonlyArray<Pick<OnboardingEnvironment, "environmentId" | "connection">>,
   selectedIds: ReadonlySet<EnvironmentId>,

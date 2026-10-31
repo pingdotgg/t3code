@@ -27,7 +27,6 @@ export interface SourceControlProviderContext {
   readonly provider: SourceControlProviderInfo;
   readonly remoteName: string;
   readonly remoteUrl: string;
-  /** An explicit web authority can disambiguate Forgejo logins sharing an SSH alias. */
   readonly requestedHost?: string;
 }
 
@@ -40,10 +39,18 @@ export interface SourceControlRefSelector {
 const MAX_ERROR_TRANSPORT_VALUE_LENGTH = 256;
 
 /**
- * Sanitizes user-provided source-control identifiers before attaching them to
- * contract errors. This is intentionally narrower than request validation: it
- * only strips URL secrets and bounds diagnostic values sent over transport.
+ * The fixed product text a provider failure carries for the user, if it has one. Any other
+ * detail may be upstream response text, so callers show a generic message instead.
  */
+export function userFacingSourceControlDetail(cause: unknown): string | undefined {
+  return typeof cause === "object" &&
+    cause !== null &&
+    "userFacingDetail" in cause &&
+    typeof cause.userFacingDetail === "string"
+    ? cause.userFacingDetail
+    : undefined;
+}
+
 export function transportSafeSourceControlErrorValue(value: string): string {
   let printable = "";
   for (const character of value) {
@@ -60,9 +67,7 @@ export function transportSafeSourceControlErrorValue(value: string): string {
     url.search = "";
     url.hash = "";
     safe = url.toString();
-  } catch {
-    // Plain repository and change-request identifiers are not URLs.
-  }
+  } catch {}
 
   return safe.slice(0, MAX_ERROR_TRANSPORT_VALUE_LENGTH);
 }
@@ -94,7 +99,6 @@ export function sourceControlRefFromInput(input: {
   return input.source ?? parseSourceControlOwnerRef(input.headSelector);
 }
 
-/** The repository path a remote URL names (`owner/name`, or deeper for nested groups). */
 export function repositoryPathFromRemoteUrl(url: string | null): string | null {
   const trimmed = url?.trim() ?? "";
   if (trimmed.length === 0) {
@@ -113,34 +117,17 @@ export class SourceControlProvider extends Context.Service<
   SourceControlProvider,
   {
     readonly kind: SourceControlProviderKind;
-    /**
-     * How to look up a branch's change requests: which head selectors to ask about, and how many
-     * results to read per selector. The caller checks the owner against what comes back, so a
-     * host that cannot search `owner:branch` can drop those selectors without losing anything.
-     * Absent asks about every selector, reading 1 for the open lookup and 20 for any state.
-     */
+    /** The caller verifies owners, so hosts may drop unsupported `owner:branch` selectors. */
     readonly headBranchProbe?: (input: {
       readonly headSelectors: ReadonlyArray<string>;
       readonly state: "open" | "all";
     }) => { readonly headSelectors: ReadonlyArray<string>; readonly limit: number };
-    /**
-     * The repository's change request template at `treeish`, for change request content
-     * generation to follow. Absent means the host has no template convention.
-     */
     readonly readChangeRequestTemplate?: (input: {
       readonly cwd: string;
       readonly treeish: string;
     }) => Effect.Effect<Option.Option<string>>;
-    /**
-     * The repository's `owner/name` from a remote URL, for a host whose remote paths can carry
-     * more than that (Forgejo's HTTP installation mount). Absent means the whole path.
-     */
+    /** Strip installation mounts from remote paths; absent means use the whole path. */
     readonly repositoryNameFromRemoteUrl?: (url: string) => string | null;
-    /**
-     * Fills in what a repository identity read from git cannot know, such as the browser URL of
-     * a host the remote URL does not name. `resolveContext` asks the registry which host (and
-     * base URL) serves a remote. Only consulted for identities this host may own.
-     */
     readonly refineRepositoryIdentity?: (input: {
       readonly identity: RepositoryIdentity;
       readonly resolveContext: (input: {
@@ -148,8 +135,39 @@ export class SourceControlProvider extends Context.Service<
         readonly context: SourceControlProviderContext;
       }) => Effect.Effect<SourceControlProviderContext | null, SourceControlProviderError>;
     }) => Effect.Effect<RepositoryIdentity, SourceControlProviderError>;
-    /** Optional capability for issue and change-request subjects. */
+    /**
+     * The web host serving a remote, for a host whose remote URL may not name it (an SSH alias
+     * for one of several servers). It answers for the context's `requestedHost` when the caller
+     * narrows to one. Absent, or null, means the remote's own host is the web host.
+     */
+    readonly resolveRemoteWebHost?: (input: {
+      readonly cwd: string;
+      readonly context: SourceControlProviderContext;
+      readonly resolveContext: (input: {
+        readonly cwd: string;
+        readonly context: SourceControlProviderContext;
+      }) => Effect.Effect<SourceControlProviderContext | null, SourceControlProviderError>;
+    }) => Effect.Effect<string | null, SourceControlProviderError>;
     readonly resolveLink?: ResolveSourceControlLink;
+    /**
+     * Whether `createChangeRequest` from `cwd` targets `repository`, the `owner/name` of the
+     * context's remote, for a host whose tools let configuration outside the remotes name another
+     * repository. Absent means it does.
+     */
+    readonly createsChangeRequestsIn?: (input: {
+      readonly cwd: string;
+      readonly context: SourceControlProviderContext;
+      readonly repository: string | null;
+    }) => Effect.Effect<boolean>;
+    /**
+     * Told when T3 records `baseBranch`, a branch name on the host, as the base `branch` was cut
+     * from, for a host whose own tools keep that in git config of their own.
+     */
+    readonly recordBranchBase?: (input: {
+      readonly cwd: string;
+      readonly branch: string;
+      readonly baseBranch: string;
+    }) => Effect.Effect<void>;
     readonly listChangeRequests: (input: {
       readonly cwd: string;
       readonly context?: SourceControlProviderContext;

@@ -5,8 +5,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as CodexReplay from "effect-codex-app-server/replay";
-import { ProviderDriverKind } from "@t3tools/contracts";
+import {
+  type OrchestrationV2ThreadProjection,
+  ProviderDriverKind,
+  type ThreadId,
+} from "@t3tools/contracts";
 
 import {
   ClaudeOrchestratorReplayHarness,
@@ -21,6 +26,7 @@ import {
 } from "../Adapters/CursorAdapterV2.testkit.ts";
 import * as CursorAdapterV2Testkit from "../Adapters/CursorAdapterV2.testkit.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as EffectWorker from "../EffectWorker.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import {
@@ -42,7 +48,14 @@ import {
   assertUserMessagesInclude,
   projectionFor,
 } from "./fixtures/shared.ts";
-import { runOrchestratorV2ProviderReplayScenario } from "./ProviderReplayHarness.ts";
+import {
+  runOrchestratorV2Scenario,
+  type OrchestratorV2ScenarioResult,
+} from "./OrchestratorScenario.ts";
+import {
+  layerProviderReplay,
+  runOrchestratorV2ProviderReplayScenario,
+} from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { materializeReplayTranscriptRuntimeInstructions } from "./ReplayRuntimeInstructions.ts";
 import {
@@ -78,6 +91,65 @@ const readClaudeSubagentResumeTranscript = Effect.fn("readClaudeSubagentResumeTr
     );
   },
 );
+/** Remove the subagent's first run so restart cancels it after root settlement; resume carries the restart note. */
+const readClaudeCancelledSubagentResumeTranscript = Effect.fn(
+  "readClaudeCancelledSubagentResumeTranscript",
+)(function* () {
+  const recorded = yield* readRawTranscript(
+    new URL(
+      "./fixtures/claude_subagent_resume_after_restart/claude_transcript.ndjson",
+      import.meta.url,
+    ),
+  );
+  const frameField = (index: number, key: string): unknown => {
+    const entry = recorded.entries[index];
+    return entry?.type === "emit_inbound" && typeof entry.frame === "object" && entry.frame !== null
+      ? Reflect.get(entry.frame, key)
+      : undefined;
+  };
+  const indices = recorded.entries.map((_, index) => index);
+  const firstSubagentFrame = indices.find(
+    (index) => typeof frameField(index, "parent_tool_use_id") === "string",
+  );
+  const firstOutcome = indices.find(
+    (index) => frameField(index, "subtype") === "task_notification",
+  );
+  const firstExit = recorded.entries.findIndex((entry) => entry.type === "runtime_exit");
+  if (firstSubagentFrame === undefined || firstOutcome === undefined || firstExit < 0) {
+    throw new Error("Expected the recorded subagent's first run.");
+  }
+  const entries = recorded.entries
+    // A CLI exit settles the task; hold at query.open:2 until the crash snapshot instead.
+    .filter(
+      (_, index) => (index < firstSubagentFrame || index > firstOutcome) && index !== firstExit,
+    )
+    .map((entry) => {
+      if (entry.type !== "expect_outbound" || entry.label !== "prompt.offer:2") return entry;
+      const frame = entry.frame as {
+        readonly message: { readonly message: { readonly content: string } };
+      };
+      return {
+        ...entry,
+        frame: {
+          ...frame,
+          message: {
+            ...frame.message,
+            message: {
+              ...frame.message.message,
+              content: [
+                "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:",
+                "- subagent: Audit src/math.ts (id a44c0ed810da9e4f3)",
+                "",
+                "User message:",
+                frame.message.message.content,
+              ].join("\n"),
+            },
+          },
+        },
+      };
+    });
+  return yield* ClaudeOrchestratorReplayHarness.decodeTranscript({ ...recorded, entries });
+});
 const readCursorTranscript = Effect.fn("readCursorRecoveryTranscript")(function* () {
   const transcript = yield* readRawTranscript(
     new URL("./fixtures/provider_thread_resume/cursor_transcript.ndjson", import.meta.url),
@@ -171,7 +243,8 @@ const runCursorRecovery = Effect.fn("runCursorRecovery")(function* (input: {
         runtimePolicyOverride: { cwd: tempDir },
       },
       harness,
-      options,
+      // A real restart requeues effects, like checkpoint capture, the first runtime left running.
+      { ...options, recoverOnStartup: true },
     ),
   );
 
@@ -201,9 +274,7 @@ describe("orchestrator replay recovery", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          // Checkpoint against a throwaway git workspace: with no override the
-          // scope cwd falls back to process.cwd(), and a cold full-repo
-          // baseline capture on CI outlives the scenario wait budget.
+          // Use a throwaway checkpoint workspace; cold full-repo capture exceeds CI wait budgets.
           const workspace = yield* checkpointWorkspace("provider_thread_resume");
           const transcript = yield* readCodexTranscript(workspace);
           const fs = yield* FileSystem.FileSystem;
@@ -266,7 +337,7 @@ describe("orchestrator replay recovery", () => {
               runtimePolicyOverride: { cwd: workspace },
             },
             harness,
-            options,
+            { ...options, recoverOnStartup: true },
           );
 
           assertBaseProjection({
@@ -312,8 +383,6 @@ describe("orchestrator replay recovery", () => {
   it.effect("keeps a Claude subagent resumed after a server restart in its own thread", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        // The math.ts subagent from thread 42e302f0 (2026-09-25): launched,
-        // finished, then resumed by SendMessage after the server restarted.
         const transcript = yield* readClaudeSubagentResumeTranscript();
         const [launchPrompt, resumePrompt] = yield* decodePromptPair(transcript.metadata?.prompts);
         const workspace = yield* checkpointWorkspace(transcript.scenario);
@@ -368,7 +437,7 @@ describe("orchestrator replay recovery", () => {
               runtimePolicyOverride: { cwd: workspace },
             },
             harness,
-            options,
+            { ...options, recoverOnStartup: true },
           ),
         );
         yield* assertComplete;
@@ -384,8 +453,6 @@ describe("orchestrator replay recovery", () => {
         assert.lengthOf(childThreads, 1);
         const child = childThreads[0];
         assert.equal(child?.thread.id, subagent?.childThreadId);
-        // The recovered subagent's replies name the model its thread already
-        // holds, so the effort recorded at launch survives the restart.
         assert.deepEqual(child?.thread.modelSelection, {
           instanceId: CLAUDE_MODEL_SELECTION.instanceId,
           model: "claude-sonnet-5",
@@ -408,7 +475,6 @@ describe("orchestrator replay recovery", () => {
         assert.include(conversation[1], "is 1 line long");
         assert.include(conversation[2], "Look again at");
         assert.include(conversation[3], "Bug/edge case found and fixed");
-        // The resumed run's own tool calls land in the child thread too.
         const childCommands = (child?.turnItems ?? []).filter(
           (item) => item.type === "command_execution",
         );
@@ -419,6 +485,127 @@ describe("orchestrator replay recovery", () => {
               item.type === "assistant_message" && item.text.includes("Bug/edge case found"),
           ),
           "the resumed subagent's reply leaked into the parent thread",
+        );
+      }).pipe(
+        provideDeterministicTestRuntime,
+        Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
+      ),
+    ),
+  );
+  it.effect("reopens the thread of a Claude subagent the restart cancelled when resumed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transcript = yield* readClaudeCancelledSubagentResumeTranscript();
+        const [launchPrompt, resumePrompt] = yield* decodePromptPair(transcript.metadata?.prompts);
+        const workspace = yield* checkpointWorkspace(transcript.scenario);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* Effect.acquireRelease(
+          fs.makeTempDirectory({ prefix: "t3-orchestration-v2-claude-recovery-" }),
+          (directory) => fs.remove(directory, { recursive: true, force: true }).pipe(Effect.orDie),
+        );
+        const materialized = yield* materializeFixtureInput({
+          scenario: transcript.scenario,
+          fixtureInput: {
+            steps: [
+              { type: "message", text: launchPrompt },
+              { type: "message", text: resumePrompt },
+            ],
+          },
+          driver: ProviderDriverKind.make("claudeAgent"),
+          modelSelection: CLAUDE_MODEL_SELECTION,
+        });
+        const { phase1Commands, phase1Steps, phase2Commands, phase2Steps } =
+          splitAfterFirstIdle(materialized);
+        const { harness, assertComplete } = makeClaudeRestartReplayHarness(transcript);
+        const options = {
+          databaseLayer: SqlitePersistence.layerFromPath(path.join(tempDir, "state.sqlite")).pipe(
+            Layer.provide(NodeServices.layer),
+          ),
+        };
+        const childThreadOf = (result: OrchestratorV2ScenarioResult, parentThreadId: ThreadId) =>
+          [...result.projections.values()].find(
+            (candidate) => candidate.thread.lineage.parentThreadId === parentThreadId,
+          );
+        const childRootStatus = (child: OrchestrationV2ThreadProjection | undefined) =>
+          child?.nodes.find((node) => node.kind === "root_turn" && node.runId === null)?.status;
+
+        const snapshotPath = path.join(tempDir, "restart-state.sqlite");
+        const beforeScenario = {
+          name: `${transcript.scenario}:cancelled-first-runtime`,
+          transcript,
+          commands: phase1Commands,
+          steps: phase1Steps,
+          projectionThreadIds: materialized.projectionThreadIds,
+          runtimePolicyOverride: { cwd: workspace },
+        };
+        const before = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const result = yield* runOrchestratorV2Scenario(beforeScenario);
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            yield* worker.drain();
+            // Preserve the orphan before scoped teardown settles its provider work.
+            const sql = yield* SqlClient.SqlClient;
+            yield* sql`VACUUM INTO ${snapshotPath}`;
+            return result;
+          }).pipe(
+            Effect.provide(
+              Layer.merge(
+                layerProviderReplay(beforeScenario, harness, options),
+                options.databaseLayer,
+              ),
+            ),
+          ),
+        );
+        const settled = projectionFor(before, transcript.scenario);
+        assert.equal(settled.subagents[0]?.status, "running");
+        assert.equal(childRootStatus(childThreadOf(before, settled.thread.id)), "running");
+
+        const result = yield* Effect.scoped(
+          runOrchestratorV2ProviderReplayScenario(
+            {
+              name: `${transcript.scenario}:cancelled-second-runtime`,
+              transcript,
+              commands: phase2Commands,
+              steps: phase2Steps,
+              projectionThreadIds: materialized.projectionThreadIds,
+              runtimePolicyOverride: { cwd: workspace },
+            },
+            harness,
+            {
+              databaseLayer: SqlitePersistence.layerFromPath(snapshotPath).pipe(
+                Layer.provide(NodeServices.layer),
+              ),
+              recoverOnStartup: true,
+              continueThreadsAfterServerUpdate: false,
+            },
+          ),
+        );
+        yield* assertComplete;
+
+        const projection = projectionFor(result, transcript.scenario);
+        assertSemanticProjectionIntegrity(projection);
+        assert.equal(projection.subagents[0]?.status, "completed");
+        const child = childThreadOf(result, projection.thread.id);
+        assert.equal(child?.thread.id, projection.subagents[0]?.childThreadId);
+        assert.equal(childRootStatus(child), "completed");
+        const conversation = (child?.turnItems ?? [])
+          .toSorted((left, right) => left.ordinal - right.ordinal)
+          .flatMap((item) =>
+            item.type === "user_message" || item.type === "assistant_message"
+              ? [`${item.type === "user_message" ? "user" : "assistant"}:${item.text}`]
+              : [],
+          );
+        assert.deepEqual(
+          conversation.map((entry) => entry.slice(0, entry.indexOf(":"))),
+          ["user", "user", "assistant"],
+        );
+        assert.include(conversation[0], "Your job is just the file");
+        assert.include(conversation[1], "Look again at");
+        assert.include(conversation[2], "Bug/edge case found and fixed");
+        assert.lengthOf(
+          (child?.turnItems ?? []).filter((item) => item.type === "command_execution"),
+          2,
         );
       }).pipe(
         provideDeterministicTestRuntime,

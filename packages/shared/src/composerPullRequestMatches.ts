@@ -9,10 +9,6 @@ export interface ComposerPullRequestMatch {
   readonly updatedAt: string;
 }
 
-/**
- * Suggestion rows for the pull requests a thread links, from any repository. Built from the
- * synced snapshot, so a link the server has not read yet is left out until it has one.
- */
 export function composerPullRequestsFromLinks(
   links: ReadonlyArray<ThreadPullRequestLink>,
   projectId: string,
@@ -37,12 +33,6 @@ export function composerPullRequestsFromLinks(
   );
 }
 
-/**
- * Pull requests matching the numeric fragment typed after `#`, de-duplicated. `entries` are kept
- * to the project's repository; `linked` rows (the thread's own pull requests) may come from any
- * repository. An exact number match always outranks a substring match so the result limit can
- * never drop the pull request the user typed in full; then linked rows lead, newest first.
- */
 export function filterComposerPullRequestMatches<
   Entry extends ComposerPullRequestMatch,
   Linked extends ComposerPullRequestMatch = never,
@@ -65,7 +55,6 @@ export function filterComposerPullRequestMatches<
       entry.repository.trim().toLowerCase() === repository &&
       String(entry.number).includes(input.query),
   );
-  // Project rows go first so a linked pull request the listing also has keeps the fresher row.
   const uniqueEntries = new Map<string, Entry | Linked>();
   for (const entry of [...matchingEntries, ...linked]) {
     if (!uniqueEntries.has(keyOf(entry))) {
@@ -74,8 +63,7 @@ export function filterComposerPullRequestMatches<
   }
   const isExactMatch = (entry: ComposerPullRequestMatch) => String(entry.number) === input.query;
   const isLinked = (entry: ComposerPullRequestMatch) => linkedKeys.has(keyOf(entry));
-  // `.sort()` on a copy, not `.toSorted()`: this runs on Hermes, which has no ES2023 array
-  // methods, and reaching for one here crashed the composer as the suggestions loaded.
+  // Hermes has no ES2023 array methods, so sort a fresh array.
   return [...uniqueEntries.values()]
     .sort(
       (left, right) =>
@@ -84,4 +72,35 @@ export function filterComposerPullRequestMatches<
         right.updatedAt.localeCompare(left.updatedAt),
     )
     .slice(0, input.limit);
+}
+
+/** Puts the thread's linked pull requests that match a text query ahead of the searched ones. */
+export function withLinkedComposerPullRequestsFirst<
+  Entry extends ComposerPullRequestMatch,
+  Linked extends ComposerPullRequestMatch & {
+    readonly title: string;
+    readonly headBranch: string;
+  },
+>(input: {
+  readonly matches: ReadonlyArray<Entry>;
+  readonly linked: ReadonlyArray<Linked>;
+  readonly query: string;
+  readonly limit: number;
+}): ReadonlyArray<Entry | Linked> {
+  const keyOf = (entry: ComposerPullRequestMatch) =>
+    `${entry.repository.trim().toLowerCase()}#${entry.number}`;
+  const matchesByKey = new Map(input.matches.map((entry) => [keyOf(entry), entry]));
+  const words = input.query.toLowerCase().split(/\s+/u).filter(Boolean);
+  const linked = input.linked.flatMap((entry): Array<Entry | Linked> => {
+    const match = matchesByKey.get(keyOf(entry));
+    if (match !== undefined) return [match];
+    const text =
+      `#${entry.number} ${entry.title} ${entry.repository} ${entry.headBranch}`.toLowerCase();
+    return words.every((word) => text.includes(word)) ? [entry] : [];
+  });
+  const linkedKeys = new Set(linked.map(keyOf));
+  return [...linked, ...input.matches.filter((entry) => !linkedKeys.has(keyOf(entry)))].slice(
+    0,
+    input.limit,
+  );
 }

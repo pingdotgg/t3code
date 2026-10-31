@@ -22,6 +22,8 @@ import {
   RelayMobileRegistrationScope,
   type RelayOkResponse,
   type RelayPublicClientId,
+  type RelayT3ChatLinkRequestResponse,
+  type RelayT3ChatLinkResponse,
   RelayRegisterDeviceEndpoint,
   RelayAgentActivitySnapshotEndpoint,
   RelayRegisterLiveActivityEndpoint,
@@ -96,6 +98,9 @@ export const ManagedRelayRequestAction = Schema.Literals([
   "unregister relay mobile device",
   "register relay live activity",
   "read relay agent activity snapshot",
+  "read linked T3 Chat account",
+  "start T3 Chat linking",
+  "unlink T3 Chat account",
 ]);
 export type ManagedRelayRequestAction = typeof ManagedRelayRequestAction.Type;
 
@@ -112,6 +117,9 @@ export const ManagedRelayRequestActivity = Schema.Literals([
   "Relay mobile device unregistration",
   "Relay Live Activity registration",
   "Relay agent activity snapshot",
+  "Relay T3 Chat link lookup",
+  "Relay T3 Chat link request",
+  "Relay T3 Chat unlinking",
 ]);
 export type ManagedRelayRequestActivity = typeof ManagedRelayRequestActivity.Type;
 
@@ -120,9 +128,6 @@ export class ManagedRelayRequestTimeoutError extends Schema.TaggedError<ManagedR
   {
     activity: ManagedRelayRequestActivity,
     timeoutMs: Schema.Number,
-    // The CLIENT span's trace id. A timed-out request has no server response
-    // to take an id from, but the client span was exported, so carrying its id
-    // makes the failure searchable instead of logging `traceId: null`.
     traceId: Schema.NullOr(Schema.String),
   },
 ) {
@@ -149,7 +154,6 @@ export class ManagedRelayRequestFailedError extends Schema.TaggedError<ManagedRe
     transportFailed: Schema.optionalKey(Schema.Boolean),
     cause: Schema.Defect(),
     relayError: Schema.optional(RelayProtectedError),
-    // HTTP status of a relay response that did not decode as a typed relay error.
     status: Schema.optional(Schema.Number),
     traceId: Schema.optional(Schema.String),
   },
@@ -276,6 +280,15 @@ export class ManagedRelayClient extends Context.Service<
       readonly clerkToken: string;
       readonly environmentId: RelayClientEnvironmentRecord["environmentId"];
     }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
+    readonly getT3ChatLink: (input: {
+      readonly clerkToken: string;
+    }) => Effect.Effect<RelayT3ChatLinkResponse, ManagedRelayClientError>;
+    readonly createT3ChatLinkRequest: (input: {
+      readonly clerkToken: string;
+    }) => Effect.Effect<RelayT3ChatLinkRequestResponse, ManagedRelayClientError>;
+    readonly unlinkT3Chat: (input: {
+      readonly clerkToken: string;
+    }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
     readonly getEnvironmentStatus: (input: {
       readonly clerkToken: string;
       readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
@@ -310,8 +323,6 @@ const isRelayProtectedError = Schema.is(RelayProtectedError);
 
 const TRACEPARENT_TRACE_ID = /^[\da-f]{2}-([\da-f]{32})-[\da-f]{16}-[\da-f]{2}$/i;
 
-// Keeps the status and the relay's traceparent trace ID for a response that
-// carries no typed relay error, such as the relay's request-deadline 504.
 function untypedResponseFields(cause: RelayHttpRequestError) {
   const response = HttpClientError.isHttpClientError(cause) ? cause.response : undefined;
   if (!response) return {};
@@ -432,6 +443,9 @@ function disabledManagedRelayClient(relayUrl: string): ManagedRelayClient["Servi
     ),
     linkEnvironment: unavailable("clientRuntime.managedRelay.linkEnvironment"),
     unlinkEnvironment: unavailable("clientRuntime.managedRelay.unlinkEnvironment"),
+    getT3ChatLink: unavailable("clientRuntime.managedRelay.getT3ChatLink"),
+    createT3ChatLinkRequest: unavailable("clientRuntime.managedRelay.createT3ChatLinkRequest"),
+    unlinkT3Chat: unavailable("clientRuntime.managedRelay.unlinkT3Chat"),
     getEnvironmentStatus: unavailable("clientRuntime.managedRelay.getEnvironmentStatus"),
     connectEnvironment: unavailable("clientRuntime.managedRelay.connectEnvironment"),
     registerDevice: unavailable("clientRuntime.managedRelay.registerDevice"),
@@ -444,7 +458,7 @@ function disabledManagedRelayClient(relayUrl: string): ManagedRelayClient["Servi
   });
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.fn("ManagedRelayClient.make")(function* (
   options: ManagedRelayClientLayerOptions,
 ) {
@@ -575,7 +589,6 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
         scopes: input.scopes,
         nowMillis,
       };
-      // Cache hits do not need to wait for an unrelated exchange or store write.
       const cached = (yield* SynchronizedRef.get(cachedTokens)).find((token) =>
         tokenMatches(token, match),
       );
@@ -796,6 +809,42 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
           );
       },
       Effect.withSpan("clientRuntime.managedRelay.unlinkEnvironment"),
+      withRelayClientTracing,
+    ),
+    getT3ChatLink: Effect.fnUntraced(
+      function* (input) {
+        return yield* client.client
+          .getT3ChatLink({ headers: bearerHeaders(input.clerkToken) })
+          .pipe(
+            Effect.mapError(relayRequestError("read linked T3 Chat account")),
+            timeoutRelayRequest("Relay T3 Chat link lookup"),
+          );
+      },
+      Effect.withSpan("clientRuntime.managedRelay.getT3ChatLink"),
+      withRelayClientTracing,
+    ),
+    createT3ChatLinkRequest: Effect.fnUntraced(
+      function* (input) {
+        return yield* client.client
+          .createT3ChatLinkRequest({ headers: bearerHeaders(input.clerkToken) })
+          .pipe(
+            Effect.mapError(relayRequestError("start T3 Chat linking")),
+            timeoutRelayRequest("Relay T3 Chat link request"),
+          );
+      },
+      Effect.withSpan("clientRuntime.managedRelay.createT3ChatLinkRequest"),
+      withRelayClientTracing,
+    ),
+    unlinkT3Chat: Effect.fnUntraced(
+      function* (input) {
+        return yield* client.client
+          .unlinkT3Chat({ headers: bearerHeaders(input.clerkToken) })
+          .pipe(
+            Effect.mapError(relayRequestError("unlink T3 Chat account")),
+            timeoutRelayRequest("Relay T3 Chat unlinking"),
+          );
+      },
+      Effect.withSpan("clientRuntime.managedRelay.unlinkT3Chat"),
       withRelayClientTracing,
     ),
     getEnvironmentStatus: Effect.fnUntraced(

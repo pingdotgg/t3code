@@ -4,17 +4,15 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Base64 from "effect/encoding/Base64";
 
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubAppAccess from "./GitHubAppAccess.ts";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
-/** One open layer of a stack, bottom to top, with the head the reader reviewed. */
 export interface CascadeLayer {
   readonly number: number;
   readonly headBranch: string;
   readonly headSha: string;
 }
 
-/** A layer's rebase hit a conflict; the layers below it are already rebased on GitHub. */
 export class GitHubStackRebaseConflictError extends Schema.TaggedError<GitHubStackRebaseConflictError>()(
   "GitHubStackRebaseConflictError",
   { number: Schema.Int, completed: Schema.Int },
@@ -24,7 +22,6 @@ export class GitHubStackRebaseConflictError extends Schema.TaggedError<GitHubSta
   }
 }
 
-/** Git failed for a reason other than a conflict: the fetch, or a push GitHub refused. */
 export class GitHubStackRebaseGitError extends Schema.TaggedError<GitHubStackRebaseGitError>()(
   "GitHubStackRebaseGitError",
   { step: Schema.String, number: Schema.Int, completed: Schema.Int, cause: Schema.Defect() },
@@ -34,33 +31,22 @@ export class GitHubStackRebaseGitError extends Schema.TaggedError<GitHubStackReb
   }
 }
 
-/** The git URL of a repository on a GitHub host, which is also where its token is good. */
 function remoteUrl(host: string, repository: string): string {
   return `https://${host.trim().toLowerCase()}/${repository}.git`;
 }
 
-/**
- * GitHub's own "Rebase stack": every open layer, bottom to top, onto the new head of the layer
- * below it (the bottom one onto the stack's base). Each layer moves only its own commits —
- * `git rebase --onto <new parent> <old parent>` — so a rebased lower layer is never replayed into
- * the one above it, which is what GitHub's per-PR "update branch" does and why it conflicts.
- *
- * It works in a throwaway clone, so the environment's checkout never moves, and pushes each
- * layer with a lease on the head that was reviewed, so a push that landed meanwhile is refused
- * rather than overwritten. The stacks API has no rebase endpoint to call instead.
- */
 export const cascadeRebaseStack = Effect.fn("cascadeRebaseStack")(function* (input: {
   readonly host: string;
   readonly repository: string;
   readonly base: string;
   readonly layers: ReadonlyArray<CascadeLayer>;
-  /** Where to fetch and push; the repository's own URL on its host unless a test points elsewhere. */
   readonly remote?: string;
 }) {
-  const api = yield* GitHubApi.GitHubApi;
+  const appAccess = yield* GitHubAppAccess.GitHubAppAccess;
   const { process } = yield* SourceControlHost.SourceControlHost;
   const fileSystem = yield* FileSystem.FileSystem;
-  const { token } = yield* api.credential(input.host);
+  // A push takes one credential up front, so it must be one that reaches the repository.
+  const { token } = yield* appAccess.credentialFor(input.host, input.repository);
   const first = input.layers[0];
   if (first === undefined) return 0;
   const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-stack-rebase-" }).pipe(
@@ -74,7 +60,7 @@ export const cascadeRebaseStack = Effect.fn("cascadeRebaseStack")(function* (inp
         }),
     ),
   );
-  // The token rides in a header for this process only: never in the URL, argv, or git config.
+  // Keep the token in this process's header, outside URLs, argv and git config.
   const remote = input.remote ?? remoteUrl(input.host, input.repository);
   const authorization = `AUTHORIZATION: basic ${Base64.encode(`x-access-token:${Redacted.value(token)}`)}`;
   const env = {
@@ -118,8 +104,7 @@ export const cascadeRebaseStack = Effect.fn("cascadeRebaseStack")(function* (inp
   let parentOld = `origin/${input.base}`;
   let parentNew = `origin/${input.base}`;
   for (const [index, layer] of input.layers.entries()) {
-    // The bottom layer's old parent is where it forked from the base; above that it is the
-    // reviewed head of the layer below, which is exactly the commits this layer must not replay.
+    // Exclude old parents: the base fork point for the bottom, the reviewed lower head above it.
     const upstream =
       index === 0
         ? (yield* git(["merge-base", parentOld, layer.headSha]).pipe(

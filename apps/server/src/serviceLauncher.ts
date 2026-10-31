@@ -1,14 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalTimers:off
-// The launcher supervises the server child for the boot service and must keep
-// working across server versions, so it stays on Node built-ins with no Effect
-// runtime: it is the one part of the executable that cannot depend on the
-// rest of it being loadable.
+// The launcher must survive unloadable server versions; use Node built-ins without Effect.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeUtil from "node:util";
 
 import type {
   PendingServiceUpdate,
@@ -23,6 +21,7 @@ import {
   decodeServiceLauncherChildMessage,
   isExactServiceVersion,
   parseServiceState,
+  SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
@@ -32,17 +31,12 @@ import {
 
 const HANDOFF_DELAY_MS = 2_000;
 /**
- * How long a trial has to report prepared. Migrations and the open-time
- * `PRAGMA optimize` count toward it and scale with the database: tens of GB on
- * a cold page cache take minutes. They run synchronously on the child's main
- * thread, so it cannot report progress meanwhile. A missed window rolls back
- * the database, so the next attempt pays the same cost. Crashes are caught at
- * exit; this only bounds a trial that is alive but stuck.
+ * Migrations count toward it and can scale with the database: tens of GB on a cold page cache
+ * take minutes. A missed window rolls back the database, so the next attempt pays the same cost.
  */
-export const PREPARED_TIMEOUT_MS = 30 * 60_000;
+const PREPARED_TIMEOUT_MS = 30 * 60_000;
 const TERMINATE_GRACE_MS = 5_000;
-// Matches SERVER_EXIT_CODE_STATE_DIR_OWNED in contracts. The standalone
-// launcher stays independent of the Effect-backed contracts package.
+// Match contracts' SERVER_EXIT_CODE_STATE_DIR_OWNED without depending on Effect.
 const STATE_DIR_OWNED_EXIT_CODE = 78;
 
 type TerminalStatus = "committed" | "rolled-back" | "failed";
@@ -54,9 +48,6 @@ interface ManagedChild {
   readonly process: NodeChildProcess.ChildProcess;
 }
 
-// Mirrors pinnedRuntimePaths: a runtime is an unpacked release archive whose
-// executable runs on its own. Kept inline so this file stays on Node
-// built-ins only.
 const runtimePaths = (baseDir: string, version: string) => {
   const versionDir = NodePath.join(baseDir, "runtime", "versions", version);
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
@@ -73,7 +64,6 @@ const runtimeSpawnArguments = (paths: ReturnType<typeof runtimePaths>) => ({
   args: ["serve"],
 });
 
-/** SQLite persists across the main file plus its WAL and shared-memory sidecars. */
 const DB_FILE_SUFFIXES = ["", "-wal", "-shm"] as const;
 const RESTORE_MARKER = ".restore-pending";
 
@@ -93,6 +83,36 @@ async function pathExists(target: string): Promise<boolean> {
   }
 }
 
+const MANAGED_SERVICE_ENV_NAMES = new Set([
+  "PATH",
+  "T3CODE_HOME",
+  "T3_BOOT_SERVICE_UNIT",
+  SERVICE_LAUNCHER_CONTEXT_ENV,
+]);
+
+export async function readServiceEnvironment(
+  baseDir: string,
+  inherited: NodeJS.ProcessEnv = process.env,
+): Promise<NodeJS.ProcessEnv> {
+  const environment = { ...inherited };
+  let contents: string;
+  try {
+    contents = await NodeFSP.readFile(NodePath.join(baseDir, SERVICE_ENV_FILE), "utf8");
+  } catch (cause) {
+    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return environment;
+    throw cause;
+  }
+  for (const [name, value] of Object.entries(NodeUtil.parseEnv(contents))) {
+    if (
+      /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) &&
+      !MANAGED_SERVICE_ENV_NAMES.has(name.toUpperCase())
+    ) {
+      environment[name] = value;
+    }
+  }
+  return environment;
+}
+
 // Opened read-write: Windows refuses to flush a handle without write access.
 async function syncFile(filePath: string): Promise<void> {
   const handle = await NodeFSP.open(filePath, "r+");
@@ -103,9 +123,7 @@ async function syncFile(filePath: string): Promise<void> {
   }
 }
 
-// Flushes a directory entry so a rename into it survives power loss. Windows
-// has no directory fsync: the handle opens but sync fails with EPERM, and
-// NTFS journals the rename on its own.
+// Fsync makes renames durable; Windows returns EPERM and NTFS journals them itself.
 async function syncDirectory(directory: string): Promise<void> {
   const handle = await NodeFSP.open(directory, "r");
   try {
@@ -123,19 +141,11 @@ function runCp(args: ReadonlyArray<string>): Promise<boolean> {
   });
 }
 
-/**
- * Copies a database file as a copy-on-write clone where the filesystem has
- * them (APFS via `cp -c`, btrfs/XFS reflinks via `cp --reflink=auto`), which
- * takes no extra space and finishes instantly for a database of tens of GB.
- * Node's own clone flag is not used: on macOS `fs.copyFile` falls back to a
- * full copy. Anywhere cloning is unavailable, or `cp` fails, this is a
- * regular copy.
- */
+// macOS fs.copyFile clone flags fall back to full copies.
 async function copyDatabaseFile(source: string, destination: string): Promise<void> {
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
   const platform = process.platform;
-  // `cp -c` replaces the destination with a new file, which would cut a
-  // hard-linked database off from its other links; copy into it instead.
+  // cp -c replaces files and breaks hard links; copy into hard-linked destinations instead.
   const hardLinked =
     platform === "darwin" &&
     ((await NodeFSP.stat(destination).catch(() => undefined))?.nlink ?? 1) > 1;
@@ -149,17 +159,10 @@ async function copyDatabaseFile(source: string, destination: string): Promise<vo
 }
 
 const GIB = 1024 ** 3;
-/**
- * Clones share blocks, but the trial server diverges from them as it writes,
- * migrations included, so a cloned backup still needs room for that churn.
- */
+// Cloned backups still need headroom for trial writes and migrations to diverge.
 const CLONED_BACKUP_MIN_HEADROOM_BYTES = GIB;
 const CLONED_BACKUP_HEADROOM_FRACTION = 0.1;
 
-/**
- * Stats of the database and its existing sidecars, following symlinks. A main
- * file that cannot be read is an error.
- */
 async function statDatabaseFiles(dbPath: string): Promise<ReadonlyArray<NodeFS.Stats>> {
   const stats: Array<NodeFS.Stats> = [];
   for (const suffix of DB_FILE_SUFFIXES) {
@@ -172,18 +175,7 @@ async function statDatabaseFiles(dbPath: string): Promise<ReadonlyArray<NodeFS.S
   return stats;
 }
 
-/**
- * Whether `copyDatabaseFile` will clone the database into the backup
- * directory rather than copy it.
- * - macOS: `cp -c` clones within one APFS volume and silently copies
- *   anywhere else, so every existing database file must share the backup
- *   directory's device, whose filesystem type must match the system volume's,
- *   which is always APFS.
- * - Linux: clone each existing database file with `cp --reflink=always`,
- *   which fails instead of copying when a file cannot be reflinked (another
- *   filesystem, or a btrfs file marked No_COW), then discard the clones.
- * - Elsewhere: never.
- */
+// cp -c silently copies across volumes; require one device matching the APFS system volume's filesystem type.
 async function backupCanClone(dbPath: string, backupRoot: string): Promise<boolean> {
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
   const platform = process.platform;
@@ -194,9 +186,6 @@ async function backupCanClone(dbPath: string, backupRoot: string): Promise<boole
       NodeFSP.statfs("/"),
     ]);
     if (backupFs.type !== systemFs.type) return false;
-    // A file linked from another volume is caught because `stat` follows
-    // symlinks. A hard-linked file is restored by a full copy, so it needs the
-    // full space.
     return (await statDatabaseFiles(dbPath)).every(
       (source) => source.dev === backupDirectory.dev && source.nlink === 1,
     );
@@ -230,12 +219,7 @@ const filesystemBackupSpaceProbe: BackupSpaceProbe = {
   canClone: backupCanClone,
 };
 
-/**
- * Returns a client-visible reason when the pre-update database backup cannot
- * fit, or undefined when it can. Runs before the server is stopped so a full
- * disk refuses the update instead of causing an outage and a cold restart.
- * Throws when the database or the filesystem cannot be inspected.
- */
+/** Check before stopping the server so full disks refuse updates without an outage. */
 export async function databaseBackupBlocker(
   baseDir: string,
   dbPath: string,
@@ -258,11 +242,7 @@ export async function databaseBackupBlocker(
   return `Not enough free disk space to back up the database before updating: ${gb(needed)} GB needed, ${gb(free)} GB free. Free up disk space and try again. The server was not stopped.`;
 }
 
-/**
- * Snapshots the database once per update before the first trial. A completed
- * backup is never overwritten because a restarted launcher may be looking at
- * database writes from an earlier attempt by the same trial.
- */
+// Preserve completed backups; restarted trials may already have changed the live database.
 async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate): Promise<void> {
   const backupDir = databaseBackupDir(baseDir, pending.id);
   if (await pathExists(backupDir)) return;
@@ -292,7 +272,7 @@ const restoreMarkerPath = (baseDir: string, updateId: string) =>
 const databaseRestorePending = (baseDir: string, pending: PendingServiceUpdate) =>
   pathExists(restoreMarkerPath(baseDir, pending.id));
 
-/** Mark rollback before changing live files so launcher recovery cannot boot a partial restore. */
+// Mark before live writes so recovery cannot boot a partial restore.
 async function markDatabaseRestorePending(backupDir: string): Promise<void> {
   const markerPath = NodePath.join(backupDir, RESTORE_MARKER);
   if (!(await pathExists(markerPath))) {
@@ -306,11 +286,7 @@ async function markDatabaseRestorePending(backupDir: string): Promise<void> {
   }
 }
 
-/**
- * The file a restore writes for `path`: where its symlinks lead, even when the
- * last target is missing, as after a crash between `cp -c` removing a file
- * and cloning over it.
- */
+// Resolve symlink targets even if a crashed cp -c left the final target missing.
 async function restoreTarget(path: string): Promise<string> {
   let current = path;
   for (let hops = 0; hops < 40; hops++) {
@@ -325,8 +301,7 @@ async function restoreTarget(path: string): Promise<string> {
       throw cause;
     });
     if (link === undefined) return current;
-    // Joined without normalizing: a `..` in the link must follow directory links
-    // the way the filesystem does, not cancel a path segment.
+    // Do not normalize .. before following directory symlinks; match filesystem resolution.
     current = NodePath.isAbsolute(link)
       ? link
       : `${await NodeFSP.realpath(NodePath.dirname(current))}${NodePath.sep}${link}`;
@@ -334,7 +309,6 @@ async function restoreTarget(path: string): Promise<string> {
   throw new Error(`Too many symbolic links resolving ${path}.`);
 }
 
-/** Restore is retryable after any process crash while the backup directory remains. */
 async function restoreDatabaseBackup(
   baseDir: string,
   pending: PendingServiceUpdate,
@@ -348,8 +322,7 @@ async function restoreDatabaseBackup(
     const livePath = `${pending.dbPath}${suffix}`;
     const source = databaseBackupFile(backupDir, suffix);
     if (await pathExists(source)) {
-      // A clone replaces its destination, so restore into the file a symlinked
-      // database resolves to and keep the link itself.
+      // Restore into the symlink target; cloning would replace the link.
       const target = await restoreTarget(livePath);
       await copyDatabaseFile(source, target);
       await syncFile(target);
@@ -375,7 +348,6 @@ export async function readServiceState(filePath: string): Promise<ServiceState> 
   return state;
 }
 
-/** Durable same-directory replacement used for every runtime state transition. */
 export async function writeServiceState(filePath: string, state: ServiceState): Promise<void> {
   const directory = NodePath.dirname(filePath);
   await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 });
@@ -474,14 +446,19 @@ export class Launcher {
   #done = false;
   readonly #completion = Promise.withResolvers<void>();
   readonly #backupSpaceProbe: Partial<BackupSpaceProbe> | undefined;
+  readonly #environment: Readonly<NodeJS.ProcessEnv>;
 
   constructor(
     baseDir: string,
     state: ServiceState,
-    options: { readonly backupSpaceProbe?: Partial<BackupSpaceProbe> } = {},
+    options: {
+      readonly backupSpaceProbe?: Partial<BackupSpaceProbe>;
+      readonly environment?: Readonly<NodeJS.ProcessEnv>;
+    } = {},
   ) {
     this.#baseDir = baseDir;
     this.#backupSpaceProbe = options.backupSpaceProbe;
+    this.#environment = { ...(options.environment ?? process.env) };
     this.#statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
     this.#state = state;
   }
@@ -520,17 +497,10 @@ export class Launcher {
   }
 
   async stop(signal: NodeJS.Signals): Promise<void> {
-    // This must happen synchronously at signal receipt. A queued update
-    // transition may already be terminating the active child, and that child
-    // needs to see the marker in its shutdown finalizer. KillMode=mixed also
-    // ensures systemd signals the launcher before the rest of the cgroup, and
-    // launchd signals only the job's main process (this launcher), so the
-    // marker lands before the child sees any signal on both platforms.
+    // Write synchronously on signal receipt; a terminating child needs the marker in its finalizer.
     try {
       NodeFS.writeFileSync(stopMarkerPath(this.#baseDir), "", { mode: 0o600 });
-    } catch {
-      // Err toward keeping the tunnel; the next link or unlink reconciles it.
-    }
+    } catch {}
     if (this.#stopRequested || this.#stopping) {
       await this.#completion.promise.catch(() => undefined);
       return;
@@ -538,9 +508,7 @@ export class Launcher {
     this.#stopRequested = true;
     this.#clearTimer();
     this.#enqueue(async () => {
-      // Let an update transition already in progress start its replacement
-      // before this queued stop tears it down. That replacement owns the
-      // pre-activation tunnel cleanup path and observes the marker above.
+      // Let in-progress updates start replacements first; replacements observe the marker and own pre-activation tunnel cleanup.
       this.#stopping = true;
       const child = this.#child?.process;
       this.#child = null;
@@ -557,13 +525,7 @@ export class Launcher {
   }
 
   async #recover(): Promise<void> {
-    // A fresh launcher means servers are running again: any stop marker from
-    // a previous explicit stop is stale and must not make a future update
-    // handoff release its tunnel. A restart deferred by `t3 update` is done
-    // no matter who restarted the service, but only once this launcher is
-    // the version the marker waits for: a launcher that came up between the
-    // CLI writing the marker and writing the new state still runs the old
-    // version, and the marker has to outlive it.
+    // Clear old stop markers to preserve future tunnels; clear restart-pending only for the awaited version to avoid CLI races.
     await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
     const restartPending = restartPendingPath(this.#baseDir);
     const awaitedVersion = await NodeFSP.readFile(restartPending, "utf8").catch(() => undefined);
@@ -590,7 +552,6 @@ export class Launcher {
   }
 
   async #startTrial(pending: PendingServiceUpdate): Promise<void> {
-    // The previous child is dead here, so all three SQLite files are quiescent.
     try {
       await backupDatabaseOnce(this.#baseDir, pending);
     } catch {
@@ -618,7 +579,7 @@ export class Launcher {
     };
     const spawnArguments = runtimeSpawnArguments(paths);
     const child = NodeChildProcess.spawn(spawnArguments.command, spawnArguments.args, {
-      env: { ...process.env, [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context) },
+      env: { ...this.#environment, [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context) },
       stdio: ["inherit", "inherit", "inherit", "ipc"],
     });
     await new Promise<void>((resolve, reject) => {
@@ -700,8 +661,7 @@ export class Launcher {
       await reject("The requested target runtime is missing or incomplete.");
       return;
     }
-    // A check that cannot run refuses the update too: the alternative is
-    // stopping the server without knowing whether the backup fits.
+    // Failed checks must refuse updates rather than stop the server with unknown backup capacity.
     const backupBlocker = await databaseBackupBlocker(
       this.#baseDir,
       message.dbPath,
@@ -710,8 +670,6 @@ export class Launcher {
       (error: unknown) =>
         `Could not check that the database backup fits before updating: ${error instanceof Error ? error.message : String(error)}. The server was not stopped.`,
     );
-    // The child may have exited during the check. Its queued exit transition
-    // reports that; answering it or recording a pending update would not.
     if (!child.process.connected) return;
     if (backupBlocker !== undefined) {
       await reject(backupBlocker);
@@ -814,12 +772,7 @@ export class Launcher {
     throw new Error(`Active child exited unexpectedly (${String(code ?? signal ?? "unknown")}).`);
   }
 
-  /**
-   * Another server owns the T3 home. Exiting would make systemd or launchd
-   * start another refused server, so stay idle until stopped or restarted.
-   * A pending update fails without restoring its backup: the other owner may
-   * have written to the database since.
-   */
+  // Stay idle to avoid supervisor restart loops; never restore backups over another owner's possible writes.
   async #idleWhileStateDirOwned(): Promise<void> {
     this.#clearTimer();
     const pending = this.#state.update;
@@ -869,7 +822,8 @@ export async function main(): Promise<void> {
   if (baseDir === undefined || baseDir === "") {
     throw new Error("T3CODE_HOME is required by the T3 Code service launcher.");
   }
+  const environment = await readServiceEnvironment(baseDir);
   const statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
   const state = await readServiceState(statePath);
-  await new Launcher(baseDir, state).run();
+  await new Launcher(baseDir, state, { environment }).run();
 }

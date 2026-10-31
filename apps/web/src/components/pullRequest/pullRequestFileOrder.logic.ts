@@ -2,13 +2,6 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 
 import { resolveFileDiffPath } from "~/lib/diffRendering";
 
-/**
- * Which of the three reading passes a file belongs to.
- *
- * A reviewer reads the change itself first, then what proves it, and a lockfile or a build output
- * only ever confirms what the source already said. Ordering by path alone buries the one file the
- * change is really about under whichever directory happens to sort first.
- */
 export type DiffFileTier = "source" | "test" | "generated";
 
 const GENERATED_FILE_NAMES = new Set([
@@ -63,7 +56,6 @@ function baseName(path: string): string {
   return stripExtension(path.split("/").at(-1) ?? "");
 }
 
-/** Resolves `../x` against the importer's directory; no package resolution, only what git shows. */
 function resolveRelative(fromPath: string, specifier: string): string {
   const segments = fromPath.split("/").slice(0, -1);
   for (const part of specifier.split("/")) {
@@ -74,11 +66,8 @@ function resolveRelative(fromPath: string, specifier: string): string {
   return segments.join("/");
 }
 
-// `import x from "y"`, `import "y"`, `export … from "y"` and `require("y")` all reduce to a quoted
-// specifier preceded by one of three words.
 const IMPORT_SPECIFIER = /(?:\bfrom|\bimport|\brequire\s*\()\s*\(?\s*["']([^"']+)["']/g;
 
-/** Which changed files a file's patch lines import, by path. */
 function importedPaths(
   path: string,
   lines: ReadonlyArray<string>,
@@ -94,8 +83,7 @@ function importedPaths(
       const withExtension = specifier.startsWith(".")
         ? resolveRelative(path, specifier)
         : specifier;
-      // A specifier may name the extension the module map dropped, and it need not be the one on
-      // disk: TypeScript's own imports point at the `.js` beside a `.ts`.
+      // Module-map keys omit extensions, which can differ from disk.
       const extension = MODULE_EXTENSIONS.find((candidate) => withExtension.endsWith(candidate));
       const resolved =
         extension === undefined ? withExtension : withExtension.slice(0, -extension.length);
@@ -110,14 +98,6 @@ function importedPaths(
   return imported;
 }
 
-/**
- * Source files with what they import ahead of what imports them.
- *
- * Kahn's, but every step takes the lowest remaining path rather than any ready node, so the same
- * change always reads the same way and files of one directory stay together. A cycle leaves nothing
- * ready: the lowest path still standing is taken anyway, which is the alphabetical order the tier
- * would have had without a graph.
- */
 function orderByImports(
   paths: ReadonlyArray<string>,
   imports: ReadonlyMap<string, ReadonlySet<string>>,
@@ -137,15 +117,10 @@ function orderByImports(
   return ordered;
 }
 
-/** The implementation a test names: `foo.test.ts` and `__tests__/foo.ts` both point at `foo`. */
 function testedBaseName(path: string): string {
   return (path.split("/").at(-1) ?? "").replace(/\.(?:test|spec)\..*$/, "").replace(/\.[^.]+$/, "");
 }
 
-/**
- * Diff files in reading order: source in dependency order, then the tests that cover it, then
- * whatever a tool wrote.
- */
 export function orderDiffFiles(
   files: ReadonlyArray<FileDiffMetadata>,
 ): ReadonlyArray<FileDiffMetadata> {

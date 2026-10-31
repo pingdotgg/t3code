@@ -26,16 +26,12 @@ export class NodePtyModuleLoadError extends Schema.TaggedError<NodePtyModuleLoad
 
 type NodePtyModuleLoader = () => Promise<typeof import("node-pty")>;
 
-// node-pty stays external to the CLI bundle because it dlopens a native
-// addon. Inside a Node single-executable, `import()` cannot load files from
-// disk (only built-ins resolve), while `require` always reads the real
-// filesystem, so both the module and its spawn-helper resolve through it.
+// node-pty's native addon stays external; single-executables need require to resolve disk modules and spawn helpers.
 const requireForNodePty = NodeModule.createRequire(import.meta.url);
 
 const loadNodePty: NodePtyModuleLoader = () =>
   Promise.resolve().then(() => requireForNodePty("node-pty") as typeof import("node-pty"));
 
-/** Injectable so tests can substitute a fake module; `require` bypasses module mocks. */
 export const NodePtyModuleLoaderRef = Context.Reference<NodePtyModuleLoader>(
   "server/terminal/NodePtyModuleLoader",
   { defaultValue: () => loadNodePty },
@@ -79,19 +75,11 @@ const ensureNodePtySpawnHelperExecutable = Effect.fn(function* () {
     return;
   }
 
-  // Best-effort: avoid FileSystem.stat in packaged mode where some fs metadata can be missing.
   yield* fs.chmod(helperPath, 0o755).pipe(Effect.orElseSucceed(() => undefined));
 });
 
-/**
- * Waits for Windows process creation so the manager receives a valid PID.
- * node-pty defers creation to avoid blocking on named pipes:
- * https://github.com/microsoft/node-pty/pull/885
- * T3 adopted that behavior when upgrading from 1.1.0 to 1.2.0-beta.15:
- * https://github.com/pingdotgg/t3code/pull/13748
- * Its public API has no readiness event. The private ready_datapipe handler sets
- * pid before our listener runs.
- */
+// node-pty has no public readiness event; ready_datapipe sets pid before our listener.
+// Deferred pipe creation: https://github.com/microsoft/node-pty/pull/885
 const waitForWindowsPid = (
   process: import("node-pty").IPty,
   trackedProcess: NodePtyProcess,
@@ -144,11 +132,7 @@ const waitForWindowsPid = (
     return Effect.sync(cleanup);
   });
 
-/**
- * Cancels Windows startup without waiting for the first output, unlike public kill().
- * The private agent can cancel the pending connection before a child exists.
- * Cleanup failures are logged without replacing the startup failure.
- */
+// The private agent cancels pending connections before a child exists; public kill waits for first output.
 const killStartingWindowsPty = (process: import("node-pty").IPty) =>
   Effect.try(() => {
     if (
@@ -181,7 +165,6 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
   constructor(process: import("node-pty").IPty, platform: NodeJS.Platform) {
     this.process = process;
     this.platform = platform;
-    // Retain exits while Windows readiness and the manager hand off the process.
     this.exitSubscription = process.onExit((event) => {
       if (this.exitEvent) return;
       this.exitEvent = { exitCode: event.exitCode, signal: event.signal ?? null };
@@ -232,7 +215,7 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
   }
 }
 
-export const make = Effect.fn("NodePtyAdapter.make")(function* () {
+const make = Effect.fn("NodePtyAdapter.make")(function* () {
   const loadNodePtyModule = yield* NodePtyModuleLoaderRef;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -262,9 +245,7 @@ export const make = Effect.fn("NodePtyAdapter.make")(function* () {
   return PtyAdapter.PtyAdapter.of({
     spawn: Effect.fn("NodePtyAdapter.spawn")(function* (input) {
       yield* ensureNodePtySpawnHelperExecutableCached;
-      // node-pty only writes `name` into the child's TERM on the Unix path;
-      // the ConPTY path leaves the environment untouched, so Windows children
-      // inherit a missing or 16-color TERM unless it is set here.
+      // ConPTY ignores node-pty's name option for TERM; set it explicitly to avoid missing/16-color values.
       const env =
         platform === "win32" && input.env["TERM"] === undefined
           ? { ...input.env, TERM: "xterm-256color" }

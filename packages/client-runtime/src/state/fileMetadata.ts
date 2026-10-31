@@ -52,8 +52,6 @@ class FileMetadataRequest extends Request.Class<
   EnvironmentRpcFailure<typeof WS_METHODS.filesystemGetMetadata> | EnvironmentRpcUnavailableError
 > {}
 
-/** Shared by file chips, search results, and the file tree in one client. Cache
- * entries belong to an RPC session so reconnects and grant changes recheck them. */
 export function createFileMetadataAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
@@ -250,7 +248,6 @@ export function createFileMetadataAtoms<R, E>(
       const path = resolveWorkspaceFilePath(entry.path, cwd);
       const previous = knownEntry(session.value, path, now);
       if (previous?.value?.kind === entry.kind) continue;
-      // Listing kinds avoid another request; size and MIME hints are optional.
       remember(session.value, path, { kind: entry.kind }, now, true);
     }
   });
@@ -293,14 +290,15 @@ export function createFileMetadataAtoms<R, E>(
     );
   });
 
-  const seedAfterRead = <A, ReadError, ReadServices>(
-    read: Effect.Effect<A, ReadError, ReadServices>,
-    seed: (
-      result: A,
-      isCurrent: (session: RpcSession) => boolean,
-    ) => Effect.Effect<void, never, EnvironmentSupervisor.EnvironmentSupervisor>,
-  ) =>
-    Effect.gen(function* () {
+  const seedAfterRead =
+    /* Metadata seeding runs on every file read and is covered by the read operation. */
+    Effect.fnUntraced(function* <A, ReadError, ReadServices>(
+      read: Effect.Effect<A, ReadError, ReadServices>,
+      seed: (
+        result: A,
+        isCurrent: (session: RpcSession) => boolean,
+      ) => Effect.Effect<void, never, EnvironmentSupervisor.EnvironmentSupervisor>,
+    ) {
       const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
       const session = yield* SubscriptionRef.get(supervisor.session);
       const version = session._tag === "Some" ? (invalidationVersions.get(session.value) ?? 0) : 0;

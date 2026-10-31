@@ -17,21 +17,12 @@ type ProcessIdentity = typeof ProcessIdentity.Type;
 
 const OpenCodeServerEntry = Schema.Struct({
   version: Schema.Literal(1),
-  /** The spawned group. Its id is the pid T3 spawned, which also names the entry file. */
   pgid: Schema.Int,
-  /**
-   * A group member seen at spawn: the spawned process, or a process it left in
-   * the group if it had already exited. Its pid, start time, and command line
-   * must all still match before the group is signalled.
-   */
   pid: Schema.Int,
-  /** Linux `/proc/<pid>/stat` start ticks, or macOS `ps` lstart (whole seconds). */
   startTime: Schema.String,
   command: Schema.String,
   port: Schema.Int,
-  /** Entries copied along with a state directory are dropped, never acted on. */
   stateDir: Schema.String,
-  /** The T3 server that spawned it. Entries of a live owner are never touched. */
   owner: ProcessIdentity,
 });
 type OpenCodeServerEntry = typeof OpenCodeServerEntry.Type;
@@ -39,21 +30,12 @@ const OpenCodeServerEntryJson = Schema.fromJsonString(OpenCodeServerEntry);
 const decodeEntry = Schema.decodeUnknownOption(OpenCodeServerEntryJson);
 const encodeEntry = Schema.encodeEffect(OpenCodeServerEntryJson);
 
-/**
- * Local `opencode serve` processes run in their own process group so T3 can
- * stop the whole group, which also means they outlive a T3 server that is
- * SIGKILLed or crashes. Each spawn is recorded under the state directory and
- * removed on a graceful stop; the next server start stops whatever a dead
- * server left behind.
- */
 export class OpenCodeServerLedger extends Context.Service<
   OpenCodeServerLedger,
   {
-    /** Records a spawned server group and returns the effect that forgets it after a graceful stop. */
     readonly track: (server: {
       readonly pid: number;
       readonly port: number;
-      /** The argv after the binary, e.g. `["serve", "--hostname=127.0.0.1", "--port=4096"]`. */
       readonly args: ReadonlyArray<string>;
     }) => Effect.Effect<Effect.Effect<void>>;
   }
@@ -72,7 +54,7 @@ interface ObservedProcess {
   readonly zombie: boolean;
 }
 
-// `ps -o lstart` prints e.g. `Sat Sep  6 20:51:57 2026`; C locale and UTC keep it stable.
+// ps lstart needs C locale and UTC for stable parsing.
 const DARWIN_PS_LINE =
   /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\w{3} \w{3} +\d{1,2} \d{2}:\d{2}:\d{2} \d{4})\s+(.*)$/;
 
@@ -94,9 +76,7 @@ const parseDarwinPs = (output: string): ReadonlyArray<ObservedProcess> =>
 const signalGroup = (pgid: number, signal: NodeJS.Signals) => {
   try {
     signalProcessGroup(pgid, signal);
-  } catch {
-    // The group may already be gone.
-  }
+  } catch {}
 };
 
 const groupExists = (pgid: number) => {
@@ -108,10 +88,6 @@ const groupExists = (pgid: number) => {
   }
 };
 
-/**
- * Builds a ledger for one state directory. `ownerPid` is the T3 server that
- * owns the servers it tracks; it defaults to this process.
- */
 export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
   readonly stateDir: string;
   readonly ownerPid?: number;
@@ -121,31 +97,28 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const platform = yield* HostProcess.Platform;
   const directory = path.join(input.stateDir, ENTRY_DIRECTORY);
-  // Windows servers are not detached and are never recorded.
   const recordable = platform === "linux" || platform === "darwin";
 
-  /** Observes `pid`, or nothing when it is not in `group` (if given). */
-  const observeLinux = (pid: number, group?: number) =>
-    Effect.gen(function* () {
-      const stat = yield* fs.readFileString(`/proc/${pid}/stat`);
-      // After the parenthesized comm: state, ppid, pgrp, session, … starttime (index 19).
-      const fields = stat
-        .slice(stat.lastIndexOf(")") + 2)
-        .trim()
-        .split(/\s+/);
-      const pgid = Number(fields[2]);
-      const startTime = fields[19];
-      if (!Number.isSafeInteger(pgid) || startTime === undefined) return undefined;
-      if (group !== undefined && pgid !== group) return undefined;
-      const cmdline = yield* fs.readFileString(`/proc/${pid}/cmdline`);
-      return {
-        pid,
-        pgid,
-        startTime,
-        command: cmdline.replace(/\0$/, "").replaceAll("\0", " "),
-        zombie: fields[0] === "Z",
-      } satisfies ObservedProcess;
-    });
+  // A process-group scan calls this for every /proc entry; avoid a span per process.
+  const observeLinux = Effect.fnUntraced(function* (pid: number, group?: number) {
+    const stat = yield* fs.readFileString(`/proc/${pid}/stat`);
+    const fields = stat
+      .slice(stat.lastIndexOf(")") + 2)
+      .trim()
+      .split(/\s+/);
+    const pgid = Number(fields[2]);
+    const startTime = fields[19];
+    if (!Number.isSafeInteger(pgid) || startTime === undefined) return undefined;
+    if (group !== undefined && pgid !== group) return undefined;
+    const cmdline = yield* fs.readFileString(`/proc/${pid}/cmdline`);
+    return {
+      pid,
+      pgid,
+      startTime,
+      command: cmdline.replace(/\0$/, "").replaceAll("\0", " "),
+      zombie: fields[0] === "Z",
+    } satisfies ObservedProcess;
+  });
 
   const psDarwin = (selection: ReadonlyArray<string>) =>
     spawner
@@ -171,10 +144,10 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
         Effect.orElseSucceed(() => undefined),
       );
     }
+    // @effect-diagnostics-next-line effectSucceedWithVoid:off - Missing process observations are undefined, not void.
     return Effect.succeed(undefined);
   };
 
-  // Scans every process, so it is only used when the spawned process is gone.
   const observeGroup = (pgid: number): Effect.Effect<ReadonlyArray<ObservedProcess>> => {
     if (platform === "linux") {
       return fs.readDirectory("/proc").pipe(
@@ -211,13 +184,11 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
   const owner =
     ownerProcess === undefined ? undefined : { pid: ownerPid, startTime: ownerProcess.startTime };
 
-  const track: OpenCodeServerLedger["Service"]["track"] = (server) =>
-    Effect.gen(function* () {
+  const track: OpenCodeServerLedger["Service"]["track"] = Effect.fn("OpenCodeServerLedger.track")(
+    function* (server) {
       if (!recordable) return Effect.void;
       const pgid = server.pid;
-      // The spawned process leads the group. If it already exited (a wrapper
-      // that left the server running), any live member identifies the group:
-      // a group id is not reused while the group has members.
+      // Any live member identifies a leaderless group; pgid cannot be reused while members remain.
       const leader = yield* observe(pgid);
       const members =
         leader !== undefined && !leader.zombie && leader.pgid === pgid
@@ -260,55 +231,58 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
             Effect.logWarning("Could not forget a stopped OpenCode server", { cause }),
           ),
         );
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("Could not record an OpenCode server process", { cause }).pipe(
-          Effect.as(Effect.void),
-        ),
+    },
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Could not record an OpenCode server process", { cause }).pipe(
+        Effect.as(Effect.void),
       ),
-    );
+    ),
+  );
 
   // Signals only a group whose recorded member still has the same pid, start
   // time, group, and full command line, so a recycled pid is never touched.
-  const stopOrphan = (entry: OpenCodeServerEntry) =>
-    Effect.gen(function* () {
-      const observed = yield* observe(entry.pid);
-      if (
-        observed === undefined ||
-        observed.zombie ||
-        observed.startTime !== entry.startTime ||
-        observed.pgid !== entry.pgid ||
-        observed.command !== entry.command
-      ) {
-        return;
-      }
-      yield* Effect.logInfo("Stopping an OpenCode server left by a previous T3 Code server", {
-        pid: entry.pgid,
-        port: entry.port,
-      });
-      signalGroup(entry.pgid, "SIGTERM");
-      for (let attempt = 0; attempt < STOP_POLL_ATTEMPTS && groupExists(entry.pgid); attempt++) {
-        yield* Effect.sleep(STOP_POLL_INTERVAL);
-      }
-      // The group never emptied, so its pgid cannot have been reused.
-      if (groupExists(entry.pgid)) signalGroup(entry.pgid, "SIGKILL");
+  const stopOrphan = Effect.fn("OpenCodeServerLedger.stopOrphan")(function* (
+    entry: OpenCodeServerEntry,
+  ) {
+    const observed = yield* observe(entry.pid);
+    if (
+      observed === undefined ||
+      observed.zombie ||
+      observed.startTime !== entry.startTime ||
+      observed.pgid !== entry.pgid ||
+      observed.command !== entry.command
+    ) {
+      return;
+    }
+    yield* Effect.logInfo("Stopping an OpenCode server left by a previous T3 Code server", {
+      pid: entry.pgid,
+      port: entry.port,
     });
+    signalGroup(entry.pgid, "SIGTERM");
+    for (let attempt = 0; attempt < STOP_POLL_ATTEMPTS && groupExists(entry.pgid); attempt++) {
+      yield* Effect.sleep(STOP_POLL_INTERVAL);
+    }
+    // The group never emptied, so its pgid cannot have been reused.
+    if (groupExists(entry.pgid)) signalGroup(entry.pgid, "SIGKILL");
+  });
 
-  const reapEntry = (entryPath: string) =>
-    Effect.gen(function* () {
+  const reapEntry = Effect.fn("OpenCodeServerLedger.reapEntry")(
+    function* (entryPath: string) {
       const entry = decodeEntry(yield* fs.readFileString(entryPath));
       if (Option.isSome(entry) && entry.value.stateDir === input.stateDir) {
         if (yield* isRunning(entry.value.owner)) return;
         yield* stopOrphan(entry.value);
       }
       yield* fs.remove(entryPath, { force: true });
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("Could not clean up a recorded OpenCode server", { entryPath, cause }),
+    },
+    (effect, entryPath) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not clean up a recorded OpenCode server", { entryPath, cause }),
+        ),
       ),
-    );
+  );
 
-  /** Stops recorded servers whose owning T3 server is gone and drops stale entries. */
   const reapOrphans = Effect.gen(function* () {
     const names = yield* fs.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
     yield* Effect.forEach(
@@ -321,20 +295,21 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
   return { track, reapOrphans };
 });
 
-/** Tracks servers under `stateDir`, the server's own state directory. */
 export const layer = (input: { readonly stateDir: string }) =>
   Layer.effect(
     OpenCodeServerLedger,
     Effect.gen(function* () {
       const ledger = yield* make(input);
-      // Reaping waits for orphans to exit, so it must not hold up startup.
       yield* ledger.reapOrphans.pipe(Effect.forkScoped);
       return OpenCodeServerLedger.of({ track: ledger.track });
     }),
   );
 
-/** Records nothing. For tests that start OpenCode servers without a state directory. */
 export const layerTest = Layer.succeed(
   OpenCodeServerLedger,
-  OpenCodeServerLedger.of({ track: () => Effect.succeed(Effect.void) }),
+  OpenCodeServerLedger.of({
+    track: Effect.fn("OpenCodeServerLedger.track")(function () {
+      return Effect.succeed(Effect.void);
+    }),
+  }),
 );

@@ -1,6 +1,6 @@
 import type { PullRequestRef, PullRequestStack, ThreadPullRequestLink } from "@t3tools/contracts";
 
-/** Saved native membership is enough for navigation, but never supplies action head SHAs. */
+/** Saved membership supports navigation, never action head SHAs. */
 export function savedPullRequestStack(
   links: ReadonlyArray<ThreadPullRequestLink>,
   reference: PullRequestRef,
@@ -47,11 +47,6 @@ export function savedPullRequestStack(
   };
 }
 
-/**
- * A fresh absence overrides saved membership; failed refreshes preserve available navigation.
- * A background refresh keeps the last successful lookup fresh, so stack-dependent actions do
- * not blink out every time the detail revalidates.
- */
 export function pullRequestStackView(
   query: {
     data: PullRequestStack | null;

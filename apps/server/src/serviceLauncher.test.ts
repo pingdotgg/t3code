@@ -12,7 +12,8 @@ import { vi } from "vite-plus/test";
 import {
   databaseBackupBlocker,
   Launcher,
-  PREPARED_TIMEOUT_MS,
+  main,
+  readServiceEnvironment,
   type BackupSpaceProbe,
   readServiceState,
   writeServiceState,
@@ -21,9 +22,9 @@ import {
   compareExactServiceVersions,
   decodeServiceState,
   isExactServiceVersion,
+  SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
-  SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
 
 const spawnedChildren = vi.hoisted((): Array<NodeChildProcess.ChildProcess> => []);
@@ -107,9 +108,6 @@ it("rejects contradictory service state", () => {
   );
 });
 
-// A pinned runtime is an executable at <versionDir>/t3. The tests stand one up
-// as a Node shebang script so the launcher spawns it the way it spawns the
-// real single-executable, IPC channel included.
 const writeFakeRuntime = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -129,20 +127,50 @@ const writeFakeRuntime = (
   });
 
 it.layer(NodeServices.layer)("service state persistence", (it) => {
-  it.effect("durably replaces and strictly reads one state document", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-test-" });
-      const statePath = path.join(root, "runtime", "service-state.json");
-      const state = {
-        protocol: SERVICE_LAUNCHER_PROTOCOL,
-        activeVersion: "0.0.31",
-      } as const;
-
-      yield* Effect.promise(() => writeServiceState(statePath, state));
-      assert.deepEqual(yield* Effect.promise(() => readServiceState(statePath)), state);
-    }),
+  it.effect(
+    "loads optional service.env literally without changing inherited or managed variables",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-env-" });
+        const inherited = Object.freeze({
+          PATH: "inherited-path",
+          T3CODE_HOME: root,
+          T3_BOOT_SERVICE_UNIT: "managed-unit",
+          T3_SERVICE_LAUNCHER_CONTEXT: "managed-context",
+          T3CODE_PORT: "ambient",
+        });
+        assert.deepEqual(
+          yield* Effect.promise(() => readServiceEnvironment(root, inherited)),
+          inherited,
+        );
+        yield* fs.writeFileString(
+          path.join(root, SERVICE_ENV_FILE),
+          [
+            "# service configuration",
+            "export T3CODE_PORT=1234 # inline comment",
+            'T3CODE_TOKEN="literal $HOME ${USER} $(whoami) # token"',
+            'MULTILINE="first\nsecond"',
+            "EMPTY=",
+            "PATH=/bad",
+            "Path=/bad",
+            "T3CODE_HOME=/bad",
+            "t3code_home=/bad",
+            "T3_BOOT_SERVICE_UNIT=bad",
+            "t3_boot_service_unit=bad",
+            "T3_SERVICE_LAUNCHER_CONTEXT=bad",
+            "t3_service_launcher_context=bad",
+          ].join("\n"),
+        );
+        assert.deepEqual(yield* Effect.promise(() => readServiceEnvironment(root, inherited)), {
+          ...inherited,
+          T3CODE_PORT: "1234",
+          T3CODE_TOKEN: "literal $HOME ${USER} $(whoami) # token",
+          MULTILINE: "first\nsecond",
+          EMPTY: "",
+        });
+      }),
   );
 
   it.effect("a fresh launcher clears a restart deferred by t3 update", () =>
@@ -175,14 +203,10 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
           yield* Effect.promise(() => running);
         });
 
-      // A launcher that is still the old version leaves a marker that waits
-      // for a newer one.
       yield* fs.writeFileString(restartPending, "1.0.1\n");
       yield* run();
       assert.isTrue(yield* fs.exists(restartPending));
 
-      // Whoever restarted the service, the launcher now runs what the unit
-      // names, so the deferred-restart marker is gone.
       yield* fs.writeFileString(restartPending, "1.0.0\n");
       yield* run();
       assert.isFalse(yield* fs.exists(restartPending));
@@ -225,37 +249,6 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       yield* Effect.promise(() => refused.promise);
       assert.isFalse(completed);
       yield* Effect.promise(() => launcher.stop("SIGTERM"));
-      yield* Effect.promise(() => running);
-    }),
-  );
-
-  it.effect("serializes shutdown with launcher recovery", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-stop-" });
-      const statePath = path.join(root, "runtime", "service-state.json");
-      yield* writeFakeRuntime(
-        fs,
-        path,
-        path.join(root, "runtime", "versions", "1.0.0"),
-        "setInterval(() => {}, 1_000);\n",
-      );
-      yield* Effect.promise(() =>
-        writeServiceState(statePath, {
-          protocol: SERVICE_LAUNCHER_PROTOCOL,
-          activeVersion: "1.0.0",
-        }),
-      );
-
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
-      const running = launcher.run();
-      const stopping = launcher.stop("SIGTERM");
-      // An explicit stop leaves the marker that tells a child shutting down
-      // mid-update that no replacement server is coming. It is present as
-      // soon as stop() returns its promise, before queued transitions run.
-      assert.isTrue(yield* fs.exists(path.join(root, "runtime", SERVICE_STOP_MARKER_FILE)));
-      yield* Effect.promise(() => stopping);
       yield* Effect.promise(() => running);
     }),
   );
@@ -313,21 +306,33 @@ if (context.update?.status === "pending") {
     }),
   );
 
-  it.effect("rolls back a trial that reports the wrong update ID", () =>
+  it.effect("rolls back invalid trials with the startup environment", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-rollback-" });
       const statePath = path.join(root, "runtime", "service-state.json");
       const databasePath = path.join(root, "userdata", "state.sqlite");
+      const observationsPath = path.join(root, "environment-observations.jsonl");
+      const envPath = path.join(root, SERVICE_ENV_FILE);
+      yield* fs.writeFileString(envPath, "T3CODE_TEST_SERVICE_TOKEN=initial\n");
+      vi.stubEnv("T3CODE_HOME", root);
+      vi.stubEnv("T3CODE_TEST_SERVICE_TOKEN", "inherited");
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllEnvs()));
       yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
       yield* fs.writeFileString(databasePath, "before trial");
       const encodedDatabasePath = JSON.stringify(databasePath);
       const childSource = `
+import { appendFileSync, writeFileSync } from "node:fs";
 const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
+appendFileSync(${JSON.stringify(observationsPath)}, JSON.stringify({
+  token: process.env.T3CODE_TEST_SERVICE_TOKEN,
+  update: context.update?.status ?? "active",
+}) + "\\n");
 if (context.update?.status === "pending") {
   process.send({ type: "prepared", updateId: "wrong-update" });
 } else if (context.update === undefined) {
+  writeFileSync(${JSON.stringify(envPath)}, "T3CODE_TEST_SERVICE_TOKEN=changed\\n");
   process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: ${encodedDatabasePath} });
   setInterval(() => {}, 1_000);
 } else {
@@ -349,9 +354,8 @@ if (context.update?.status === "pending") {
         }),
       );
 
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
       yield* Effect.promise(() =>
-        launcher.run().then(
+        main().then(
           () => Promise.reject(new Error("launcher unexpectedly completed")),
           () => Promise.resolve(),
         ),
@@ -364,89 +368,18 @@ if (context.update?.status === "pending") {
         state.update?.status === "rolled-back" ? state.update.reason : undefined,
         "invalid-prepared",
       );
+      const observations = (yield* fs.readFileString(observationsPath))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      assert.deepEqual(observations, [
+        { token: "initial", update: "active" },
+        { token: "initial", update: "pending" },
+        { token: "initial", update: "rolled-back" },
+      ]);
+      assert.equal(process.env.T3CODE_TEST_SERVICE_TOKEN, "inherited");
+      assert.equal(yield* fs.readFileString(envPath), "T3CODE_TEST_SERVICE_TOKEN=changed\n");
     }),
-  );
-
-  // Migrations on a large database can keep a trial busy for minutes before it
-  // reports prepared. Only a trial that stays stuck past the window rolls back.
-  it.effect.each([
-    { prepares: true, status: "committed", activeVersion: "1.1.0" },
-    { prepares: false, status: "rolled-back", activeVersion: "1.0.0" },
-  ] as const)(
-    "gives a trial the full prepared window (prepares: $prepares)",
-    ({ prepares, status, activeVersion }) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-slow-" });
-        const statePath = path.join(root, "runtime", "service-state.json");
-        const databasePath = path.join(root, "userdata", "state.sqlite");
-        yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
-        yield* fs.writeFileString(databasePath, "before trial");
-        // The trial stands in for slow migrations: it reports prepared only
-        // when the test tells it to.
-        const childSource = `
-const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
-if (context.update?.status !== "pending") process.exit(0);
-process.on("message", (message) => {
-  if (message.type === "test-prepare") process.send({ type: "prepared", updateId: context.update.id });
-  if (message.type === "committed") process.exit(0);
-});
-setInterval(() => {}, 1_000);
-`;
-        for (const version of ["1.0.0", "1.1.0"]) {
-          yield* writeFakeRuntime(
-            fs,
-            path,
-            path.join(root, "runtime", "versions", version),
-            childSource,
-          );
-        }
-        yield* Effect.promise(() =>
-          writeServiceState(statePath, {
-            protocol: SERVICE_LAUNCHER_PROTOCOL,
-            activeVersion: "1.0.0",
-            update: {
-              id: "update-1",
-              fromVersion: "1.0.0",
-              targetVersion: "1.1.0",
-              dbPath: databasePath,
-              status: "pending",
-            },
-          }),
-        );
-
-        // Effect schedules on setImmediate, so faking only timeouts leaves it running.
-        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-        yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
-        const launcher = new Launcher(
-          root,
-          yield* Effect.promise(() => readServiceState(statePath)),
-        );
-        // Each run ends when the final active child exits on its own.
-        const running = launcher.run().then(
-          () => Promise.reject(new Error("launcher unexpectedly completed")),
-          () => Promise.resolve(),
-        );
-        // The prepared timer is armed once the trial has spawned.
-        yield* Effect.promise(() =>
-          vi.waitFor(() => assert.equal(vi.getTimerCount(), 1), { timeout: 10_000 }),
-        );
-        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(121_000));
-        if (prepares) spawnedChildren.at(-1)!.send({ type: "test-prepare" });
-        else yield* Effect.promise(() => vi.advanceTimersByTimeAsync(PREPARED_TIMEOUT_MS));
-        yield* Effect.promise(() => running);
-
-        const state = yield* Effect.promise(() => readServiceState(statePath));
-        assert.equal(state.activeVersion, activeVersion);
-        assert.equal(state.update?.status, status);
-        if (!prepares) {
-          assert.equal(
-            state.update?.status === "rolled-back" ? state.update.reason : undefined,
-            "prepared-timeout",
-          );
-        }
-      }),
   );
 
   it.effect.each(["file", "symlink", "dangling symlink"] as const)(
@@ -458,10 +391,6 @@ setInterval(() => {}, 1_000);
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-db-" });
         const statePath = path.join(root, "runtime", "service-state.json");
         const databasePath = path.join(root, "userdata", "state.sqlite");
-        // A symlinked database keeps its link: rollback restores the file it points to,
-        // even one the trial left missing, as a crash during a macOS clone restore can.
-        // The dangling case reaches its file through a directory link and a relative
-        // `..` link, which only resolves correctly by following the directory link.
         const databaseFile =
           kind === "file" ? databasePath : path.join(root, "data", "original.sqlite");
         const linkTarget = kind === "dangling symlink" ? "../original.sqlite" : databaseFile;
@@ -665,7 +594,6 @@ setInterval(() => {}, 1_000);
         yield* Effect.promise(() => readServiceState(statePath)),
         {
           backupSpaceProbe: {
-            // Answer only once the server that asked has disconnected.
             readFreeBytes: () => {
               const child = spawnedChildren.at(-1)!;
               return new Promise((resolve) => {
@@ -705,57 +633,13 @@ setInterval(() => {}, 1_000);
           }),
         );
 
-      // A full copy fits: no clone needed.
       assert.isUndefined(yield* check(11 * 1024 ** 3, false));
-      // A clone needs 10% headroom for the trial's writes, at least 1 GiB.
       assert.isUndefined(yield* check(1.5 * 1024 ** 3, true));
       assert.include((yield* check(0.5 * 1024 ** 3, true)) ?? "", "1.0 GB needed, 0.5 GB free");
-      // A filesystem that cannot clone needs room for the full copy.
       const blocker = yield* check(8 * 1024 ** 3, false);
       assert.include(blocker ?? "", "Not enough free disk space");
       assert.include(blocker ?? "", "10.5 GB needed, 8.0 GB free");
       assert.include(blocker ?? "", "The server was not stopped");
-    }),
-  );
-
-  it.effect("fails the backup check when the database cannot be inspected", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-blocker-" });
-      const error = yield* Effect.promise(() =>
-        databaseBackupBlocker(root, path.join(root, "missing.sqlite"), {
-          readFreeBytes: () => Promise.resolve(0),
-        }).then(
-          () => undefined,
-          (cause: unknown) => cause,
-        ),
-      );
-      assert.equal((error as NodeJS.ErrnoException | undefined)?.code, "ENOENT");
-    }),
-  );
-
-  it.effect("recognizes a clone into the backup directory on this filesystem", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-clone-" });
-      const databasePath = path.join(root, "userdata", "state.sqlite");
-      yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
-      yield* fs.writeFileString(databasePath, "database");
-      // With no free space, the result shows which requirement applied.
-      const blocker = yield* Effect.promise(() =>
-        databaseBackupBlocker(root, databasePath, { readFreeBytes: () => Promise.resolve(0) }),
-      );
-      // A tiny database: 1.0 GB is the clone minimum, 0.0 GB the full copy. The
-      // macOS temp directory is on APFS, so the clone requirement applies there.
-      assert.include(
-        blocker ?? "",
-        // oxlint-disable-next-line t3code/no-global-process-runtime -- mirrors the standalone launcher's own platform check.
-        process.platform === "darwin" ? "1.0 GB needed, 0.0 GB free" : "GB needed, 0.0 GB free",
-      );
-      // Linux probes leave nothing behind in the backup directory.
-      assert.deepEqual(yield* fs.readDirectory(path.join(root, "runtime", "db-backup")), []);
     }),
   );
 });

@@ -1,10 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { ProviderDriverKind, type ProviderReplayEntry } from "@t3tools/contracts";
+import { EventId, ProviderDriverKind, type ProviderReplayEntry } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import {
   ClaudeOrchestratorReplayHarness,
@@ -12,6 +14,8 @@ import {
 } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as EffectWorker from "../EffectWorker.ts";
+import * as EventSink from "../EventSink.ts";
+import * as Orchestrator from "../Orchestrator.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT } from "./fixtures/claude_background_subagent_after_root/input.ts";
@@ -31,16 +35,10 @@ const SESSION_ID = "cca274e4-25ae-4171-b972-bbb31118517e";
 const FIRST_AFTER_RESTART = "Is the background subagent done yet?";
 const SECOND_AFTER_RESTART = "Thanks. Anything else?";
 const NOTE = [
-  "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back:",
-  "- subagent: Background subagent test",
+  "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:",
+  "- subagent: Background subagent test (id a2995bfced8019363)",
 ].join("\n");
 
-/**
- * The recorded background-subagent session cut by a restart right after the
- * root turn settled: the subagent's frames never arrive. A fresh runtime then
- * resumes the native session; each prompt frame it sends is pinned, so these
- * resumed turns are the provider's view of what T3 told it.
- */
 const readRestartTranscript = Effect.fn("readRestartTranscript")(function* (
   resumedPrompts: ReadonlyArray<string>,
 ) {
@@ -50,7 +48,7 @@ const readRestartTranscript = Effect.fn("readRestartTranscript")(function* (
   const rootResult = recorded.entries.findIndex(
     (entry) => entry.type === "emit_inbound" && entry.label === "result",
   );
-  // The restarted server resumes the recorded session instead of creating it.
+
   const queryOpen = recorded.entries[0];
   const openFrame = queryOpen?.type === "expect_outbound" ? queryOpen.frame : undefined;
   const queryOptions: unknown =
@@ -119,8 +117,7 @@ const readRestartTranscript = Effect.fn("readRestartTranscript")(function* (
     ...recorded,
     entries: [
       ...recorded.entries.slice(0, rootResult + 1),
-      // The server dies here, with the background subagent still running.
-      { type: "runtime_exit", status: "success" },
+      // Keep the query alive until the crash snapshot is captured.
       {
         type: "expect_outbound",
         label: "query.open:resume",
@@ -155,7 +152,7 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
     driver: ProviderDriverKind.make("claudeAgent"),
     modelSelection: CLAUDE_MODEL_SELECTION,
   });
-  // Phase 1 ends once the root run settles; the subagent is still open.
+
   const firstIdle = materialized.steps.findIndex((step) => step.type === "await_thread_idle");
   const phase1Steps = materialized.steps.slice(0, firstIdle + 1);
   const phase2Steps = materialized.steps.slice(firstIdle + 1);
@@ -163,6 +160,7 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
   const layerDatabase = SqlitePersistence.layerFromPath(path.join(tempDir, "state.sqlite")).pipe(
     Layer.provide(NodeServices.layer),
   );
+  const snapshotPath = path.join(tempDir, "restart-state.sqlite");
   const scenario = (name: string, steps: typeof materialized.steps) => ({
     name: `${SCENARIO}:${name}`,
     transcript,
@@ -172,17 +170,59 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
     runtimePolicyOverride: { cwd: workspace },
   });
 
+  const beforeScenario = scenario("before-restart", phase1Steps);
   const before = yield* Effect.scoped(
-    runOrchestratorV2ProviderReplayScenario(scenario("before-restart", phase1Steps), harness, {
-      databaseLayer: layerDatabase,
-    }),
+    Effect.gen(function* () {
+      const result = yield* runOrchestratorV2Scenario(beforeScenario);
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      yield* worker.drain();
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = materialized.projectionThreadIds[0];
+      if (threadId === undefined) {
+        return yield* Effect.die("restart scenario has no projection thread");
+      }
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      const session = projection.providerSessions[0];
+      if (session === undefined) {
+        return yield* Effect.die("restart scenario has no provider session");
+      }
+      // Snapshot the legacy running task before exit cleanup settles it, then
+      // seed the stopped session that older runtimes could leave after a crash.
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("event:restart-background-note:stopped-provider-session"),
+            type: "provider-session.updated",
+            threadId,
+            providerInstanceId: session.providerInstanceId,
+            occurredAt: now,
+            payload: { ...session, status: "stopped", updatedAt: now, lastError: null },
+          },
+        ],
+      });
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`VACUUM INTO ${snapshotPath}`;
+      return result;
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          ProviderReplayHarness.layerProviderReplay(beforeScenario, harness, {
+            databaseLayer: layerDatabase,
+          }),
+          layerDatabase,
+        ),
+      ),
+    ),
+  );
+  const snapshotDatabase = SqlitePersistence.layerFromPath(snapshotPath).pipe(
+    Layer.provide(NodeServices.layer),
   );
   const settled = projectionFor(before, SCENARIO);
   assert.equal(settled.runs[0]?.status, "completed");
   assert.equal(settled.subagents[0]?.status, "running");
 
-  // Drain recovery before submitting any user work, which would otherwise
-  // take precedence over an incorrectly queued automatic continuation.
   const restartScenario = scenario("restarted", []);
   const restarted = yield* Effect.scoped(
     Effect.gen(function* () {
@@ -192,7 +232,7 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
     }).pipe(
       Effect.provide(
         ProviderReplayHarness.layerProviderReplay(restartScenario, harness, {
-          databaseLayer: layerDatabase,
+          databaseLayer: snapshotDatabase,
           recoverOnStartup: true,
           continueThreadsAfterServerUpdate: input.continueThreadsAfterServerUpdate,
         }),
@@ -209,11 +249,11 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
 
   const after = yield* Effect.scoped(
     runOrchestratorV2ProviderReplayScenario(scenario("after-restart", phase2Steps), harness, {
-      databaseLayer: layerDatabase,
+      databaseLayer: snapshotDatabase,
       continueThreadsAfterServerUpdate: input.continueThreadsAfterServerUpdate,
     }),
   );
-  // The replay runner rejects any prompt frame that differs from the transcript.
+
   yield* assertComplete;
   const projection = projectionFor(after, SCENARIO);
   assert.equal(projection.subagents[0]?.status, "cancelled");
@@ -230,7 +270,6 @@ describe("restart-cancelled background work", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const projection = yield* runRestart({
-            // The first turn after the restart carries the note; the second does not.
             resumedPrompts: [
               `${NOTE}\n\nUser message:\n${FIRST_AFTER_RESTART}`,
               SECOND_AFTER_RESTART,
@@ -245,7 +284,7 @@ describe("restart-cancelled background work", () => {
           assert.isFalse(
             projection.runs.some((run) => run.restartContinuationOfRunId !== undefined),
           );
-          // The note reaches the provider only; the timeline keeps what the user sent.
+
           assert.deepEqual(userTexts(projection), [
             CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT,
             FIRST_AFTER_RESTART,

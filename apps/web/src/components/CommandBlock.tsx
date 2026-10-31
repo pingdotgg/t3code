@@ -6,7 +6,6 @@ import { cn } from "~/lib/utils";
 
 import { Button } from "./ui/button";
 
-/** A shell command to copy and run elsewhere, such as on the environment's host. */
 export function CommandBlock({
   command,
   className,

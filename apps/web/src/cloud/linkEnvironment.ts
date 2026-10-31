@@ -48,10 +48,10 @@ const relayClientRpcError = (message: string) => (cause: unknown) =>
     cause,
   });
 
-function ensureRelayClientAvailable(
-  environmentId: EnvironmentId,
-): Effect.Effect<void, CloudEnvironmentLinkError, EnvironmentRegistry.EnvironmentRegistry> {
-  return Effect.gen(function* () {
+const ensureRelayClientAvailable = Effect.fn("linkEnvironment.ensureRelayClientAvailable")(
+  function* (
+    environmentId: EnvironmentId,
+  ): Effect.fn.Return<void, CloudEnvironmentLinkError, EnvironmentRegistry.EnvironmentRegistry> {
     const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
     const status = yield* registry
       .run(environmentId, request(WS_METHODS.cloudGetRelayClientStatus, {}))
@@ -99,8 +99,8 @@ function ensureRelayClientAvailable(
             : "The relay client is still unavailable after installation.",
       });
     }
-  });
-}
+  },
+);
 
 const isEnvironmentCloudApiError = Schema.is(
   Schema.Union([
@@ -184,166 +184,169 @@ export interface CloudLinkTarget {
 
 export type CloudLinkState = EnvironmentCloudLinkStateResult;
 
-export function readPrimaryCloudLinkState(input: {
+export const readPrimaryCloudLinkState: (input: {
   readonly target: CloudLinkTarget;
-}): Effect.Effect<CloudLinkState | null, CloudEnvironmentLinkError, HttpClient.HttpClient> {
-  return Effect.gen(function* () {
+}) => Effect.Effect<CloudLinkState | null, CloudEnvironmentLinkError, HttpClient.HttpClient> =
+  Effect.fn("linkEnvironment.readPrimaryCloudLinkState")(function* (input: {
+    readonly target: CloudLinkTarget;
+  }) {
     const client = yield* makeEnvironmentHttpApiClient(input.target.httpBaseUrl);
     return yield* client.connect
       .linkState({ headers: {} })
       .pipe(Effect.mapError(environmentApiError("Could not read environment cloud link state.")));
-  }).pipe(Effect.provide(PrimaryEnvironmentHttpLayer.layer));
-}
+  }, Effect.provide(PrimaryEnvironmentHttpLayer.layer));
 
-export function updatePrimaryCloudPreferences(input: {
+export const updatePrimaryCloudPreferences: (input: {
   readonly target: CloudLinkTarget;
   readonly publishAgentActivity: boolean;
   readonly holdWebhooksWhileOffline?: boolean;
-}): Effect.Effect<CloudLinkState, CloudEnvironmentLinkError, HttpClient.HttpClient> {
-  return Effect.gen(function* () {
-    const client = yield* makeEnvironmentHttpApiClient(input.target.httpBaseUrl);
-    const { target: _target, ...payload } = input;
-    return yield* client.connect
-      .preferences({
-        headers: {},
-        payload,
-      })
-      .pipe(
-        Effect.mapError(environmentApiError("Could not update environment cloud preferences.")),
-      );
-  }).pipe(Effect.provide(PrimaryEnvironmentHttpLayer.layer));
-}
+}) => Effect.Effect<CloudLinkState, CloudEnvironmentLinkError, HttpClient.HttpClient> = Effect.fn(
+  "linkEnvironment.updatePrimaryCloudPreferences",
+)(function* (input: {
+  readonly target: CloudLinkTarget;
+  readonly publishAgentActivity: boolean;
+  readonly holdWebhooksWhileOffline?: boolean;
+}) {
+  const client = yield* makeEnvironmentHttpApiClient(input.target.httpBaseUrl);
+  const { target: _target, ...payload } = input;
+  return yield* client.connect
+    .preferences({
+      headers: {},
+      payload,
+    })
+    .pipe(Effect.mapError(environmentApiError("Could not update environment cloud preferences.")));
+}, Effect.provide(PrimaryEnvironmentHttpLayer.layer));
 
-export function unlinkPrimaryEnvironmentFromCloud(input: {
+export const unlinkPrimaryEnvironmentFromCloud: (input: {
   readonly target: CloudLinkTarget;
   readonly clerkToken: string | null;
-}): Effect.Effect<
+}) => Effect.Effect<
   void,
   CloudEnvironmentLinkError,
   HttpClient.HttpClient | ManagedRelay.ManagedRelayClient
-> {
-  return Effect.gen(function* () {
-    const client = yield* makeEnvironmentHttpApiClient(input.target.httpBaseUrl);
-    yield* client.connect
-      .unlink({ headers: {} })
-      .pipe(Effect.mapError(environmentApiError("Could not unlink the environment from cloud.")));
+> = Effect.fn("linkEnvironment.unlinkPrimaryEnvironmentFromCloud")(function* (input: {
+  readonly target: CloudLinkTarget;
+  readonly clerkToken: string | null;
+}) {
+  const client = yield* makeEnvironmentHttpApiClient(input.target.httpBaseUrl);
+  yield* client.connect
+    .unlink({ headers: {} })
+    .pipe(Effect.mapError(environmentApiError("Could not unlink the environment from cloud.")));
 
-    const configuredRelayUrl = relayUrl();
-    if (configuredRelayUrl && input.clerkToken) {
-      const relayClient = yield* ManagedRelay.ManagedRelayClient;
-      yield* relayClient
-        .unlinkEnvironment({
-          clerkToken: input.clerkToken,
-          environmentId: EnvironmentId.make(input.target.environmentId),
-        })
-        .pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning("Could not revoke cloud environment link after local unlink.", {
-              cause,
-            }),
-          ),
-        );
-    }
-  }).pipe(Effect.provide(PrimaryEnvironmentHttpLayer.layer));
-}
+  const configuredRelayUrl = relayUrl();
+  if (configuredRelayUrl && input.clerkToken) {
+    const relayClient = yield* ManagedRelay.ManagedRelayClient;
+    yield* relayClient
+      .unlinkEnvironment({
+        clerkToken: input.clerkToken,
+        environmentId: EnvironmentId.make(input.target.environmentId),
+      })
+      .pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not revoke cloud environment link after local unlink.", {
+            cause,
+          }),
+        ),
+      );
+  }
+}, Effect.provide(PrimaryEnvironmentHttpLayer.layer));
 
-// "publish_only" links the environment to the relay for agent-activity
-// publishing alone: no managed tunnel is provisioned, so it can be toggled
-// independently of T3 Connect while clients reach the environment out of band.
 export type CloudLinkMode = "managed" | "publish_only";
 
 const PUBLISH_ONLY_PROVIDER_KIND = "manual" satisfies RelayManagedEndpointProviderKind;
 
-export function linkPrimaryEnvironmentToCloud(input: {
+export const linkPrimaryEnvironmentToCloud: (input: {
   readonly target: CloudLinkTarget;
   readonly clerkToken: string;
   readonly mode?: CloudLinkMode;
-}): Effect.Effect<
+}) => Effect.Effect<
   void,
   CloudEnvironmentLinkError,
   EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient | ManagedRelay.ManagedRelayClient
-> {
-  return Effect.gen(function* () {
-    const configuredRelayUrl = relayUrl();
-    if (!configuredRelayUrl) {
-      return yield* new CloudEnvironmentLinkError({
-        message: "T3CODE_RELAY_URL is not configured.",
-      });
-    }
-    const managedTunnelsEnabled = (input.mode ?? "managed") === "managed";
-    const providerKind = managedTunnelsEnabled
-      ? MANAGED_ENDPOINT_PROVIDER_KIND
-      : PUBLISH_ONLY_PROVIDER_KIND;
-    const relayClient = yield* ManagedRelay.ManagedRelayClient;
-    const environmentClient = yield* makeEnvironmentHttpApiClient(input.target.httpBaseUrl);
-    if (managedTunnelsEnabled) {
-      yield* ensureRelayClientAvailable(EnvironmentId.make(input.target.environmentId));
-    }
-
-    const challenge = yield* relayClient
-      .createEnvironmentLinkChallenge({
-        clerkToken: input.clerkToken,
-        payload: {
-          notificationsEnabled: true,
-          liveActivitiesEnabled: true,
-          managedTunnelsEnabled,
-        },
-      })
-      .pipe(
-        Effect.mapError(
-          decodedRelayClientError(
-            `${configuredRelayUrl}/v1/client/environment-link-challenges failed`,
-          ),
-        ),
-      );
-    const proof = yield* environmentClient.connect
-      .linkProof({
-        headers: {},
-        payload: {
-          challenge: challenge.challenge,
-          relayIssuer: configuredRelayUrl,
-          endpoint: {
-            httpBaseUrl: input.target.httpBaseUrl,
-            wsBaseUrl: input.target.wsBaseUrl,
-            providerKind,
-          },
-          origin: endpointOrigin(input.target.httpBaseUrl),
-        },
-      })
-      .pipe(Effect.mapError(environmentApiError("Could not obtain environment link proof.")));
-    const link = yield* relayClient
-      .linkEnvironment({
-        clerkToken: input.clerkToken,
-        payload: {
-          proof,
-          notificationsEnabled: true,
-          liveActivitiesEnabled: true,
-          managedTunnelsEnabled,
-        },
-      })
-      .pipe(
-        Effect.mapError(
-          decodedRelayClientError(`${configuredRelayUrl}/v1/client/environment-links failed`),
-        ),
-      );
-    yield* ensureLinkedEnvironmentMatches({
-      expectedEnvironmentId: input.target.environmentId,
-      expectedProviderKind: providerKind,
-      link,
+> = Effect.fn("linkEnvironment.linkPrimaryEnvironmentToCloud")(function* (input: {
+  readonly target: CloudLinkTarget;
+  readonly clerkToken: string;
+  readonly mode?: CloudLinkMode;
+}) {
+  const configuredRelayUrl = relayUrl();
+  if (!configuredRelayUrl) {
+    return yield* new CloudEnvironmentLinkError({
+      message: "T3CODE_RELAY_URL is not configured.",
     });
+  }
+  const managedTunnelsEnabled = (input.mode ?? "managed") === "managed";
+  const providerKind = managedTunnelsEnabled
+    ? MANAGED_ENDPOINT_PROVIDER_KIND
+    : PUBLISH_ONLY_PROVIDER_KIND;
+  const relayClient = yield* ManagedRelay.ManagedRelayClient;
+  const environmentClient = yield* makeEnvironmentHttpApiClient(input.target.httpBaseUrl);
+  if (managedTunnelsEnabled) {
+    yield* ensureRelayClientAvailable(EnvironmentId.make(input.target.environmentId));
+  }
 
-    yield* environmentClient.connect
-      .relayConfig({
-        headers: {},
-        payload: {
-          relayUrl: configuredRelayUrl,
-          relayIssuer: link.relayIssuer,
-          cloudUserId: link.cloudUserId,
-          environmentCredential: link.environmentCredential,
-          cloudMintPublicKey: link.cloudMintPublicKey,
-          endpointRuntime: link.endpointRuntime,
+  const challenge = yield* relayClient
+    .createEnvironmentLinkChallenge({
+      clerkToken: input.clerkToken,
+      payload: {
+        notificationsEnabled: true,
+        liveActivitiesEnabled: true,
+        managedTunnelsEnabled,
+      },
+    })
+    .pipe(
+      Effect.mapError(
+        decodedRelayClientError(
+          `${configuredRelayUrl}/v1/client/environment-link-challenges failed`,
+        ),
+      ),
+    );
+  const proof = yield* environmentClient.connect
+    .linkProof({
+      headers: {},
+      payload: {
+        challenge: challenge.challenge,
+        relayIssuer: configuredRelayUrl,
+        endpoint: {
+          httpBaseUrl: input.target.httpBaseUrl,
+          wsBaseUrl: input.target.wsBaseUrl,
+          providerKind,
         },
-      })
-      .pipe(Effect.mapError(environmentApiError("Could not configure environment relay access.")));
-  }).pipe(Effect.provide(PrimaryEnvironmentHttpLayer.layer));
-}
+        origin: endpointOrigin(input.target.httpBaseUrl),
+      },
+    })
+    .pipe(Effect.mapError(environmentApiError("Could not obtain environment link proof.")));
+  const link = yield* relayClient
+    .linkEnvironment({
+      clerkToken: input.clerkToken,
+      payload: {
+        proof,
+        notificationsEnabled: true,
+        liveActivitiesEnabled: true,
+        managedTunnelsEnabled,
+      },
+    })
+    .pipe(
+      Effect.mapError(
+        decodedRelayClientError(`${configuredRelayUrl}/v1/client/environment-links failed`),
+      ),
+    );
+  yield* ensureLinkedEnvironmentMatches({
+    expectedEnvironmentId: input.target.environmentId,
+    expectedProviderKind: providerKind,
+    link,
+  });
+
+  yield* environmentClient.connect
+    .relayConfig({
+      headers: {},
+      payload: {
+        relayUrl: configuredRelayUrl,
+        relayIssuer: link.relayIssuer,
+        cloudUserId: link.cloudUserId,
+        environmentCredential: link.environmentCredential,
+        cloudMintPublicKey: link.cloudMintPublicKey,
+        endpointRuntime: link.endpointRuntime,
+      },
+    })
+    .pipe(Effect.mapError(environmentApiError("Could not configure environment relay access.")));
+}, Effect.provide(PrimaryEnvironmentHttpLayer.layer));

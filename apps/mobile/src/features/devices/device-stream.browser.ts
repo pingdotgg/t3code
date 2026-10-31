@@ -23,7 +23,6 @@ export function command(button: "home" | "back" | "appSwitcher" | "rotate") {
   else activeClient?.pressButton(button);
 }
 
-/** Bundled into the existing native WebView without React or Expo's web runtime. */
 export function start(configuration: DeviceStreamConfiguration) {
   stop();
   // oxlint-disable-next-line unicorn/require-post-message-target-origin -- The native WebView bridge takes one string.
@@ -140,6 +139,10 @@ export function start(configuration: DeviceStreamConfiguration) {
       onMjpegFallback: () => {
         canvas.style.display = "none";
         image.style.display = "block";
+      },
+      onCanvasVideo: () => {
+        image.style.display = "none";
+        canvas.style.display = "";
       },
       onUnauthorized: unauthorized,
       onInputConnected: (connected) => {

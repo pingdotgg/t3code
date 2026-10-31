@@ -1,14 +1,4 @@
-/**
- * CursorKeychain - the Cursor CLI's macOS Keychain login, shared by usage
- * history and usage limits in one server process.
- *
- * macOS shows the access prompt on the server's own screen, which a remote
- * client cannot answer, so a read gives up after a timeout. The Keychain read
- * stays in flight: the next read joins it instead of stacking a second prompt,
- * and picks up the token once someone allows access.
- *
- * @module provider-cursor/server/CursorKeychain
- */
+// Remote clients cannot answer macOS prompts; time out reads but retain the in-flight request for reuse.
 import * as NodeModule from "node:module";
 
 import * as Clock from "effect/Clock";
@@ -25,7 +15,6 @@ const DEFAULT_TIMEOUT = Duration.seconds(30);
 
 const requireForKeyring = NodeModule.createRequire(import.meta.url);
 
-/** Nobody answered the macOS Keychain prompt in time. */
 export class CursorKeychainTimeoutError extends Schema.TaggedError<CursorKeychainTimeoutError>()(
   "CursorKeychainTimeoutError",
   {},
@@ -37,7 +26,6 @@ export class CursorKeychainTimeoutError extends Schema.TaggedError<CursorKeychai
 
 export const isCursorKeychainTimeoutError = Schema.is(CursorKeychainTimeoutError);
 
-/** The Keychain could not be read. */
 export class CursorKeychainReadError extends Schema.TaggedError<CursorKeychainReadError>()(
   "CursorKeychainReadError",
   { cause: Schema.Defect() },
@@ -50,7 +38,6 @@ export class CursorKeychainReadError extends Schema.TaggedError<CursorKeychainRe
 export class CursorKeychain extends Context.Service<
   CursorKeychain,
   {
-    /** The access token, or `null` when the Keychain holds no Cursor login. */
     readonly accessToken: Effect.Effect<
       string | null,
       CursorKeychainTimeoutError | CursorKeychainReadError
@@ -58,7 +45,6 @@ export class CursorKeychain extends Context.Service<
   }
 >()("@t3tools/provider-cursor/server/CursorKeychain") {}
 
-/** Reads the Cursor CLI's default macOS credential without invoking the shared security binary. */
 const readKeychainEntry = Effect.tryPromise({
   try: async () => {
     const { AsyncEntry } = requireForKeyring(
@@ -69,15 +55,13 @@ const readKeychainEntry = Effect.tryPromise({
   catch: (cause) => new CursorKeychainReadError({ cause }),
 });
 
-/** A Keychain backed by `read`, which tests replace. */
-export const make = (
+const make = (
   read: Effect.Effect<string | null, CursorKeychainReadError> = readKeychainEntry,
   timeout: Duration.Input = DEFAULT_TIMEOUT,
 ): CursorKeychain["Service"] => {
   let cached: { readonly token: string; readonly untilMs: number } | null = null;
   let pending: Deferred.Deferred<string | null, CursorKeychainReadError> | null = null;
 
-  /** Joins the read in flight, or starts one that outlives the caller. */
   const startRead = Effect.uninterruptible(
     Effect.gen(function* () {
       if (pending !== null) return pending;

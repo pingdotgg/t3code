@@ -1,4 +1,4 @@
-import type { ComponentType } from "react";
+import type { ComponentType, Ref } from "react";
 import type { NativeSyntheticEvent, ViewProps } from "react-native";
 import { requireNativeView, requireOptionalNativeModule } from "expo";
 
@@ -22,6 +22,7 @@ interface TerminalResizeEvent {
 }
 
 export interface NativeTerminalSurfaceProps extends ViewProps {
+  readonly ref?: Ref<NativeTerminalSurfaceHandle>;
   readonly appearanceScheme?: "light" | "dark";
   readonly autoFocus?: boolean;
   readonly readOnly?: boolean;
@@ -35,8 +36,14 @@ export interface NativeTerminalSurfaceProps extends ViewProps {
   readonly terminalKey: string;
   readonly initialBuffer: string;
   readonly fontSize: number;
+  /** `[cols, rows]` of the shared PTY, or empty before the server reports one. */
+  readonly sharedGrid?: ReadonlyArray<number>;
   readonly onInput?: (event: NativeSyntheticEvent<TerminalInputEvent>) => void;
   readonly onResize?: (event: NativeSyntheticEvent<TerminalResizeEvent>) => void;
+}
+
+export interface NativeTerminalSurfaceHandle {
+  readonly writeOutput: (data: string, reset: boolean) => Promise<void>;
 }
 
 let cachedNativeTerminalSurfaceView: ComponentType<NativeTerminalSurfaceProps> | undefined;
@@ -79,11 +86,6 @@ export function resolveNativeTerminalSurfaceView(): ComponentType<NativeTerminal
   return cachedNativeTerminalSurfaceView ?? null;
 }
 
-/**
- * Revision of the native hardware-keyboard handling compiled into the installed binary,
- * or `null` when the binary predates the revision constant (or the module is missing).
- * Used in terminal debug logs to detect stale native builds.
- */
 export function getNativeTerminalHardwareKeyRevision(): number | null {
   try {
     if (typeof requireOptionalNativeModule !== "function") {
@@ -100,4 +102,15 @@ export function getNativeTerminalHardwareKeyRevision(): number | null {
 
 export function hasNativeTerminalSurface() {
   return resolveNativeTerminalSurfaceView() !== null;
+}
+
+export function supportsNativeTerminalOutput(): boolean {
+  try {
+    const module = requireOptionalNativeModule<{ readonly outputRevision?: number }>(
+      NATIVE_TERMINAL_MODULE_NAME,
+    );
+    return (module?.outputRevision ?? 0) >= 1 && hasNativeTerminalSurface();
+  } catch {
+    return false;
+  }
 }

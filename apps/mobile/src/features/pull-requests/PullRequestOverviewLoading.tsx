@@ -1,12 +1,13 @@
+import { Chip } from "../../components/ui/Chip";
 import { PullRequestSectionHeading } from "./PullRequestSectionHeading";
 import type { PullRequestListEntry } from "@t3tools/contracts";
 import { View } from "react-native";
-import { AppText as Text } from "../../components/AppText";
 import { PullRequestCardGroup, PullRequestCardRow } from "./PullRequestControls";
 import { PullRequestStackCard } from "./PullRequestStackCard";
 import type { PullRequestParams } from "./usePullRequestDiff";
 import type { PullRequestStackState } from "./usePullRequestStack";
 import { pullRequestListReviewStatus } from "./pullRequestList";
+import { PullRequestGlyph } from "./pullRequestGlyphs";
 
 export function PullRequestOverviewLoading({
   summary,
@@ -74,7 +75,7 @@ export function PullRequestOverviewLoading({
                 : "Branch"
           }
           icon={
-            conflicting ? "exclamationmark.triangle" : clean ? "checkmark.circle" : "arrow.branch"
+            conflicting ? PullRequestGlyph.conflicting : clean ? "checkmark.circle" : "arrow.branch"
           }
           tint={
             conflicting
@@ -91,9 +92,7 @@ export function PullRequestOverviewLoading({
       {summary.labels.length ? (
         <View className="flex-row flex-wrap gap-2">
           {summary.labels.map((label) => (
-            <View key={label.name} className="rounded-full bg-grouped-card px-3 py-1">
-              <Text className="text-2xs text-foreground-muted">{label.name}</Text>
-            </View>
+            <Chip key={label.name} label={label.name} size="small" />
           ))}
         </View>
       ) : null}
