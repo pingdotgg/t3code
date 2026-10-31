@@ -267,7 +267,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   return (
     <Dialog open={props.open} onOpenChange={handleOpenChange}>
       <DialogPopup
-        className="sm:max-w-115"
+        className="sm:max-w-150"
         onKeyDown={(event) => {
           if (publishResult || !isDialogSubmitShortcut(event)) return;
           event.preventDefault();
@@ -322,7 +322,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
               <div className="flex flex-col gap-1.5">
                 <Label render={<span />}>Provider</Label>
                 <div
-                  className="grid grid-cols-3 gap-1.5 min-[480px]:grid-cols-6"
+                  className="grid grid-cols-3 gap-1.5 sm:grid-cols-6"
                   role="group"
                   aria-label="Provider"
                 >
