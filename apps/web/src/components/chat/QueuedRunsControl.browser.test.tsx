@@ -1,7 +1,7 @@
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import * as DateTime from "effect/DateTime";
-import type { ComponentProps } from "react";
+import { createRef, type ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
@@ -42,7 +42,7 @@ vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
 
 import "~/index.css";
 import { render as renderUi } from "../../../test/render";
-import { QueuedRunsControl } from "./QueuedRunsControl";
+import { QueuedRunsControl, type QueuedRunsControlHandle } from "./QueuedRunsControl";
 
 function setup() {
   state.projection = null;
@@ -202,4 +202,26 @@ it("stays inside the timeline scroller instead of growing the chat column", asyn
   await expect.element(page.getByText("Later", { exact: true })).toBeInTheDocument();
   const column = screen.getByTestId("column").element();
   expect(column.scrollHeight).toBe(column.clientHeight);
+});
+
+it("does not send a queued message from the shortcut while it is open in the composer", async () => {
+  setup();
+  state.projection = { projection: { messages: [] } };
+  state.workflow = {
+    activeRun: { id: "run:active" },
+    canPromoteToSteer: true,
+    queuedRuns: [
+      {
+        run: { id: "run:edited", userMessageId: "message:edited" },
+        text: "Edited",
+        attachments: [],
+      },
+    ],
+  };
+  const ref = createRef<QueuedRunsControlHandle>();
+  await using screen = await renderQueue({ ref, editingRunId: "run:edited" as never });
+  expect(ref.current?.steerNext(true)).toBe(false);
+
+  await screen.rerender(<QueuedRunsControl {...baseProps} ref={ref} />);
+  expect(ref.current?.steerNext(true)).toBe(true);
 });
