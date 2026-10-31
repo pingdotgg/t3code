@@ -1,10 +1,8 @@
 import { type ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
-import { memo } from "react";
-import { InfoIcon, XIcon } from "lucide-react";
-import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
-import { Button, InlineButton } from "../ui/button";
+import { BotOffIcon, CircleAlertIcon, KeyRoundIcon, TriangleAlertIcon } from "lucide-react";
+import { Button } from "../ui/button";
 import { formatProviderDriverKindLabel } from "../../providerModels";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
 function getIncompatibleVersion(status: ServerProvider) {
   const compatibility = status.compatibilityAdvisory;
@@ -85,65 +83,77 @@ export function getProviderStatusMessage(status: ServerProvider): string {
       : `${providerName} provider has limited availability.`;
 }
 
-export const ProviderStatusBanner = memo(function ProviderStatusBanner({
+/**
+ * The selected provider's status as a tray notice: signed out, no models,
+ * unsupported version, or degraded. The provider's own message follows the
+ * title; a clipped one opens in the notice's details popover.
+ */
+export function providerStatusBannerItem({
   onDismiss,
   onOpenProviderSetup,
+  onOpenTerminal,
   status,
 }: {
   onDismiss: () => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
+  /** Offered for a signed-out provider whose sign-in runs in its CLI. */
+  onOpenTerminal?: () => void;
   status: ServerProvider | null;
-}) {
-  if (!status || getProviderStatusBannerKey(status) === null) {
+}): ComposerBannerStackItem | null {
+  const bannerKey = getProviderStatusBannerKey(status);
+  if (!status || bannerKey === null) {
     return null;
   }
 
   const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
   const isUnauthenticated = status.status === "error" && status.auth.status === "unauthenticated";
   const incompatible = getIncompatibleVersion(status);
+  const hasNoModels =
+    status.status === "warning" &&
+    status.installed &&
+    status.auth.status !== "unauthenticated" &&
+    status.models.length === 0;
   const title = isUnauthenticated
-    ? `${providerName} is unauthenticated`
+    ? `${providerName} signed out`
     : incompatible
       ? `${providerName} ${status.version ?? ""} is ${incompatible.status === "broken" ? "known to be broken" : "unsupported"}`
-      : `${providerName} provider status`;
+      : hasNoModels
+        ? `${providerName} has no models`
+        : status.status === "error"
+          ? `${providerName} unavailable`
+          : `${providerName} limited`;
   const message = incompatible?.message ?? getProviderStatusMessage(status);
   const isWarning =
-    incompatible?.status !== "broken" && (status.status === "warning" || incompatible !== null);
+    isUnauthenticated ||
+    hasNoModels ||
+    (incompatible?.status !== "broken" && (status.status === "warning" || incompatible !== null));
+  const openSetup = onOpenProviderSetup && hasProviderSetup(status) ? onOpenProviderSetup : null;
+  const { instanceId } = status;
 
-  return (
-    <div className="pointer-events-auto mx-auto w-fit max-w-[calc(100%-2rem)] pt-3">
-      <Alert
-        variant={isWarning ? "warning" : "error"}
-        role={incompatible && incompatible.status !== "broken" ? "status" : "alert"}
-        surface="tray"
-        controlAlignment="first-line"
-      >
-        <InfoIcon />
-        <AlertTitle>{title}</AlertTitle>
-        <AlertDescription>
-          <Tooltip>
-            <TooltipTrigger render={<div className="line-clamp-3" />}>{message}</TooltipTrigger>
-            <TooltipPopup side="top" className="whitespace-pre-wrap">
-              {message}
-            </TooltipPopup>
-          </Tooltip>
-          {onOpenProviderSetup && hasProviderSetup(status) ? (
-            <InlineButton onClick={() => onOpenProviderSetup(status.instanceId)}>
-              Open provider setup
-            </InlineButton>
-          ) : null}
-        </AlertDescription>
-        <AlertAction>
-          <Button
-            aria-label={`Dismiss ${providerName} provider ${status.status}`}
-            onClick={onDismiss}
-            size="icon-xs"
-            variant="ghost-muted"
-          >
-            <XIcon />
-          </Button>
-        </AlertAction>
-      </Alert>
-    </div>
-  );
-});
+  return {
+    id: `provider-status:${bannerKey}`,
+    variant: isWarning ? "warning" : "error",
+    icon: isUnauthenticated ? (
+      <KeyRoundIcon />
+    ) : hasNoModels ? (
+      <BotOffIcon />
+    ) : isWarning ? (
+      <TriangleAlertIcon />
+    ) : (
+      <CircleAlertIcon />
+    ),
+    title,
+    description: message,
+    actions: openSetup ? (
+      <Button size="xs" variant="secondary" onClick={() => openSetup(instanceId)}>
+        Provider setup
+      </Button>
+    ) : isUnauthenticated && onOpenTerminal ? (
+      <Button size="xs" variant="secondary" onClick={onOpenTerminal}>
+        Open terminal
+      </Button>
+    ) : undefined,
+    dismissLabel: `Dismiss ${providerName} provider ${status.status}`,
+    onDismiss,
+  };
+}
