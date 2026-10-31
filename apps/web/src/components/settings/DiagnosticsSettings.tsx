@@ -81,6 +81,25 @@ function isStaleProcessSignalMessage(message: string | undefined): boolean {
   return message?.includes("not a live descendant") ?? false;
 }
 
+function StatTooltip({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            className="inline-flex size-3.5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-dim-foreground hover:text-foreground"
+            aria-label={`${label} details`}
+          >
+            <InfoIcon className="size-3" />
+          </button>
+        }
+      />
+      <TooltipPopup side="top">{children}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 function StatBlock({
   label,
   value,
@@ -96,22 +115,7 @@ function StatBlock({
     <div className="min-w-0 border-border/60 px-4 py-3 sm:px-5">
       <div className="flex min-w-0 items-center gap-1.5 text-caption text-dim-foreground">
         <span className="min-w-0 truncate">{label}</span>
-        {tooltip ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  className="cursor-pointer inline-flex size-3.5 shrink-0 items-center justify-center rounded-sm text-dim-foreground hover:text-foreground"
-                  aria-label={`${label} details`}
-                >
-                  <InfoIcon className="size-3" />
-                </button>
-              }
-            />
-            <TooltipPopup side="top">{tooltip}</TooltipPopup>
-          </Tooltip>
-        ) : null}
+        {tooltip ? <StatTooltip label={label}>{tooltip}</StatTooltip> : null}
       </div>
       <div
         className={cn(
@@ -165,22 +169,7 @@ function OverviewTile({
     <div className="min-w-0 rounded-card border border-transparent surface-card-settings px-4 py-3">
       <div className="flex min-w-0 items-center gap-1.5 text-meta text-dim-foreground">
         <span className="min-w-0 truncate">{label}</span>
-        {tooltip ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  className="inline-flex size-3.5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-dim-foreground hover:text-foreground"
-                  aria-label={`${label} details`}
-                >
-                  <InfoIcon className="size-3" />
-                </button>
-              }
-            />
-            <TooltipPopup side="top">{tooltip}</TooltipPopup>
-          </Tooltip>
-        ) : null}
+        {tooltip ? <StatTooltip label={label}>{tooltip}</StatTooltip> : null}
       </div>
       <div className="mt-1 truncate text-xl font-semibold tabular-nums text-strong-foreground">
         {value}
