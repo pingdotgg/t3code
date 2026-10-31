@@ -241,7 +241,9 @@ export function createWorkspaceFocusController(doc: Document) {
     const area = surfaceTarget
       ? surfaceTab && findArea(areas.filter((element) => paneId(element) === surfaceTab))
       : (localArea ??
-        (currentPane && (name === "panel" || name === "details") ? undefined : findArea(areas)));
+        (currentPane && (name === "content" || name === "panel" || name === "details")
+          ? undefined
+          : findArea(areas)));
     if (!area) return false;
     const surface = area.querySelector("[data-right-panel-surface-content]");
     // A lazy surface's Suspense fallback is empty. Wait for its content instead
