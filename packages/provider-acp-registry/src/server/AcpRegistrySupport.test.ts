@@ -1547,6 +1547,76 @@ describe("AcpRegistrySupport", () => {
     });
   });
 
+  it.effect("resolves an installed agent while another agent's download is still running", () => {
+    const slowArchiveUrl = "https://registry.test/slow-agent.bin";
+    const agent = makeAgent({
+      binary: { "linux-x86_64": { archive: archiveUrl, cmd: "./bin/example-agent" } },
+    });
+    const slowAgent = {
+      ...agent,
+      distribution: {
+        binary: { "linux-x86_64": { archive: slowArchiveUrl, cmd: "./bin/slow-agent" } },
+      },
+      id: "slow-agent",
+      name: "Slow Agent",
+    };
+    const binaryBytes = new TextEncoder().encode("#!/bin/sh\necho example\n");
+    return Effect.gen(function* () {
+      const downloadStarted = yield* Deferred.make<void>();
+      const releaseDownload = yield* Deferred.make<void>();
+      return yield* Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-parallel-install-",
+        });
+        const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        });
+
+        yield* resolver.resolve(settings(), "/workspace");
+
+        const prepareFiber = yield* resolver
+          .prepare({ agentId: slowAgent.id })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(downloadStarted);
+
+        const resolved = yield* resolver.resolve(settings(), "/workspace");
+        expect(resolved.spawn.command).toContain(
+          "/tools/example-agent/1.2.3/linux-x86_64/bin/example-agent",
+        );
+        expect(prepareFiber.pollUnsafe()).toBeUndefined();
+
+        yield* Deferred.succeed(releaseDownload, undefined);
+        expect(yield* Fiber.join(prepareFiber)).toMatchObject({ prepared: true });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerResolver((request) => {
+            if (request.url === registryUrl) {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(JSON.stringify({ version: "1.0.0", agents: [slowAgent, agent] })),
+                ),
+              );
+            }
+            const response = HttpClientResponse.fromWeb(
+              request,
+              new Response(binaryBytes.buffer as ArrayBuffer),
+            );
+            if (request.url !== slowArchiveUrl) return Effect.succeed(response);
+            return Deferred.succeed(downloadStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseDownload)),
+              Effect.as(response),
+            );
+          }),
+        ),
+      );
+    });
+  });
+
   it.effect("reserves a prepared binary until a configured instance inspects it", () => {
     const agent = makeAgent({
       binary: {
