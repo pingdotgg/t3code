@@ -232,6 +232,9 @@ describe("resolvePipelineSelection", () => {
     expect(resolvePipelineSelection({ pipelines, ...none, requestedId: "a2" }).pipeline?.id).toBe(
       "x2",
     );
+    expect(resolvePipelineSelection({ pipelines, ...none, requestedId: "x3" }).pipeline?.id).toBe(
+      "x3",
+    );
     expect(
       resolvePipelineSelection({ pipelines, ...none, lastUsedName: "Ship" }).pipeline?.id,
     ).toBe("x2");

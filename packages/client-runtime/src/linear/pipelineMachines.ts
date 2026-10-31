@@ -205,8 +205,9 @@ export function resolvePipelineSelection<P extends PipelineRef>(input: {
       primaryPipelines[0]
     )?.name ??
     null;
+  const pickedId = chosen?.id ?? input.requestedId;
   const pipeline =
-    (chosen === null ? undefined : pipelines.find((candidate) => candidate.id === chosen.id)) ??
+    (pickedId === null ? undefined : pipelines.find((candidate) => candidate.id === pickedId)) ??
     byName(pipelines, shownName) ??
     byName(pipelines, input.lastUsedName) ??
     pipelines[0] ??

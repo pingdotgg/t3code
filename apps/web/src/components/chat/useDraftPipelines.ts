@@ -64,6 +64,8 @@ export function useDraftPipelines(environmentId: EnvironmentId, enabled: boolean
   return {
     available,
     loaded: query.data !== null,
+    /** Loaded, or failed before any data arrived. */
+    settled: query.data !== null || query.error !== null,
     pipelines: query.data?.pipelines ?? NO_PIPELINES,
   };
 }

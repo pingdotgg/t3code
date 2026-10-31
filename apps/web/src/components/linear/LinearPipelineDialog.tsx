@@ -234,7 +234,7 @@ function PipelineDialogBody({
     machines,
     active: machineState.effective === "auto",
     live: machineState.live,
-    pipelineKnown: pipelines.loaded,
+    pipelineKnown: pipelines.settled,
     pipeline,
     latch: machineState.latch,
   });
