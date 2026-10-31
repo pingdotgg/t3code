@@ -10,7 +10,12 @@ export type MermaidMarkdownSegment =
     };
 
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})[ \t]*([^\n]*)\n?/;
+const QUOTE_RE = /^(?: {0,3}>[ \t]?)+/;
 const DEFINITION_RE = /^ {0,3}\[[^\]\n]+\]:[ \t]*\S.*$/;
+
+function stripQuote(line: string): string {
+  return line.replace(QUOTE_RE, "");
+}
 
 function fenceLanguage(info: string): string {
   return info.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
@@ -33,6 +38,25 @@ function closerIndex(lines: readonly string[], from: number, fence: string): num
   return -1;
 }
 
+/** Reference definitions on lines outside any fenced block. */
+function collectDefinitions(markdown: string): string[] {
+  const found: string[] = [];
+  const lines = markdown.split("\n").map(stripQuote);
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index] ?? "";
+    const open = FENCE_RE.exec(line);
+    if (open) {
+      const close = closerIndex(lines, index + 1, open[1] ?? "```");
+      index = close === -1 ? lines.length : close + 1;
+      continue;
+    }
+    if (DEFINITION_RE.test(line)) found.push(line);
+    index += 1;
+  }
+  return [...new Set(found)];
+}
+
 export function splitMarkdownWithMermaid(markdown: string): MermaidMarkdownSegment[] {
   const raw: Array<
     | { readonly kind: "markdown"; readonly markdown: string; readonly start: number }
@@ -44,6 +68,7 @@ export function splitMarkdownWithMermaid(markdown: string): MermaidMarkdownSegme
       }
   > = [];
   const lines = markdown.split("\n");
+  const text = lines.map(stripQuote);
   let markdownStart = 0;
   let index = 0;
 
@@ -58,14 +83,13 @@ export function splitMarkdownWithMermaid(markdown: string): MermaidMarkdownSegme
   };
 
   while (index < lines.length) {
-    const line = lines[index] ?? "";
-    const open = FENCE_RE.exec(line);
+    const open = FENCE_RE.exec(text[index] ?? "");
     if (!open) {
       index += 1;
       continue;
     }
     const fence = open[1] ?? "```";
-    const close = closerIndex(lines, index + 1, fence);
+    const close = closerIndex(text, index + 1, fence);
     if (close === -1) {
       index += 1;
       continue;
@@ -76,7 +100,7 @@ export function splitMarkdownWithMermaid(markdown: string): MermaidMarkdownSegme
       continue;
     }
     pushMarkdown(index);
-    const source = lines.slice(index + 1, close).join("\n");
+    const source = text.slice(index + 1, close).join("\n");
     raw.push({ kind: "mermaid", source, id: fenceHash(source), start: index });
     index = close + 1;
     markdownStart = index;
@@ -88,9 +112,7 @@ export function splitMarkdownWithMermaid(markdown: string): MermaidMarkdownSegme
   const definitions = [
     ...new Set(
       raw.flatMap((segment) =>
-        segment.kind === "markdown"
-          ? segment.markdown.split("\n").filter((entry) => DEFINITION_RE.test(entry))
-          : [],
+        segment.kind === "markdown" ? collectDefinitions(segment.markdown) : [],
       ),
     ),
   ];

@@ -80,4 +80,33 @@ describe("splitMarkdownWithMermaid", () => {
       expect(tail.markdown).toContain("[Open][guide]");
     }
   });
+
+  it("renders a mermaid fence inside a blockquote", () => {
+    const segments = splitMarkdownWithMermaid(
+      ["> Quoted intro", ">", "> ```mermaid", "> A --> B", "> ```"].join("\n"),
+    );
+    expect(segments.map((segment) => segment.kind)).toEqual(["markdown", "mermaid"]);
+    expect(segments[1]).toMatchObject({ kind: "mermaid", source: "A --> B" });
+  });
+
+  it("ignores link definitions inside fenced code", () => {
+    const segments = splitMarkdownWithMermaid(
+      [
+        "```ts",
+        "[guide]: https://example.com",
+        "```",
+        "",
+        "```mermaid",
+        "A --> B",
+        "```",
+        "",
+        "[Open][guide]",
+      ].join("\n"),
+    );
+    const tail = segments[segments.length - 1];
+    expect(tail).toMatchObject({ kind: "markdown" });
+    if (tail?.kind === "markdown") {
+      expect(tail.markdown).not.toContain("[guide]: https://example.com");
+    }
+  });
 });

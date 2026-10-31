@@ -124,6 +124,7 @@ export function MobileMermaidDiagram(props: { readonly source: string; readonly 
           domStorageEnabled={false}
           allowFileAccess={false}
           scrollEnabled={tall}
+          nestedScrollEnabled={tall}
           onLoadStart={() => setFailed(null)}
           style={{ height }}
           onMessage={onMessage}
