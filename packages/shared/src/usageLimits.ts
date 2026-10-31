@@ -187,6 +187,13 @@ export function collectExternalUsageLinks(presentations: LimitPresentations) {
   return [...links.values()];
 }
 
+interface AccountReport {
+  readonly driver: ServerProvider["driver"];
+  readonly email?: string | undefined;
+  readonly workspaceId?: string | undefined;
+  readonly usageLimits?: ServerProviderUsageLimits | undefined;
+}
+
 function accountKey(
   driver: ServerProvider["driver"],
   email: string | undefined,
@@ -199,13 +206,6 @@ function accountKey(
     : null;
 }
 
-interface AccountReport {
-  readonly driver: ServerProvider["driver"];
-  readonly email?: string | undefined;
-  readonly workspaceId?: string | undefined;
-  readonly usageLimits?: ServerProviderUsageLimits | undefined;
-}
-
 const nativeReport = (provider: ServerProvider): AccountReport => ({
   driver: provider.driver,
   email: provider.auth.email,
@@ -213,19 +213,58 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
   usageLimits: provider.usageLimits,
 });
 
-// Include every enabled login, even unreadable workspaces.
+/**
+ * Pass every enabled login, read or not, so an unreadable workspace still
+ * counts as one. Codex account IDs can join native and hub reports even when
+ * one side does not include the account email.
+ */
 function accountKeyResolver(reports: Iterable<AccountReport>) {
   const workspaces = new Map<string, Set<string>>();
+  const codexEmailWorkspaces = new Map<string, Set<string>>();
+  const codexWorkspaceEmails = new Map<string, Set<string>>();
   for (const report of reports) {
     const key = accountKey(report.driver, report.email, report.usageLimits);
-    if (key && report.workspaceId) {
-      workspaces.set(key, (workspaces.get(key) ?? new Set()).add(report.workspaceId));
+    const email = report.email?.trim().toLowerCase();
+    const workspaceId = report.workspaceId?.trim();
+    if (key && workspaceId) {
+      workspaces.set(key, (workspaces.get(key) ?? new Set()).add(workspaceId));
+    }
+    if (report.driver === "codex" && email && workspaceId) {
+      codexWorkspaceEmails.set(
+        workspaceId,
+        (codexWorkspaceEmails.get(workspaceId) ?? new Set()).add(email),
+      );
+      const emailKey = `${report.driver}:${email}`;
+      codexEmailWorkspaces.set(
+        emailKey,
+        (codexEmailWorkspaces.get(emailKey) ?? new Set()).add(workspaceId),
+      );
     }
   }
   return (report: AccountReport): string | null => {
     const key = accountKey(report.driver, report.email, report.usageLimits);
+    const email = report.email?.trim().toLowerCase();
+    const workspaceId = report.workspaceId?.trim();
+    if (report.driver === "codex") {
+      if (workspaceId) {
+        if ((codexWorkspaceEmails.get(workspaceId)?.size ?? 0) > 1) {
+          return email ? `${report.driver}:${email}:${workspaceId}` : null;
+        }
+        return `${report.driver}:workspace:${workspaceId}`;
+      }
+      if (email) {
+        const known = codexEmailWorkspaces.get(`${report.driver}:${email}`);
+        if (known && known.size > 1) return null;
+        if (known?.size === 1) {
+          const knownWorkspace = [...known][0]!;
+          return (codexWorkspaceEmails.get(knownWorkspace)?.size ?? 0) > 1
+            ? `${report.driver}:${email}:${knownWorkspace}`
+            : `${report.driver}:workspace:${knownWorkspace}`;
+        }
+      }
+    }
     if (!key) return null;
-    if (report.workspaceId) return `${key}:${report.workspaceId}`;
+    if (workspaceId) return `${key}:${workspaceId}`;
     const known = workspaces.get(key);
     if (!known) return key;
     return known.size === 1 ? `${key}:${[...known][0]}` : null;
@@ -297,9 +336,18 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     ];
     const winner = fresher ? next : previous;
     const creditSource = creditSources.get(key);
+    const email = previous.email ?? next.email;
+    // A native login is named after the driver ("Codex") and often has no
+    // email. The hub row for the same workspace has the email and no name.
+    // Keep the email, and keep the name from the side that supplied it, so
+    // the chart shows the account chip instead of another "Codex" bar.
+    const identified = previous.email ? previous : next.email ? next : null;
     accounts.set(key, {
       ...previous,
-      displayName: previous.displayName ?? next.displayName,
+      email,
+      displayName: identified
+        ? (identified.displayName ?? null)
+        : (previous.displayName ?? next.displayName),
       plan: planSources.get(key)?.plan ?? previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
       environments,

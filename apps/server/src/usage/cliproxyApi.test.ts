@@ -49,9 +49,10 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 function fixture(
   options: {
     accounts?: Array<
-      (typeof accounts)[number] & {
+      Omit<(typeof accounts)[number], "id_token"> & {
         disabled?: boolean;
-        id_token: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
+        account_id?: string;
+        id_token: { chatgpt_account_id?: string; plan_type?: string; chatgpt_plan_type?: string };
       }
     >;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
@@ -424,6 +425,51 @@ describe("CLIProxyAPI built-in management API", () => {
       const result = yield* api.consume(config, "missing.json", "credit").pipe(Effect.result);
       expect(result._tag).toBe("Failure");
       expect(test.requests).toHaveLength(1);
+    }),
+  );
+
+  it.effect("reads a Codex workspace from account_id when the id token omits it", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [
+          {
+            ...accounts[0]!,
+            id: "plain.json",
+            auth_index: "p",
+            email: "plain@example.com",
+            id_token: {},
+            account_id: "workspace-plain",
+          },
+          {
+            ...accounts[0]!,
+            id: "claude-plain.json",
+            auth_index: "c",
+            provider: "claude",
+            id_token: {},
+            account_id: "claude-account",
+          },
+          {
+            ...accounts[0]!,
+            id: "claude-token.json",
+            auth_index: "t",
+            provider: "claude",
+            id_token: { chatgpt_account_id: " token-workspace " },
+            account_id: "claude-account",
+          },
+        ],
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(result.map((account) => [account.id, account.workspaceId])).toEqual([
+        ["plain.json", "workspace-plain"],
+        ["claude-plain.json", undefined],
+        ["claude-token.json", "token-workspace"],
+      ]);
+      expect(
+        test.requests.find((request) => request.body?.auth_index === "p")?.body?.header?.[
+          "Chatgpt-Account-Id"
+        ],
+      ).toBe("workspace-plain");
     }),
   );
 });

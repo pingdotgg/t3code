@@ -233,8 +233,20 @@ function PoolWindowCard({
           return (
             <View
               key={member.account.key}
-              className={wide ? "h-9 min-w-0 flex-1" : "h-7 min-w-0 flex-1"}
-            />
+              accessible
+              accessibilityLabel={`Segment ${index + 1}, ${accountName(member.account)}, ${pool.label} usage not reported`}
+              className={`${wide ? "h-9" : "h-7"} min-w-0 flex-1 items-center justify-center overflow-hidden rounded-md border border-dashed border-border-subtle`}
+            >
+              {inlineLabels ? (
+                <Text
+                  numberOfLines={1}
+                  className="max-w-full px-1 text-xs font-t3-medium text-foreground"
+                >
+                  {accountName(member.account)}
+                </Text>
+              ) : null}
+              <Text className="text-xs text-foreground-muted">Not reported</Text>
+            </View>
           );
         const { account, window } = member;
         const timeLeft = paceRemainingPercent(window, now);
@@ -324,7 +336,18 @@ function PoolWindowCard({
   const legend = (
     <View>
       {pool.columns.map(({ account, window }, index) => {
-        if (!window) return null;
+        if (!window)
+          return (
+            <View key={account.key} className="min-h-[44px] flex-row items-center gap-2">
+              <View className="size-5 items-center justify-center rounded-md bg-subtle-strong">
+                <Text className="text-xs text-foreground-muted">{index + 1}</Text>
+              </View>
+              <Text numberOfLines={1} className="min-w-0 flex-1 text-sm text-foreground">
+                {accountName(account)}
+              </Text>
+              <Text className="text-sm text-foreground-muted">Not reported</Text>
+            </View>
+          );
         const segmentColor = normalizeProviderAccentColor(account.accentColor) ?? color;
         const credits = account.limits.resetCredits?.availableCount ?? 0;
         const resetsIn = formatResetsIn(window, now);

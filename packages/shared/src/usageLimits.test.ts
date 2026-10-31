@@ -528,6 +528,239 @@ describe("pools", () => {
     expect(account?.redeem?.environmentId).toBe("env-2");
   });
 
+  it("merges Codex reports by workspace when email is missing and uses the freshest report", () => {
+    const nativeAccount = (instanceId: string, workspaceId: string) =>
+      provider({
+        instanceId: ProviderInstanceId.make(instanceId),
+        auth: {
+          status: "authenticated",
+          workspaceId,
+          label: "ChatGPT Plus Subscription",
+        },
+        usageLimits: {
+          checkedAt: "2026-09-03T12:00:00.000Z",
+          windows: [{ ...window, id: "primary", usedPercent: 100 }],
+        },
+      });
+    const proxyAccount = (id: string, email: string, workspaceId: string) => ({
+      id,
+      driver: ProviderDriverKind.make("codex"),
+      email,
+      workspaceId,
+      plan: "ChatGPT Plus Subscription",
+      usageLimits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        windows: [{ ...weekly, id: "secondary", usedPercent: 100 }],
+      },
+    });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [
+              nativeAccount("native-1", "chatgpt-account-1"),
+              nativeAccount("native-2", "chatgpt-account-2"),
+            ],
+            usageLimitSources: [
+              {
+                ...source,
+                accounts: [
+                  proxyAccount("codex-account-1.json", "one@example.com", "chatgpt-account-1"),
+                  proxyAccount("codex-account-2.json", "two@example.com", "chatgpt-account-2"),
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+
+    const accounts = collectLimitAccounts(input);
+    expect(accounts).toHaveLength(2);
+    expect(accounts.map((account) => account.limits.windows.map((item) => item.kind))).toEqual([
+      ["session"],
+      ["session"],
+    ]);
+    expect(
+      collectLimitPools(accounts, now)[0]?.windows.map((item) => [item.kind, item.members.length]),
+    ).toEqual([["session", 2]]);
+    expect(accounts.map((account) => account.email)).toEqual([
+      "one@example.com",
+      "two@example.com",
+    ]);
+  });
+
+  it("shows one bar per ChatGPT account when native logins omit the email", () => {
+    const sessionWindow = { ...window, id: "primary", usedPercent: 79 };
+    const weeklyWindow = { ...weekly, id: "secondary", usedPercent: 93 };
+    const native = (instanceId: string) =>
+      provider({
+        instanceId: ProviderInstanceId.make(instanceId),
+        displayName: "Codex",
+        auth: {
+          status: "authenticated",
+          workspaceId: "workspace-one",
+          label: "Plus",
+        },
+        usageLimits: { checkedAt, windows: [sessionWindow, weeklyWindow] },
+      });
+    const input = new Map([
+      [
+        EnvironmentId.make("mac"),
+        {
+          entry: { target: { label: "Mac" } },
+          serverConfig: {
+            providers: [native("mac-codex")],
+            usageLimitSources: [
+              {
+                ...source,
+                accounts: [
+                  {
+                    id: "one.json",
+                    driver: ProviderDriverKind.make("codex"),
+                    email: "one@example.com",
+                    workspaceId: "workspace-one",
+                    plan: "Plus",
+                    usageLimits: {
+                      checkedAt: "2026-09-03T11:30:00.000Z",
+                      windows: [sessionWindow, weeklyWindow],
+                    },
+                  },
+                  {
+                    id: "two.json",
+                    driver: ProviderDriverKind.make("codex"),
+                    email: "two@example.com",
+                    workspaceId: "workspace-two",
+                    plan: "Plus",
+                    usageLimits: {
+                      checkedAt,
+                      windows: [{ ...weekly, id: "primary", usedPercent: 0 }],
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+      [
+        EnvironmentId.make("agentbox"),
+        {
+          entry: { target: { label: "agentbox" } },
+          serverConfig: { providers: [native("agentbox-codex")] },
+        },
+      ],
+    ]);
+
+    const accounts = collectLimitAccounts(input);
+    expect(accounts.map((account) => [account.email, account.displayName])).toEqual([
+      ["one@example.com", null],
+      ["two@example.com", null],
+    ]);
+    expect(
+      collectLimitPools(accounts, now)[0]?.windows.map((item) => [
+        item.kind,
+        item.members.map((member) => member.account.email),
+      ]),
+    ).toEqual([
+      ["session", ["one@example.com"]],
+      ["weekly", ["one@example.com", "two@example.com"]],
+    ]);
+    const session = collectLimitPools(accounts, now)[0]?.windows.find(
+      (item) => item.kind === "session",
+    );
+    expect(
+      session?.columns.map(({ account, window }) => [account.email, window?.usedPercent ?? null]),
+    ).toEqual([
+      ["one@example.com", 79],
+      ["two@example.com", null],
+    ]);
+    expect(session?.remainingPercent).toBe(21);
+  });
+
+  it("does not retain an omitted Codex window from an older report", () => {
+    const login = (
+      instanceId: string,
+      checkedAt: string,
+      windows: NonNullable<ServerProvider["usageLimits"]>["windows"],
+    ) =>
+      provider({
+        instanceId: ProviderInstanceId.make(instanceId),
+        auth: {
+          status: "authenticated",
+          email: "same@example.com",
+          workspaceId: "chatgpt-account-1",
+          label: "ChatGPT Plus Subscription",
+        },
+        usageLimits: { checkedAt, windows },
+      });
+    const accounts = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [
+                login("session-10", "2026-09-03T10:00:00.000Z", [
+                  { ...window, id: "primary", usedPercent: 10 },
+                ]),
+                login("weekly-12", "2026-09-03T12:00:00.000Z", [
+                  { ...weekly, id: "secondary", usedPercent: 20 },
+                ]),
+                login("session-11", "2026-09-03T11:00:00.000Z", [
+                  { ...window, id: "primary", usedPercent: 30 },
+                ]),
+              ],
+            },
+          },
+        ],
+      ]),
+    );
+
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.limits.windows.map((item) => [item.kind, item.usedPercent])).toEqual([
+      ["weekly", 20],
+    ]);
+  });
+
+  it.each([ProviderDriverKind.make("codex"), claude])(
+    "keeps different %s emails in the same workspace separate",
+    (driver) => {
+      const claudeAccount = (instanceId: string, email: string) =>
+        provider({
+          instanceId: ProviderInstanceId.make(instanceId),
+          driver,
+          auth: { status: "authenticated", email, workspaceId: "shared-workspace" },
+          usageLimits: { checkedAt, windows: [window] },
+        });
+      const accounts = collectLimitAccounts(
+        new Map([
+          [
+            EnvironmentId.make("env-a"),
+            {
+              ...laptop,
+              serverConfig: {
+                providers: [
+                  claudeAccount("claude-one", "one@example.com"),
+                  claudeAccount("claude-two", "two@example.com"),
+                ],
+              },
+            },
+          ],
+        ]),
+      );
+
+      expect(accounts).toHaveLength(2);
+      expect(accounts.map((account) => account.email).sort()).toEqual([
+        "one@example.com",
+        "two@example.com",
+      ]);
+    },
+  );
+
   it("keeps one email in two workspaces apart while merging each workspace's duplicates", () => {
     const login = (instanceId: string, workspaceId: string, usedPercent: number) =>
       provider({

@@ -521,7 +521,28 @@ function PoolBar({
               index={position + 1}
               showAccountName={pool.columns.length > 1}
             />
-          ) : null,
+          ) : (
+            <Fragment key={member.account.key}>
+              <div
+                style={{ gridColumn: position + 1, gridRow: 1 }}
+                className="flex h-5 min-w-0 items-center justify-center gap-1 overflow-hidden rounded-md border border-dashed border-border text-2xs text-muted-foreground @2xl/pool:h-8"
+                aria-label={`${member.account.displayName ?? (member.account.email ? accountInitials(member.account.email) : member.account.driver)}: ${pool.label} usage not reported`}
+              >
+                <span className="hidden @2xl/pool:inline-flex">
+                  <AccountName account={member.account} />
+                </span>
+                <span className="truncate">Not reported</span>
+              </div>
+              <div
+                style={{ gridColumn: "1 / -1", gridRow: position + 2 }}
+                className="flex min-w-0 items-center gap-2 px-1 text-xs text-muted-foreground @2xl/pool:hidden"
+              >
+                <span>{position + 1}</span>
+                <AccountName account={member.account} />
+                <span className="ms-auto">Not reported</span>
+              </div>
+            </Fragment>
+          ),
         )}
       </div>
     </div>

@@ -24,6 +24,7 @@ const AuthFile = Schema.Struct({
   provider: Schema.String,
   email: Schema.optional(Schema.String),
   disabled: Schema.optional(Schema.Boolean),
+  account_id: Schema.optional(Schema.String),
   id_token: Schema.optional(
     Schema.Struct({
       chatgpt_account_id: Schema.optional(Schema.String),
@@ -133,6 +134,13 @@ const decodeConsumeResponse = Schema.decodeUnknownEffect(
   ),
 );
 
+function codexWorkspaceId(account: {
+  readonly account_id?: string | undefined;
+  readonly id_token?: { readonly chatgpt_account_id?: string | undefined } | undefined;
+}): string | undefined {
+  return account.id_token?.chatgpt_account_id?.trim() || account.account_id?.trim() || undefined;
+}
+
 const CODEX_BASE = "https://chatgpt.com/backend-api/wham";
 const CREDIT_URL = `${CODEX_BASE}/rate-limit-reset-credits`;
 
@@ -201,6 +209,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     url: string,
     data?: unknown,
   ) {
+    const workspaceId = codexWorkspaceId(account);
     const header =
       account.provider === "codex"
         ? {
@@ -208,9 +217,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
             "Content-Type": "application/json",
             "OpenAI-Beta": "codex-1",
             Originator: "Codex Desktop",
-            ...(account.id_token?.chatgpt_account_id
-              ? { "Chatgpt-Account-Id": account.id_token.chatgpt_account_id }
-              : {}),
+            ...(workspaceId ? { "Chatgpt-Account-Id": workspaceId } : {}),
           }
         : {
             Authorization: "Bearer $TOKEN$",
@@ -256,13 +263,15 @@ export const makeCliproxyApi = Effect.gen(function* () {
     account: typeof AuthFile.Type,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
+    const workspaceId =
+      account.provider === "codex"
+        ? codexWorkspaceId(account)
+        : account.id_token?.chatgpt_account_id?.trim();
     const base = {
       id: account.id,
       driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
       ...(account.email ? { email: account.email } : {}),
-      ...(account.id_token?.chatgpt_account_id?.trim()
-        ? { workspaceId: account.id_token.chatgpt_account_id.trim() }
-        : {}),
+      ...(workspaceId ? { workspaceId } : {}),
     };
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {
@@ -385,7 +394,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
       }
       const body = yield* apiCall(config, account, `${CREDIT_URL}/consume`, {
         redeem_request_id: yield* creditRedeemRequestId(
-          account.id_token?.chatgpt_account_id ?? account.id,
+          codexWorkspaceId(account) ?? account.id,
           creditId,
         ).pipe(Effect.provideService(Crypto.Crypto, crypto)),
         credit_id: creditId,
