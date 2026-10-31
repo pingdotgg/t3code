@@ -1,6 +1,15 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { useProjects, useServerConfigs, useThreadShells } from "~/state/entities";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  threadRuntimeIsActive,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
+import {
+  useProjects,
+  useQuietThreadShell,
+  useServerConfigs,
+  useThreadShells,
+} from "~/state/entities";
 import {
   threadPullRequestKeysEqual,
   visibleThreadPullRequests,
@@ -12,6 +21,7 @@ import type {
   ProjectId,
   PullRequestState,
   ResolvedKeybindingsConfig,
+  ThreadId,
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
@@ -25,7 +35,7 @@ import {
 import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dnd-kit/modifiers";
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { ChevronDown, ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Plus, MessagesSquare } from "lucide-react";
 import { Volume2, VolumeOff } from "lucide";
 import {
   type ComponentType,
@@ -116,6 +126,9 @@ export interface RightPanelTabsProps {
   /** Whether each registered panel can open here, and how; titles and icons come from its definition. */
   panels: Readonly<Record<SidePanelId, SidePanelLauncher>>;
   onAddBrowserInProfile: (profileId: string) => void;
+  onAddSideChat?: (() => void) | undefined;
+  sideChatAvailable?: boolean;
+  sideChatDisabledReason?: string | null;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
   children: ReactNode;
 }
@@ -166,7 +179,10 @@ interface SurfaceAction {
   onClick: () => void;
 }
 
-type SurfaceActionInputs = Pick<RightPanelTabsProps, "panels">;
+type SurfaceActionInputs = Pick<
+  RightPanelTabsProps,
+  "panels" | "onAddSideChat" | "sideChatAvailable" | "sideChatDisabledReason"
+>;
 
 /**
  * The surfaces the empty launcher and the add menu offer, in launcher order.
@@ -197,6 +213,21 @@ export function rightPanelSurfaceActions(props: SurfaceActionInputs): SurfaceAct
     registered("pull-request"),
     registered("pull-requests"),
     registered("device"),
+    ...(props.onAddSideChat
+      ? [
+          {
+            id: "side-chat",
+            label: "Side chat",
+            icon: MessagesSquare,
+            shortcut: "S",
+            available: props.sideChatAvailable === true && !props.sideChatDisabledReason,
+            unavailableHint: props.sideChatDisabledReason ?? "Available after the first message.",
+            unavailableReason:
+              props.sideChatDisabledReason ?? "Side chats start after the first message.",
+            onClick: () => props.onAddSideChat?.(),
+          },
+        ]
+      : []),
   ];
 }
 
@@ -494,6 +525,8 @@ function surfaceTitle(
       return "Pull requests";
     case "device":
       return surface.title ?? surface.target?.name ?? getSidePanelMetadata("device").title;
+    case "side-chat":
+      return "Side chat";
     case "preview": {
       const fallback = getSidePanelMetadata("preview").title;
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
@@ -592,6 +625,8 @@ function SurfaceIcon({
       const Icon = getSidePanelMetadata("pull-requests").icon;
       return <Icon className="size-3 shrink-0" />;
     }
+    case "side-chat":
+      return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
     case "device": {
       const DeviceIcon = getSidePanelMetadata("device").icon;
       return surface.target?.platform === "ios" ? (
@@ -603,6 +638,41 @@ function SurfaceIcon({
       );
     }
   }
+}
+
+/** What a side chat tab's dot shows and its title's accessible name says. */
+function sideChatTabState(shell: EnvironmentThreadShell | null) {
+  if (shell === null) return null;
+  if (shell.hasPendingApprovals || shell.pendingSubagentRequest === "approval") {
+    return "needs approval";
+  }
+  if (shell.hasPendingUserInput || shell.pendingSubagentRequest === "user_input") {
+    return "needs input";
+  }
+  return threadRuntimeIsActive(shell.runtime) ? "running" : null;
+}
+
+// Static dots: a side chat tab can stay open for a whole run.
+function SideChatTabIcon(props: { environmentId: EnvironmentId | null; threadId: ThreadId }) {
+  const state = sideChatTabState(
+    useQuietThreadShell(
+      props.environmentId === null ? null : scopeThreadRef(props.environmentId, props.threadId),
+    ),
+  );
+  return (
+    <>
+      <MessagesSquare className="size-3 shrink-0" />
+      {state === null ? null : (
+        <span
+          className={cn(
+            "absolute -top-0.5 -right-0.5 size-1.5 rounded-full",
+            state === "running" ? "bg-muted-foreground" : "bg-info",
+          )}
+          aria-hidden
+        />
+      )}
+    </>
+  );
 }
 
 export function resolvePullRequestTabLink(
@@ -762,7 +832,6 @@ function RightPanelTab(
 ) {
   const {
     surface,
-    title,
     audio,
     audioRuntimeTabId,
     onActivate,
@@ -776,6 +845,13 @@ function RightPanelTab(
     id: surface.id,
     disabled: props.dragDisabled,
   });
+  const sideChatShell = useQuietThreadShell(
+    surface.kind === "side-chat" && props.environmentId !== null
+      ? scopeThreadRef(props.environmentId, surface.threadId)
+      : null,
+  );
+  const title = sideChatShell?.title ?? props.title;
+  const sideChatState = sideChatTabState(sideChatShell);
   const content = (
     <>
       <PanelTabCloseButton label={`Close ${title}`} onClick={() => onClose(surface)}>
@@ -845,6 +921,7 @@ function RightPanelTab(
                   if (surface.kind === "device" && props.canRename) onStartRename(surface.id);
                 }}
                 className="cursor-pointer flex min-w-0 items-center"
+                aria-label={sideChatState === null ? undefined : `${title}, ${sideChatState}`}
                 onClick={() => onActivate(surface)}
               >
                 <span className="truncate">{title}</span>
