@@ -1051,6 +1051,59 @@ describe("AcpRuntimeModel", () => {
       _tag: "UsageUpdated",
       usage: { usedTokens: 420 },
     });
+
+    // Later updates patch fields: omission keeps a value, null or [] clears it.
+    let patched: AcpToolCallState | undefined;
+    const patchCompaction = (
+      patch: Omit<
+        Extract<EffectAcpSchema.SessionUpdate, { readonly sessionUpdate: "compaction_update" }>,
+        "sessionUpdate" | "compactionId"
+      >,
+    ) => {
+      const event = parseSessionUpdateEvent({
+        sessionId: "session-1",
+        update: { sessionUpdate: "compaction_update", compactionId: "compact-2", ...patch },
+      }).events[0];
+      if (event?._tag !== "ToolCallUpdated") throw new Error("expected a compaction tool update");
+      patched = mergeToolCallState(patched, event.toolCall);
+      const { rawOutput, error, meta } = patched.data;
+      return { summary: rawOutput, error, meta };
+    };
+    const kept = [{ type: "text" as const, text: "Kept the plan." }];
+    expect(
+      patchCompaction({ status: "completed", summary: kept, _meta: { source: "agent" } }),
+    ).toEqual({ summary: "Kept the plan.", meta: { source: "agent" } });
+    expect(patchCompaction({ status: "completed" })).toEqual({
+      summary: "Kept the plan.",
+      meta: { source: "agent" },
+    });
+    expect(patchCompaction({ status: "completed", summary: null, _meta: null })).toEqual({
+      summary: null,
+      meta: null,
+    });
+    expect(patchCompaction({ status: "completed", summary: kept })).toEqual({
+      summary: "Kept the plan.",
+      meta: null,
+    });
+    expect(patchCompaction({ status: "completed", summary: [] })).toEqual({
+      summary: null,
+      meta: null,
+    });
+    expect(patchCompaction({ status: "failed", error: "Context is still too large." })).toEqual({
+      summary: null,
+      error: "Context is still too large.",
+      meta: null,
+    });
+    expect(patchCompaction({ status: "failed" })).toEqual({
+      summary: null,
+      error: "Context is still too large.",
+      meta: null,
+    });
+    expect(patchCompaction({ status: "failed", error: null })).toEqual({
+      summary: null,
+      error: null,
+      meta: null,
+    });
   });
 
   it("applies ACP v2 agent-owned terminal snapshots and output chunks", () => {

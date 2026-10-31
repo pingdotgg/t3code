@@ -446,6 +446,7 @@ const pollProtocolMethods = (events: Queue.Queue<EffectAcpProtocol.AcpProtocolLo
 
 const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
   environment: Readonly<Record<string, string>>,
+  prepareAttachments = false,
 ) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const path = yield* Path.Path;
@@ -465,12 +466,34 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
     authorizationHeader: "Bearer instruction-compaction-token",
     browserToolsAvailable: true,
   });
+  type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
+  let sessionUpdate: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;
+  let copilotSessionEvent:
+    | ((event: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>)
+    | undefined;
+  let duringNextPreparation: Effect.Effect<void, EffectAcpErrors.AcpError> = Effect.void;
+  let nextPromptStopReason: "cancelled" | "refusal" | "error" | undefined;
+  const prepare = Effect.suspend(() => {
+    const during = duringNextPreparation;
+    duringNextPreparation = Effect.void;
+    return during.pipe(Effect.orDie);
+  });
   const adapter = yield* makeAcpAdapterV2({
     instanceId,
     flavor: {
       driver: ACP_TEST_DRIVER,
       capabilities: AcpProviderCapabilitiesV2,
       supportsCompaction: true,
+      rewriteUserText: (text) =>
+        prepareAttachments ? Effect.succeed(text) : prepare.pipe(Effect.as(text)),
+      ...(prepareAttachments
+        ? {
+            buildAttachmentPrompt: () => prepare.pipe(Effect.as([])),
+          }
+        : {}),
+      registerExtensions: makeCopilotSubagentRouting().registerExtensions,
+      // Routes updates tagged with a Devin subagent context to that child session.
+      normalizeSessionUpdate: normalizeDevinSessionUpdate,
       makeRuntime: makeMockRuntime({
         childProcessSpawner,
         mockAgentPath,
@@ -478,9 +501,29 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
         environment,
         wrapRuntime: (runtime) => ({
           ...runtime,
+          // The captured handlers deliver frames between turns, while no prompt is in flight.
+          handleSessionUpdate: (next) =>
+            Effect.sync(() => {
+              sessionUpdate = next;
+            }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+          handleExtNotification: (method, payload, next) =>
+            Effect.sync(() => {
+              if (method === "github.com/copilot/sessionEvent") {
+                copilotSessionEvent = next as typeof copilotSessionEvent;
+              }
+            }).pipe(Effect.andThen(runtime.handleExtNotification(method, payload, next))),
           // Make compaction during prompt completion deterministic at the adapter boundary.
           prompt: (payload, options) =>
-            runtime.prompt(payload, options).pipe(Effect.tap(() => runtime.drainEvents)),
+            runtime.prompt(payload, options).pipe(
+              Effect.tap(() => runtime.drainEvents),
+              // Grok's local cancel reports `cancelled` even when the agent never saw the prompt.
+              Effect.map((result) => {
+                if (nextPromptStopReason === undefined) return result;
+                const stopReason = nextPromptStopReason;
+                nextPromptStopReason = undefined;
+                return { ...result, stopReason };
+              }),
+            ),
         }),
       }),
     },
@@ -501,30 +544,56 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
   const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
   const now = yield* DateTime.now;
   let ordinal = 0;
-  return Effect.fnUntraced(function* (messageText: string, expectedStatus = "completed") {
-    yield* runtime.startTurn(
-      makeTurnInput({
-        threadId,
-        providerThread,
-        instanceId,
-        runtimePolicy,
-        now,
-        ordinal: ++ordinal,
-        messageText,
-      }),
-    );
-    const terminal = yield* runtime.events.pipe(
-      Stream.filter((event) => event.type === "turn.terminal"),
-      Stream.runHead,
-    );
-    assert.equal(Option.getOrThrow(terminal).status, expectedStatus);
-    while (true) {
-      const event = yield* Queue.take(protocolEvents);
-      if (event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt") {
-        return rawProtocolPromptTextBlocks(event);
+  const sessionId = "mock-session-1";
+  return {
+    runTurn: Effect.fnUntraced(function* (messageText: string, expectedStatus = "completed") {
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now,
+          ordinal: ++ordinal,
+          messageText,
+        }),
+      );
+      const terminal = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      assert.equal(Option.getOrThrow(terminal).status, expectedStatus);
+      while (true) {
+        const event = yield* Queue.take(protocolEvents);
+        if (event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt") {
+          return rawProtocolPromptTextBlocks(event);
+        }
       }
-    }
-  });
+    }),
+    idleSessionUpdate: Effect.fnUntraced(function* (update: EffectAcpSchema.SessionUpdate) {
+      assert.isDefined(sessionUpdate);
+      yield* sessionUpdate({ sessionId, update });
+    }),
+    reportNextPromptStopped: (stopReason: "cancelled" | "refusal" | "error") =>
+      Effect.sync(() => {
+        nextPromptStopReason = stopReason;
+      }),
+    sessionUpdateDuringNextPreparation: (update: EffectAcpSchema.SessionUpdate) =>
+      Effect.sync(() => {
+        duringNextPreparation = Effect.suspend(() => {
+          assert.isDefined(sessionUpdate);
+          return sessionUpdate({ sessionId, update });
+        });
+      }),
+    idleCopilotSessionEvent: Effect.fnUntraced(function* (event: {
+      readonly type: string;
+      readonly agentId?: string;
+      readonly data: Record<string, unknown>;
+    }) {
+      assert.isDefined(copilotSessionEvent);
+      yield* copilotSessionEvent({ sessionId, ...event });
+    }),
+  };
 });
 
 function assertReinjectedInstructions(
@@ -536,6 +605,7 @@ function assertReinjectedInstructions(
   assert.include(text, "## T3 Code browser");
   assert.include(text, "T3 Code orchestration");
   assert.include(text, `<user_request>\n${request}\n</user_request>`);
+  assert.include(blocks[1]?.text ?? "", "<runtime_info>");
 }
 
 describe("AcpAdapterV2", () => {
@@ -1769,6 +1839,7 @@ describe("AcpAdapterV2", () => {
         ordinal: number,
         runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
         messageText: string,
+        turnModelSelection: ModelSelection = modelSelection,
       ) {
         yield* runtime.startTurn(
           makeTurnInput({
@@ -1779,6 +1850,7 @@ describe("AcpAdapterV2", () => {
             now,
             ordinal,
             messageText,
+            modelSelection: turnModelSelection,
           }),
         );
         yield* runtime.events.pipe(
@@ -1816,15 +1888,15 @@ describe("AcpAdapterV2", () => {
       assert.include(firstDefault.prompt, "T3 Code interaction mode: Default");
       assert.include(firstDefault.prompt, "## T3 Code browser");
       assert.include(firstDefault.prompt, "T3 Code orchestration");
+      assert.include(firstDefault.prompt, "<runtime_info>");
       assert.notInclude(
         firstDefault.methods,
         "session/set_config_option",
         "Build should preserve the agent's advertised mode default",
       );
-      assert.include(
-        (yield* runTurn(3, defaultPolicy, "Second default request.")).prompt,
-        "Second default request.",
-      );
+      const secondDefault = yield* runTurn(3, defaultPolicy, "Second default request.");
+      assert.equal(secondDefault.prompt, "Second default request.");
+      assert.equal(secondDefault.textBlockCount, 1);
 
       const planPolicy = policy("plan");
       const firstPlan = yield* runTurn(4, planPolicy, "Plan this change.");
@@ -1841,20 +1913,46 @@ describe("AcpAdapterV2", () => {
         "session/set_config_option",
         "Build should restore the native mode that T3 temporarily replaced for Plan",
       );
+      const switchedModel = yield* runTurn(7, defaultPolicy, "Switch models.", {
+        instanceId,
+        model: "composer-2",
+      });
+      assert.equal(switchedModel.textBlockCount, 2);
+      assert.include(switchedModel.prompt, "as composer-2");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.live(
-    "reinjects ACP instructions after protocol compaction, including during reinjection",
-    () =>
+  it.live.each(["cancelled", "refusal", "error"] as const)(
+    "reinjects ACP instructions after protocol compaction, during reinjection, prompt preparation, or while idle (%s)",
+    (stopReason) =>
       Effect.gen(function* () {
-        const runTurn = yield* makeInstructionCompactionHarness({
-          T3_ACP_COMPACTION_PROMPT_ORDINALS: "2,4",
-        });
-        yield* runTurn("Start work.");
-        yield* runTurn("Continue until context compacts.");
+        const {
+          runTurn,
+          idleSessionUpdate,
+          idleCopilotSessionEvent,
+          sessionUpdateDuringNextPreparation,
+          reportNextPromptStopped,
+        } = yield* makeInstructionCompactionHarness(
+          {
+            T3_ACP_COMPACTION_PROMPT_ORDINALS: "2,4",
+            T3_ACP_OPEN_COMPACTION_PROMPT_ORDINALS: "13",
+          },
+          stopReason === "error",
+        );
+        const expectedStatus =
+          stopReason === "error"
+            ? "failed"
+            : stopReason === "cancelled"
+              ? "cancelled"
+              : "completed";
+        yield* reportNextPromptStopped(stopReason);
+        assertReinjectedInstructions(yield* runTurn("Start work.", expectedStatus), "Start work.");
+        assertReinjectedInstructions(
+          yield* runTurn("Continue until context compacts."),
+          "Continue until context compacts.",
+        );
         assert.deepEqual(yield* runTurn("  /repro-skill"), [
-          { type: "text", text: "  /repro-skill" },
+          { type: "text", text: stopReason === "error" ? "/repro-skill" : "  /repro-skill" },
         ]);
         assertReinjectedInstructions(
           yield* runTurn("Continue after compaction."),
@@ -1864,7 +1962,99 @@ describe("AcpAdapterV2", () => {
           yield* runTurn("Continue after the second compaction."),
           "Continue after the second compaction.",
         );
-        assert.equal((yield* runTurn("Finish work."))[0]?.text, "Finish work.");
+        assert.deepEqual(yield* runTurn("Finish work."), [{ type: "text", text: "Finish work." }]);
+
+        yield* idleSessionUpdate({
+          sessionUpdate: "compaction_update",
+          compactionId: "compact-idle",
+          status: "completed",
+        });
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after idle compaction."),
+          "Continue after idle compaction.",
+        );
+        yield* idleSessionUpdate({
+          sessionUpdate: "compaction_update",
+          compactionId: "compact-idle",
+          status: "completed",
+        });
+        assert.deepEqual(yield* runTurn("Continue after a repeated compaction update."), [
+          { type: "text", text: "Continue after a repeated compaction update." },
+        ]);
+        const copilotCompaction = { success: true, outcome: "applied", trigger: "threshold" };
+        yield* idleCopilotSessionEvent({
+          type: "session.compaction_complete",
+          agentId: "agent-a",
+          data: copilotCompaction,
+        });
+        assert.deepEqual(yield* runTurn("Continue after subagent compaction."), [
+          { type: "text", text: "Continue after subagent compaction." },
+        ]);
+        yield* idleCopilotSessionEvent({
+          type: "session.compaction_complete",
+          data: copilotCompaction,
+        });
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after Copilot compaction."),
+          "Continue after Copilot compaction.",
+        );
+        yield* idleCopilotSessionEvent({
+          type: "session.compaction_complete",
+          data: { success: true, trigger: "threshold" },
+        });
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after legacy Copilot compaction."),
+          "Continue after legacy Copilot compaction.",
+        );
+        yield* idleSessionUpdate({
+          sessionUpdate: "compaction_update",
+          compactionId: "compact-child",
+          status: "completed",
+          _meta: { "cognition.ai/subagent_context": { parentAgentId: "agent-b" } },
+        });
+        assert.deepEqual(yield* runTurn("Continue after child compaction."), [
+          { type: "text", text: "Continue after child compaction." },
+        ]);
+        yield* runTurn("End this turn while compaction is still running.");
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after the turn ended mid-compaction."),
+          "Continue after the turn ended mid-compaction.",
+        );
+        yield* idleSessionUpdate({
+          sessionUpdate: "compaction_update",
+          compactionId: "compact-13",
+          status: "completed",
+        });
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after the compaction really finished."),
+          "Continue after the compaction really finished.",
+        );
+        yield* sessionUpdateDuringNextPreparation({
+          sessionUpdate: "compaction_update",
+          compactionId: "compact-while-preparing",
+          status: "completed",
+        });
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after a compaction during prompt preparation."),
+          "Continue after a compaction during prompt preparation.",
+        );
+        assert.deepEqual(yield* runTurn("Finish after that reinjection."), [
+          { type: "text", text: "Finish after that reinjection." },
+        ]);
+        yield* idleSessionUpdate({
+          sessionUpdate: "compaction_update",
+          compactionId: "compact-before-undelivered-prompt",
+          status: "completed",
+        });
+        yield* reportNextPromptStopped(stopReason);
+        assertReinjectedInstructions(
+          yield* runTurn("Do not retain this prompt.", expectedStatus),
+          "Do not retain this prompt.",
+        );
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after the undelivered prompt."),
+          "Continue after the undelivered prompt.",
+        );
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
@@ -1872,21 +2062,28 @@ describe("AcpAdapterV2", () => {
     "reinjects ACP instructions after successful native compact, but not failed compact",
     () =>
       Effect.gen(function* () {
-        const runTurn = yield* makeInstructionCompactionHarness({
+        const { runTurn } = yield* makeInstructionCompactionHarness({
           T3_ACP_FAIL_PROMPT_ORDINAL: "2",
         });
         yield* runTurn("Start work.");
         assert.deepEqual(yield* runTurn("/compact", "failed"), [
           { type: "text", text: "/compact" },
         ]);
-        assert.equal(
-          (yield* runTurn("Continue after failure."))[0]?.text,
-          "Continue after failure.",
-        );
+        assert.deepEqual(yield* runTurn("Continue after failure."), [
+          { type: "text", text: "Continue after failure." },
+        ]);
         assert.deepEqual(yield* runTurn("/compact"), [{ type: "text", text: "/compact" }]);
         assert.deepEqual(yield* runTurn("/repro-skill"), [{ type: "text", text: "/repro-skill" }]);
         assertReinjectedInstructions(yield* runTurn("Continue work."), "Continue work.");
-        assert.equal((yield* runTurn("Finish work."))[0]?.text, "Finish work.");
+        assert.deepEqual(yield* runTurn("Finish work."), [{ type: "text", text: "Finish work." }]);
+        // Agents such as Grok accept preservation instructions after the command.
+        assert.deepEqual(yield* runTurn("/compact keep the plan"), [
+          { type: "text", text: "/compact keep the plan" },
+        ]);
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after the focused compact."),
+          "Continue after the focused compact.",
+        );
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
@@ -2953,7 +3150,7 @@ describe("AcpAdapterV2", () => {
               Object(rawProtocolRequestParam(initialize, "clientCapabilities")),
               "session",
             ),
-        { notices: {} },
+        { notices: {}, compaction: {} },
       );
       const title =
         "skill discovery warning: candidate was skipped because its metadata is invalid";
@@ -4258,9 +4455,11 @@ describe("AcpAdapterV2", () => {
         browserToolsAvailable: false,
       });
       const runtimeInputs: Array<AcpAdapterV2RuntimeInput> = [];
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
       const makeRuntime = makeMockRuntime({
         childProcessSpawner,
         mockAgentPath,
+        protocolEvents,
         environment: { T3_ACP_PROMPT_DELAY_MS: "100" },
       });
       const adapter = yield* makeAcpAdapterV2({
@@ -4392,6 +4591,143 @@ describe("AcpAdapterV2", () => {
         }
       }
       assert.equal(secondStatus, "completed");
+      const prompts = Array.from(yield* Queue.takeAll(protocolEvents))
+        .filter(
+          (event) =>
+            event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt",
+        )
+        .map(rawProtocolPromptTextBlocks);
+      assert.lengthOf(prompts, 2);
+      // The mock agent reuses its session id, so only the rollback reset resends these notes.
+      assert.include(prompts[1]?.at(-1)?.text ?? "", "<runtime_info>");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("resends T3 notes after rollback when the replaced runtime's prompt settles late", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let firstSessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const firstPromptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+      const firstPromptCallbackDone = yield* Deferred.make<void>();
+      const replacementPromptText = yield* Deferred.make<string>();
+      const instanceId = ProviderInstanceId.make("acp-test-late-prompt-rollback");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        testHooks: {
+          afterPromptCallback: () =>
+            Deferred.succeed(firstPromptCallbackDone, undefined).pipe(Effect.asVoid),
+        },
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          followAgentWorkState: true,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime, runtimeOrdinal) =>
+              runtimeOrdinal === 1
+                ? {
+                    ...runtime,
+                    handleSessionUpdate: (handler) =>
+                      Effect.sync(() => {
+                        firstSessionUpdate = handler;
+                      }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+                    prompt: () => Deferred.await(firstPromptGate),
+                  }
+                : {
+                    ...runtime,
+                    prompt: (payload, options) =>
+                      Deferred.succeed(
+                        replacementPromptText,
+                        payload.prompt
+                          .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                          .join("\n"),
+                      ).pipe(Effect.andThen(runtime.prompt(payload, options))),
+                  },
+          }),
+        },
+        selfInvocation,
+        continuationRequests: { offer: () => Effect.void },
+      });
+      const threadId = ThreadId.make("thread-acp-late-prompt-rollback");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-late-prompt-rollback"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      if (firstSessionUpdate === undefined) {
+        return yield* Effect.die("the first runtime's session handler must be wired");
+      }
+      // The agent goes idle while its prompt RPC is still open, which ends the turn.
+      yield* firstSessionUpdate({
+        sessionId: "mock-session-1",
+        update: { sessionUpdate: "user_message_chunk", content: { type: "text", text: "echo" } },
+      });
+      yield* firstSessionUpdate({
+        sessionId: "mock-session-1",
+        update: { sessionUpdate: "state_update", state: "idle", stopReason: "end_turn" },
+      });
+      while ((yield* Queue.take(events)).type !== "turn.terminal") {}
+
+      const rolledBack = yield* runtime.rollbackThread({
+        providerThread,
+        providerThreadTurns: [],
+        target: {
+          type: "thread_start",
+          checkpointId: CheckpointId.make("checkpoint-acp-late-prompt-rollback"),
+          appRunOrdinal: 0,
+        },
+      });
+      // The replaced runtime's prompt settles late. A successful result would record delivery
+      // without the generation check; a cancelled one never records it, so it proves nothing.
+      // Its completion callback must finish before the next turn reads delivery state.
+      yield* Deferred.succeed(firstPromptGate, { stopReason: "end_turn" });
+      yield* Deferred.await(firstPromptCallbackDone);
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread: rolledBack.providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+          ordinal: 2,
+        }),
+      );
+      const replacementPrompt = yield* Deferred.await(replacementPromptText);
+      assert.include(replacementPrompt, "T3 Code interaction mode: Default");
+      assert.include(replacementPrompt, "<runtime_info>");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
