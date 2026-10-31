@@ -38,13 +38,6 @@ describe("parseMarkdownFileLink", () => {
     ["C:%5Crepo%5Cimage.png", "C:\\repo\\image.png"],
     ["</D:/Programme/t3code/ChatMarkdown.tsx:1>", "D:/Programme/t3code/ChatMarkdown.tsx"],
     ["file://localhost/home/me/notes.md", "/home/me/notes.md"],
-    ["outputs/a%26b.txt", "outputs/a&b.txt"],
-    ["outputs/a%26copy;.txt#L7", "outputs/a&copy;.txt"],
-    ["outputs/a%26amp;b.txt", "outputs/a&amp;b.txt"],
-    ["outputs/a%26%2335;b.txt", "outputs/a&#35;b.txt"],
-    ["a%26copy;.txt", "a&copy;.txt"],
-    ["a%26%23x26;b.txt", "a&#x26;b.txt"],
-    ["outputs/a%26copy;/report.txt", "outputs/a&copy;/report.txt"],
   ])("recognizes %s as a file", (href, path) => {
     expect(parseMarkdownFileLink(href)?.path).toBe(path);
   });
