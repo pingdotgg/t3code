@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { DraftComposerAttachment } from "../../lib/composerImages";
 import type { IncomingShareDraft } from "../sharing/incoming-share-model";
-import { undoComposerDraftMergeState, type ComposerDraft } from "../../state/use-composer-drafts";
+import {
+  mergeComposerDraftContentState,
+  undoComposerDraftMergeState,
+  type ComposerDraft,
+} from "../../state/use-composer-drafts";
 import {
   makeIncomingShareImports,
   type ShareImportDeps,
@@ -71,6 +75,7 @@ function importTarget(overrides: Partial<ShareImportTarget> = {}): ShareImportTa
     draftKey: "draft-a",
     destination,
     shareId: "share-1",
+    createdAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
 }
@@ -155,13 +160,31 @@ describe("incoming share imports", () => {
     expect(deps.onWarnings).toHaveBeenCalledWith(["too big"]);
   });
 
-  it("wraps the shared text in the chosen template", async () => {
-    const { drafts, imports, watch } = setup();
-    const target = importTarget({ template: "Review {{shared}} for bugs." });
-    watch(target);
-    await imports.settled(target);
-
-    expect(drafts.get("draft-a")?.text).toBe("mine\nReview shared text for bugs.");
+  it("wraps each share handoff once in its chosen template", async () => {
+    const { drafts, inbox, imports, watch, deps } = setup({
+      mergeIntoDraft: async (draftKey, content) => {
+        const next = mergeComposerDraftContentState(Object.fromEntries(drafts), draftKey, content);
+        for (const [key, value] of Object.entries(next)) drafts.set(key, value);
+        return { skippedAttachmentCount: 0 };
+      },
+    });
+    for (const [createdAt, template] of [
+      ["2026-01-01T00:00:00.000Z", "Review {{shared}} for bugs."],
+      ["2026-01-02T00:00:00.000Z", "Summarize {{shared}}."],
+      ["2026-01-03T00:00:00.000Z", "Summarize {{shared}}."],
+    ] as const) {
+      inbox.set("share-1", { ...share(), createdAt });
+      const target = { ...importTarget({ template }), createdAt };
+      watch(target);
+      await imports.settled(target);
+      const draft = drafts.get("draft-a")!;
+      expect(draft.text).toContain(template.replace("{{shared}}", "shared text"));
+      drafts.set("draft-a", { ...draft, text: `${draft.text}\nuser edit` });
+    }
+    expect(drafts.get("draft-a")?.text).toBe(
+      "mine\n\nReview shared text for bugs.\nuser edit\n\nSummarize shared text.\nuser edit\n\nSummarize shared text.\nuser edit",
+    );
+    expect(deps.consume).toHaveBeenCalledTimes(3);
   });
 
   it("runs once when its atom node is removed and rebuilt", async () => {

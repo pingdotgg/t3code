@@ -353,6 +353,7 @@ export function NewTaskDraftScreen(props: {
         projectId: String(selectedProject.id),
       },
       shareId: incomingShare.id,
+      createdAt: incomingShare.createdAt,
       ...(chosenShareTemplate?.template ? { template: chosenShareTemplate.template } : {}),
     };
   })();

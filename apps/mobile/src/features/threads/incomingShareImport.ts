@@ -66,6 +66,7 @@ export interface ShareImportTarget {
   readonly draftKey: string;
   readonly destination: IncomingShareDestination;
   readonly shareId: string;
+  readonly createdAt: string;
   /** The share template prompt that wraps the shared text. */
   readonly template?: string;
 }
@@ -93,6 +94,7 @@ export interface ShareImportDeps {
       readonly text: string;
       readonly attachments: ReadonlyArray<DraftComposerAttachment>;
       readonly sourceShareId: string;
+      readonly sourceShareCreatedAt: string;
     },
   ) => Promise<{ readonly skippedAttachmentCount: number }>;
   readonly selectAttachments: (
@@ -136,6 +138,7 @@ function keyOf(target: ShareImportTarget): string {
     target.destination.environmentId,
     target.destination.projectId,
     target.shareId,
+    target.createdAt,
     target.template ?? null,
   ]);
 }
@@ -226,6 +229,7 @@ export function makeIncomingShareImports(deps: ShareImportDeps) {
           text: template === undefined ? share.text : applyShareTemplate(template, share.text),
           attachments: selected.attachments,
           sourceShareId: shareId,
+          sourceShareCreatedAt: share.createdAt,
         }));
       } finally {
         // The merge publishes before it persists, so read it back even when
