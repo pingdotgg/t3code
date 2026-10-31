@@ -3970,7 +3970,7 @@ export default function ChatView(props: ChatViewProps) {
                     </ComposerSurface.Shell>
                     <div
                       aria-hidden
-                      className="h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]"
+                      className="h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.125rem)]"
                     />
                   </div>
                 </div>
