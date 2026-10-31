@@ -346,6 +346,30 @@ describe("server browser snapshot screenshot", () => {
 
     expect([screenshot.width, screenshot.height]).toEqual([1280, 800]);
   });
+
+  it("keeps a saved screenshot at the captured resolution while the agent's stays shrunk", async () => {
+    const page = await context.newPage();
+    await page.setContent(halves(""));
+    const result = await ServerBrowserPage.snapshot({
+      page,
+      cdp: await context.newCDPSession(page),
+      renderScale: 2,
+      fullResolution: true,
+      consoleEntries: [],
+      networkEntries: [],
+      actionTimeline: [],
+    });
+    const sizeOf = ({ data }: { readonly data: string }) => {
+      const header = Buffer.from(data, "base64");
+      return [header.readUInt32BE(16), header.readUInt32BE(20)];
+    };
+
+    // Without a full-resolution copy, preview_snapshot saves the agent's screenshot.
+    expect({
+      agent: sizeOf(result.screenshot),
+      saved: sizeOf(result.fullResolutionScreenshot ?? result.screenshot),
+    }).toEqual({ agent: [1280, 800], saved: [2560, 1600] });
+  });
 });
 
 describe("server browser drag", () => {
