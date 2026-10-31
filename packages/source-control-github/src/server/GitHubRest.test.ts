@@ -136,6 +136,7 @@ describe("GitHubRest", () => {
           headers: request.headers,
           body,
         });
+        response.statusCode = request.url === "/user/starred/acme/web" ? 204 : 200;
         response.setHeader("content-type", "application/json");
         response.end(
           JSON.stringify(
@@ -267,6 +268,8 @@ describe("GitHubRest", () => {
         });
         expect(reference.number).toBe(7);
         expect(requests.at(-1)?.body).toContain("query PullRequestByNumber");
+        expect(yield* instance.isRepositoryStarred!("github.com", "acme/web")).toBe(true);
+        expect(requests.at(-1)?.path).toBe("/user/starred/acme/web");
         yield* Effect.promise(() => NodeFSP.unlink(socketPath));
         const error = yield* Effect.flip(
           rest.rest({ host: "github.com", operation: "user", path: "user" }),
