@@ -13,7 +13,9 @@ function Shell({
       data-slot="composer-shell"
       data-context-row={contextRow || undefined}
       className={cn(
-        "@container/composer-surface group/composer-surface relative isolate mx-auto flex w-full max-w-(--chat-content-max-width) flex-col rounded-2xl surface-tray border-0",
+        "@container/composer-surface group/composer-surface relative isolate mx-auto flex w-full max-w-(--chat-content-max-width) flex-col rounded-2xl surface-tray border-0!",
+        // Paint the rim above the main surface without expanding the 48px + 30px stack.
+        "after:pointer-events-none after:absolute after:inset-0 after:z-20 after:rounded-[inherit] after:border after:border-(--tray-stroke)",
         "[--chat-composer-surface:var(--popover)] [--chat-composer-outline:var(--tray-stroke)]",
         className,
       )}
