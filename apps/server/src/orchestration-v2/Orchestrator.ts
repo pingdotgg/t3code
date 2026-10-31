@@ -7430,30 +7430,47 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
 
-    if (canResumeAcrossInstances && activeProviderThread.providerSessionId !== null) {
-      const previousProviderSessionId = activeProviderThread.providerSessionId;
+    const detachReason = canResumeAcrossInstances
+      ? "Provider account changed; continuing the native thread."
+      : "Provider or model selection changed.";
+    // Shared sessions keep a left thread attached, and with it the other provider's MCP credential.
+    const sessionsToDetach = !isProviderSwitch
+      ? []
+      : canResumeAcrossInstances
+        ? activeProviderThread.providerSessionId === null
+          ? []
+          : [
+              {
+                id: activeProviderThread.providerSessionId,
+                driver: activeProviderThread.driver,
+                providerInstanceId: activeProviderThread.providerInstanceId,
+              },
+            ]
+        : projection.providerSessions.filter(
+            (session) =>
+              session.providerInstanceId !== modelSelection.instanceId &&
+              session.status !== "stopped" &&
+              session.status !== "error",
+          );
+    for (const session of sessionsToDetach) {
       yield* emitEvent({
         type: "provider-session.detached",
         threadId: command.threadId,
-        driver: activeProviderThread.driver,
-        providerInstanceId: activeProviderThread.providerInstanceId,
+        driver: session.driver,
+        providerInstanceId: session.providerInstanceId,
         occurredAt: now,
-        payload: {
-          providerSessionId: previousProviderSessionId,
-          detachedAt: now,
-          reason: "Provider account changed; continuing the native thread.",
-        },
+        payload: { providerSessionId: session.id, detachedAt: now, reason: detachReason },
       });
       yield* Ref.update(effects, (existing) => [
         ...existing,
         {
-          id: `effect:${command.commandId}:provider-session.detach:${previousProviderSessionId}`,
+          id: `effect:${command.commandId}:provider-session.detach:${session.id}`,
           commandId: command.commandId,
           threadId: command.threadId,
           request: {
             type: "provider-session.detach",
-            providerSessionId: previousProviderSessionId,
-            detail: "Provider account changed; continuing the native thread.",
+            providerSessionId: session.id,
+            detail: detachReason,
           },
         } satisfies PendingOrchestrationEffectV2,
       ]);
