@@ -28,7 +28,7 @@ import { relativeTime } from "../../lib/time";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useServerConfigs } from "../../state/entities";
 import { useEnvironmentScope } from "../../state/session";
-import { ThreadSwipeable } from "../home/thread-swipe-actions";
+import { ThreadSwipeable, type ThreadSwipeAccessibility } from "../home/thread-swipe-actions";
 import type { ArchivedThreadGroup, ArchivedThreadSortOrder } from "./archivedThreadList";
 import { SettingsScreenContent } from "../settings/components/SettingsScreen";
 
@@ -197,8 +197,10 @@ function ArchivedThreadRow(props: {
   const subtitle = [props.environmentLabel, props.thread.branch].filter((part): part is string =>
     Boolean(part),
   );
-  const rowContent = (
+  const rowContent = (swipeAccessibility?: ThreadSwipeAccessibility) => (
     <View
+      accessible
+      {...swipeAccessibility}
       className={`flex-row items-center gap-3 bg-grouped-card px-4 py-3 ${props.isLast ? "" : "border-b border-separator"}`}
     >
       <View className="h-[34px] w-[34px] items-center justify-center rounded-[11px] bg-subtle">
@@ -248,7 +250,7 @@ function ArchivedThreadRow(props: {
     borderBottomRightRadius: props.isLast ? 20 : 0,
     overflow: "hidden" as const,
   };
-  if (!canOperateThread) return <View style={containerStyle}>{rowContent}</View>;
+  if (!canOperateThread) return <View style={containerStyle}>{rowContent()}</View>;
 
   return (
     <ThreadSwipeable
@@ -269,7 +271,7 @@ function ArchivedThreadRow(props: {
       simultaneousWith={props.simultaneousSwipeGesture}
       threadTitle={props.thread.title}
     >
-      {() => rowContent}
+      {(_close, swipeAccessibility) => rowContent(swipeAccessibility)}
     </ThreadSwipeable>
   );
 }

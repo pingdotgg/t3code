@@ -20,7 +20,7 @@ import {
 } from "../../lib/microphonePriority";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
-import { ThreadSwipeable } from "../home/thread-swipe-actions";
+import { ThreadSwipeable, type ThreadSwipeAccessibility } from "../home/thread-swipe-actions";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
 import { SettingsSection } from "./components/SettingsSection";
@@ -234,16 +234,13 @@ function MicrophoneRow(props: {
     ],
     zIndex: lifted ? 1 : 0,
   }));
-  const row = (
+  const row = (swipeAccessibility?: ThreadSwipeAccessibility) => (
     // Opaque so the swipe actions stay hidden until the row slides over them.
     <View className="flex-row items-center bg-grouped-card">
       <View
         accessible
         accessibilityLabel={`${title}, ${kind.label}, ${props.position} of ${props.count}`}
-        accessibilityActions={onForget ? [{ name: "forget", label: "Forget" }] : undefined}
-        onAccessibilityAction={({ nativeEvent }) => {
-          if (nativeEvent.actionName === "forget") onForget?.();
-        }}
+        {...swipeAccessibility}
         className="min-w-0 flex-1"
       >
         <ListRowLayout
@@ -291,10 +288,10 @@ function MicrophoneRow(props: {
           threadKey={`microphone:${microphoneEntryKey(entry)}`}
           threadTitle={title}
         >
-          {() => row}
+          {(_close, swipeAccessibility) => row(swipeAccessibility)}
         </ThreadSwipeable>
       ) : (
-        row
+        row()
       )}
     </Reanimated.View>
   );
