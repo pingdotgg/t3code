@@ -1432,6 +1432,7 @@ describe("locating a device id across hosts", () => {
   const listingHost = (
     host: { readonly id: string; readonly label: string },
     ids: ReadonlyArray<string>,
+    attach: DeviceHost.DeviceOperations["attach"] = () => Effect.void,
   ): DeviceHost.DeviceHost["Service"] => {
     const devices = ids.map((id) => ({
       id,
@@ -1447,7 +1448,7 @@ describe("locating a device id across hosts", () => {
       devices: {
         list: Effect.succeed({ devices, detail: undefined }),
         boot: (device) => Effect.succeed(device.id),
-        attach: () => Effect.void,
+        attach,
         shutdown: () => Effect.void,
         screenshot: () => Effect.succeed(new Uint8Array()),
       },
@@ -1501,6 +1502,44 @@ describe("locating a device id across hosts", () => {
       deviceId: DeviceId.make(deviceId),
       platform: deviceId.startsWith("Pixel") ? "android" : "ios",
     });
+
+  // The hub fails a stream start that overlaps another one on the same device.
+  it.effect.each([
+    { case: "one device take turns", other: "MAC-UDID", overlap: 1 },
+    { case: "different devices run together", other: "MAC-UDID-2", overlap: 2 },
+  ])("concurrent opens of $case", ({ other, overlap }) =>
+    Effect.gen(function* () {
+      const attaching = yield* Queue.unbounded<Deferred.Deferred<void>>();
+      let active = 0;
+      let most = 0;
+      const host = listingHost(macMini, ["MAC-UDID", "MAC-UDID-2"], () =>
+        Effect.gen(function* () {
+          most = Math.max(most, ++active);
+          const done = yield* Deferred.make<void>();
+          yield* Queue.offer(attaching, done);
+          yield* Deferred.await(done);
+          active--;
+        }),
+      );
+      const service = yield* DeviceService.makeWithHosts(new Map([[macMini.id, host]])).pipe(
+        Effect.provide(NodeCrypto.layer),
+      );
+      const opening = yield* Effect.forkChild(
+        Effect.all(
+          [
+            open(service, macMini.id, "MAC-UDID"),
+            open(service, macMini.id, other, ThreadId.make("thread-other")),
+          ],
+          { concurrency: "unbounded" },
+        ),
+      );
+      yield* Deferred.succeed(yield* Queue.take(attaching), undefined);
+      yield* Deferred.succeed(yield* Queue.take(attaching), undefined);
+      yield* Fiber.join(opening);
+      expect(most).toBe(overlap);
+      expect((yield* service.state).sessions).toHaveLength(2);
+    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
+  );
 
   it.effect("finds a device id that exists only on another host", () =>
     withTwoHosts((service) =>
