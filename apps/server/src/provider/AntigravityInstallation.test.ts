@@ -950,26 +950,39 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
     }),
   );
 
-  it.effect("preserves the active runtime when an update is withdrawn during validation", () =>
-    Effect.gen(function* () {
-      let manifest = ModelManifest.BUNDLED_MODEL_MANIFEST;
-      const h = yield* makeHarness({
-        asset: yield* pinnedAsset(),
-        registry: registryListing(),
-        archives: { [upstreamUrl]: upstreamArchive },
-        manifest: Effect.sync(() => manifest),
-        validate: (_executable, version) =>
-          Effect.sync(() => {
-            if (version === "1.4.1") manifest = withdrawnManifest;
-          }),
-      });
-      yield* h.installation.start;
-      yield* terminalState(h.installation);
-      yield* h.installation.checkForUpdate;
-      yield* h.installation.start;
-      expect((yield* terminalState(h.installation)).phase).toBe("failed");
-      expect((yield* h.installation.resolve()).version).toBe("1.3.0");
-    }),
+  it.effect.each(["update", "reinstall"] as const)(
+    "rejects withdrawal during $0 validation",
+    (operation) =>
+      Effect.gen(function* () {
+        let manifest = ModelManifest.BUNDLED_MODEL_MANIFEST;
+        let withdraw = operation === "update";
+        const h = yield* makeHarness({
+          asset: yield* pinnedAsset(),
+          registry: registryListing(),
+          archives: { [upstreamUrl]: upstreamArchive },
+          manifest: Effect.sync(() => manifest),
+          validate: (_executable, version) =>
+            Effect.sync(() => {
+              if (withdraw && version === "1.4.1") manifest = withdrawnManifest;
+            }),
+        });
+        yield* h.installation.start;
+        yield* terminalState(h.installation);
+        yield* h.installation.checkForUpdate;
+        if (operation === "reinstall") {
+          yield* h.installation.start;
+          expect((yield* terminalState(h.installation)).phase).toBe("succeeded");
+          withdraw = true;
+        }
+        yield* h.installation.start;
+        expect((yield* terminalState(h.installation)).phase).toBe("failed");
+        if (operation === "update") {
+          expect((yield* h.installation.resolve()).version).toBe("1.3.0");
+        } else {
+          expect((yield* h.installation.state).version).toBe("1.3.0");
+          yield* Effect.flip(h.installation.resolve());
+        }
+      }),
   );
 
   it.effect("returns an install the manifest withdraws to the pinned release", () =>

@@ -663,41 +663,54 @@ it.effect("returns a managed install the manifest withdraws to the pinned releas
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect("preserves the active runtime when an update is withdrawn during validation", () =>
-  Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
-    const checksum = Hex.encode(
-      yield* crypto.digest("SHA-256", upstreamArchive).pipe(Effect.orDie),
-    );
-    let manifest = ModelManifest.BUNDLED_MODEL_MANIFEST;
-    const h = yield* makeHarness({
-      responses: upstreamResponses(checksum),
-      manifestCurrent: Effect.sync(() => manifest),
-      options: {
-        validate: (_executable, version) =>
-          Effect.sync(() => {
-            if (version === upstreamVersion)
-              manifest = {
-                ...ModelManifest.BUNDLED_MODEL_MANIFEST,
-                compatibility: [
-                  {
-                    driver: "codex",
-                    t3CodeRange: ">=0.0.42",
-                    ranges: [
-                      { range: ">=0.160.0", status: "unsupported" },
-                      { range: ">=0.156.0 <0.160.0", status: "supported" },
-                    ],
-                  },
-                ],
-              };
-          }),
-      },
-    });
-    yield* h.installation.start;
-    yield* terminalState(h.installation);
-    yield* h.installation.checkForUpdate;
-    yield* h.installation.start;
-    expect((yield* terminalState(h.installation)).phase).toBe("failed");
-    expect((yield* h.installation.resolve()).version).toBe("0.156.1");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+it.effect.each(["update", "reinstall"] as const)(
+  "rejects withdrawal during $0 validation",
+  (operation) =>
+    Effect.gen(function* () {
+      const crypto = yield* Crypto.Crypto;
+      const checksum = Hex.encode(
+        yield* crypto.digest("SHA-256", upstreamArchive).pipe(Effect.orDie),
+      );
+      let manifest = ModelManifest.BUNDLED_MODEL_MANIFEST;
+      let withdraw = operation === "update";
+      const h = yield* makeHarness({
+        responses: upstreamResponses(checksum),
+        manifestCurrent: Effect.sync(() => manifest),
+        options: {
+          validate: (_executable, version) =>
+            Effect.sync(() => {
+              if (withdraw && version === upstreamVersion)
+                manifest = {
+                  ...ModelManifest.BUNDLED_MODEL_MANIFEST,
+                  compatibility: [
+                    {
+                      driver: "codex",
+                      t3CodeRange: ">=0.0.42",
+                      ranges: [
+                        { range: ">=0.160.0", status: "unsupported" },
+                        { range: ">=0.156.0 <0.160.0", status: "supported" },
+                      ],
+                    },
+                  ],
+                };
+            }),
+        },
+      });
+      yield* h.installation.start;
+      yield* terminalState(h.installation);
+      yield* h.installation.checkForUpdate;
+      if (operation === "reinstall") {
+        yield* h.installation.start;
+        expect((yield* terminalState(h.installation)).phase).toBe("succeeded");
+        withdraw = true;
+      }
+      yield* h.installation.start;
+      expect((yield* terminalState(h.installation)).phase).toBe("failed");
+      if (operation === "update") {
+        expect((yield* h.installation.resolve()).version).toBe("0.156.1");
+      } else {
+        expect((yield* h.installation.state).version).toBe("0.156.1");
+        yield* Effect.flip(h.installation.resolve());
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

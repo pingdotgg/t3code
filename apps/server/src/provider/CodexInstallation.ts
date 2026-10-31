@@ -761,12 +761,20 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         Effect.scoped,
         Effect.timeout("90 seconds"),
       );
+      const kept = yield* keptInstall(executable.version);
+      if (kept === null) {
+        yield* SubscriptionRef.update(state, (current) => ({ ...current, ...offer(kept) }));
+        return yield* installationError(
+          "verify",
+          "This Codex release was withdrawn. Check for updates and try again.",
+        );
+      }
       yield* SubscriptionRef.update(
         state,
         (current) =>
           ({
             ...current,
-            ...offer(executable.version),
+            ...offer(kept),
             phase: "succeeded",
             source: "managed",
             installedVersion: executable.version,

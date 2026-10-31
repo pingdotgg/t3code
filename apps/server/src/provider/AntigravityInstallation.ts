@@ -919,12 +919,20 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         Effect.scoped,
         Effect.timeout(VALIDATION_TIMEOUT),
       );
+      const kept = yield* keptInstall(installed.version);
+      if (kept === null) {
+        yield* SubscriptionRef.update(state, (current) => ({ ...current, ...offer(kept) }));
+        return yield* installationError(
+          "verify",
+          "This Antigravity release was withdrawn. Check for updates and try again.",
+        );
+      }
       yield* SubscriptionRef.update(
         state,
         (current) =>
           ({
             ...current,
-            ...offer(installed.version),
+            ...offer(kept),
             phase: "succeeded",
             installedVersion: installed.version,
             message: null,
