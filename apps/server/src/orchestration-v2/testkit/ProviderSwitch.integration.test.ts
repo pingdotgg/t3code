@@ -1435,6 +1435,14 @@ describe("orchestration v2 provider switching", () => {
             { type: "handoff", contextHandoffId: handoff!.id },
             "Expected a handoff turn item for the recovered run.",
           );
+          assert.deepEqual(
+            projection.turnItems
+              .filter((item) => item.runId === run2.id)
+              .toSorted((left, right) => left.ordinal - right.ordinal)
+              .map((item) => item.type)
+              .slice(0, 2),
+            ["handoff", "user_message"],
+          );
         }).pipe(
           Effect.provide(
             ProviderReplayHarness.layerWithRegistry(
