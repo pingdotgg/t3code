@@ -10,6 +10,7 @@ import {
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
+  resolveAdjacentThreadId,
   resolveSidebarRowThreadId,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
@@ -1685,5 +1686,77 @@ describe("resolveSidebarFolderDot", () => {
     expect(resolveSidebarFolderDot([idle, working])).toBe("working");
     expect(resolveSidebarFolderDot([working, unread])).toBe("unread");
     expect(resolveSidebarFolderDot([unread, limited])).toBe("attention");
+  });
+});
+
+describe("resolveAdjacentThreadId", () => {
+  const threadIds = ["thread-a", "thread-b", "thread-c"];
+
+  it("moves to the previous and next thread in list order", () => {
+    expect(
+      resolveAdjacentThreadId({ threadIds, currentThreadId: "thread-b", direction: "previous" }),
+    ).toBe("thread-a");
+    expect(
+      resolveAdjacentThreadId({ threadIds, currentThreadId: "thread-b", direction: "next" }),
+    ).toBe("thread-c");
+  });
+
+  it("stops at the list ends without wrap", () => {
+    expect(
+      resolveAdjacentThreadId({ threadIds, currentThreadId: "thread-a", direction: "previous" }),
+    ).toBe(null);
+    expect(
+      resolveAdjacentThreadId({ threadIds, currentThreadId: "thread-c", direction: "next" }),
+    ).toBe(null);
+  });
+
+  it("wraps from the last thread to the first and back", () => {
+    expect(
+      resolveAdjacentThreadId({
+        threadIds,
+        currentThreadId: "thread-c",
+        direction: "next",
+        wrap: true,
+      }),
+    ).toBe("thread-a");
+    expect(
+      resolveAdjacentThreadId({
+        threadIds,
+        currentThreadId: "thread-a",
+        direction: "previous",
+        wrap: true,
+      }),
+    ).toBe("thread-c");
+  });
+
+  it("starts from the list end matching the direction when no thread is current", () => {
+    expect(resolveAdjacentThreadId({ threadIds, currentThreadId: null, direction: "next" })).toBe(
+      "thread-a",
+    );
+    expect(
+      resolveAdjacentThreadId({ threadIds, currentThreadId: null, direction: "previous" }),
+    ).toBe("thread-c");
+  });
+
+  it("returns null for an empty list, an unknown current thread, or nothing to rotate to", () => {
+    expect(
+      resolveAdjacentThreadId({ threadIds: [], currentThreadId: null, direction: "next" }),
+    ).toBe(null);
+    expect(
+      resolveAdjacentThreadId({
+        threadIds,
+        currentThreadId: "thread-d",
+        direction: "next",
+        wrap: true,
+      }),
+    ).toBe(null);
+    expect(
+      resolveAdjacentThreadId({
+        threadIds: ["thread-a"],
+        currentThreadId: "thread-a",
+        direction: "next",
+        wrap: true,
+      }),
+    ).toBe(null);
   });
 });
