@@ -369,6 +369,17 @@ pairing links and revoke client sessions. Revoking an unused link prevents new
 pairings; revoke a device's session to remove its existing access. Command-line
 management is available through `t3 auth --help`.
 
+An agent running in a live **Full access** thread in default interaction mode can
+also manage access through MCP: ask it to create a pairing credential for a new
+device, list unused credentials or trusted clients, or revoke either. The tools
+are `t3_pairing_create`, `t3_pairing_list`, `t3_pairing_revoke`, `t3_client_list`,
+and `t3_client_revoke`. Pairing credentials grant standard client permissions;
+use the CLI or authenticated API to choose other permissions. Share the returned
+credential privately using `https://<reachable-host>/pair#token=<credential>`.
+The host must already be reachable, and the receiving device still needs to pair.
+Outside agents signed in through MCP cannot administer access, including those
+approved for full access.
+
 A session with an open connection stays listed after its access credential
 expires.
 
