@@ -1,13 +1,4 @@
-/**
- * Plugin - Schemas for trusted local plugins run by the environment server.
- *
- * A plugin is a directory with a `t3-plugin.json` manifest and one JavaScript
- * entry module. The server runs each enabled plugin in its own supervised
- * child process, started lazily on first use. Plugins are trusted OS-user
- * code: the child process is an availability boundary, not a sandbox.
- *
- * @module Plugin
- */
+// Plugins run as trusted OS-user code; the supervised process boundary is not a sandbox.
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -65,18 +56,8 @@ export type PluginManifest = typeof PluginManifest.Type;
 
 const PluginFailureReason = Schema.String.check(Schema.isMaxLength(1000));
 
-/**
- * Runtime state of one enabled plugin's child process. `idle` means no child
- * runs: either it has not been needed yet or it stopped cleanly. After a
- * crash the plugin waits in `backoff` and becomes `idle` again at `retryAt`;
- * too many consecutive failures park it in `quarantined` until someone resumes
- * it explicitly. `incompatible` means the plugin's code cannot run on any
- * server of this version (for example it uses top-level await); it does not
- * count as a failure and also waits for an explicit resume.
- *
- * Clients must decode this through `ForwardCompatibleOptional` and treat an
- * absent value as unknown: never as idle, disabled, or safe to enable.
- */
+// Decode through ForwardCompatibleOptional: an absent state is unknown, never idle or safe to enable.
+// Incompatible code and quarantined crashes require explicit resume; ordinary backoff retries automatically.
 export const PluginHostState = Schema.Union([
   Schema.TaggedStruct("idle", {}),
   Schema.TaggedStruct("starting", {}),

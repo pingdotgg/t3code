@@ -1,18 +1,5 @@
-/**
- * The environment's trusted local plugins: which directories were added, what
- * their exact bytes were, who consented to which bytes, and which are enabled.
- *
- * Nothing in a plugin directory runs until its current digest has consent and
- * the installation is enabled. Enabling registers it with the supervisor,
- * which still starts no process until the first invoke. The bytes are checked
- * again whenever they are about to matter: on add, refresh, consent, enable,
- * server start, and before an invoke that would start a fresh process. A
- * change found at any of those points disables the installation and leaves it
- * needing consent; it is never re-enabled automatically.
- *
- * Plugins are trusted OS-user code. The digest pins what the user agreed to
- * run, not what the directory's owner can do between checks.
- */
+// Consent binds to exact directory bytes; edits revoke registration and require fresh consent.
+// The digest cannot constrain its OS-user owner between checks or turn trusted plugins into a sandbox.
 import {
   PluginCatalogError,
   PluginInstallation,
@@ -156,14 +143,7 @@ export class PluginCatalog extends Context.Service<
     readonly resume: (
       input: PluginInstallationInput,
     ) => Effect.Effect<PluginInstallationResult, PluginCatalogError>;
-    /**
-     * Calls a handler of an enabled installation. A call that would start a
-     * fresh process first checks the bytes still match the consent. Pass the
-     * `generation` the caller saw to refuse a call that would reach a later
-     * registration (`generation-changed`). A call whose installation is
-     * disabled, removed, or re-registered before the supervisor takes it
-     * fails; it never follows the plugin id to a replacement.
-     */
+    // Checks consent before cold starts; generation pins the registration so revocation or replacement never redirects a call.
     readonly invoke: (
       installationId: PluginInstallationId,
       handler: string,
@@ -254,13 +234,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
   const isReady = (record: PluginInstallationRecord) =>
     pluginInstallationStatus({ ...record, enabled: true }) === "enabled";
 
-  /**
-   * Revokes the installation's registration and returns the fiber that waits
-   * for its process to exit. The supervisor revokes as soon as `disable`
-   * starts, so this starts it at once; only the wait may be cut short. An
-   * installation already revoked returns its earlier stop, so a retry still
-   * waits for that process and never touches a replacement under the same id.
-   */
+  // Revocation starts immediately; retries share the original stop fiber and cannot stop a replacement registration.
   const unregister = Effect.fnUntraced(function* (installation: Installation) {
     const registered = installation.registered;
     if (registered === undefined) return installation.stopping;
@@ -479,7 +453,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
       Effect.uninterruptible,
     );
     return yield* result(installation);
-  });
+  }, managed);
 
   const refresh = Effect.fn("PluginCatalog.refresh")(function* (input: PluginRefreshInput) {
     const targets =
@@ -488,7 +462,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
         : [yield* find(input.installationId)];
     yield* Effect.forEach(targets, reinspect, { discard: true });
     return yield* list;
-  });
+  }, managed);
 
   const consent = Effect.fn("PluginCatalog.consent")(function* (input: PluginConsentInput) {
     const installation = yield* find(input.installationId);
@@ -510,7 +484,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
       },
     });
     return yield* result(installation);
-  });
+  }, managed);
 
   const enable = Effect.fn("PluginCatalog.enable")(function* (input: PluginInstallationInput) {
     const installation = yield* find(input.installationId);
@@ -530,7 +504,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     if (installation.registered !== undefined) return yield* result(installation);
     yield* register(installation, inspection.registration);
     return yield* result(installation);
-  });
+  }, managed);
 
   const disableInstallation = (installation: Installation) =>
     revoke(
@@ -544,7 +518,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     const installation = yield* find(input.installationId);
     yield* disableInstallation(installation);
     return yield* result(installation);
-  });
+  }, managed);
 
   const remove = Effect.fn("PluginCatalog.remove")(function* (input: PluginInstallationInput) {
     const installation = yield* find(input.installationId);
@@ -561,7 +535,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
       }),
     );
     return { installationId: input.installationId };
-  });
+  }, managed);
 
   const resume = Effect.fn("PluginCatalog.resume")(function* (input: PluginInstallationInput) {
     const installation = yield* find(input.installationId);
@@ -570,7 +544,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     yield* supervisor.resume(installation.registered.pluginId).pipe(Effect.ignore);
     if (Option.isSome(eventDeliveries)) yield* eventDeliveries.value.resume(input.installationId);
     return yield* result(installation);
-  });
+  }, managed);
 
   /**
    * Re-checks that `registered` is still this installation's registration and, unless the call
@@ -745,13 +719,13 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
         ),
       ),
     ),
-    add: (input) => managed(add(input)),
-    refresh: (input) => managed(refresh(input)),
-    consent: (input) => managed(consent(input)),
-    enable: (input) => managed(enable(input)),
-    disable: (input) => managed(disable(input)),
-    remove: (input) => managed(remove(input)),
-    resume: (input) => managed(resume(input)),
+    add,
+    refresh,
+    consent,
+    enable,
+    disable,
+    remove,
+    resume,
     invoke,
   });
 });

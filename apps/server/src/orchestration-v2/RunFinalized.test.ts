@@ -401,7 +401,7 @@ it.effect("a restart after finalizing but before settling records one milestone"
     yield* seedThread;
     yield* finishProviderTurn("waiting");
     // A worker finalized, then its process died before settling the effect.
-    yield* outbox.claimNext({ workerId: "worker:crashed", leaseDurationMs: 60_000 });
+    yield* outbox.claimNext({ workerId: "worker:crashed" });
     yield* finalization.finalize({ threadId, runId, scopeId });
     assert.lengthOf(finalizedEvents(yield* storedEvents), 1);
 
@@ -840,7 +840,7 @@ it.effect("a restart after a failure record but before settling never finalizes 
     yield* finishProviderTurn("waiting");
     // A worker recorded the failure, then its process died before settling
     // the capture (the state a non-atomic writer could leave).
-    yield* outbox.claimNext({ workerId: "worker:crashed", leaseDurationMs: 60_000 });
+    yield* outbox.claimNext({ workerId: "worker:crashed" });
     const context = yield* ProjectionStore.ProjectionStoreV2.pipe(
       Effect.flatMap((projections) =>
         projections.getCheckpointCaptureContext(threadId, { runId, scopeId }),

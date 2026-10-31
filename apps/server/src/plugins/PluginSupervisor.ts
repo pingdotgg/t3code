@@ -1,30 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Each plugin child gets an extra fd 3 pipe, which needs Node's child_process.
-/**
- * Runs each enabled plugin in its own child process.
- *
- * A child starts the first time a plugin is invoked, never at enable time, so
- * zero enabled (or zero used) plugins means zero processes. Each child gets a
- * V8 heap limit, a minimal environment, and a byte-bounded JSON line channel
- * on fd 3; the server decodes everything it reads and kills a child that
- * sends anything malformed or oversized. The server stops reading a child
- * whose decoded-but-unhandled lines reach `maxMessageBytes`, so a chatty
- * plugin is slowed down rather than buffered; the child then drops its logs,
- * never its results.
- *
- * A call that outlives its deadline, or whose caller is interrupted, is
- * cancelled cooperatively: the plugin's handler signal aborts and the child
- * has `cancelGrace` to answer. A child that cannot answer (a synchronous loop
- * never reads the cancel) is killed. Unexpected exits back the plugin off
- * with doubling delays; more than `maxRestarts` consecutive failures park it
- * in `quarantined` until `resume`. Disabling a plugin revokes its
- * registration at once: in-flight calls and calls still waiting for
- * activation fail, nothing new is sent, and no result produced after that
- * point reaches a caller. The supervisor owns a stopping process until it has
- * exited, even if the caller that disabled it goes away.
- *
- * Plugins are trusted OS-user code. The process boundary protects the
- * server's availability, not its data.
- */
+// Plugins are trusted OS-user code; child isolation protects availability, not data.
+// The supervisor owns startup and shutdown independently of callers, with bounded IPC and cooperative cancellation.
 import * as NodeChildProcess from "node:child_process";
 import type * as NodeStream from "node:stream";
 
@@ -895,7 +871,9 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
       yield* setState(entry, { _tag: "idle" });
     }),
     invoke,
-    state: (pluginId) => Effect.sync(() => Option.fromUndefinedOr(entries.get(pluginId)?.state)),
+    state: Effect.fn("PluginSupervisor.state")((pluginId) =>
+      Effect.sync(() => Option.fromUndefinedOr(entries.get(pluginId)?.state)),
+    ),
     subscribe: PubSub.subscribe(events),
   });
 });
