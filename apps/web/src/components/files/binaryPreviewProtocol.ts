@@ -1,7 +1,11 @@
-export const BINARY_PREVIEW_MAX_BYTES = 50 * 1024 * 1024;
-export const ARCHIVE_ENTRY_MAX_BYTES = 10 * 1024 * 1024;
-export const ARCHIVE_MAX_ENTRIES = 2048;
-export const ARCHIVE_MAX_RATIO = 200;
+import { ARCHIVE_MAX_BYTES } from "@t3tools/client-runtime/zip/bounded-zip";
+
+export {
+  ARCHIVE_ENTRY_MAX_BYTES,
+  ARCHIVE_MAX_ENTRIES,
+  ARCHIVE_MAX_RATIO,
+} from "@t3tools/client-runtime/zip/bounded-zip";
+export const BINARY_PREVIEW_MAX_BYTES = ARCHIVE_MAX_BYTES;
 export const SQLITE_PAGE_SIZE = 50;
 
 export interface ArchiveEntry {

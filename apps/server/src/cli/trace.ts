@@ -100,7 +100,7 @@ export function makeTraceSpanSummary(sinceMs = -Infinity) {
 }
 
 const formatMs = (ms: number) =>
-  ms < 1_000 ? `${Math.round(ms)}ms` : `${(ms / 1_000).toFixed(1)}s`;
+  ms < 1_000 ? `${Math.round(ms)}ms` : `${Math.round(ms / 100) / 10}s`;
 
 function formatTraceSummary(
   summary: ReturnType<ReturnType<typeof makeTraceSpanSummary>["finish"]>,
@@ -127,7 +127,7 @@ function formatTraceSummary(
   const widths = header.map((_, column) => Math.max(...table.map((row) => row[column]!.length)));
   const formatIso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
   return [
-    `${summary.spanCount} spans ended from ${formatIso(summary.firstEndMs)} to ${formatIso(summary.lastEndMs)} (${summary.minutes.toFixed(1)} min).`,
+    `${summary.spanCount} spans ended from ${formatIso(summary.firstEndMs)} to ${formatIso(summary.lastEndMs)} (${summary.minutes.toFixed(1).replace(/\.0+$/, "")} min).`,
     ...(summary.skippedLineCount > 0
       ? [`Skipped ${summary.skippedLineCount} lines that are not spans.`]
       : []),
