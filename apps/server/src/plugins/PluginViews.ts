@@ -1,17 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
-/**
- * Isolated plugin views: the views enabled plugins declare, the exact bytes
- * a client host runs them from, and the calls a mounted view makes into its
- * own plugin.
- *
- * A view's files are read once per installation generation, between the
- * catalogue's consent and a fresh digest of the whole directory that must
- * still equal the consented one. A mismatch serves nothing and asks the
- * catalogue to re-inspect, which disables the installation. Everything a
- * client gets is bound to `(installationId, generation)`: disable, remove, a
- * byte change, or a re-enable drops the views from the next snapshot at once,
- * and later fetches and calls for the old generation are refused.
- */
+// Read generation bytes between consent and a matching fresh digest; mismatches serve nothing and revoke via re-inspection.
+// All fetches and calls pin installation/generation, so revocation never redirects a stale client.
 import * as NodeCrypto from "node:crypto";
 
 import {

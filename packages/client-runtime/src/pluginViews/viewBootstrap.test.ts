@@ -218,6 +218,7 @@ describe("plugin view bootstrap with the host bridge", () => {
       const { t3View, calls, until } = yield* mountBootstrap(() =>
         Effect.never.pipe(Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined))),
       );
+      // @effect-diagnostics-next-line abortControllerInEffect:off - The view API accepts caller-owned cancellation independently of the test fiber.
       const controller = new AbortController();
       const pending = t3View.call("hang", null, { signal: controller.signal });
       const settled = Effect.promise(() => Promise.allSettled([pending]));

@@ -1,23 +1,6 @@
-/**
- * The host's end of one mounted view's MessagePort, shared by every client.
- *
- * A host creates one bridge per mount, after its window-message handshake has
- * handed the view the other port end, and passes every port message to
- * `receive`. The bridge enforces the contract bounds on what the view sends
- * (JSON text only, byte size, nesting depth, a message rate budget, in-flight
- * calls) and turns `call` messages into calls on the host's binding. Every
- * message it sends keeps the same byte and depth bounds: an answer that would
- * not, or that is not JSON, is replaced by a small `error`. Every call it admits or refuses gets
- * exactly one answer, so the view's promise always settles. The
- * binding (environment, installation, generation, view) lives in the host's
- * `call` closure; nothing in a message can name another target.
- *
- * Closing the bridge (its scope, `close`, too many violations, or a missed
- * ping) interrupts every call in flight and drops any answer that arrives
- * later. A host closes it when the view's `(installationId, generation,
- * viewId)` leaves the views snapshot, when the session or environment
- * changes, and when it unmounts the frame.
- */
+// Authority comes from the host's port binding, never message fields.
+// JSON size/depth/rate/concurrency bounds apply in both directions; every admitted or refused call receives one answer.
+// Closing interrupts in-flight calls and drops late answers, including after revocation, session changes or missed pings.
 import {
   PLUGIN_VIEW_MAX_IN_FLIGHT_CALLS,
   PLUGIN_VIEW_MAX_VIOLATIONS,

@@ -1,6 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 
-import { useEnvironmentIds } from "../state/environments";
+import { useEnvironments } from "../state/environments";
 import { useMountPluginActions } from "../state/pluginActions";
 
 function EnvironmentPluginActions(props: { readonly environmentId: EnvironmentId }) {
@@ -14,8 +14,8 @@ function EnvironmentPluginActions(props: { readonly environmentId: EnvironmentId
  * receives no subscription.
  */
 export function PluginActionSubscriptions() {
-  const environmentIds = useEnvironmentIds();
-  return environmentIds.map((environmentId) => (
+  const { environments } = useEnvironments();
+  return environments.map(({ environmentId }) => (
     <EnvironmentPluginActions key={environmentId} environmentId={environmentId} />
   ));
 }
