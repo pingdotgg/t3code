@@ -25,6 +25,7 @@ import {
 import {
   codexRateLimitsToUpdate,
   mergeCodexRateLimits,
+  codexPublishedUsageLimitResetAt,
   codexUsageLimitResetAt,
   type CodexRateLimitSnapshot,
 } from "../../provider/codexUsageLimits.ts";
@@ -38,6 +39,7 @@ import {
   ProviderDriverKind,
   ProviderSetupError,
   type ServerProviderCompatibilityAdvisory,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -1563,7 +1565,10 @@ export type CodexAdapterV2DriverEnv =
 
 export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapterV2")(function* (
   { instanceId, environment, enabled, config }: ProviderAdapterDriverCreateInput<CodexSettings>,
-  hooks: Pick<CodexAdapterV2Options, "onUsageLimits" | "resolveRuntime" | "compatibility"> = {},
+  hooks: Pick<
+    CodexAdapterV2Options,
+    "onUsageLimits" | "getUsageLimits" | "resolveRuntime" | "compatibility"
+  > = {},
 ) {
   const clientFactory = yield* CodexAppServerClientFactory;
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
@@ -1613,6 +1618,7 @@ export interface CodexAdapterV2Options {
   readonly environment: NodeJS.ProcessEnv;
   readonly clientFactory: CodexAppServerClientFactoryShape;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
+  readonly getUsageLimits?: Effect.Effect<ServerProviderUsageLimits | undefined>;
   readonly resolveRuntime?: Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>;
   readonly compatibility?: (
     version: string,
@@ -1786,8 +1792,29 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           Effect.forkScoped,
         );
         const rateLimitSnapshot = yield* Ref.make<CodexRateLimitSnapshot | undefined>(undefined);
+        const usageLimitReset = Effect.fnUntraced(function* () {
+          const atMs = DateTime.toEpochMillis(yield* DateTime.now);
+          const snapshot = yield* Ref.get(rateLimitSnapshot);
+          // Session notifications outrank probes, even when they lack a reset.
+          if (snapshot !== undefined) {
+            return { resetAt: codexUsageLimitResetAt(snapshot, atMs), source: "session" as const };
+          }
+          return {
+            resetAt:
+              adapterOptions.getUsageLimits === undefined
+                ? null
+                : codexPublishedUsageLimitResetAt(yield* adapterOptions.getUsageLimits, atMs),
+            source: "published" as const,
+          };
+        });
         const limitedTurnItems = yield* Ref.make(
-          new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
+          new Map<
+            ProviderThreadId,
+            {
+              readonly item: Extract<OrchestrationV2TurnItem, { type: "error" }>;
+              readonly resetSource: "session" | "published";
+            }
+          >(),
         );
         const activeTurns = yield* Ref.make(new Map<string, ActiveCodexTurnContext>());
         const turnTokenUsageByThread = new Map<string, CodexTurnTokenUsageState>();
@@ -4400,25 +4427,37 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("account/rateLimits/updated", (payload) =>
           Effect.gen(function* () {
+            if (payload.rateLimits.limitId && payload.rateLimits.limitId !== "codex") return;
             const previous = yield* Ref.getAndUpdate(rateLimitSnapshot, (previous) =>
               mergeCodexRateLimits(previous, payload.rateLimits),
             );
-            const resetAt = codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot));
-            for (const item of (yield* Ref.get(limitedTurnItems)).values()) {
-              if (resetAt === null || item.failure.resetAt != null) continue;
+            const resetAt = codexUsageLimitResetAt(
+              yield* Ref.get(rateLimitSnapshot),
+              DateTime.toEpochMillis(yield* DateTime.now),
+            );
+            for (const { item, resetSource } of (yield* Ref.get(limitedTurnItems)).values()) {
+              // Published resets stay provisional until the session reports its allowance.
+              if (resetSource === "session" && (resetAt === null || item.failure.resetAt != null)) {
+                continue;
+              }
               const updated = {
                 ...item,
                 updatedAt: yield* DateTime.now,
                 failure: { ...item.failure, resetAt },
               };
               yield* Ref.update(limitedTurnItems, (current) =>
-                new Map(current).set(item.providerThreadId!, updated),
+                new Map(current).set(item.providerThreadId!, {
+                  item: updated,
+                  resetSource: "session",
+                }),
               );
-              yield* emitProviderEvent({
-                type: "turn_item.updated",
-                driver: CODEX_PROVIDER,
-                turnItem: updated,
-              });
+              if (item.failure.resetAt !== resetAt) {
+                yield* emitProviderEvent({
+                  type: "turn_item.updated",
+                  driver: CODEX_PROVIDER,
+                  turnItem: updated,
+                });
+              }
             }
             const update = codexRateLimitsToUpdate(payload.rateLimits, previous);
             if (update && adapterOptions.onUsageLimits) {
@@ -5722,13 +5761,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   `terminal-failure:${input.context.providerTurnId}`,
                 ),
                 status: terminalStatus,
-                failure:
-                  failure.class === "usage_limit"
-                    ? {
-                        ...failure,
-                        resetAt: codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)),
-                      }
-                    : failure,
+                failure,
                 ...(input.providerRetry === undefined
                   ? {}
                   : {
@@ -5755,17 +5788,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           context: ActiveCodexTurnContext,
           event: CodexRootTerminalEvent,
         ) {
-          const current =
+          const reset =
             event.status === "failed" && event.failure.class === "usage_limit"
-              ? {
-                  ...event,
-                  failure: {
-                    ...event.failure,
-                    resetAt:
-                      event.failure.resetAt ??
-                      codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)),
-                  },
-                }
+              ? yield* usageLimitReset()
+              : undefined;
+          const current =
+            event.status === "failed" && reset !== undefined
+              ? { ...event, failure: { ...event.failure, resetAt: reset.resetAt } }
               : event;
           yield* emitProviderEvent(current);
           const continued = continuedRuns.get(context.providerTurnId) ?? [context];
@@ -5785,7 +5814,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           if (nativeThreadId != null && rootProviderThread !== undefined) {
             rootProviderThreads.set(nativeThreadId, { ...rootProviderThread, status: "idle" });
           }
-          if (current.status === "failed" && current.failure.class === "usage_limit") {
+          if (current.status === "failed" && reset !== undefined) {
             const item = makeProviderFailureTurnItem({
               driver: CODEX_PROVIDER,
               threadId: context.input.threadId,
@@ -5798,7 +5827,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               occurredAt: yield* DateTime.now,
             });
             yield* Ref.update(limitedTurnItems, (items) =>
-              new Map(items).set(context.providerThread.id, item),
+              new Map(items).set(context.providerThread.id, { item, resetSource: reset.source }),
             );
           }
         });

@@ -264,16 +264,43 @@ describe("mergeCodexRateLimits", () => {
 import { codexUsageLimitResetAt } from "./codexUsageLimits.ts";
 
 describe("codexUsageLimitResetAt", () => {
+  const stoppedAtMs = Date.parse("2033-05-18T03:00:00.000Z");
+
   it("waits for every exhausted window and never invents an unknown reset", () => {
     expect(
-      codexUsageLimitResetAt({
-        primary: { usedPercent: 100, resetsAt: 2000000000 },
-        secondary: { usedPercent: 100, resetsAt: 2000100000 },
-      }),
+      codexUsageLimitResetAt(
+        {
+          primary: { usedPercent: 100, resetsAt: 2000000000 },
+          secondary: { usedPercent: 100, resetsAt: 2000100000 },
+        },
+        stoppedAtMs,
+      ),
     ).toBe("2033-05-19T07:20:00.000Z");
-    expect(codexUsageLimitResetAt({ primary: { usedPercent: 100 } })).toBeNull();
     expect(
-      codexUsageLimitResetAt({ primary: { usedPercent: 50, resetsAt: 2000000000 } }),
+      codexUsageLimitResetAt(
+        {
+          primary: { usedPercent: 100, resetsAt: 2000000000 },
+          secondary: { usedPercent: 99, resetsAt: 2000100000 },
+        },
+        stoppedAtMs,
+      ),
+    ).toBe("2033-05-18T03:33:20.000Z");
+    expect(codexUsageLimitResetAt({ primary: { usedPercent: 100 } }, stoppedAtMs)).toBeNull();
+    expect(
+      codexUsageLimitResetAt({ primary: { usedPercent: 50, resetsAt: 2000000000 } }, stoppedAtMs),
+    ).toBeNull();
+  });
+
+  it("ignores a window that has renewed since it was observed", () => {
+    const afterSessionResetMs = Date.parse("2033-05-18T04:00:00.000Z");
+    expect(
+      codexUsageLimitResetAt(
+        {
+          primary: { usedPercent: 100, resetsAt: 2000000000 },
+          secondary: { usedPercent: 40, resetsAt: 2000100000 },
+        },
+        afterSessionResetMs,
+      ),
     ).toBeNull();
   });
 });
