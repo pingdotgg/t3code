@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { splitBufferedAssistantText } from "./assistantStreaming.ts";
+import { splitBufferedAssistantText } from "@t3tools/shared/assistantStreaming";
 
 describe("V2 assistant streaming", () => {
   it("keeps code fences intact", () => {
