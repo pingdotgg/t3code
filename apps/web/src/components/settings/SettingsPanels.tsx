@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
-import { CheckIcon } from "lucide-react";
+import { CheckIcon, RotateCcwIcon } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import {
@@ -309,7 +309,7 @@ function AboutVersionSection() {
               render={
                 <Button
                   size="sm"
-                  variant="outline"
+                  variant="secondary"
                   disabled={buttonDisabled || isUpdateActionPending}
                   onClick={handleButtonClick}
                 >
@@ -421,7 +421,7 @@ function AboutVersionSection() {
   );
 }
 
-export function useSettingsRestore(onRestored?: () => void) {
+function useSettingsRestore(onRestored?: () => void) {
   const {
     theme,
     setTheme,
@@ -430,6 +430,8 @@ export function useSettingsRestore(onRestored?: () => void) {
     setThemeHalf,
     clearThemeHalves,
     themeHalves,
+    blackChrome,
+    setBlackChrome,
   } = useTheme();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -444,10 +446,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(theme !== "system" ? ["Theme"] : []),
     ...(!followSystem ? ["Follow system"] : []),
     ...(themeHalves !== null ? ["Theme mix"] : []),
+    ...(blackChrome ? ["Black chrome"] : []),
     ...(settings.appearanceContrast !== DEFAULT_UNIFIED_SETTINGS.appearanceContrast
       ? ["Contrast"]
       : []),
-    ...(settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? ["Glass opacity"] : []),
     ...(settings.diffColorScheme !== DEFAULT_UNIFIED_SETTINGS.diffColorScheme
       ? ["Diff colors"]
       : []),
@@ -458,12 +460,17 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.mathRenderingEnabled !== DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled
       ? ["Render math"]
       : []),
+    ...(settings.surfaceStyle !== DEFAULT_UNIFIED_SETTINGS.surfaceStyle ? ["Style"] : []),
     ...(settings.panelAnimationDurationMs !== DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs
       ? ["Panel animations"]
       : []),
     ...(settings.environmentIdentificationMode !==
     DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode
       ? ["Environment identification"]
+      : []),
+    ...(settings.hideWindowControlsWhenSidebarCollapsed !==
+    DEFAULT_UNIFIED_SETTINGS.hideWindowControlsWhenSidebarCollapsed
+      ? ["Hide window controls"]
       : []),
     ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
       ? ["Time format"]
@@ -503,10 +510,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? ["Snooze options"]
       : []),
     ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
-    ...(settings.persistComposerContextStrip !==
-    DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip
-      ? ["Composer context"]
-      : []),
     ...getChangedTypographySettingLabels(settings),
     ...(settings.diffFilesCollapsed !== DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed
       ? ["Default diff file state"]
@@ -621,6 +624,11 @@ export function useSettingsRestore(onRestored?: () => void) {
       notifyThemeRestoreFailure();
       return;
     }
+    if (blackChrome && !setBlackChrome(false)) {
+      rollbackThemeState();
+      notifyThemeRestoreFailure();
+      return;
+    }
     if (needsFollowSystemReset && !setFollowSystem(true)) {
       rollbackThemeState();
       notifyThemeRestoreFailure();
@@ -632,11 +640,11 @@ export function useSettingsRestore(onRestored?: () => void) {
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
       effortDisplay: DEFAULT_UNIFIED_SETTINGS.effortDisplay,
       mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
+      surfaceStyle: DEFAULT_UNIFIED_SETTINGS.surfaceStyle,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
-      persistComposerContextStrip: DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
@@ -647,7 +655,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
-      glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
+      hideWindowControlsWhenSidebarCollapsed:
+        DEFAULT_UNIFIED_SETTINGS.hideWindowControlsWhenSidebarCollapsed,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
@@ -743,6 +752,28 @@ function AutoSettleDaysInput({
       onBlur={() => setDraft(String(value))}
       aria-label="Days of inactivity before auto-settle"
     />
+  );
+}
+
+/** Restores every device setting from the settings and appearance headers. */
+export function RestoreDeviceDefaultsButton({
+  onRestored,
+  compact = false,
+}: {
+  onRestored?: () => void;
+  compact?: boolean;
+}) {
+  const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
+  return (
+    <Button
+      size="xs"
+      variant="ghost"
+      disabled={changedSettingLabels.length === 0}
+      onClick={() => void restoreDefaults()}
+    >
+      <RotateCcwIcon className="mx-1 size-3.5" />
+      <span className={compact ? "max-sm:sr-only" : undefined}>Restore device defaults</span>
+    </Button>
   );
 }
 
@@ -1794,6 +1825,7 @@ export function ThreadsSettingsPanel() {
                   lockedProvider={null}
                   instanceEntries={textGenerationModelInstanceEntries}
                   modelOptionsByInstance={textGenerationModelOptionsByInstance}
+                  triggerVariant="settings"
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                   {...(mixedTextGenerationModel ? { triggerLabel: "Mixed" } : {})}
                   getModelDisabledReason={textGenerationModelDisabledReason}
@@ -1838,6 +1870,7 @@ export function ThreadsSettingsPanel() {
                     planModeEnabled={
                       settings.planModeEnabled || selectsPlanAgent(textGenModelOptions)
                     }
+                    triggerVariant="settings"
                     triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                     onModelOptionsChange={(nextOptions) => {
                       updateSettings({
@@ -2020,7 +2053,7 @@ export function MaintenanceSettingsPanel() {
                 <Link to="/settings/diagnostics" search={{ machine: environmentId ?? undefined }} />
               }
               size="sm"
-              variant="outline"
+              variant="secondary"
             >
               View diagnostics
             </Button>
@@ -2048,7 +2081,7 @@ export function AboutSettingsPanel() {
                     <a href={primaryPolicy.supportUrl} target="_blank" rel="noreferrer noopener" />
                   }
                   size="sm"
-                  variant="outline"
+                  variant="secondary"
                 >
                   Get help
                 </Button>
@@ -2082,7 +2115,7 @@ export function AboutSettingsPanel() {
             <Button
               render={<a href={PRIVACY_POLICY_URL} target="_blank" rel="noreferrer noopener" />}
               size="sm"
-              variant="outline"
+              variant="secondary"
             >
               View policy
             </Button>
@@ -2095,7 +2128,7 @@ export function AboutSettingsPanel() {
             <Button
               render={<Link to="/settings/open-source-licenses" />}
               size="sm"
-              variant="outline"
+              variant="secondary"
             >
               View licenses
             </Button>

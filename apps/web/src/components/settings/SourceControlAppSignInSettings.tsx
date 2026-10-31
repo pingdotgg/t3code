@@ -61,7 +61,7 @@ function AppMark(props: { readonly signedIn: boolean }) {
 /** The device code, one cell per character, as GitHub prints it. */
 function DeviceCode(props: { readonly code: string }) {
   return (
-    <div className="flex items-center gap-1 font-mono text-lg font-medium">
+    <div className="flex items-center gap-1 font-mono text-title">
       <span className="sr-only">{props.code}</span>
       {Array.from(props.code, (char, index) =>
         char === "-" ? (
@@ -176,7 +176,7 @@ export function SourceControlAppSignInSettings({
         "Signed in"
       );
     action = (
-      <Button size="xs" variant="outline" disabled={!canSignIn} onClick={() => void signOut()}>
+      <Button size="xs" variant="secondary" disabled={!canSignIn} onClick={() => void signOut()}>
         Sign out
       </Button>
     );
@@ -218,8 +218,8 @@ export function SourceControlAppSignInSettings({
       <div className="flex items-center gap-3 p-3">
         <AppMark signedIn={signedIn} />
         <div className="min-w-0 flex-1 space-y-0.5">
-          <p className="text-sm font-medium text-foreground">{appSignIn.appName}</p>
-          <div className="text-xs text-muted-foreground">{subtitle}</div>
+          <p className="text-label text-foreground">{appSignIn.appName}</p>
+          <div className="text-meta text-muted-foreground">{subtitle}</div>
         </div>
         <div className="shrink-0">{action}</div>
       </div>
@@ -248,16 +248,19 @@ export function SourceControlAppSignInSettings({
               Copy code & open GitHub
               <ExternalLinkIcon aria-hidden className="size-3.5" />
             </Button>
-            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-muted-foreground">
               <span aria-hidden className="size-1.5 rounded-full bg-warning" />
-              Waiting for approval · code expires at {expiryTime(waiting.expiresAt)}
+              <span className="grid gap-1">
+                <span>Waiting for approval</span>
+                <span>Code expires at {expiryTime(waiting.expiresAt)}</span>
+              </span>
             </p>
           </div>
         </div>
       ) : null}
 
       {signedIn ? (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border bg-muted/40 px-3 py-2 text-meta text-muted-foreground">
           <span className="min-w-0 flex-1">
             Reaches repositories in accounts and organizations that installed the app.
           </span>
@@ -269,7 +272,7 @@ export function SourceControlAppSignInSettings({
       {state.status === "failed" && !signedIn ? (
         <p
           role="alert"
-          className="border-t border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+          className="border-t border-destructive/20 bg-destructive/5 px-3 py-2 text-meta text-destructive"
         >
           {state.message}
         </p>

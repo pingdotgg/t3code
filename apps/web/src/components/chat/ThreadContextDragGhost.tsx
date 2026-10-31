@@ -9,13 +9,13 @@ export function ThreadContextDragGhost() {
   return createPortal(
     <div
       aria-hidden="true"
-      className="pointer-events-none fixed left-0 top-0 z-[100] flex max-w-72 items-center gap-2 rounded-lg border bg-popover px-3 py-2 text-sm shadow-lg"
+      className="pointer-events-none fixed left-0 top-0 z-[100] flex max-w-72 items-center gap-2 rounded-card surface-popover px-3 py-2 text-sm"
       style={{ transform: `translate(${ghost.x + 12}px, ${ghost.y + 12}px)` }}
     >
-      <MessagesSquareIcon className="size-4 shrink-0 text-secondary-label" />
+      <MessagesSquareIcon className="size-4 shrink-0 text-muted-foreground" />
       <span className="truncate">{ghost.title}</span>
       {ghost.count > 1 ? (
-        <span className="shrink-0 rounded-full bg-muted px-1.5 text-xs text-secondary-label">
+        <span className="shrink-0 rounded-badge bg-muted px-1.5 text-xs text-muted-foreground">
           +{ghost.count - 1}
         </span>
       ) : null}

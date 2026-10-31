@@ -84,7 +84,7 @@ export function GuideStop({
       <article className="flex min-w-0 flex-col gap-5">
         <Collapsible open={railOpen} onOpenChange={onRailOpenChange}>
           <header className="flex items-center justify-between gap-2">
-            <p className="text-xs text-muted-foreground tabular-nums @max-[56rem]/guide:hidden">
+            <p className="text-meta text-muted-foreground tabular-nums @max-[56rem]/guide:hidden">
               Stop {index + 1} of {stopCount}
             </p>
             <CollapsibleTrigger
@@ -100,7 +100,7 @@ export function GuideStop({
             <div className="flex items-center gap-1">
               <Button
                 size="icon-xs"
-                variant="outline"
+                variant="secondary"
                 aria-label="Previous stop"
                 disabled={index === 0}
                 onClick={() => onStep(-1)}
@@ -109,7 +109,7 @@ export function GuideStop({
               </Button>
               <Button
                 size="icon-xs"
-                variant="outline"
+                variant="secondary"
                 aria-label="Next stop"
                 disabled={index === stopCount - 1}
                 onClick={() => onStep(1)}
@@ -131,9 +131,9 @@ export function GuideStop({
         </Collapsible>
 
         <div className="flex max-w-[60rem] flex-col gap-2">
-          <h2 className="text-lg font-semibold text-foreground">{stop.title}</h2>
+          <h2 className="text-title text-foreground">{stop.title}</h2>
           {stop.summary.trim() !== "" ? (
-            <div className="text-sm text-muted-foreground">
+            <div className="text-body text-muted-foreground">
               <GuideProse text={stop.summary} />
             </div>
           ) : null}
@@ -173,7 +173,7 @@ export function GuideStop({
 
         {otherFiles.length > 0 ? (
           <section className="flex flex-col gap-1.5">
-            <h3 className="text-xs font-medium text-muted-foreground">
+            <h3 className="text-label text-muted-foreground">
               {stop.excerpts.length > 0 ? "Also in this stop" : "Files in this stop"}
             </h3>
             <DiffWorkerPoolProvider>
@@ -184,7 +184,7 @@ export function GuideStop({
                   return (
                     <li key={file.path} className="border-border/60 not-first:border-t">
                       <Collapsible>
-                        <CollapsibleTrigger className="group flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left text-xs outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
+                        <CollapsibleTrigger className="group flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left text-meta outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
                           <ChevronRightIcon
                             aria-hidden
                             className="size-3.5 shrink-0 text-muted-foreground group-data-panel-open:rotate-90"
@@ -213,7 +213,7 @@ export function GuideStop({
                           {diff !== undefined ? (
                             <GuideFileDiff file={diff} loadDiffFiles={loadDiffFiles} />
                           ) : (
-                            <p className="px-3 py-2 text-xs text-muted-foreground">
+                            <p className="px-3 py-2 text-meta text-muted-foreground">
                               {diffLoading
                                 ? "Loading the diff..."
                                 : "This file is not in the loaded diff."}
@@ -232,20 +232,21 @@ export function GuideStop({
         {stop.questions.length > 0 || onAsk !== null ? (
           <section className="flex flex-col gap-1.5">
             {stop.questions.length > 0 ? (
-              <h3 className="text-xs font-medium text-muted-foreground">Questions to consider</h3>
+              <h3 className="text-label text-muted-foreground">Questions to consider</h3>
             ) : null}
             <div className="flex flex-col items-start gap-1.5">
               {stop.questions.map((question) =>
                 onAsk === null ? (
-                  <div key={question} className="text-sm text-foreground">
+                  <div key={question} className="text-body text-foreground">
                     <GuideProse text={question} />
                   </div>
                 ) : (
-                  <button
+                  <Button
                     key={question}
-                    type="button"
+                    variant="secondary"
+                    size="sm-multiline"
                     onClick={() => onAsk(question)}
-                    className="flex min-w-0 items-start gap-2 rounded-lg border border-border/60 px-3 py-1.5 text-left text-sm text-foreground outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                    className="min-w-0 items-start text-left"
                   >
                     <MessageCircleQuestionIcon
                       aria-hidden
@@ -255,7 +256,7 @@ export function GuideStop({
                     <span>
                       <GuideProse text={question} plain />
                     </span>
-                  </button>
+                  </Button>
                 ),
               )}
               {onAsk !== null ? (

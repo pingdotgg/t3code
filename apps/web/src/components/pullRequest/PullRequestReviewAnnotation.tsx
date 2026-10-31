@@ -16,7 +16,7 @@ import { RelativeTime } from "~/components/RelativeTime";
 import { cn } from "~/lib/utils";
 import { SpeechTextField, TextFieldSpeechControls } from "~/speech/useTextFieldSpeech";
 
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { PullRequestEditButton } from "./PullRequestEditButton";
 import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
@@ -35,8 +35,7 @@ import {
   type PullRequestCompletionScope,
 } from "./PullRequestMarkdownTextarea";
 
-const CARD_CLASS =
-  "mx-3 my-2 rounded-xl border border-border/70 bg-background p-3 text-sm shadow-sm";
+const CARD_CLASS = "mx-3 my-2 rounded-card border border-border surface-card p-3 text-sm";
 
 function submitKeys(input: {
   readonly value: string;
@@ -238,15 +237,14 @@ export function ReviewThreadCard({
           className={cn("size-3.5", thread.isResolved && "text-success-foreground")}
           icon={thread.isResolved ? CircleCheck : Circle}
         />
-        <button
-          type="button"
-          className="hover:text-foreground"
+        <InlineButton
+          tone="muted"
           aria-expanded={expanded}
+          aria-label={`${thread.isResolved ? "Resolved" : "Open"}, ${commentCount} ${commentCount === 1 ? "comment" : "comments"}`}
           onClick={() => setExpanded((current) => !current)}
         >
-          {thread.isResolved ? "Resolved" : "Open"} · {commentCount}{" "}
-          {commentCount === 1 ? "comment" : "comments"}
-        </button>
+          {commentCount} {commentCount === 1 ? "comment" : "comments"}
+        </InlineButton>
         {thread.isOutdated ? <span>outdated</span> : null}
         {onFix ? (
           <Button

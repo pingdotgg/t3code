@@ -3,8 +3,8 @@ import { type OrchestrationV2CheckpointFileTotals, type RunId } from "@t3tools/c
 import { type MouseEvent, type ReactNode, memo, useLayoutEffect, useRef, useState } from "react";
 import { type TurnDiffFileChange } from "../../types";
 import { buildTurnDiffTree, type TurnDiffTreeNode } from "../../lib/turnDiffTree";
-import { ChevronRightIcon, FileDiffIcon } from "lucide-react";
-import { ChevronsDownUp, ChevronsUpDown, Folder, FolderClosed } from "lucide";
+import { ChevronRightIcon, FileDiffIcon, FolderIcon } from "lucide-react";
+import { ChevronsDownUp, ChevronsUpDown } from "lucide";
 import { cn } from "~/lib/utils";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { PierreEntryIcon } from "./PierreEntryIcon";
@@ -52,12 +52,12 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
 
   return (
     <div
-      className="@container/changed-files mt-4 rounded-lg bg-secondary dark:bg-input/20"
+      className="@container/changed-files mt-4 rounded-card surface-card"
       data-changed-files-state="tree"
     >
       <div
         data-changed-files-header=""
-        className="sticky top-2 z-10 flex items-center justify-between gap-2 rounded-t-lg bg-secondary px-3 py-2 dark:bg-background dark:bg-linear-to-b dark:from-input/20 dark:to-input/20"
+        className="sticky top-2 z-10 flex items-center justify-between gap-2 rounded-t-card surface-card px-4 py-2"
       >
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium text-foreground">
           <span>
@@ -93,7 +93,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                 }
               >
                 <MorphIcon
-                  className="size-3"
+                  className="size-3.5"
                   icon={allDirectoriesExpanded ? ChevronsDownUp : ChevronsUpDown}
                 />
               </TooltipTrigger>
@@ -108,7 +108,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                 <Button
                   type="button"
                   size="xs"
-                  variant="ghost-muted"
+                  variant="secondary"
                   aria-label="Open diff"
                   onClick={() => onOpenTurnDiff(runId, files[0]?.path)}
                 />
@@ -200,26 +200,23 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
           type="button"
           data-scroll-anchor-ignore
           aria-expanded={isExpanded}
-          className="group flex h-7 w-full cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+          className="group flex h-7 w-full cursor-pointer items-center gap-2 rounded-row py-1.5 pr-2 text-left transition-colors hover:surface-ghost-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
           style={{ paddingLeft: `${leftPadding}px` }}
           onClick={() => toggleDirectory(node.path)}
         >
           <ChevronRightIcon
             aria-hidden="true"
             className={cn(
-              "size-3.5 shrink-0 text-muted-foreground/70 transition-transform group-hover:text-foreground/80",
+              "size-3 shrink-0 text-dim-foreground transition-transform group-hover:text-foreground",
               isExpanded && "rotate-90",
             )}
           />
-          <MorphIcon
-            className="size-3.5 shrink-0 text-muted-foreground/75"
-            icon={isExpanded ? Folder : FolderClosed}
-          />
-          <span className="truncate font-mono text-2xs text-muted-foreground/90 group-hover:text-foreground/90">
+          <FolderIcon className="size-3 shrink-0 text-dim-foreground" />
+          <span className="truncate text-2xs text-dim-foreground group-hover:text-foreground">
             {node.name}
           </span>
           {hasNonZeroStat(node.stat) && (
-            <span className="ml-auto shrink-0 font-mono text-3xs tabular-nums">
+            <span className="ml-auto shrink-0 text-3xs font-medium tabular-nums">
               <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
             </span>
           )}
@@ -231,7 +228,7 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
       <button
         key={`file:${node.path}`}
         type="button"
-        className="group flex h-7 w-full cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+        className="group flex h-7 w-full cursor-pointer items-center gap-2 rounded-row py-1.5 pr-2 text-left transition-colors hover:surface-ghost-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
         style={{ paddingLeft: `${leftPadding}px` }}
         onClick={() => onOpenTurnDiff(runId, node.path)}
         onContextMenu={
@@ -250,13 +247,13 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
           pathValue={node.path}
           kind="file"
           theme={resolvedTheme}
-          className="size-3.5 text-muted-foreground/70"
+          className="size-3 text-dim-foreground"
         />
-        <span className="flex min-w-0 font-mono text-xs text-foreground/85 group-hover:text-foreground">
+        <span className="flex min-w-0 text-xs font-medium text-foreground group-hover:text-foreground">
           <MiddleTruncate value={node.name} />
         </span>
         {node.stat && (
-          <span className="ml-auto shrink-0 font-mono text-3xs tabular-nums">
+          <span className="ml-auto shrink-0 text-3xs font-medium tabular-nums">
             <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
           </span>
         )}
