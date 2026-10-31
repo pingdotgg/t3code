@@ -45,16 +45,18 @@ const ScheduledTaskFixedTimeSchedule = Schema.Struct({
   ),
 });
 
+const ISO_WITH_OFFSET = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+
+// Checked by filter, not pattern, to keep the MCP tool schema small.
 const ScheduledTaskOnceSchedule = Schema.Struct({
   type: Schema.Literal("once"),
   runAt: TrimmedNonEmptyString.check(
-    Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/),
-    Schema.makeFilter((value) => Number.isFinite(Date.parse(value)) || "Invalid date."),
-  ).annotate({
-    description: "ISO 8601 date and time with an offset, such as 2026-11-02T15:00:00-08:00.",
-  }),
-}).annotate({
-  description: "Run once at this time. If the server is offline then, it runs when back.",
+    Schema.makeFilter(
+      (value) =>
+        (ISO_WITH_OFFSET.test(value) && Number.isFinite(Date.parse(value))) ||
+        "Expected an ISO date and time with an offset.",
+    ),
+  ),
 });
 
 const ScheduledTaskWebhookSignatureFields = {
