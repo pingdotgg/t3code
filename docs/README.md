@@ -7,6 +7,7 @@
 - [Working with threads](./user/thread-sidebar.md)
 - [Permission modes](./user/permission-modes.md)
 - [Pipelines](./user/pipelines.md)
+- [Linear](./user/linear.md)
 - [Terminal history](./user/terminal.md)
 - [Source control](./user/source-control.md)
 - [Project settings](./user/project-settings.md)
