@@ -49,7 +49,6 @@ const clientSettings: ClientSettings = {
   fontSizePrompt: 14,
   fontSizeTerminal: 12,
   fontSmoothing: true,
-  onboardingCompletedAt: null,
   panelAnimationDurationMs: 0,
   planModeEnabled: false,
   proactivePanelsEnabled: true,
@@ -177,7 +176,7 @@ describe("DesktopClientSettings", () => {
         const settings = yield* DesktopClientSettings.DesktopClientSettings;
         const savedSettings = {
           ...clientSettings,
-          onboardingCompletedAt: "2026-09-05T12:00:00.000Z",
+          fontSmoothing: false,
         };
         yield* settings.set(savedSettings);
         const savedContents = yield* fileSystem.readFileString(environment.clientSettingsPath);
