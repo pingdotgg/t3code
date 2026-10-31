@@ -178,17 +178,29 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
 });
 
 describe("Antigravity model catalog", () => {
-  it("uses legacy session models only when model config is absent", () => {
-    const fromLegacy = buildAntigravityModelsFromSession({
+  it("preserves session models when the model config is partial", () => {
+    const fromSessionState = buildAntigravityModelsFromSession({
       models: sessionSetupResult.models,
     });
-    expect(fromLegacy).toEqual(buildAntigravityModelsFromSession(sessionSetupResult));
+    expect(fromSessionState).toEqual(buildAntigravityModelsFromSession(sessionSetupResult));
     expect(
       buildAntigravityModelsFromSession({
         ...sessionSetupResult,
         configOptions: [{ ...modelConfig, options: [] }],
       }),
-    ).toEqual([]);
+    ).toEqual(fromSessionState);
+
+    const withClaude = buildAntigravityModelsFromSession({
+      models: {
+        ...sessionSetupResult.models,
+        availableModels: [
+          ...sessionSetupResult.models.availableModels,
+          { modelId: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (Thinking)" },
+        ],
+      },
+      configOptions: [{ ...modelConfig, options: modelOptions.slice(0, 3) }],
+    });
+    expect(withClaude.some((model) => model.slug === "claude-sonnet-4-6")).toBe(true);
   });
 
   it("flattens native option groups without combining distinct model IDs", () => {
@@ -388,7 +400,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     ),
   );
 
-  it.effect("replaces live model choices and accepts an empty catalog", () =>
+  it.effect("preserves the session model catalog across config-only updates", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const harness = yield* makeHarness();
@@ -403,20 +415,21 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
             options: modelOptions.slice(0, 3),
           },
         ];
-        const nextSnapshot = yield* Stream.toPull(
-          harness.provider.snapshot.streamChanges.pipe(
-            Stream.filter((snapshot) => snapshot.models.length === 3),
-          ),
-        );
+        const nextSnapshot = yield* Stream.toPull(harness.provider.snapshot.streamChanges);
         yield* harness.provider.onConfigOptionsUpdated(configOptions);
         expect((yield* nextSnapshot)[0]).toMatchObject({
-          models: buildAntigravityModelsFromSession({ configOptions }),
+          models: buildAntigravityModelsFromSession({
+            configOptions,
+            models: sessionSetupResult.models,
+          }),
           auth: before.auth,
           workspaceSnapshots: before.workspaceSnapshots,
           slashCommands: expectedCommands,
         });
         yield* harness.provider.onConfigOptionsUpdated([]);
-        expect((yield* harness.provider.snapshot.getSnapshot).models).toEqual([]);
+        expect((yield* harness.provider.snapshot.getSnapshot).models).toEqual(
+          buildAntigravityModelsFromSession({ models: sessionSetupResult.models }),
+        );
       }),
     ),
   );
