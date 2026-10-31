@@ -868,6 +868,32 @@ describe("CursorAdapterV2", () => {
         {
           type: "tool-call-completed",
           modelCallId: "native-model-call",
+          callId: "grep-counts",
+          toolCall: {
+            type: "grep",
+            args: { pattern: "TODO", outputMode: "count" },
+            result: {
+              status: "success",
+              value: {
+                workspaceResults: {
+                  [workspace]: {
+                    type: "count",
+                    output: {
+                      counts: [
+                        { file: "src/a.ts", count: 1 },
+                        { file: "src/b.ts", count: 3 },
+                      ],
+                      total: 4,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        {
+          type: "tool-call-completed",
+          modelCallId: "native-model-call",
           callId: "glob-failed",
           toolCall: {
             type: "glob",
@@ -1114,6 +1140,14 @@ describe("CursorAdapterV2", () => {
             pattern: "TODO",
             status: "failed",
             results: [{ fileName: "src", preview: "search failed" }],
+          },
+          {
+            pattern: "TODO",
+            status: "completed",
+            results: [
+              { fileName: "src/a.ts", preview: "1 match" },
+              { fileName: "src/b.ts", preview: "3 matches" },
+            ],
           },
           {
             pattern: "*.ts",
