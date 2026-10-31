@@ -1100,8 +1100,9 @@ describe("AcpRuntimeModel", () => {
     expect(second.pendingOutputBytes).toBeUndefined();
   });
 
-  it("keeps the newest 16 MiB of ACP terminal output at a UTF-8 boundary", () => {
+  it("trims full ACP terminal output by a further 1 MiB at a UTF-8 boundary", () => {
     const cap = 16 * 1024 * 1024;
+    const step = 1024 * 1024;
     const chunk = (text: string | Uint8Array) => ({
       sessionUpdate: "terminal_output_chunk" as const,
       terminalId: "terminal-cap",
@@ -1110,32 +1111,41 @@ describe("AcpRuntimeModel", () => {
     const seeded = applyAcpAgentTerminalUpdate(undefined, {
       sessionUpdate: "terminal_update",
       terminalId: "terminal-cap",
-      output: { data: Buffer.from(`é${"a".repeat(cap - 3)}`).toString("base64") },
+      output: {
+        data: Buffer.from(`${"a".repeat(step)}é${"a".repeat(cap - step - 3)}`).toString("base64"),
+      },
     });
     expect(seeded.outputBytes).toBe(cap - 1);
 
-    // One byte over the cap falls inside "é", so the whole character is dropped.
-    const trimmed = applyAcpAgentTerminalUpdate(seeded, chunk("bc"));
-    expect(trimmed.output.length).toBe(cap - 1);
+    const full = applyAcpAgentTerminalUpdate(seeded, chunk("b"));
+    expect(full.outputBytes).toBe(cap);
+    expect(full.output.length).toBe(cap - 1);
+
+    // The cut at one byte past the cap plus 1 MiB falls inside "é", so the whole character goes.
+    const trimmed = applyAcpAgentTerminalUpdate(full, chunk("c"));
+    expect(trimmed.outputBytes).toBe(cap - step - 1);
+    expect(trimmed.output.length).toBe(cap - step - 1);
     expect(trimmed.output.slice(0, 2)).toBe("aa");
     expect(trimmed.output.slice(-3)).toBe("abc");
-    expect(trimmed.outputBytes).toBe(cap - 1);
 
-    const emoji = applyAcpAgentTerminalUpdate(trimmed, chunk("🙂"));
-    expect(emoji.output.slice(-5)).toBe("abc🙂");
-    expect(emoji.outputBytes).toBe(cap);
-    expect(Buffer.byteLength(emoji.output)).toBe(cap);
+    const appended = applyAcpAgentTerminalUpdate(trimmed, chunk("🙂"));
+    expect(appended.output.slice(-5)).toBe("abc🙂");
+    expect(appended.output.length).toBe(trimmed.output.length + 2);
+    expect(appended.outputBytes).toBe(cap - step + 3);
 
-    // Exit flushes an incomplete trailing character and trims again.
-    const pending = applyAcpAgentTerminalUpdate(emoji, chunk(Buffer.from("🙂").subarray(0, 2)));
+    expect(Buffer.byteLength(appended.output)).toBe(appended.outputBytes);
+
+    const refilled = applyAcpAgentTerminalUpdate(appended, chunk("x".repeat(step - 3)));
+    expect(refilled.outputBytes).toBe(cap);
+    const pending = applyAcpAgentTerminalUpdate(refilled, chunk(Buffer.from("🙂").subarray(0, 2)));
     const exited = applyAcpAgentTerminalUpdate(pending, {
       sessionUpdate: "terminal_update",
       terminalId: "terminal-cap",
       exitStatus: { exitCode: 1 },
     });
-    expect(exited.output.slice(-4)).toBe("c🙂\uFFFD");
+    expect(exited.output.slice(-4)).toBe("xxx\uFFFD");
+    expect(exited.outputBytes).toBe(cap - step);
     expect(exited.outputBytes).toBe(Buffer.byteLength(exited.output));
-    expect(exited.outputBytes).toBeLessThanOrEqual(cap);
 
     const cleared = applyAcpAgentTerminalUpdate(exited, {
       sessionUpdate: "terminal_update",
