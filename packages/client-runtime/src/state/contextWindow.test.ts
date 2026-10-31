@@ -34,6 +34,7 @@ function sendInput(
     readonly source?: ProviderInstanceId;
     readonly selected?: ProviderInstanceId;
     readonly onlyEarlierConversationUsage?: boolean;
+    readonly unstartedFork?: boolean;
     readonly slashCommands?: ReadonlyArray<string>;
     readonly dismissed?: boolean;
     readonly heldQueue?: boolean;
@@ -136,6 +137,29 @@ function sendInput(
     ],
     visibleTurnItems,
   } as unknown as ThreadStructure;
+  if (overrides.unstartedFork === true) {
+    Object.assign(projection, {
+      thread: {
+        ...projection.thread,
+        activeProviderThreadId: null,
+        forkedFrom: { type: "run", threadId: "source-thread", runId: "source-run" },
+      },
+      runs: [],
+      providerThreads: [],
+      providerTurns: [],
+      contextTransfers: [
+        {
+          type: "fork",
+          targetThreadId: projection.thread.id,
+          sourceThreadId: "source-thread",
+          sourcePoint: { runId: "source-run" },
+          sourceProviderInstanceId: source,
+          status: "pending",
+          sourceTokenUsage: { usedTokens: 293_611, updatedAt: lastTurnAt },
+        },
+      ],
+    });
+  }
   const selected = overrides.selected ?? claude;
   return {
     projection,
@@ -202,6 +226,13 @@ describe("shouldCompactBeforeSend", () => {
     {
       name: "when only an earlier conversation reported usage",
       onlyEarlierConversationUsage: true,
+      expected: false,
+    },
+    { name: "an unstarted fork resuming its source instance", unstartedFork: true, expected: true },
+    {
+      name: "an unstarted fork selecting another Claude home",
+      unstartedFork: true,
+      selected: claudeOtherHome,
       expected: false,
     },
     { name: "for a provider without /compact", slashCommands: [], expected: false },

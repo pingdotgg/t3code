@@ -290,7 +290,7 @@ export function shouldCompactBeforeSend(input: {
   );
   const liveUsage = latestProviderTurnTokenUsage(
     projection.providerTurns.filter((turn) => turn.providerThreadId === activeProviderThreadId),
-    projection,
+    input.selection.instanceId === projection.thread.modelSelection.instanceId ? projection : null,
     providerThread,
   );
   const contextWindow = deriveLatestContextWindowSnapshot(
