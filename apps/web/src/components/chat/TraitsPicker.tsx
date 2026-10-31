@@ -25,7 +25,7 @@ import {
   normalizeModelSlug,
 } from "@t3tools/shared/model";
 import { memo, type ReactNode, useRef } from "react";
-import { ChevronDownIcon, GaugeIcon, ZapIcon } from "lucide-react";
+import { GaugeIcon, ZapIcon } from "lucide-react";
 import {
   Menu,
   MenuGroup,
@@ -723,9 +723,6 @@ export const TraitsPicker = memo(function TraitsPicker({
               <span data-composer-control-label>{triggerLabel}</span>
             </>
           )}
-          {isComposerOwned && size !== "xs" ? (
-            <ChevronDownIcon aria-hidden="true" className="size-3 opacity-65" />
-          ) : null}
         </TooltipTrigger>
         <TooltipPopup side="top">{triggerDescription}</TooltipPopup>
       </Tooltip>

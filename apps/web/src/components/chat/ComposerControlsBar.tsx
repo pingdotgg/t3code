@@ -30,14 +30,10 @@ import {
 import type { useComposerProviderModel } from "./useComposerProviderModel";
 import { resolveComposerControlsOwnership } from "./composerControlsOwnership";
 
-const pickerSurface =
-  "border-foreground/12 bg-foreground/4 hover:bg-foreground/9 data-popup-open:bg-foreground/9";
-
 /**
  * The composer footer controls: model picker, traits, mode controls and the overflow menu for
  * blocks that do not fit. Rendered in the expanded footer or the resting controls host.
  */
-
 export function ComposerControlsBar(props: {
   environmentId: EnvironmentId;
   routeKind: ChatComposerProps["routeKind"];
@@ -166,7 +162,7 @@ export function ComposerControlsBar(props: {
     planModeEnabled,
     isComposerOwned: true,
     effortDisplay: props.effortDisplay,
-    triggerClassName: pickerSurface,
+    triggerClassName: "border-s-border rounded-s-none data-popup-open:bg-accent",
     // Permissions always live in the effort menu, so the section never unmounts while open.
     extraMenuContent: (
       <ComposerPermissionsSection
@@ -271,8 +267,7 @@ export function ComposerControlsBar(props: {
       modelOptionsByInstance={modelOptionsByInstance}
       size={composerControlsCollapsed ? "xs" : "sm"}
       triggerClassName={cn(
-        pickerSurface,
-        "me-0.5",
+        "data-popup-open:bg-accent",
         composerControlsCollapsed ? "min-w-13 shrink text-xs!" : "min-w-13",
       )}
       terminalOpen={terminalOpen}
