@@ -204,7 +204,13 @@ describe("resolveBoundEndpoints", () => {
     "reports only the tailnet address with %o, where no LAN client can connect",
     (mode) => {
       expect(
-        resolveBoundEndpoints({ platform: "linux", host: "0.0.0.0", port: 3773, interfaces: INTERFACES, ...mode }),
+        resolveBoundEndpoints({
+          platform: "linux",
+          host: "0.0.0.0",
+          port: 3773,
+          interfaces: INTERFACES,
+          ...mode,
+        }),
       ).toEqual([{ kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" }]);
     },
   );
