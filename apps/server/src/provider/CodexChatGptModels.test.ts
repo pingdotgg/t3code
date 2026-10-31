@@ -44,7 +44,15 @@ it.effect(
                           supported_reasoning_levels: [{ effort: "high", description: "Deep" }],
                         },
                       ]
-                    : [{ slug: "account-b-only", display_name: "B", visibility: "list" }],
+                    : [
+                        {
+                          slug: "account-b-only",
+                          display_name: "B",
+                          visibility: "list",
+                          default_reasoning_level: null,
+                          supported_reasoning_levels: null,
+                        },
+                      ],
               }),
             ),
           );
