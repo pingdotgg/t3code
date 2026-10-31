@@ -26,7 +26,6 @@ interface ChatTerminalDrawersProps {
   readonly activeTerminalOpen: boolean;
   readonly composerHeight: number;
   readonly launchContext: PersistentTerminalLaunchContext | null;
-  readonly focusRequestId: number;
   readonly splitShortcutLabel: string | undefined;
   readonly splitVerticalShortcutLabel: string | undefined;
   readonly newShortcutLabel: string | undefined;
@@ -99,7 +98,6 @@ export function ChatTerminalDrawers(props: ChatTerminalDrawersProps) {
       offscreen={props.offscreen ?? false}
       composerHeight={mountedThreadKey === activeThreadKey ? props.composerHeight : 0}
       launchContext={mountedThreadKey === activeThreadKey ? props.launchContext : null}
-      focusRequestId={mountedThreadKey === activeThreadKey ? props.focusRequestId : 0}
       splitShortcutLabel={props.splitShortcutLabel}
       splitVerticalShortcutLabel={props.splitVerticalShortcutLabel}
       newShortcutLabel={props.newShortcutLabel}
