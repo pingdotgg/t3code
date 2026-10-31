@@ -1718,6 +1718,10 @@ body {
   padding: 0;
 }
 
+[data-preview-url-input] {
+  font-variant-ligatures: none;
+}
+
 /* Lighter default icon stroke. In the base layer so stroke-* utilities still win; any
    CSS beats lucide's stroke-width="2" attribute. */
 @layer base {
@@ -2179,6 +2183,20 @@ code {
 
 :is(.chat-markdown, .composer-tiptap) .chat-markdown-shiki :is(.shiki, .diffs) {
   background: transparent !important;
+}
+
+/* Plain-text fences override the highlighter's inline foreground colors. */
+:is(.chat-markdown, .composer-tiptap)
+  .chat-markdown-codeblock:is(
+    [data-language="text" i],
+    [data-language="txt" i],
+    [data-language="plain" i],
+    [data-language="plaintext" i]
+  ) {
+  &,
+  & :is(pre, pre *) {
+    color: inherit !important;
+  }
 }
 
 /* Paragraphs and code blocks arrive in chunks while a response streams. Fade

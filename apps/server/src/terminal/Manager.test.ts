@@ -7,6 +7,7 @@ import {
   type TerminalOpenInput,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProjectId,
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -31,8 +32,11 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as TestClock from "effect/testing/TestClock";
 import { expect, vi } from "vite-plus/test";
 
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as TerminalManager from "./Manager.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
@@ -991,6 +995,92 @@ it.layer(
     }),
   );
 
+  it.effect("releases delivered output while the process queue stays busy", () =>
+    Effect.gen(function* () {
+      // Observe retained payloads, since delivery and bounded history alone cannot detect a leak.
+      let readState: Effect.Effect<unknown> = Effect.void;
+      const makeRef = vi.mocked(SynchronizedRef.make).getMockImplementation()!;
+      using _capture = vi.spyOn(SynchronizedRef, "make").mockImplementation(<A>(value: A) =>
+        makeRef(value).pipe(
+          Effect.tap((ref) =>
+            Effect.sync(() => {
+              if (typeof value === "object" && value !== null && "sessions" in value) {
+                readState = SynchronizedRef.get(ref);
+              }
+            }),
+          ),
+        ),
+      );
+      const { manager, ptyAdapter } = yield* createManager(5, { historyByteLimit: 1024 });
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const measured = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<void>();
+      const drained = yield* Deferred.make<void>();
+      yield* Effect.addFinalizer(() => Deferred.succeed(finish, undefined));
+      yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined));
+      const chunkBytes = 64 * 1024;
+      const chunkCount = 256;
+      let delivered = 0;
+      const unsubscribe = yield* manager.subscribe((event) =>
+        Effect.gen(function* () {
+          if (event.type !== "output") return;
+          delivered += 1;
+          expect(event.data).toBe(
+            delivered === 1
+              ? "start"
+              : (delivered === 2
+                  ? "queued-a"
+                  : delivered === 3
+                    ? "queued-b"
+                    : `${delivered - 3}`
+                ).padEnd(chunkBytes, "x"),
+          );
+          if (delivered === 1) {
+            yield* Deferred.succeed(entered, undefined);
+            yield* Deferred.await(release);
+          }
+          if (delivered === chunkCount) {
+            yield* Deferred.succeed(measured, undefined);
+            yield* Deferred.await(finish);
+          } else if (delivered < chunkCount) {
+            process.emitData(`${delivered}`.padEnd(chunkBytes, "x"));
+          } else if (delivered === chunkCount + 2) {
+            yield* Deferred.succeed(drained, undefined);
+          }
+        }),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      process.emitData("start");
+      yield* Deferred.await(entered);
+      process.emitData("queued-a".padEnd(chunkBytes, "x"));
+      process.emitData("queued-b".padEnd(chunkBytes, "x"));
+      yield* Deferred.succeed(release, undefined);
+      yield* Deferred.await(measured);
+
+      const state = (yield* readState) as {
+        sessions: ReadonlyMap<
+          string,
+          { pendingProcessEvents: ReadonlyArray<{ data?: string } | undefined> }
+        >;
+      };
+      const retained = [...state.sessions.values()].flatMap(
+        (session) => session.pendingProcessEvents,
+      );
+      const retainedBytes = retained.reduce(
+        (bytes, event) => bytes + (event?.data?.length ?? 0),
+        0,
+      );
+      expect(delivered).toBe(chunkCount);
+      expect(retainedBytes).toBeLessThanOrEqual(2 * chunkBytes);
+      expect(retained.length).toBeLessThanOrEqual(4);
+      yield* Deferred.succeed(finish, undefined);
+      yield* Deferred.await(drained);
+    }),
+  );
+
   it.effect("retains plain Unicode and control characters around a split query", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -1441,6 +1531,61 @@ it.layer(
     }),
   );
 
+  it.effect(
+    "writes completion syntax for the fallback shell instead of the configured fish shell",
+    () =>
+      Effect.gen(function* () {
+        const env = { SHELL: "/missing/fish" };
+        const { manager, ptyAdapter, baseDir } = yield* createManager(5, { env }).pipe(
+          Effect.provide(layerWithHostPlatform("linux")),
+        );
+        ptyAdapter.spawnFailures.push(new Error("spawn fish ENOENT"));
+        const written = yield* Deferred.make<void>();
+        const terminals = TerminalManager.TerminalManager.of({
+          ...manager,
+          write: (input) =>
+            manager.write(input).pipe(Effect.tap(() => Deferred.succeed(written, undefined))),
+        });
+        const runner = yield* ProjectSetupScriptRunner.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.succeed(TerminalManager.TerminalManager, terminals),
+              Layer.mock(ProjectService.ProjectService)({}),
+              Layer.mock(ProjectionStore.ProjectionStoreV2)({
+                getThreadShell: () => Effect.succeed(null),
+              }),
+              ServerSettings.layerTest(),
+              Layer.succeed(HostProcess.Platform, "linux"),
+              Layer.succeed(HostProcess.Environment, env),
+            ),
+          ),
+        );
+        yield* runner.runForThread({
+          threadId: "thread-setup-fallback",
+          worktreePath: baseDir,
+          project: {
+            id: ProjectId.make("project-setup-fallback"),
+            workspaceRoot: baseDir,
+            scripts: [
+              {
+                id: "setup",
+                name: "Setup",
+                command: "echo setup-ready",
+                icon: "play",
+                runOnWorktreeCreate: true,
+              },
+            ],
+          },
+          observeCompletion: {},
+        });
+        const process = ptyAdapter.processes[0]!;
+        process.emitData("\x1b[?2004h");
+        yield* Deferred.await(written);
+        const command = process.writes[0]!;
+        expect(command).toContain('"$?"');
+      }),
+  );
+
   it.effect("preserves Windows Path casing when appending managed ACP binaries", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1531,6 +1676,62 @@ it.layer(
       ]);
       expect(ptyAdapter.spawnInputs[1]?.args).toEqual(["-NoLogo"]);
       expect(ptyAdapter.spawnInputs[2]?.args).toEqual(["-NoLogo"]);
+    }),
+  );
+
+  it.effect("closes an idle cmd fallback before rejecting its completion wrapper", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, baseDir } = yield* createManager(5, {
+        env: { SystemRoot: "C:\\Windows" },
+        subprocessInspector: () =>
+          Effect.succeed({
+            hasRunningSubprocess: false,
+            childCommand: null,
+            processIds: [],
+          }),
+      }).pipe(Effect.provide(layerWithHostPlatform("win32")));
+      ptyAdapter.spawnFailures.push(
+        new Error("spawn pwsh ENOENT"),
+        new Error("spawn WindowsPowerShell ENOENT"),
+        new Error("spawn powershell ENOENT"),
+      );
+      const runner = yield* ProjectSetupScriptRunner.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(TerminalManager.TerminalManager, manager),
+            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getThreadShell: () => Effect.succeed(null),
+            }),
+            ServerSettings.layerTest(),
+          ),
+        ),
+      );
+      const error = yield* runner
+        .runForThread({
+          threadId: "thread-cmd-fallback",
+          worktreePath: baseDir,
+          project: {
+            id: ProjectId.make("project-cmd-fallback"),
+            workspaceRoot: baseDir,
+            scripts: [
+              {
+                id: "setup",
+                name: "Setup",
+                command: "echo setup-ready",
+                icon: "play",
+                runOnWorktreeCreate: true,
+              },
+            ],
+          },
+          observeCompletion: {},
+        })
+        .pipe(Effect.flip);
+
+      expect(error._tag).toBe("ProjectSetupScriptUnsupportedShellError");
+      expect(ptyAdapter.spawnInputs.at(-1)?.shell).toBe("C:\\Windows\\System32\\cmd.exe");
+      expect(ptyAdapter.processes[0]?.writes).toEqual([]);
+      expect(ptyAdapter.processes[0]?.killed).toBe(true);
     }),
   );
 

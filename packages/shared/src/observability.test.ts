@@ -214,6 +214,39 @@ describe("observability", () => {
     );
   });
 
+  it("keeps an object that appears twice without marking it circular", () => {
+    const shared = { cwd: "/repo" };
+    const sharedMap = new Map([["cwd", "/repo"]]);
+    const sharedSet = new Set(["/repo"]);
+
+    assert.deepStrictEqual(
+      compactTraceAttributes({
+        ctx: { first: shared, second: shared },
+        list: [shared, shared],
+        maps: [sharedMap, sharedMap],
+        sets: [sharedSet, sharedSet],
+      }),
+      {
+        ctx: { first: { cwd: "/repo" }, second: { cwd: "/repo" } },
+        list: [{ cwd: "/repo" }, { cwd: "/repo" }],
+        maps: [{ cwd: "/repo" }, { cwd: "/repo" }],
+        sets: [["/repo"], ["/repo"]],
+      },
+    );
+  });
+
+  it("caps shared references that would expand exponentially", () => {
+    let graph: Record<string, unknown> = { cwd: "/repo" };
+    for (let depth = 0; depth < 20; depth++) {
+      graph = { left: graph, right: graph };
+    }
+
+    const serialized = JSON.stringify(compactTraceAttributes({ graph }));
+
+    assert.include(serialized, '"[Truncated]"');
+    assert.isBelow(serialized.length, 1_000_000);
+  });
+
   nodeServicesIt("node services", (it) => {
     it.effect(
       "keeps trace producers responsive during a slow write, bounds the backlog, and drains on close",
