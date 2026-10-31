@@ -33,11 +33,13 @@ function Composer({
   value,
   richTextEnabled,
   skills,
+  slashCommands,
   onChange,
 }: {
   value: string;
   richTextEnabled: boolean;
   skills: ReadonlyArray<ServerProviderSkill>;
+  slashCommands?: ComposerPromptEditorProps["slashCommands"];
   onChange?: ComposerPromptEditorProps["onChange"] | undefined;
 }) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
@@ -49,6 +51,7 @@ function Composer({
       richTextEnabled={richTextEnabled}
       contextRecords={new Map()}
       skills={skills}
+      slashCommands={slashCommands}
       disabled={false}
       placeholder=""
       onChange={(...args) => {
@@ -65,9 +68,16 @@ function composer(
   richTextEnabled = true,
   skills: ReadonlyArray<ServerProviderSkill> = [],
   onChange?: ComposerPromptEditorProps["onChange"],
+  slashCommands?: ComposerPromptEditorProps["slashCommands"],
 ) {
   return (
-    <Composer value={value} richTextEnabled={richTextEnabled} skills={skills} onChange={onChange} />
+    <Composer
+      value={value}
+      richTextEnabled={richTextEnabled}
+      skills={skills}
+      slashCommands={slashCommands}
+      onChange={onChange}
+    />
   );
 }
 
@@ -435,5 +445,56 @@ describe("an Arabic line", () => {
     expect(editor.view.coordsAtPos(editor.state.selection.head).left).toBeGreaterThan(
       box.left + box.width / 2,
     );
+  });
+});
+
+describe("a slash command opening the prompt", () => {
+  const commands = [{ name: "btw" }];
+  const expectColored = (editor: Editor, colored: string | null, message?: string) =>
+    vi.waitFor(() => {
+      const text = editor.view.dom.querySelector(".text-info-foreground")?.textContent ?? null;
+      expect(text, message).toBe(colored);
+    });
+
+  it("is colored only while it would run as a command", async () => {
+    const cases: ReadonlyArray<[prompt: string, richText: boolean, colored: string | null]> = [
+      ["/btw why?", true, "/btw"],
+      ["/btw why?", false, "/btw"],
+      ["/btw", true, "/btw"],
+      ["/btwx", true, null],
+      ["/btw/notes.md", true, null],
+      ["ask /btw later", true, null],
+      ["`/btw`", true, null],
+      ["**/btw**", true, null],
+      ["/btw**x**", true, null],
+      ["/bt**w** why?", true, null],
+      ["/btw **why?**", true, "/btw"],
+      ["```\n/btw\n```", true, null],
+    ];
+    for (const [prompt, richText, colored] of cases) {
+      await using screen = await mountEditor(prompt, richText, [], undefined, commands);
+      await expectColored(screen.editor, colored, prompt);
+      await vi.waitFor(() => {
+        expect(screen.editor.view.dom.textContent, prompt).toContain("btw");
+      });
+    }
+  });
+
+  it("follows edits and the command list without changing the prompt", async () => {
+    const onChange = vi.fn();
+    await using screen = await mountEditor("/btw", true, [], onChange, commands);
+    await act(async () => {
+      screen.editor.commands.insertContentAt(5, "x");
+    });
+    await expectColored(screen.editor, null);
+    await act(async () => {
+      screen.editor.commands.deleteRange({ from: 5, to: 6 });
+    });
+    await expectColored(screen.editor, "/btw");
+
+    onChange.mockClear();
+    const editor = await screen.update("/btw", true, [], onChange, []);
+    await expectColored(editor, null);
+    expect(onChange).not.toHaveBeenCalled();
   });
 });

@@ -324,6 +324,35 @@ export function parseSideChatCommand(text: string): { prompt: string } | null {
   return match ? { prompt: match[1]?.trim() ?? "" } : null;
 }
 
+export interface NamedSlashCommand {
+  readonly name: string;
+}
+
+/** The `/command` opening a prompt, when it is one of `commands`. */
+export function leadingSlashCommand(
+  text: string,
+  commands: ReadonlyArray<NamedSlashCommand>,
+): string | null {
+  const name = /^\/(\S+)/.exec(text)?.[1];
+  if (!name) return null;
+  const lowerName = name.toLowerCase();
+  return commands.some((command) => command.name.toLowerCase() === lowerName)
+    ? text.slice(0, name.length + 1)
+    : null;
+}
+
+/** The commands the composer runs itself, as its slash menu offers them. */
+export function composerBuiltInSlashCommands(input: {
+  readonly planModeUiEnabled: boolean;
+  readonly sideChatAvailable: boolean;
+}): ReadonlyArray<NamedSlashCommand> {
+  return [
+    { name: "model" },
+    ...(input.planModeUiEnabled ? [{ name: "plan" }, { name: "default" }] : []),
+    ...(input.sideChatAvailable ? [{ name: "side" }, { name: "btw" }] : []),
+  ];
+}
+
 export function parseStandaloneComposerSlashCommand(
   text: string,
 ): Exclude<ComposerSlashCommand, "model" | "side" | "btw"> | null {

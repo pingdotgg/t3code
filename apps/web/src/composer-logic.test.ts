@@ -22,6 +22,7 @@ import {
   extendReplacementRangeForTrailingSpace,
   formatAssistantCitationForComposer,
   isPathSuggestionCurrent,
+  leadingSlashCommand,
   parseSideChatCommand,
   replaceTextRange,
 } from "./composer-logic";
@@ -548,6 +549,24 @@ describe("extendReplacementRangeForTrailingSpace", () => {
     expect(extendReplacementRangeForTrailingSpace("@firest", 3, "@file ")).toBe(3);
     expect(extendReplacementRangeForTrailingSpace("@fi rest", 3, "@file")).toBe(3);
     expect(extendReplacementRangeForTrailingSpace("@fi", 3, "@file ")).toBe(3);
+  });
+});
+
+describe("leadingSlashCommand", () => {
+  const commands = [{ name: "btw" }, { name: "plugin:review" }];
+
+  it("returns a known command opening the text, as it was typed", () => {
+    expect(leadingSlashCommand("/btw why does this fail?", commands)).toBe("/btw");
+    expect(leadingSlashCommand("/BTW\nline two", commands)).toBe("/BTW");
+    expect(leadingSlashCommand("/plugin:review", commands)).toBe("/plugin:review");
+  });
+
+  it("ignores paths, unknown commands, and commands later in the text", () => {
+    expect(leadingSlashCommand("/btw/notes.md", commands)).toBeNull();
+    expect(leadingSlashCommand("/btwx", commands)).toBeNull();
+    expect(leadingSlashCommand("/", commands)).toBeNull();
+    expect(leadingSlashCommand("ask /btw later", commands)).toBeNull();
+    expect(leadingSlashCommand("/btw", [])).toBeNull();
   });
 });
 

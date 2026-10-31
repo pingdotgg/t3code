@@ -128,6 +128,20 @@ function buttonsLabelled(container: HTMLElement, label: string) {
   );
 }
 
+it("colors a leading command only where it opens the text", async () => {
+  setup();
+  await using screen = await renderText("/compact now\n\n/compact later", {
+    leadingCommand: "/compact",
+    lineBreaks: true,
+    parseRawHtml: false,
+  });
+  await vi.waitFor(() => {
+    const colored = screen.container.querySelectorAll(".text-info-foreground");
+    expect([...colored].map((node) => node.textContent)).toEqual(["/compact"]);
+    expect(screen.container.querySelector("p")?.textContent).toBe("/compact now");
+  });
+});
+
 it("shows unavailable audio when a workspace embed has no thread", async () => {
   setup();
   await using screen = await renderText("![recording](clip.wav)");
