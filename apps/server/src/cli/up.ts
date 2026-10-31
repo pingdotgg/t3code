@@ -382,7 +382,11 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
 
   const after = yield* readSetup();
   yield* Console.log(
-    `\nThis machine\n${formatSetup(after)}\n\n${formatNextSteps(routes, after.service.installed)}`,
+    // From what took effect: a failed service step can undo a choice.
+    `\nThis machine\n${formatSetup(after)}\n\n${formatNextSteps(
+      { connect: after.connect === true, lan: after.lan },
+      after.service.installed,
+    )}`,
   );
 });
 
