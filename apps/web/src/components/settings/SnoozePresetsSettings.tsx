@@ -413,7 +413,7 @@ function DurationFields(props: { minutes: number; onChange: (minutes: number) =>
     <div className="flex max-w-full min-w-0 items-center gap-2">
       <NumberField
         size="sm"
-        className="w-32 min-w-0"
+        className="w-32 shrink-0"
         min={1}
         max={maxAmount}
         step={1}
@@ -454,7 +454,7 @@ function DurationFields(props: { minutes: number; onChange: (minutes: number) =>
           }
         }}
       >
-        <SelectTrigger size="sm" className="w-28" aria-label="Unit">
+        <SelectTrigger size="sm" className="w-28 max-sm:min-w-0" aria-label="Unit">
           <SelectValue />
         </SelectTrigger>
         <SelectPopup>
