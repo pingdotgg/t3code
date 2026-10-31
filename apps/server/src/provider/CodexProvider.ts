@@ -52,6 +52,7 @@ import {
   type CodexRateLimitSnapshot,
   type CodexResetCreditsSummary,
 } from "./codexUsageLimits.ts";
+import { CODEX_AUTOMATIC_CYBER_ACCESS_PROGRAM_ID } from "../codexModelOptions.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import packageJson from "../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
@@ -111,6 +112,12 @@ const DEFAULT_SERVICE_TIER_ID = "default";
 
 const SERVICE_TIER_DESCRIPTIONS: Readonly<Record<string, string>> = {
   ultrafast: "Even faster, more expensive",
+};
+
+const CYBER_ACCESS_PROGRAM_LABELS: Readonly<Record<string, string>> = {
+  standard: "Standard",
+  daybreakBlue: "Daybreak Blue",
+  daybreakRed: "Daybreak Red",
 };
 
 function reasoningEffortLabel(reasoningEffort: string): string {
@@ -241,6 +248,27 @@ export function mapCodexModelCapabilities(
       currentValue: defaultServiceTier,
     });
   }
+  const cyberAccessPrograms = model.availableAccessPrograms?.cyber ?? [];
+  // Only Daybreak programmes need a choice; standard-only models keep their usual controls.
+  if (cyberAccessPrograms.some((program) => program !== "standard")) {
+    optionDescriptors.push({
+      id: "cyberAccessProgram",
+      label: "Cyber Access",
+      type: "select",
+      options: [
+        {
+          id: CODEX_AUTOMATIC_CYBER_ACCESS_PROGRAM_ID,
+          label: "Automatic",
+          isDefault: true,
+        },
+        ...cyberAccessPrograms.map((program) => ({
+          id: program,
+          label: CYBER_ACCESS_PROGRAM_LABELS[program] ?? program,
+        })),
+      ],
+      currentValue: CODEX_AUTOMATIC_CYBER_ACCESS_PROGRAM_ID,
+    });
+  }
 
   return createModelCapabilities({
     optionDescriptors,
@@ -314,13 +342,19 @@ function applyConfiguredCodexServiceTier(
 /**
  * Codex has no static default capability set, so a bare custom slug borrows
  * the first built-in's descriptors; an entry with its own capabilities keeps
- * them.
+ * them. Daybreak access is per model, so a borrowed slug never inherits it.
  */
-function appendCustomCodexModels(
+export function appendCustomCodexModels(
   models: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<CustomModelSetting>,
 ): ReadonlyArray<ServerProviderModel> {
-  const fallbackCapabilities = models.find((model) => model.capabilities)?.capabilities ?? null;
+  const borrowed = models.find((model) => model.capabilities)?.capabilities ?? null;
+  const fallbackCapabilities = borrowed && {
+    ...borrowed,
+    optionDescriptors: borrowed.optionDescriptors?.filter(
+      (descriptor) => descriptor.id !== "cyberAccessProgram",
+    ),
+  };
   return providerModelsFromSettings(models, customModels, fallbackCapabilities);
 }
 
