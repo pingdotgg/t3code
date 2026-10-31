@@ -7,7 +7,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -203,6 +205,13 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => false),
     );
 
+  const folderOnPath = (link: string) =>
+    Effect.sync(() =>
+      pathEntries(process.env.PATH, ":").some(
+        (entry) => entry.replace(/\/+$/, "") === path.dirname(link),
+      ),
+    );
+
   const state: DesktopCliCommand["Service"]["state"] = Effect.gen(function* () {
     if (!environment.isPackaged) {
       return { supported: false, installedPath: null, onPath: false, launcherPath: null } as const;
@@ -218,11 +227,7 @@ export const make = Effect.gen(function* () {
     // Only a folder missing from PATH; prepending one that is there behind another t3 would
     // change which t3 runs.
     const setup =
-      onPath ||
-      Option.isNone(installed) ||
-      pathEntries(process.env.PATH, ":").some(
-        (entry) => entry.replace(/\/+$/, "") === path.dirname(installed.value),
-      )
+      onPath || Option.isNone(installed) || (yield* folderOnPath(installed.value))
         ? undefined
         : startupLine(installed.value);
     return {
@@ -297,14 +302,18 @@ export const make = Effect.gen(function* () {
           );
       if (!created) continue;
       // Our own link is swapped in place; anything else there makes symlink fail and stays.
-      const staging = `${link}.staging`;
+      const staging = `${link}.${yield* Random.nextIntBetween(0, 0xffffff)}.tmp`;
       const linked = yield* (
         link === replaced
-          ? fs.remove(staging, { force: true }).pipe(
-              Effect.andThen(fs.symlink(launcher, staging)),
-              Effect.andThen(fs.rename(staging, link)),
-              Effect.tapError(() => fs.remove(staging, { force: true }).pipe(Effect.ignore)),
-            )
+          ? fs
+              .symlink(launcher, staging)
+              .pipe(
+                Effect.andThen(
+                  fs
+                    .rename(staging, link)
+                    .pipe(Effect.tapError(() => fs.remove(staging).pipe(Effect.ignore))),
+                ),
+              )
           : fs.symlink(launcher, link)
       ).pipe(
         Effect.as(true),
@@ -340,12 +349,14 @@ export const make = Effect.gen(function* () {
     return yield* state;
   }).pipe(Effect.withSpan("desktop.cliCommand.uninstall"));
 
+  // One at a time, so Settings and onboarding cannot both append the line.
+  const addToPathPermit = yield* Semaphore.make(1);
   const addToPath: DesktopCliCommand["Service"]["addToPath"] = Effect.gen(function* () {
     const installed = yield* installedAt;
     if (Option.isNone(installed)) return yield* fail("Install the t3 command first.");
     const setup = startupLine(installed.value);
     if (setup === undefined) return yield* fail("T3 Code cannot add t3 to this shell's PATH.");
-    if (!(yield* hasLine(setup))) {
+    if (!(yield* folderOnPath(installed.value)) && !(yield* hasLine(setup))) {
       yield* fs.makeDirectory(path.dirname(setup.path), { recursive: true }).pipe(
         Effect.andThen(
           fs.writeFileString(setup.path, `\n# Added by T3 Code\n${setup.line}\n`, { flag: "a" }),
@@ -354,7 +365,7 @@ export const make = Effect.gen(function* () {
       );
     }
     return yield* state;
-  }).pipe(Effect.withSpan("desktop.cliCommand.addToPath"));
+  }).pipe(addToPathPermit.withPermits(1), Effect.withSpan("desktop.cliCommand.addToPath"));
 
   const installOnFirstLaunch: DesktopCliCommand["Service"]["installOnFirstLaunch"] = Effect.gen(
     function* () {

@@ -140,7 +140,12 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       // Add to PATH appends one line, once, and keeps a final line with no newline intact.
       const zshrc = path.join(home, ".zshrc");
       yield* fs.writeFileString(zshrc, "# mine");
+      // A folder already on PATH needs nothing.
+      process.env.PATH = path.join(home, ".local", "bin");
       yield* command.addToPath;
+      expect(yield* fs.readFileString(zshrc)).toBe("# mine");
+      process.env.PATH = "";
+      yield* Effect.all([command.addToPath, command.addToPath], { concurrency: "unbounded" });
       expect((yield* command.addToPath).pathSetup).toEqual({ file: "~/.zshrc", added: true });
       expect(yield* fs.readFileString(zshrc)).toBe(
         '# mine\n# Added by T3 Code\nexport PATH="$HOME/.local/bin:$PATH"\n',
@@ -212,6 +217,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       expect((yield* after.install).installedPath).toBe(path.join(home, "bin", "t3"));
 
       // An old link of ours is updated where it is, not moved to a folder that may be off PATH.
+      yield* fs.writeFileString(path.join(home, "bin", "t3.staging"), "mine");
       yield* fs.remove(path.join(home, "bin", "t3"));
       yield* fs.symlink(path.join(home, "old-t3", "bin", "t3"), path.join(home, "bin", "t3"));
       process.env.PATH = "";
@@ -220,6 +226,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         path.join(home, "new-t3", "bin", "t3"),
       );
       expect(yield* fs.exists(path.join(home, ".local", "bin", "t3"))).toBe(false);
+      expect(yield* fs.readFileString(path.join(home, "bin", "t3.staging"))).toBe("mine");
     }).pipe(Effect.scoped),
   );
 
