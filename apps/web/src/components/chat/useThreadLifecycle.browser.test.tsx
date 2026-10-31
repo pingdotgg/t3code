@@ -1,9 +1,11 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
 const state = vi.hoisted(() => ({
+  childThreadInputs: [] as EnvironmentThreadShell[],
   switchRef: (async () => undefined) as (input: unknown) => Promise<unknown>,
 }));
 
@@ -31,7 +33,7 @@ vi.mock(import("../../hooks/useThreadActions"), async (importOriginal) => ({
 
 vi.mock(import("../../state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useChildThreadInputs: (() => []) as never,
+  useChildThreadInputs: (() => state.childThreadInputs) as never,
 }));
 
 import { render } from "../../../test/render";
@@ -40,6 +42,7 @@ import { useThreadLifecycle } from "./useThreadLifecycle";
 const environmentId = EnvironmentId.make("environment:test");
 
 function setup() {
+  state.childThreadInputs = [];
   state.switchRef = async () => undefined;
 }
 
@@ -58,6 +61,40 @@ function threadInput(threadId: string, branch: string) {
 }
 
 type ThreadInput = ReturnType<typeof threadInput>;
+
+it.each([
+  { remote: false, approval: false, link: "Open question" },
+  { remote: true, approval: false, link: "Open question" },
+  { remote: true, approval: false, link: "Child" },
+  { remote: true, approval: true, link: "Open approval" },
+])("opens the child in its environment ($remote, $link)", async ({ remote, approval, link }) => {
+  setup();
+  const parent = threadInput("parent", "main");
+  const childEnvironmentId = remote ? EnvironmentId.make("remote") : environmentId;
+  state.childThreadInputs = [
+    {
+      id: ThreadId.make("child"),
+      environmentId: childEnvironmentId,
+      title: "Child",
+      hasPendingApprovals: approval,
+    } as EnvironmentThreadShell,
+  ];
+  await using screen = await render(
+    <RestoreBranchHarness
+      thread={parent}
+      currentRouteThreadKeyRef={{ current: parent.routeThreadKey }}
+      refreshGitStatus={() => undefined}
+      focusComposer={() => undefined}
+    />,
+    { router: "/environment:test/parent" },
+  );
+  await screen.getByRole("button", { name: link, exact: true }).click();
+  await vi.waitFor(() =>
+    expect(screen.router?.state.location.pathname).toBe(
+      `/${encodeURIComponent(childEnvironmentId)}/child`,
+    ),
+  );
+});
 
 function RestoreBranchHarness(props: {
   readonly thread: ThreadInput;
@@ -95,13 +132,17 @@ function RestoreBranchHarness(props: {
     persistThreadSettingsForNextTurn: async () => ({ _tag: "Success", value: undefined }) as never,
   });
   return (
-    <button
-      type="button"
-      disabled={lifecycle.isRestoringThreadBranch}
-      onClick={lifecycle.handleSwitchCheckoutToThreadStable}
-    >
-      {lifecycle.isRestoringThreadBranch ? "Restoring..." : "Restore branch"}
-    </button>
+    <>
+      {lifecycle.childInputNow?.description}
+      {lifecycle.childInputNow?.actions}
+      <button
+        type="button"
+        disabled={lifecycle.isRestoringThreadBranch}
+        onClick={lifecycle.handleSwitchCheckoutToThreadStable}
+      >
+        {lifecycle.isRestoringThreadBranch ? "Restoring..." : "Restore branch"}
+      </button>
+    </>
   );
 }
 
