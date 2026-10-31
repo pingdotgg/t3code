@@ -399,9 +399,15 @@ export function useComposerContextImport(input: {
             !linkedEnvironments.has(record.environmentId)
           )
             break;
-          const imported = conflicts
-            ? { ...record, contextId: toKindScopedComposerContextId("thread", randomUUID()) }
-            : record;
+          const attached = getComposerDraft(threadDraftTarget)?.threadContexts.find(
+            (thread) =>
+              thread.environmentId === record.environmentId && thread.threadId === record.threadId,
+          );
+          const imported =
+            attached ??
+            (conflicts
+              ? { ...record, contextId: toKindScopedComposerContextId("thread", randomUUID()) }
+              : record);
           addComposerDraftThreadContexts(threadDraftTarget, [imported], {
             appendReference: false,
           });

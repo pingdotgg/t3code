@@ -193,10 +193,11 @@ it.each([
   );
 });
 
-it.each([false, true])(
-  "preserves thread identity when pasting a colliding context (other environment: %s)",
-  async (otherEnvironment) => {
-    const target = DraftId.make(`thread-collision-${otherEnvironment}`);
+it.each(["same", "renamed", "other-environment"] as const)(
+  "preserves thread identity across repeated pastes: %s",
+  async (variant) => {
+    const otherEnvironment = variant === "other-environment";
+    const target = DraftId.make(`thread-collision-${variant}`);
     const store = useComposerDraftStore.getState();
     using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
     const environmentId = EnvironmentId.make("thread-source");
@@ -210,7 +211,9 @@ it.each([false, true])(
           { environmentId: otherEnvironmentId, threadId: first.threadId },
           "Second",
         )
-      : first;
+      : variant === "renamed"
+        ? threadContextRecord({ environmentId, threadId: first.threadId }, "Renamed")
+        : first;
     store.addThreadContexts(target, [first], { appendReference: false });
     let importer!: Importer;
     await using _screen = await render(
@@ -245,11 +248,16 @@ it.each([false, true])(
         .get(pasted.contextId);
     });
     const records = store.getComposerDraft(target)!.threadContexts;
-    expect(records.find((record) => record.contextId === importedId)).toEqual({
-      ...pasted,
-      contextId: importedId,
+    expect(records.find((record) => record.contextId === importedId)).toMatchObject({
+      environmentId: pasted.environmentId,
+      threadId: pasted.threadId,
     });
     expect(records).toHaveLength(otherEnvironment ? 2 : 1);
     expect(records[0]).toEqual(first);
+    await act(() => {
+      const repeated = importer.importContextRecords([pasted], pasted.environmentId);
+      expect(repeated.get(pasted.contextId)).toBe(importedId);
+    });
+    expect(store.getComposerDraft(target)!.threadContexts).toEqual(records);
   },
 );
