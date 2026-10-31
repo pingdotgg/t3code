@@ -26,7 +26,7 @@ import {
 import { saveLayoutNow, useLayoutStore } from "./layoutStore";
 
 /** Handles fill the gap between panes (the chrome gutter), centered on the boundary. */
-const HANDLE_SIZE = "var(--workspace-pane-inset)";
+const HANDLE_SIZE = "8px";
 /**
  * The smallest usable column or stacked pane. A column grows up to the
  * strip's width; vertically stacked panes share their column's fixed height.
