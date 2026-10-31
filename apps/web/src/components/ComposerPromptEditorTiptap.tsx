@@ -165,6 +165,7 @@ export interface ComposerPromptEditorProps {
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
   placeholder: string;
+  narrowPlaceholder?: string | undefined;
   /** Rendered after the placeholder text, such as a key hint. */
   placeholderSuffix?: ReactNode;
   ariaLabel?: string | undefined;
@@ -906,6 +907,7 @@ function ComposerPromptEditorTiptapInner(
     skills,
     disabled,
     placeholder,
+    narrowPlaceholder,
     ariaLabel,
     suggestionListId,
     activeSuggestionId,
@@ -1835,7 +1837,16 @@ function ComposerPromptEditorTiptapInner(
                   placeholderClassName,
                 )}
               >
-                {placeholder}
+                {narrowPlaceholder ? (
+                  <>
+                    <span className="@max-[440px]/composer-surface:hidden">{placeholder}</span>
+                    <span className="hidden @max-[440px]/composer-surface:inline">
+                      {narrowPlaceholder}
+                    </span>
+                  </>
+                ) : (
+                  placeholder
+                )}
                 {placeholderSuffix}
               </div>
             ) : null}
