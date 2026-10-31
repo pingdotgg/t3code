@@ -58,6 +58,7 @@ import {
   LAYOUT_TAB_ICON_CLASS,
   LAYOUT_TAB_SLOT_CLASS,
   LayoutPaneTab,
+  LayoutPaneTabStrip,
   LayoutTabCloseButton,
   showLayoutTabMenu,
   useLayoutPaneSiblingTabs,
@@ -414,7 +415,7 @@ function LauncherTabNotch({ tabId }: { tabId: string | null }) {
   const siblingTabs = useLayoutPaneSiblingTabs();
   return (
     <PaneNotch>
-      <div className="flex min-w-0 items-center gap-1 overflow-hidden">
+      <LayoutPaneTabStrip>
         {siblingTabs.before.map((tab) => (
           <LayoutPaneTab key={tab.id} tab={tab} />
         ))}
@@ -440,7 +441,7 @@ function LauncherTabNotch({ tabId }: { tabId: string | null }) {
         {siblingTabs.after.map((tab) => (
           <LayoutPaneTab key={tab.id} tab={tab} />
         ))}
-      </div>
+      </LayoutPaneTabStrip>
       <Tooltip>
         <TooltipTrigger
           render={
