@@ -178,7 +178,6 @@ import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { GuestPendingMessages } from "./chat/GuestShareControls";
 import { useDeviceState } from "~/state/device";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
-import { ComposerContextPermissions } from "./ComposerContextPermissions";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { isEditableFocused } from "../lib/editableFocus";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
@@ -627,7 +626,9 @@ export default function ChatView(props: ChatViewProps) {
   const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const branchToolbarRef = useRef<BranchToolbarHandle>(null);
-  // Approval, question and plan cards portal here, just above the composer tray.
+  const [composerTrayControlsHost, setComposerTrayControlsHost] = useState<HTMLDivElement | null>(
+    null,
+  );
   const [composerRequestCardHost, setComposerRequestCardHost] = useState<HTMLDivElement | null>(
     null,
   );
@@ -3283,7 +3284,6 @@ export default function ChatView(props: ChatViewProps) {
             onFileOpen={openFileAttachmentStable}
           />
         ) : null}
-        {hasQueuedTurns ? queuedRunsControl : null}
       </>
     );
 
@@ -3676,13 +3676,14 @@ export default function ChatView(props: ChatViewProps) {
                         : undefined
                     }
                   >
-                    <ChildThreadApprovals threadRef={activeThreadRef} />
-                    <div
-                      ref={setComposerRequestCardHost}
-                      data-chat-composer-request-host="true"
-                      className="mb-2 empty:hidden"
-                    />
                     <ComposerSurface.Shell contextRow={showComposerContextStrip}>
+                      <ChildThreadApprovals threadRef={activeThreadRef} />
+                      <div
+                        ref={setComposerRequestCardHost}
+                        data-chat-composer-request-host="true"
+                        className="empty:hidden"
+                      />
+                      {hasQueuedTurns ? queuedRunsControl : null}
                       <ComposerSurface.Host
                         inert={queuedRunEdit.isSaving}
                         aria-busy={queuedRunEdit.isSaving}
@@ -3826,7 +3827,9 @@ export default function ChatView(props: ChatViewProps) {
                                 supportsPullRequests ? activeProjectRepository : null
                               }
                               threadPullRequests={(activeThreadShell ?? activeThread)?.pullRequests}
+                              onRespondToApproval={onRespondToApprovalStable}
                               requestCardHost={composerRequestCardHost}
+                              trayControlsHost={composerTrayControlsHost}
                               onComposerOverlayHeightChange={publishComposerOverlayHeightStable}
                               permissionsShownInStrip={showComposerContextStrip && !isServerThread}
                               promptRef={promptRef}
@@ -3875,7 +3878,7 @@ export default function ChatView(props: ChatViewProps) {
                           data-terminal-open={terminalUiState.terminalOpen ? "true" : undefined}
                           className="relative z-0"
                         >
-                          {showComposerContextStrip && (
+                          {composerMounted && (
                             <div className="pointer-events-auto">
                               <BranchToolbar
                                 forceNewWorktree={multipleModelSelections !== null}
@@ -3917,20 +3920,12 @@ export default function ChatView(props: ChatViewProps) {
                                 }
                                 availableEnvironments={logicalProjectEnvironments}
                                 environmentUnavailable={activeEnvironmentUnavailableState !== null}
-                                {...(isServerThread
-                                  ? {}
-                                  : {
-                                      trailing: (
-                                        <ComposerContextPermissions
-                                          environmentId={environmentId}
-                                          runtimeMode={runtimeMode}
-                                          supportedRuntimeModes={
-                                            activeProviderStatus?.supportedRuntimeModes
-                                          }
-                                          onRuntimeModeChange={handleRuntimeModeChangeStable}
-                                        />
-                                      ),
-                                    })}
+                                trailing={
+                                  <div
+                                    ref={setComposerTrayControlsHost}
+                                    className="ms-auto flex min-w-0 flex-1 justify-end"
+                                  />
+                                }
                               />
                             </div>
                           )}
