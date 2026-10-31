@@ -17,7 +17,19 @@ export function formatWorkingTimer(startIso: string, endIso: string): string | n
   return formatDuration(elapsedSeconds * 1_000);
 }
 
-export function formatWorkingTimerNow(startIso: string, environmentId: EnvironmentId): string {
+export function formatWorkingTimerNow(
+  startIso: string,
+  environmentId: EnvironmentId,
+  clock = false,
+): string {
+  if (clock) {
+    const seconds =
+      Math.max(
+        0,
+        Math.floor((toServerClock(environmentId, Date.now()) - Date.parse(startIso)) / 1000),
+      ) || 0;
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  }
   const startedAtMs = Date.parse(startIso);
   if (!Number.isFinite(startedAtMs)) {
     return "0s";
