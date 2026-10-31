@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
+import * as NodeZlib from "node:zlib";
 import { describe, expect, it } from "@effect/vitest";
 import {
   AgentSessionImportSource,
@@ -131,6 +132,21 @@ const writeTranscript = Effect.fn("AgentSessionScanner.test.writeTranscript")(fu
   const seconds = input.mtimeMs / 1000;
   yield* fileSystem.utimes(input.filePath, seconds, seconds);
 });
+
+const writeCompressedTranscript = Effect.fn("AgentSessionScanner.test.writeCompressedTranscript")(
+  function* (input: {
+    readonly filePath: string;
+    readonly contents: string;
+    readonly mtimeMs: number;
+  }) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fileSystem.makeDirectory(path.dirname(input.filePath), { recursive: true });
+    yield* fileSystem.writeFile(input.filePath, NodeZlib.zstdCompressSync(input.contents));
+    const seconds = input.mtimeMs / 1000;
+    yield* fileSystem.utimes(input.filePath, seconds, seconds);
+  },
+);
 
 const claudeSessionLine = (cwd: string) =>
   `${JSON.stringify({ type: "user", cwd, sessionId: "s1" })}\n${JSON.stringify({ type: "assistant" })}\n`;
@@ -339,6 +355,42 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             threadCount: 2,
             lastActiveAt: "2026-04-01T09:00:00.000Z",
             alreadyImported: true,
+            git: null,
+          },
+        ]);
+      }),
+    );
+
+    it.effect("discovers zstd-compressed Codex rollouts", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-compressed-");
+
+        yield* writeCompressedTranscript({
+          filePath: path.join(
+            codexHomePath,
+            "sessions",
+            "2026",
+            "04",
+            "01",
+            "rollout-2026-04-01T09-00-00-aaa.jsonl.zst",
+          ),
+          contents: codexRolloutLine(workspace),
+          mtimeMs: Date.parse("2026-04-01T09:00:00.000Z"),
+        });
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath });
+
+        expect(result.candidates).toEqual([
+          {
+            path: workspace,
+            title: path.basename(workspace),
+            sources: ["codex"],
+            threadCount: 1,
+            lastActiveAt: "2026-04-01T09:00:00.000Z",
+            alreadyImported: false,
             git: null,
           },
         ]);
@@ -1201,6 +1253,64 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           ["Legacy prompt", "Legacy answer"],
         ]);
         expect(threads[0]).toMatchObject({ source: "pi", title: "Pi refactor" });
+      }),
+    );
+
+    it.effect("imports a recent zstd-compressed Codex rollout", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-compressed-");
+
+        yield* writeCompressedTranscript({
+          filePath: path.join(
+            codexHomePath,
+            "sessions",
+            "2026",
+            "08",
+            "24",
+            "rollout-codex-compressed.jsonl.zst",
+          ),
+          contents: [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: { id: "codex-compressed", cwd: workspace },
+            }),
+            encodeTranscriptRecord({
+              type: "event_msg",
+              timestamp: "2026-08-24T10:00:00.000Z",
+              payload: { type: "user_message", message: "Review this code" },
+            }),
+            encodeTranscriptRecord({
+              type: "response_item",
+              timestamp: "2026-08-24T10:01:00.000Z",
+              payload: {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "Looks good" }],
+              },
+            }),
+          ].join("\n"),
+          mtimeMs: nowMs - 60 * 60 * 1000,
+        });
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(
+          threads.map((thread) => ({
+            providerSessionId: thread.providerSessionId,
+            messages: thread.messages.map((message) => message.text),
+          })),
+        ).toEqual([
+          { providerSessionId: "codex-compressed", messages: ["Review this code", "Looks good"] },
+        ]);
       }),
     );
 
