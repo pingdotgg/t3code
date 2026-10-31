@@ -194,15 +194,14 @@ export function AccountLimits(props: {
         </View>
         {props.trailing}
       </View>
-      {notice ? (
-        <Text className="text-sm text-foreground-muted">{notice}</Text>
-      ) : (
+      {notice ? <Text className="text-sm text-foreground-muted">{notice}</Text> : null}
+      {limits.windows.length > 0 && limits.unavailable?.reason !== "unsupported" ? (
         <View className="gap-3">
           {limits.windows.map((window) => (
             <WindowRow key={window.id} window={window} color={color} now={now} />
           ))}
         </View>
-      )}
+      ) : null}
       {externalUsage ? (
         <Pressable
           accessibilityRole="link"
