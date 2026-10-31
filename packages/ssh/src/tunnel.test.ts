@@ -1,17 +1,27 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import {
+  HttpClient,
+  HttpClientResponse,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/http";
+import * as NetAddress from "effect/net/NetAddress";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as SshAuth from "./auth.ts";
@@ -80,6 +90,16 @@ function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
 }
 
 const ARCHIVE = { archiveVersion: "1.2.3-preview.20260911.4" } as const;
+
+const runShell = Effect.fn("runShell")(function* (script: string, env?: Record<string, string>) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const handle = yield* spawner.spawn(ChildProcess.make("/bin/sh", ["-c", script], { env }));
+  const [stderr, exitCode] = yield* Effect.all(
+    [Stream.mkString(Stream.decodeText(handle.stderr)), handle.exitCode],
+    { concurrency: "unbounded" },
+  );
+  return { stderr, exitCode };
+}, Effect.scoped);
 
 describe("ssh tunnel scripts", () => {
   it("rejects archive versions that are not a single exact version segment", () => {
@@ -259,6 +279,58 @@ describe("ssh tunnel scripts", () => {
       }).pipe(Effect.provide(layer), Effect.scoped);
     }),
   );
+
+  for (const downloader of ["curl", "wget"] as const) {
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+      `names the release URL ${downloader} could not download`,
+      (ctx) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const server = yield* HttpServer.HttpServer;
+          const notFound: Array<string> = [];
+          // Only this version publishes checksums; no archive is ever served.
+          yield* server.serve(
+            Effect.gen(function* () {
+              const { url } = yield* HttpServerRequest.HttpServerRequest;
+              if (url === `/v${ARCHIVE.archiveVersion}/SHA256SUMS`) {
+                return HttpServerResponse.empty({ status: 200 });
+              }
+              notFound.push(url);
+              return HttpServerResponse.empty({ status: 404 });
+            }),
+          );
+          if (!NetAddress.isInetAddress(server.address)) {
+            return yield* Effect.die(new Error("Expected a TCP address"));
+          }
+          const baseUrl = `http://127.0.0.1:${server.address.port}`;
+          const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runner-download-" });
+          // A PATH with one downloader proves each branch, not whichever the host prefers.
+          const bin = `${home}/bin`;
+          const linked = yield* runShell(
+            `command -v ${downloader} >/dev/null || exit 3; mkdir '${bin}'; for tool in ${downloader} mkdir cat uname mktemp rm; do ln -s "$(command -v "$tool")" '${bin}'; done`,
+          );
+          if (linked.exitCode === 3) return ctx.skip(`${downloader} is not installed`);
+          assert.equal(linked.exitCode, 0, linked.stderr);
+
+          for (const [version, missing] of [
+            ["9.9.9", "/SHA256SUMS"],
+            [ARCHIVE.archiveVersion, ".tar.gz"],
+          ] as const) {
+            const result = yield* runShell(
+              SshTunnel.buildRemoteT3RunnerScript({
+                archiveVersion: version,
+                releaseBaseUrl: baseUrl,
+              }),
+              { HOME: home, PATH: bin },
+            );
+            const missed = notFound.at(-1) ?? "";
+            assert.isTrue(missed.startsWith(`/v${version}/`) && missed.endsWith(missing), missed);
+            assert.notEqual(result.exitCode, 0);
+            assert.include(result.stderr, `${baseUrl}${missed}`);
+          }
+        }).pipe(Effect.scoped, Effect.provide([NodeHttpServer.layerTest, NodeServices.layer])),
+    );
+  }
 
   it.effect.each(["local tunnel", "remote server"] as const)(
     "waits for %s shutdown before reconnecting the same target",
