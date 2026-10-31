@@ -3310,9 +3310,47 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (commands.some((entry) => entry.name === command.name)) {
           // session.command neither accepts nor returns our ID; record the preceding history boundary.
           const newest = yield* client.message.list({ sessionID, order: "desc", limit: 1 });
-          yield* markBefore(sessionId, newest.data[0]?.id ?? null);
+          const before = newest.data[0]?.id ?? null;
+          yield* markBefore(sessionId, before);
           if (!sending()) return;
-          return yield* client.session.command({ sessionID, ...command });
+          yield* client.session.command({ sessionID, ...command });
+          // A command that never prompts the model starts no execution, so no event ends its turn.
+          const idle = () => state.active === turn && !busy.has(sessionId);
+          if (!idle()) return;
+          const active = yield* client.session
+            .active()
+            .pipe(Effect.timeout(ACTIVE_CHECK_TIMEOUT), Effect.option);
+          if (active._tag === "None") {
+            return yield* Effect.logWarning("Could not check whether an OpenCode command started.");
+          }
+          if (sessionId in active.value) return;
+          // An execution that already ended left history behind; its events may still trail this reply.
+          const ran = yield* OpenCode2Client.paginate(
+            { sessionID, order: "desc" as const, limit: 1 },
+            client.message.list,
+          ).pipe(
+            Stream.takeWhile((message) => message.id !== before),
+            Stream.filter(
+              (message) =>
+                message.type === "user" || message.type === "assistant" || message.type === "idle",
+            ),
+            Stream.runHead,
+            Effect.timeout(ACTIVE_CHECK_TIMEOUT),
+            Effect.option,
+          );
+          if (ran._tag === "None") {
+            return yield* Effect.logWarning("Could not check whether an OpenCode command ran.");
+          }
+          if (ran.value._tag === "Some") return;
+          return yield* lock.withPermit(
+            Effect.suspend(() =>
+              idle()
+                ? endExecution(state, turn, {
+                    status: turn.interrupted ? "interrupted" : "completed",
+                  })
+                : Effect.void,
+            ),
+          );
         }
       }
       const skills = SKILL_MENTION.test(text)
