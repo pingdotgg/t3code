@@ -34,6 +34,7 @@ import * as ServerSettings from "../serverSettings.ts";
 
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_MAX_DELAY = Duration.minutes(15);
+const VCS_STATUS_CACHE_CAPACITY = 256;
 const MAX_FAILURE_DIAGNOSTIC_VALUES = 8;
 const MAX_FAILURE_DIAGNOSTIC_VALUE_LENGTH = 128;
 
@@ -137,6 +138,22 @@ interface CachedRemoteStatus extends CachedValue<VcsStatusRemoteResult | null> {
 interface CachedVcsStatus {
   readonly local: CachedValue<VcsStatusLocalResult> | null;
   readonly remote: CachedRemoteStatus | null;
+}
+
+// Keep recent snapshots for subscriptions and direct reads without retaining every visited cwd.
+function retainCachedStatus(
+  cache: ReadonlyMap<string, CachedVcsStatus>,
+  cwd: string,
+  status: CachedVcsStatus,
+) {
+  const nextCache = new Map(cache);
+  nextCache.delete(cwd);
+  nextCache.set(cwd, status);
+  if (nextCache.size > VCS_STATUS_CACHE_CAPACITY) {
+    const oldestCwd = nextCache.keys().next().value;
+    if (oldestCwd !== undefined) nextCache.delete(oldestCwd);
+  }
+  return nextCache;
 }
 
 interface ActiveRemotePoller {
@@ -260,7 +277,10 @@ export const make = Effect.gen(function* () {
   const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
     cwd: string,
   ) {
-    return yield* Ref.get(cacheRef).pipe(Effect.map((cache) => cache.get(cwd) ?? null));
+    return yield* Ref.modify(cacheRef, (cache) => {
+      const cached = cache.get(cwd) ?? null;
+      return [cached, cached ? retainCachedStatus(cache, cwd, cached) : cache] as const;
+    });
   });
 
   const updateCachedLocalStatus = Effect.fn("VcsStatusBroadcaster.updateCachedLocalStatus")(
@@ -271,7 +291,7 @@ export const make = Effect.gen(function* () {
         const remote = previous.remote?.branch === local.refName ? previous.remote : null;
         return [
           [previous.local?.fingerprint !== nextLocal.fingerprint, previous.remote !== remote],
-          new Map(cache).set(cwd, { local: nextLocal, remote }),
+          retainCachedStatus(cache, cwd, { local: nextLocal, remote }),
         ] as const;
       });
       if (options?.publish && remoteCleared) {
@@ -297,7 +317,7 @@ export const make = Effect.gen(function* () {
         const next = remote?.branch === previous.local?.value.refName ? remote : null;
         return [
           [previous.remote?.fingerprint !== next?.fingerprint, next?.value ?? null],
-          new Map(cache).set(cwd, { ...previous, remote: next }),
+          retainCachedStatus(cache, cwd, { ...previous, remote: next }),
         ] as const;
       });
       if (options?.publish && changed) {
@@ -472,11 +492,16 @@ export const make = Effect.gen(function* () {
     options?: {
       readonly refreshUpstream?: boolean;
       readonly policyCwds?: ReadonlyArray<string>;
+      readonly onlyIfMissing?: boolean;
     },
   ) {
     return yield* withRemoteWriteLock(
       cwd,
       Effect.gen(function* () {
+        if (options?.onlyIfMissing) {
+          const cached = yield* getCachedStatus(cwd);
+          if (cached?.remote) return cached.remote.value;
+        }
         const previousRemote = (yield* getCachedStatus(cwd))?.remote?.value;
         const remoteRead = yield* readRemoteStatus(cwd, options);
         const remote = remoteRead?.value;
@@ -549,8 +574,10 @@ export const make = Effect.gen(function* () {
         cwd,
         Effect.gen(function* () {
           const cached = yield* getCachedStatus(cwd);
-          if (!cached?.local || cached.remote?.value === null) return null;
+          if (cached && (!cached.local || cached.remote?.value === null)) return null;
           const poller = (yield* SynchronizedRef.get(pollersRef)).get(cwd);
+          // A watched cwd still needs turn-end PR updates after its snapshot is evicted.
+          if (!cached && !poller) return null;
           const demandCwds = poller ? [...(yield* Ref.get(poller.demandCwds)).keys()] : [rawCwd];
           const shouldRefresh = (yield* Effect.forEach(
             demandCwds,
@@ -663,6 +690,34 @@ export const make = Effect.gen(function* () {
           next.set(demandCwd, (next.get(demandCwd) ?? 0) + 1);
           return next;
         }).pipe(
+          Effect.tap(() =>
+            refreshImmediately
+              ? Effect.gen(function* () {
+                  const interval = yield* automaticFetchInterval;
+                  const demandCwds = yield* Ref.get(existing.demandCwds);
+                  yield* refreshRemoteStatus(cwd, {
+                    refreshUpstream: !Duration.isZero(interval),
+                    policyCwds: [...demandCwds.keys()],
+                    onlyIfMissing: true,
+                  }).pipe(
+                    Effect.retry(
+                      Schedule.exponential(VCS_STATUS_REFRESH_FAILURE_BASE_DELAY).pipe(
+                        Schedule.modifyDelay(({ duration }) =>
+                          Effect.succeed(
+                            Duration.max(
+                              interval,
+                              Duration.min(duration, VCS_STATUS_REFRESH_FAILURE_MAX_DELAY),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Effect.ignore,
+                    Effect.forkScoped,
+                  );
+                })
+              : Effect.void,
+          ),
           Effect.map(() => {
             const nextPollers = new Map(activePollers);
             nextPollers.set(cwd, {
