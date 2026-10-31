@@ -16,6 +16,7 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopState from "./DesktopState.ts";
+import * as DesktopTray from "./DesktopTray.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 
 export class DesktopLifecycleRelaunchError extends Schema.TaggedError<DesktopLifecycleRelaunchError>()(
@@ -40,10 +41,11 @@ export type DesktopLifecycleRuntimeServices =
 
 type DesktopLifecycleRegistrationServices =
   | DesktopLifecycleRuntimeServices
+  | DesktopTray.DesktopTray
   | ElectronWindow.ElectronWindow;
 
 /**
- * @effect-expect-leaking DesktopEnvironment | DesktopShutdown | DesktopState | DesktopWindow | ElectronApp | ElectronTheme | ElectronWindow
+ * @effect-expect-leaking DesktopEnvironment | DesktopShutdown | DesktopState | DesktopWindow | ElectronApp | ElectronTheme | ElectronWindow | DesktopTray
  */
 export class DesktopLifecycle extends Context.Service<
   DesktopLifecycle,
@@ -282,12 +284,26 @@ export const make = DesktopLifecycle.of({
         }).pipe(Effect.withSpan("desktop.lifecycle.activate")),
       );
     });
+    yield* electronApp.on("second-instance", (_event: unknown, argv: readonly string[]) => {
+      if (argv.some((argument) => argument.includes("://"))) return;
+      void runEffect(
+        Effect.gen(function* () {
+          const state = yield* DesktopState.DesktopState;
+          if (!(yield* Ref.get(state.quitting))) yield* desktopWindow.activate;
+        }).pipe(Effect.withSpan("desktop.lifecycle.secondInstance")),
+      );
+    });
     yield* electronApp.on("window-all-closed", () => {
       void runEffect(
         Effect.gen(function* () {
           const app = yield* ElectronApp.ElectronApp;
           const state = yield* DesktopState.DesktopState;
-          if (environment.platform !== "darwin" && !(yield* Ref.get(state.quitting))) {
+          const tray = yield* DesktopTray.DesktopTray;
+          if (
+            environment.platform !== "darwin" &&
+            !(yield* tray.keepsHostAlive) &&
+            !(yield* Ref.get(state.quitting))
+          ) {
             yield* app.quit;
           }
         }).pipe(Effect.withSpan("desktop.lifecycle.windowAllClosed")),

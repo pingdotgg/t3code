@@ -3,6 +3,14 @@
 On Linux and macOS, T3 Code can run as a service for your user so you do not need
 to keep a terminal open.
 
+On Windows, closing the desktop window keeps its server and running agents
+available to your paired devices. Reopen it from the system tray or launch
+T3 Code again.
+Choose **Quit T3 Code** in the tray to stop the app and its server completely.
+If the tray cannot be created, closing the last window quits the app.
+Background hosting requires your PC to remain awake and your Windows session
+to stay signed in; it does not start automatically after a reboot.
+
 ## Manage the service
 
 Install the `t3` CLI first ([Install T3 Code](./install.md#command-line)), then

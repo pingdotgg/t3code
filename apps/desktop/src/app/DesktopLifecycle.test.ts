@@ -14,6 +14,7 @@ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopState from "./DesktopState.ts";
+import * as DesktopTray from "./DesktopTray.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 
 function layerElectronApp(
@@ -105,6 +106,49 @@ function layerDesktopWindow(
 }
 
 describe("DesktopLifecycle", () => {
+  it.effect.each([
+    { platform: "win32", tray: true, quits: 0 },
+    { platform: "win32", tray: false, quits: 1 },
+    { platform: "linux", tray: false, quits: 1 },
+    { platform: "darwin", tray: false, quits: 0 },
+  ] as const)("handles last-window closure on $platform with tray=$tray", (input) =>
+    Effect.gen(function* () {
+      const listeners = new Map<string, (...args: readonly unknown[]) => void>();
+      const quits = yield* Ref.make(0);
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(
+          layerElectronApp(
+            listeners,
+            Ref.update(quits, (count) => count + 1),
+          ),
+        ),
+        Layer.provideMerge(layerElectronTheme),
+        Layer.provideMerge(layerElectronWindow()),
+        Layer.provideMerge(layerDesktopWindow()),
+        Layer.provideMerge(
+          Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+            platform: input.platform,
+            isDevelopment: false,
+          } as DesktopEnvironment.DesktopEnvironment["Service"]),
+        ),
+        Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(DesktopState.layer),
+        Layer.provideMerge(
+          Layer.succeed(DesktopTray.DesktopTray, {
+            configure: Effect.void,
+            keepsHostAlive: Effect.succeed(input.tray),
+          }),
+        ),
+      );
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* (yield* DesktopLifecycle.DesktopLifecycle).register;
+          listeners.get("window-all-closed")!();
+          assert.equal(yield* Ref.get(quits), input.quits);
+        }),
+      ).pipe(Effect.provide(layer));
+    }),
+  );
   it.effect.each(["darwin", "win32", "linux"] satisfies ReadonlyArray<NodeJS.Platform>)(
     "lets the updater's quit event proceed on %s",
     (platform) => {
@@ -129,6 +173,12 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(layerEnvironment),
         Layer.provideMerge(DesktopShutdown.layer),
         Layer.provideMerge(DesktopState.layer),
+        Layer.provideMerge(
+          Layer.succeed(DesktopTray.DesktopTray, {
+            configure: Effect.void,
+            keepsHostAlive: Effect.succeed(false),
+          }),
+        ),
       );
 
       return Effect.scoped(
@@ -201,6 +251,12 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(layerEnvironment),
         Layer.provideMerge(layerDesktopShutdown),
         Layer.provideMerge(DesktopState.layer),
+        Layer.provideMerge(
+          Layer.succeed(DesktopTray.DesktopTray, {
+            configure: Effect.void,
+            keepsHostAlive: Effect.succeed(false),
+          }),
+        ),
       );
 
       yield* Effect.scoped(
@@ -244,6 +300,12 @@ describe("DesktopLifecycle", () => {
         // Nothing marks this shutdown complete, so it stays pending.
         Layer.provideMerge(DesktopShutdown.layer),
         Layer.provideMerge(DesktopState.layer),
+        Layer.provideMerge(
+          Layer.succeed(DesktopTray.DesktopTray, {
+            configure: Effect.void,
+            keepsHostAlive: Effect.succeed(false),
+          }),
+        ),
       );
 
       yield* Effect.scoped(
@@ -296,6 +358,12 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(layerEnvironment),
         Layer.provideMerge(DesktopShutdown.layer),
         Layer.provideMerge(DesktopState.layer),
+        Layer.provideMerge(
+          Layer.succeed(DesktopTray.DesktopTray, {
+            configure: Effect.void,
+            keepsHostAlive: Effect.succeed(false),
+          }),
+        ),
       );
 
       yield* Effect.scoped(
@@ -303,11 +371,16 @@ describe("DesktopLifecycle", () => {
           const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
           const state = yield* DesktopState.DesktopState;
           yield* lifecycle.register;
+          appListeners.get("second-instance")?.({}, ["t3code"]);
+          assert.equal(activationCount, 1);
+          appListeners.get("second-instance")?.({}, ["t3code", "t3code://app/threads/1"]);
+          assert.equal(activationCount, 1);
           yield* Ref.set(state.quitting, true);
 
           appListeners.get("activate")?.();
+          appListeners.get("second-instance")?.({}, ["t3code"]);
 
-          assert.equal(activationCount, 0);
+          assert.equal(activationCount, 1);
         }),
       ).pipe(Effect.provide(layer));
     }),
