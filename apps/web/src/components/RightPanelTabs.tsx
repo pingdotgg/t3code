@@ -1036,7 +1036,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const tabListRef = useRef<HTMLDivElement>(null);
   // Embedded, this is one surface's tab in the layout: it drags like any tab
   // and its pane's other tabs sit around it in the notch.
-  const layoutPaneTabId = useLayoutPane().tabId;
+  const { tabId: layoutPaneTabId, leadingEdge } = useLayoutPane();
   const layoutTabId = props.mode === "embedded" ? layoutPaneTabId : null;
   const siblingTabs = useLayoutPaneSiblingTabs();
   const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
@@ -1460,6 +1460,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           ownsDesktopTitleBar && "drag-region",
           ownsDesktopTitleBar && "wco:pr-(--workspace-native-controls-inset)",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+          // The leading embedded pane shares the mobile row with the shell toggle.
+          notched && leadingEdge && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
         data-right-panel-tabbar
         data-pane-header={notched ? "" : undefined}
