@@ -179,17 +179,16 @@ export const makeCachedVcsRefsChanges = Effect.fn("CachedVcsRefsState.makeChange
       }),
     ),
   );
-  const refreshedRefs = Stream.concat(
-    Stream.fromEffect(SubscriptionRef.get(supervisor.state)),
-    SubscriptionRef.changes(supervisor.state),
-  ).pipe(
-    Stream.map((connection) => (connection.phase === "connected" ? connection.generation : null)),
+  const refreshedRefs = SubscriptionRef.changes(supervisor.session).pipe(
+    Stream.map(Option.getOrNull),
     Stream.changes,
-    Stream.switchMap((generation) =>
-      generation === null
+    Stream.switchMap((session) =>
+      session === null
         ? Stream.empty
         : Stream.fromEffect(
             refresh().pipe(
+              // Session removal can precede switchMap cancelling this refresh.
+              Effect.catchTags({ EnvironmentRpcUnavailableError: () => Effect.never }),
               Effect.tapError((error) =>
                 Effect.logWarning("Could not refresh Git refs.").pipe(
                   Effect.annotateLogs({
@@ -361,3 +360,4 @@ export function createVcsEnvironmentAtoms<R, E>(
 export * from "./gitActions.ts";
 export * from "./vcsAction.ts";
 export * from "./vcsRef.ts";
+export * from "./vcsStatusRevalidation.ts";

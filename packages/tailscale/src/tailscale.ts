@@ -15,6 +15,13 @@ export const DEFAULT_TAILSCALE_SERVE_PORT = 443;
  * that follows the timeout also takes time (`taskkill` on Windows).
  */
 const TAILSCALE_STATUS_TIMEOUT = Duration.millis(3_500);
+/**
+ * How long a probe killed on timeout gets to exit after SIGTERM before its
+ * process group is SIGKILLed. Without it the spawner never escalates, so a group
+ * member that ignores SIGTERM outlives the call. Short because the timeout error
+ * only surfaces once cleanup finishes, and a healthy `tailscale` exits at once.
+ */
+const TAILSCALE_KILL_GRACE = Duration.millis(500);
 const TAILSCALE_SERVE_TIMEOUT = Duration.seconds(10);
 const TAILSCALE_PROBE_TIMEOUT = Duration.millis(2_500);
 
@@ -226,8 +233,11 @@ const readTailscaleOutput = Effect.fn("tailscale.readTailscaleOutput")(function*
     subcommand,
     argumentCount: args.length,
   };
+  const command = ChildProcess.make(executable, [...args], {
+    forceKillAfter: TAILSCALE_KILL_GRACE,
+  });
   return yield* Effect.gen(function* () {
-    const child = yield* spawner.spawn(ChildProcess.make(executable, [...args])).pipe(
+    const child = yield* spawner.spawn(command).pipe(
       Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
       // Spawning can also fail as a defect rather than a typed error - a
       // non-directory entry on PATH makes node throw ENOTDIR synchronously.

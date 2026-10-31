@@ -20,9 +20,7 @@ function runAssistantTexts(
   );
 }
 
-// A background subagent outlives its root turn. Grok ends it only with the
-// root-session `subagent_finished` notification: the spawn tool completed at
-// launch and nothing names the subagent done in text.
+// Only root-session subagent_finished ends background subagents; spawn results only acknowledge launch.
 export function assertGrokBackgroundSubagentOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
