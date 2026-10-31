@@ -35,7 +35,7 @@ export function PairingPendingSurface() {
         description="Validating the pairing link and preparing your session."
       />
       <div className="flex justify-end">
-        <Button disabled size="sm">
+        <Button disabled size="standard">
           <Spinner />
           Pairing…
         </Button>
@@ -110,7 +110,7 @@ export function PairingRouteSurface({
         {failed ? <UnlinkIcon /> : <Link2Icon />}
       </StandalonePageIcon>
       <StandaloneCardHeader
-        title={failed ? "Pairing failed" : "Pair with this environment"}
+        title={failed ? "Pairing failed" : "Pairing backend"}
         description={describeAuthGate(auth.bootstrapMethods)}
       />
 
@@ -152,12 +152,12 @@ export function PairingRouteSurface({
           <Button
             disabled={isSubmitting}
             onClick={() => window.location.reload()}
-            size="sm"
+            size="standard"
             variant="secondary"
           >
             Reload app
           </Button>
-          <Button disabled={isSubmitting} size="sm" type="submit">
+          <Button disabled={isSubmitting} size="standard" type="submit">
             {isSubmitting ? <Spinner /> : null}
             {isSubmitting ? "Pairing…" : failed ? "Try again" : "Continue"}
             {isSubmitting ? null : <Kbd>⏎</Kbd>}
@@ -277,17 +277,21 @@ export function HostedPairingRouteSurface() {
       {status === "pairing" || canRetry || status === "paired" ? (
         <div className="flex flex-wrap justify-end gap-2">
           {status === "pairing" ? (
-            <Button disabled size="sm">
+            <Button disabled size="standard">
               <Spinner />
               Pairing…
             </Button>
           ) : canRetry ? (
-            <Button size="sm" onClick={() => void submitHostedPairingRequest()}>
+            <Button size="standard" onClick={() => void submitHostedPairingRequest()}>
               Try again
             </Button>
           ) : null}
           {status === "paired" ? (
-            <Button size="sm" variant="secondary" onClick={() => (window.location.href = "/")}>
+            <Button
+              size="standard"
+              variant="secondary"
+              onClick={() => (window.location.href = "/")}
+            >
               Open app
             </Button>
           ) : null}
