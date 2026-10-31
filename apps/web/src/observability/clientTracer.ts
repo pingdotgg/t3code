@@ -1,4 +1,3 @@
-import * as HttpObservability from "@t3tools/shared/httpObservability";
 import * as Layer from "effect/Layer";
 import * as Tracer from "effect/Tracer";
 
@@ -20,11 +19,9 @@ export function hasDelegate(): boolean {
 // Install before exporters exist so spans reach whichever exporter is configured later.
 export const layer = Layer.succeed(
   Tracer.Tracer,
-  HttpObservability.redactUrlAttributes(
-    Tracer.make({
-      span(options) {
-        return delegate?.span(options) ?? new Tracer.NativeSpan(options);
-      },
-    }),
-  ),
+  Tracer.make({
+    span(options) {
+      return delegate?.span(options) ?? new Tracer.NativeSpan(options);
+    },
+  }),
 );

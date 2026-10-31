@@ -4,20 +4,18 @@ import * as Tracer from "effect/Tracer";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { redactUrlAttributes } from "./httpObservability.ts";
+import * as HttpObservability from "./httpObservability.ts";
 
-describe("redactUrlAttributes", () => {
+describe("HttpObservability.layer", () => {
   it.effect("redacts credential query parameters on HTTP client spans", () => {
     const spans: Array<Tracer.NativeSpan> = [];
-    const tracer = redactUrlAttributes(
-      Tracer.make({
-        span: (options) => {
-          const span = new Tracer.NativeSpan(options);
-          spans.push(span);
-          return span;
-        },
-      }),
-    );
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options);
+        spans.push(span);
+        return span;
+      },
+    });
     const client = HttpClient.make((request) =>
       Effect.succeed(HttpClientResponse.fromWeb(request, new Response("ok"))),
     );
@@ -30,6 +28,6 @@ describe("redactUrlAttributes", () => {
       expect(span.attributes.get("url.query")).toBe(
         "wsTicket=REDACTED&clientOs=linux&dpop=REDACTED",
       );
-    }).pipe(Effect.withTracer(tracer));
+    }).pipe(Effect.provide(HttpObservability.layer), Effect.withTracer(tracer));
   });
 });

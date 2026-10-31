@@ -7,7 +7,6 @@ import {
   type SignalExport,
 } from "@t3tools/shared/observability";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as HttpObservability from "@t3tools/shared/httpObservability";
 import * as SharedObservability from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { releaseChannelOf, releaseResourceAttributes } from "@t3tools/shared/releaseResource";
@@ -677,7 +676,7 @@ const layerTelemetry = Layer.unwrap(
           ...(delegate ? { delegate } : {}),
         });
 
-        return Layer.succeed(Tracer.Tracer, HttpObservability.redactUrlAttributes(tracer));
+        return Layer.succeed(Tracer.Tracer, tracer);
       }),
     ).pipe(Layer.provide(OtlpExporter.layerFlusher));
 
