@@ -3372,6 +3372,7 @@ export default function ChatView(props: ChatViewProps) {
             <ThreadFind onClose={focusComposerStable} />
             {isWorkspaceFileDragActive ? <WorkspaceFileDropOverlay /> : null}
             <ChatBannerLane
+              environmentId={activeThread.environmentId}
               providerStatus={visibleProviderStatus}
               providerStatusBannerKey={providerStatusBannerKey}
               setDismissedProviderStatusBannerKey={setDismissedProviderStatusBannerKey}
