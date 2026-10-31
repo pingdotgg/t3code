@@ -8,6 +8,8 @@ import * as Tracer from "effect/Tracer";
 import type { HttpClient } from "effect/http";
 import { OtlpSerialization, OtlpTracer } from "effect/observability";
 
+import { redactUrlAttributes } from "./httpObservability.ts";
+
 export interface RelayClientTracingConfig {
   readonly tracesUrl: string;
   readonly tracesDataset: string;
@@ -178,6 +180,9 @@ export function layer(
 
   return Layer.effect(
     RelayClientTracer,
-    Tracer.Tracer.pipe(Effect.map(nonInterferingTracer), Effect.asSome),
+    Tracer.Tracer.pipe(
+      Effect.map((tracer) => nonInterferingTracer(redactUrlAttributes(tracer))),
+      Effect.asSome,
+    ),
   ).pipe(Layer.provide(layerTracer));
 }

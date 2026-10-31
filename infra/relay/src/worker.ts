@@ -459,6 +459,7 @@ export const layer = Api.make(
               Effect.withSpan("relay.apn_delivery_queue.process_message"),
             ),
           ),
+          Observability.withRelayTracer,
           Effect.provide(layerRuntime),
         ),
     );
@@ -476,6 +477,7 @@ export const layer = Api.make(
         stream.pipe(
           Stream.withSpan("relay.fcm_delivery_queue.process_batch"),
           Stream.runForEach(FcmDeliveryQueueConsumer.processMessage),
+          Observability.withRelayTracer,
           Effect.provide(layerRuntime),
         ),
     );
@@ -530,7 +532,7 @@ export const layer = Api.make(
         { concurrency: 3, discard: true },
       ).pipe(
         Effect.withSpan("relay.cron.prune_expired_state"),
-        Observability.withSchemaErrorSpanAttributes,
+        Observability.withRelayTracer,
         Effect.provide(layerRuntime),
       ),
     );
@@ -551,9 +553,7 @@ export const layer = Api.make(
       Effect.provideService(HttpRouter.RouterConfig, RELAY_HTTP_ROUTER_CONFIG),
       withoutCapturedParentSpan,
       Effect.map((httpEffect) =>
-        traceRelayHttpRequestWith(httpEffect, Layer.empty).pipe(
-          Observability.withSchemaErrorSpanAttributes,
-        ),
+        traceRelayHttpRequestWith(httpEffect, Layer.empty).pipe(Observability.withRelayTracer),
       ),
     );
 

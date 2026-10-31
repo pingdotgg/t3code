@@ -76,7 +76,10 @@ export const layer = Layer.unwrap(
         yield* heapAttribution.run;
 
         return Layer.mergeAll(
-          Layer.succeed(Tracer.Tracer, heapAttribution.tracer),
+          Layer.succeed(
+            Tracer.Tracer,
+            HttpObservability.redactUrlAttributes(heapAttribution.tracer),
+          ),
           BrowserTraceCollector.layer(sink),
         );
       }),

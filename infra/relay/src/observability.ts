@@ -5,6 +5,7 @@ import * as Alchemy from "alchemy";
 import * as Axiom from "@alchemy.run/axiom";
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Output from "alchemy/Output";
+import * as HttpObservability from "@t3tools/shared/httpObservability";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -288,15 +289,13 @@ class RelayTraceSpan implements Tracer.Span {
   }
 }
 
-const withSchemaErrorAttributes = (delegate: Tracer.Tracer): Tracer.Tracer =>
-  Tracer.make({
-    span: (options) => new RelayTraceSpan(delegate.span(options)),
-    ...(delegate.context ? { context: delegate.context } : {}),
-  });
-
-export const withSchemaErrorSpanAttributes = <A, E, R>(
-  effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> =>
-  Effect.flatMap(Effect.tracer, (tracer) =>
-    effect.pipe(Effect.withTracer(withSchemaErrorAttributes(tracer))),
+const relayTracer = (delegate: Tracer.Tracer): Tracer.Tracer =>
+  HttpObservability.redactUrlAttributes(
+    Tracer.make({
+      span: (options) => new RelayTraceSpan(delegate.span(options)),
+      ...(delegate.context ? { context: delegate.context } : {}),
+    }),
   );
+
+export const withRelayTracer = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  Effect.flatMap(Effect.tracer, (tracer) => effect.pipe(Effect.withTracer(relayTracer(tracer))));
