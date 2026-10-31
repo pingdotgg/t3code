@@ -126,12 +126,12 @@ function PublishProviderTile(props: {
   const tile = (
     <Toggle
       variant="outline"
-      size="lg"
+      size="tile"
       pressed={props.selected}
       aria-label={option.label}
       disabled={props.disabled}
       onClick={readiness.ready ? props.onSelect : props.onOpenSetup}
-      className="h-14 w-full min-w-0"
+      className="w-full min-w-0"
     >
       <span
         className={cn(
