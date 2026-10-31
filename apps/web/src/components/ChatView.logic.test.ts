@@ -6,6 +6,7 @@ import {
   withMessageContext,
   deriveAvailableRevertTurnCounts,
   deriveWorkspaceMutationId,
+  canSelectNewWorktree,
 } from "./ChatView.logic";
 import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
@@ -623,6 +624,39 @@ describe("checkout Git memory", () => {
   it("does not confuse an environment id containing the separator with a path", () => {
     rememberCheckoutIsRepo(EnvironmentId.make("env"), "a:b", false);
     expect(recallCheckoutIsRepo(EnvironmentId.make("env:a"), "b")).toBeUndefined();
+  });
+});
+
+describe("canSelectNewWorktree", () => {
+  const localDraft = {
+    envLocked: false,
+    isMultiModel: false,
+    isLocalDraftThread: true,
+    canOverrideServerThreadEnvMode: false,
+  };
+
+  it("keeps a non-Git draft out of worktree mode before its first status arrives", () => {
+    expect(canSelectNewWorktree({ ...localDraft, isGitRepo: undefined })).toBe(false);
+    expect(canSelectNewWorktree({ ...localDraft, isGitRepo: false })).toBe(false);
+  });
+
+  it("allows a draft once live or remembered status confirms a Git repository", () => {
+    expect(canSelectNewWorktree({ ...localDraft, isGitRepo: true })).toBe(true);
+  });
+
+  it("keeps locked and multi-model drafts out of worktree mode", () => {
+    expect(canSelectNewWorktree({ ...localDraft, isGitRepo: true, envLocked: true })).toBe(false);
+    expect(canSelectNewWorktree({ ...localDraft, isGitRepo: true, isMultiModel: true })).toBe(
+      false,
+    );
+  });
+
+  it("allows only overridable server threads", () => {
+    const serverThread = { ...localDraft, isGitRepo: true, isLocalDraftThread: false };
+    expect(canSelectNewWorktree(serverThread)).toBe(false);
+    expect(canSelectNewWorktree({ ...serverThread, canOverrideServerThreadEnvMode: true })).toBe(
+      true,
+    );
   });
 });
 

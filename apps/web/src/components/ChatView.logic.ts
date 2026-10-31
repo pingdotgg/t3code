@@ -871,6 +871,21 @@ export function recallCheckoutIsRepo(
     : sessionCheckoutIsRepo.get(checkoutIsRepoKey(environmentId, cwd));
 }
 
+export function canSelectNewWorktree(input: {
+  readonly isGitRepo: boolean | undefined;
+  readonly envLocked: boolean;
+  readonly isMultiModel: boolean;
+  readonly isLocalDraftThread: boolean;
+  readonly canOverrideServerThreadEnvMode: boolean;
+}): boolean {
+  return (
+    input.isGitRepo === true &&
+    !input.envLocked &&
+    !input.isMultiModel &&
+    (input.isLocalDraftThread || input.canOverrideServerThreadEnvMode)
+  );
+}
+
 function threadHasStarted(thread: Thread | null | undefined): boolean {
   return Boolean(thread && (thread.latestRun !== null || thread.itemCount > 0 || thread.runtime));
 }

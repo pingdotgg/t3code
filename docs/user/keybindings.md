@@ -29,6 +29,8 @@ Use `mod+shift+e` for effort, `mod+shift+a` for permissions, `mod+shift+x` for t
 workspace, and `mod+shift+g` for the Git branch. The workspace menu includes the
 current checkout, a new worktree, and the previous worktree when available.
 Use `mod+shift+l` to reuse the previous worktree directly.
+To select a new worktree directly, bind **Composer: New Worktree** in Keybindings.
+It has no default shortcut and uses the same rules as the workspace menu.
 
 To change effort one step without opening the picker, bind
 **Composer: Increase Effort** and **Composer: Decrease Effort** in Keybindings.
