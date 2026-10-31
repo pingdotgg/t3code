@@ -127,6 +127,7 @@ import {
   modelMatchesCatalogQuery,
   pendingModelAfterPress,
   providerSectionIsCollapsed,
+  selectableModelKeys,
   settleHiddenModelOverride,
   withHiddenModelOverrides,
 } from "./thread-settings-sheet-state";
@@ -324,6 +325,7 @@ type ThreadSettingsSessionValue = {
   readonly commitPendingModel: () => boolean;
   readonly isApplied: (option: ModelOption) => boolean;
   readonly isDisplayed: (option: ModelOption) => boolean;
+  readonly isSelectable: (option: ModelOption) => boolean;
   readonly pressModel: (option: ModelOption) => void;
   readonly setProviderFilter: (providerKey: string | null) => void;
   readonly setSearchQuery: (query: string) => void;
@@ -540,9 +542,13 @@ function ThreadSettingsSessionProvider(
   const hasLegacyModels = providerGroups.some((group) =>
     group.models.some((model) => model.isLegacy),
   );
+  const selectableKeys = selectableModelKeys(providerGroups);
+  const confirmedSelectableKeys = selectableModelKeys(props.providerGroups);
+  const isSelectable = (option: ModelOption) =>
+    selectableKeys.has(option.key) && confirmedSelectableKeys.has(option.key);
   const commitPendingModel = () => {
     if (pendingModel) {
-      if (!canCommitPendingModel(pendingModel, providerGroups)) {
+      if (!canCommitPendingModel(pendingModel, providerGroups, props.providerGroups)) {
         Dialog.alert(
           "Model unavailable",
           "Set up this provider on web or desktop, or select another model.",
@@ -607,6 +613,7 @@ function ThreadSettingsSessionProvider(
   };
 
   const pressModel = (option: ModelOption) => {
+    if (!isSelectable(option)) return;
     void Haptics.selectionAsync();
     if (isApplied(option) || option.key !== pendingModel?.key) {
       setPendingPrompt(null);
@@ -648,6 +655,7 @@ function ThreadSettingsSessionProvider(
     commitPendingModel,
     isApplied,
     isDisplayed,
+    isSelectable,
     pressModel,
     setProviderFilter,
     setSearchQuery,
@@ -731,6 +739,7 @@ function ThreadSettingsModelListRow(props: {
           : undefined
       }
       hiddenUpdatePending={session.pendingHiddenKeys.has(props.option.key)}
+      selectionDisabled={!session.isSelectable(props.option)}
       option={props.option}
       selected={session.isDisplayed(props.option)}
     />
@@ -1322,7 +1331,15 @@ function ThreadSettingsModelsScreen() {
           }
           onCancel={presentation.onClose}
           title="Thread settings"
-          confirm={session.pendingModel ? { label: "Save", onPress: commitAndClose } : undefined}
+          confirm={
+            session.pendingModel
+              ? {
+                  label: "Save",
+                  onPress: commitAndClose,
+                  disabled: !session.isSelectable(session.pendingModel),
+                }
+              : undefined
+          }
         />
       ) : null}
       <NativeStackScreenOptions
@@ -1383,6 +1400,7 @@ function ThreadSettingsModelsScreen() {
           confirm={{
             label: session.pendingModel ? "Save thread settings" : "Done",
             onPress: commitAndClose,
+            disabled: session.pendingModel !== null && !session.isSelectable(session.pendingModel),
           }}
         />
       ) : null}

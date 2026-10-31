@@ -55,10 +55,20 @@ export function pendingModelAfterPress(input: {
 export function canCommitPendingModel(
   pending: ModelOption,
   groups: ReadonlyArray<ProviderGroup>,
+  confirmedGroups = groups,
 ): boolean {
-  return groups.some((group) =>
-    group.models.some(
-      (model) => model.key === pending.key && !model.isUnavailable && !model.isHidden,
+  return (
+    selectableModelKeys(groups).has(pending.key) &&
+    (confirmedGroups === groups || selectableModelKeys(confirmedGroups).has(pending.key))
+  );
+}
+
+export function selectableModelKeys(groups: ReadonlyArray<ProviderGroup>) {
+  return new Set(
+    groups.flatMap((group) =>
+      group.models
+        .filter((model) => !model.isUnavailable && !model.isHidden)
+        .map((model) => model.key),
     ),
   );
 }

@@ -14,6 +14,7 @@ export type ModelRowProps = {
   readonly onToggleFavorite: () => void;
   readonly onToggleHidden?: () => void;
   readonly hiddenUpdatePending?: boolean;
+  readonly selectionDisabled?: boolean;
   readonly isFirst: boolean;
   readonly isLast: boolean;
 };
@@ -54,10 +55,13 @@ export function ModelRowContent(
         accessibilityRole="radio"
         accessibilityState={{
           checked: props.selected,
-          disabled: props.option.isUnavailable === true || props.option.isHidden === true,
+          disabled:
+            props.option.isUnavailable === true ||
+            props.option.isHidden === true ||
+            props.selectionDisabled === true,
         }}
         className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 active:opacity-70"
-        disabled={props.option.isUnavailable || props.option.isHidden}
+        disabled={props.option.isUnavailable || props.option.isHidden || props.selectionDisabled}
         onPress={props.onPress}
       >
         {props.leadingSelection}

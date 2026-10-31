@@ -220,6 +220,8 @@ describe("thread settings sheet state", () => {
     const showing = withHiddenModelOverrides(groups(true), environmentId, superseding, false);
     expect(isHidden(showing)).toBe(false);
     expect(canCommitPendingModel(model, showing.providerGroups)).toBe(true);
+    expect(canCommitPendingModel(model, showing.providerGroups, groups(true))).toBe(false);
+    expect(canCommitPendingModel(model, showing.providerGroups, groups(false))).toBe(true);
     expect(showing.overrides).toBe(superseding);
     const shown = settleHiddenModelOverride(superseding, key, showOverride, true);
     expect(
