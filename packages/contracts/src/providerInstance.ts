@@ -78,6 +78,8 @@ export const ProviderInstanceConfig = Schema.Struct({
   accentColor: Schema.optional(TrimmedNonEmptyString),
   environment: Schema.optionalKey(ProviderInstanceEnvironment),
   enabled: Schema.optionalKey(Schema.Boolean),
+  /** Hides the instance from the provider settings list. Threads and the model picker keep using it. */
+  hidden: Schema.optionalKey(Schema.Boolean),
   config: Schema.optionalKey(Schema.Unknown),
 });
 export type ProviderInstanceConfig = typeof ProviderInstanceConfig.Type;
