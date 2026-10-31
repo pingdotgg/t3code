@@ -1,16 +1,5 @@
-/**
- * Messages between the server and one plugin child, carried as
- * newline-delimited JSON on the child's fd 3 (see pluginIpcFraming.ts).
- *
- * Both ends ship in the same server build, so this protocol carries no
- * version: only the plugin API (PLUGIN_API_VERSION) is versioned. The server
- * decodes every child message with these schemas; a message that fails to
- * decode or exceeds the byte bound gets the child killed.
- *
- * Every `Invoke` is answered by exactly one `Succeeded` or `Failed` with the
- * same `requestId`, including after `Cancel`; that answer is how the server
- * learns a cancelled call has settled.
- */
+// Both IPC endpoints ship together; only the public plugin API is versioned.
+// Every Invoke must receive one result, including after Cancel, so cancellation can release its slot.
 import { PluginId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
