@@ -70,6 +70,8 @@ const WorkspaceSelections = Schema.Struct({
       key: Schema.optional(Schema.String),
     }),
   ),
+  /** The chat in `threads` was on screen, so a compact window reopens it after a relaunch. */
+  threadsShown: Schema.optional(Schema.Boolean),
   settings: Schema.optional(Schema.String),
   settingsKey: Schema.optional(Schema.String),
   /** A draft the threads tab showed after its last chat; only meaningful in its session. */

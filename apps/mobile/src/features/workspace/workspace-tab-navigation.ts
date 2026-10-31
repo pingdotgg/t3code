@@ -4,6 +4,7 @@ import {
   type SettingsPageTarget,
 } from "../settings/components/settings-page-targets";
 import { settingsNavigationState } from "../settings/settings-navigation";
+import { workspaceRoutesOf } from "../layout/workspace-overlay-routes";
 import type { WorkspaceTab } from "./workspace-tabs-state";
 
 type RouteLike = {
@@ -84,7 +85,8 @@ function samePullRequest(
 
 /**
  * The page each tab shows in a root route chain: the newest chat, the newest pull request, and
- * the Settings page directly above the Settings route. Returns `previous` when nothing changed.
+ * the Settings page directly above the Settings route, plus whether that chat is the page on
+ * screen under any sheets. Returns `previous` when nothing changed.
  */
 export function workspaceSelectionsIn(
   routes: readonly RouteLike[],
@@ -111,6 +113,10 @@ export function workspaceSelectionsIn(
   ) {
     next = { ...next, threadsDraft: { key: thread.key, params: thread.params } };
   }
+  const onScreen = workspaceRoutesOf(routes).workspace.at(-1);
+  const threadShown = onScreen?.name === "Thread" && Boolean(environmentId && threadId);
+  // Kept explicit even when false, so a saved `true` can't win the hydration merge.
+  if (next.threadsShown !== threadShown) next = { ...next, threadsShown: threadShown };
   const pullRequestRoute = routes.findLast((route) => route.name === "PullRequest");
   const pullRequest = pullRequestSelection(pullRequestRoute?.params);
   if (
