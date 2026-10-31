@@ -123,8 +123,12 @@ function HostedPromptLinkLanding({
   return (
     <StandalonePage>
       <StandalonePageHeader
-        title="Open this prompt"
-        description="It opens as a draft. Nothing runs until you press Send."
+        title={prompt === null ? "Open this thread" : "Open this prompt"}
+        description={
+          prompt === null
+            ? "Choose where to open your thread."
+            : "It opens as a draft. Nothing runs until you press Send."
+        }
       />
       {prompt !== null && prompt.hiddenCharacters > 0 ? (
         <Alert className="mt-5" variant="error">

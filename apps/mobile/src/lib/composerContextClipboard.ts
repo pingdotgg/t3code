@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import {
   decodeComposerContextClipboardHtml,
+  normalizeThreadClipboard,
   decodeComposerContextFragment,
   encodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
@@ -70,11 +71,13 @@ export async function importComposerContextClipboard(
   /** The machines the destination links to, whose threads its agent can read too. */
   linkedEnvironments: ReadonlyMap<EnvironmentId, string> = new Map(),
 ) {
-  const fragment =
-    decodeComposerContextFragment(input.fragment) ?? decodeComposerContextClipboardHtml(input.html);
+  const { text, fragment } = normalizeThreadClipboard(
+    input.text,
+    decodeComposerContextFragment(input.fragment) ?? decodeComposerContextClipboardHtml(input.html),
+  );
   if (!fragment) return null;
-  const selected = referencedComposerContext(input.text, { version: 1, records: fragment.records });
-  const imported = reidentifyComposerContext(input.text, selected?.records ?? [], uuidv4);
+  const selected = referencedComposerContext(text, { version: 1, records: fragment.records });
+  const imported = reidentifyComposerContext(text, selected?.records ?? [], uuidv4);
   const skippedThreads =
     destinationEnvironmentId === undefined
       ? []

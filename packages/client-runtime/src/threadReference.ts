@@ -3,16 +3,15 @@ import type {
   ScopedThreadRef,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import {
-  formatComposerContextReference,
-  threadContextRecord,
-} from "@t3tools/shared/composerContextReferences";
+import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
+
+import { threadDeepLink } from "@t3tools/shared/threadDeepLinks";
 
 import { resolveThreadCurrentPullRequestLink } from "./threadPullRequests.ts";
 
 export interface ThreadReferenceCopyTarget {
   readonly kind: "pull-request" | "thread";
-  /** The plain text: a PR URL, or a thread chip's reference link. */
+  /** The plain text: a PR URL or a public thread deep link. */
   readonly value: string;
   /** What a toast or palette row shows for the copy. */
   readonly description: string;
@@ -31,7 +30,7 @@ export function threadChipCopyTarget(
   const record = threadContextRecord(threadRef, title);
   return {
     kind: "thread",
-    value: formatComposerContextReference(record),
+    value: threadDeepLink(threadRef),
     description: record.title,
     fragment: { version: 1, source: { environmentId: threadRef.environmentId }, records: [record] },
     clipboardTarget: "thread",

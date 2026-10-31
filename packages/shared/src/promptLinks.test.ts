@@ -111,6 +111,7 @@ describe("link round trips", () => {
     expect(promptLinkAppPath("https://app.t3.codes/env-1/thread-1?prompt=go")).toBe(
       "/env-1/thread-1?prompt=go",
     );
+    expect(promptLinkAppPath("https://app.t3.codes/env-1/thread-1")).toBe("/env-1/thread-1");
     expect(promptLinkAppPath("https://app.t3.codes/settings/general")).toBeNull();
     expect(promptLinkAppPath("https://evil.test/new?prompt=hi")).toBeNull();
     expect(promptLinkAppPath("t3code://app/index.html")).toBeNull();

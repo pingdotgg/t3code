@@ -1,5 +1,6 @@
 import { EnvironmentId, ThreadId, type ThreadPullRequestLink } from "@t3tools/contracts";
 import {
+  normalizeThreadClipboard,
   decodeComposerContextFragment,
   encodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
@@ -82,6 +83,7 @@ describe("resolveThreadReferenceCopyTarget", () => {
 
     expect(target).toMatchObject({
       kind: "thread",
+      value: "https://app.t3.codes/env-1/thread-1",
       description: "Fix the login flow",
       successTitle: "Thread copied",
     });
@@ -99,7 +101,9 @@ describe("resolveThreadReferenceCopyTarget", () => {
       ],
     });
     // A paste keeps only the records its plain text references.
-    expect(collectComposerContextReferences(target!.value)).toEqual([
+    expect(
+      collectComposerContextReferences(normalizeThreadClipboard(target!.value, pasted).text),
+    ).toEqual([
       expect.objectContaining({
         kind: "thread",
         contextId: pasted!.records[0]!.contextId,

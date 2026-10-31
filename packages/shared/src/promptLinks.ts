@@ -182,7 +182,7 @@ export function buildNewThreadLink(input: {
 }
 
 const APP_SCHEME = /^t3code(?:-[a-z]+)?:$/;
-const THREAD_PATH = /^\/([^/]+)\/([^/]+)\/?$/;
+const THREAD_PATH = /^\/(?!settings\/|projects\/|draft\/)([^/]+)\/([^/]+)\/?$/;
 
 export function promptLinkAppPath(
   value: string,
@@ -199,7 +199,7 @@ export function promptLinkAppPath(
   }
   if (!URL.canParse(hostedAppUrl) || url.origin !== new URL(hostedAppUrl).origin) return null;
   if (url.pathname === "/new") return `/new${url.search}`;
-  const thread = url.searchParams.has("prompt") ? THREAD_PATH.exec(url.pathname) : null;
+  const thread = THREAD_PATH.exec(url.pathname);
   return thread ? `/${thread[1]}/${thread[2]}${url.search}` : null;
 }
 

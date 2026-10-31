@@ -1,6 +1,7 @@
 import { ComposerContextId } from "@t3tools/contracts";
 import type { ComposerContextClipboardFragment } from "@t3tools/contracts";
 import {
+  normalizeThreadClipboard,
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   decodeComposerContextFragment,
   decodeComposerContextClipboardHtml,
@@ -13,10 +14,14 @@ import {
 export function readPastedComposerContext(
   clipboardData: Pick<DataTransfer, "getData">,
 ): ComposerContextClipboardFragment | null {
-  const pastedText = clipboardData.getData("text/plain");
-  const decodedFragment =
+  const rawText = clipboardData.getData("text/plain");
+  const decoded =
     decodeComposerContextFragment(clipboardData.getData(COMPOSER_CONTEXT_CLIPBOARD_MIME)) ??
     decodeComposerContextClipboardHtml(clipboardData.getData("text/html"));
+  const { text: pastedText, fragment: decodedFragment } = normalizeThreadClipboard(
+    rawText,
+    decoded,
+  );
   if (decodedFragment === null) return null;
   const pastedIds = new Set<string>(
     collectComposerContextReferences(pastedText).map((occurrence) => occurrence.contextId),
@@ -43,10 +48,13 @@ export function importPastedComposerText(
     fragment: ComposerContextClipboardFragment,
   ) => ReadonlyMap<string, string>,
 ): string {
-  const pastedText = clipboardData.getData("text/plain");
+  const rawText = clipboardData.getData("text/plain");
   const fragment = importContextFragment ? readPastedComposerContext(clipboardData) : null;
   const rewrittenIds =
     fragment && fragment.records.length > 0 ? importContextFragment!(fragment) : null;
+  const pastedText = rewrittenIds
+    ? normalizeThreadClipboard(rawText, fragment, rewrittenIds).text
+    : rawText;
   const text =
     rewrittenIds && rewrittenIds.size > 0
       ? replaceComposerContextReferences(pastedText, (occurrence) => {
