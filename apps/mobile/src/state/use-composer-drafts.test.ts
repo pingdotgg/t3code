@@ -12,6 +12,7 @@ import {
   v2ThreadShell,
 } from "../../../../packages/client-runtime/src/state/orchestrationV2TestFixtures";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
@@ -166,6 +167,7 @@ vi.mock("../features/sharing/incoming-share-storage", () => ({
 }));
 
 import type { DraftComposerAttachment } from "../lib/composerImages";
+import { DraftComposerAttachmentSchema } from "../lib/composer-image-schema";
 import {
   collectComposerContextReferences,
   formatComposerContextReference,
@@ -1241,6 +1243,81 @@ describe("mobile composer drafts", () => {
     });
     expect(setComposerDraftAttachmentUpload(key, { ...uploaded, id: "removed-photo" })).toBe(false);
     expect(getComposerDraftSnapshot(key).attachments).toHaveLength(2);
+  });
+
+  it("keeps rollback preview fields and reads compact live and archived drafts", async () => {
+    const key = "environment-1:inline-preview";
+    const image = {
+      id: "inline-image",
+      type: "image" as const,
+      name: "photo.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      dataUrl: "data:image/png;base64,YWJj",
+      previewUri: "data:image/png;base64,YWJj",
+    };
+    const fileBacked = {
+      ...image,
+      id: "file-image",
+      fileUri: "file:///documents/photo.png",
+      previewUri: "file:///documents/photo.png",
+    };
+    const externalPreview = { ...image, id: "external-image", previewUri: "file:///picked.png" };
+    const attachments = [image, fileBacked, externalPreview];
+    const queued = {
+      environmentId: EnvironmentId.make("environment-1"),
+      threadId: ThreadId.make("thread-1"),
+      messageId: MessageId.make("queued-image"),
+      commandId: CommandId.make("queued-image-command"),
+      text: "Send later",
+      attachments,
+      createdAt: "2026-09-06T12:00:00.000Z",
+    };
+    await waitForComposerDraftsLoaded();
+    appendComposerDraftAttachments(key, attachments);
+    appAtomRegistry.set(composerCloudDraftsAtom, {
+      accountId: null,
+      signedOut: {
+        account: {
+          drafts: { [key]: { text: "Archived", attachments: [image] } },
+          queuedMessages: [queued],
+        },
+      },
+    });
+    await flushComposerDrafts();
+
+    const document = JSON.parse(composerDraftFileMocks.getDocument());
+    const decodeLegacyImages = Schema.decodeUnknownSync(
+      Schema.Array(DraftComposerAttachmentSchema),
+    );
+    expect(document.schemaVersion).toBe(1);
+    expect(decodeLegacyImages(document.drafts[key].attachments)).toEqual(attachments);
+    expect(decodeLegacyImages(document.signedOutDrafts.account.drafts[key].attachments)).toEqual([
+      image,
+    ]);
+    expect(
+      decodeLegacyImages(document.signedOutDrafts.account.queuedMessages[0].attachments),
+    ).toEqual(attachments);
+
+    appAtomRegistry.set(composerDraftsAtom, {});
+    appAtomRegistry.set(composerCloudDraftsAtom, { accountId: null, signedOut: {} });
+    resetComposerDraftsLoadState();
+    await waitForComposerDraftsLoaded();
+    expect(getComposerDraftSnapshot(key).attachments).toEqual(attachments);
+    expect(
+      appAtomRegistry.get(composerCloudDraftsAtom).signedOut.account?.drafts[key]?.attachments,
+    ).toEqual([image]);
+    expect(appAtomRegistry.get(composerCloudDraftsAtom).signedOut.account?.queuedMessages).toEqual([
+      queued,
+    ]);
+
+    delete document.drafts[key].attachments[0].previewUri;
+    delete document.signedOutDrafts.account.drafts[key].attachments[0].previewUri;
+    delete document.signedOutDrafts.account.queuedMessages[0].attachments[0].previewUri;
+    const compact = decodePersistedComposerState(document);
+    expect(compact.drafts[key]?.attachments).toEqual(attachments);
+    expect(compact.cloudDrafts.signedOut.account?.drafts[key]?.attachments).toEqual([image]);
+    expect(compact.cloudDrafts.signedOut.account?.queuedMessages).toEqual([queued]);
   });
 
   it.each(["file", "image"] as const)(

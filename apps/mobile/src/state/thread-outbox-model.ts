@@ -24,7 +24,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import { DraftComposerAttachmentSchema } from "../lib/composer-image-schema";
+import { PersistedComposerAttachmentSchema } from "../lib/composer-image-schema";
 import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { DraftComposerAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
@@ -53,7 +53,7 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   commandId: CommandId,
   text: Schema.String,
   context: Schema.optional(OrchestrationMessageContext),
-  attachments: Schema.Array(DraftComposerAttachmentSchema),
+  attachments: Schema.Array(PersistedComposerAttachmentSchema),
   modelSelection: Schema.optional(ModelSelection),
   dispatchMode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
   runtimeMode: Schema.optional(RuntimeMode),

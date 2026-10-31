@@ -7,7 +7,10 @@ import {
 const files = new Map<string, { base64: string; deleted: boolean; text?: string }>();
 
 const manipulator = vi.hoisted(() => {
-  const state = { sourceSize: { width: 0, height: 0 } };
+  const state = {
+    sourceSize: { width: 0, height: 0 },
+    renderedBase64: "cmVuZGVyZWQ=",
+  };
   const manipulate = vi.fn((source: string | { width: number; height: number }) => {
     let size = typeof source === "string" ? state.sourceSize : source;
     const context = {
@@ -18,10 +21,11 @@ const manipulator = vi.hoisted(() => {
       renderAsync: vi.fn(async () => ({
         ...size,
         release: vi.fn(),
-        saveAsync: vi.fn(async (options: { format: string }) => ({
-          uri: `file:///cache/rendered.${options.format}`,
-          base64: `cmVuZGVyZWQ=`,
-        })),
+        saveAsync: vi.fn(async (options: { format: string }) => {
+          const uri = `file:///cache/rendered.${options.format}`;
+          files.set(uri, { base64: state.renderedBase64, deleted: false });
+          return { uri, base64: state.renderedBase64 };
+        }),
       })),
     };
     return context;
@@ -102,6 +106,47 @@ import { convertPastedImagesToAttachments } from "./composerImages";
 describe("native pasted image cleanup", () => {
   beforeEach(() => {
     files.clear();
+    manipulator.state.sourceSize = { width: 0, height: 0 };
+    manipulator.state.renderedBase64 = "cmVuZGVyZWQ=";
+  });
+
+  it.each([
+    { format: "png", rejected: false },
+    { format: "jpeg", rejected: false },
+    { format: "png", rejected: true },
+    { format: "jpeg", rejected: true },
+  ])("cleans resized $format files when rejected: $rejected", async ({ format, rejected }) => {
+    const owned = format === "png";
+    const uri = owned ? "file:///cache/t3-composer-paste/source.png" : "file:///photos/source.jpeg";
+    const header = Buffer.alloc(24);
+    if (format === "png") {
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header);
+      header.write("IHDR", 12);
+      header.writeUInt32BE(3200, 16);
+      header.writeUInt32BE(2400, 20);
+    } else {
+      Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0, 17, 8, 9, 96, 12, 128]).copy(header);
+    }
+    files.set(uri, { base64: header.toString("base64"), deleted: false });
+    manipulator.state.sourceSize = { width: 3200, height: 2400 };
+    if (rejected) {
+      manipulator.state.renderedBase64 = Buffer.alloc(
+        PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1,
+      ).toString("base64");
+    }
+
+    const attachments = await convertPastedImagesToAttachments({ uris: [uri], existingCount: 0 });
+
+    expect(files.get(`file:///cache/rendered.${format}`)?.deleted).toBe(true);
+    expect(files.get(uri)?.deleted).toBe(owned);
+    if (rejected) {
+      expect(attachments).toEqual([]);
+    } else {
+      const dataUrl = `data:image/${format};base64,${manipulator.state.renderedBase64}`;
+      expect(attachments).toEqual([
+        expect.objectContaining({ dataUrl, previewUri: dataUrl, mimeType: `image/${format}` }),
+      ]);
+    }
   });
 
   it("converts owned files to data-backed previews and deletes the source", async () => {
