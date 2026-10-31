@@ -1210,8 +1210,13 @@ export function pullRequestChecksFromContexts(
   const checks = toChecks(contexts);
   const checksState = rollupChecksState(contexts);
   if (contexts.length === 0) return { checks, checksState };
-  // Raw names, since deduping prefixes same-named jobs of different workflows with the workflow.
-  const started = new Set(contexts.map((c) => trimmed(c.name) ?? trimmed(c.context)));
+  // Raw names, since deduping prefixes same-named jobs of different workflows with the workflow. A
+  // context GitHub calls not required is another app's namesake of an app-bound requirement.
+  const started = new Set(
+    contexts.flatMap((c) =>
+      c.isRequired === false ? [] : [trimmed(c.name) ?? trimmed(c.context)],
+    ),
+  );
   const missing = requiredCheckNames.flatMap((name) =>
     started.has(name)
       ? []

@@ -554,6 +554,21 @@ describe("pull request detail decoding", () => {
     expect(detail.checksState).toBe("passing");
   });
 
+  it("waits for a required check that only a check GitHub calls not required shares a name with", () => {
+    const detail = detailOf(
+      [
+        check({ name: "lint", status: "COMPLETED", conclusion: "SUCCESS", isRequired: true }),
+        check({ name: "Done", status: "COMPLETED", conclusion: "SUCCESS", isRequired: false }),
+      ],
+      { baseRef: { compare: null, refUpdateRule: { requiredStatusCheckContexts: ["Done"] } } },
+    );
+
+    expect(detail.checks.filter((entry) => entry.required)).toEqual([
+      { name: "lint", status: "success", description: null, url: null, required: true },
+      { name: "Done", status: "pending", description: null, url: null, required: true },
+    ]);
+  });
+
   it("adds no required check to a head no check has reported on", () => {
     const detail = detailOf([], {
       baseRef: { compare: null, refUpdateRule: { requiredStatusCheckContexts: ["Done"] } },
