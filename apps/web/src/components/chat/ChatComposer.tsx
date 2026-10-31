@@ -3586,6 +3586,16 @@ export function ChatComposer(props: ChatComposerProps) {
                         </span>
                       ) : undefined
                     }
+                    narrowPlaceholder={
+                      !isComposerApprovalState &&
+                      !activePendingProgress &&
+                      offeredPromptSuggestion === null &&
+                      !projectSelectionRequired &&
+                      !showProviderUnavailable &&
+                      environmentUnavailable === null
+                        ? "Ask anything…"
+                        : undefined
+                    }
                     disabled={
                       projectSelectionRequired ||
                       isChoiceOnlyPendingQuestion ||
