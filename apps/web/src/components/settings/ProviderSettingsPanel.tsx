@@ -798,7 +798,7 @@ export function EnvironmentProviderSettings({
     if (instanceEditsRef.current.get(instanceId) !== edits) return;
     edits.saving -= 1;
     if (succeeded) edits.confirmed = Math.max(edits.confirmed, carried);
-    else if (edits.saving === 0) edits.updates.length = edits.confirmed;
+    if (edits.saving === 0) edits.updates.length = edits.confirmed;
   };
 
   const persistInstance = async (

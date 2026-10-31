@@ -245,6 +245,23 @@ describe("mobile model options", () => {
         null,
       )[0]?.providerBadge?.showBadge,
     ).toBe(false);
+    for (const [appearance, showBadge] of [
+      [{ icon: "initials", badgeLabel: "PX" }, false],
+      [{ badgeLabel: "PX" }, true],
+      [{ icon: "claudeAgent" }, false],
+    ] as const) {
+      const providers = config.providers.map((provider, index) =>
+        index === 0 ? { ...provider, ...appearance } : provider,
+      );
+      expect(
+        buildModelOptions(
+          { ...config, providers: showBadge ? providers.slice(0, 1) : providers },
+          null,
+          undefined,
+          null,
+        )[0]?.providerBadge?.showBadge,
+      ).toBe(showBadge);
+    }
   });
 
   it("only badges ACP accounts that share the same agent", () => {

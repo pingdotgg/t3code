@@ -222,6 +222,8 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
+        icon: entry.icon,
+        badgeLabel: entry.badgeLabel,
         reason: "Reading secrets…",
       }),
     };
@@ -242,6 +244,8 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
+        icon: entry.icon,
+        badgeLabel: entry.badgeLabel,
         reason: `Could not read ${unreadable.join(", ")} from its secret provider. Unlock it, then refresh.`,
       }),
     };

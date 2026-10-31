@@ -355,17 +355,25 @@ describe("EnvironmentProviderSettings routing", () => {
     });
   });
 
-  it("starts the next edit from server state after a save fails", async () => {
-    await setup();
-    state.mutateProviderInstance.mockResolvedValueOnce(
-      AsyncResult.failure(Cause.fail(new Error("settings write failed"))),
-    );
-    await using screen = await render(panel());
-    await commitInstanceField(screen, "badge-label", "PX");
-    await chooseInstanceIcon("Claude");
-    expect(savedInstance(1)).toMatchObject({ icon: "claudeAgent" });
-    expect(savedInstance(1)).not.toHaveProperty("badgeLabel");
-  });
+  it.each([false, true])(
+    "starts the next edit from server state after a save fails (overlap: %s)",
+    async (overlap) => {
+      await setup();
+      const finish = overlap ? holdFirstSave() : undefined;
+      state.mutateProviderInstance.mockResolvedValueOnce(
+        AsyncResult.failure(Cause.fail(new Error("settings write failed"))),
+      );
+      await using screen = await render(panel());
+      if (overlap) await commitInstanceField(screen, "display-name", "Work");
+      await commitInstanceField(screen, "badge-label", "PX");
+      await finish?.();
+      await chooseInstanceIcon("Claude");
+      const saved = savedInstance(overlap ? 2 : 1);
+      expect(saved).toMatchObject({ icon: "claudeAgent" });
+      if (overlap) expect(saved.displayName).toBe("Work");
+      expect(saved).not.toHaveProperty("badgeLabel");
+    },
+  );
 
   it("does not substitute another account when the requested instance was removed", async () => {
     await setup();
