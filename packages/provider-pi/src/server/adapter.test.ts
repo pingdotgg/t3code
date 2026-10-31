@@ -3635,7 +3635,6 @@ describe("PiAdapterV2", () => {
                   ],
                   childOutputs: [
                     {
-                      runId: "unavailable",
                       workflowKey: "alpha",
                       savedOutputPath: "/output/scout.txt",
                     },

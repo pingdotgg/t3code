@@ -1376,7 +1376,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 ? childOutputs.find(
                     (output) =>
                       recordString(output, "workflowKey") === workflowKey &&
-                      recordString(output, "runId") === childId,
+                      (recordString(output, "runId") === childId ||
+                        (childId === "unavailable" && recordString(output, "runId") === undefined)),
                   )
                 : undefined;
               const result =
