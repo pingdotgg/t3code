@@ -21,7 +21,6 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { MinusIcon, PlusIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import { getProviderStatusMessage, hasProviderSetup } from "./ProviderStatusBanner";
@@ -1020,13 +1019,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       aria-expanded={legacySection.isExpanded}
                       className="group w-full cursor-pointer"
                     >
-                      <span className="flex items-center gap-1.5 text-sm leading-snug text-muted-foreground group-hover:text-foreground group-data-highlighted:text-foreground">
+                      <span className="text-sm leading-snug text-muted-foreground group-hover:text-foreground group-data-highlighted:text-foreground">
                         {legacySection.isExpanded ? "Show less" : "Show more"}
-                        {legacySection.isExpanded ? (
-                          <MinusIcon aria-hidden="true" className="size-3.5 text-current" />
-                        ) : (
-                          <PlusIcon aria-hidden="true" className="size-3.5 text-current" />
-                        )}
                       </span>
                     </ComboboxItem>
                   );
