@@ -467,6 +467,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarAutoSettleOnMerge !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge
       ? ["Auto-settle merged threads"]
       : []),
+    ...(settings.sidebarAutoSettleSnoozedOnMerge !==
+    DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleSnoozedOnMerge
+      ? ["Settle snoozed threads on merge"]
+      : []),
     ...(settings.autoResumeLimitedThreads !== DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads
       ? ["Resume after usage limits"]
       : []),
@@ -626,6 +630,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
+      sidebarAutoSettleSnoozedOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleSnoozedOnMerge,
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
       snoozePresets: DEFAULT_UNIFIED_SETTINGS.snoozePresets,
@@ -1471,7 +1476,7 @@ export function ThreadsSettingsPanel() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
-  const { environment, connectedEnvironments, target, scope } = useSettingsScope();
+  const { environment, connectedEnvironments, target, targets, scope } = useSettingsScope();
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const environmentId = environment?.environmentId ?? null;
   const hasServerTargets = connectedEnvironments.length > 0;
@@ -1483,6 +1488,12 @@ export function ThreadsSettingsPanel() {
       : undefined) ?? EMPTY_SERVER_PROVIDERS;
   const supportsAutoSettlementScope = connectedEnvironments.every(
     (target) => target.serverConfig?.environment.capabilities.threadAutoSettlementScope === true,
+  );
+  const supportsAutoSettleSnoozedOnMerge = connectedEnvironments.every(
+    (entry) => entry.serverConfig?.environment.capabilities.threadAutoSettleSnoozedOnMerge === true,
+  );
+  const anyTargetHasAutoSettleOnMerge = targets.some(
+    (entry) => entry.settings.sidebarAutoSettleOnMerge === true,
   );
 
   const textGenerationProviders = serverProviders.filter(
@@ -1634,6 +1645,24 @@ export function ThreadsSettingsPanel() {
               />
             }
           />
+          {anyTargetHasAutoSettleOnMerge && supportsAutoSettleSnoozedOnMerge ? (
+            <SettingsRow
+              serverScoped
+              settingKeys={["sidebarAutoSettleSnoozedOnMerge"]}
+              title={searchableSetting("settle-snoozed-threads-on-merge").title}
+              description="A merge also settles snoozed threads. Off keeps them snoozed until they wake."
+              control={
+                <ScopedSwitch
+                  settingKeys={["sidebarAutoSettleSnoozedOnMerge"]}
+                  checked={settings.sidebarAutoSettleSnoozedOnMerge}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ sidebarAutoSettleSnoozedOnMerge: Boolean(checked) })
+                  }
+                  aria-label="Settle snoozed threads on merge"
+                />
+              }
+            />
+          ) : null}
 
           <SettingsRow
             serverScoped
