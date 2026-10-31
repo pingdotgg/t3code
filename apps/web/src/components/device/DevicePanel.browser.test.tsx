@@ -7,6 +7,7 @@ import {
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import type { RightPanelSurface } from "~/rightPanelStore";
 
 import { act, render } from "../../../test/render";
@@ -98,8 +99,11 @@ vi.mock("~/rightPanelStore", () => ({
 }));
 vi.mock("~/components/device/DeviceHostUpdates", () => ({ DeviceHostUpdates: () => null }));
 vi.mock("~/components/device/DeviceWorkspace", () => ({
-  DeviceWorkspace: ({ onPowerOff }: { onPowerOff: () => void }) => (
-    <button onClick={onPowerOff}>Power off</button>
+  DeviceWorkspace: ({ onPowerOff, onClose }: { onPowerOff: () => void; onClose: () => void }) => (
+    <>
+      <button onClick={onPowerOff}>Power off</button>
+      <button onClick={onClose}>Close device panel</button>
+    </>
   ),
 }));
 vi.mock("~/components/preview/PreviewPanelShell", () => ({
@@ -122,7 +126,7 @@ const switches = [
 ] as const;
 const threadB = switches[0][1];
 const picker: Extract<RightPanelSurface, { kind: "device" }> = { id: "device", kind: "device" };
-const phoneTarget = { hostId: "local", deviceId: "phone", platform: "ios", name: "Phone" };
+const phoneTarget = { hostId: "local", deviceId: "phone", platform: "ios", name: "Phone" } as const;
 const opened = { _tag: "Success", value: { hostId: "local", deviceId: "phone" } } as const;
 const failed = { _tag: "Failure", cause: new Error("boom") } as const;
 
@@ -153,6 +157,7 @@ const errors = () => container.querySelectorAll('[role="alert"]');
 
 function setup() {
   vi.resetAllMocks();
+  usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
   mocks.list.mockResolvedValue({ _tag: "Success", value: { hostId: "local", deviceId: "" } });
   currentState = deviceState;
   container = document.createElement("div");
@@ -212,4 +217,19 @@ describe("DevicePanel host probe", () => {
       [{ environmentId: threadRef.environmentId, input: {} }],
     ]);
   });
+});
+
+it("dismisses the retained floating device when its panel is closed", async () => {
+  setup();
+  usePreviewMiniPlayerStore.getState().open(threadA, { kind: "device", ...phoneTarget });
+  await using screen = await render(
+    devicePanel(threadA, { id: "device:local:phone", kind: "device", target: phoneTarget }),
+    { container },
+  );
+  await screen.getByRole("button", { name: "Close device panel" }).click();
+  expect(
+    selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, threadA),
+  ).toBeNull();
+  expect(mocks.closeSurface).toHaveBeenCalledWith(threadA, "device:local:phone");
+  expect(mocks.close).not.toHaveBeenCalled();
 });

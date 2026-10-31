@@ -3,6 +3,10 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { expect, it, vi } from "vite-plus/test";
 import { act, render } from "../../test/render";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
+import {
+  selectThreadPreviewMiniPlayer,
+  usePreviewMiniPlayerStore,
+} from "../previewMiniPlayerStore";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useRightPanelSurfaceClose } from "./useRightPanelSurfaceClose";
 
@@ -61,6 +65,7 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
 }));
 
 function setup() {
+  usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
   fixture.allowed = new Set(["environment-a", "environment-b"]);
   fixture.sessions = new Map();
   fixture.failClose = false;
@@ -132,3 +137,30 @@ it.each(["cancel", "revoked"])(
     ).toHaveLength(1);
   },
 );
+
+it("dismisses only the floating device whose tab is closed", async () => {
+  const { original } = setup();
+  const target = { hostId: "local", deviceId: "phone", platform: "ios", name: "Phone" } as const;
+  useRightPanelStore.getState().openDevice(original, target);
+  const surface = selectThreadRightPanelState(
+    useRightPanelStore.getState().byThreadKey,
+    original,
+  ).surfaces.find((entry) => entry.kind === "device")!;
+  function DeviceClose() {
+    const { closeSurface } = useRightPanelSurfaceClose({
+      threadRef: original,
+      terminalLabelsById: new Map(),
+    });
+    return <button onClick={() => closeSurface(surface)}>Close device</button>;
+  }
+  await using screen = await render(<DeviceClose />);
+  for (const deviceId of ["other", "phone"]) {
+    useRightPanelStore.getState().openDevice(original, target);
+    usePreviewMiniPlayerStore.getState().open(original, { kind: "device", ...target, deviceId });
+    await screen.getByRole("button").click();
+    expect(
+      selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, original)
+        ?.source ?? null,
+    ).toEqual(deviceId === "phone" ? null : { kind: "device", ...target, deviceId });
+  }
+});

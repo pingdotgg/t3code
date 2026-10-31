@@ -20,7 +20,6 @@ import {
 import { useRightPanelStore } from "../../rightPanelStore";
 import {
   applyDeviceSnapshot,
-  floatDeviceSurface,
   followPreviewSessions,
   resetDeviceSessionBaselinesForTests,
   revealServerTabs,
@@ -166,32 +165,6 @@ describe("applyDeviceSnapshot", () => {
     expect(
       usePreviewMiniPlayerStore.getState().byThreadKey[scopedThreadKey(otherRef)]?.source,
     ).toMatchObject({ kind: "device", deviceId: "pixel" });
-  });
-});
-
-describe("floatDeviceSurface", () => {
-  const source = {
-    kind: "device",
-    hostId: "local",
-    deviceId: "pixel",
-    platform: "android",
-    name: "Pixel 8",
-  } as const;
-
-  it("floats a device with a live session, or before device state loads", () => {
-    setup();
-    floatDeviceSurface(ref, source, deviceState({ sessions: [session] }));
-    expect(miniPlayerSource()).toMatchObject({ kind: "device", deviceId: "pixel" });
-
-    setup();
-    floatDeviceSurface(ref, source, null);
-    expect(miniPlayerSource()).toMatchObject({ kind: "device", deviceId: "pixel" });
-  });
-
-  it("does not float a device whose session ended", () => {
-    setup();
-    floatDeviceSurface(ref, source, deviceState({ sessions: [] }));
-    expect(miniPlayerSource()).toBeUndefined();
   });
 });
 

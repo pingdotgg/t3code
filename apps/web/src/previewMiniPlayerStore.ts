@@ -32,7 +32,7 @@ export interface PreviewMiniPlayerState {
 interface PreviewMiniPlayerStoreState {
   readonly byThreadKey: Record<string, PreviewMiniPlayerState>;
   readonly open: (ref: ScopedThreadRef, source: PreviewMiniPlayerSource) => void;
-  readonly close: (ref: ScopedThreadRef) => void;
+  readonly close: (ref: ScopedThreadRef, source?: PreviewMiniPlayerSource) => void;
   /** `sourceKey` guards against a drag that outlives the source it started on. */
   readonly move: (
     ref: ScopedThreadRef,
@@ -83,10 +83,16 @@ export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((
         },
       };
     }),
-  close: (ref) =>
+  close: (ref, source) =>
     set((state) => {
       const threadKey = scopedThreadKey(ref);
-      if (!(threadKey in state.byThreadKey)) return state;
+      const current = state.byThreadKey[threadKey];
+      if (
+        !current ||
+        (source &&
+          previewMiniPlayerSourceKey(current.source) !== previewMiniPlayerSourceKey(source))
+      )
+        return state;
       const { [threadKey]: _closed, ...byThreadKey } = state.byThreadKey;
       return { byThreadKey };
     }),
