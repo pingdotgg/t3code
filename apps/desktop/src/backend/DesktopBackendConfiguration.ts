@@ -698,8 +698,11 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
 
   return {
     ...baseConfig,
+    // Avoid inheriting a Windows-mounted cwd for server-wide provider discovery.
     args: [
       ...distroArgs,
+      "--cd",
+      "~",
       "--exec",
       "env",
       `PATH=${launchPath}`,
