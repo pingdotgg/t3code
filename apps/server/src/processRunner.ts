@@ -9,7 +9,9 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { WindowsAnsiEncoding } from "@t3tools/shared/windowsCodePage";
 import {
   collectUint8StreamText,
   decodeUtf8,
@@ -29,6 +31,11 @@ export interface ProcessRunInput {
   readonly maxOutputBytes?: number | undefined;
   readonly outputMode?: "error" | "truncate" | undefined;
   readonly truncatedMarker?: string | undefined;
+  /**
+   * Windows CLIs that are not in UTF-8 mode (`az`) write piped output in the ANSI code page.
+   * Opt in per command so a UTF-8 tool with a stray legacy byte keeps its text.
+   */
+  readonly windowsAnsiOutput?: boolean | undefined;
   /** Timed-out results discard partial stdout/stderr. */
   readonly timeoutBehavior?: "error" | "timedOutResult" | undefined;
 }
@@ -157,6 +164,7 @@ const collectText = Effect.fnUntraced(function* (input: {
   readonly maxOutputBytes: number;
   readonly outputMode: "error" | "truncate";
   readonly truncatedMarker: string;
+  readonly legacyEncoding: string | null;
 }) {
   const stream = input.stream.pipe(
     Stream.mapError(
@@ -177,6 +185,7 @@ const collectText = Effect.fnUntraced(function* (input: {
       stream,
       maxBytes: input.maxOutputBytes,
       truncatedMarker: input.truncatedMarker,
+      legacyEncoding: input.legacyEncoding,
     });
   }
 
@@ -215,7 +224,9 @@ const collectText = Effect.fnUntraced(function* (input: {
       },
     ),
     Effect.map((state): CollectedUint8StreamText => ({
-      ...decodeUtf8(Buffer.concat(state.chunks, state.bytes)),
+      ...decodeUtf8(Buffer.concat(state.chunks, state.bytes), {
+        legacyEncoding: input.legacyEncoding,
+      }),
       bytes: state.bytes,
       truncated: false,
     })),
@@ -265,12 +276,14 @@ const commandName = (command: string) => command.replace(/^.*[\\/]/, "");
 
 const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  legacyOutputEncoding: Effect.Effect<string | null>,
   input: ProcessRunInput,
 ): Effect.fn.Return<ProcessRunOutput, ProcessRunError, Scope.Scope> {
   yield* Effect.annotateCurrentSpan("process.command", commandName(input.command));
   const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   const outputMode = input.outputMode ?? "error";
   const truncatedMarker = input.truncatedMarker ?? "";
+  const legacyEncoding = input.windowsAnsiOutput === true ? yield* legacyOutputEncoding : null;
   const extendEnv = input.env !== undefined;
   const spawnCommand = yield* resolveSpawnCommand(
     input.command,
@@ -343,6 +356,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
         maxOutputBytes,
         outputMode,
         truncatedMarker,
+        legacyEncoding,
       }),
       collectText({
         command: input.command,
@@ -354,6 +368,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
         maxOutputBytes,
         outputMode,
         truncatedMarker,
+        legacyEncoding,
       }),
       writeStdin,
     ],
@@ -389,9 +404,14 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
 /** @public */
 export const make = Effect.fn("ProcessRunner.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const platform = yield* HostProcess.Platform;
+  // Python CLIs that are not in UTF-8 mode (`az`) encode piped output in the ANSI code page.
+  const legacyEncoding: Effect.Effect<string | null> =
+    platform === "win32" ? yield* WindowsAnsiEncoding : Effect.succeed(null);
+  const legacyOutputEncoding = yield* Effect.cached(legacyEncoding);
 
   const run: ProcessRunner["Service"]["run"] = (input) =>
-    finalizeRunProcess(runProcessCore(spawner, input), input);
+    finalizeRunProcess(runProcessCore(spawner, legacyOutputEncoding, input), input);
 
   return ProcessRunner.of({
     run,

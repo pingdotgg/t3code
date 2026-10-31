@@ -13,6 +13,9 @@ import {
 } from "@t3tools/contracts";
 
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import { AzureCliInstallLocation, type AzureCliInstall } from "./azureCliLauncher.ts";
 import {
   decodeAzureDevOpsPullRequestJson,
   decodeAzureDevOpsPullRequestListJson,
@@ -362,17 +365,54 @@ const classifyAzFailure = (stderr: string): VcsProcessExitFailureKind | null => 
     : null;
 };
 
+export interface AzureCliInvocation {
+  readonly command: string;
+  /** Arguments `az` needs before the caller's, to run the CLI in UTF-8 mode. */
+  readonly args: ReadonlyArray<string>;
+  readonly env?: NodeJS.ProcessEnv;
+  /** The launcher could not run in UTF-8 mode, so its piped output may be the ANSI code page. */
+  readonly windowsAnsiOutput?: boolean;
+}
+
+/**
+ * `-X utf8` is the only way in: the launcher's `-I` implies `-E`, so `PYTHONUTF8` and
+ * `PYTHONIOENCODING` are ignored, and the ANSI code page loses text `az` cannot encode.
+ * Resolved once when the service is built: installing `az` later needs a restart.
+ */
+export const azureCliInvocation = Effect.fn("AzureDevOpsCli.invocation")(function* () {
+  if ((yield* HostProcess.Platform) !== "win32") {
+    return { command: "az", args: [] } satisfies AzureCliInvocation;
+  }
+  const resolveExecutable = yield* SpawnExecutableResolution;
+  const launcher = resolveExecutable("az", "win32", yield* HostProcess.Environment);
+  const installFor: (launcherPath: string) => AzureCliInstall | undefined =
+    yield* AzureCliInstallLocation;
+  const install = launcher === undefined ? undefined : installFor(launcher);
+  return install === undefined
+    ? ({ command: "az", args: [], windowsAnsiOutput: true } satisfies AzureCliInvocation)
+    : ({
+        command: install.interpreter,
+        args: ["-X", "utf8", "-IBm", "azure.cli"],
+        env: { AZ_INSTALLER: install.installer },
+      } satisfies AzureCliInvocation);
+});
+
 /** @public */
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
+  const invocation = yield* azureCliInvocation();
 
   const execute: AzureDevOpsCli["Service"]["execute"] = (input) =>
     process
       .run({
         operation: "AzureDevOpsCli.execute",
-        command: "az",
-        args: input.args,
+        command: invocation.command,
+        args: [...invocation.args, ...input.args],
         cwd: input.cwd,
+        ...(invocation.env === undefined ? {} : { env: invocation.env }),
+        ...(invocation.windowsAnsiOutput === undefined
+          ? {}
+          : { windowsAnsiOutput: invocation.windowsAnsiOutput }),
         classifyFailure: classifyAzFailure,
         notFoundDetail: "Pull request not found.",
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
