@@ -423,6 +423,36 @@ export function routesAfterRemoving(
 }
 
 /**
+ * A learned route borrows the paired route's name along with its token, and the
+ * environment shows the first route's name, so renaming the paired route
+ * renames the routes learned through it.
+ */
+export function relabelLearnedRoutes(
+  routes: ReadonlyArray<ConnectionRoute>,
+  credentialId: string,
+  label: string,
+): ReadonlyArray<ConnectionRoute> {
+  return routes.map((route) => {
+    if (
+      !isLearned(route) ||
+      route.target._tag !== "BearerConnectionTarget" ||
+      route.target.label === label ||
+      credentialConnectionId(route.target.connectionId) !== credentialId
+    ) {
+      return route;
+    }
+    const profile = Option.getOrNull(route.profile);
+    return {
+      target: new BearerConnectionTarget({ ...route.target, label }),
+      profile:
+        profile?._tag === "BearerConnectionProfile"
+          ? Option.some(new BearerConnectionProfile({ ...profile, label }))
+          : route.profile,
+    };
+  });
+}
+
+/**
  * A dragged route order shows until the saved routes catch up with it. It is
  * stale, and returns null, once the saved order matches it or the saved routes
  * are no longer the same set: kept any longer, it would hide a route added
