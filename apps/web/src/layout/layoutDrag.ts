@@ -98,7 +98,9 @@ function measure(): { panes: LayoutDragPane[]; strip: LayoutDragRect } | null {
       const tabs = [...element.querySelectorAll<HTMLElement>("[data-layout-pane-tab]")].map(
         (tab) => ({ id: tab.dataset.layoutPaneTab!, rect: toRect(tab.getBoundingClientRect()) }),
       );
-      return [{ paneId, rect: toRect(rect), tabs, companion: element.dataset.layoutCompanion != null }];
+      return [
+        { paneId, rect: toRect(rect), tabs, companion: element.dataset.layoutCompanion != null },
+      ];
     },
   );
   return { panes, strip: toRect(strip.getBoundingClientRect()) };
@@ -159,7 +161,12 @@ function layoutDropDestination(
   target: LayoutDropTarget,
 ): LayoutTabDestination | null {
   if (target.kind === "side") return { kind: "split", paneId: target.paneId, side: target.side };
-  if (target.kind === "into") return { kind: "pane", paneId: target.paneId, ...(target.index === undefined ? {} : { index: target.index }) };
+  if (target.kind === "into")
+    return {
+      kind: "pane",
+      paneId: target.paneId,
+      ...(target.index === undefined ? {} : { index: target.index }),
+    };
   const workspace = selectFocusedWorkspace(layout);
   if (target.edge === "left") return { kind: "column", workspaceId: workspace.id, index: 0 };
   if (target.edge === "right") {
@@ -188,7 +195,10 @@ function isLayoutDropUseful(
   if (!location) return false;
   const alone = location.pane.tabs.length === 1;
   if (target.kind === "into") {
-    return target.paneId !== location.pane.id || (target.index !== undefined && target.index !== location.tabIndex);
+    return (
+      target.paneId !== location.pane.id ||
+      (target.index !== undefined && target.index !== location.tabIndex)
+    );
   }
   if (target.kind === "side") return !(alone && target.paneId === location.pane.id);
   const workspace = selectFocusedWorkspace(layout);
@@ -252,9 +262,9 @@ export function moveLayoutDrag(
       : resolveLayoutDropTarget(point, measured.panes, measured.strip);
   if (raw?.kind === "into") {
     const paneId = raw.paneId;
-    const tabs = measured.panes.find((pane) => pane.paneId === paneId)?.tabs?.filter(
-      (tab) => source.kind !== "tab" || tab.id !== source.tabId,
-    );
+    const tabs = measured.panes
+      .find((pane) => pane.paneId === paneId)
+      ?.tabs?.filter((tab) => source.kind !== "tab" || tab.id !== source.tabId);
     if (tabs) {
       const before = tabs.findIndex((tab) => point.x < (tab.rect.left + tab.rect.right) / 2);
       raw = { ...raw, index: before === -1 ? tabs.length : before };

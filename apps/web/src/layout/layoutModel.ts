@@ -45,7 +45,6 @@ export type LayoutTabContent =
    */
   | { kind: "surface"; threadRef: ScopedThreadRef; surfaceId: string };
 
-
 export function isLayoutPageContent(content: LayoutTabContent): content is LayoutPageContent {
   return (
     content.kind === "settings" || content.kind === "usage" || content.kind === "pull-requests"

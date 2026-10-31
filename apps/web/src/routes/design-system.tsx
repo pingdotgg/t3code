@@ -1,10 +1,7 @@
 import { Outlet, createFileRoute, notFound, redirect } from "@tanstack/react-router";
 
 import { SidebarInset } from "../components/ui/sidebar";
-import {
-  WorkspaceBreadcrumb,
-  WorkspaceBreadcrumbItem,
-} from "../components/WorkspaceBreadcrumb";
+import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../components/WorkspaceBreadcrumb";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { isElectron } from "../env";
 
