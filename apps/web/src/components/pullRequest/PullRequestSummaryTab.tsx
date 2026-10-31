@@ -720,7 +720,7 @@ export function PullRequestSummaryTab({
 
   return (
     <div ref={scrollerRef} className="h-full overflow-y-auto" data-pull-request-summary-scroll>
-      {readiness ? <section className="px-4 pt-3 pb-4">{readiness}</section> : null}
+      {readiness ? <section className="px-4 pt-3.5 pb-1.5">{readiness}</section> : null}
 
       <Section key={`description:${detail.url}`} title="Description" keepMounted>
         <div className="group">

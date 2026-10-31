@@ -518,9 +518,9 @@ export function PullRequestReadinessCard({
       </div>
       {primary ? (
         <div className="px-2 pt-3 pb-2">
-          <div className="inline-flex min-w-0 items-stretch">
+          <div className="flex min-w-0 items-stretch">
             {primaryMenu ? (
-              <Group>
+              <Group className="w-full">
                 {primary}
                 <Menu>
                   <MenuTrigger
