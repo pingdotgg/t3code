@@ -149,7 +149,6 @@ describe("server browser element refs", () => {
       /typed-pass|saved-pass|role-pass|styled-pass|editable-pass|frame-pass|blank-pass/,
     );
     expect(result.visibleText).not.toContain("editable-pass");
-    // Page text masks the same values, so it can't be compared against the tree.
     expect(result.visibleText).toContain("Order ••••••••-2");
     expect(tree).toMatch(/row "password: •+"/);
     expect(tree).toMatch(/textbox "Username" [^\n]*: maria$/m);
@@ -173,7 +172,6 @@ describe("server browser element refs", () => {
       <input type="password" aria-label="Long" value="long-secret">`);
     const cut = (await takeSnapshot()).visibleText;
     expect(cut.length).toBe(20_000);
-    // Masked before the cut, so no prefix of the value is left.
     expect(cut.slice(-8)).toBe("xxx•••••");
   });
 
@@ -247,6 +245,109 @@ describe("server browser element refs", () => {
   });
 });
 
+describe("server browser snapshot screenshot", () => {
+  let browser: Browser;
+  let context: BrowserContext;
+
+  beforeAll(async () => {
+    // ServerBrowserContexts launches with these, and the capture scale depends on them.
+    browser = await chromium.launch({
+      headless: true,
+      args: ["--disable-gpu", "--force-device-scale-factor=2"],
+    });
+  });
+  afterAll(async () => {
+    await browser?.close();
+  });
+  beforeEach(async () => {
+    context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      deviceScaleFactor: 2,
+    });
+  });
+  afterEach(async () => {
+    await context.close();
+  });
+
+  // Blue on the left half and red on the right, so a mirrored left half shows up on the right.
+  const halves = (overlay: string) => `
+    <style>
+      body { margin: 0; background: white; }
+      .half { position: absolute; top: 0; width: 640px; height: 800px; }
+      .overlay { position: fixed; inset: 0; ${overlay} }
+    </style>
+    <div class="half" style="left: 0; background: #2563eb"></div>
+    <div class="half" style="left: 640px; background: #ef4444"></div>
+    <div class="overlay"></div>`;
+
+  const screenshotOf = async (html: string) => {
+    const page = await context.newPage();
+    await page.setContent(html);
+    const { screenshot } = await ServerBrowserPage.snapshot({
+      page,
+      cdp: await context.newCDPSession(page),
+      renderScale: 2,
+      consoleEntries: [],
+      networkEntries: [],
+      actionTimeline: [],
+    });
+    // The server has no DOM types, so the decoder runs as page source.
+    const points = [
+      [0.15, 0.75],
+      [0.85, 0.25],
+      [0.85, 0.75],
+    ];
+    const pixels = (await page.evaluate(`(async () => {
+      const bytes = Uint8Array.from(atob(${JSON.stringify(screenshot.data)}), (char) => char.charCodeAt(0));
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext("2d");
+      context.drawImage(bitmap, 0, 0);
+      return ${JSON.stringify(points)}.map(([x, y]) =>
+        Array.from(context.getImageData(x * bitmap.width, y * bitmap.height, 1, 1).data),
+      );
+    })()`)) as Array<[number, number, number, number]>;
+    return { screenshot, pixels };
+  };
+  const colorOf = ([red, green, blue]: readonly [number, number, number, number]) =>
+    blue - red > 100 ? "blue" : red - blue > 100 ? "red" : `rgb(${red}, ${green}, ${blue})`;
+
+  it("captures a blurred backdrop-filter page as rendered, not mirrored", async () => {
+    const { screenshot, pixels } = await screenshotOf(halves("backdrop-filter: blur(4px);"));
+
+    expect({
+      size: [screenshot.width, screenshot.height],
+      colors: pixels.map(colorOf),
+    }).toEqual({ size: [1280, 800], colors: ["blue", "red", "red"] });
+  });
+
+  it("captures a plain page at the shrunk size with its content in place", async () => {
+    const { screenshot, pixels } = await screenshotOf(halves(""));
+
+    expect({
+      size: [screenshot.width, screenshot.height],
+      colors: pixels.map(colorOf),
+    }).toEqual({ size: [1280, 800], colors: ["blue", "red", "red"] });
+  });
+
+  it("shrinks the screenshot of an XML document, whose createElement makes no canvas", async () => {
+    const page = await context.newPage();
+    await page.goto("data:text/xml,<a/>");
+    const { screenshot } = await ServerBrowserPage.snapshot({
+      page,
+      cdp: await context.newCDPSession(page),
+      renderScale: 2,
+      consoleEntries: [],
+      networkEntries: [],
+      actionTimeline: [],
+    });
+
+    expect([screenshot.width, screenshot.height]).toEqual([1280, 800]);
+  });
+});
+
 describe("server browser drag", () => {
   it("fails the drag, not the server, when it times out while the cursor is still moving", async () => {
     const timedOut = new Error("locator.dragTo: Timeout 30000ms exceeded.");
@@ -285,5 +386,19 @@ describe("server browser drag", () => {
     } finally {
       process.off("unhandledRejection", onUnhandled);
     }
+  });
+});
+
+describe("server browser net errors", () => {
+  it.each([
+    ["net::ERR_CONNECTION_REFUSED", "ERR_CONNECTION_REFUSED", -102],
+    [
+      "page.goto: net::ERR_HTTP2_PROTOCOL_ERROR at https://localhost:5173/",
+      "ERR_HTTP2_PROTOCOL_ERROR",
+      -2,
+    ],
+    ["net::ERR_TLS13_DOWNGRADE_DETECTED", "ERR_TLS13_DOWNGRADE_DETECTED", -2],
+  ])("reads the whole error name from %j", (errorText, description, code) => {
+    expect(ServerBrowserPage.parseNetError(errorText)).toEqual({ description, code });
   });
 });

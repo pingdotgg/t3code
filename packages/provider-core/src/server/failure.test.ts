@@ -2,6 +2,8 @@ import { assert, it } from "@effect/vitest";
 import {
   NodeId,
   ProviderDriverKind,
+  ProviderInstanceId,
+  ProviderSetupError,
   ProviderThreadId,
   ProviderTurnId,
   RunId,
@@ -16,6 +18,7 @@ import {
   makeProviderFailureTurnItem,
   MAX_PROVIDER_FAILURE_MESSAGE_LENGTH,
   ContextHandoffBudgetError,
+  ContextHandoffBackgroundWorkError,
 } from "./failure.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -38,6 +41,20 @@ it("redacts credentials and URL secrets from provider failures", () => {
   assert.notInclude(failure.message, "json-secret");
   assert.notInclude(failure.message, "key-secret");
   assert.notInclude(failure.message, "sk-abcdefghijklmnop");
+});
+
+it("redacts credentials whose key names end in a credential word", () => {
+  const failure = makeProviderFailure({
+    code: '{"refresh_token":"code value"}',
+    message:
+      'oauth refresh failed: client_secret=client-value refresh_token=refresh-value {"client_secret":"json-value"} clientSecret: camel-value X-Auth-Token: header-value max_tokens=4096',
+  });
+
+  assert.equal(failure.code, '{"refresh_token":"[REDACTED]"}');
+  assert.equal(
+    failure.message,
+    'oauth refresh failed: client_secret=[REDACTED] refresh_token=[REDACTED] {"client_secret":"[REDACTED]"} clientSecret: [REDACTED] X-Auth-Token: [REDACTED] max_tokens=4096',
+  );
 });
 
 it("does not split a surrogate pair at the truncation boundary", () => {
@@ -68,18 +85,25 @@ it("does not expose arbitrary cause messages and preserves explicit messages", (
   }
 });
 
-it("preserves actionable handoff errors wrapped by turn startup", () => {
-  const cause = new ProviderAdapter.ProviderAdapterTurnStartError({
-    driver: ProviderDriverKind.make("codex"),
-    threadId: ThreadId.make("thread:handoff-error"),
-    providerThreadId: ProviderThreadId.make("provider-thread:handoff-error"),
-    runId: RunId.make("run:handoff-error"),
-    cause: new ContextHandoffBudgetError(),
-  });
-  assert.equal(
-    makeProviderFailure({ cause: Cause.fail(cause) }).message,
-    new ContextHandoffBudgetError().message,
-  );
+it("preserves actionable T3 errors wrapped by turn startup", () => {
+  for (const error of [
+    new ContextHandoffBudgetError(),
+    new ContextHandoffBackgroundWorkError(),
+    new ProviderSetupError({
+      instanceId: ProviderInstanceId.make("codex"),
+      operation: "runtime",
+      detail: "Codex 0.144.3 does not work with this T3 Code release.",
+    }),
+  ]) {
+    const cause = new ProviderAdapter.ProviderAdapterTurnStartError({
+      driver: ProviderDriverKind.make("codex"),
+      threadId: ThreadId.make("thread:handoff-error"),
+      providerThreadId: ProviderThreadId.make("provider-thread:handoff-error"),
+      runId: RunId.make("run:handoff-error"),
+      cause: error,
+    });
+    assert.equal(makeProviderFailure({ cause: Cause.fail(cause) }).message, error.message);
+  }
 });
 
 it("keeps unrecognized reasons and provider text out of category messages", () => {
