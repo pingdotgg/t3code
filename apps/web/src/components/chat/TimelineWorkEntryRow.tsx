@@ -426,7 +426,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       }
       label={
         <div className="min-w-0 flex-1 overflow-hidden">
-          <p className="flex min-w-0 w-full items-baseline gap-1.5 text-sm leading-relaxed">
+          <p className="flex min-w-0 w-full items-baseline gap-1.25 text-body">
             <span
               className={cn(
                 answerPreview || editCounts ? "min-w-0" : "min-w-0 flex-1",
