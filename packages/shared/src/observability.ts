@@ -547,7 +547,7 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
   } satisfies TraceSink;
 });
 
-// Effect's HTTP server errors put the request URL in their message.
+// Effect's HTTP errors, including failed upgrades, put the request URL in their message.
 function redactExitCredentials(exit: Exit.Exit<unknown, unknown>): Exit.Exit<unknown, unknown> {
   if (ExitRuntime.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)) {
     return exit;
@@ -606,10 +606,7 @@ class LocalFileSpan implements Tracer.Span {
       endTime,
       exit: traceExit,
     };
-    this.delegate.end(
-      endTime,
-      this.kind === "server" ? redactExitCredentials(traceExit) : traceExit,
-    );
+    this.delegate.end(endTime, redactExitCredentials(traceExit));
 
     if (this.sampled) {
       this.push(spanToTraceRecord(this));

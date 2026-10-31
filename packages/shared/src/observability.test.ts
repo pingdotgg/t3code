@@ -404,8 +404,8 @@ describe("observability", () => {
             Effect.withSpan("GET", { kind: "server" }),
             Effect.provideService(Tracer.Tracer, tracer),
           );
-          yield* Effect.die(new Error(`ResponseError (503 GET ${url})`)).pipe(
-            Effect.withSpan("GET", { kind: "server" }),
+          yield* Effect.die(new Error(`RequestParseError (GET ${url})`)).pipe(
+            Effect.withSpan("DeviceHubProxy.proxyWebSocket"),
             Effect.provideService(Tracer.Tracer, tracer),
             Effect.exit,
           );
