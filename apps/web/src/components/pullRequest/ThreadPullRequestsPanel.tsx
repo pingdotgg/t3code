@@ -474,9 +474,17 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
           drawDistance={440}
           className="min-h-0 flex-1 overscroll-contain p-1.5"
         />
-        <footer className="flex items-center justify-between border-t border-border py-1.5 ps-4 pe-2.25 text-2xs text-muted-foreground">
+        <footer className="flex items-center justify-between border-t border-border py-1.5 ps-4 pe-2.25 text-meta text-muted-foreground">
           <Tooltip>
-            <TooltipTrigger render={<span />}>{linkCount} linked</TooltipTrigger>
+            <TooltipTrigger render={<span className="flex min-w-0 flex-wrap gap-x-2" />}>
+              <span>{linkCount} linked</span>
+              <span>{openCount} open</span>
+              {lastSynced ? (
+                <span>
+                  synced <RelativeTime timestamp={lastSynced} />
+                </span>
+              ) : null}
+            </TooltipTrigger>
             <TooltipPopup>
               <span className="flex flex-col gap-0.5">
                 <span>{openCount} open</span>
