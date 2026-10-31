@@ -1131,4 +1131,55 @@ describe("DesktopWindow", () => {
       }).pipe(Effect.provide(layer));
     }),
   );
+
+  it.effect("keeps a closed main window closed when the backend restarts", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const onReveal = vi.fn();
+      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow, onReveal });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        assert.equal(yield* Ref.get(createCount), 1);
+
+        fakeWindow.windowListeners.get("closed")?.();
+        assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
+
+        yield* desktopWindow.handleBackendNotReady;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        assert.equal(yield* Ref.get(createCount), 1);
+        assert.equal(onReveal.mock.calls.length, 0);
+
+        yield* desktopWindow.activate;
+        assert.equal(yield* Ref.get(createCount), 2);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect(
+    "opens the main window when the backend returns after activation during a restart",
+    () =>
+      Effect.gen(function* () {
+        const fakeWindow = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          fakeWindow.windowListeners.get("closed")?.();
+          yield* desktopWindow.handleBackendNotReady;
+
+          yield* desktopWindow.activate;
+          assert.equal(yield* Ref.get(createCount), 1);
+
+          yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          assert.equal(yield* Ref.get(createCount), 2);
+        }).pipe(Effect.provide(layer));
+      }),
+  );
 });
