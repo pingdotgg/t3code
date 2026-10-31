@@ -251,15 +251,22 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
       `✓ Signed in to T3 Connect${linked.identity ? ` as ${linked.identity}` : ""}`,
     );
   }
-  if (!routes.connect && (current.connect || before.connectRevoked)) {
-    yield* disconnectCloud({ clearAuthorization: false });
-  }
+  // A running server unlinks live; when that fails, only a restart stops its tunnel.
+  const unlinkFailed =
+    !routes.connect && (current.connect || before.connectRevoked)
+      ? (yield* disconnectCloud({ clearAuthorization: false })).status === "failed"
+      : false;
   const previousLan = (yield* CliService.readServiceEnv(baseDir)).entries.T3CODE_LAN;
   yield* CliService.writeServiceEnv(baseDir, { T3CODE_LAN: String(routes.lan) });
   // When the service step fails, an installed service still runs with the old
   // value, so the file goes back to match it.
+  // A new T3 Connect link is undone too, so a rerun sees it as a change and restarts.
   const restoreServiceEnv = before.service.installed
-    ? CliService.writeServiceEnv(baseDir, { T3CODE_LAN: previousLan })
+    ? CliService.writeServiceEnv(baseDir, { T3CODE_LAN: previousLan }).pipe(
+        Effect.andThen(
+          routes.connect && !current.connect ? CliState.setCliDesiredCloudLink(false) : Effect.void,
+        ),
+      )
     : Effect.void;
   if (before.host !== undefined) {
     yield* Console.warn(
@@ -297,13 +304,29 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
     } else if (result.changed) {
       yield* Console.log(CliService.formatServiceChange(result));
       started = true;
-    } else if (restart) {
-      if (!interactive && !stopped) {
-        yield* Console.log("Restarting T3 Code. Running agent turns will stop.");
+    } else if (restart || (unlinkFailed && before.service.installed)) {
+      const confirmed =
+        restart ||
+        !interactive ||
+        (yield* Prompt.run(
+          Prompt.Confirm({
+            message:
+              "The running service still has T3 Connect on. Restart it? Running agent turns will stop.",
+            initial: true,
+          }),
+        ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(false) })));
+      if (!confirmed) {
+        yield* Console.log("Run `t3 service restart` to turn T3 Connect off.");
+      } else {
+        if (!interactive && !stopped) {
+          yield* Console.log("Restarting T3 Code. Running agent turns will stop.");
+        }
+        const outcome = yield* service.restart.pipe(Effect.tapError(() => restoreServiceEnv));
+        if (outcome === "queued") {
+          yield* Console.log("Restart queued. This session will disconnect.");
+        }
+        started = outcome === "restarted";
       }
-      const outcome = yield* service.restart.pipe(Effect.tapError(() => restoreServiceEnv));
-      if (outcome === "queued") yield* Console.log("Restart queued. This session will disconnect.");
-      started = outcome === "restarted";
     }
   }
   if (started && routes.connect && !current.connect) yield* waitForReachability();

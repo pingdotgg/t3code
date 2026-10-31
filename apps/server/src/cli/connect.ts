@@ -503,6 +503,7 @@ export const disconnectCloud = Effect.fn("cloud.cli.disconnect")(function* (opti
       "Signed out of T3 Connect locally.\nThe background service is managed separately with `t3 service`.",
     );
   }
+  return liveResult;
 });
 
 export const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function* <A, E>(
