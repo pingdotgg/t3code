@@ -117,7 +117,12 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     );
   };
 
-  return {
+  let frame = 0;
+  let frameAnimates = false;
+  const view = parent.ownerDocument.defaultView;
+
+  const api = {
+    /** Read every row's position and animate rows that moved. Reads layout. */
     update(animate: boolean) {
       if (disposed) return;
       const next = new Map(
@@ -228,6 +233,19 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
       }
       positions = next;
     },
+    /** `update` in the next frame, before it paints, so a commit's own layout
+     * pass is the one read instead of a forced one mid-commit. A chat
+     * mounting in the same commit made that forced layout expensive. Calls
+     * before the frame coalesce; the last one decides whether rows animate. */
+    scheduleUpdate(animate: boolean) {
+      if (disposed || !view) return;
+      frameAnimates = animate;
+      if (frame !== 0) return;
+      frame = view.requestAnimationFrame(() => {
+        frame = 0;
+        api.update(frameAnimates);
+      });
+    },
     release() {
       suspend();
       const origin = parent.getBoundingClientRect().top;
@@ -240,7 +258,9 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     suspend,
     dispose() {
       suspend();
+      if (frame !== 0) view?.cancelAnimationFrame(frame);
       disposed = true;
     },
   };
+  return api;
 }

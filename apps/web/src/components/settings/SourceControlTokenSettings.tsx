@@ -1,6 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ExternalLinkIcon } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import {
@@ -26,6 +26,9 @@ export function SourceControlTokenSettings({
   readonly credentials: SourceControlHostCredentials;
   readonly onSaved: () => void;
 }) {
+  const id = useId();
+  const hostInputId = `${definition.kind}-token-host-${environmentId}-${id}`;
+  const tokenInputId = `${definition.kind}-token-${environmentId}-${id}`;
   const { tokens } = useEnvironmentSettings(environmentId, (settings) =>
     readHostCredentialSettings(settings, definition.kind),
   );
@@ -96,9 +99,9 @@ export function SourceControlTokenSettings({
         </p>
         <div className="grid gap-3 sm:grid-cols-[12rem_1fr]">
           <div className="grid gap-1.5">
-            <Label htmlFor={`${definition.kind}-token-host-${environmentId}`}>Host</Label>
+            <Label htmlFor={hostInputId}>Host</Label>
             <Input
-              id={`${definition.kind}-token-host-${environmentId}`}
+              id={hostInputId}
               autoComplete="off"
               size="sm"
               placeholder={defaultHost}
@@ -107,9 +110,9 @@ export function SourceControlTokenSettings({
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor={`${definition.kind}-token-${environmentId}`}>Token</Label>
+            <Label htmlFor={tokenInputId}>Token</Label>
             <SecretInput
-              id={`${definition.kind}-token-${environmentId}`}
+              id={tokenInputId}
               size="sm"
               configured={isSaved}
               value={draft}

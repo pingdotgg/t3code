@@ -147,8 +147,7 @@ export const PanelAnimationDurationMs = Schema.Int.check(
   }),
 );
 export type PanelAnimationDurationMs = typeof PanelAnimationDurationMs.Type;
-const DEFAULT_PANEL_ANIMATION_DURATION_MS: PanelAnimationDurationMs = 0;
-
+const DEFAULT_PANEL_ANIMATION_DURATION_MS: PanelAnimationDurationMs = 150;
 export const MIN_INTERFACE_FONT_SIZE = 12;
 export const MAX_INTERFACE_FONT_SIZE = 20;
 export const InterfaceFontSize = Schema.Int.check(
@@ -362,7 +361,104 @@ export type ModelPreferences = {
   readonly providerModelPreferences: typeof ProviderModelPreferences.Type;
 };
 
+/** What a layout pane shows. Each opened thing is a tab in a pane of one of these kinds. */
+export const LayoutPaneKind = Schema.Literals(["chat", "terminal", "diff", "files", "browser"]);
+export type LayoutPaneKind = typeof LayoutPaneKind.Type;
+
+/** A share of the column width or height, in (0, 1]. */
+const LayoutFraction = Schema.Number.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(1));
+
+/**
+ * One pane of the template. `span: "full"` lets the last pane of the first
+ * column (a terminal, usually) run under every column instead of only its own.
+ */
+export const LayoutTemplatePane = Schema.Struct({
+  kind: LayoutPaneKind,
+  size: LayoutFraction,
+  span: Schema.Literals(["column", "full"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("column" as const)),
+  ),
+});
+export type LayoutTemplatePane = typeof LayoutTemplatePane.Type;
+
+export const LayoutTemplateColumn = Schema.Struct({
+  size: LayoutFraction,
+  panes: Schema.Array(LayoutTemplatePane).check(Schema.isMinLength(1)),
+});
+export type LayoutTemplateColumn = typeof LayoutTemplateColumn.Type;
+
+/** The panes a chat and its companions open into (Settings › Layout › Your layout). */
+export const LayoutTemplate = Schema.Struct({
+  columns: Schema.Array(LayoutTemplateColumn).check(Schema.isMinLength(1)),
+});
+export type LayoutTemplate = typeof LayoutTemplate.Type;
+
+export const DEFAULT_LAYOUT_TEMPLATE: LayoutTemplate = {
+  columns: [
+    {
+      size: 1,
+      panes: [
+        { kind: "chat", size: 0.64, span: "column" },
+        { kind: "terminal", size: 0.36, span: "column" },
+      ],
+    },
+  ],
+};
+
+/** Where cmd+J opens the terminal. */
+export const LayoutTerminalPlacement = Schema.Literals(["attached-below", "new-tab", "new-column"]);
+export type LayoutTerminalPlacement = typeof LayoutTerminalPlacement.Type;
+/** Where alt+cmd+B opens the side pane (diffs, files, the browser, PRs). */
+export const LayoutSidePanePlacement = Schema.Literals(["beside-chat", "new-tab", "new-column"]);
+export type LayoutSidePanePlacement = typeof LayoutSidePanePlacement.Type;
+/** The tab alt+cmd+B shows first. */
+export const LayoutSidePaneOpensOn = Schema.Literals([
+  "last-used",
+  "diff",
+  "files",
+  "browser",
+  "pull-request",
+]);
+export type LayoutSidePaneOpensOn = typeof LayoutSidePaneOpensOn.Type;
+/** Where cmd+T adds a tab. */
+export const LayoutNewTabPosition = Schema.Literals(["after-current", "end"]);
+export type LayoutNewTabPosition = typeof LayoutNewTabPosition.Type;
+/** What happens when a new pane has no room (pen uQRYP). */
+export const LayoutWhenNoRoom = Schema.Literals([
+  "shrink-then-scroll",
+  "always-shrink",
+  "always-scroll",
+]);
+export type LayoutWhenNoRoom = typeof LayoutWhenNoRoom.Type;
+
+/** Device-local pane defaults and behavior (Settings › Layout). */
+export const LayoutSettings = Schema.Struct({
+  template: LayoutTemplate.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_LAYOUT_TEMPLATE)),
+  ),
+  terminalPlacement: LayoutTerminalPlacement.pipe(
+    Schema.withDecodingDefault(Effect.succeed("attached-below" as const)),
+  ),
+  sidePanePlacement: LayoutSidePanePlacement.pipe(
+    Schema.withDecodingDefault(Effect.succeed("beside-chat" as const)),
+  ),
+  sidePaneOpensOn: LayoutSidePaneOpensOn.pipe(
+    Schema.withDecodingDefault(Effect.succeed("last-used" as const)),
+  ),
+  newTabPosition: LayoutNewTabPosition.pipe(
+    Schema.withDecodingDefault(Effect.succeed("after-current" as const)),
+  ),
+  whenNoRoom: LayoutWhenNoRoom.pipe(
+    Schema.withDecodingDefault(Effect.succeed("shrink-then-scroll" as const)),
+  ),
+});
+export type LayoutSettings = typeof LayoutSettings.Type;
+
+export const DEFAULT_LAYOUT_SETTINGS: LayoutSettings = Schema.decodeSync(LayoutSettings)({});
+
 export const ClientSettingsSchema = Schema.Struct({
+  // Absence survives persistence until the primary environment's legacy layout is migrated.
+  layout: Schema.optionalKey(LayoutSettings),
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
   ),
@@ -373,6 +469,8 @@ export const ClientSettingsSchema = Schema.Struct({
   chatWidth: ChatWidth.pipe(Schema.withDecodingDefault(Effect.succeed("comfortable" as const))),
   effortDisplay: EffortDisplay.pipe(Schema.withDecodingDefault(Effect.succeed("label" as const))),
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** macOS desktop: a three-finger swipe moves one column or workspace (needs the system's "Swipe between pages" on three fingers). */
+  layoutThreeFingerSwipe: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   appearanceContrast: AppearanceContrast.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_APPEARANCE_CONTRAST)),
@@ -1833,12 +1931,23 @@ export function requiredScopesForProjectMutation(
 }
 
 export const ClientSettingsPatch = Schema.Struct({
+  layout: Schema.optionalKey(
+    Schema.Struct({
+      template: Schema.optionalKey(LayoutTemplate),
+      terminalPlacement: Schema.optionalKey(LayoutTerminalPlacement),
+      sidePanePlacement: Schema.optionalKey(LayoutSidePanePlacement),
+      sidePaneOpensOn: Schema.optionalKey(LayoutSidePaneOpensOn),
+      newTabPosition: Schema.optionalKey(LayoutNewTabPosition),
+      whenNoRoom: Schema.optionalKey(LayoutWhenNoRoom),
+    }),
+  ),
   notificationMode: Schema.optionalKey(NotificationMode),
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
   chatWidth: Schema.optionalKey(ChatWidth),
   effortDisplay: Schema.optionalKey(EffortDisplay),
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
+  layoutThreeFingerSwipe: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
   appearanceContrast: Schema.optionalKey(AppearanceContrast),
   surfaceStyle: Schema.optionalKey(SurfaceStyle),

@@ -1,3 +1,5 @@
+import { selectFocusedTab, findLayoutTabByContent } from "./layout/layoutModel";
+import { useLayoutStore } from "./layout/layoutStore";
 import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
 import { createEnvironmentThreadShellAtoms } from "@t3tools/client-runtime/state/threads";
 import {
@@ -1494,9 +1496,24 @@ describe("composerDraftStore draft promotion", () => {
   });
 
   it("holds a background submission on its draft until the send settles", async () => {
+    const previousLayout = useLayoutStore.getState().layout;
+    onTestFinished(() => {
+      useLayoutStore.setState({ layout: previousLayout });
+    });
     const h = draftPromotionHarness();
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    const layout = useLayoutStore.getState();
+    layout.openTab({ kind: "chat", target: { kind: "draft", draftId } });
+    const draftTab = selectFocusedTab(useLayoutStore.getState().layout);
+    layout.openTab({
+      kind: "chat",
+      target: {
+        kind: "server",
+        threadRef: scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("other")),
+      },
+    });
+    const focusedTab = selectFocusedTab(useLayoutStore.getState().layout);
     beginBackgroundDraftSubmissionByRef(threadRef);
     h.arrive(threadRef, {
       latestRun: preparingRun,
@@ -1511,6 +1528,31 @@ describe("composerDraftStore draft promotion", () => {
     h.flush();
     await waitForDraftHeroTransition();
     expect(useComposerDraftStore.getState().getDraftSession(draftId)).toBeNull();
+    expect(
+      findLayoutTabByContent(useLayoutStore.getState().layout, {
+        kind: "chat",
+        target: { kind: "server", threadRef },
+      })?.tab.id,
+    ).toBe(draftTab?.id);
+    expect(selectFocusedTab(useLayoutStore.getState().layout)).toEqual(focusedTab);
+  });
+
+  it("closes a discarded draft tab without closing another chat", () => {
+    const previousLayout = useLayoutStore.getState().layout;
+    onTestFinished(() => {
+      useLayoutStore.setState({ layout: previousLayout });
+    });
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    const draftContent = { kind: "chat", target: { kind: "draft", draftId } } as const;
+    useLayoutStore.getState().openTab(draftContent);
+    useLayoutStore.getState().openTab({ kind: "chat", target: { kind: "server", threadRef } });
+    const focusedTab = selectFocusedTab(useLayoutStore.getState().layout);
+
+    store.clearDraftThread(draftId);
+
+    expect(findLayoutTabByContent(useLayoutStore.getState().layout, draftContent)).toBeNull();
+    expect(selectFocusedTab(useLayoutStore.getState().layout)).toEqual(focusedTab);
   });
 
   it("does not finalize a draft whose send failed and was restored", async () => {

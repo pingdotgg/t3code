@@ -113,6 +113,8 @@ export const PREVIEW_RECORDING_STOP_CHANNEL = "desktop:preview-recording-stop";
 export const PREVIEW_RECORDING_SAVE_CHANNEL = "desktop:preview-recording-save";
 export const PREVIEW_STATE_CHANGE_CHANNEL = "desktop:preview-state-change";
 export const PREVIEW_POINTER_EVENT_CHANNEL = "desktop:preview-pointer-event";
+export const PREVIEW_SET_FORWARDED_KEY_CHORDS_CHANNEL = "desktop:preview-set-forwarded-key-chords";
+export const PREVIEW_FORWARDED_KEY_CHORD_CHANNEL = "desktop:preview-forwarded-key-chord";
 export const PREVIEW_OPEN_LINK_CHANNEL = "desktop:preview-open-link";
 
 export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";

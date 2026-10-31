@@ -1451,7 +1451,7 @@ function ComposerPromptEditorTiptapInner(
   // Push attributes before layout measurements; Tiptap updates them later in a passive effect.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes DOM attributes into the ProseMirror view before layout measurements read them
   useLayoutEffect(() => {
-    if (!editor?.isInitialized) return;
+    if (!editor?.isInitialized || editor.isDestroyed) return;
     editor.view.setProps({ attributes: editorAttributes });
   }, [editor, editorAttributes]);
 
@@ -1513,7 +1513,7 @@ function ComposerPromptEditorTiptapInner(
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reconciles the controlled Tiptap document before paint, outside React's commit
   useLayoutEffect(() => {
     latestValueRef.current = value;
-    if (!editor) return;
+    if (!editor || editor.isDestroyed) return;
     // Tiptap mounts React node views with flushSync; leave React's commit before updating them.
     let active = true;
     const applyControlledUpdate = () => {
@@ -1618,14 +1618,15 @@ function ComposerPromptEditorTiptapInner(
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores ProseMirror focus and caret scroll when the keyed editor remounts, capturing focus on teardown
   useLayoutEffect(() => {
     if (!editor) return;
-    if (restoreFocusRef.current) {
+    if (restoreFocusRef.current && !editor.isDestroyed) {
       restoreFocusRef.current = false;
       editor.view.focus();
       scrollTiptapCaretIntoView(editor);
     }
     return () => {
-      // Capture focus before the keyed editor's DOM is removed.
-      restoreFocusRef.current = editor.view.hasFocus();
+      // Capture focus before the keyed editor's DOM is removed. A pane move can unmount
+      // the view first; reading it then throws.
+      restoreFocusRef.current = !editor.isDestroyed && editor.view.hasFocus();
     };
   }, [editor, restoreFocusRef]);
 

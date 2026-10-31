@@ -58,34 +58,23 @@ interface DraftHeroHeadlineProps {
   readonly activeProjectTitle: string | null;
 }
 
-export function DraftHeroHeadline({
-  draftId,
-  activeProjectRef,
-  activeProjectTitle,
-}: DraftHeroHeadlineProps) {
+/**
+ * The projects a new thread can start in, as the draft hero and the new tab
+ * launcher list them (pen fsQuY): pinned projects, the most recent others, a
+ * way to every project, then the no-project and add-project rows.
+ */
+export function useProjectPickerModel(activeProjectRef: ScopedProjectRef | null) {
   const projects = useProjects();
   const threads = useThreadShells();
   const { environments } = useEnvironments();
-  const providersByEnvironment = useEnvironmentProviders();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const projectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
-  const setLogicalProjectDraftThreadId = useComposerDraftStore(
-    (store) => store.setLogicalProjectDraftThreadId,
-  );
-  const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
-  // A boolean, so typing in a draft does not re-render the hero.
-  const isTriageDraftPrompt = useComposerDraftStore((store) =>
-    draftId ? isTriagePrompt(store.getComposerDraft(draftId)?.prompt ?? "") : false,
-  );
-  const applyStickyState = useComposerDraftStore((store) => store.applyStickyState);
-  const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const openAddProject = () => openCommandPalette({ open: "add-project" });
   const openAllProjects = () => openCommandPalette({ open: "new-thread-in" });
-  const { scratchEnvironmentId, scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
-  const openProjectDraft = useNewThreadHandler();
+  const { scratchEnvironmentId, scratchWorkspaceRootFor, scratchUnavailableReason } =
+    useScratchProject();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const nowMinute = useNowMinute();
 
   const environmentLabelById = new Map(
     environments.map((environment) => [environment.environmentId, environment.label] as const),
@@ -123,15 +112,202 @@ export function DraftHeroHeadline({
           ),
         ) ?? null);
   const activeProjectKey = activeProjectGroup?.projectKey ?? "";
-  const activeProjectDisplayName = activeProjectGroup?.displayName ?? activeProjectTitle;
-  const hasResolvedProject = activeProjectTitle !== null;
-  const canChooseProject = projectPickerEntries.length > 0;
   // The project that hosts threads without a project appears once, as the
   // "No project" item, not as a project row.
   const menuEntries = projectPickerEntries.filter(
     ({ targetProject }) =>
       !isScratchProject(targetProject, scratchWorkspaceRootFor(targetProject.environmentId)),
   );
+  const scratchTargetEnvironmentId = scratchEnvironmentId(
+    activeProjectRef?.environmentId ?? primaryEnvironmentId,
+  );
+  const scratchWorkspaceRoot = scratchWorkspaceRootFor(scratchTargetEnvironmentId);
+  const scratchOffReason = scratchUnavailableReason(
+    activeProjectRef?.environmentId ?? primaryEnvironmentId,
+  );
+
+  const { canPinProjectGroup, toggleProjectGroupPin } = useProjectPin();
+  const pinnedKeySet = new Set(
+    menuEntries.filter(({ group }) => group.pinned).map(({ group }) => group.projectKey),
+  );
+  const pinnedEntries = menuEntries.filter(({ group }) => pinnedKeySet.has(group.projectKey));
+  const unpinnedEntries = menuEntries.filter(({ group }) => !pinnedKeySet.has(group.projectKey));
+  // The active project always shows, so the selection never hides behind "All projects".
+  const recentEntries = unpinnedEntries.filter(
+    ({ group }, index) => index < RECENT_PROJECT_LIMIT || group.projectKey === activeProjectKey,
+  );
+  const hiddenProjectCount = menuEntries.length - pinnedEntries.length - recentEntries.length;
+  return {
+    projects,
+    projectGroupingSettings,
+    primaryEnvironmentId,
+    environments,
+    activeProjectGroup,
+    activeProjectKey,
+    canChooseProject: projectPickerEntries.length > 0,
+    menuEntries,
+    pinnedEntries,
+    recentEntries,
+    hiddenProjectCount,
+    pinnedKeySet,
+    canPinProjectGroup,
+    toggleProjectGroupPin,
+    showProjectEnvironments,
+    environmentMachineById,
+    scratchTargetEnvironmentId,
+    scratchWorkspaceRoot,
+    scratchOffReason,
+    noProjectShortcut: shortcutLabelForCommand(keybindings, "chat.newWithoutProject"),
+    openAddProject,
+    openAllProjects,
+  };
+}
+
+export type ProjectPickerModel = ReturnType<typeof useProjectPickerModel>;
+export type ProjectPickerEntry = ProjectPickerModel["menuEntries"][number];
+
+/**
+ * The picker's rows. `groupLabels` names the pinned and recent groups, as
+ * the draft hero does; a list with its own heading leaves them out.
+ */
+export function ProjectPickerRows({
+  model,
+  groupLabels,
+  selectedProjectKey,
+  scratchSelected,
+  onChooseEntry,
+  onFocusEntry,
+  onFocusNoProject,
+  onNoProject,
+  concise = false,
+}: {
+  readonly model: ProjectPickerModel;
+  readonly groupLabels: boolean;
+  readonly selectedProjectKey: string | null;
+  readonly scratchSelected: boolean;
+  readonly onChooseEntry: (entry: ProjectPickerEntry) => void;
+  /** A project row took the keyboard (arrows, Tab). */
+  readonly onFocusEntry?: (entry: ProjectPickerEntry) => void;
+  /** "No project" took the keyboard. */
+  readonly onFocusNoProject?: () => void;
+  readonly onNoProject: () => void;
+  /** The launcher offers usable actions without explanatory copy. */
+  readonly concise?: boolean;
+}) {
+  const renderProjectRow = (entry: ProjectPickerEntry) => {
+    const { group, targetProject } = entry;
+    const pinned = model.pinnedKeySet.has(group.projectKey);
+    return (
+      <DraftProjectRow
+        key={group.projectKey}
+        selected={group.projectKey === selectedProjectKey}
+        icon={<ProjectFavicon project={group} className="size-4 shrink-0" />}
+        label={group.displayName}
+        badge={
+          model.showProjectEnvironments ? (
+            <ProjectEnvironmentBadge
+              group={group}
+              primaryEnvironmentId={model.primaryEnvironmentId}
+              machineByEnvironmentId={model.environmentMachineById}
+            />
+          ) : null
+        }
+        detail={formatProjectRootForDisplay(targetProject.workspaceRoot)}
+        detailIsPath
+        onSelect={() => onChooseEntry(entry)}
+        {...(onFocusEntry ? { onFocus: () => onFocusEntry(entry) } : {})}
+        action={
+          model.canPinProjectGroup(group) ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost-muted"
+                    size="icon-micro"
+                    aria-label={pinned ? `Unpin ${group.displayName}` : `Pin ${group.displayName}`}
+                    aria-pressed={pinned}
+                    onClick={() => model.toggleProjectGroupPin(group)}
+                  />
+                }
+              >
+                {pinned ? <PinOffIcon /> : <PinIcon />}
+              </TooltipTrigger>
+              <TooltipPopup side="top">{pinned ? "Unpin" : "Pin"}</TooltipPopup>
+            </Tooltip>
+          ) : null
+        }
+      />
+    );
+  };
+  return (
+    <>
+      {model.pinnedEntries.length > 0 ? (
+        <>
+          {groupLabels ? <DraftProjectGroupLabel>Pinned</DraftProjectGroupLabel> : null}
+          {model.pinnedEntries.map(renderProjectRow)}
+        </>
+      ) : null}
+      {model.recentEntries.length > 0 ? (
+        <>
+          {groupLabels ? <DraftProjectGroupLabel>Recent</DraftProjectGroupLabel> : null}
+          {model.recentEntries.map(renderProjectRow)}
+        </>
+      ) : null}
+      {model.hiddenProjectCount > 0 ? (
+        <DraftProjectRow
+          icon={<FoldersIcon className="size-4 shrink-0 text-muted-foreground" />}
+          label="All projects…"
+          detail={String(model.menuEntries.length)}
+          onSelect={model.openAllProjects}
+        />
+      ) : null}
+      {model.menuEntries.length > 0 ? (
+        <div aria-hidden className="mx-2.5 my-1 h-px bg-border" />
+      ) : null}
+      {model.scratchWorkspaceRoot !== null ? (
+        <DraftProjectRow
+          selected={scratchSelected}
+          icon={<MessageSquareDashedIcon className="size-4 shrink-0 text-muted-foreground" />}
+          label="No project"
+          detail={concise ? "" : "Its own folder, no git"}
+          shortcut={model.noProjectShortcut}
+          onSelect={onNoProject}
+          {...(onFocusNoProject ? { onFocus: onFocusNoProject } : {})}
+        />
+      ) : null}
+      <DraftProjectRow
+        icon={<FolderPlusIcon className="size-4 shrink-0 text-muted-foreground" />}
+        label="Add project…"
+        detail={concise ? "" : "Open a folder or clone a repository"}
+        onSelect={model.openAddProject}
+      />
+    </>
+  );
+}
+
+export function DraftHeroHeadline({
+  draftId,
+  activeProjectRef,
+  activeProjectTitle,
+}: DraftHeroHeadlineProps) {
+  const model = useProjectPickerModel(activeProjectRef);
+  const providersByEnvironment = useEnvironmentProviders();
+  const nowMinute = useNowMinute();
+  const { projects, environments, activeProjectKey, scratchTargetEnvironmentId } = model;
+  const setLogicalProjectDraftThreadId = useComposerDraftStore(
+    (store) => store.setLogicalProjectDraftThreadId,
+  );
+  const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
+  // A boolean, so typing in a draft does not re-render the hero.
+  const isTriageDraftPrompt = useComposerDraftStore((store) =>
+    draftId ? isTriagePrompt(store.getComposerDraft(draftId)?.prompt ?? "") : false,
+  );
+  const applyStickyState = useComposerDraftStore((store) => store.applyStickyState);
+  const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
+  const { openScratchProject, scratchWorkspaceRootFor } = useScratchProject();
+  const openProjectDraft = useNewThreadHandler();
+  const activeProjectDisplayName = model.activeProjectGroup?.displayName ?? activeProjectTitle;
+  const hasResolvedProject = activeProjectTitle !== null;
   const activeProject =
     activeProjectRef === null
       ? null
@@ -140,8 +316,6 @@ export function DraftHeroHeadline({
             project.environmentId === activeProjectRef.environmentId &&
             project.id === activeProjectRef.projectId,
         ) ?? null);
-  const scratchTargetEnvironmentId = scratchEnvironmentId(activeProjectRef?.environmentId ?? null);
-  const scratchWorkspaceRoot = scratchWorkspaceRootFor(scratchTargetEnvironmentId);
   const isScratchDraft =
     activeProject !== null &&
     isScratchProject(activeProject, scratchWorkspaceRootFor(activeProject.environmentId));
@@ -221,69 +395,15 @@ export function DraftHeroHeadline({
       return false;
     }
     pendingScratchRef.current = null;
-    selectProject(project, deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings));
+    selectProject(
+      project,
+      deriveLogicalProjectKeyFromSettings(project, model.projectGroupingSettings),
+    );
     return true;
   };
-
-  // The pen's draft hero (fsQuY): pinned projects, the most recent others,
-  // a way to every project, then the no-project and add-project rows.
-  const { canPinProjectGroup, toggleProjectGroupPin } = useProjectPin();
-  const pinnedEntries = menuEntries.filter(({ group }) => group.pinned);
-  const unpinnedEntries = menuEntries.filter(({ group }) => !group.pinned);
-  // The active project always shows, so the selection never hides behind "All projects".
-  const recentEntries = unpinnedEntries.filter(
-    ({ group }, index) => index < RECENT_PROJECT_LIMIT || group.projectKey === activeProjectKey,
-  );
-  const hiddenProjectCount = menuEntries.length - pinnedEntries.length - recentEntries.length;
-  const chooseEntry = (entry: (typeof menuEntries)[number]) => {
+  const chooseEntry = (entry: ProjectPickerEntry) => {
     if (entry.group.projectKey === activeProjectKey && !isScratchDraft) return;
     selectProject(entry.targetProject, entry.group.projectKey);
-  };
-  const noProjectShortcut = shortcutLabelForCommand(keybindings, "chat.newWithoutProject");
-
-  const renderProjectRow = (entry: (typeof menuEntries)[number]) => {
-    const { group, targetProject } = entry;
-    const pinned = group.pinned;
-    return (
-      <DraftProjectRow
-        key={group.projectKey}
-        selected={!isScratchDraft && group.projectKey === activeProjectKey}
-        icon={<ProjectFavicon project={group} className="size-4 shrink-0" />}
-        label={group.displayName}
-        badge={
-          showProjectEnvironments ? (
-            <ProjectEnvironmentBadge
-              group={group}
-              primaryEnvironmentId={primaryEnvironmentId}
-              machineByEnvironmentId={environmentMachineById}
-            />
-          ) : null
-        }
-        detail={formatProjectRootForDisplay(targetProject.workspaceRoot)}
-        detailIsPath
-        onSelect={() => chooseEntry(entry)}
-        action={
-          canPinProjectGroup(group) ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="ghost-muted"
-                    size="icon-micro"
-                    aria-label={pinned ? `Unpin ${group.displayName}` : `Pin ${group.displayName}`}
-                    aria-pressed={pinned}
-                    onClick={() => toggleProjectGroupPin(group)}
-                  />
-                }
-              >
-                {pinned ? <PinOffIcon /> : <PinIcon />}
-              </TooltipTrigger>
-              <TooltipPopup side="top">{pinned ? "Unpin" : "Pin"}</TooltipPopup>
-            </Tooltip>
-          ) : null
-        }
-      />
-    );
   };
 
   // The hero used to be a sentence; screen readers still get one.
@@ -291,7 +411,7 @@ export function DraftHeroHeadline({
     ? "What should we work on?"
     : hasResolvedProject
       ? `What should we build in ${activeProjectDisplayName}?`
-      : canChooseProject
+      : model.canChooseProject
         ? "Choose a project to start"
         : "Add a project to start";
 
@@ -315,42 +435,13 @@ export function DraftHeroHeadline({
         aria-label="Projects"
         className="flex min-h-0 flex-col gap-0.5 overflow-y-auto"
       >
-        {pinnedEntries.length > 0 ? (
-          <>
-            <DraftProjectGroupLabel>Pinned</DraftProjectGroupLabel>
-            {pinnedEntries.map(renderProjectRow)}
-          </>
-        ) : null}
-        {recentEntries.length > 0 ? (
-          <>
-            <DraftProjectGroupLabel>Recent</DraftProjectGroupLabel>
-            {recentEntries.map(renderProjectRow)}
-          </>
-        ) : null}
-        {hiddenProjectCount > 0 ? (
-          <DraftProjectRow
-            icon={<FoldersIcon className="size-4 shrink-0 text-muted-foreground" />}
-            label="All projects…"
-            detail={String(menuEntries.length)}
-            onSelect={openAllProjects}
-          />
-        ) : null}
-        {menuEntries.length > 0 ? <div aria-hidden className="mx-2.5 my-1 h-px bg-border" /> : null}
-        {scratchWorkspaceRoot === null ? null : (
-          <DraftProjectRow
-            selected={isScratchDraft}
-            icon={<MessageSquareDashedIcon className="size-4 shrink-0 text-muted-foreground" />}
-            label="No project"
-            detail="Its own folder, no git"
-            shortcut={noProjectShortcut}
-            onSelect={() => void startScratch()}
-          />
-        )}
-        <DraftProjectRow
-          icon={<FolderPlusIcon className="size-4 shrink-0 text-muted-foreground" />}
-          label="Add project…"
-          detail="Open a folder or clone a repository"
-          onSelect={openAddProject}
+        <ProjectPickerRows
+          model={model}
+          groupLabels
+          selectedProjectKey={isScratchDraft ? null : activeProjectKey}
+          scratchSelected={isScratchDraft}
+          onChooseEntry={chooseEntry}
+          onNoProject={() => void startScratch()}
         />
       </div>
     </div>
@@ -361,7 +452,7 @@ export function DraftHeroHeadline({
 const RECENT_PROJECT_LIMIT = 3;
 
 /** Home-relative like a shell prompt: /Users/me/src/app reads as ~/src/app. */
-function formatProjectRootForDisplay(workspaceRoot: string): string {
+export function formatProjectRootForDisplay(workspaceRoot: string): string {
   return workspaceRoot.replace(/^(?:\/Users\/[^/]+|\/home\/[^/]+|[A-Za-z]:\\Users\\[^\\]+)/, "~");
 }
 
@@ -384,20 +475,26 @@ export function DraftProjectRow(props: {
   readonly detailIsPath?: boolean;
   readonly shortcut?: string | null;
   readonly selected?: boolean;
+  /** Shown but inert; the detail says why. */
+  readonly disabled?: boolean;
   readonly action?: ReactNode;
   readonly onSelect: () => void;
+  readonly onFocus?: () => void;
 }) {
   return (
     <div
       role="listitem"
       data-selected={props.selected ? "" : undefined}
-      className="group/row relative flex h-8.5 shrink-0 items-center rounded-item hover:surface-ghost-hover has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-ring data-selected:surface-selected-soft"
+      data-disabled={props.disabled ? "" : undefined}
+      className="group/row relative flex h-8.5 shrink-0 items-center rounded-item not-data-disabled:hover:surface-ghost-hover has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-ring data-selected:surface-selected-soft"
     >
       <button
         type="button"
         aria-current={props.selected ? "true" : undefined}
+        disabled={props.disabled}
         onClick={props.onSelect}
-        className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded-item px-2.5 text-left outline-none"
+        onFocus={props.onFocus}
+        className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded-item px-2.5 text-left outline-none disabled:cursor-default disabled:opacity-64"
       >
         {props.icon}
         <span className="min-w-0 shrink truncate font-medium text-label text-foreground group-data-selected/row:text-strong-foreground">

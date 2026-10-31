@@ -1241,9 +1241,7 @@ function DiagnosticsSettingsBody() {
                   </span>
                 </td>
                 <td className="px-3 py-3 align-top">
-                  <div className="truncate font-medium text-strong-foreground">
-                    {event.spanName}
-                  </div>
+                  <div className="truncate text-meta text-strong-foreground">{event.spanName}</div>
                   <div className="mt-0.5 text-dim-foreground">
                     <TraceIdCell traceId={event.traceId} />
                   </div>

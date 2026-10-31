@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { flushSync } from "react-dom";
 import { observeResize } from "../../lib/observeResize";
 
 // The gap between the prompt and its inline actions (gap-1.5).
@@ -43,30 +44,35 @@ export function useComposerMultilinePrompt(): readonly [
   (body: HTMLElement | null) => (() => void) | undefined,
 ] {
   const [isMultiline, setIsMultiline] = useState(false);
+  // Measure in the observer or the frame after editing, where layout is already computed; commit
+  // before paint to avoid showing actions in the wrong row.
   const observeBody = (body: HTMLElement | null) => {
     if (!body) return;
-    // Measuring reads layout, so one measurement per frame runs after all of the frame's DOM
-    // writes instead of forcing a layout after each mutation.
-    let frame: number | null = null;
+    let lastMultiline: boolean | null = null;
     const measure = () => {
-      if (frame !== null) return;
+      const next = measureComposerMultilinePrompt(body);
+      if (next === null || next === lastMultiline) return;
+      lastMultiline = next;
+      flushSync(() => setIsMultiline(next));
+    };
+    let frame = 0;
+    const measureNextFrame = () => {
+      if (frame !== 0) return;
       frame = requestAnimationFrame(() => {
-        frame = null;
-        const next = measureComposerMultilinePrompt(body);
-        if (next !== null) setIsMultiline(next);
+        frame = 0;
+        measure();
       });
     };
-    measure();
     const editor = body.querySelector<HTMLElement>('[data-testid="composer-editor"]');
     const actions = body.querySelector<HTMLElement>('[data-chat-composer-actions="right"]');
     const stopObserving = observeResize(
       [body, ...(editor ? [editor] : []), ...(actions ? [actions] : [])],
       measure,
     );
-    const mutationObserver = new MutationObserver(measure);
+    const mutationObserver = new MutationObserver(measureNextFrame);
     mutationObserver.observe(body, { childList: true, characterData: true, subtree: true });
     return () => {
-      if (frame !== null) cancelAnimationFrame(frame);
+      cancelAnimationFrame(frame);
       stopObserving();
       mutationObserver.disconnect();
     };

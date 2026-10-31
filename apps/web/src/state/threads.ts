@@ -28,10 +28,9 @@ export const olderSettledThreads = createOlderSettledThreadAtoms(
   connectionAtomRuntime,
   environmentShell.stateAtom,
 );
-export const threadEnvironment = createThreadEnvironmentAtoms(
-  connectionAtomRuntime,
-  threadFamilies.snapshotAtom,
-);
+// The annotation keeps declaration output independent of incidental command-input imports.
+export const threadEnvironment: ReturnType<typeof createThreadEnvironmentAtoms> =
+  createThreadEnvironmentAtoms(connectionAtomRuntime, threadFamilies.snapshotAtom);
 const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime);
 export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(
   environmentThreads.stateAtom,

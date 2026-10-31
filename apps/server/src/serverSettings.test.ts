@@ -3,6 +3,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   globalIdleCompaction,
   type ManagedPolicyDocument,
+  DEFAULT_LAYOUT_SETTINGS,
   ModelSelection,
   ProjectId,
   ProjectScript,
@@ -10,6 +11,7 @@ import {
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
   SecretProviderId,
+  ServerConfig as ServerConfigContract,
   ServerSettings,
   ServerSettingsPatch,
   UsageLimitSourceId,
@@ -38,7 +40,10 @@ import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.t
 
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 const decodeServerSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
-const decodeServerSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
+const decodeClientConfigSettings = Schema.decodeEffect(
+  Schema.toType(ServerConfigContract.fields.settings),
+);
+const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 
 const layerServerSettings = (policy?: ManagedPolicyDocument) =>
   ServerSettingsModule.layer.pipe(
@@ -184,6 +189,86 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }),
     ).pipe(Effect.provide(layerServerSettings())),
   );
+  it.effect("retains layout only for client migration across unrelated saves and restarts", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const legacyLayout = { ...DEFAULT_LAYOUT_SETTINGS, terminalPlacement: "new-column" as const };
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({
+          layout: legacyLayout,
+          responseStreamingMode: "turn",
+          projectSettingsOverrides: {
+            legacy: { layout: { template: "retired-shape" }, defaultAutoPull: true },
+          },
+        }),
+      );
+
+      const settings = yield* service.getSettings;
+      const clientSettings = yield* decodeClientConfigSettings(
+        ServerSettingsModule.redactServerSettingsForClient(settings),
+      );
+      assert.deepEqual(clientSettings.layout, legacyLayout);
+      const projectSettingsOverrides: unknown = settings.projectSettingsOverrides;
+      assert.deepEqual(projectSettingsOverrides, {
+        [ProjectId.make("legacy")]: {
+          layout: { template: "retired-shape" },
+          defaultAutoPull: true,
+        },
+      });
+      yield* service.updateSettings(
+        yield* decodeSettingsPatch({
+          responseStreamingMode: "paragraph",
+          layout: { ...legacyLayout, newTabPosition: "end" },
+        }),
+      );
+      const persisted = JSON.parse(yield* fs.readFileString(config.settingsPath));
+      assert.deepEqual(persisted.layout, legacyLayout);
+      assert.notProperty(persisted, "legacyLayout");
+      assert.deepEqual(persisted.projectSettingsOverrides, {
+        legacy: { layout: { template: "retired-shape" }, defaultAutoPull: true },
+      });
+
+      const restarted = yield* Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        return yield* service.getSettings;
+      }).pipe(
+        Effect.provide(
+          Layer.fresh(ServerSettingsModule.layer).pipe(Layer.provide(ManagedPolicy.layerTest())),
+        ),
+      );
+      assert.deepEqual(
+        (yield* decodeClientConfigSettings(
+          ServerSettingsModule.redactServerSettingsForClient(restarted),
+        )).layout,
+        legacyLayout,
+      );
+      assert.equal(restarted.responseStreamingMode, "paragraph");
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("ignores malformed retired layout without resetting other server settings", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({
+          layout: { template: "retired-shape" },
+          responseStreamingMode: "turn",
+          enableAgentBrowserAccess: false,
+        }),
+      );
+      const settings = yield* service.getSettings;
+      assert.notProperty(settings, "layout");
+      assert.equal(settings.responseStreamingMode, "turn");
+      assert.isFalse(settings.enableAgentBrowserAccess);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("migrates saved token delivery to paragraph buffering without resetting settings", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
@@ -290,7 +375,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;
       const write = (entry: unknown) =>
-        decodeServerSettingsPatch({ secretProviders: { personal: entry } }).pipe(
+        decodeSettingsPatch({ secretProviders: { personal: entry } }).pipe(
           Effect.flatMap(service.updateSettings),
           Effect.flip,
         );

@@ -31,6 +31,10 @@ export interface ContextMenuItem<T extends string = string> {
   icon?: string;
   separatorBefore?: boolean;
   checked?: boolean;
+  /** The item's key as the platform writes it ("⌥⌘F"), shown by the web fallback. */
+  shortcut?: string;
+  /** The same key in Electron accelerator form, shown (not registered) by desktop menus. */
+  accelerator?: string;
   children?: readonly ContextMenuItem<T>[];
 }
 
@@ -47,6 +51,8 @@ export interface ContextMenuItemSchemaType {
   readonly icon?: string;
   readonly separatorBefore?: boolean;
   readonly checked?: boolean;
+  readonly shortcut?: string;
+  readonly accelerator?: string;
   readonly children?: readonly ContextMenuItemSchemaType[];
 }
 
@@ -59,6 +65,8 @@ export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Sc
   icon: Schema.optionalKey(Schema.String),
   separatorBefore: Schema.optionalKey(Schema.Boolean),
   checked: Schema.optionalKey(Schema.Boolean),
+  shortcut: Schema.optionalKey(Schema.String),
+  accelerator: Schema.optionalKey(Schema.String),
   children: Schema.optionalKey(
     Schema.Array(
       Schema.suspend((): Schema.Codec<ContextMenuItemSchemaType> => ContextMenuItemSchema),
@@ -998,6 +1006,33 @@ export const DesktopPreviewAnnotationThemeInputSchema = Schema.Struct({
   theme: DesktopPreviewAnnotationThemeSchema,
 });
 
+/**
+ * A chord a focused preview webview hands back to the app window instead of
+ * the page (the layout map). `key` is a keybinding key token ("arrowleft",
+ * "u", "["); modifiers are exact.
+ */
+export const DesktopForwardedShortcutSchema = Schema.Struct({
+  key: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(32)),
+  metaKey: Schema.Boolean,
+  ctrlKey: Schema.Boolean,
+  altKey: Schema.Boolean,
+  shiftKey: Schema.Boolean,
+});
+export type DesktopForwardedShortcut = typeof DesktopForwardedShortcutSchema.Type;
+
+export const DesktopPreviewForwardedShortcutsInputSchema = Schema.Struct({
+  shortcuts: Schema.Array(DesktopForwardedShortcutSchema).check(Schema.isMaxLength(256)),
+});
+
+/** A forwarded keydown, replayed in the app window as-is. */
+export interface DesktopForwardedKeyEvent {
+  readonly key: string;
+  readonly code: string;
+  readonly metaKey: boolean;
+  readonly ctrlKey: boolean;
+  readonly altKey: boolean;
+  readonly shiftKey: boolean;
+}
 export const DesktopPreviewAnnotationSendEnabledInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   enabled: Schema.Boolean,
@@ -1240,6 +1275,9 @@ export interface DesktopPreviewBridge {
   }) => Promise<BrowserImportResult>;
   setAnnotationTheme: (theme: DesktopPreviewAnnotationTheme) => Promise<void>;
   setAnnotationSendEnabled: (tabId: string, enabled: boolean) => Promise<void>;
+  /** Older desktop shells may omit both layout-chord forwarding methods. */
+  setForwardedKeyChords?: (shortcuts: ReadonlyArray<DesktopForwardedShortcut>) => Promise<void>;
+  onForwardedKeyChord?: (listener: (event: DesktopForwardedKeyEvent) => void) => () => void;
   annotationVoice: {
     onEvent(
       listener: (tabId: string, event: DesktopPreviewAnnotationVoiceEvent) => void,

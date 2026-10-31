@@ -192,6 +192,7 @@ vi.mock("../composerDraftStore", () => {
     composerDraftHasUserContent: (draft: { readonly draftId?: string } | null | undefined) =>
       testState.hasUserText(draft),
     markPromotedDraftThreadByRef: vi.fn(),
+    NO_PROJECTS_DRAFT_ID: "no-projects",
     useComposerDraftStore,
   };
 });

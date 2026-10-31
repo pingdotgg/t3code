@@ -164,8 +164,6 @@ const inlineButtonVariants = cva(
           "rounded-kbd px-0.5 [font-weight:inherit] text-muted-foreground hover:surface-ghost-hover hover:text-foreground hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         "ghost-dim":
           "rounded-kbd px-0.5 [font-weight:inherit] text-muted-foreground/70 hover:surface-ghost-hover hover:text-foreground hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-        picker:
-          "gap-1.5 text-inherit [font-weight:inherit] underline decoration-current/30 decoration-dotted decoration-from-font underline-offset-4 hover:decoration-foreground hover:decoration-solid data-popup-open:decoration-foreground data-popup-open:decoration-solid",
       },
     },
   },

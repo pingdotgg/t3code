@@ -11,6 +11,8 @@ import {
 import { PullRequestActionsMenu } from "./PullRequestActionsMenu";
 import { projectChangeRequestUrl } from "@t3tools/client-runtime/change-request-links";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
+import { useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
+import { openPullRequestWorkspace } from "../../layout/openRules";
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import {
@@ -427,7 +429,9 @@ export function PullRequestDetailPanel({
         description: error.message,
       }),
   });
+  const paneFocusedRef = useLayoutPaneFocusedRef();
   const copyFromShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (!paneFocusedRef.current) return;
     if (!shortcutsEnabled || event.defaultPrevented || isCommandPaletteOpen()) return;
     const command = resolveShortcutCommand(event, keybindings, {
       context: getShortcutContext(),
@@ -1401,6 +1405,11 @@ export function PullRequestDetailPanel({
                 linkThreadRef={
                   threadRef ??
                   (typeof composerDraftTarget === "object" ? composerDraftTarget : null)
+                }
+                onOpenAsWorkspace={
+                  threadRef !== null && context !== "page"
+                    ? () => openPullRequestWorkspace(threadRef, reference.number)
+                    : undefined
                 }
                 onThreadPickerOpenChange={setThreadPickerOpen}
                 refreshing={refreshing}

@@ -392,9 +392,14 @@ export function selectThreadRelationshipShells(
   const current = threads.find((thread) => thread.id === threadId);
   const currentParentId = current === undefined ? null : shellParentThreadId(current);
   if (currentParentId !== null) named.add(currentParentId);
-  return threads.filter(
-    (thread) => named.has(thread.id) || shellParentThreadId(thread) === threadId,
-  );
+  return threads.filter((thread) => {
+    const parentId = shellParentThreadId(thread);
+    return (
+      named.has(thread.id) ||
+      parentId === threadId ||
+      (currentParentId !== null && parentId === currentParentId)
+    );
+  });
 }
 
 const relationshipShellsAtomFamily = Atom.family((key: string) => {

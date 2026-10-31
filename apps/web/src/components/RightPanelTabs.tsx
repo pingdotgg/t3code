@@ -10,6 +10,16 @@ import {
   useServerConfigs,
   useThreadShells,
 } from "~/state/entities";
+import { useLayoutPane, useLayoutPaneFocusedRef } from "../layout/layoutPaneContext";
+import { beginLayoutTabDrag } from "../layout/layoutDrag";
+import { useLayoutStore } from "../layout/layoutStore";
+import {
+  buildLayoutTabMenuItems,
+  isLayoutTabMenuId,
+  LayoutPaneTab,
+  runLayoutTabMenuAction,
+  useLayoutPaneSiblingTabs,
+} from "../layout/PaneTabs";
 import {
   threadPullRequestKeysEqual,
   visibleThreadPullRequests,
@@ -45,6 +55,7 @@ import {
   Globe2,
   MessagesSquare,
   Plus,
+  SquarePen,
   TerminalSquare,
 } from "lucide-react";
 import { Volume2, VolumeOff } from "lucide";
@@ -53,8 +64,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
   type ReactNode,
-  useEffect,
-  useEffectEvent,
+  type Ref,
   useRef,
   useState,
 } from "react";
@@ -63,14 +73,12 @@ import { isElectron } from "~/env";
 import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
-import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
 import { readLocalApi } from "~/localApi";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { AndroidIcon, AppleIcon } from "~/components/Icons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import { Kbd } from "~/components/ui/kbd";
 import {
   Menu,
   MenuItem,
@@ -88,6 +96,8 @@ import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import { useTheme } from "~/hooks/useTheme";
 import { useDeviceState } from "~/state/device";
 import type { PreviewPanelInlineSize } from "~/hooks/usePreviewPanelInlineSize";
+import { useRevealActiveTab } from "~/hooks/useRevealActiveTab";
+import { FOLDED_TAB_CLASS, usePaneTabStripFit } from "~/hooks/usePaneTabStripFit";
 import {
   newestPullRequestSummary,
   pullRequestEnvironment,
@@ -97,22 +107,39 @@ import { useEnvironmentQuery } from "~/state/query";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
+import { PanelTabSlotsContext } from "./PanelTabBreadcrumb";
+import { PANE_BODY_UNDER_HEADER_CLASS, PaneNotch } from "./PaneNotch";
 import { FaviconImage } from "./preview/PreviewFaviconIcon";
 import { previewBridge } from "./preview/previewBridge";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
-import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
+import {
+  SurfaceLauncherRows,
+  surfaceShortcutActionForKey,
+  useLauncherElement,
+  useSurfaceLauncherKeys,
+  type SurfaceLauncherAction,
+} from "./SurfaceLauncher";
+
+export {
+  surfaceShortcutActionForKey,
+  surfaceShortcutTargetsTypingContext,
+} from "./SurfaceLauncher";
 
 export interface RightPanelTabsProps {
   mode: PreviewPanelMode;
   maximized?: boolean;
   open?: boolean;
   keybindings: ResolvedKeybindingsConfig;
-  getShortcutContext: () => ShortcutMatchContext;
   widthStorageKey?: string;
   defaultWidth?: number;
+  /**
+   * An inline panel drawn as its own inset pane, notch and all, beside a page's pane (the
+   * pull requests page's review, pen bETcv).
+   */
+  pane?: boolean;
   inlineSize?: PreviewPanelInlineSize;
   layoutControls?: ReactNode;
   surfaces: readonly RightPanelSurface[];
@@ -132,9 +159,13 @@ export interface RightPanelTabsProps {
   onCloseAllSurfaces: () => void;
   onMoveSurface?: (surfaceId: string, toIndex: number) => void;
   onCopyFilePath: (relativePath: string) => void;
+  /** Escape on the empty pane's chooser closes the pane; the sheet closes itself. */
+  onClose?: () => void;
   onAddBrowser: () => void;
   /** Keep separate from the DOM click handler so a MouseEvent cannot become a profile id. */
   onAddBrowserInProfile: (profileId: string) => void;
+  /** The "+" menu's New thread, in the thread's project; omitted, it has none. */
+  onNewThread?: (() => void) | undefined;
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
@@ -144,6 +175,8 @@ export interface RightPanelTabsProps {
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
   browserAvailable: boolean;
+  /** Why the browser cannot open, when it cannot. */
+  browserUnavailableReason?: string | null;
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
@@ -154,6 +187,11 @@ export interface RightPanelTabsProps {
   /** Overrides the default reason while side chats are available but cannot start. */
   sideChatDisabledReason?: string | null;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
+  /**
+   * The tab names its thread after its own title ("Diff · Fix login"): a
+   * surface tab in the layout, which can sit anywhere.
+   */
+  threadTitle?: string | null;
   children: ReactNode;
 }
 
@@ -180,31 +218,6 @@ const SURFACE_DISABLED_REASONS = {
   pullRequests: "No linked pull requests are available for this thread.",
   device: "Devices are only available from a thread.",
   sideChat: "Side chats start after the first message.",
-} as const;
-
-// Closed keepMounted popups must stop blocking shortcuts once their exit transition ends.
-const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
-  "dialog-popup",
-  "alert-dialog-popup",
-  "command-dialog-popup",
-  "menu-popup",
-  "select-popup",
-  "popover-popup",
-  "combobox-popup",
-  "autocomplete-popup",
-]
-  .map((slot) => `[data-slot="${slot}"]:is([data-open],[data-ending-style])`)
-  .join(",");
-
-const SURFACE_UNAVAILABLE_HINTS = {
-  browser: "Only available in the desktop app.",
-  terminal: "Available when a project is open.",
-  files: "Available when a project is open.",
-  diff: "Available for Git repositories.",
-  pullRequest: "No pull request on this branch yet.",
-  pullRequests: "No linked pull requests available.",
-  device: "Available from a thread.",
-  sideChat: "Available after the first message.",
 } as const;
 
 type TabContextMenuAction =
@@ -254,30 +267,70 @@ function tabAudioState(overlay: DesktopPreviewOverlay | null): TabAudioState {
   return overlay.audioMuted ? "muted" : "audible";
 }
 
-type SurfaceShortcutEvent = Pick<
-  KeyboardEvent,
-  "altKey" | "ctrlKey" | "defaultPrevented" | "isComposing" | "key" | "metaKey"
-> &
-  Partial<Pick<KeyboardEvent, "code" | "getModifierState">>;
-
-export function surfaceShortcutActionForKey<
-  const Action extends { available: boolean; shortcut: string },
->(actions: readonly Action[], event: SurfaceShortcutEvent): Action | null {
-  if (event.defaultPrevented || event.isComposing) return null;
-  if (event.metaKey || event.ctrlKey || event.altKey) return null;
-  const key = surfaceShortcutKey(event);
+/**
+ * A layout pane's tabs sit in its notch with "+" as the notch's last child,
+ * like a chat's and the terminal's; the sheet and inline panel keep a plain row.
+ */
+/**
+ * The row the tabs sit in: in a notch it clips and the tabs fit it
+ * (usePaneTabStripFit); elsewhere it scrolls, with arrows on overflow.
+ */
+function PanelTabStrip({
+  notched,
+  ref,
+  children,
+}: {
+  notched: boolean;
+  ref: Ref<HTMLDivElement>;
+  children: ReactNode;
+}) {
+  if (notched) {
+    return (
+      // Sized by its tabs like the layout tabs beside it, which give way first,
+      // so a narrow pane never squeezes its shown tab away.
+      <div
+        ref={ref}
+        className="flex min-w-0 flex-auto items-center gap-1 overflow-hidden"
+        data-right-panel-tab-list
+      >
+        {children}
+      </div>
+    );
+  }
   return (
-    actions.find((action) => action.available && action.shortcut.toLowerCase() === key) ?? null
+    <ScrollArea
+      radius="none"
+      ref={ref}
+      hideScrollbars
+      scrollFade
+      className="min-w-0 flex-1"
+      data-right-panel-tab-list
+    >
+      <div className="flex h-full w-max min-w-full items-center gap-1">{children}</div>
+    </ScrollArea>
   );
 }
 
-/** Skip contenteditable=false islands to find their editable host, matching the composer typing guard. */
-export function surfaceShortcutTargetsTypingContext(
-  target: { closest(selectors: string): unknown } | null,
-): boolean {
+function PanelTabsNotch(props: { notched: boolean; addButton: ReactNode; children: ReactNode }) {
+  if (!props.notched) return props.children;
   return (
-    target?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') !=
-    null
+    <PaneNotch>
+      {props.children}
+      {props.addButton ? (
+        <span data-pane-notch-add="" className="flex shrink-0">
+          {props.addButton}
+        </span>
+      ) : null}
+    </PaneNotch>
+  );
+}
+
+function PanelActionsNotch(props: { notched: boolean; children: ReactNode }) {
+  if (!props.notched) return props.children;
+  return (
+    <PaneNotch side="right" className="ms-auto shrink-0">
+      {props.children}
+    </PaneNotch>
   );
 }
 
@@ -292,7 +345,7 @@ function DisabledReasonTooltip(props: { reason: string; trigger: ReactElement })
 
 function SurfaceMenuItem(props: {
   available: boolean;
-  disabledReason?: string;
+  disabledReason?: string | undefined;
   shortcut: string;
   onClick: () => void;
   children: ReactNode;
@@ -312,7 +365,12 @@ function SurfaceMenuItem(props: {
   return <DisabledReasonTooltip reason={props.disabledReason} trigger={item} />;
 }
 
+/**
+ * Pane-wide letter shortcuts must yield to typing contexts.
+ * The focused launcher also supports arrows and explains unavailable surfaces.
+ */
 function RightPanelEmptyState(props: {
+  onClose: (() => void) | undefined;
   onAddBrowser: () => void;
   onAddBrowserInProfile: (profileId: string) => void;
   browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
@@ -325,6 +383,7 @@ function RightPanelEmptyState(props: {
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
   browserAvailable: boolean;
+  browserUnavailableReason: string | null | undefined;
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
@@ -334,234 +393,80 @@ function RightPanelEmptyState(props: {
   sideChatAvailable: boolean;
   sideChatDisabledReason: string | null;
 }) {
-  const [highlight, setHighlight] = useState(-1);
-
-  const actions = [
+  const actions: SurfaceLauncherAction[] = [
     {
-      label: "Browser",
-      icon: Globe2,
+      kind: "browser",
       shortcut: "B",
       available: props.browserAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.browser,
+      ...(props.browserUnavailableReason ? { disabledReason: props.browserUnavailableReason } : {}),
       onClick: props.onAddBrowser,
     },
     {
-      label: "Terminal",
-      icon: TerminalSquare,
+      kind: "terminal",
       shortcut: "T",
       available: props.terminalAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.terminal,
       onClick: props.onAddTerminal,
     },
+    { kind: "files", shortcut: "F", available: props.filesAvailable, onClick: props.onAddFiles },
+    { kind: "diff", shortcut: "D", available: props.diffAvailable, onClick: props.onAddDiff },
     {
-      label: "Files",
-      icon: Files,
-      shortcut: "F",
-      available: props.filesAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.files,
-      onClick: props.onAddFiles,
-    },
-    {
-      label: "Diff",
-      icon: FileDiff,
-      shortcut: "D",
-      available: props.diffAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.diff,
-      onClick: props.onAddDiff,
-    },
-    {
-      label: "Pull request",
-      icon: PullRequestGlyph.pullRequest,
+      kind: "pull-request",
       shortcut: "P",
       available: props.pullRequestAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.pullRequest,
       onClick: props.onAddPullRequest,
     },
     {
-      label: "Linked pull requests",
-      icon: PullRequestGlyph.link,
+      kind: "pull-requests",
       shortcut: "L",
       available: props.pullRequestsAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.pullRequests,
       onClick: props.onAddPullRequests,
     },
-    {
-      label: "Device",
-      description: "Watch an iOS Simulator or Android Emulator.",
-      icon: Smartphone,
-      shortcut: "M",
-      available: props.deviceAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.device,
-      onClick: props.onAddDevice,
-    },
+    { kind: "device", shortcut: "M", available: props.deviceAvailable, onClick: props.onAddDevice },
     ...(props.onAddSideChat
       ? [
           {
-            label: "Side chat",
-            description: "Ask a side question while this thread keeps working.",
-            icon: MessagesSquare,
+            kind: "side-chat" as const,
             shortcut: "S",
             available: props.sideChatAvailable && !props.sideChatDisabledReason,
-            disabledReason: props.sideChatDisabledReason ?? SURFACE_UNAVAILABLE_HINTS.sideChat,
             onClick: props.onAddSideChat,
           },
         ]
       : []),
-  ] as const;
-
-  type SurfaceAction = (typeof actions)[number];
-
-  const availableActions = actions.filter((action) => action.available);
-  const highlightIndex =
-    availableActions.length === 0 ? -1 : Math.min(highlight, availableActions.length - 1);
-
-  const handleShortcut = useEffectEvent((event: KeyboardEvent) => {
-    const action = surfaceShortcutActionForKey(availableActions, event);
-    if (!action) return;
-    if (document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
-    const target = event.composedPath()[0] ?? event.target;
-    if (target instanceof Element && surfaceShortcutTargetsTypingContext(target)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    action.onClick();
+  ];
+  const paneFocusedRef = useLayoutPaneFocusedRef();
+  const [launcherRef, attachLauncher] = useLauncherElement(paneFocusedRef, false);
+  useSurfaceLauncherKeys({
+    launcherRef,
+    activeRef: paneFocusedRef,
+    actions,
+    onClose: props.onClose,
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a capture-phase window keydown listener for surface shortcuts while the menu is mounted
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => handleShortcut(event);
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
-  }, []);
-
-  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
-    if (availableActions.length === 0) return;
-    if (event.key === "ArrowDown" || event.key === "ArrowRight") {
-      event.preventDefault();
-      setHighlight((highlightIndex + 1) % availableActions.length);
-      return;
-    }
-    if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
-      event.preventDefault();
-      setHighlight(
-        highlightIndex === -1
-          ? availableActions.length - 1
-          : (highlightIndex - 1 + availableActions.length) % availableActions.length,
-      );
-      return;
-    }
-    if (event.key === "Enter") {
-      if (event.target !== event.currentTarget) return;
-      const action = availableActions[highlightIndex];
-      if (!action) return;
-      event.preventDefault();
-      action.onClick();
-    }
-  };
-
-  const isHighlighted = (action: SurfaceAction) =>
-    highlightIndex !== -1 && availableActions[highlightIndex] === action;
-
-  const actionIcon = (action: SurfaceAction, iconClassName = "size-4") => {
-    const Icon = action.icon;
-    return (
-      <span className="relative inline-flex shrink-0">
-        <Icon className={iconClassName} />
-      </span>
-    );
-  };
 
   return (
     <div
       data-workspace-focus-default
+      ref={attachLauncher}
       tabIndex={0}
-      onKeyDown={handleKeyDown}
       aria-label="Open a surface"
-      data-surface-launcher-keys={availableActions.map((action) => action.shortcut).join("")}
+      data-surface-launcher-keys={actions
+        .filter((action) => action.available)
+        .map((action) => action.shortcut)
+        .join("")}
       className={cn(
-        "scrollbar-gutter-both flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 outline-none",
+        "scrollbar-gutter-both flex min-h-0 flex-1 items-center-safe justify-center overflow-y-auto px-4 outline-none",
         "pb-(--workspace-topbar-height)",
       )}
     >
-      <div className="w-full max-w-xs py-6">
-        <h3 className="mb-3 text-center font-medium text-foreground text-sm">Open a surface</h3>
-        <div className="flex flex-col gap-0.5">
-          {actions.map((action) =>
-            action.available ? (
-              <div
-                key={action.label}
-                className="group relative"
-                onMouseEnter={() => setHighlight(availableActions.indexOf(action))}
-                onMouseLeave={() =>
-                  setHighlight((current) =>
-                    current === availableActions.indexOf(action) ? -1 : current,
-                  )
-                }
-              >
-                <button
-                  type="button"
-                  onClick={action.onClick}
-                  className={cn(
-                    "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-2.5 text-left text-sm transition-colors group-hover:surface-ghost-hover",
-                    isHighlighted(action) && "surface-selected-soft",
-                  )}
-                >
-                  {actionIcon(action, "size-4")}
-                  <span
-                    className={cn(
-                      "min-w-0 flex-1 truncate",
-                      action.label === "Browser" && props.browserProfiles.length > 1 && "pr-7",
-                    )}
-                  >
-                    {action.label}
-                  </span>
-                  <Kbd>{action.shortcut}</Kbd>
-                </button>
-                {action.label === "Browser" && props.browserProfiles.length > 1 ? (
-                  <Menu>
-                    <MenuTrigger
-                      render={
-                        <Button
-                          aria-label="Open browser in a profile"
-                          className="absolute top-1/2 right-8 -translate-y-1/2"
-                          size="icon-xs"
-                          variant="ghost-muted"
-                        />
-                      }
-                    >
-                      <ChevronDown className="size-3.5" />
-                    </MenuTrigger>
-                    <MenuPopup align="end" side="bottom" sideOffset={6} className="max-w-56">
-                      {props.browserProfiles.map((profile) => (
-                        <MenuItem
-                          key={profile.id}
-                          onClick={() => props.onAddBrowserInProfile(profile.id)}
-                        >
-                          <span className="min-w-0 truncate">{profile.name}</span>
-                        </MenuItem>
-                      ))}
-                    </MenuPopup>
-                  </Menu>
-                ) : null}
-              </div>
-            ) : (
-              <DisabledReasonTooltip
-                key={action.label}
-                reason={action.disabledReason}
-                trigger={
-                  <div
-                    tabIndex={0}
-                    aria-disabled="true"
-                    className="flex h-8 w-full cursor-default items-center gap-2.5 rounded-(--control-radius) px-2.5 text-left text-sm opacity-50"
-                  >
-                    {actionIcon(action, "size-4")}
-                    <span className="min-w-0 flex-1 truncate">{action.label}</span>
-                    <Kbd>{action.shortcut}</Kbd>
-                  </div>
-                }
-              />
-            ),
-          )}
-        </div>
+      <div
+        role="list"
+        aria-label="Surfaces"
+        className="flex w-full max-w-110 flex-col gap-0.5 py-6"
+      >
+        <SurfaceLauncherRows
+          actions={actions}
+          browserProfiles={props.browserProfiles}
+          onAddBrowserInProfile={props.onAddBrowserInProfile}
+        />
       </div>
     </div>
   );
@@ -891,12 +796,35 @@ function RightPanelTab(
     renaming: boolean;
     canRename: boolean;
     ownsDesktopTitleBar: boolean;
+    folded: boolean;
+    squeezed: boolean;
+    notched: boolean;
+    layoutTabId: string | null;
+    threadTitle: string | null;
+    onBreadcrumbSlotChange: (element: HTMLSpanElement | null) => void;
   },
 ) {
   const {
+    dragDisabled,
+    squeezed,
+    previewUrl,
+    previewCapturedUrl,
+    theme,
+    environmentId,
+    pullRequestStatusSeed,
+    renaming,
+    canRename,
+    threadTitle,
+    onBreadcrumbSlotChange,
     surface,
     audio,
     audioRuntimeTabId,
+    active,
+    pending,
+    folded,
+    notched,
+    layoutTabId,
+    ownsDesktopTitleBar,
     onActivate,
     onClose,
     onAuxClick,
@@ -906,7 +834,7 @@ function RightPanelTab(
   } = props;
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: surface.id,
-    disabled: props.dragDisabled,
+    disabled: dragDisabled,
   });
   const sideChatShell = useQuietThreadShell(
     surface.kind === "side-chat" && props.environmentId !== null
@@ -915,117 +843,178 @@ function RightPanelTab(
   );
   const title = sideChatShell?.title ?? props.title;
   const sideChatState = sideChatTabState(sideChatShell);
-  const content = (
-    <>
-      <PanelTabCloseButton label={`Close ${title}`} onClick={() => onClose(surface)}>
-        <SurfaceIcon
-          surface={surface}
-          previewUrl={props.previewUrl}
-          previewCapturedUrl={props.previewCapturedUrl}
-          theme={props.theme}
-          environmentId={props.environmentId}
-          pullRequestStatusSeed={props.pullRequestStatusSeed}
-        />
-        {props.pending ? (
-          <span
-            className="absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full bg-current"
-            aria-hidden
-          />
-        ) : null}
-      </PanelTabCloseButton>
-      {audio === "none" || !audioRuntimeTabId ? null : (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                className="cursor-pointer flex size-4 shrink-0 items-center justify-center rounded-kbd hover:surface-ghost-hover"
-                aria-label={audio === "muted" ? `Unmute ${title}` : `Mute ${title}`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void previewBridge
-                    ?.setAudioMuted(audioRuntimeTabId, audio !== "muted")
-                    .catch(() => undefined);
-                }}
-              >
-                <MorphIcon className="size-3" icon={audio === "muted" ? VolumeOff : Volume2} />
-              </button>
-            }
-          />
-          <TooltipPopup>{audio === "muted" ? "Unmute tab" : "Mute tab"}</TooltipPopup>
-        </Tooltip>
-      )}
-      {props.renaming ? (
-        <input
-          aria-label="Device tab name"
-          className="w-24 min-w-0 rounded-kbd surface-well px-1 outline-none focus:surface-focus"
-          defaultValue={title}
-          ref={(element) => {
-            element?.focus();
-            element?.select();
-          }}
-          onBlur={(event) => onFinishRename(surface.id, event.currentTarget.value)}
-          onKeyDown={(event) => {
-            event.stopPropagation();
-            if (event.key === "Enter") event.currentTarget.blur();
-            if (event.key === "Escape") {
-              event.currentTarget.value = title;
-              event.currentTarget.blur();
-            }
-          }}
-        />
-      ) : (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                onDoubleClick={() => {
-                  if (surface.kind === "device" && props.canRename) onStartRename(surface.id);
-                }}
-                className="cursor-pointer flex min-w-0 items-center"
-                aria-label={sideChatState === null ? undefined : `${title}, ${sideChatState}`}
-                onClick={() => onActivate(surface)}
-              >
-                <span className="truncate">{title}</span>
-              </button>
-            }
-          />
-          <TooltipPopup>
-            {surface.kind === "device" ? (
-              <DeviceTabTooltip
-                surface={surface}
-                environmentId={props.environmentId}
-                title={title}
-              />
-            ) : (
-              title
-            )}
-          </TooltipPopup>
-        </Tooltip>
-      )}
-    </>
-  );
+  // An open workspace file reads "Files › file.tsx": its breadcrumb names it.
+  const filesCrumb = active && surface.kind === "file" && !surface.attachment;
   return (
     <div
-      data-active-tab={props.active}
+      ref={setNodeRef}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+      data-active-tab={active}
+      data-tab-key={surface.id}
+      onPointerDown={
+        layoutTabId !== null ? (event) => beginLayoutTabDrag(event, layoutTabId) : undefined
+      }
       onMouseDown={preventTabMiddleButtonDefault}
       onMouseUp={preventTabMiddleButtonDefault}
       onAuxClick={(event) => onAuxClick(event, surface)}
       onContextMenu={(event) => onContextMenu(event, surface)}
       {...listeners}
-      ref={setNodeRef}
-      style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(
-        "cursor-pointer group/tab flex h-6 max-w-36 shrink-0 items-center gap-0.5 rounded-item pr-2 pl-1.5 text-xs",
-        props.ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
-        props.active
-          ? "font-medium text-strong-foreground"
-          : "text-muted-foreground hover:surface-ghost-hover hover:text-foreground",
+        "cursor-pointer group/tab flex items-center",
         isDragging && "relative z-10",
+        active && squeezed ? "min-w-0" : "shrink-0",
+        // In the notch a tab is the chat's 28px notch tab (pen JiaZk).
+        notched
+          ? "h-7 gap-1.75 rounded-control px-2.5 text-label"
+          : "h-6 gap-0.5 rounded-item pr-2 pl-1.5 text-xs",
+        folded && FOLDED_TAB_CLASS,
+        // The active tab grows with its breadcrumb; its title caps below.
+        !active && "max-w-36",
+        ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
+        active
+          ? cn("text-strong-foreground", !notched && "font-medium")
+          : "text-muted-foreground hover:surface-ghost-hover hover:text-foreground",
       )}
     >
-      {content}
+      {folded ? (
+        // A folded tab is its icon alone, so a click shows it
+        // rather than turning the icon into its close button.
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label={sideChatState === null ? title : `${title}, ${sideChatState}`}
+                className="cursor-pointer relative flex size-full items-center justify-center rounded-control outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-ring"
+                onClick={() => onActivate(surface)}
+              />
+            }
+          >
+            <SurfaceIcon
+              surface={surface}
+              previewUrl={previewUrl}
+              previewCapturedUrl={previewCapturedUrl}
+              theme={theme}
+              environmentId={environmentId}
+              pullRequestStatusSeed={pullRequestStatusSeed}
+            />
+            {pending ? (
+              <span
+                className="absolute right-1.5 bottom-1.5 size-1.5 rounded-full bg-current"
+                aria-hidden
+              />
+            ) : null}
+          </TooltipTrigger>
+          <TooltipPopup>{title}</TooltipPopup>
+        </Tooltip>
+      ) : (
+        <>
+          <PanelTabCloseButton label={`Close ${title}`} onClick={() => onClose(surface)}>
+            {filesCrumb ? (
+              <Files className="size-3.5 shrink-0 text-foreground" />
+            ) : (
+              <SurfaceIcon
+                surface={surface}
+                previewUrl={previewUrl}
+                previewCapturedUrl={previewCapturedUrl}
+                theme={theme}
+                environmentId={environmentId}
+                pullRequestStatusSeed={pullRequestStatusSeed}
+              />
+            )}
+            {pending ? (
+              <span
+                className="absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full bg-current"
+                aria-hidden
+              />
+            ) : null}
+          </PanelTabCloseButton>
+          {audio === "none" || !audioRuntimeTabId ? null : (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    className="cursor-pointer flex size-4 shrink-0 items-center justify-center rounded-kbd hover:surface-ghost-hover"
+                    aria-label={audio === "muted" ? `Unmute ${title}` : `Mute ${title}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void previewBridge
+                        ?.setAudioMuted(audioRuntimeTabId, audio !== "muted")
+                        .catch(() => undefined);
+                    }}
+                  >
+                    <MorphIcon className="size-3" icon={audio === "muted" ? VolumeOff : Volume2} />
+                  </button>
+                }
+              />
+              <TooltipPopup>{audio === "muted" ? "Unmute tab" : "Mute tab"}</TooltipPopup>
+            </Tooltip>
+          )}
+          {renaming ? (
+            <input
+              aria-label="Device tab name"
+              className="w-24 min-w-0 rounded-kbd surface-well px-1 outline-none focus:surface-focus"
+              defaultValue={title}
+              ref={(element) => {
+                element?.focus();
+                element?.select();
+              }}
+              onBlur={(event) => onFinishRename(surface.id, event.currentTarget.value)}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === "Enter") event.currentTarget.blur();
+                if (event.key === "Escape") {
+                  event.currentTarget.value = title;
+                  event.currentTarget.blur();
+                }
+              }}
+            />
+          ) : (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    onDoubleClick={() => {
+                      if (surface.kind === "device" && canRename) onStartRename(surface.id);
+                    }}
+                    // "Files" and "Diff" stay whole; their breadcrumb truncates instead.
+                    className={cn(
+                      "cursor-pointer flex min-w-0 items-center",
+                      (filesCrumb || (active && surface.kind === "diff")) && "shrink-0",
+                    )}
+                    onClick={() => onActivate(surface)}
+                  >
+                    <span className={cn("truncate", active && "max-w-60")}>
+                      {filesCrumb ? "Files" : title}
+                      {threadTitle ? (
+                        <span className="text-muted-foreground">
+                          {" · "}
+                          {threadTitle}
+                        </span>
+                      ) : null}
+                    </span>
+                  </button>
+                }
+              />
+              <TooltipPopup>
+                {surface.kind === "device" ? (
+                  <DeviceTabTooltip surface={surface} environmentId={environmentId} title={title} />
+                ) : (
+                  title
+                )}
+              </TooltipPopup>
+            </Tooltip>
+          )}
+          {active ? (
+            <span
+              ref={onBreadcrumbSlotChange}
+              className={cn("flex min-w-0 items-center", notched ? "gap-1" : "gap-0.5")}
+            />
+          ) : null}
+        </>
+      )}
     </div>
   );
 }
@@ -1036,8 +1025,19 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
-  const addSurfaceTriggerRef = useRef<HTMLButtonElement>(null);
+  // Embedded, this is one surface's tab in the layout: it drags like any tab
+  // and its pane's other tabs sit around it in the notch.
+  const layoutPaneTabId = useLayoutPane().tabId;
+  const layoutTabId = props.mode === "embedded" ? layoutPaneTabId : null;
+  const siblingTabs = useLayoutPaneSiblingTabs();
   const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
+  // The active tab's breadcrumb and the row's actions slot; its surface
+  // portals its header into them (PanelTabBreadcrumb, PanelTabActions).
+  const [breadcrumbSlot, setBreadcrumbSlot] = useState<HTMLSpanElement | null>(null);
+  const [actionsSlot, setActionsSlot] = useState<HTMLDivElement | null>(null);
+  const tabSlots = { breadcrumb: breadcrumbSlot, actions: actionsSlot };
+  // A layout pane's tabs sit in its notch (pen JiaZk), like a chat's.
+  const notched = props.mode === "embedded" || props.pane === true;
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
   const [tabScrollState, setTabScrollState] = useState({
     hasOverflow: false,
@@ -1046,29 +1046,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   });
 
   if (props.open === false && addSurfaceMenuOpen) setAddSurfaceMenuOpen(false);
-
-  const onNewSurfaceKeyDown = useEffectEvent((event: KeyboardEvent) => {
-    if (event.defaultPrevented || event.isComposing) return;
-    if (
-      resolveShortcutCommand(event, props.keybindings, {
-        context: { ...props.getShortcutContext(), rightPanelOpen: true },
-      }) !== "rightPanel.new"
-    )
-      return;
-    if (!addSurfaceMenuOpen && document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (!event.repeat) {
-      addSurfaceTriggerRef.current?.focus();
-      setAddSurfaceMenuOpen(true);
-    }
-  });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a document keydown listener for the new surface shortcut while the panel is open
-  useEffect(() => {
-    if (props.open === false) return;
-    document.addEventListener("keydown", onNewSurfaceKeyDown, true);
-    return () => document.removeEventListener("keydown", onNewSurfaceKeyDown, true);
-  }, [props.open]);
 
   const updateTabScrollState = (viewport: HTMLDivElement) => {
     const hasOverflow = viewport.scrollWidth - viewport.clientWidth > TAB_SCROLL_EDGE_TOLERANCE;
@@ -1099,12 +1076,25 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   };
 
   const addSurfaceActions = [
+    // A surface tab in the layout offers a new thread first, as a chat's "+" does.
+    ...(props.onNewThread
+      ? [
+          {
+            label: "New thread",
+            icon: SquarePen,
+            shortcut: "N",
+            available: true,
+            disabledReason: undefined,
+            onClick: props.onNewThread,
+          },
+        ]
+      : []),
     {
       label: "Browser",
       icon: Globe2,
       shortcut: "B",
       available: props.browserAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.browser,
+      disabledReason: props.browserUnavailableReason ?? SURFACE_DISABLED_REASONS.browser,
       onClick: props.onAddBrowser,
     },
     {
@@ -1206,6 +1196,37 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         }),
       });
     }
+    // A surface tab in the layout offers the layout's tab actions after its own.
+    if (layoutTabId !== null) {
+      const keybindings = props.keybindings;
+      const layoutItems = buildLayoutTabMenuItems(
+        useLayoutStore.getState().layout,
+        layoutTabId,
+        keybindings,
+      ).map((item, index) =>
+        index === 0 && items.length > 0 ? { ...item, separatorBefore: true } : item,
+      );
+      const picked = await api.contextMenu.show<
+        TabContextMenuAction | (typeof layoutItems)[number]["id"]
+      >([...items, ...layoutItems], { x: event.clientX, y: event.clientY });
+      if (picked !== null && isLayoutTabMenuId(picked)) {
+        runLayoutTabMenuAction(picked, layoutTabId);
+        return;
+      }
+      if (picked === "rename") setRenamingDevice(surface.id);
+      else if (picked === "copy-path" && surface.kind === "file" && !surface.attachment) {
+        props.onCopyFilePath(surface.relativePath);
+      } else if (picked === "toggle-mute") {
+        const runtimeTabId =
+          menuPreviewTabId && menuOverlay
+            ? (props.previewRuntimeTabId?.(menuPreviewTabId) ?? null)
+            : null;
+        if (runtimeTabId) {
+          void previewBridge?.setAudioMuted(runtimeTabId, !menuMuted).catch(() => undefined);
+        }
+      }
+      return;
+    }
     items.push(
       { id: "close", label: "Close" },
       {
@@ -1281,13 +1302,16 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     setRenamingDevice(null);
   });
 
-  // A newly active tab, or tabs that start overflowing, can sit outside the scrolled strip.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the active tab DOM node into view after it changes or the tab strip starts overflowing
-  useEffect(() => {
-    if (!props.activeSurfaceId || !tabScrollState.hasOverflow) return;
-    const activeTab = tabListRef.current?.querySelector<HTMLElement>("[data-active-tab='true']");
-    activeTab?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [props.activeSurfaceId, tabScrollState.hasOverflow]);
+  useRevealActiveTab(tabListRef, props.activeSurfaceId);
+  const fitTabs = props.surfaces.map((surface) => ({
+    key: surface.id,
+    title: surfaceTitle(surface, props.previewSessions, props.terminalLabelsById),
+  }));
+  // In the notch the tabs fold and overflow into a menu instead of scrolling.
+  const tabFit = usePaneTabStripFit(tabListRef, fitTabs, props.activeSurfaceId);
+  const hiddenSurfaces = notched
+    ? props.surfaces.filter((surface) => tabFit.hidden.has(surface.id))
+    : [];
 
   const attachTabList = (root: HTMLDivElement | null) => {
     tabListRef.current = root;
@@ -1323,6 +1347,81 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     };
   };
 
+  const addSurfaceMenu =
+    // A notch keeps it while empty too: an empty notch reads as a broken corner.
+    props.open !== false || props.surfaces.length > 0 || notched ? (
+      <Menu open={addSurfaceMenuOpen} onOpenChange={setAddSurfaceMenuOpen}>
+        <MenuTrigger
+          render={
+            <Button
+              aria-label="Add panel surface"
+              className="shrink-0"
+              size="icon-xs"
+              variant="ghost-muted"
+            />
+          }
+        >
+          <Plus className="size-3.5" />
+        </MenuTrigger>
+        <MenuPopup
+          align="start"
+          side="bottom"
+          sideOffset={6}
+          onKeyDownCapture={handleAddSurfaceMenuKeyDown}
+        >
+          {addSurfaceActions.map((action) => {
+            const Icon = action.icon;
+            if (action.label === "Browser" && action.available) {
+              return (
+                <MenuSub key={action.label}>
+                  <MenuSubTrigger
+                    className="[&>svg:last-child]:ms-0"
+                    aria-keyshortcuts={action.shortcut}
+                    onClick={(event) => {
+                      const pointerType =
+                        "pointerType" in event.nativeEvent &&
+                        typeof event.nativeEvent.pointerType === "string"
+                          ? event.nativeEvent.pointerType
+                          : undefined;
+                      if (!shouldOpenDefaultBrowserProfileFromMenuClick(pointerType)) return;
+                      setAddSurfaceMenuOpen(false);
+                      action.onClick();
+                    }}
+                  >
+                    <Icon />
+                    {action.label}
+                    <MenuShortcut>{action.shortcut}</MenuShortcut>
+                  </MenuSubTrigger>
+                  <MenuSubPopup className="max-w-56">
+                    {browserProfiles.map((profile) => (
+                      <MenuItem
+                        key={profile.id}
+                        onClick={() => props.onAddBrowserInProfile(profile.id)}
+                      >
+                        <span className="min-w-0 truncate">{profile.name}</span>
+                      </MenuItem>
+                    ))}
+                  </MenuSubPopup>
+                </MenuSub>
+              );
+            }
+            return (
+              <SurfaceMenuItem
+                key={action.label}
+                available={action.available}
+                disabledReason={action.disabledReason}
+                shortcut={action.shortcut}
+                onClick={action.onClick}
+              >
+                <Icon />
+                {action.label}
+              </SurfaceMenuItem>
+            );
+          })}
+        </MenuPopup>
+      </Menu>
+    ) : null;
+
   return (
     <PreviewPanelShell
       workspaceArea
@@ -1337,29 +1436,34 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       {...(props.open !== undefined ? { open: props.open } : {})}
       {...(props.widthStorageKey !== undefined ? { widthStorageKey: props.widthStorageKey } : {})}
       {...(props.defaultWidth !== undefined ? { defaultWidth: props.defaultWidth } : {})}
+      {...(props.pane ? { pane: true } : {})}
       {...(props.inlineSize ? { inlineSize: props.inlineSize } : {})}
     >
       <div
         className={cn(
-          "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 pl-2",
-          props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3",
+          // diff-toolbar: the active surface's actions sit in this row and fold
+          // into a menu when the pane is narrow (DiffViewControls).
+          "@container/diff-toolbar flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1",
+          // A layout pane's row lines up with its chat's header and starts at
+          // the pane's edge, under its notch.
+          notched ? "relative z-10 ps-1.5 pe-2 md:ps-0" : "pl-2",
+          !notched && (props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3"),
           ownsDesktopTitleBar && "drag-region",
           ownsDesktopTitleBar && "wco:pr-(--workspace-native-controls-inset)",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
         data-right-panel-tabbar
+        data-pane-header={notched ? "" : undefined}
+        data-floating-pane-header={notched ? "" : undefined}
       >
-        <ScrollArea
-          radius="none"
-          ref={attachTabList}
-          hideScrollbars
-          scrollFade
-          className="min-w-0 flex-1"
-          data-right-panel-tab-list
-        >
-          <div className="flex h-full w-max min-w-full items-center gap-1">
+        <PanelTabsNotch notched={notched} addButton={addSurfaceMenu}>
+          {layoutTabId !== null
+            ? siblingTabs.before.map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)
+            : null}
+          <PanelTabStrip notched={notched} ref={attachTabList}>
             <SortableTabList surfaces={props.surfaces} onMove={props.onMoveSurface}>
               {props.surfaces.map((surface) => {
+                if (tabFit.hidden.has(surface.id)) return null;
                 const previewTabId = previewTabIdOf(surface, props.previewSessions);
                 const favicon = previewFaviconOf(
                   surface,
@@ -1370,7 +1474,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   <RightPanelTab
                     key={surface.id}
                     surface={surface}
-                    dragDisabled={!props.onMoveSurface || renamingDevice === surface.id}
+                    // A layout tab's strip drags the whole tab instead.
+                    dragDisabled={
+                      !props.onMoveSurface || renamingDevice === surface.id || layoutTabId !== null
+                    }
                     active={surface.id === props.activeSurfaceId}
                     pending={props.pendingSurfaceIds.has(surface.id)}
                     title={surfaceTitle(surface, props.previewSessions, props.terminalLabelsById)}
@@ -1388,6 +1495,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     renaming={renamingDevice === surface.id}
                     canRename={props.onRenameDevice !== undefined}
                     ownsDesktopTitleBar={ownsDesktopTitleBar}
+                    folded={tabFit.folded && surface.id !== props.activeSurfaceId}
+                    squeezed={tabFit.squeezed}
+                    notched={notched}
+                    layoutTabId={layoutTabId}
+                    threadTitle={props.threadTitle ?? null}
+                    onBreadcrumbSlotChange={setBreadcrumbSlot}
                     onActivate={onActivateTab}
                     onClose={onCloseTab}
                     onAuxClick={onTabAuxClick}
@@ -1398,83 +1511,55 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 );
               })}
             </SortableTabList>
-            {props.open !== false ? (
-              <Menu open={addSurfaceMenuOpen} onOpenChange={setAddSurfaceMenuOpen}>
+            {hiddenSurfaces.length > 0 ? (
+              <Menu>
                 <MenuTrigger
-                  ref={addSurfaceTriggerRef}
                   render={
                     <Button
-                      aria-label="Add panel surface"
+                      aria-label="More panel tabs"
                       className="shrink-0"
+                      data-tab-overflow=""
                       size="icon-xs"
                       variant="ghost-muted"
                     />
                   }
                 >
-                  <Plus className="size-3.5" />
+                  <ChevronDown className="size-3.5" />
                 </MenuTrigger>
-                <MenuPopup
-                  align="start"
-                  side="bottom"
-                  sideOffset={6}
-                  onKeyDownCapture={handleAddSurfaceMenuKeyDown}
-                >
-                  {addSurfaceActions.map((action) => {
-                    const Icon = action.icon;
-                    if (action.label === "Browser" && action.available) {
-                      return (
-                        <MenuSub key={action.label}>
-                          <MenuSubTrigger
-                            className="[&>svg:last-child]:ms-0"
-                            aria-keyshortcuts={action.shortcut}
-                            onClick={(event) => {
-                              const pointerType =
-                                "pointerType" in event.nativeEvent &&
-                                typeof event.nativeEvent.pointerType === "string"
-                                  ? event.nativeEvent.pointerType
-                                  : undefined;
-                              if (!shouldOpenDefaultBrowserProfileFromMenuClick(pointerType))
-                                return;
-                              setAddSurfaceMenuOpen(false);
-                              action.onClick();
-                            }}
-                          >
-                            <Icon />
-                            {action.label}
-                            <MenuShortcut>{action.shortcut}</MenuShortcut>
-                          </MenuSubTrigger>
-                          <MenuSubPopup className="max-w-56">
-                            {browserProfiles.map((profile) => (
-                              <MenuItem
-                                key={profile.id}
-                                onClick={() => props.onAddBrowserInProfile(profile.id)}
-                              >
-                                <span className="min-w-0 truncate">{profile.name}</span>
-                              </MenuItem>
-                            ))}
-                          </MenuSubPopup>
-                        </MenuSub>
-                      );
-                    }
+                <MenuPopup align="start" side="bottom" sideOffset={6} className="max-w-64">
+                  {hiddenSurfaces.map((surface) => {
+                    const favicon = previewFaviconOf(
+                      surface,
+                      props.previewSessions,
+                      props.desktopByTabId,
+                    );
                     return (
-                      <SurfaceMenuItem
-                        key={action.label}
-                        available={action.available}
-                        disabledReason={action.disabledReason}
-                        shortcut={action.shortcut}
-                        onClick={action.onClick}
-                      >
-                        <Icon />
-                        {action.label}
-                      </SurfaceMenuItem>
+                      <MenuItem key={surface.id} onClick={() => props.onActivate(surface)}>
+                        <SurfaceIcon
+                          surface={surface}
+                          previewUrl={favicon.url}
+                          previewCapturedUrl={favicon.capturedUrl}
+                          theme={resolvedTheme}
+                          environmentId={props.environmentId}
+                          pullRequestStatusSeed={props.pullRequestStatusSeeds?.[surface.id]}
+                        />
+                        <span className="min-w-0 truncate">
+                          {surfaceTitle(surface, props.previewSessions, props.terminalLabelsById)}
+                        </span>
+                      </MenuItem>
                     );
                   })}
                 </MenuPopup>
               </Menu>
             ) : null}
-          </div>
-        </ScrollArea>
-        {tabScrollState.hasOverflow ? (
+            {notched ? null : addSurfaceMenu}
+          </PanelTabStrip>
+          {layoutTabId !== null
+            ? siblingTabs.after.map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)
+            : null}
+        </PanelTabsNotch>
+        {/* In the notch the tabs scroll by wheel and ctrl+Tab; the actions need the room. */}
+        {!notched && tabScrollState.hasOverflow ? (
           <div
             className="flex shrink-0 items-center gap-0.5 [-webkit-app-region:no-drag]"
             role="group"
@@ -1518,7 +1603,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             </Tooltip>
           </div>
         ) : null}
-        {props.layoutControls}
+        <PanelActionsNotch notched={notched && props.activeSurfaceId !== null}>
+          <div
+            ref={setActionsSlot}
+            className="ms-auto flex shrink-0 items-center gap-0.5 empty:hidden [-webkit-app-region:no-drag]"
+            data-right-panel-tab-actions
+          />
+          {props.layoutControls}
+        </PanelActionsNotch>
         {ownsDesktopTitleBar && !props.layoutControls ? (
           <span aria-hidden className="hidden w-24 shrink-0 wco:block" />
         ) : null}
@@ -1529,9 +1621,13 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           />
         ) : null}
       </div>
-      <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
+      <div
+        className={cn("flex min-h-0 flex-1 flex-col", notched && PANE_BODY_UNDER_HEADER_CLASS)}
+        data-right-panel-surface-content
+      >
         {props.activeSurfaceId === null ? (
           <RightPanelEmptyState
+            onClose={props.onClose}
             onAddBrowser={props.onAddBrowser}
             onAddBrowserInProfile={props.onAddBrowserInProfile}
             browserProfiles={browserProfiles}
@@ -1543,6 +1639,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddDevice={props.onAddDevice}
             onAddSideChat={props.onAddSideChat}
             browserAvailable={props.browserAvailable}
+            browserUnavailableReason={props.browserUnavailableReason}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
             filesAvailable={props.filesAvailable}
@@ -1553,7 +1650,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             sideChatDisabledReason={props.sideChatDisabledReason ?? null}
           />
         ) : (
-          props.children
+          <PanelTabSlotsContext value={tabSlots}>{props.children}</PanelTabSlotsContext>
         )}
       </div>
     </PreviewPanelShell>

@@ -33,7 +33,8 @@ export function openCommandPalette(detail: CommandPaletteOpenDetail = {}): void 
   }
 }
 
-/** True while the palette popup is on screen, including its closing animation. */
+/** True while the palette popup is open. */
 export function isCommandPaletteOpen(): boolean {
-  return openLayerMatches("[data-command-palette]");
+  // A palette playing its close animation is closed: shortcuts work again.
+  return openLayerMatches("[data-command-palette]:not([data-closed])");
 }

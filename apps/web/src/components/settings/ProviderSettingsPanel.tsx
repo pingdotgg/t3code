@@ -65,11 +65,7 @@ import { useEnvironmentSessionState } from "../../state/session";
 import { useProjects } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useRelativeTimeState } from "../../hooks/useRelativeTimeState";
-import {
-  ConnectionStatusDot,
-  connectionPhaseDotClassName,
-  connectionPhasePingClassName,
-} from "../ConnectionStatusDot";
+import { connectionPhasePings, connectionPhaseTone } from "../connectionPhaseTone";
 import {
   isProviderSettingsUpdateCandidate,
   isProviderUpdateActive,
@@ -77,6 +73,7 @@ import {
 } from "../ProviderUpdateLaunchNotification.logic";
 import { ProviderUpdatesAction } from "../ProviderUpdatesAction";
 import { Button } from "../ui/button";
+import { StatusDot } from "../ui/status-dot";
 import {
   Empty,
   EmptyContent,
@@ -427,9 +424,11 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
                   <span className="truncate">{environment.label}</span>
                   <span className="truncate text-dim-foreground">{detail}</span>
                   {environment.connection.phase !== "connected" ? (
-                    <ConnectionStatusDot
-                      dotClassName={connectionPhaseDotClassName(environment.connection.phase)}
-                      pingClassName={connectionPhasePingClassName(environment.connection.phase)}
+                    <StatusDot
+                      size="md"
+                      tone={connectionPhaseTone(environment.connection.phase)}
+                      ping={connectionPhasePings(environment.connection.phase)}
+                      framed
                     />
                   ) : null}
                   <span className="sr-only">{statusText}</span>

@@ -405,6 +405,14 @@ export function ThemeEditorPanel({
       if (opener?.isConnected && panel?.contains(document.activeElement)) opener.focus();
     };
   }, [opener]);
+  // The toast stack steps left of the docked panel (toast.tsx).
+  const docked = position === null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Mark the document while the editor is docked so the external toast portal avoids it.
+  useLayoutEffect(() => {
+    if (!docked) return;
+    document.documentElement.setAttribute("data-theme-editor-docked", "");
+    return () => document.documentElement.removeAttribute("data-theme-editor-docked");
+  }, [docked]);
   const dragOffsetRef = useRef<{ dx: number; dy: number; width: number } | null>(null);
   const resizeStartRef = useRef<{
     pointerX: number;
