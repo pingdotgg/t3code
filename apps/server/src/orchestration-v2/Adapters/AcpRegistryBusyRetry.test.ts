@@ -25,13 +25,7 @@ const MINIMAX_SESSION = "minimax-session";
 const MINIMAX_CODE_BUSY_MESSAGE =
   "MiniMax Code Runtime failed: Session already has an active Turn. Use queue send to deliver the message after it.";
 
-/**
- * The busy policy under test, with the backoff dropped to zero.
- *
- * The runtime behaviour does not depend on how long the prompt waits, and a
- * zero delay never registers with the test clock, so the re-send happens
- * without a virtual time advance.
- */
+// Zero delay keeps replay independent of the test clock.
 const busyRetryPolicy: AcpPromptBusyRetryPolicy = {
   ...minimaxCodePromptBusyRetry,
   delayMs: () => 0,

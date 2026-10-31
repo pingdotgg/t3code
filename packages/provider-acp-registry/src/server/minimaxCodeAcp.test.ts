@@ -19,16 +19,13 @@ describe("isMinimaxCodeBusyFailure", () => {
     assert.isTrue(isMinimaxCodeBusyFailure(Cause.fail(busyError)));
   });
 
-  it("ignores other request errors", () => {
+  it.each([
+    { code: -32603, errorMessage: "MiniMax Code Runtime failed: the model exploded." },
+    { code: -32602, errorMessage: busyError.errorMessage },
+    { code: -32603, errorMessage: "Tool failed: session already has an active turn." },
+  ])("ignores other request errors ($code, $errorMessage)", (error) => {
     assert.isFalse(
-      isMinimaxCodeBusyFailure(
-        Cause.fail(
-          new EffectAcpErrors.AcpRequestError({
-            code: -32603,
-            errorMessage: "MiniMax Code Runtime failed: the model exploded.",
-          }),
-        ),
-      ),
+      isMinimaxCodeBusyFailure(Cause.fail(new EffectAcpErrors.AcpRequestError(error))),
     );
   });
 

@@ -134,8 +134,6 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 
 export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
 
-export type { AcpPromptBusyRetryPolicy };
-
 // Grok summaries can trail hydrated tools by over two seconds; shorter waits split the wake.
 const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
 
@@ -271,11 +269,6 @@ export interface AcpAdapterV2Flavor {
     readonly promptCapabilities: EffectAcpSchema.AgentCapabilities["promptCapabilities"];
   }) => Effect.Effect<ReadonlyArray<EffectAcpSchema.ContentBlock>, EffectAcpErrors.AcpError>;
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
-  /**
-   * Retry a prompt the provider rejects because its session still owns an
-   * active turn. minimax-code holds a turn lease until the previous turn has
-   * finished unwinding, and rejects any prompt that arrives in that window.
-   */
   readonly promptBusyRetry?: AcpPromptBusyRetryPolicy;
   readonly requiresSignIn?: (cause: unknown) => boolean;
   /**

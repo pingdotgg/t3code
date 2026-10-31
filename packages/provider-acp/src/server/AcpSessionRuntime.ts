@@ -119,13 +119,6 @@ export interface AcpSessionRuntimeOptions {
   readonly linuxCgroupController?: AcpLinuxCgroupController | null;
   readonly cancelBehavior?: "interrupt" | "wait-for-prompt";
   readonly cancelTimeout?: Duration.Input;
-  /**
-   * Retry a prompt the agent rejects because its session still owns an active
-   * turn. Some agents (minimax-code) hold a turn lease until the previous turn
-   * has finished unwinding and reject any prompt that arrives during that
-   * window. The rejection is transient, so the prompt can be re-sent once the
-   * lease is released instead of failing the whole turn.
-   */
   readonly promptBusyRetry?: AcpPromptBusyRetryPolicy;
   readonly clientCapabilities?: EffectAcpSchema.InitializeRequest["clientCapabilities"];
   readonly clientInfo: {
@@ -1235,21 +1228,7 @@ interface EnsureActiveAssistantSegmentResult {
 interface AcpActivePrompt {
   readonly fiber: Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
   readonly completed: Deferred.Deferred<void>;
-  /**
-   * Whether the prompt request is currently with the agent. A prompt that is
-   * not in flight is either waiting to be sent or waiting to be re-sent, and a
-   * cancel has to interrupt it instead of asking the agent to stop it.
-   */
-  readonly attemptInFlight: Ref.Ref<boolean>;
-  /**
-   * Whether the prompt is being re-sent after the agent rejected it as busy.
-   *
-   * The re-send is a second dispatch of the same prompt, so a cancel has to
-   * interrupt it even while the request is in flight: the request and the
-   * cancel notification share one queue, and a cancel that is written first
-   * would let the agent start the turn after the user stopped it.
-   */
-  readonly reSendPending: Ref.Ref<boolean>;
+  readonly attemptState: Ref.Ref<"pending" | "initial" | "retry">;
 }
 
 export const make = Effect.fn("AcpSessionRuntime.make")(function* (
@@ -2349,10 +2328,6 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   });
 
   const cancel = Effect.gen(function* () {
-    // A prompt that is still waiting to be re-sent was never accepted by the
-    // agent, so `session/cancel` cannot stop it. Invalidate the waiting
-    // prompts first, so a cancelled prompt is not delivered after the user
-    // stopped the turn.
     yield* promptBusyRetryGate.cancel;
     const started = yield* getStartedState;
     const activePrompt = yield* Ref.get(activePromptRef);
@@ -2362,21 +2337,9 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     } satisfies EffectAcpSchema.CancelNotification;
     if (options.cancelBehavior !== "wait-for-prompt") {
       if (options.interruptPromptOnCancel === false) {
-        // A prompt that is waiting to be re-sent was never accepted by the
-        // agent, so `session/cancel` has nothing to stop. Interrupt the wait
-        // instead, so the prompt is not re-sent after the user stopped the
-        // turn.
-        //
-        // A re-send is interrupted even while its request is in flight. The
-        // request and the cancel notification share one queue, so a cancel
-        // that is written before the re-send would let the agent start the
-        // turn after the user stopped it. Interrupting the prompt either
-        // drops the request before it is written, or happens after it was
-        // written, which keeps the order on the wire.
+        // Interrupt retries before queueing cancel, so no resend can follow Stop.
         if (promptBusyRetry !== undefined && Option.isSome(activePrompt)) {
-          const inFlight = yield* Ref.get(activePrompt.value.attemptInFlight);
-          const reSendPending = yield* Ref.get(activePrompt.value.reSendPending);
-          if (!inFlight || reSendPending) {
+          if ((yield* Ref.get(activePrompt.value.attemptState)) !== "initial") {
             yield* Fiber.interrupt(activePrompt.value.fiber).pipe(Effect.ignore);
           }
         }
@@ -2619,42 +2582,25 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
               } satisfies EffectAcpSchema.PromptRequest;
               const completed = yield* Deferred.make<void>();
               yield* promptBusyRetryGate.issue;
-              const attemptInFlight = yield* Ref.make(false);
-              const reSendPending = yield* Ref.make(false);
-              let sendAttempts = 0;
-              const sendPrompt = Effect.gen(function* () {
-                sendAttempts += 1;
-                // The first send is the original prompt. Every send after it
-                // is a re-send of a prompt the agent rejected as busy.
-                if (sendAttempts > 1) {
-                  yield* Ref.set(reSendPending, true);
-                }
-                yield* Ref.set(attemptInFlight, true);
-                return yield* acp.agent
-                  .prompt(requestPayload)
-                  .pipe(Effect.ensuring(Ref.set(attemptInFlight, false)));
-              });
-              // The busy retry runs inside the prompt fiber, so the prompt stays
-              // this session's active prompt while it waits to be re-sent, and a
-              // cancel that interrupts the fiber stops the wait. The request is
-              // logged once for the whole prompt, so the gate check below is
-              // the last thing before the request is written.
+              const attemptState = yield* Ref.make<"pending" | "initial" | "retry">("pending");
+              const sendPrompt = Ref.update(attemptState, (state) =>
+                state === "pending" ? "initial" : "retry",
+              ).pipe(
+                Effect.andThen(acp.agent.prompt(requestPayload)),
+                Effect.ensuring(Ref.set(attemptState, "retry")),
+              );
+              // Keep backoff inside the active prompt fiber so Stop can interrupt it.
               const fiber = yield* runLoggedRequest(
                 "session/prompt",
                 requestPayload,
                 retryPromptOnBusy(promptBusyRetry, sendPrompt, {
-                  // The agent never accepted a rejected prompt, so
-                  // `session/cancel` has nothing to stop. The gate is what keeps
-                  // a cancelled prompt from being delivered after the user
-                  // stopped the turn.
                   cancelled: promptBusyRetryGate.cancelled,
                 }),
               ).pipe(Effect.forkIn(runtimeScope));
               const active = {
                 fiber,
                 completed,
-                attemptInFlight,
-                reSendPending,
+                attemptState,
               } satisfies AcpActivePrompt;
               yield* Ref.set(activePromptRef, Option.some(active));
               if (promptOptions?.dispatched) {
