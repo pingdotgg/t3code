@@ -139,6 +139,20 @@ export const NodesCommentsPullRequestReviewCommentConnection = Schema.Struct({
 })
 export interface NodesCommentsPullRequestReviewCommentConnection extends Schema.Struct.Type<typeof NodesCommentsPullRequestReviewCommentConnection.fields> {}
 
+/** A review comment associated with a given repository pull request. */
+export const PullRequestReviewComment = Schema.Struct({
+  /** The diff hunk to which the comment applies. */
+  diffHunk: Schema.String
+})
+export interface PullRequestReviewComment extends Schema.Struct.Type<typeof PullRequestReviewComment.fields> {}
+
+/** The connection type for PullRequestReviewComment. */
+export const FirstCommentPullRequestReviewCommentConnection = Schema.Struct({
+  /** A list of nodes. */
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(PullRequestReviewComment)))
+})
+export interface FirstCommentPullRequestReviewCommentConnection extends Schema.Struct.Type<typeof FirstCommentPullRequestReviewCommentConnection.fields> {}
+
 /** A threaded list of comments for a given pull request. */
 export const NodesPullRequestReviewThread = Schema.Struct({
   /** The Node ID of the PullRequestReviewThread object */
@@ -154,7 +168,9 @@ export const NodesPullRequestReviewThread = Schema.Struct({
   /** The side of the diff on which this thread was placed. */
   diffSide: GraphQL.enumLiterals(Shared.DiffSide.literals),
   /** A list of pull request comments associated with the thread. */
-  comments: NodesCommentsPullRequestReviewCommentConnection
+  comments: NodesCommentsPullRequestReviewCommentConnection,
+  /** A list of pull request comments associated with the thread. */
+  firstComment: FirstCommentPullRequestReviewCommentConnection
 })
 export interface NodesPullRequestReviewThread extends Schema.Struct.Type<typeof NodesPullRequestReviewThread.fields> {}
 
@@ -302,22 +318,93 @@ export const ReviewDismissedEvent = Schema.Struct({
 export interface ReviewDismissedEvent extends Schema.Struct.Type<typeof ReviewDismissedEvent.fields> {}
 
 /** An item in a pull request timeline */
-export const PullRequestTimelineItemsOther = Schema.Struct({
+export const ReviewDismissalsNodesPullRequestTimelineItemsOther = Schema.Struct({
   __typename: GraphQL.otherTypename<Shared.Typename.PullRequestTimelineItems>()(["ReviewDismissedEvent"])
 })
-export interface PullRequestTimelineItemsOther extends Schema.Struct.Type<typeof PullRequestTimelineItemsOther.fields> {}
+export interface ReviewDismissalsNodesPullRequestTimelineItemsOther extends Schema.Struct.Type<typeof ReviewDismissalsNodesPullRequestTimelineItemsOther.fields> {}
 
 /** The connection type for PullRequestTimelineItems. */
-export const PullRequestTimelineItemsConnection = Schema.Struct({
+export const ReviewDismissalsPullRequestTimelineItemsConnection = Schema.Struct({
   /** Information to aid in pagination. */
   pageInfo: PageInfo,
   /** A list of nodes. */
   nodes: Schema.NullOr(Schema.Array(Schema.NullOr(Schema.Union([
     ReviewDismissedEvent,
-    PullRequestTimelineItemsOther
+    ReviewDismissalsNodesPullRequestTimelineItemsOther
   ]))))
 })
-export interface PullRequestTimelineItemsConnection extends Schema.Struct.Type<typeof PullRequestTimelineItemsConnection.fields> {}
+export interface ReviewDismissalsPullRequestTimelineItemsConnection extends Schema.Struct.Type<typeof ReviewDismissalsPullRequestTimelineItemsConnection.fields> {}
+
+/** Represents an 'review_requested' event on a given pull request. */
+export const ReviewRequestedEvent = Schema.Struct({
+  __typename: Schema.Literal("ReviewRequestedEvent"),
+  /** Identifies the date and time when the object was created. */
+  createdAt: Shared.DateTime,
+  /** Identifies the actor who performed the event. */
+  actor: Schema.NullOr(Actor),
+  /** Identifies the reviewer whose review was requested. */
+  requestedReviewer: Schema.NullOr(Schema.Union([
+    RequestedReviewerUser,
+    RequestedReviewerBot,
+    Team,
+    RequestedReviewerOther
+  ]))
+})
+export interface ReviewRequestedEvent extends Schema.Struct.Type<typeof ReviewRequestedEvent.fields> {}
+
+/** An item in a pull request timeline */
+export const ReviewRequestEventsNodesPullRequestTimelineItemsOther = Schema.Struct({
+  __typename: GraphQL.otherTypename<Shared.Typename.PullRequestTimelineItems>()(["ReviewRequestedEvent"])
+})
+export interface ReviewRequestEventsNodesPullRequestTimelineItemsOther extends Schema.Struct.Type<typeof ReviewRequestEventsNodesPullRequestTimelineItemsOther.fields> {}
+
+/** The connection type for PullRequestTimelineItems. */
+export const ReviewRequestEventsPullRequestTimelineItemsConnection = Schema.Struct({
+  /** A list of nodes. */
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(Schema.Union([
+    ReviewRequestedEvent,
+    ReviewRequestEventsNodesPullRequestTimelineItemsOther
+  ]))))
+})
+export interface ReviewRequestEventsPullRequestTimelineItemsConnection extends Schema.Struct.Type<typeof ReviewRequestEventsPullRequestTimelineItemsConnection.fields> {}
+
+/** Represents a count of the state of a check run. */
+export const CheckRunStateCount = Schema.Struct({
+  /** The state of a check run. */
+  state: GraphQL.enumLiterals(Shared.CheckRunState.literals),
+  /** The number of check runs with this state. */
+  count: Shared.Int
+})
+export interface CheckRunStateCount extends Schema.Struct.Type<typeof CheckRunStateCount.fields> {}
+
+/** Represents a count of the state of a status context. */
+export const StatusContextStateCount = Schema.Struct({
+  /** The state of a status context. */
+  state: GraphQL.enumLiterals(Shared.StatusState.literals),
+  /** The number of statuses with this state. */
+  count: Shared.Int
+})
+export interface StatusContextStateCount extends Schema.Struct.Type<typeof StatusContextStateCount.fields> {}
+
+/** The connection type for StatusCheckRollupContext. */
+export const StatusCheckRollupContextConnection = Schema.Struct({
+  /** Identifies the total count of items in the connection. */
+  totalCount: Shared.Int,
+  /** Counts of check runs by state. */
+  checkRunCountsByState: Schema.NullOr(Schema.Array(CheckRunStateCount)),
+  /** Counts of status contexts by state. */
+  statusContextCountsByState: Schema.NullOr(Schema.Array(StatusContextStateCount))
+})
+export interface StatusCheckRollupContextConnection extends Schema.Struct.Type<typeof StatusCheckRollupContextConnection.fields> {}
+
+/** Represents the rollup for both the check runs and status for a commit. */
+export const StatusCheckRollup = Schema.Struct({
+  /** The combined status for the commit. */
+  state: GraphQL.enumLiterals(Shared.StatusState.literals),
+  /** A list of status contexts and check runs for this commit. */
+  contexts: StatusCheckRollupContextConnection
+})
+export interface StatusCheckRollup extends Schema.Struct.Type<typeof StatusCheckRollup.fields> {}
 
 /** Represents an actor in a Git commit (ie. an author or committer). */
 export const GitActor = Schema.Struct({
@@ -345,6 +432,8 @@ export const Commit = Schema.Struct({
   messageHeadline: Schema.String,
   /** The datetime when this commit was committed. */
   committedDate: Shared.DateTime,
+  /** Check and Status rollup information for this commit. */
+  statusCheckRollup: Schema.NullOr(StatusCheckRollup),
   /**
    * The list of authors for this commit based on the git author and the Co-authored-by
    * message trailer. The git author will always be first.
@@ -388,7 +477,9 @@ export const ReviewThreadsRepositoryPullRequestPullRequest = Schema.Struct({
   /** A list of latest reviews per user associated with the pull request that are not also pending review. */
   latestReviews: Schema.NullOr(LatestReviewsPullRequestReviewConnection),
   /** A list of events, comments, commits, etc. associated with the pull request. */
-  reviewDismissals: PullRequestTimelineItemsConnection,
+  reviewDismissals: ReviewDismissalsPullRequestTimelineItemsConnection,
+  /** A list of events, comments, commits, etc. associated with the pull request. */
+  reviewRequestEvents: Schema.optionalKey(ReviewRequestEventsPullRequestTimelineItemsConnection),
   /** A list of commits present in this pull request's head branch not present in the base branch. */
   commits: PullRequestCommitConnection
 })
@@ -409,11 +500,12 @@ export const ReviewThreads = GraphQL.query("ReviewThreads", {
       { name: "name", body: "String!" },
       { name: "number", body: "Int!" },
       { name: "after", body: "String" },
-      { name: "requestedReviewers", body: "Int!" }
+      { name: "requestedReviewers", body: "Int!" },
+      { name: "requestEvents", body: "Boolean!" }
     ],
     selections: [
       { name: "viewer", body: ["{login}"] },
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){reviewThreads(first:100 after:$", "after", "){totalCount pageInfo{hasNextPage endCursor}nodes{id isResolved isOutdated path line diffSide comments(first:10){totalCount pageInfo{hasNextPage endCursor}nodes{...ThreadComment}}}}viewerCanUpdate viewerDidAuthor author{__typename login avatarUrl}...Reactions comments(first:100){nodes{id lastEditedAt author{__typename login avatarUrl}...Reactions}}reviews(first:100){nodes{id lastEditedAt author{__typename login avatarUrl}...Reactions}}reviewRequests(first:$", "requestedReviewers", "){nodes{requestedReviewer{__typename...on User{login name avatarUrl}...on Bot{login avatarUrl}...on Team{combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}latestReviews(first:50){nodes{state author{__typename login avatarUrl}}}reviewDismissals:timelineItems(itemTypes:[REVIEW_DISMISSED_EVENT]first:100){pageInfo{hasNextPage endCursor}nodes{__typename...on ReviewDismissedEvent{dismissalMessage review{id}}}}commits(last:100){nodes{commit{oid messageHeadline committedDate authors(first:3){nodes{name avatarUrl user{login}}}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){reviewThreads(first:100 after:$", "after", "){totalCount pageInfo{hasNextPage endCursor}nodes{id isResolved isOutdated path line diffSide comments(first:10){totalCount pageInfo{hasNextPage endCursor}nodes{...ThreadComment}}firstComment:comments(first:1){nodes{diffHunk}}}}viewerCanUpdate viewerDidAuthor author{__typename login avatarUrl}...Reactions comments(first:100){nodes{id lastEditedAt author{__typename login avatarUrl}...Reactions}}reviews(first:100){nodes{id lastEditedAt author{__typename login avatarUrl}...Reactions}}reviewRequests(first:$", "requestedReviewers", "){nodes{requestedReviewer{__typename...on User{login name avatarUrl}...on Bot{login avatarUrl}...on Team{combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}latestReviews(first:50){nodes{state author{__typename login avatarUrl}}}reviewDismissals:timelineItems(itemTypes:[REVIEW_DISMISSED_EVENT]first:100){pageInfo{hasNextPage endCursor}nodes{__typename...on ReviewDismissedEvent{dismissalMessage review{id}}}}reviewRequestEvents:timelineItems(itemTypes:[REVIEW_REQUESTED_EVENT]last:100)@include(if:$", "requestEvents", "){nodes{__typename...on ReviewRequestedEvent{createdAt actor{__typename login avatarUrl}requestedReviewer{__typename...on User{login name avatarUrl}...on Bot{__typename login avatarUrl}...on Team{combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}}commits(last:100){nodes{commit{oid messageHeadline committedDate statusCheckRollup{state contexts(first:1){totalCount checkRunCountsByState{state count}statusContextCountsByState{state count}}}authors(first:3){nodes{name avatarUrl user{login}}}}}}}}"] }
     ],
     fragments: [
       { name: "ThreadComment", body: ["on PullRequestReviewComment{id author{__typename login avatarUrl}body createdAt lastEditedAt url...Reactions}"] },
@@ -425,7 +517,8 @@ export const ReviewThreads = GraphQL.query("ReviewThreads", {
     name: Schema.String,
     number: Shared.Int,
     after: Schema.optional(Schema.NullOr(Schema.String)),
-    requestedReviewers: Shared.Int
+    requestedReviewers: Shared.Int,
+    requestEvents: Schema.Boolean
   },
   result: Schema.Struct({
     /** The currently authenticated user. */
@@ -525,7 +618,7 @@ export declare namespace ReviewThreadComments {
 /** A repository pull request. */
 export const ReviewDismissalsRepositoryPullRequestPullRequest = Schema.Struct({
   /** A list of events, comments, commits, etc. associated with the pull request. */
-  timelineItems: PullRequestTimelineItemsConnection
+  timelineItems: ReviewDismissalsPullRequestTimelineItemsConnection
 })
 export interface ReviewDismissalsRepositoryPullRequestPullRequest extends Schema.Struct.Type<typeof ReviewDismissalsRepositoryPullRequestPullRequest.fields> {}
 
