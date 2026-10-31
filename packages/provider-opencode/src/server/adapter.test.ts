@@ -151,12 +151,13 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   nativeSessionId: string,
   client: object,
   host: Partial<ProviderHost.ProviderHost["Service"]> = {},
+  model = "anthropic/claude-sonnet",
 ) {
   const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
   const threadId = ThreadId.make(`thread-opencode-${suffix}`);
   const modelSelection = {
     instanceId,
-    model: "anthropic/claude-sonnet",
+    model,
     options: [],
   };
   const policy = runtimePolicy("full-access", { cwd: "/workspace" });
@@ -581,6 +582,135 @@ describe("OpenCodeAdapterV2", () => {
                 hasSubagents: false,
               },
         );
+      }).pipe(
+        Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+        Effect.scoped,
+      ),
+  );
+
+  it.effect.each(["ready", "pending"] as const)(
+    "reports an OpenRouter turn's last step without waiting for a %s model catalog",
+    (catalogState) =>
+      Effect.gen(function* () {
+        const nativeEvents = asyncEventStream();
+        let promptId = "";
+        const catalogGate = promiseGate<void>();
+        const harness = yield* makeOpenCodeRuntimeHarness(
+          "context-usage",
+          "root",
+          {
+            event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+            provider: {
+              list: async () => {
+                if (catalogState === "pending") await catalogGate.promise;
+                return {
+                  data: {
+                    all: [
+                      {
+                        id: "openrouter",
+                        name: "OpenRouter",
+                        source: "env",
+                        env: [],
+                        options: {},
+                        models: {
+                          "z-ai/glm-5.3-flash": {
+                            id: "z-ai/glm-5.3-flash",
+                            providerID: "openrouter",
+                            limit: { context: 202_752, output: 131_072 },
+                          },
+                        },
+                      },
+                    ],
+                    default: {},
+                    connected: ["openrouter"],
+                  },
+                };
+              },
+            },
+            session: {
+              create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+              promptAsync: async (input: { messageID: string }) => {
+                promptId = input.messageID;
+                return { data: true };
+              },
+              abort: async () => ({ data: true }),
+              children: async () => ({ data: [] }),
+            },
+          },
+          {},
+          "openrouter/z-ai/glm-5.3-flash",
+        );
+        yield* harness.startTurn();
+        const received = yield* harness.runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        const push = (event: unknown) => Effect.promise(() => nativeEvents.push(event));
+        yield* push({
+          type: "message.updated",
+          properties: {
+            sessionID: "root",
+            info: { id: promptId, role: "user", time: { created: 1 } },
+          },
+        });
+        yield* push({
+          type: "message.updated",
+          properties: {
+            sessionID: "root",
+            info: {
+              id: "assistant",
+              role: "assistant",
+              time: { created: 1 },
+              parentID: promptId,
+              providerID: "openrouter",
+              modelID: "z-ai/glm-5.3-flash",
+            },
+          },
+        });
+        const step = (id: string, tokens: { input: number; read: number; output: number }) =>
+          push({
+            type: "message.part.updated",
+            properties: {
+              part: {
+                type: "step-finish",
+                id,
+                sessionID: "root",
+                messageID: "assistant",
+                reason: "stop",
+                cost: 0,
+                tokens: {
+                  input: tokens.input,
+                  output: tokens.output,
+                  reasoning: 0,
+                  cache: { read: tokens.read, write: 0 },
+                },
+              },
+            },
+          });
+        yield* step("first", { input: 9_000, read: 500, output: 40 });
+        yield* step("last", { input: 11_000, read: 1_000, output: 32 });
+        yield* push({
+          type: "session.status",
+          properties: { sessionID: "root", status: { type: "busy" } },
+        });
+        yield* push({
+          type: "session.status",
+          properties: { sessionID: "root", status: { type: "idle" } },
+        });
+        const events = yield* Fiber.join(received);
+        const completed = events.findLast((event) => event.type === "provider_turn.updated");
+        const { updatedAt, ...tokenUsage } = completed?.providerTurn.tokenUsage ?? {};
+        assert.deepEqual(tokenUsage, {
+          usedTokens: 12_032,
+          maxTokens: catalogState === "ready" ? 202_752 : null,
+          inputTokens: 12_000,
+          cachedInputTokens: 1_000,
+          outputTokens: 32,
+          reasoningOutputTokens: 0,
+        });
+        assert.isString(updatedAt);
+        catalogGate.resolve();
       }).pipe(
         Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
         Effect.scoped,

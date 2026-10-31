@@ -222,6 +222,9 @@ interface OpenCodeTurnTokenUsageAccumulator {
   cacheCreationTokens: number;
   outputTokens: number;
   reasoningTokens: number;
+  // The newest owned step is the turn's live context: that is what the
+  // composer's meter shows, while the sums above are what the turn cost.
+  lastStep: OpenCodeStepUsage["tokens"] | undefined;
   hasSubagents: boolean;
   complete: boolean;
 }
@@ -237,6 +240,7 @@ function makeOpenCodeTurnTokenUsageAccumulator(): OpenCodeTurnTokenUsageAccumula
     cacheCreationTokens: 0,
     outputTokens: 0,
     reasoningTokens: 0,
+    lastStep: undefined,
     hasSubagents: false,
     complete: true,
   };
@@ -253,6 +257,7 @@ function accumulateOpenCodeStepUsage(
   accumulator.cacheCreationTokens += part.tokens.cache.write;
   accumulator.outputTokens += part.tokens.output + part.tokens.reasoning;
   accumulator.reasoningTokens += part.tokens.reasoning;
+  accumulator.lastStep = part.tokens;
 }
 
 interface ActiveOpenCodeTurn {
@@ -1039,6 +1044,28 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             ),
           );
 
+        // Fetch the optional ceiling in the background; turn completion must
+        // never wait for the catalog. Skip protocol logging for this large list.
+        let contextWindows = new Map<string, number>();
+        yield* OpenCodeRuntime.runOpenCodeSdk("provider.list", (signal) =>
+          client.provider.list(undefined, { signal }),
+        ).pipe(
+          Effect.timeout("5 seconds"),
+          Effect.tap((list) =>
+            Effect.sync(() => {
+              const windows = new Map<string, number>();
+              for (const provider of list.data?.all ?? []) {
+                for (const model of Object.values(provider.models)) {
+                  windows.set(`${provider.id}/${model.id}`, model.limit.context);
+                }
+              }
+              contextWindows = windows;
+            }),
+          ),
+          Effect.ignore,
+          Effect.forkIn(scope),
+        );
+
         const abortDescendants = Effect.fn("OpencodeAdapter.abortDescendants")(function* (
           rootId: string,
         ) {
@@ -1120,12 +1147,17 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           return ordinal;
         };
 
-        const emitProviderTurn = (
+        const emitProviderTurn = Effect.fnUntraced(function* (
           state: OpenCodeThreadState,
           turn: ActiveOpenCodeTurn,
           status: OrchestrationV2ProviderTurn["status"],
           completedAt: DateTime.Utc | null,
-        ) => {
+        ) {
+          const lastStep = completedAt === null ? undefined : turn.usage.lastStep;
+          const maxTokens =
+            lastStep === undefined
+              ? null
+              : (contextWindows.get(turn.modelSelection.model.trim()) ?? null);
           const providerTurn: OrchestrationV2ProviderTurn = {
             ...turn.providerTurn,
             nativeTurnRef:
@@ -1160,16 +1192,30 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                           hasSubagents: turn.usage.hasSubagents,
                         },
                 }),
+            ...(completedAt === null || lastStep === undefined
+              ? {}
+              : {
+                  tokenUsage: {
+                    usedTokens:
+                      lastStep.input + lastStep.cache.read + lastStep.cache.write + lastStep.output,
+                    maxTokens,
+                    inputTokens: lastStep.input + lastStep.cache.read + lastStep.cache.write,
+                    cachedInputTokens: lastStep.cache.read,
+                    outputTokens: lastStep.output,
+                    reasoningOutputTokens: lastStep.reasoning,
+                    updatedAt: DateTime.formatIso(completedAt),
+                  },
+                }),
           };
           Object.assign(turn.providerTurn, providerTurn);
           state.providerTurns.set(String(providerTurn.id), providerTurn);
-          return emitProviderEvent({
+          yield* emitProviderEvent({
             type: "provider_turn.updated",
             driver: OPENCODE_PROVIDER,
             threadId: turn.threadId,
             providerTurn,
           });
-        };
+        });
 
         const emitTextPart = Effect.fnUntraced(function* (
           state: OpenCodeThreadState,
