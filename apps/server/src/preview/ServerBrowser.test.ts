@@ -1011,6 +1011,26 @@ it.effect.each([
     ],
   },
   {
+    name: "wheel burst before a click",
+    inputs: [
+      ...Array.from({ length: 120 }, () => ({
+        type: "wheel",
+        x: 100,
+        y: 200,
+        deltaX: 0,
+        deltaY: 12,
+      })),
+      { type: "mouse", action: "down", x: 100, buttons: 1, button: "left" },
+      { type: "mouse", action: "up", x: 100, buttons: 0, button: "left" },
+    ],
+    expected: [
+      { type: "mouseMoved", x: -1 },
+      { type: "mouseWheel", x: 100, y: 200, deltaX: 0, deltaY: 1440 },
+      { type: "mousePressed", x: 100 },
+      { type: "mouseReleased", x: 100 },
+    ],
+  },
+  {
     name: "modifier changes and drag points",
     inputs: [
       { type: "mouse", action: "move", x: 1, buttons: 0, button: "none" },
