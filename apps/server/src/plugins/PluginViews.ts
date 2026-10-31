@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off -- Node's synchronous SHA-256 keeps view-byte hashing consistent with the catalogue.
 // Read generation bytes between consent and a matching fresh digest; mismatches serve nothing and revoke via re-inspection.
 // All fetches and calls pin installation/generation, so revocation never redirects a stale client.
 import * as NodeCrypto from "node:crypto";

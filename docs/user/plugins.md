@@ -155,6 +155,11 @@ With the `views` capability, declare up to 8 views. Each has an `id`, a `title`,
 open as tabs in the right panel of the web and desktop apps, from its empty launcher and its **+**
 menu. Views are not available in the mobile apps yet.
 
+View files must use UTF-8 without a byte order mark, CR or NUL characters. Scripts cannot contain
+`<!--`, `<script` or `</script`; styles cannot contain `</style` (tag checks ignore case).
+The JSON-encoded script and style text together must fit within 2 MiB. T3 Code shows the reason
+when it refuses a view.
+
 A view runs in an isolated frame. It cannot read T3 Code's pages, storage or connection, load other
 files, or reach the network; inline images and fonts as `data:` URLs. Its script finds `t3View` on
 `window`: `t3View.ready` resolves once connected, and `t3View.call(handler, input)` reaches
