@@ -29,6 +29,7 @@ import {
   type ElicitationResult,
   forkSession as forkClaudeSession,
   type EffortLevel,
+  type FastModeDisabledReason,
   type ForkSessionOptions,
   type ForkSessionResult,
   getSessionMessages,
@@ -3965,6 +3966,41 @@ function formatClaudeUsageLimitWait(waitMs: number): string {
   return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
 }
 
+const CLAUDE_FAST_MODE_DISABLED_REASONS = {
+  free: " It needs a paid Claude plan.",
+  preference: " Your organization has turned it off.",
+  extra_usage_disabled: " It needs usage credits on this Claude account.",
+  network_error: " Claude Code could not check whether it is available.",
+  unknown: "",
+  not_first_party: " It needs the Anthropic API or an eligible Claude subscription.",
+  disabled_by_env: " CLAUDE_CODE_DISABLE_FAST_MODE is set.",
+  model_not_allowed: " It is not available for this model.",
+  sdk_opt_in_required: "",
+  pending: "",
+} satisfies Record<FastModeDisabledReason, string>;
+
+// Missing and pending state reports leave the previous notice unchanged.
+function claudeFastModeNotice(message: SDKMessage): string | null | undefined {
+  if (!(message.type === "result" || (message.type === "system" && message.subtype === "init"))) {
+    return undefined;
+  }
+  const state = message.fast_mode_state;
+  const reason = message.fast_mode_disabled_reason;
+  if (message.type === "result" && message.usage.speed === "standard") {
+    if (state === "on" || state === undefined || reason === "pending") {
+      return "Claude answered this Fast request at standard speed.";
+    }
+  }
+  if (state === undefined || reason === "pending") return undefined;
+  if (state === "on") return message.type === "result" ? null : undefined;
+  if (state === "cooldown") {
+    return "Fast mode is paused after a rate limit, so Claude is answering at standard speed until the cooldown ends.";
+  }
+  return `Fast mode is off, so Claude is answering at standard speed.${
+    reason === undefined ? "" : (CLAUDE_FAST_MODE_DISABLED_REASONS[reason] ?? "")
+  }`;
+}
+
 interface ActiveClaudeTurnContext {
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
@@ -4800,6 +4836,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         );
         const goalsByNativeThread = new Map<string, OrchestrationV2ProviderGoal | null>();
         const goalCheckedTurns = new Set<string>();
+        const fastModeNoticesByNativeThread = new Map<string, string>();
         // Background subagents can finish after root settlement; retain their registry for wake evidence and hydration.
         const sessionSubagentsByTaskId = yield* Ref.make(new Map<string, ActiveClaudeSubagent>());
         const sessionSubagentTaskIdsByToolUseId = yield* Ref.make(new Map<string, string>());
@@ -5291,6 +5328,55 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             type: "provider_thread.updated",
             driver: CLAUDE_PROVIDER,
             providerThread: updated,
+          });
+        });
+
+        // SDK frames are frequent; avoid a span for each unchanged notice.
+        const announceClaudeFastMode = Effect.fnUntraced(function* (input: {
+          readonly liveQuery: ClaudeLiveQueryContext;
+          readonly context: ActiveClaudeTurnContext;
+          readonly message: SDKMessage;
+        }) {
+          const nativeThreadId = input.liveQuery.nativeThreadId;
+          const notice = claudeFastModeNotice(input.message);
+          if (notice === null || input.liveQuery.selection.settings.fastMode !== true) {
+            fastModeNoticesByNativeThread.delete(nativeThreadId);
+            return;
+          }
+          if (notice === undefined || fastModeNoticesByNativeThread.get(nativeThreadId) === notice)
+            return;
+          fastModeNoticesByNativeThread.set(nativeThreadId, notice);
+          const { context } = input;
+          const now = yield* DateTime.now;
+          const nativeItemId = `fast-mode:${context.providerTurnId}`;
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: CLAUDE_PROVIDER,
+            turnItem: {
+              id: idAllocator.derive.turnItemFromProviderItem({
+                driver: CLAUDE_PROVIDER,
+                nativeItemId,
+              }),
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId: context.input.rootNodeId,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: {
+                driver: CLAUDE_PROVIDER,
+                nativeId: nativeItemId,
+                strength: "weak",
+              },
+              parentItemId: null,
+              ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+              type: "system_notice",
+              status: "completed",
+              title: notice,
+              message: notice,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+            },
           });
         });
 
@@ -8338,6 +8424,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
           yield* trackClaudeGoal({ nativeThreadId: liveQuery.nativeThreadId, context, message });
+          yield* announceClaudeFastMode({ liveQuery, context, message });
 
           if (message.type === "stream_event" && !message.parent_tool_use_id) {
             const event = message.event;
