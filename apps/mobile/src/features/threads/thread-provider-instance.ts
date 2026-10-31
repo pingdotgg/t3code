@@ -6,7 +6,12 @@ import {
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
-import type { EnvironmentId, ProviderDriverKind } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProviderDriverKind,
+  ServerConfig,
+  ServerProvider,
+} from "@t3tools/contracts";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
 export interface ThreadRowProviderInstance {
@@ -14,6 +19,31 @@ export interface ThreadRowProviderInstance {
   readonly displayName: string;
   readonly accentColor?: string | undefined;
   readonly showBadge: boolean;
+}
+
+export type BadgeProvider = ServerProvider & {
+  readonly driverKind: ServerProvider["driver"];
+  readonly acpRegistryAgentId: string | undefined;
+};
+
+/** Badge eligibility needs each ACP instance's registry agent, which only settings carry. */
+export function resolveBadgeProviders(
+  config: Pick<ServerConfig, "providers" | "settings"> | null | undefined,
+): ReadonlyArray<BadgeProvider> {
+  return (config?.providers ?? []).map((provider) => {
+    const rawConfig = config?.settings.providerInstances[provider.instanceId]?.config;
+    const instanceConfig =
+      rawConfig !== null && typeof rawConfig === "object"
+        ? (rawConfig as Readonly<Record<string, unknown>>)
+        : null;
+    const agentId = instanceConfig?.source === "local" ? undefined : instanceConfig?.agentId;
+    return {
+      ...provider,
+      driverKind: provider.driver,
+      accentColor: normalizeProviderAccentColor(provider.accentColor),
+      acpRegistryAgentId: typeof agentId === "string" ? agentId.trim() || undefined : undefined,
+    };
+  });
 }
 
 /** Scope by environment; default instance ids name different accounts on different servers. */

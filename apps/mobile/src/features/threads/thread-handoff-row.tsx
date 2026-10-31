@@ -4,7 +4,6 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { resolveHandoffEndpoints, type HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
 import {
-  normalizeProviderAccentColor,
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
@@ -12,7 +11,6 @@ import type {
   EnvironmentId,
   OrchestrationV2ProjectedTurnItem,
   ProviderInstanceId,
-  ServerProvider,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { useMemo } from "react";
@@ -23,11 +21,7 @@ import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIco
 import { environmentThreadDetails } from "../../state/threads";
 import { serverEnvironment } from "../../state/server";
 import { ThreadContextDivider } from "./thread-context-divider";
-
-type HandoffProvider = ServerProvider & {
-  readonly driverKind: ServerProvider["driver"];
-  readonly acpRegistryAgentId: string | undefined;
-};
+import { resolveBadgeProviders, type BadgeProvider } from "./thread-provider-instance";
 
 function handoffEndpointsAtom(
   environmentId: EnvironmentId,
@@ -82,20 +76,7 @@ export function ThreadHandoffDivider(props: {
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const { endpoints } = props;
   const endpointProps = {
-    providers: (config?.providers ?? []).map((provider) => {
-      const rawConfig = config?.settings.providerInstances[provider.instanceId]?.config;
-      const instanceConfig =
-        rawConfig !== null && typeof rawConfig === "object"
-          ? (rawConfig as Readonly<Record<string, unknown>>)
-          : null;
-      const agentId = instanceConfig?.source === "local" ? undefined : instanceConfig?.agentId;
-      return {
-        ...provider,
-        driverKind: provider.driver,
-        accentColor: normalizeProviderAccentColor(provider.accentColor),
-        acpRegistryAgentId: typeof agentId === "string" ? agentId.trim() || undefined : undefined,
-      };
-    }),
+    providers: resolveBadgeProviders(config),
     surfaceColor: props.surfaceColor,
   };
   return (
@@ -131,7 +112,7 @@ export function ThreadHandoffDivider(props: {
 function HandoffEndpoint(props: {
   instanceId: ProviderInstanceId;
   model?: string | undefined;
-  providers: ReadonlyArray<HandoffProvider>;
+  providers: ReadonlyArray<BadgeProvider>;
   surfaceColor: string;
 }) {
   const provider = props.providers.find((candidate) => candidate.instanceId === props.instanceId);
