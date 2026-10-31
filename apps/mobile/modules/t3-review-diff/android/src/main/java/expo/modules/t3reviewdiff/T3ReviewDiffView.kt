@@ -1423,13 +1423,24 @@ private fun centeredBaseline(top: Int, bottom: Int, paint: Paint): Float {
   return (top + bottom) / 2f - (metrics.ascent + metrics.descent) / 2f
 }
 
+// A single-line preview never shows this many characters, so longer text is cut before measuring.
+private const val ELLIPSIZE_MAX_CHARS = 500
+
 private fun ellipsize(value: String, paint: Paint, width: Float): String {
-  if (paint.measureText(value) <= width) return value
+  val truncated = value.length > ELLIPSIZE_MAX_CHARS
+  val capEnd = surrogateSafeEnd(value, ELLIPSIZE_MAX_CHARS)
+  val text = if (truncated) value.substring(0, capEnd) else value
+  if (!truncated && paint.measureText(text) <= width) return value
   val suffix = "..."
   val available = max(0f, width - paint.measureText(suffix))
-  var end = value.length
-  while (end > 0 && paint.measureText(value, 0, end) > available) end -= 1
-  return value.substring(0, end) + suffix
+  val end = surrogateSafeEnd(text, paint.breakText(text, true, available, null))
+  return text.substring(0, end) + suffix
+}
+
+private fun surrogateSafeEnd(value: String, end: Int): Int {
+  val splitsPair = end in 1 until value.length &&
+    Character.isSurrogatePair(value[end - 1], value[end])
+  return if (splitsPair) end - 1 else end
 }
 
 private fun indexFileHeaders(rows: List<DiffRow>): IntArray {
