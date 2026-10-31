@@ -13,6 +13,8 @@ const COLOR_DECLARATION_RE = /(?:^|;)\s*color\s*:\s*([^;]*?)\s*(!\s*important)?\
 const PLAIN_COLOR_RE = /^(?:#[\da-f]{3,8}|[a-z]+|(?:rgba?|hsla?)\([\d\s.,%/]+\))$/i;
 const COMMENT_OR_SVG_TAG_RE = /<!--[\s\S]*?-->|<svg\b[^>]*>/gi;
 const COLOR_ATTRIBUTE_RE = /\s+color\s*=\s*(?:"[^"]*"|'[^']*')/i;
+const MEDIA_ATTRIBUTE_RE = /\s+media\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
+const COLOR_SCHEME_CONDITION_RE = /^\(\s*prefers-color-scheme\s*:\s*(light|dark)\s*\)$/i;
 
 // CoreSVG ignores root stylesheet colors and misreads @media; resolve both before decoding.
 export function resolveProjectFaviconColorScheme(url: string, scheme: MobileThemeAppearance) {
@@ -26,6 +28,14 @@ export function resolveProjectFaviconColorScheme(url: string, scheme: MobileThem
     STYLE_ELEMENT_RE,
     (match, open: string, css: string | undefined, close: string) => {
       if (css === undefined) return match;
+      const mediaAttribute = open.match(MEDIA_ATTRIBUTE_RE);
+      const media = (mediaAttribute?.[1] ?? mediaAttribute?.[2])?.trim();
+      if (media) {
+        const condition = media.match(COLOR_SCHEME_CONDITION_RE);
+        if (!condition) return match;
+        if (condition[1]?.toLowerCase() !== scheme) return "";
+        open = open.replace(MEDIA_ATTRIBUTE_RE, "");
+      }
       // Comments can hold braces or a commented-out `@media`, which the block matcher would count.
       const resolvedCss = replaceBlocks(
         css.replace(CSS_COMMENT_RE, ""),
@@ -94,8 +104,8 @@ function lastRootColor(css: string) {
     if (specificity === -1) continue;
     for (const [, value = "", important] of declarations.matchAll(COLOR_DECLARATION_RE)) {
       const nextPriority = specificity + (important ? 2 : 0);
-      if (!PLAIN_COLOR_RE.test(value) || nextPriority < priority) continue;
-      color = value;
+      if (nextPriority < priority) continue;
+      color = PLAIN_COLOR_RE.test(value) ? value : undefined;
       priority = nextPriority;
     }
   }

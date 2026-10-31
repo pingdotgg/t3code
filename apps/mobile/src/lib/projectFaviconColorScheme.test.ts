@@ -53,6 +53,17 @@ describe("resolveProjectFaviconColorScheme", () => {
     expect(decode(resolveProjectFaviconColorScheme(svgDataUrl(icon), "light"))).toBe(
       `<svg color="blue" xmlns="http://www.w3.org/2000/svg"><style>:root{color:red;color:blue}@media print{:root{color:green}}</style></svg>`,
     );
+    const variable = icon.replace("color:blue", "color:var(--icon)");
+    expect(resolveProjectFaviconColorScheme(svgDataUrl(variable), "dark")).toBe(
+      svgDataUrl(variable),
+    );
+    const media = `<svg><style>:root{color:blue}</style><style media="(prefers-color-scheme: dark)">:root{color:white}.a{fill:white}</style><style media="print">:root{color:red}</style></svg>`;
+    expect(decode(resolveProjectFaviconColorScheme(svgDataUrl(media), "light"))).toBe(
+      `<svg color="blue"><style>:root{color:blue}</style><style media="print">:root{color:red}</style></svg>`,
+    );
+    expect(decode(resolveProjectFaviconColorScheme(svgDataUrl(media), "dark"))).toBe(
+      `<svg color="white"><style>:root{color:blue}</style><style>:root{color:white}.a{fill:white}</style><style media="print">:root{color:red}</style></svg>`,
+    );
   });
 
   it("lets an important root color beat later normal ones", () => {
