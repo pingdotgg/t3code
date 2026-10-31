@@ -66,11 +66,11 @@ export function SettingsScopeSentence({ pathname }: { pathname: string }) {
   };
   return (
     <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-3 text-meta text-muted-foreground sm:px-4">
-      <span className="flex min-w-0 max-w-full items-center gap-1.5">
+      <span className="flex min-w-0 max-w-full items-center gap-1.5 max-sm:flex-wrap">
         <span className="shrink-0">Applying settings for</span>
         <ProjectScopeMenu {...props} />
       </span>
-      <span className="flex min-w-0 max-w-full items-center gap-1.5">
+      <span className="flex min-w-0 max-w-full items-center gap-1.5 max-sm:flex-wrap">
         <span className="shrink-0">
           {scope.search.machine || scope.scope.kind === "checkout" ? "on" : "across"}
         </span>
