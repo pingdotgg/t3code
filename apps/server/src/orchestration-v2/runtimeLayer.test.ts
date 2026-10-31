@@ -19,6 +19,7 @@ import {
   type ModelSelection,
   type OrchestrationV2Run,
   type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2TurnItem,
   ProjectId,
   type PullRequestDetail,
   type PullRequestComment,
@@ -76,6 +77,7 @@ import * as RuntimeLayer from "./runtimeLayer.ts";
 import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as TurnItemContentStore from "./TurnItemContentStore.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ScratchThreadPromotion from "../project/ScratchThreadPromotion.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -276,6 +278,7 @@ const moveProject = (projectId: ProjectId, workspaceRoot: string, updatedAt: str
 const layerTest = Layer.mergeAll(
   RuntimeLayer.layer,
   RuntimeLayer.layerEventSink,
+  TurnItemContentStore.layer,
   ProjectStore.layer,
   ProjectionStore.layer,
   EffectOutbox.layer,
@@ -2399,6 +2402,221 @@ it.layer(layerLegacyImportTest)("OrchestrationV2 legacy import", (it) => {
 });
 
 it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
+  it.effect("replaces offloaded preparation output without changing prior event content", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const contentStore = yield* TurnItemContentStore.TurnItemContentStore;
+      const assertOutput = (item: OrchestrationV2TurnItem | null, expected: string) => {
+        if (item?.type !== "command_execution") {
+          throw new Error("Expected the workspace preparation command item.");
+        }
+        assert.isTrue(item.output === expected, "workspace preparation output did not round-trip");
+      };
+
+      for (const outcome of ["interruption", "failure", "completion"] as const) {
+        const name = `runtime-layer-preparation-content:${outcome}`;
+        const threadId = ThreadId.make(`${name}:thread`);
+        const projectId = ProjectId.make(`${name}:project`);
+        yield* seedProject({
+          projectId,
+          title: "Preparation content replacement",
+          workspaceRoot: process.cwd(),
+          defaultModelSelection: modelSelection,
+          createdAt: DateTime.formatIso(yield* DateTime.now),
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${name}:create`),
+          threadId,
+          projectId,
+          title: "Preparation content replacement",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${name}:message`),
+          threadId,
+          messageId: MessageId.make(`${name}:message`),
+          text: "Prepare the workspace.",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "defer_start", workspaceStrategy: { type: "root" } },
+        });
+
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const run = projection.runs[0];
+        const preparation = projection.turnItems.find(
+          (item) => item.type === "command_execution" && item.input === "Preparing workspace",
+        );
+        if (run === undefined || preparation?.type !== "command_execution") {
+          throw new Error("Workspace preparation did not create its run and command item.");
+        }
+
+        const previousOutput = `previous preparation output:${"x".repeat(70_000)}`;
+        const seedCommandId = CommandId.make(`${name}:seed-output`);
+        const seeded = yield* eventSink.write({
+          commandId: seedCommandId,
+          events: [
+            {
+              id: EventId.make(`${name}:seed-output-event`),
+              type: "turn-item.updated",
+              threadId,
+              runId: run.id,
+              nodeId: preparation.nodeId ?? undefined,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: yield* DateTime.now,
+              payload: { ...preparation, output: previousOutput },
+            },
+          ],
+        });
+        const seededUpdate = seeded.find(
+          (stored) =>
+            stored.event.type === "turn-item.updated" && stored.event.payload.id === preparation.id,
+        );
+        if (seededUpdate?.event.type !== "turn-item.updated") {
+          throw new Error("The seeded preparation output was not persisted.");
+        }
+        if (
+          seededUpdate.event.payload.type !== "command_execution" ||
+          seededUpdate.event.payload.contentRef === undefined
+        ) {
+          throw new Error("The seeded preparation output was not offloaded.");
+        }
+        const originalContentRef = seededUpdate.event.payload.contentRef;
+
+        const progress = yield* orchestrator.dispatch({
+          type: "prepared-run.progress",
+          commandId: CommandId.make(`${name}:progress`),
+          threadId,
+          runId: run.id,
+          phase: "setup",
+        });
+        const progressUpdate = progress.storedEvents.find(
+          (stored) =>
+            stored.event.type === "turn-item.updated" && stored.event.payload.id === preparation.id,
+        );
+        if (
+          progressUpdate?.event.type !== "turn-item.updated" ||
+          progressUpdate.event.payload.type !== "command_execution"
+        ) {
+          throw new Error("Preparation progress did not update its command item.");
+        }
+        assert.deepEqual(progressUpdate.event.payload.contentRef, originalContentRef);
+        assertOutput(
+          yield* orchestrator.getTurnItem({ threadId, itemId: preparation.id }),
+          previousOutput,
+        );
+
+        const replacementOutput =
+          outcome === "interruption"
+            ? `replacement preparation interruption:${"y".repeat(70_000)}`
+            : outcome === "completion"
+              ? "Workspace preparation completed."
+              : "Workspace preparation failed.";
+        const transition = yield* Effect.gen(function* () {
+          switch (outcome) {
+            case "failure":
+              return yield* orchestrator.dispatch({
+                type: "prepared-run.fail",
+                commandId: CommandId.make(`${name}:fail`),
+                threadId,
+                runId: run.id,
+                failure: {
+                  class: "validation_error",
+                  message: replacementOutput,
+                  code: null,
+                  retryable: false,
+                },
+              });
+            case "completion":
+              return yield* orchestrator.dispatch({
+                type: "prepared-run.release",
+                commandId: CommandId.make(`${name}:release`),
+                threadId,
+                runId: run.id,
+              });
+            case "interruption":
+              return yield* orchestrator.dispatch({
+                type: "run.interrupt",
+                commandId: CommandId.make(`${name}:interrupt`),
+                threadId,
+                runId: run.id,
+                reason: replacementOutput,
+              });
+          }
+        });
+        const replacementUpdate = transition.storedEvents.find(
+          (stored) =>
+            stored.event.type === "turn-item.updated" && stored.event.payload.id === preparation.id,
+        );
+        if (
+          replacementUpdate?.event.type !== "turn-item.updated" ||
+          replacementUpdate.event.payload.type !== "command_execution"
+        ) {
+          throw new Error("The preparation outcome did not update its command item.");
+        }
+        if (outcome === "interruption") {
+          const replacementRef = replacementUpdate.event.payload.contentRef;
+          if (replacementRef === undefined) {
+            throw new Error("Large replacement output was not offloaded.");
+          }
+          assert.notEqual(replacementRef.attachmentId, originalContentRef.attachmentId);
+        } else {
+          assert.isUndefined(replacementUpdate.event.payload.contentRef);
+        }
+        const readback = yield* orchestrator.getTurnItem({ threadId, itemId: preparation.id });
+        assertOutput(readback, replacementOutput);
+        if (readback?.type !== "command_execution") {
+          throw new Error("Workspace preparation readback lost its command item.");
+        }
+        assert.equal(
+          readback.status,
+          outcome === "failure" ? "failed" : outcome === "completion" ? "completed" : "interrupted",
+        );
+
+        if (outcome === "failure") {
+          yield* orchestrator.dispatch({
+            type: "prepared-run.retry",
+            commandId: CommandId.make(`${name}:retry`),
+            threadId,
+            runId: run.id,
+          });
+          const retried = yield* orchestrator.getTurnItem({ threadId, itemId: preparation.id });
+          if (retried?.type !== "command_execution") {
+            throw new Error("Retried preparation lost its command item.");
+          }
+          assert.isUndefined(retried.output);
+          assert.isUndefined(retried.contentRef);
+        }
+
+        const persistedSeed = yield* eventSink
+          .readByCommandId({ commandId: seedCommandId })
+          .pipe(Stream.runCollect);
+        const persistedOriginal = Array.from(persistedSeed).find(
+          (stored) =>
+            stored.event.type === "turn-item.updated" && stored.event.payload.id === preparation.id,
+        );
+        if (
+          persistedOriginal?.event.type !== "turn-item.updated" ||
+          persistedOriginal.event.payload.type !== "command_execution"
+        ) {
+          throw new Error("The original preparation event was not retained.");
+        }
+        assert.deepEqual(persistedOriginal.event.payload.contentRef, originalContentRef);
+        assertOutput(yield* contentStore.read(persistedOriginal.event.payload), previousOutput);
+      }
+    }),
+  );
+
   it.effect("applies lifecycle commands idempotently and emits archive/removal shell deltas", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

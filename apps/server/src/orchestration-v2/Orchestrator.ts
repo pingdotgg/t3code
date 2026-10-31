@@ -619,7 +619,13 @@ const RUNTIME_REQUEST_DELIVERY_FAILED_MESSAGE =
 function withoutPreparationResult(
   item: Extract<OrchestrationV2TurnItem, { readonly type: "command_execution" }>,
 ) {
-  const { output: _output, exitCode: _exitCode, outputIndicatesFailure: _failure, ...rest } = item;
+  const {
+    contentRef: _contentRef,
+    output: _output,
+    exitCode: _exitCode,
+    outputIndicatesFailure: _failure,
+    ...rest
+  } = item;
   return rest;
 }
 
@@ -9902,7 +9908,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerInstanceId: state.run.providerInstanceId,
         occurredAt: now,
         payload: {
-          ...state.preparationItem,
+          ...withoutPreparationResult(state.preparationItem),
           status: "completed",
           title: "Workspace ready",
           output: "Workspace preparation completed.",
@@ -9977,7 +9983,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       providerInstanceId: state.run.providerInstanceId,
       occurredAt: now,
       payload: {
-        ...state.preparationItem,
+        ...withoutPreparationResult(state.preparationItem),
         status: "failed",
         title: "Workspace preparation failed",
         output: command.failure.message,
@@ -11282,7 +11288,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           providerInstanceId: run.providerInstanceId,
           occurredAt: now,
           payload: {
-            ...preparationItem,
+            ...withoutPreparationResult(preparationItem),
             status: "interrupted",
             title: "Workspace preparation interrupted",
             output: command.reason ?? "Interrupted before provider start",
