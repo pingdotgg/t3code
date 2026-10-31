@@ -114,12 +114,7 @@ const decodeCodexIdTokenClaims = Schema.decodeUnknownOption(
   ),
 );
 
-/**
- * A model provider that does not require OpenAI auth makes `account/read`
- * answer with no account, yet usage still comes from the saved ChatGPT login.
- * Its id_token is only an identity hint, so callers must match it against the
- * account the backend reports.
- */
+// Proxied usage can retain a saved login while account/read hides it; match this hint to backend usage.
 const readCodexStoredChatGptLogin = Effect.fn("readCodexStoredChatGptLogin")(function* (
   codexHome: string,
 ) {
@@ -646,7 +641,10 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   const storedLogin =
     accountResponse.account || !config || credentialStore !== "file"
       ? undefined
-      : yield* readCodexStoredChatGptLogin(initialize.codexHome);
+      : yield* withCodexDiscoveryDeadline(
+          readCodexStoredChatGptLogin(initialize.codexHome),
+          deadlineMs,
+        );
 
   return {
     account: accountResponse,

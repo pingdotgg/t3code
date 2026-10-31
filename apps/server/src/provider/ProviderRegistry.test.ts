@@ -368,7 +368,10 @@ it.live("names a proxied login by its saved ChatGPT email only when Codex reads 
     const scriptPath = path.join(codexHome, "script.json");
     const binaryPath = path.join(import.meta.dirname, "testFixtures", "codexCollabMockPeer.sh");
     // A model provider that skips OpenAI auth hides the account, yet usage still names one.
-    const proxied = Effect.fn(function* (accountId: string, store: string) {
+    const proxied = Effect.fn("test.proxiedCodexLogin")(function* (
+      accountId: string,
+      store: string,
+    ) {
       yield* fileSystem.writeFileString(
         scriptPath,
         JSON.stringify({
@@ -392,6 +395,18 @@ it.live("names a proxied login by its saved ChatGPT email only when Codex reads 
     const otherAccount = yield* proxied("acct-2", "file");
     assert.strictEqual(otherAccount.auth.email, undefined);
     assert.strictEqual(otherAccount.auth.workspaceId, "acct-2");
+    const stalledLogin = yield* proxied("acct-1", "file").pipe(
+      Effect.provideService(FileSystem.FileSystem, {
+        ...fileSystem,
+        readFileString: (file, ...options) =>
+          file === path.join(codexHome, "auth.json")
+            ? Effect.never
+            : fileSystem.readFileString(file, ...options),
+      }),
+    );
+    assert.strictEqual(stalledLogin.status, "ready");
+    assert.strictEqual(stalledLogin.auth.workspaceId, "acct-1");
+    assert.strictEqual(stalledLogin.auth.email, undefined);
   }).pipe(
     Effect.scoped,
     Effect.provide(Layer.mergeAll(layerTestNodeServices, ServerSettingsModule.layerTest())),
