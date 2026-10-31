@@ -68,6 +68,7 @@ export function LinearMilestoneView({
   );
   const result = noActivity ? { issues: [], truncated: false } : issues.data;
   const isNoMilestone = search.milestone === NO_MILESTONE_ID;
+  const completedHidden = search.showCompleted !== true && (search.states?.length ?? 0) === 0;
   return (
     <div className="flex flex-col gap-3">
       {degradation ? (
@@ -124,7 +125,20 @@ export function LinearMilestoneView({
         )
       ) : result.issues.length === 0 ? (
         <div className="flex flex-col items-start gap-2 py-6 text-sm text-muted-foreground">
-          <p className="m-0">No issues match.</p>
+          <p className="m-0">
+            {completedHidden
+              ? "No open issues match. Completed issues are hidden."
+              : "No issues match."}
+          </p>
+          {completedHidden ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onReplaceSearch({ ...search, showCompleted: true })}
+            >
+              Show completed
+            </Button>
+          ) : null}
           {hasActiveLinearFilters(search) ? (
             <Button
               variant="outline"
