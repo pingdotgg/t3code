@@ -17,6 +17,7 @@ import {
   providerInstanceEntriesFor,
 } from "./providerInstances";
 import {
+  defaultModelSelectionsAreMixed,
   getAppModelOptionsForInstance,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
@@ -72,6 +73,90 @@ function settingsWithProviderInstances(): UnifiedSettings {
     },
   };
 }
+
+describe("scoped default model selections", () => {
+  // regression: #27997 equal automatic defaults can resolve to different providers
+  it("compares automatic defaults using each environment's models", () => {
+    const codex = {
+      settings: DEFAULT_UNIFIED_SETTINGS,
+      providers: [provider({ instanceId: "codex", models: ["gpt-6-astra"] })],
+    };
+    const claude = {
+      settings: DEFAULT_UNIFIED_SETTINGS,
+      providers: [
+        provider({
+          instanceId: "claudeAgent",
+          provider: ProviderDriverKind.make("claudeAgent"),
+          models: ["claude-sonnet-4-6"],
+        }),
+      ],
+    };
+
+    expect(defaultModelSelectionsAreMixed([codex, claude])).toBe(true);
+    expect(defaultModelSelectionsAreMixed([claude, codex])).toBe(true);
+    expect(defaultModelSelectionsAreMixed([codex, codex])).toBe(false);
+    expect(defaultModelSelectionsAreMixed([claude])).toBe(false);
+    expect(defaultModelSelectionsAreMixed([])).toBe(false);
+    expect(defaultModelSelectionsAreMixed([codex, { ...codex, providers: [] }])).toBe(true);
+    expect(
+      defaultModelSelectionsAreMixed([
+        codex,
+        { ...codex, providers: [provider({ instanceId: "codex", models: ["gpt-6-sol"] })] },
+      ]),
+    ).toBe(true);
+    expect(
+      defaultModelSelectionsAreMixed([
+        codex,
+        {
+          ...codex,
+          settings: {
+            ...codex.settings,
+            providerModelPreferences: {
+              [ProviderInstanceId.make("codex")]: {
+                hiddenModels: ["gpt-6-astra"],
+                modelOrder: [],
+              },
+            },
+          },
+          providers: [provider({ instanceId: "codex", models: ["gpt-6-astra", "gpt-6-sol"] })],
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  it("keeps automatic, explicit, and different saved options distinct", () => {
+    const providers = [provider({ instanceId: "codex", models: ["gpt-6-astra"] })];
+    const selected = {
+      providers,
+      settings: {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        defaultModelSelection: createModelSelection(
+          ProviderInstanceId.make("codex"),
+          "gpt-6-astra",
+        ),
+      },
+    };
+    expect(defaultModelSelectionsAreMixed([selected, { ...selected }])).toBe(false);
+    expect(
+      defaultModelSelectionsAreMixed([selected, { providers, settings: DEFAULT_UNIFIED_SETTINGS }]),
+    ).toBe(true);
+    expect(
+      defaultModelSelectionsAreMixed([
+        selected,
+        {
+          ...selected,
+          settings: {
+            ...selected.settings,
+            defaultModelSelection: {
+              ...selected.settings.defaultModelSelection,
+              options: [{ id: "reasoningEffort", value: "xhigh" }],
+            },
+          },
+        },
+      ]),
+    ).toBe(true);
+  });
+});
 
 describe("instance-scoped model selection", () => {
   it("keeps custom models on the provider instance that declared them", () => {
