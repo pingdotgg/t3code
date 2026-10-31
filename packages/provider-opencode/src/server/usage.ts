@@ -49,6 +49,12 @@ function parseOpenCodeMessage(
   const cache = object(usage.cache);
   const modelReference = object(message.model);
   const model = text(modelReference.id) || text(modelReference.modelID) || text(message.modelID);
+  const provider = text(modelReference.providerID) || text(message.providerID);
+  // OpenCode's subscription provider uses Z.AI's API-equivalent token rates.
+  const rateModel =
+    (provider === "zai" || provider === "zai-coding-plan") && !model.includes("/")
+      ? `zai/${model}`
+      : undefined;
   const timestampMs = object(message.time).created ?? fallback.timestampMs;
   if (!model || typeof timestampMs !== "number" || !Number.isFinite(timestampMs)) return null;
   const reasoningTokens = tokens(usage.reasoning);
@@ -66,6 +72,7 @@ function parseOpenCodeMessage(
     provider: "opencode",
     timestampMs,
     model,
+    ...(rateModel === undefined ? {} : { rateModel }),
     sessionId: fallback.sessionId || text(message.sessionID),
     totals,
     // OpenCode uses zero for unknown rates, including paid subscriptions; let shared pricing estimate.
