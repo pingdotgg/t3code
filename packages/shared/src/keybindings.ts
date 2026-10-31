@@ -87,9 +87,14 @@ export function normalizeEventKey(key: string): string {
   return normalized;
 }
 
-export function shortcutKeyFromEvent(event: Pick<ShortcutEventLike, "key" | "code">): string {
+export function shortcutKeyFromEvent(
+  event: Pick<ShortcutEventLike, "key" | "code" | "shiftKey" | "altKey">,
+): string {
   const layoutKey = normalizeEventKey(event.key);
   if (/^[a-z]$/.test(layoutKey)) return layoutKey;
+  // An unshifted "+" is a dedicated zoom key (German, Spanish, Nordic); Czech types it on Digit1.
+  const isZoomPlus = layoutKey === "+" && !event.shiftKey && !event.altKey;
+  if (isZoomPlus && !event.code?.startsWith("Digit")) return layoutKey;
   const physicalKey = event.code ? EVENT_CODE_SHORTCUT_KEYS[event.code] : undefined;
   return physicalKey ?? layoutKey;
 }
