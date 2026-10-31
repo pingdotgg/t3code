@@ -5829,7 +5829,16 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ["completed", "queued", "queued"],
       );
 
-      // Sending another message now keeps the edit hold.
+      // Another device cannot send the edited message, but can send the others.
+      const rejected = yield* orchestrator
+        .dispatch({
+          type: "queued-run.start",
+          commandId: CommandId.make(`${threadId}:send-edited`),
+          threadId,
+          runId: edited!.id,
+        })
+        .pipe(Effect.flip);
+      assert.equal(rejected._tag, "OrchestratorDispatchError");
       yield* orchestrator.dispatch({
         type: "queued-run.start",
         commandId: CommandId.make(`${threadId}:send-behind`),

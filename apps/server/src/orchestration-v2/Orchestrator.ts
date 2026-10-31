@@ -758,6 +758,9 @@ function worktreeSetupPending(
   );
 }
 
+const QUEUED_RUN_BEING_EDITED =
+  "This queued message is being edited. Save or cancel the edit first.";
+
 function nextQueuedRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
 ): OrchestrationV2Run | undefined {
@@ -9279,6 +9282,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Queued run ${command.queuedRunId} is not queued.`,
       });
     }
+    if (queuedRun.editing === true) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: QUEUED_RUN_BEING_EDITED,
+      });
+    }
     const queuedRootNode =
       queuedRun.rootNodeId === null
         ? undefined
@@ -13154,6 +13164,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               commandId: command.commandId,
               commandType: command.type,
               cause: "A queued user message can only be sent now while the thread is stopped.",
+            });
+          }
+          if (selectedRun.editing === true) {
+            return yield* new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: QUEUED_RUN_BEING_EDITED,
             });
           }
         }
