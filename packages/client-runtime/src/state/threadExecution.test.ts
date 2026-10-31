@@ -83,6 +83,31 @@ describe("thread execution presentation", () => {
       lastError: "Plan limit reached",
       lastErrorClass: "usage_limit",
     });
+    const resetAt = "2026-07-28T12:00:00.000Z";
+    const recovery = { runId: failed.id, resetAt, autoResume: true, waitForReset: true };
+    const recovered = { ...projection, thread: { ...projection.thread, limitRecovery: recovery } };
+    expect(deriveThreadRuntime(recovered)?.usageLimitResetAt).toBe(resetAt);
+    expect(
+      deriveThreadRuntime({
+        ...recovered,
+        turnItems: [{ ...item, failure: { ...item.failure, resetAt: "2026-07-28T13:00:00.000Z" } }],
+      })?.usageLimitResetAt,
+    ).toBe("2026-07-28T13:00:00.000Z");
+    expect(
+      deriveThreadRuntime({
+        ...recovered,
+        thread: {
+          ...recovered.thread,
+          limitRecovery: { ...recovery, runId: RunId.make("other-run") },
+        },
+      })?.usageLimitResetAt,
+    ).toBeNull();
+    expect(
+      deriveThreadRuntime({
+        ...recovered,
+        thread: { ...recovered.thread, limitRecovery: { ...recovery, waitForReset: false } },
+      })?.usageLimitResetAt,
+    ).toBeNull();
     expect(
       deriveThreadRuntime({
         ...projection,

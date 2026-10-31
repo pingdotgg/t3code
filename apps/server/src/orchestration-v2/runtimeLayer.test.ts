@@ -1,5 +1,7 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
+import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -18,6 +20,7 @@ import {
   TurnItemId,
   type ModelSelection,
   type OrchestrationV2Run,
+  type ServerProviderUsageLimits,
   type OrchestrationV2RuntimeRequest,
   ProjectId,
   type PullRequestDetail,
@@ -7385,6 +7388,312 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       }),
   );
 
+  it.effect.each([true, false])(
+    "preserves early recovery with global auto-resume off when retry reports reset: %s",
+    (retryReportsReset) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const events = yield* EventSink.EventSinkV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const threadId = ThreadId.make(`recovery:early-reset:${retryReportsReset}`);
+        const projectId = ProjectId.make(`recovery:project:early-reset:${retryReportsReset}`);
+        const now = yield* DateTime.now;
+        yield* seedProject({
+          projectId,
+          title: "Recovery project",
+          workspaceRoot: process.cwd(),
+          defaultModelSelection: modelSelection,
+          createdAt: DateTime.formatIso(now),
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`recovery:create:early-reset:${retryReportsReset}`),
+          threadId,
+          projectId,
+          title: "Limited thread",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`recovery:message:early-reset:${retryReportsReset}`),
+          threadId,
+          messageId: MessageId.make(`recovery:message:early-reset:${retryReportsReset}`),
+          text: "Work on this.",
+          attachments: [],
+          dispatchMode: { type: "defer_start" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        const resetAt = DateTime.formatIso(DateTime.add(now, { hours: 3 }));
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make(`recovery:run:early-reset:${retryReportsReset}`),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...run, status: "failed", completedAt: now },
+            },
+            {
+              id: EventId.make(`recovery:error:early-reset:${retryReportsReset}`),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make(`recovery:error:early-reset:${retryReportsReset}`),
+                type: "error",
+                threadId,
+                runId: run.id,
+                nodeId: run.rootNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "failed",
+                title: "Usage limit reached",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                failure: {
+                  class: "usage_limit",
+                  message: "Plan limit reached.",
+                  code: "usageLimitExceeded",
+                  retryable: null,
+                  resetAt,
+                },
+              },
+            },
+          ],
+        });
+        const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        const arm = limitRecoveryCommand(shell, true, DateTime.toEpochMillis(now));
+        assert(arm?.type === "thread.metadata.update" && arm.limitRecovery != null);
+        yield* orchestrator.autoArmLimitRecovery({
+          commandId: arm.commandId,
+          threadId,
+          limitRecovery: arm.limitRecovery,
+        });
+        yield* TestClock.adjust("1 minute");
+        const checkedNow = yield* DateTime.now;
+        const reading = (checkedAt: DateTime.Utc, usedPercent: number) => ({
+          checkedAt: DateTime.formatIso(checkedAt),
+          windows: [{ id: "five_hour", kind: "session" as const, label: "5h", usedPercent }],
+        });
+        const sweep = (
+          usageLimits: ServerProviderUsageLimits,
+          instanceId = shell.providerInstanceId,
+        ) =>
+          Effect.scoped(
+            Layer.build(
+              UsageLimitRecoveryWorker.layer.pipe(
+                Layer.provide([
+                  Layer.succeed(ProjectionStore.ProjectionStoreV2, projections),
+                  Layer.succeed(Orchestrator.OrchestratorV2, orchestrator),
+                  Layer.mock(ThreadManagementService.ThreadManagementService)({
+                    dispatch: orchestrator.dispatch,
+                  }),
+                  ServerSettings.layerTest(),
+                  Layer.mock(ProviderRegistry.ProviderRegistry)({
+                    streamChanges: Stream.empty,
+                    getProviders: Effect.succeed([
+                      {
+                        instanceId,
+                        driver,
+                        enabled: true,
+                        installed: true,
+                        version: null,
+                        status: "ready",
+                        auth: { status: "authenticated" },
+                        checkedAt: usageLimits.checkedAt,
+                        models: [],
+                        slashCommands: [],
+                        skills: [],
+                        usageLimits,
+                      },
+                    ]),
+                  }),
+                  Layer.mock(Scheduler.Scheduler)({
+                    register: (_name, work) => Effect.orDie(work),
+                  }),
+                ]),
+              ),
+            ),
+          );
+        const armed = (yield* projections.getLimitRecoveryCandidates({
+          now: checkedNow,
+          autoResume: true,
+          snooze: false,
+        })).find((row) => row.id === threadId);
+        assert.isDefined(armed);
+        const nowMs = DateTime.toEpochMillis(checkedNow);
+        // Readings from before the failure, or ones that still show the limit, keep waiting.
+        assert.isNull(limitRecoveryCommand(armed!, true, nowMs, false, reading(now, 0)));
+        assert.isNull(limitRecoveryCommand(armed!, true, nowMs, false, reading(checkedNow, 100)));
+        yield* sweep(reading(now, 0));
+        yield* sweep(reading(checkedNow, 100));
+        yield* sweep(reading(checkedNow, 0), alternateInstanceId);
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+        const staleResume = limitRecoveryCommand(
+          armed!,
+          true,
+          nowMs,
+          false,
+          reading(checkedNow, 0),
+        );
+        assert(staleResume?.type === "message.dispatch");
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`recovery:cancel:early-reset:${retryReportsReset}`),
+          threadId,
+          limitRecovery: { runId: run.id, resetAt, autoResume: false },
+        });
+        yield* orchestrator.dispatch(staleResume);
+        yield* sweep(reading(checkedNow, 0));
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`recovery:rearm:early-reset:${retryReportsReset}`),
+          threadId,
+          limitRecovery: { runId: run.id, resetAt, autoResume: true },
+        });
+        const ready = (yield* projections.getLimitRecoveryCandidates({
+          now: checkedNow,
+          autoResume: true,
+          snooze: false,
+        })).find((row) => row.id === threadId)!;
+        const racedResume = limitRecoveryCommand(ready, true, nowMs, false, reading(checkedNow, 0));
+        assert(racedResume?.type === "message.dispatch");
+        const nodeId = run.rootNodeId;
+        assert(nodeId !== null);
+        const request = {
+          id: RuntimeRequestId.make(`recovery:pending-race:${retryReportsReset}`),
+          nodeId,
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: "user_input" as const,
+          status: "pending" as const,
+          responseCapability: { type: "message" as const },
+          createdAt: checkedNow,
+          resolvedAt: null,
+        };
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make(`recovery:pending-race:${retryReportsReset}`),
+              type: "runtime-request.updated",
+              threadId,
+              nodeId,
+              occurredAt: checkedNow,
+              payload: request,
+            },
+          ],
+        });
+        yield* orchestrator.dispatch(racedResume);
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make(`recovery:pending-race:resolved:${retryReportsReset}`),
+              type: "runtime-request.updated",
+              threadId,
+              nodeId,
+              occurredAt: checkedNow,
+              payload: { ...request, status: "resolved", resolvedAt: checkedNow },
+            },
+          ],
+        });
+        yield* sweep(reading(checkedNow, 0));
+        const resumed = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(resumed.runs, 2);
+        assert.equal(resumed.runs[1]?.status, "starting");
+
+        // The reading can omit the limit that stopped the run, such as a
+        // per-model weekly limit. The early run then fails on the same limit.
+        const earlyRun = resumed.runs[1]!;
+        const retryResetAt = retryReportsReset
+          ? DateTime.formatIso(DateTime.add(now, { hours: 4 }))
+          : resetAt;
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make(`recovery:run:early-reset:again:${retryReportsReset}`),
+              type: "run.updated",
+              threadId,
+              occurredAt: checkedNow,
+              payload: { ...earlyRun, status: "failed", completedAt: checkedNow },
+            },
+            {
+              id: EventId.make(`recovery:error:early-reset:again:${retryReportsReset}`),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: checkedNow,
+              payload: {
+                id: TurnItemId.make(`recovery:error:early-reset:again:${retryReportsReset}`),
+                type: "error",
+                threadId,
+                runId: earlyRun.id,
+                nodeId: earlyRun.rootNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "failed",
+                title: "Usage limit reached",
+                startedAt: checkedNow,
+                completedAt: checkedNow,
+                updatedAt: checkedNow,
+                failure: {
+                  class: "usage_limit",
+                  message: "Plan limit reached.",
+                  code: "usageLimitExceeded",
+                  retryable: null,
+                  resetAt: retryReportsReset ? retryResetAt : null,
+                },
+              },
+            },
+          ],
+        });
+        yield* TestClock.adjust("1 minute");
+        const laterNow = yield* DateTime.now;
+        yield* sweep(reading(laterNow, 0));
+        const rearmed = (yield* projections.getLimitRecoveryCandidates({
+          now: laterNow,
+          autoResume: false,
+          snooze: false,
+        })).find((row) => row.id === threadId)!;
+        assert.equal(rearmed.limitRecovery?.waitForReset, true);
+        assert.equal(rearmed.limitRecovery?.resetAt, retryResetAt);
+        yield* sweep(reading(laterNow, 0));
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+        assert.isNull(
+          limitRecoveryCommand(
+            rearmed,
+            true,
+            DateTime.toEpochMillis(laterNow),
+            false,
+            reading(laterNow, 0),
+          ),
+        );
+        const onTime = limitRecoveryCommand(rearmed, false, Date.parse(retryResetAt));
+        assert(onTime?.type === "message.dispatch");
+        assert.isUndefined(onTime.usageLimitClearedAt);
+        yield* TestClock.setTime(Date.parse(retryResetAt));
+        yield* orchestrator.dispatch(onTime);
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 3);
+      }),
+  );
+
   it.effect.each([
     "resume",
     "queued-resume",
@@ -7401,6 +7710,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
     "stop",
     "stop-before-arm",
     "stop-before-arm-mismatched-recovery",
+    "unrelated-recovery",
   ] as const)("guards a scheduled usage-limit continuation against %s", (scenario) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -7556,6 +7866,28 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         threadId,
         limitRecovery: arm.limitRecovery,
       };
+      if (scenario === "unrelated-recovery") {
+        const current = yield* orchestrator.getThreadProjection(threadId);
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make("recovery:unrelated-window"),
+              type: "thread.metadata-updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                ...current.thread,
+                limitRecovery: {
+                  runId: RunId.make("recovery:old-provider-run"),
+                  resetAt: DateTime.formatIso(DateTime.add(now, { hours: 4 })),
+                  autoResume: true,
+                  waitForReset: true,
+                },
+              },
+            },
+          ],
+        });
+      }
       const stopBeforeArm =
         scenario === "stop-before-arm" || scenario === "stop-before-arm-mismatched-recovery";
       if (stopBeforeArm) {
@@ -7869,6 +8201,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         after.runs,
         before.runs.length +
           (scenario === "resume" ||
+          scenario === "unrelated-recovery" ||
           stopBeforeArm ||
           scenario === "queued-resume" ||
           scenario === "independent-patches" ||
@@ -7880,6 +8213,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         after.messages,
         before.messages.length +
           (scenario === "resume" ||
+          scenario === "unrelated-recovery" ||
           stopBeforeArm ||
           scenario === "queued-resume" ||
           scenario === "independent-patches" ||

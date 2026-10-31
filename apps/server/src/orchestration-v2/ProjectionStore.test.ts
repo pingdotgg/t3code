@@ -1081,6 +1081,104 @@ it.effect("SQL projection keeps background thread updates out of updatedAt", () 
   backgroundThreadUpdatesKeepTimestamp.pipe(Effect.provide(layerTest)),
 );
 
+it.effect("SQL limit recovery loads armed threads before their reset", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* addRolledBackRecoveryCandidate("armed-before-reset");
+    const projection = yield* store.getThreadProjection(threadId);
+    const run = projection.runs[0]!;
+    const now = yield* DateTime.now;
+    const resetAt = "2099-01-01T00:00:00.000Z";
+    yield* store.apply({
+      id: EventId.make("event:armed-before-reset:error"),
+      type: "turn-item.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make("armed-before-reset:error"),
+        threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 2,
+        status: "failed",
+        title: "Usage limit reached",
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "error",
+        failure: {
+          class: "usage_limit",
+          message: "Plan limit reached.",
+          resetAt,
+          code: "usageLimitExceeded",
+          retryable: null,
+        },
+      },
+    });
+    yield* store.apply({
+      id: EventId.make("event:armed-before-reset:failed"),
+      type: "run.updated",
+      threadId,
+      occurredAt: now,
+      payload: { ...run, status: "failed" },
+    });
+    const recovery = {
+      runId: run.id,
+      resetAt,
+      autoResume: true,
+      requestId: CommandId.make("recovery:armed-before-reset"),
+    };
+    const updateThread = (suffix: string, patch: Partial<typeof projection.thread>) =>
+      store.apply({
+        id: EventId.make(`event:armed-before-reset:${suffix}`),
+        type: "thread.metadata-updated",
+        threadId,
+        occurredAt: now,
+        payload: { ...projection.thread, limitRecovery: recovery, ...patch },
+      });
+    const candidate = Effect.map(
+      store.getLimitRecoveryCandidates({ now, autoResume: false, snooze: false }),
+      (rows) => rows.find((row) => row.id === threadId),
+    );
+
+    yield* updateThread("armed", {});
+    assert.deepEqual((yield* candidate)?.limitRecovery, recovery);
+    const retry = { ...recovery, resetAt: "2099-01-02T00:00:00.000Z", waitForReset: true };
+    yield* updateThread("retry", { limitRecovery: retry });
+    assert.deepEqual((yield* candidate)?.limitRecovery, retry);
+    const failure = (yield* store.getThreadProjection(threadId)).turnItems.find(
+      (item) => item.id === TurnItemId.make("armed-before-reset:error"),
+    );
+    assert(failure?.type === "error");
+    yield* store.apply({
+      id: EventId.make("event:armed-before-reset:no-reset"),
+      type: "turn-item.updated",
+      threadId,
+      occurredAt: now,
+      payload: { ...failure, failure: { ...failure.failure!, resetAt: null } },
+    });
+    assert.equal((yield* candidate)?.usageLimitResetAt, retry.resetAt);
+    assert.equal((yield* store.getThreadShell(threadId))?.usageLimitResetAt, retry.resetAt);
+    assert.equal(
+      ProjectionStore.threadShellFromProjection(yield* store.getThreadProjection(threadId))
+        .usageLimitResetAt,
+      retry.resetAt,
+    );
+    yield* updateThread("no-reset-unarmed", {});
+    assert.isUndefined(yield* candidate);
+    yield* updateThread("retry-cancelled", { limitRecovery: { ...retry, autoResume: false } });
+    assert.isUndefined(yield* candidate);
+    yield* updateThread("snoozed", { snoozedUntil: DateTime.makeUnsafe(resetAt) });
+    assert.isUndefined(yield* candidate);
+    yield* updateThread("cancelled", { limitRecovery: { ...recovery, autoResume: false } });
+    assert.isUndefined(yield* candidate);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 const runlessNativeSubagentNeedsRecovery = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const threadId = yield* addRolledBackRecoveryCandidate("runless-native-recovery");
@@ -4366,6 +4464,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         if (lastErrorClass === "usage_limit") {
           assert.deepEqual(candidate, {
             id: sqlShell.id,
+            providerInstanceId: sqlShell.providerInstanceId,
             status: sqlShell.status,
             lastErrorClass: sqlShell.lastErrorClass,
             usageLimitResetAt: sqlShell.usageLimitResetAt,
@@ -4544,10 +4643,12 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       yield* sql`UPDATE orchestration_v2_projection_threads
         SET payload_json = json_set(payload_json, '$.limitRecovery', json(${encodeUnknownJsonString(recovery)}))
         WHERE thread_id = ${threadId}`;
-      assert.isUndefined(
+      // Armed rows load before the reset too, so the sweep can see an allowance restored early.
+      assert.deepEqual(
         (yield* store.getLimitRecoveryCandidates({ ...recoveryOptions, autoResume: true })).find(
           (row) => row.id === threadId,
-        ),
+        )?.limitRecovery,
+        recovery,
       );
       assert.strictEqual(yield* store.getLimitRecoveryWakeAt(now), DateTime.toEpochMillis(reset));
       assert.isNull(yield* store.getLimitRecoveryWakeAt(reset));

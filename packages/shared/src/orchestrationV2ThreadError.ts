@@ -1,5 +1,7 @@
 import type {
   OrchestrationV2ProviderFailure,
+  OrchestrationV2LimitRecovery,
+  RunId,
   OrchestrationV2Run,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
@@ -40,12 +42,19 @@ export function latestRootProviderFailure(
 export function threadErrorSummary(
   failure: OrchestrationV2ProviderFailure | null,
   sessionError: string | null,
+  recovery?: OrchestrationV2LimitRecovery | null,
+  runId?: RunId | null,
 ) {
   const currentFailure =
     sessionError !== null && sessionError !== failure?.message ? null : failure;
   return {
     usageLimitResetAt:
-      currentFailure?.class === "usage_limit" ? (currentFailure.resetAt ?? null) : null,
+      currentFailure?.class === "usage_limit"
+        ? (currentFailure.resetAt ??
+          (recovery != null && recovery.runId === runId && recovery.waitForReset === true
+            ? recovery.resetAt
+            : null))
+        : null,
     lastError: sessionError ?? failure?.message ?? null,
     lastErrorClass: currentFailure?.class ?? null,
     lastErrorCode: currentFailure?.code ?? null,
