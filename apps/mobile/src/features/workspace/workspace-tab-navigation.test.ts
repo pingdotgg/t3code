@@ -55,6 +55,18 @@ describe("workspace tab selections", () => {
 
     const draft = { key: "draft", name: "Thread", params: { environmentId: "env" } };
     expect(workspaceSelectionsIn([home, draft], shown).threadsShown).toBe(false);
+    for (const params of [
+      { threadId: "child" },
+      { environmentId: "", threadId: "child" },
+      { environmentId: "env", threadId: "" },
+    ]) {
+      const malformed = workspaceSelectionsIn(
+        [home, { key: "malformed", name: "Thread", params }],
+        shown,
+      );
+      expect(malformed.threadsShown).toBe(false);
+      expect(malformed.threads).toEqual(shown.threads);
+    }
     expect(workspaceSelectionsIn([home, pullRequest], shown).threadsShown).toBe(false);
     // Recorded before saved selections load, so the hydration merge can't revive a saved `true`.
     expect(workspaceSelectionsIn([home], {})).toEqual({ threadsShown: false });

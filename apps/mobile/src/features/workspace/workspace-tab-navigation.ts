@@ -114,8 +114,7 @@ export function workspaceSelectionsIn(
     next = { ...next, threadsDraft: { key: thread.key, params: thread.params } };
   }
   const onScreen = workspaceRoutesOf(routes).workspace.at(-1);
-  const threadShown =
-    onScreen?.name === "Thread" && stringParam(onScreen.params, "threadId") !== undefined;
+  const threadShown = onScreen?.name === "Thread" && Boolean(environmentId && threadId);
   // Kept explicit even when false, so a saved `true` can't win the hydration merge.
   if (next.threadsShown !== threadShown) next = { ...next, threadsShown: threadShown };
   const pullRequestRoute = routes.findLast((route) => route.name === "PullRequest");
