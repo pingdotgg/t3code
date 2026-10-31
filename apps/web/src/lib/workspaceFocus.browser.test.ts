@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
+import appCss from "~/index.css?inline";
 import { createWorkspaceFocusController } from "./workspaceFocus";
 
 function setup() {
@@ -256,5 +258,33 @@ describe("workspace area focus", () => {
     composer.button.focus();
     expect(fixture.controller.move(1)).toBe(true);
     expect(document.activeElement).toBe(terminal.button);
+  });
+
+  it("rings an area reached with F6, but not a clicked one after a bare key press", async () => {
+    using fixture = setup();
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    const sidebar = fixture.area("sidebar", 0);
+    const home = fixture.append(
+      '<main data-workspace-area="home" data-workspace-order="1" tabindex="-1" style="height: 200px"></main>',
+    );
+    const outline = () => getComputedStyle(home).outlineStyle;
+
+    await userEvent.click(home);
+    expect(document.activeElement).toBe(home);
+    expect(outline()).toBe("none");
+    // A window switch can deliver a lone modifier key without moving focus.
+    await userEvent.keyboard("{Shift}");
+    expect(outline(), "a clicked area shows the focus ring after a bare key press").toBe("none");
+
+    await userEvent.keyboard("{F6}");
+    fixture.controller.move(-1);
+    expect(document.activeElement).toBe(sidebar.button);
+    await userEvent.keyboard("{F6}");
+    fixture.controller.move(1);
+    expect(document.activeElement).toBe(home);
+    expect(outline()).toBe("solid");
   });
 });
