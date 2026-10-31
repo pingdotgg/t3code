@@ -18,7 +18,11 @@ import {
 
 import { collectInlineContextIds } from "./lib/composerContextReferences";
 
-// Thread chips stay readable links; other chips carry their payload as a normal send does.
+const isAttachmentReference = (reference: { kind: string }) =>
+  reference.kind === "image" || reference.kind === "file";
+
+// Thread chips stay readable links. Other chips carry their payload as a normal send does, except
+// attachments: the server appends their paths, so they keep only their label.
 export function projectPendingUserInputAnswer(
   answer: unknown,
   records: ReadonlyArray<ComposerContextRecord>,
@@ -31,10 +35,14 @@ export function projectPendingUserInputAnswer(
     if (record?.kind === "thread" && "threadId" in record) {
       return formatThreadLink(record, reference.label);
     }
-    expandsPayload ||= record !== undefined;
+    expandsPayload ||= record !== undefined && !isAttachmentReference(reference);
     return reference.source;
   });
-  return expandsPayload ? projectComposerContextForProvider({ text, records }) : text;
+  if (!expandsPayload) return text;
+  const withoutAttachments = replaceComposerContextReferences(text, (reference) =>
+    isAttachmentReference(reference) ? reference.label : reference.source,
+  );
+  return projectComposerContextForProvider({ text: withoutAttachments, records });
 }
 
 // Question drafts retain deleted chip records for undo; only transfer referenced records.
