@@ -1390,7 +1390,7 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
-  it("keeps the agent's reply to a steer visible after the settled turn folds", () => {
+  it("keeps the agent's reply to each steer visible after the settled turn folds", () => {
     const runId = RunId.make("steer-reply-run");
     const time = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
     const message = (
@@ -1427,7 +1427,11 @@ describe("deriveMessagesTimelineRows", () => {
         work("work-before-steer", 4),
         message("steer", 10, "user", "steer"),
         message("steer-reply", 12, "assistant"),
+        message("progress-after-reply", 13, "assistant"),
         work("work-after-steer", 15),
+        message("second-steer", 20, "user", "steer"),
+        message("second-steer-reply", 22, "assistant"),
+        work("work-after-second-steer", 25),
         message("final", 30, "assistant"),
       ],
       latestRun: { runId, status: "completed", startedAt: time(0), completedAt: time(30) },
@@ -1437,10 +1441,12 @@ describe("deriveMessagesTimelineRows", () => {
       supportsConversationRollback: false,
     }).map((row) => row.id);
 
-    expect(rowIds).toEqual(expect.arrayContaining(["steer-reply", "final"]));
+    expect(rowIds).toEqual(expect.arrayContaining(["steer-reply", "second-steer-reply", "final"]));
     expect(rowIds).not.toContain("progress-note");
+    expect(rowIds).not.toContain("progress-after-reply");
     expect(rowIds).not.toContain("work-before-steer");
     expect(rowIds).not.toContain("work-after-steer");
+    expect(rowIds).not.toContain("work-after-second-steer");
   });
 
   it("stacks back-to-back steers as one burst with a single steer label", () => {
