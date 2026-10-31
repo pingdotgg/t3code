@@ -57,7 +57,6 @@ function makeFakeClaudeBinary(dir: string, lifecyclePort?: number) {
 function withFakeClaudeEnv<A, E, R>(
   input: {
     output: string;
-    cliVersion?: string | null;
     rejectsNoSessionPersistence?: boolean;
     lifecyclePort?: number;
     exitCode?: number;
@@ -205,7 +204,6 @@ function withFakeClaudeEnv<A, E, R>(
     const config = decodeClaudeSettings(input.claudeConfig ?? {});
     const textGeneration = yield* makeClaudeTextGeneration(
       config,
-      Effect.succeed(input.cliVersion === undefined ? "2.1.316" : input.cliVersion),
       undefined,
       Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
     );
@@ -338,20 +336,11 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
     }),
   );
 
-  it.effect.each([
-    { cliVersion: "2.0.63", rejectsNoSessionPersistence: false, label: "passes it to 2.0.63" },
-    { cliVersion: "2.0.62", rejectsNoSessionPersistence: true, label: "omits it for 2.0.62" },
-    {
-      cliVersion: null,
-      rejectsNoSessionPersistence: true,
-      label: "omits it for an unknown version",
-    },
-  ])("--no-session-persistence $label", ({ cliVersion, rejectsNoSessionPersistence }) =>
+  it.effect("retries without --no-session-persistence when the Claude CLI rejects it", () =>
     withFakeClaudeEnv(
       {
         output: JSON.stringify({ structured_output: { title: "Reconnect failures" } }),
-        cliVersion,
-        rejectsNoSessionPersistence,
+        rejectsNoSessionPersistence: true,
       },
       (textGeneration) =>
         Effect.gen(function* () {
