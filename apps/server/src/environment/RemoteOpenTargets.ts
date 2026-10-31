@@ -1,11 +1,13 @@
 import { type RemoteOpenTarget } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
-import { readTailscaleSshEnabled, readTailscaleStatus } from "@t3tools/tailscale";
+import { readTailscaleSshEnabled } from "@t3tools/tailscale";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+
+import * as TailscaleStatusReader from "./TailscaleStatusReader.ts";
 
 const SSH_PORT = 22;
 
@@ -20,6 +22,7 @@ export class RemoteOpenTargets extends Context.Service<
 export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const net = yield* NetService.NetService;
+  const tailscaleStatus = yield* TailscaleStatusReader.TailscaleStatusReader;
 
   const resolveTargets = Effect.gen(function* () {
     // Check both loopback families: sshd can be bound IPv6-only.
@@ -30,10 +33,9 @@ export const make = Effect.gen(function* () {
     );
     const username = yield* HostProcess.Username;
 
-    const magicDnsName = yield* readTailscaleStatus.pipe(
+    const magicDnsName = yield* tailscaleStatus.read().pipe(
       Effect.map((status) => status.magicDnsName),
       Effect.orElseSucceed(() => null),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
 
     const targets: Array<RemoteOpenTarget> = [];

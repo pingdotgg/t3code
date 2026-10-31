@@ -1,18 +1,27 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NetService from "@t3tools/shared/Net";
 import type * as NodeOS from "node:os";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as DirectEndpoints from "./DirectEndpoints.ts";
 import { resolveBoundEndpoints } from "./DirectEndpoints.ts";
+import * as RemoteOpenTargets from "./RemoteOpenTargets.ts";
+import * as TailscaleStatusReader from "./TailscaleStatusReader.ts";
 
 const INTERFACES: ReturnType<typeof NodeOS.networkInterfaces> = {
   lo0: [
@@ -171,26 +180,31 @@ const TAILSCALE_STATUS_JSON = JSON.stringify({
   Self: { DNSName: "bb-1.tail1234.ts.net.", TailscaleIPs: ["100.64.1.2"] },
 });
 
-const layerTailscaleUp = Layer.succeed(
-  ChildProcessSpawner.ChildProcessSpawner,
-  ChildProcessSpawner.make(() =>
-    Effect.succeed(
-      ChildProcessSpawner.makeHandle({
-        pid: ChildProcessSpawner.ProcessId(1),
-        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
-        isRunning: Effect.succeed(false),
-        kill: () => Effect.void,
-        unref: Effect.succeed(Effect.void),
-        stdin: Sink.drain,
-        stdout: Stream.make(new TextEncoder().encode(TAILSCALE_STATUS_JSON)),
-        stderr: Stream.empty,
-        all: Stream.empty,
-        getInputFd: () => Sink.drain,
-        getOutputFd: () => Stream.empty,
+// `tailscale status` exits non-zero while tailscaled is unavailable, and prints the node once it is up.
+const layerTailscale = (isUp: () => boolean) =>
+  Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make(() =>
+      Effect.sync(() => {
+        const up = isUp();
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(up ? 0 : 1)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: up ? Stream.make(new TextEncoder().encode(TAILSCALE_STATUS_JSON)) : Stream.empty,
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        });
       }),
     ),
-  ),
-);
+  );
+
+const layerTailscaleUp = layerTailscale(() => true);
 
 const layerServeProbe = (status: number) =>
   Layer.succeed(
@@ -217,6 +231,7 @@ const resolveWithServe = (probeStatus: number) =>
   Effect.flatMap(DirectEndpoints.DirectEndpoints, (service) => service.resolve()).pipe(
     Effect.provide(
       DirectEndpoints.layer.pipe(
+        Layer.provide(TailscaleStatusReader.layer),
         Layer.provide(
           Layer.mergeAll(layerServeConfig, layerTailscaleUp, layerServeProbe(probeStatus)),
         ),
@@ -236,6 +251,106 @@ describe("DirectEndpoints Tailscale Serve", () => {
   effectIt.effect("leaves the tailnet name out when Serve is not forwarding", () =>
     Effect.gen(function* () {
       expect(yield* resolveWithServe(502)).toEqual([]);
+    }),
+  );
+});
+
+// A CLI that cannot reach tailscaled: `tailscale status` never answers, so each read waits out its timeout.
+const layerTailscaleHung = (onStatusSpawn: () => void) =>
+  Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make((command) => {
+      if (ChildProcess.isStandardCommand(command) && command.args[0] === "status") onStatusSpawn();
+      return Effect.succeed(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Effect.never,
+          isRunning: Effect.succeed(true),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.empty,
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        }),
+      );
+    }),
+  );
+
+const layerSshdListening = Layer.succeed(NetService.NetService, {
+  canListenOnHost: () => Effect.succeed(true),
+  isPortAvailableOnLoopback: () => Effect.succeed(true),
+  hasListenerOnHost: () => Effect.succeed(true),
+  reserveLoopbackPort: () => Effect.succeed(40_000),
+  findAvailablePort: (preferred) => Effect.succeed(preferred),
+});
+
+const MDNS_ONLY = [{ kind: "mdns", host: "bb-1.local", username: "t3-user" }];
+
+// What ws.loadServerConfig resolves for every client that connects. The layers live in the
+// test's scope, as the server's do, so the shared status read outlives each connect.
+const connectWithTailscale = (layerSpawner: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>) =>
+  Effect.gen(function* () {
+    const context = yield* Layer.build(
+      Layer.mergeAll(DirectEndpoints.layer, RemoteOpenTargets.layer).pipe(
+        Layer.provide(TailscaleStatusReader.layer),
+        Layer.provide(
+          Layer.mergeAll(layerServeConfig, layerSpawner, layerServeProbe(200), layerSshdListening),
+        ),
+      ),
+    );
+    const remoteOpenTargets = Context.get(context, RemoteOpenTargets.RemoteOpenTargets);
+    const directEndpoints = Context.get(context, DirectEndpoints.DirectEndpoints);
+    return Effect.all([remoteOpenTargets.resolveTargets(), directEndpoints.resolve()], {
+      concurrency: "unbounded",
+    }).pipe(
+      Effect.provideService(HostProcess.Hostname, "bb-1"),
+      Effect.provideService(HostProcess.Username, "t3-user"),
+    );
+  });
+
+describe("Tailscale status shared by DirectEndpoints and RemoteOpenTargets", () => {
+  effectIt.effect("reads `tailscale status` once per connect, not once per service", () =>
+    Effect.gen(function* () {
+      let statusReads = 0;
+      const connect = yield* connectWithTailscale(layerTailscaleHung(() => statusReads++));
+      const first = yield* Effect.forkChild(connect);
+      yield* TestClock.adjust("4 seconds");
+      expect(yield* Fiber.join(first)).toEqual([MDNS_ONLY, []]);
+      expect(statusReads, "tailscale status spawns for one connect").toBe(1);
+    }),
+  );
+
+  effectIt.effect(
+    "answers a later connect from the settled failed read without waiting again",
+    () =>
+      Effect.gen(function* () {
+        const connect = yield* connectWithTailscale(layerTailscaleHung(() => {}));
+        const first = yield* Effect.forkChild(connect);
+        yield* TestClock.adjust("4 seconds");
+        expect(yield* Fiber.join(first)).toEqual([MDNS_ONLY, []]);
+
+        const later = yield* connect.pipe(Effect.timeoutOption("1 second"), Effect.forkChild);
+        yield* TestClock.adjust("1 second");
+        expect(yield* Fiber.join(later), "later connect still waiting on tailscale status").toEqual(
+          Option.some([MDNS_ONLY, []]),
+        );
+      }),
+  );
+
+  effectIt.effect("answers a connect from a recovered read that settles within the grace", () =>
+    Effect.gen(function* () {
+      let tailscaleUp = false;
+      const connect = yield* connectWithTailscale(layerTailscale(() => tailscaleUp));
+      expect(yield* connect, "startup read fails").toEqual([MDNS_ONLY, []]);
+
+      tailscaleUp = true;
+      expect(yield* connect).toEqual([
+        [{ kind: "tailscale", host: "bb-1.tail1234.ts.net", username: "t3-user" }, ...MDNS_ONLY],
+        [{ kind: "tailnet", httpBaseUrl: "https://bb-1.tail1234.ts.net/" }],
+      ]);
     }),
   );
 });

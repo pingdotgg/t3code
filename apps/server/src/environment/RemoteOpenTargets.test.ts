@@ -12,6 +12,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { afterEach, describe, expect, vi } from "vite-plus/test";
 
 import * as RemoteOpenTargets from "./RemoteOpenTargets.ts";
+import * as TailscaleStatusReader from "./TailscaleStatusReader.ts";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -74,6 +75,7 @@ const resolveTargets = (input: {
     Effect.provideService(HostProcess.Hostname, input.hostname),
     Effect.provide(
       RemoteOpenTargets.layer.pipe(
+        Layer.provide(TailscaleStatusReader.layer),
         Layer.provide(Layer.mergeAll(layerNet(input.sshd), layerSpawner(input.tailscale))),
       ),
     ),
