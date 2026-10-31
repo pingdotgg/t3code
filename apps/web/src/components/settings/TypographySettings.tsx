@@ -227,7 +227,7 @@ function FontSmoothingRow() {
       resetAction={
         settings.fontSmoothing !== DEFAULT_UNIFIED_SETTINGS.fontSmoothing ? (
           <SettingResetButton
-            label="font smoothing"
+            label={t("settings.typography.fontSmoothing.resetLabel")}
             onClick={() =>
               updateSettings({ fontSmoothing: DEFAULT_UNIFIED_SETTINGS.fontSmoothing })
             }
@@ -257,7 +257,7 @@ function WordWrapRow() {
       resetAction={
         settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? (
           <SettingResetButton
-            label="word wrapping"
+            label={t("settings.typography.wordWrap.resetLabel")}
             onClick={() => updateSettings({ wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap })}
           />
         ) : null

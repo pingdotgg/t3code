@@ -208,7 +208,7 @@ export function AppearanceSettingsPanel() {
           resetAction={
             settings.appearanceContrast !== DEFAULT_UNIFIED_SETTINGS.appearanceContrast ? (
               <SettingResetButton
-                label="contrast"
+                label={t("settings.interface.contrast.resetLabel")}
                 onClick={() =>
                   updateSettings({
                     appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
@@ -257,7 +257,7 @@ export function AppearanceSettingsPanel() {
           resetAction={
             settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? (
               <SettingResetButton
-                label="glass opacity"
+                label={t("settings.interface.glassOpacity.resetLabel")}
                 onClick={() =>
                   updateSettings({ glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity })
                 }
@@ -304,7 +304,7 @@ export function AppearanceSettingsPanel() {
           resetAction={
             settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? (
               <SettingResetButton
-                label="chat width"
+                label={t("settings.interface.chatWidth.resetLabel")}
                 onClick={() => updateSettings({ chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth })}
               />
             ) : null
@@ -344,7 +344,7 @@ export function AppearanceSettingsPanel() {
           resetAction={
             settings.effortDisplay !== DEFAULT_UNIFIED_SETTINGS.effortDisplay ? (
               <SettingResetButton
-                label="effort display"
+                label={t("settings.interface.effortDisplay.resetLabel")}
                 onClick={() =>
                   updateSettings({ effortDisplay: DEFAULT_UNIFIED_SETTINGS.effortDisplay })
                 }
@@ -384,7 +384,7 @@ export function AppearanceSettingsPanel() {
           resetAction={
             settings.mathRenderingEnabled !== DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled ? (
               <SettingResetButton
-                label="math rendering"
+                label={t("settings.interface.mathRendering.resetLabel")}
                 onClick={() =>
                   updateSettings({
                     mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
@@ -454,7 +454,7 @@ export function AppearanceSettingsPanel() {
               settings.panelAnimationDurationMs !==
               DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs ? (
                 <SettingResetButton
-                  label="panel animations"
+                  label={t("settings.interface.panelAnimations.resetLabel")}
                   onClick={() =>
                     updateSettings({
                       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
@@ -475,7 +475,7 @@ export function AppearanceSettingsPanel() {
             resetAction={
               settings.environmentIdentificationMode !== DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE ? (
                 <SettingResetButton
-                  label="environment identification"
+                  label={t("settings.interface.environmentIdentification.resetLabel")}
                   onClick={() =>
                     updateSettings({
                       environmentIdentificationMode: DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
@@ -519,7 +519,7 @@ export function AppearanceSettingsPanel() {
               settings.persistComposerContextStrip !==
               DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip ? (
                 <SettingResetButton
-                  label="composer context"
+                  label={t("settings.interface.composerContext.resetLabel")}
                   onClick={() =>
                     updateSettings({
                       persistComposerContextStrip:

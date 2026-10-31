@@ -38,11 +38,14 @@ export const enMessages = {
   "settings.typography.fontSmoothing.description":
     "Use thinner grayscale text smoothing instead of the macOS default.",
   "settings.typography.fontSmoothing.a11y": "Font smoothing",
+  "settings.typography.fontSmoothing.resetLabel": "font smoothing",
   "settings.typography.wordWrap.title": "Word wrap",
   "settings.typography.wordWrap.description":
     "Wrap long lines in code blocks, diffs, and file previews by default.",
   "settings.typography.wordWrap.a11y": "Wrap code, diffs, and file previews by default",
+  "settings.typography.wordWrap.resetLabel": "word wrapping",
   "settings.threadDetails.title": "Thread details",
+  "settings.threadDetails.resetLabel": "thread details",
   "settings.threadDetails.description":
     "Choose what the thread details card shows. You can also right-click the card.",
   "settings.threadDetails.summary": "{enabled} of {total} on",
@@ -80,10 +83,13 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.typography.fontSmoothing.title": "字体平滑",
   "settings.typography.fontSmoothing.description": "使用更细的灰度文字平滑，取代 macOS 默认效果。",
   "settings.typography.fontSmoothing.a11y": "字体平滑",
+  "settings.typography.fontSmoothing.resetLabel": "字体平滑",
   "settings.typography.wordWrap.title": "自动换行",
   "settings.typography.wordWrap.description": "默认在代码块、差异与文件预览中对长行自动换行。",
   "settings.typography.wordWrap.a11y": "默认在代码块、差异与文件预览中自动换行",
+  "settings.typography.wordWrap.resetLabel": "自动换行",
   "settings.threadDetails.title": "线程详情",
+  "settings.threadDetails.resetLabel": "线程详情",
   "settings.threadDetails.description": "选择线程详情卡片显示的内容，也可以右键点击该卡片。",
   "settings.threadDetails.summary": "已开启 {enabled}/{total}",
   "settings.threadDetails.summaryA11y": "线程详情：已开启 {enabled}/{total}",
