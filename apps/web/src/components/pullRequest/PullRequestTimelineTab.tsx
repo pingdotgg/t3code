@@ -12,6 +12,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   CheckIcon,
+  ChevronDownIcon,
   ChevronRightIcon,
   ExternalLinkIcon,
   FileCodeIcon,
@@ -20,7 +21,7 @@ import {
   UserPlusIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -28,11 +29,13 @@ import { useRelativeTimeState } from "~/hooks/useRelativeTimeState";
 
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   buildPullRequestRail,
   isPullRequestVerdictStale,
   newestPullRequestCommitAt,
+  pullRequestBodyPreview,
   visibleBody,
   type PullRequestChatSubject,
   type PullRequestRailEntry,
@@ -42,6 +45,7 @@ import {
   PullRequestActorAvatar,
   PullRequestReviewOutcomeIcon,
   pullRequestReviewOutcomeStaleLabel,
+  pullRequestReviewOutcomeVerb,
   pullRequestReviewOutcomeToneClassName,
 } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
@@ -63,7 +67,7 @@ function RailMarker({
     <span
       aria-hidden
       className={cn(
-        "absolute top-0 left-0 z-10 flex size-6 items-center justify-center rounded-full border border-border bg-(--code-surface) text-dim-foreground",
+        "absolute top-0 left-0 z-10 flex size-6 items-center justify-center rounded-full surface-pill text-dim-foreground",
         className,
       )}
     >
@@ -141,6 +145,50 @@ function CommitChecksPill({ checks }: { checks: NonNullable<PullRequestCommit["c
   );
 }
 
+/** A review's text, one quiet line until opened. */
+function ReviewRailBody({
+  body,
+  cwd,
+  environmentId,
+  threadRef,
+}: {
+  body: string;
+  cwd: string;
+  environmentId: EnvironmentId;
+  threadRef: ScopedThreadRef | null;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger
+        variant="muted"
+        aria-label={open ? "Hide review text" : "Show review text"}
+        className="w-full min-w-0 gap-1 text-left"
+      >
+        <span className="min-w-0 flex-1 truncate">
+          {open ? null : pullRequestBodyPreview(body)}
+        </span>
+        <ChevronDownIcon
+          aria-hidden
+          className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-180")}
+        />
+      </CollapsibleTrigger>
+      <CollapsiblePanel>
+        {open ? (
+          <div className="pb-1 text-body text-muted-foreground">
+            <PullRequestMarkdown
+              text={body}
+              cwd={cwd}
+              environmentId={environmentId}
+              threadRef={threadRef}
+            />
+          </div>
+        ) : null}
+      </CollapsiblePanel>
+    </Collapsible>
+  );
+}
+
 function RailEntry({
   entry,
   detail,
@@ -213,6 +261,9 @@ function RailEntry({
               {commit.oid.slice(0, 7)}
             </code>
             {commit.checks ? <CommitChecksPill checks={commit.checks} /> : null}
+            <time dateTime={entry.at} className="shrink-0 text-meta text-muted-foreground">
+              <TimelineRelativeTime timestamp={entry.at} />
+            </time>
           </button>
         </li>
       );
@@ -233,12 +284,7 @@ function RailEntry({
       const body = visibleBody(entry.comment.body);
       const first = entry.threads[0];
       const unresolved = entry.threads.filter((thread) => !thread.isResolved).length;
-      const verb =
-        entry.outcome === "approved"
-          ? "approved"
-          : entry.outcome === "changes-requested"
-            ? "requested changes"
-            : "had a review dismissed";
+      const verb = pullRequestReviewOutcomeVerb(entry.outcome);
       return (
         <li className="relative min-h-6 pb-2.5 pl-8.5 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
           <RailMarker
@@ -289,14 +335,12 @@ function RailEntry({
             </time>
           </div>
           {body ? (
-            <div className="text-body text-muted-foreground">
-              <PullRequestMarkdown
-                text={body}
-                cwd={detail.workspaceRoot}
-                environmentId={environmentId}
-                threadRef={threadRef}
-              />
-            </div>
+            <ReviewRailBody
+              body={body}
+              cwd={detail.workspaceRoot}
+              environmentId={environmentId}
+              threadRef={threadRef}
+            />
           ) : null}
           {first ? (
             <button
@@ -317,7 +361,14 @@ function RailEntry({
                   {entry.threads.length} {entry.threads.length === 1 ? "thread" : "threads"}
                 </span>
                 <span className="flex-1" />
-                {unresolved > 0 ? <Badge variant="warning">Unresolved</Badge> : null}
+                {unresolved > 0 ? (
+                  <Badge variant="warning">Unresolved</Badge>
+                ) : (
+                  <span className="inline-flex shrink-0 items-center gap-1">
+                    <CheckIcon aria-hidden className="size-3.5 text-success-foreground" />
+                    Resolved
+                  </span>
+                )}
                 <ChevronRightIcon aria-hidden className="size-3.5 shrink-0" />
               </span>
             </button>
