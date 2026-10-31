@@ -898,6 +898,7 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
 /** The installer's own answer is cached apart from the npm registry entry. */
 function installerLatestVersionKey(capabilities: ProviderMaintenanceCapabilities) {
   if (!capabilities.lookupLatestVersion) return null;
+  if (capabilities.latestVersionCacheKey) return capabilities.latestVersionCacheKey;
   const update = capabilities.update;
   return update
     ? [update.lockKey, update.executable, ...update.args].join("\0")
