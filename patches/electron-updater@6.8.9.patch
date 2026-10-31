@@ -1,0 +1,40 @@
+diff --git a/out/electronHttpExecutor.js b/out/electronHttpExecutor.js
+index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..3932b6607ca41e6663aae001111c9b18594ed37a 100644
+--- a/out/electronHttpExecutor.js
++++ b/out/electronHttpExecutor.js
+@@ -61,6 +61,35 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
+         }
+         return request;
+     }
++    // Electron's net.ClientRequest never emits "socket", so the inherited socket idle timeout never
++    // arms and a stalled request stays pending forever. Reset an idle timer on every chunk instead.
++    addTimeOutHandler(request, callback, timeout) {
++        let timer = null;
++        const clear = () => {
++            if (timer != null) {
++                clearTimeout(timer);
++                timer = null;
++            }
++        };
++        const arm = () => {
++            clear();
++            timer = setTimeout(() => {
++                timer = null;
++                request.abort();
++                callback(new Error("Request timed out"));
++            }, timeout);
++        };
++        request.on("response", (response) => {
++            arm();
++            response.on("data", arm);
++            response.on("end", clear);
++            response.on("aborted", clear);
++            response.on("error", clear);
++        });
++        request.on("abort", clear);
++        request.on("error", clear);
++        arm();
++    }
+     addRedirectHandlers(request, options, reject, redirectCount, handler) {
+         request.on("redirect", (statusCode, method, redirectUrl) => {
+             // no way to modify request options, abort old and make a new one
