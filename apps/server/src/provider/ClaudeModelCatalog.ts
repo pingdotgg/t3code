@@ -99,6 +99,12 @@ export function scopeClaudeModelCatalog(
   const customCatalogModels: Array<ClaudeCatalogModel> = [];
   for (const entry of customEntries) {
     if (!entry.capabilities || builtInSlugs.has(entry.slug)) continue;
+    const hasExtendedContext = entry.capabilities.optionDescriptors?.some(
+      (descriptor) =>
+        descriptor.id === "contextWindow" &&
+        descriptor.type === "select" &&
+        descriptor.options.some((choice) => choice.id === "1m"),
+    );
     customCatalogModels.push({
       model: {
         slug: entry.slug,
@@ -106,7 +112,13 @@ export function scopeClaudeModelCatalog(
         isCustom: true,
         capabilities: entry.capabilities,
       },
-      runtime: {},
+      runtime: hasExtendedContext
+        ? {
+            modelSuffixes: { contextWindow: { "1m": "[1m]" } },
+            contextWindowTokens: { "1m": 1_000_000 },
+            ...(/\[1m\]$/i.test(entry.slug) ? { fixedContextWindowTokens: 1_000_000 } : {}),
+          }
+        : {},
       compatibility: {},
     });
   }
@@ -268,7 +280,9 @@ export function resolveClaudeCatalogApiModelId(
     const value = getProviderOptionCurrentValue(
       descriptors.find((descriptor) => descriptor.id === optionId),
     );
-    if (typeof value === "string" && suffixes[value]) return `${slug}${suffixes[value]}`;
+    const suffix =
+      typeof value === "string" && Object.hasOwn(suffixes, value) ? suffixes[value] : undefined;
+    if (suffix && !slug.toLowerCase().endsWith(suffix.toLowerCase())) return `${slug}${suffix}`;
   }
   return slug;
 }
@@ -281,5 +295,8 @@ export function resolveClaudeCatalogContextWindowTokens(
   if (!entry) return undefined;
   if (entry.runtime.fixedContextWindowTokens) return entry.runtime.fixedContextWindowTokens;
   const contextWindow = resolveClaudeCatalogContextWindow(catalog, modelSelection);
-  return contextWindow ? entry.runtime.contextWindowTokens?.[contextWindow] : undefined;
+  const windows = entry.runtime.contextWindowTokens;
+  return contextWindow && windows && Object.hasOwn(windows, contextWindow)
+    ? windows[contextWindow]
+    : undefined;
 }

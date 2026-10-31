@@ -91,6 +91,12 @@ On web and desktop, use Settings → Providers → **Models** to add an unlisted
 name and options. Only options supported by the provider integration affect turns. Antigravity
 uses its account catalog and does not support custom models.
 
+For a custom Claude route, add a Choices option with ID `contextWindow` and values `default`
+(Provider default) and `1m` (1M). Choosing 1M appends `[1m]` to the model ID for Claude Code.
+Provider default leaves the ID unchanged and does not assume a context size. Only choose 1M
+when your gateway and model support it. Add a separate Thinking toggle with ID `thinking`
+to control thinking independently. Models without these options keep their existing behavior.
+
 To rename a built-in model on every client, edit the server's `settings.json` in its `userdata`
 directory. Add a custom model entry with the built-in model ID and a new name under that provider
 instance:
