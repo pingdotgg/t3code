@@ -40,6 +40,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { PluginCatalog } from "./PluginCatalog.ts";
+import * as ViewFile from "./pluginViewFile.ts";
 import { digestPluginSourceFiles } from "./pluginSource.ts";
 
 const MAX_MANIFEST_BYTES = 64 * 1024;
@@ -131,9 +132,9 @@ export const make = Effect.fn("PluginViews.make")(function* () {
       return yield* fail("resolves outside the plugin directory.");
     const bytes = yield* Effect.scoped(
       Effect.gen(function* () {
-        const file = yield* fs.open(real);
+        const file = yield* ViewFile.open(real);
         const info = yield* file.stat;
-        if (info.type !== "File") return yield* fail("is not a file.");
+        if (!info.isFile()) return yield* fail("is not a file.");
         if (Number(info.size) > maxBytes) return yield* fail(`is larger than ${maxBytes} bytes.`);
         // The file can grow after stat; never allocate or read more than the limit plus
         // the one byte that proves it is too large. Handle short reads until EOF.
@@ -176,20 +177,30 @@ export const make = Effect.fn("PluginViews.make")(function* () {
   const readViews = Effect.fnUntraced(function* (installation: PluginInstallation, digest: string) {
     const directory = installation.directory;
     const manifestPath = path.join(directory, PLUGIN_MANIFEST_FILE);
-    const info = yield* fs
-      .stat(manifestPath)
-      .pipe(
-        Effect.mapError(() => viewError("invalid-view", `${PLUGIN_MANIFEST_FILE} is missing.`)),
-      );
-    if (info.type !== "File" || Number(info.size) > MAX_MANIFEST_BYTES)
-      return yield* viewError("invalid-view", `${PLUGIN_MANIFEST_FILE} is too large.`);
-    const manifestBytes = yield* fs
-      .readFile(manifestPath)
-      .pipe(
-        Effect.mapError(() =>
-          viewError("invalid-view", `${PLUGIN_MANIFEST_FILE} is not readable.`),
-        ),
-      );
+    const manifestBytes = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const file = yield* ViewFile.open(manifestPath);
+        const info = yield* file.stat;
+        if (!info.isFile() || Number(info.size) > MAX_MANIFEST_BYTES)
+          return yield* viewError("invalid-view", `${PLUGIN_MANIFEST_FILE} is too large.`);
+        const buffer = new Uint8Array(MAX_MANIFEST_BYTES + 1);
+        let length = 0;
+        while (length < buffer.length) {
+          const count = yield* file.read(buffer.subarray(length));
+          if (count === 0) break;
+          length += count;
+        }
+        if (length > MAX_MANIFEST_BYTES)
+          return yield* viewError("invalid-view", `${PLUGIN_MANIFEST_FILE} is too large.`);
+        return buffer.subarray(0, length);
+      }),
+    ).pipe(
+      Effect.mapError((error) =>
+        error._tag === "PluginViewError"
+          ? error
+          : viewError("invalid-view", `${PLUGIN_MANIFEST_FILE} is not readable.`),
+      ),
+    );
     const read = new Map([
       [PLUGIN_MANIFEST_FILE, NodeCrypto.createHash("sha256").update(manifestBytes).digest("hex")],
     ]);
