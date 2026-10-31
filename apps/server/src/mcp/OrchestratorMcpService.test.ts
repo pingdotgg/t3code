@@ -24,6 +24,7 @@ import {
 } from "@t3tools/contracts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -1923,6 +1924,157 @@ describe("OrchestratorMcpService provider resolution", () => {
           }).pipe(Effect.provide(layerTest));
         }).pipe(Effect.provide(NodeServices.layer)),
       ),
+  );
+
+  it.effect.each(["local", "remote"] as const)(
+    "a blocking %s delegation cancelled mid-wait wakes its parent like an async task",
+    (placement) =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("codex");
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          {
+            instanceId: codexInstanceId,
+            driver,
+            getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+            planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
+            openSession: () => Effect.die("The child never starts: the effect worker is off."),
+          },
+        ]);
+        const layerDatabase = SqlitePersistence.layerMemory;
+        const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
+          { name: "mcp-wait-cancelled" },
+          layerRegistry,
+          { databaseLayer: layerDatabase, runEffectWorker: false },
+        );
+        const layerSettings = ServerSettings.layerTest({
+          providerInstances: { [codexInstanceId]: { driver: "codex", enabled: true } },
+        });
+        const layerThreads = ThreadManagementService.layer.pipe(
+          Layer.provideMerge(layerOrchestrator),
+          Layer.provide(
+            LegacyV1ThreadImporter.layer.pipe(
+              Layer.provide(layerOrchestrator),
+              Layer.provide(layerDatabase),
+            ),
+          ),
+          Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+          Layer.provideMerge(layerSettings),
+        );
+        const waiting = yield* Deferred.make<void>();
+        const layerWatchedThreads = Layer.effect(
+          ThreadManagementService.ThreadManagementService,
+          Effect.gen(function* () {
+            const threads = yield* ThreadManagementService.ThreadManagementService;
+            return {
+              ...threads,
+              streamStoredEventsFrom: (input) =>
+                Stream.unwrap(
+                  Deferred.succeed(waiting, undefined).pipe(
+                    Effect.as(threads.streamStoredEventsFrom(input)),
+                  ),
+                ),
+            } satisfies ThreadManagementService.ThreadManagementService["Service"];
+          }),
+        ).pipe(Layer.provideMerge(layerThreads));
+        const remoteChild = {
+          environmentId: EnvironmentId.make("environment:mcp-providers-box"),
+          threadId: ThreadId.make("thread:mcp-providers-on-the-box"),
+          label: "Box",
+        };
+        // Records the task as the real delegation does once the linked environment launched it.
+        const layerRemoteDelegation = Layer.unwrap(
+          Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            return Layer.mock(RemoteDelegation.RemoteDelegation)({
+              delegate: (_scope, input) =>
+                Effect.gen(function* () {
+                  const run = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
+                  yield* orchestrator.dispatch({
+                    type: "delegated_task.remote.request",
+                    commandId: CommandId.make("command:remote-delegate:wait-cancelled"),
+                    parentThreadId,
+                    parentRunId: run.id,
+                    parentNodeId: run.rootNodeId!,
+                    task: input.task,
+                    driver: ProviderDriverKind.make("remote"),
+                    modelSelection: run.modelSelection,
+                    remoteChild,
+                    completionWake: "settled_only",
+                  });
+                  const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+                  return { taskId: parent.subagents[0]!.id };
+                }).pipe(Effect.orDie),
+            });
+          }),
+        ).pipe(Layer.provide(layerWatchedThreads));
+        const layerTest = layerOrchestratorService.pipe(
+          Layer.provideMerge(layerWatchedThreads),
+          Layer.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              layerRegistry,
+              layerSettings,
+              providerRegistryLayer([
+                providerSnapshot({ instanceId: codexInstanceId, driver, model: "gpt-5.4" }),
+              ]),
+              Layer.mock(ProjectService.ProjectService)({}),
+              Layer.mock(SecretRequests.SecretRequests)({}),
+              layerRemoteDelegation,
+              Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+            ),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("parent:create"),
+            threadId: parentThreadId,
+            projectId,
+            title: "MCP parent",
+            modelSelection: { instanceId: codexInstanceId, model: "gpt-5.4" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("parent:start"),
+            threadId: parentThreadId,
+            messageId: MessageId.make("parent:message"),
+            text: "Delegate a review and wait for it.",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+          });
+          const call = yield* service
+            .delegateTask(scope, {
+              task: "Review the change.",
+              ...(placement === "remote"
+                ? { target: { environmentId: remoteChild.environmentId } }
+                : {}),
+              mode: "wait",
+              clientRequestId: "delegate-wait-cancelled",
+            })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(waiting);
+          // A steered Claude parent cancels the tools/call, which interrupts this fiber.
+          yield* Fiber.interrupt(call);
+          const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+          const task = parent.subagents.find((subagent) => subagent.origin === "app_owned");
+          assert.equal(task?.status, "running");
+          assert.equal(
+            task?.completionWake,
+            "always",
+            "a cancelled blocking delegation left the task settled_only, so its result never reaches the still-live parent run",
+          );
+        }).pipe(Effect.provide(layerTest));
+      }),
   );
 
   it.effect(
