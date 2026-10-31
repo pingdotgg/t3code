@@ -2,6 +2,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
@@ -14,6 +17,7 @@ const cursorSdkMock = vi.hoisted(() => {
   const runOperations: Array<string> = [];
   let agentCloseFailure: unknown;
   let staleRunActive = false;
+  let onDelta: ((input: { readonly update: unknown }) => Promise<void>) | undefined;
   const runWait = vi.fn(async () => ({
     id: "run-cursor-agent-sdk-test",
     requestId: "request-cursor-agent-sdk-test",
@@ -34,6 +38,7 @@ const cursorSdkMock = vi.hoisted(() => {
       _message: unknown,
       options: { readonly onDelta?: (input: { readonly update: unknown }) => Promise<void> },
     ) => {
+      onDelta = options.onDelta;
       runOperations.push("run.start");
       if (staleRunActive) {
         throw new Error("Agent agent-cursor-agent-sdk-test already has active run");
@@ -75,6 +80,7 @@ const cursorSdkMock = vi.hoisted(() => {
 
   return {
     agentClose,
+    emitDelta: (update: unknown) => onDelta?.({ update }),
     cancelRun,
     closeExecutionOrder,
     create,
@@ -171,5 +177,39 @@ describe("CursorAgentSdkRunner", () => {
         },
       ]);
     }).pipe(Effect.provide(layerTest)),
+  );
+  it.effect("drains queued callbacks before returning from cancellation", () =>
+    Effect.gen(function* () {
+      const order: Array<string> = [];
+      const callbackStarted = yield* Deferred.make<void>();
+      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
+      const session = yield* runner.open({
+        operation: "create",
+        options: { model: { id: "default" }, mode: "agent", local: { cwd: process.cwd() } },
+        threadId: ThreadId.make("thread-cursor-cancel-callback"),
+        providerSessionId: ProviderSessionId.make("session-cursor-cancel-callback"),
+      });
+      const run = yield* session.send({
+        message: "hi",
+        onDelta: (update) =>
+          Effect.gen(function* () {
+            if (update.type !== "text-delta") return;
+            yield* Deferred.succeed(callbackStarted, undefined);
+            yield* Effect.sleep("1 second");
+            order.push(update.text);
+          }),
+      });
+      cursorSdkMock.runCancel.mockImplementationOnce(async () => {
+        void cursorSdkMock.emitDelta({ type: "text-delta", text: "callback" });
+      });
+      const cancelling = yield* run.cancel.pipe(
+        Effect.tap(() => Effect.sync(() => order.push("cancel returned"))),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(callbackStarted);
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(cancelling);
+      assert.deepStrictEqual(order, ["callback", "cancel returned"]);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 });
