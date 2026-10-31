@@ -259,7 +259,9 @@ function useSettingsIndexSections(): SettingsListSection[] {
         serverPage("SettingsProviderAccounts", "person.crop.circle", "Providers"),
         serverPage("SettingsThreads", "text.bubble", "Threads"),
         page("SettingsScheduledTasks", "clock", "Scheduled tasks"),
-        ...(selectedTargets.some(supportsPlugins) ? [page("SettingsPlugins", "shippingbox", "Plugins")] : []),
+        ...(selectedTargets.some(supportsPlugins)
+          ? [page("SettingsPlugins", "shippingbox", "Plugins")]
+          : []),
       ],
     },
     {
