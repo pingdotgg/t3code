@@ -20,6 +20,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -316,6 +317,7 @@ describe("CursorAdapterV2", () => {
     },
     {
       reason: "turn-ended when run.wait never resolves",
+      cancelCalls: 1,
       updates: [
         { type: "text-delta", text: "Done." },
         { type: "turn-ended" },
@@ -364,6 +366,63 @@ describe("CursorAdapterV2", () => {
       failure: { class: "transport_error", message: "Provider turn failed." },
     },
     {
+      reason: "the SDK fallback answer after turn-ended",
+      updates: [{ type: "turn-ended" }] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        status: "finished" as const,
+        result: "The answer.",
+      }),
+      failure: null,
+      answers: ["The answer."],
+      cancelCalls: 0,
+    },
+    {
+      reason: "a cancelled wait without streamed text",
+      updates: [{ type: "turn-ended" }] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.succeed({ id: "native-cursor-run", status: "cancelled" as const }),
+      failure: null,
+      status: "cancelled",
+      cancelCalls: 0,
+    },
+    {
+      reason: "a cancelled wait released by idle cancellation",
+      updates: [
+        { type: "text-delta", text: "Done." },
+        { type: "turn-ended" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: null,
+      failure: null,
+      cancelCalls: 1,
+    },
+    {
+      reason: "a delayed continuation after turn-ended",
+      updates: [
+        { type: "text-delta", text: "Checking." },
+        { type: "turn-ended" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      continuation: [
+        { type: "text-delta", text: "Done." },
+        { type: "turn-ended" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: null,
+      failure: null,
+      cancelCalls: 1,
+      answers: ["Checking.", "Done."],
+    },
+    ...(["before-wait", "after-wait", "timeout"] as const).map((cancelOutcome) => ({
+      reason: "a cancelled wait when idle cancel fails " + cancelOutcome,
+      updates: [
+        { type: "text-delta", text: "Done." },
+        { type: "turn-ended" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: null,
+      failure: null,
+      status: "cancelled",
+      cancelCalls: 1,
+      cancelOutcome,
+    })),
+    {
       reason: "no answer from a resume after the turn ended that made no progress",
       updates: [{ type: "turn-ended" }] satisfies ReadonlyArray<InteractionUpdate>,
       wait: Effect.succeed({
@@ -378,10 +437,16 @@ describe("CursorAdapterV2", () => {
       failure: null,
       answers: [],
     },
-  ])("ends the turn with $reason", ({ updates = [], wait, failure, answers }) =>
+  ])("ends the turn with $reason", (testCase) =>
     Effect.gen(function* () {
+      const { updates = [], wait, failure, status, cancelCalls } = testCase;
+      const answers = "answers" in testCase ? testCase.answers : undefined;
+      const continuation = "continuation" in testCase ? testCase.continuation : undefined;
+      const cancelOutcome = "cancelOutcome" in testCase ? testCase.cancelOutcome : undefined;
       const fileSystem = yield* FileSystem.FileSystem;
-      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-failure-" });
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "cursor-v2-failure-",
+      });
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-failure-thread");
       const modelSelection = { instanceId, model: "claude-fable-5" };
@@ -390,6 +455,10 @@ describe("CursorAdapterV2", () => {
         interactionMode: "default",
         cwd: workspace,
       });
+      const cancelled = yield* Deferred.make<void>();
+      const waitObserved = yield* Deferred.make<void>();
+      let observedCancelCalls = 0;
+      let onDelta: ((update: InteractionUpdate) => Effect.Effect<void>) | undefined;
       const adapter = yield* makeCursorAdapterV2({
         instanceId,
         environment: { HOME: workspace },
@@ -403,14 +472,38 @@ describe("CursorAdapterV2", () => {
               close: Effect.void,
               send: (input) =>
                 Effect.gen(function* () {
+                  onDelta = (update) => input.onDelta!(update).pipe(Effect.orDie);
                   for (const update of updates) {
                     yield* input.onDelta!(update).pipe(Effect.orDie);
                   }
                   return {
                     agentId: "native-cursor-failure",
                     runId: "native-cursor-run",
-                    wait,
-                    cancel: Effect.void,
+                    wait:
+                      wait ??
+                      Deferred.await(cancelled).pipe(
+                        Effect.andThen(Deferred.succeed(waitObserved, undefined)),
+                        Effect.as({
+                          id: "native-cursor-run",
+                          status: "cancelled" as const,
+                        }),
+                      ),
+                    cancel: Effect.gen(function* () {
+                      observedCancelCalls += 1;
+                      if (cancelOutcome !== "before-wait") {
+                        yield* Deferred.succeed(cancelled, undefined);
+                      }
+                      if (cancelOutcome === "after-wait" || cancelOutcome === "timeout") {
+                        yield* Deferred.await(waitObserved);
+                      }
+                      if (cancelOutcome === "timeout") return yield* Effect.never;
+                      if (cancelOutcome !== undefined) {
+                        return yield* new CursorAgentSdk.CursorAgentSdkRunnerError({
+                          method: "run.cancel",
+                          cause: new Error("cancel failed"),
+                        });
+                      }
+                    }),
                   };
                 }),
             }),
@@ -470,18 +563,32 @@ describe("CursorAdapterV2", () => {
           attachments: [],
         },
       });
+      if (continuation !== undefined) {
+        yield* TestClock.adjust("500 millis");
+        assert.equal(observedCancelCalls, 0);
+        for (const update of continuation) {
+          yield* onDelta!(update);
+        }
+      }
+      yield* TestClock.adjust("1 second");
+      if (cancelOutcome === "before-wait") yield* Deferred.succeed(cancelled, undefined);
+      if (cancelOutcome === "timeout") yield* TestClock.adjust("10 seconds");
       const events = yield* runtime.events.pipe(
         Stream.takeUntil((event) => event.type === "turn.terminal"),
         Stream.runCollect,
       );
       const terminal = events.find((event) => event.type === "turn.terminal");
-      assert.equal(terminal?.status, failure === null ? "completed" : "failed");
+      assert.equal(terminal?.status, status ?? (failure === null ? "completed" : "failed"));
+      if (cancelCalls !== undefined) assert.equal(observedCancelCalls, cancelCalls);
+      if (cancelOutcome !== undefined) assert.equal(terminal?.threadDisposition, "broken");
       assert.equal(terminal?.failure?.class, failure?.class);
       assert.equal(terminal?.failure?.message, failure?.message);
       if (answers !== undefined) {
         assert.deepEqual(
           events.flatMap((event) =>
-            event.type === "message.updated" && event.message.role === "assistant"
+            event.type === "message.updated" &&
+            event.message.role === "assistant" &&
+            !event.message.streaming
               ? [event.message.text]
               : [],
           ),
@@ -494,131 +601,6 @@ describe("CursorAdapterV2", () => {
         Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
       ),
     ),
-  );
-
-  it.effect(
-    "cancels a hung run.wait after turn-ended when assistant text was already streamed",
-    () =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const workspace = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "cursor-v2-idle-cancel-",
-        });
-        const instanceId = ProviderInstanceId.make("cursor");
-        const threadId = ThreadId.make("cursor-idle-cancel-thread");
-        const modelSelection = { instanceId, model: "claude-fable-5" };
-        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          cwd: workspace,
-        });
-        let cancelCalls = 0;
-        const cancelGate = yield* Deferred.make<void, never>();
-        const adapter = yield* makeCursorAdapterV2({
-          instanceId,
-          environment: { HOME: workspace },
-        }).pipe(
-          Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
-            assertComplete: Effect.void,
-            open: () =>
-              Effect.succeed({
-                agentId: "native-cursor-idle-cancel",
-                listMessages: Effect.succeed([]),
-                close: Effect.void,
-                send: (input) =>
-                  Effect.gen(function* () {
-                    yield* input.onDelta!({ type: "text-delta", text: "Done." }).pipe(Effect.orDie);
-                    yield* input.onDelta!({ type: "turn-ended" }).pipe(Effect.orDie);
-                    return {
-                      agentId: "native-cursor-idle-cancel",
-                      runId: "native-cursor-run",
-                      wait: Deferred.await(cancelGate).pipe(
-                        Effect.flatMap(() =>
-                          Effect.succeed({
-                            id: "native-cursor-run",
-                            requestId: "native-request",
-                            status: "cancelled" as const,
-                            model: { id: "claude-fable-5" },
-                            durationMs: 1,
-                          }),
-                        ),
-                      ),
-                      cancel: Effect.gen(function* () {
-                        cancelCalls += 1;
-                        yield* Deferred.succeed(cancelGate, undefined);
-                      }),
-                    };
-                  }),
-              }),
-          }),
-          Effect.provide(TestProviderHost.layer({ cwd: workspace })),
-        );
-        const runtime = yield* adapter.openSession({
-          threadId,
-          providerSessionId: ProviderSessionId.make("cursor-idle-cancel-session"),
-          modelSelection,
-          runtimePolicy,
-        });
-        const providerThread = yield* runtime.ensureThread({
-          threadId,
-          modelSelection,
-          runtimePolicy,
-        });
-        const now = yield* DateTime.now;
-        yield* runtime.startTurn({
-          threadId,
-          providerThread,
-          modelSelection,
-          runtimePolicy,
-          runId: RunId.make("cursor-idle-cancel-run"),
-          runOrdinal: 1,
-          providerTurnOrdinal: 1,
-          attemptId: RunAttemptId.make("cursor-idle-cancel-attempt"),
-          rootNodeId: NodeId.make("cursor-idle-cancel-root"),
-          appThread: {
-            id: threadId,
-            projectId: ProjectId.make("cursor-idle-cancel-project"),
-            createdBy: "user",
-            creationSource: "web",
-            title: "Cursor idle cancel",
-            providerInstanceId: instanceId,
-            modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: null,
-            activeProviderThreadId: providerThread.id,
-            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
-            forkedFrom: null,
-            createdAt: now,
-            updatedAt: now,
-            archivedAt: null,
-            settledOverride: null,
-            settledAt: null,
-            lastVisitedAt: null,
-            deletedAt: null,
-          },
-          message: {
-            messageId: MessageId.make("cursor-idle-cancel-message"),
-            createdBy: "user",
-            creationSource: "web",
-            text: "hi",
-            attachments: [],
-          },
-        });
-        const events = yield* runtime.events.pipe(
-          Stream.takeUntil((event) => event.type === "turn.terminal"),
-          Stream.runCollect,
-        );
-        const terminal = events.find((event) => event.type === "turn.terminal");
-        assert.equal(terminal?.status, "completed");
-        assert.equal(cancelCalls, 1);
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
-        ),
-      ),
   );
 
   it.effect("fails standalone SDK transport diagnostics and sends compaction as /compress", () =>
