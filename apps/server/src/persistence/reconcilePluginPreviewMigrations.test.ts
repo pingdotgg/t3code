@@ -6,8 +6,8 @@ import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { migrationManifest, runMigrations } from "./Migrations.ts";
-import PluginInstallations from "./Migrations/069_PluginInstallations.ts";
-import PluginEventCursors from "./Migrations/070_PluginEventCursors.ts";
+import PluginInstallations from "./Migrations/076_PluginInstallations.ts";
+import PluginEventCursors from "./Migrations/077_PluginEventCursors.ts";
 
 const previews = [
   [67, "PluginInstallations", PluginInstallations],

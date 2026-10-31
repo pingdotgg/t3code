@@ -4,6 +4,7 @@ import {
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderAuthState,
   type ServerProvider,
   type UnifiedSettings,
 } from "@t3tools/contracts";
@@ -17,6 +18,8 @@ import { act, render } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
   providers: null as unknown as Atom.Writable<ReadonlyArray<ServerProvider>>,
+  providerAuthQuery: null as unknown,
+  providerAuth: null as ProviderAuthState | null,
   settings: null as unknown as UnifiedSettings,
   canManageProviders: true,
   canWriteSettings: true,
@@ -40,6 +43,8 @@ vi.mock(import("../../state/server"), async (original) => {
   const providers = Atom.make<ReadonlyArray<ServerProvider>>([]).pipe(Atom.keepAlive);
   state.providers = providers;
   const config = Atom.make(null);
+  const providerAuth = Atom.make(null);
+  state.providerAuthQuery = providerAuth;
   const commandLabels = {
     refreshProviders: "refresh",
     updateProvider: "update",
@@ -59,6 +64,7 @@ vi.mock(import("../../state/server"), async (original) => {
       ...actual.serverEnvironment,
       ...labelled,
       configValueAtom: (() => config) as never,
+      providerAuthState: (() => providerAuth) as never,
       providersValueAtom: (() => providers) as never,
     } as never,
   };
@@ -75,8 +81,8 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
 }));
 vi.mock(import("../../state/query"), async (original) => ({
   ...(await original()),
-  useEnvironmentQuery: (() => ({
-    data: null,
+  useEnvironmentQuery: ((query: unknown) => ({
+    data: query === state.providerAuthQuery ? state.providerAuth : null,
     error: null,
     isPending: false,
     refresh: vi.fn(),
@@ -120,7 +126,6 @@ vi.mock(import("../../state/entities"), async (original) => ({
 vi.mock(import("./settingsLayout"), async (original) => ({
   ...(await original()),
   useSettingsSearchTargetId: () => state.searchTargetId,
-  // The real row reads write permission and overrides from live environment state.
   SettingsRow: (({
     id,
     title,
@@ -145,7 +150,6 @@ vi.mock(import("./settingsLayout"), async (original) => ({
     </div>
   )) as never,
 }));
-// Its own data flows are covered by its suite; this one is about the panel.
 vi.mock(import("./UsageProviderSettings"), async (original) => ({
   ...(await original()),
   UsageProviderSettings: (() => null) as never,
@@ -218,6 +222,7 @@ async function setup() {
   state.canManageProviders = true;
   state.canWriteSettings = true;
   state.searchTargetId = null;
+  state.providerAuth = null;
   state.readEnvironmentIds = [];
   state.updateEnvironmentIds = [];
   state.mutationEnvironmentIds = [];
@@ -303,5 +308,52 @@ describe("EnvironmentProviderSettings routing", () => {
       environmentId,
       input: { instanceId, elicitationId: action.elicitationId },
     });
+  });
+
+  it("lets a signed-out managed Codex account switch to the existing CLI", async () => {
+    await setup();
+    const codex = ProviderDriverKind.make("codex");
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: {
+          driver: codex,
+          enabled: true,
+          config: { enabled: true, setupMode: "managed" },
+        },
+      },
+    };
+    state.providerAuth = {
+      instanceId: codexId,
+      phase: "idle",
+      flowId: null,
+      authorizationUrl: null,
+      expiresAt: null,
+      message: null,
+      methods: [{ id: "chatgpt-profile:work", name: "Work", description: null, type: "agent" }],
+    };
+    await setProviders([
+      {
+        ...provider(),
+        auth: { status: "unauthenticated" },
+        setup: { canAuthenticate: true, canInstall: true },
+      },
+    ]);
+    await using _screen = await render(panel({ targetInstanceId: codexId }));
+    await expect.element(page.getByRole("button", { name: "Reconnect account" })).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Use existing CLI" }).element());
+
+    expect(state.mutateProviderInstance).toHaveBeenCalledWith(
+      {
+        operation: "upsert",
+        instanceId: codexId,
+        instance: {
+          driver: codex,
+          enabled: true,
+          config: { enabled: true, setupMode: "existing" },
+        },
+      },
+      {},
+    );
   });
 });
