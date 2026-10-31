@@ -1328,7 +1328,10 @@ describe("composerDraftUserContentSignature", () => {
       },
       {
         ...draft,
-        environmentContexts: draft.environmentContexts.map((entry) => ({ ...entry, label: "After" })),
+        environmentContexts: draft.environmentContexts.map((entry) => ({
+          ...entry,
+          label: "After",
+        })),
       },
     ];
     for (const edited of edits) expect(composerDraftUserContentSignature(edited)).not.toBe(before);
