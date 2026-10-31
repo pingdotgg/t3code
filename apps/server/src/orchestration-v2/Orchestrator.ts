@@ -538,6 +538,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "queued-run.reorder":
     case "queued-run.cancel":
     case "queued-run.edit":
+    case "queued-run.editing":
     case "runtime-request.respond":
     case "runtime-request.delivery.fail":
     case "thread.user-input.dismiss":
@@ -1620,6 +1621,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
         return;
       }
+      // After the pause checks, so a failure during the edit still pauses the queue.
+      if (options?.queuedRunId === undefined && storedQueuedRun.editing === true) return;
       // Move queued ordinals after runs that started while they waited to preserve transcript and checkpoint order.
       // Started runs have prompts; cancelled queued messages do not.
       const newerRunIds = projection.runs
@@ -9740,6 +9743,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
   });
 
+  const dispatchQueuedRunEditing = Effect.fn("Orchestrator.dispatchQueuedRunEditing")(function* (
+    command: Extract<OrchestrationV2Command, { readonly type: "queued-run.editing" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const projection = yield* projectionStore
+      .getThreadRecords(command.threadId, ["runs"])
+      .pipe(Effect.mapError(() => new OrchestratorProjectionError({ threadId: command.threadId })));
+    const queuedRun = projection.runs.find((candidate) => candidate.id === command.runId);
+    if (queuedRun === undefined || queuedRun.status !== "queued") {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Run ${command.runId} is not queued.`,
+      });
+    }
+    if ((queuedRun.editing === true) === command.editing) return;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "run.updated",
+      threadId: command.threadId,
+      runId: queuedRun.id,
+      ...(queuedRun.rootNodeId === null ? {} : { nodeId: queuedRun.rootNodeId }),
+      providerInstanceId: queuedRun.providerInstanceId,
+      occurredAt: yield* DateTime.now,
+      payload: { ...queuedRun, editing: command.editing },
+    });
+  });
+
   const subagentCount = (threadId: ThreadId) =>
     projectionStore
       .getSubagentCount(threadId)
@@ -13151,7 +13184,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             runId: run.id,
             providerInstanceId: run.providerInstanceId,
             occurredAt: now,
-            payload: { ...run, queueHeld: false },
+            // Also the way out of an edit hold left by a client that went away.
+            payload: { ...run, queueHeld: false, editing: false },
           });
         }
         if (queued.length === 0) {
@@ -13175,6 +13209,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "queued-run.edit":
         yield* dispatchQueuedRunEdit(command, events);
+        break;
+      case "queued-run.editing":
+        yield* dispatchQueuedRunEditing(command, events);
         break;
       case "checkpoint.rollback":
         yield* dispatchCheckpointRollback(command, events, effects);
@@ -13292,7 +13329,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
-      if (command.type === "queue.resume" || command.type === "queued-run.start") {
+      if (
+        command.type === "queue.resume" ||
+        command.type === "queued-run.start" ||
+        (command.type === "queued-run.editing" && !command.editing)
+      ) {
         yield* mapDispatchError(command)(
           startNextQueuedRun(
             command.threadId,
@@ -13439,7 +13480,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         detail: committed.receipt.error ?? "Previously rejected.",
       });
     }
-    if (command.type === "queue.resume" || command.type === "queued-run.start") {
+    if (
+      command.type === "queue.resume" ||
+      command.type === "queued-run.start" ||
+      (command.type === "queued-run.editing" && !command.editing)
+    ) {
       yield* mapDispatchError(command)(
         startNextQueuedRun(
           command.threadId,

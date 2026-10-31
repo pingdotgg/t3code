@@ -247,6 +247,44 @@ it.effect("SQL queue readiness skips held runs without bypassing active work", (
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("SQL and in-memory shells skip queued runs waiting on an open edit", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* addRolledBackRecoveryCandidate("edited-queue");
+    const run = (yield* store.getThreadProjection(threadId)).runs[0]!;
+    const now = yield* DateTime.now;
+    const queued = (suffix: string, ordinal: number, editing: boolean) =>
+      store.apply({
+        id: EventId.make(`edited-queue:${suffix}:${editing}`),
+        type: "run.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          ...run,
+          id: RunId.make(`edited-queue:${suffix}`),
+          ordinal,
+          status: "queued" as const,
+          editing,
+          startedAt: null,
+          completedAt: null,
+        },
+      });
+    const latestRunIds = Effect.gen(function* () {
+      const sql = (yield* store.getShellSnapshot()).threads.find((row) => row.id === threadId)!;
+      const memory = ProjectionStore.threadShellFromProjection(
+        yield* store.getThreadProjection(threadId),
+      );
+      return [sql.latestRunId, memory.latestRunId];
+    });
+    yield* queued("edited", 2, true);
+    yield* queued("behind", 3, false);
+    assert.deepEqual(yield* latestRunIds, [run.id, run.id]);
+    yield* queued("edited", 2, false);
+    const behind = RunId.make("edited-queue:behind");
+    assert.deepEqual(yield* latestRunIds, [behind, behind]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("SQL shells flag only an active turn blocked solely on T3 thread waits", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;

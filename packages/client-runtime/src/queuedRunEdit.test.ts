@@ -21,13 +21,18 @@ function setup(initialRuns: ReadonlyArray<QueuedRunStatus> | null = queued()) {
     label: "test-queued-run-edits",
   });
   const exits: Array<{ threadKey: string; text: string }> = [];
-  const begin = () =>
+  const holds: Array<readonly [RunId, boolean]> = [];
+  const begin = (runId = RUN) =>
     store.begin(
       "env:thread",
-      { runId: RUN, text: "draft" },
-      { runs, onRunLeftQueue: (threadKey, edit) => exits.push({ threadKey, text: edit.text }) },
+      { runId, text: "draft" },
+      {
+        runs,
+        onRunLeftQueue: (threadKey, edit) => exits.push({ threadKey, text: edit.text }),
+        hold: (editing) => holds.push([runId, editing]),
+      },
     );
-  return { registry, runs, store, exits, begin };
+  return { registry, runs, store, exits, holds, begin };
 }
 
 describe("resolveQueuedEditExit", () => {
@@ -83,6 +88,27 @@ describe("makeQueuedRunEditStore", () => {
     registry.set(runs, []);
     expect(exits).toEqual([]);
     expect(store.get("env:thread")).toBeNull();
+  });
+
+  it("holds the edited run on the server until the edit is saved, cancelled or moves on", () => {
+    const OTHER = RunId.make("run-2");
+    const { store, holds, begin } = setup([
+      { id: RUN, status: "queued" },
+      { id: OTHER, status: "queued" },
+    ]);
+    begin();
+    begin(OTHER);
+    store.end("env:thread");
+    begin();
+    store.startSave("env:thread")?.(true);
+    expect(holds).toEqual([
+      [RUN, true],
+      [OTHER, true],
+      [RUN, false],
+      [OTHER, false],
+      [RUN, true],
+      [RUN, false],
+    ]);
   });
 
   it("holds the exit during a save and replays it when the save fails", () => {

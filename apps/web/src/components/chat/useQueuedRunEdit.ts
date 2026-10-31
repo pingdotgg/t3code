@@ -18,6 +18,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import {
   restoreAttachmentOnlyBootstrapPrompt,
   stripAttachmentOnlyBootstrapPrompt,
@@ -256,6 +257,17 @@ export function useQueuedRunEdit(input: {
               get(environmentThreadDetails.quietThreadAtom(threadRef))?.projection.runs ?? null,
           ),
         }),
+        // An older server rejects the hold; the edit then works as before.
+        hold: (editing) =>
+          void runAtomCommand(
+            appAtomRegistry,
+            threadEnvironment.setQueuedRunEditing,
+            {
+              environmentId,
+              input: { threadId: threadRef.threadId, runId: request.runId, editing },
+            },
+            { reportFailure: false },
+          ),
         // The run started or was cancelled from another client. A changed
         // edit moves into the thread's own draft when that draft is empty;
         // otherwise it is dropped. Edits outlive navigation, so the toast is
