@@ -45,6 +45,12 @@ export const AuthAccessReadScope = "access:read" as const;
 export const AuthAccessWriteScope = "access:write" as const;
 export const AuthRelayReadScope = "relay:read" as const;
 export const AuthRelayWriteScope = "relay:write" as const;
+/** Plugin management requires credential administration and permission to execute host code. */
+export const PLUGIN_MANAGEMENT_REQUIRED_SCOPES = [
+  AuthAccessWriteScope,
+  AuthTerminalOperateScope,
+] as const;
+
 export const AuthEnvironmentScope = Schema.Literals([
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,

@@ -1,0 +1,10 @@
+{
+  "id": "test.approvals",
+  "name": "Approvals fixture",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entry": "main.mjs",
+  "capabilities": ["approvals"],
+  "proposedApi": true,
+  "approvals": { "kinds": ["command"], "timeoutSeconds": 30 }
+}

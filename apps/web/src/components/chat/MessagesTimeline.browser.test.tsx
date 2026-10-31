@@ -15,6 +15,7 @@ import {
   ScheduledTaskId,
   ThreadId,
   type OrchestrationV2Subagent,
+  type OrchestrationV2ProjectedTurnItem,
 } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
@@ -140,43 +141,6 @@ function message(
       ...overrides,
     },
   };
-}
-
-function work(id: string, entry: Record<string, unknown>): Entry {
-  return {
-    id,
-    kind: "work",
-    createdAt: CREATED_AT,
-    entry: { id, createdAt: CREATED_AT, ...entry },
-  } as Entry;
-}
-
-function v2Item(type: string, fields: Record<string, unknown>) {
-  const id = (fields.id as string | undefined) ?? type;
-  return {
-    position: 0,
-    visibility: "local",
-    sourceThreadId: "thread-1",
-    sourceItemId: id,
-    item: {
-      id,
-      threadId: "thread-1",
-      runId: "run-1",
-      nodeId: null,
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      parentItemId: null,
-      ordinal: 0,
-      status: "completed",
-      title: null,
-      startedAt: null,
-      completedAt: null,
-      updatedAt: {},
-      type,
-      ...fields,
-    },
-  } as never;
 }
 
 async function renderElement(element: ReactElement, options: { router?: false } = {}) {
@@ -1125,6 +1089,181 @@ describe("compact reasoning math", () => {
       "x^2",
     ]);
   });
+});
+
+function work(id: string, entry: Record<string, unknown>): Entry {
+  return {
+    id,
+    kind: "work",
+    createdAt: CREATED_AT,
+    entry: { id, createdAt: CREATED_AT, ...entry },
+  } as Entry;
+}
+
+function v2Item(type: string, fields: Record<string, unknown>) {
+  const id = (fields.id as string | undefined) ?? type;
+  return {
+    position: 0,
+    visibility: "local",
+    sourceThreadId: "thread-1",
+    sourceItemId: id,
+    item: {
+      id,
+      threadId: "thread-1",
+      runId: "run-1",
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "completed",
+      title: null,
+      startedAt: null,
+      completedAt: null,
+      updatedAt: {},
+      type,
+      ...fields,
+    },
+  } as never;
+}
+
+describe("MessagesTimeline plugin context", () => {
+  it.each([
+    {
+      status: "completed",
+      title: "Added context from Context fixture",
+      output: {
+        context: [{ title: "Project codename", text: "The project codename is PERIWINKLE-42." }],
+      },
+      detail: ["Project codename", "The project codename is PERIWINKLE-42."],
+    },
+    {
+      status: "failed",
+      title: "Context from Context fixture not added",
+      output: { reason: "the notes index is offline" },
+      detail: ["Not added", "the notes index is offline"],
+    },
+  ])(
+    "shows plugin context detail for a $status call after expansion",
+    async ({ status, title, output, detail }) => {
+      const item = {
+        status,
+        title,
+        toolName: "plugin_context",
+        toolSource: { key: "plugin:test.context", name: "Context fixture", kind: "integration" },
+        input: {
+          plugin: {
+            id: "test.context",
+            name: "Context fixture",
+            installationId: "INSTALLATION_INPUT",
+            generation: 3,
+          },
+        },
+        output,
+      };
+      await using screen = await renderTimeline([
+        work(`plugin-context-${status}`, {
+          label: title,
+          tone: "tool",
+          itemType: "dynamic_tool",
+          toolLifecycleStatus: status,
+          structuredPayload: { type: "dynamic_tool", ...item },
+          projectedItem: v2Item("dynamic_tool", item),
+        }),
+      ]);
+      for (const value of detail) expect(screen.text()).not.toContain(value);
+      const accessibleTitle = status === "failed" ? `${title}, tool call failed` : title;
+      await click(screen.button(accessibleTitle));
+      expect(screen.text()).toContain("From Context fixture (test.context)");
+      for (const value of detail) expect(screen.text()).toContain(value);
+      expect(screen.text()).not.toContain("INSTALLATION_INPUT");
+    },
+  );
+});
+
+describe("plugin approval attribution", () => {
+  it.each([
+    {
+      id: "approved",
+      resolution: {
+        decision: "accept" as const,
+        reason: "The proof allows this exact command.",
+      },
+      label: "Approved by plugin Proof policy",
+    },
+    {
+      id: "declined",
+      resolution: {
+        decision: "decline" as const,
+        reason: "The proof forbids this exact command.",
+      },
+      label: "Declined by plugin Proof policy",
+    },
+    { id: "answered", resolution: undefined, label: undefined },
+  ])(
+    "shows the $id approval's plugin attribution and keeps its reason behind expansion",
+    async ({ id, resolution, label }) => {
+      const fixture = makeStreamingTimelineFixture();
+      const source = fixture.visibleTurnItems[0]!;
+      const prompt = `Create ${id}.txt file`;
+      const item: OrchestrationV2ProjectedTurnItem = {
+        ...source,
+        sourceItemId: TurnItemId.make(id),
+        item: {
+          id: TurnItemId.make(id),
+          threadId: source.item.threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: source.item.ordinal,
+          status: resolution?.decision === "decline" ? "cancelled" : "completed",
+          title: null,
+          startedAt: source.item.startedAt,
+          completedAt: source.item.completedAt,
+          updatedAt: source.item.updatedAt,
+          type: "approval_request",
+          requestId: RuntimeRequestId.make(`request-${id}`),
+          requestKind: "command",
+          prompt,
+          ...(resolution
+            ? {
+                resolvedBy: {
+                  _tag: "plugin" as const,
+                  pluginId: "proof.policy",
+                  pluginName: "Proof policy",
+                  ...resolution,
+                },
+              }
+            : {}),
+        },
+      };
+      await using screen = await renderTimeline(
+        deriveTimelineEntriesFromVisibleTurnItems({
+          visibleTurnItems: [item],
+          optimisticMessages: [],
+        }),
+      );
+      const inspector = () =>
+        screen.container.querySelector('[data-v2-item-inspector="approval_request"]');
+      expect(inspector()).toBeNull();
+      if (resolution) expect(screen.text()).not.toContain(resolution.reason);
+      await click(screen.button(label ?? prompt));
+      await vi.waitFor(() => expect(inspector()?.textContent).toContain(prompt));
+      if (resolution) {
+        expect(inspector()?.textContent).toContain(label);
+        expect(inspector()?.textContent).toContain(resolution.reason);
+      } else {
+        expect(inspector()?.textContent).not.toContain("by plugin");
+      }
+      await click(screen.button(label ?? prompt));
+      await vi.waitFor(() => expect(inspector()).toBeNull());
+      if (resolution) expect(screen.text()).not.toContain(resolution.reason);
+    },
+  );
 });
 
 it("renders automatic compaction as one live divider that finishes with its reason and token delta", async () => {
