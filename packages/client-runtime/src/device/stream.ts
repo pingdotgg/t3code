@@ -147,6 +147,7 @@ const SEMU_MAGIC = 0x53454d55;
 const SEMU_HEADER_BYTES = 16;
 const SEMU_FLAG_KEY = 1;
 const SOFT_DECODE_QUEUE = 8;
+const IOS_BACKLOG_RECOVERY_FRAMES = 120;
 // expo-device-hub 0.15.3 serve-emu input.js MAX_TEXT_BYTES limits packets to 300 UTF-8 bytes.
 const ANDROID_MAX_TEXT_BYTES = 300;
 // The pinned hub queue depth is 128; the client does not read queue rejections.
@@ -418,6 +419,9 @@ export function createDeviceStreamClient(
   let mjpeg = false;
   let generation = 0;
   let decoderEpoch = 0;
+  let iosDecoderBacklogs = 0;
+  let iosRecoveryFrames = 0;
+  let iosPreferSoftware = false;
   let frameTimer: ReturnType<typeof setTimeout> | null = null;
   let videoReadTimer: ReturnType<typeof setTimeout> | null = null;
   let mjpegImage: HTMLImageElement | null = null;
@@ -582,8 +586,10 @@ export function createDeviceStreamClient(
       // A new AVCC request starts a fresh capture with a keyframe; there is no MJPEG.
       closeDecoder();
       controller?.abort();
-    } else if (platform === "ios") fallBackToMjpeg();
-    else {
+    } else if (platform === "ios") {
+      if (target.videoOnly) fail("This browser could not decode the Duo panel's video.");
+      else fallBackToMjpeg();
+    } else {
       closeDecoder();
       connecting("Video decoder restarted.");
       requestKeyframe();
@@ -598,6 +604,13 @@ export function createDeviceStreamClient(
           if (videoDecoder === decoder && (!avcc || feedGeneration === videoGeneration)) {
             decodedVideoGeneration = feedGeneration;
             paint(frame, frame.displayWidth, frame.displayHeight);
+            if (
+              platform === "ios" &&
+              iosDecoderBacklogs > 0 &&
+              ++iosRecoveryFrames >= IOS_BACKLOG_RECOVERY_FRAMES
+            ) {
+              iosDecoderBacklogs = 0;
+            }
           }
         } finally {
           frame.close();
@@ -617,7 +630,11 @@ export function createDeviceStreamClient(
     isCurrent = () => !stopped,
   ): Promise<boolean> => {
     const epoch = decoderEpoch;
-    const full: VideoDecoderConfig = { ...config, optimizeForLatency: true };
+    const full: VideoDecoderConfig = {
+      ...config,
+      optimizeForLatency: true,
+    };
+    if (iosPreferSoftware) full.hardwareAcceleration = "prefer-software";
     const support = await VideoDecoder.isConfigSupported(full).catch(() => ({ supported: false }));
     if (!isCurrent() || epoch !== decoderEpoch) return false;
     if (!support.supported) {
@@ -644,6 +661,21 @@ export function createDeviceStreamClient(
       if (!avcc) {
         recoverDecoder();
         return;
+      }
+      if (platform === "ios") {
+        // A fresh keyframe fixes transient lag. Repeated overload with the same
+        // decoder needs software decoding, then MJPEG if that also falls behind.
+        iosRecoveryFrames = 0;
+        if (++iosDecoderBacklogs >= 2) {
+          if (iosPreferSoftware) {
+            if (serveSimOnly) fail("This browser cannot keep up with the device's video.");
+            else if (target.videoOnly)
+              fail("This browser cannot keep up with the Duo panel's video.");
+            else fallBackToMjpeg();
+            return;
+          }
+          iosPreferSoftware = true;
+        }
       }
       // Native IDRs are spaced by frame count, so an idle simulator may take
       // minutes to produce one. A new AVCC subscription forces a fresh IDR.
@@ -1258,6 +1290,9 @@ export function createDeviceStreamClient(
     stopped = false;
     generation++;
     configuring = false;
+    iosDecoderBacklogs = 0;
+    iosRecoveryFrames = 0;
+    iosPreferSoftware = false;
     iosInputAdmitted = false;
     iosInputUnavailable = false;
     connecting();
