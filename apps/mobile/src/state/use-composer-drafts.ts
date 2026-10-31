@@ -381,6 +381,7 @@ export interface ComposerDraftContent {
   readonly context?: OrchestrationMessageContext;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly sourceShareId?: string;
+  readonly sourceShareCreatedAt?: string;
 }
 
 export interface ComposerDraftWorkspaceSelection {
@@ -1644,7 +1645,12 @@ export function mergeComposerDraftContentState(
   content: ComposerDraftContent,
 ): Record<string, ComposerDraft> {
   const existing = normalizeDraft(current[draftKey]);
-  if (content.sourceShareId && existing.importedShareIds?.includes(content.sourceShareId)) {
+  const receipt =
+    content.sourceShareId &&
+    (content.sourceShareCreatedAt
+      ? JSON.stringify([content.sourceShareId, content.sourceShareCreatedAt])
+      : content.sourceShareId);
+  if (receipt && existing.importedShareIds?.includes(receipt)) {
     return current;
   }
   const attachmentIds = new Set(existing.attachments.map((attachment) => attachment.id));
@@ -1661,9 +1667,11 @@ export function mergeComposerDraftContentState(
   );
   const text = mergeComposerDraftText(existing.text, content.text);
   const context = mergeReferencedComposerContext(text, existing.context, content.context);
-  const importedShareIds = content.sourceShareId
-    ? [...(existing.importedShareIds ?? []), content.sourceShareId]
-    : existing.importedShareIds;
+  // Retain the content id for restored routes; the handoff receipt guards duplicate merges.
+  const importedShareIds =
+    content.sourceShareId && receipt
+      ? [...new Set([...(existing.importedShareIds ?? []), content.sourceShareId, receipt])]
+      : existing.importedShareIds;
   if (
     text === existing.text &&
     attachments.length === existing.attachments.length &&
