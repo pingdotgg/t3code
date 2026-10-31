@@ -16261,6 +16261,28 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               event.type === "provider_thread.updated" && event.providerThread.goal === null,
           ),
         );
+        const clearedThread = harness.events.findLast(
+          (event) => event.type === "provider_thread.updated" && event.providerThread.goal === null,
+        );
+        assert.equal(clearedThread?.type, "provider_thread.updated");
+        if (clearedThread?.type !== "provider_thread.updated") return;
+        assert.isTrue(
+          yield* harness.runtime.withRollbackAdmission!(
+            {
+              providerThread: {
+                ...clearedThread.providerThread,
+                goal: { objective: condition, status: "active", checks: 1 },
+              },
+              target: {
+                type: "thread_start",
+                checkpointId: CheckpointId.make("cleared-goal-admission"),
+                appRunOrdinal: 0,
+              },
+              providerThreadTurns: [],
+            },
+            () => Effect.succeed(true),
+          ),
+        );
         assert.isFalse(
           harness.events.some(
             (event) => event.type === "message.updated" && event.message.role === "assistant",

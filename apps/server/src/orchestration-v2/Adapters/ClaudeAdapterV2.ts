@@ -11336,10 +11336,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 const currentTurn = yield* Ref.get(activeTurn);
                 const nativeThreadId = rollbackInput.providerThread.nativeThreadRef?.nativeId;
                 const goal =
-                  nativeThreadId == null
-                    ? rollbackInput.providerThread.goal
-                    : (goalsByNativeThread.get(nativeThreadId) ??
-                      rollbackInput.providerThread.goal);
+                  nativeThreadId != null && goalsByNativeThread.has(nativeThreadId)
+                    ? goalsByNativeThread.get(nativeThreadId)
+                    : rollbackInput.providerThread.goal;
                 if (
                   currentTurn !== null ||
                   goal?.status === "active" ||
