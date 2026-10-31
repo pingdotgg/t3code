@@ -7233,6 +7233,40 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return { node, request, turnItem };
         });
 
+        // Claude withdraws a permission request it no longer needs, for example
+        // when a PermissionRequest hook answered it. Close the request and its
+        // card, which would otherwise wait for an answer nothing reads.
+        const cancelWithdrawnRequest = Effect.fnUntraced(function* (
+          artifacts: Effect.Success<ReturnType<typeof buildApprovalRequestArtifacts>>,
+        ) {
+          const now = yield* DateTime.now;
+          yield* Effect.all(
+            [
+              emitProviderEvent({
+                type: "runtime_request.updated",
+                driver: CLAUDE_PROVIDER,
+                runtimeRequest: { ...artifacts.request, status: "cancelled", resolvedAt: now },
+              }),
+              emitProviderEvent({
+                type: "node.updated",
+                driver: CLAUDE_PROVIDER,
+                node: { ...artifacts.node, status: "cancelled", completedAt: now },
+              }),
+              emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: {
+                  ...artifacts.turnItem,
+                  status: "cancelled",
+                  completedAt: now,
+                  updatedAt: now,
+                },
+              }),
+            ],
+            { concurrency: 1 },
+          );
+        });
+
         const ensureReasoningBlock = Effect.fnUntraced(function* (
           context: ActiveClaudeTurnContext,
           itemId: string,
@@ -9708,6 +9742,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
               ),
             );
+            if (!(yield* Deferred.isDone(answers))) yield* cancelWithdrawnRequest(artifacts);
             return callbackOptions.signal.aborted
               ? ({
                   behavior: "deny",
@@ -9827,6 +9862,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               }),
             ),
           );
+          if (!(yield* Deferred.isDone(decision))) yield* cancelWithdrawnRequest(artifacts);
 
           return permissionResultFromDecision({
             toolName,
