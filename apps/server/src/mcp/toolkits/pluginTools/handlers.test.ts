@@ -13,7 +13,8 @@ import { McpSchema, McpServer } from "effect/ai";
 import * as PluginTools from "../../../plugins/PluginTools.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { liveThreadsLayer } from "../../McpToolAccess.testkit.ts";
+import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
+import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 
 const grants = [{ installationId: PluginInstallationId.make("installation-1"), generation: 3 }];
 const invocation = {
@@ -55,6 +56,10 @@ it.effect(
   "takes grants and thread from the credential and marks the call tool conservatively",
   () => {
     const seen: Array<unknown> = [];
+    let shell = liveThreadShell(invocation.thread.threadId);
+    const threads = Layer.mock(ThreadManagement.ThreadManagementService)({
+      getThreadShell: () => Effect.sync(() => shell),
+    });
     const tools = Layer.mock(PluginTools.PluginTools)({
       list: (granted, options) =>
         Effect.sync(() => {
@@ -151,13 +156,30 @@ it.effect(
       ]);
       expect(outsideList.structuredContent).toEqual({ tools: [], notInThisSession: [] });
       expect(seen).toEqual([]);
+      for (const modes of [
+        { runtimeMode: "approval-required", interactionMode: "default" },
+        { runtimeMode: "auto-accept-edits", interactionMode: "default" },
+        { runtimeMode: "auto", interactionMode: "default" },
+        { runtimeMode: "full-access", interactionMode: "plan" },
+      ] as const) {
+        shell = liveThreadShell(invocation.thread.threadId, modes);
+        const refused = yield* callTool("plugin_tool_call", { tool: "acme.search/lookup" });
+        expect(refused.isError).toBe(true);
+        expect(refused.content).toEqual([
+          {
+            type: "text",
+            text: "Calling a trusted plugin needs a full-access thread in default mode.",
+          },
+        ]);
+        expect(seen).toEqual([]);
+      }
     }).pipe(
       Effect.scoped,
       Effect.provide(
         McpHttpServer.layerPluginToolsToolkit.pipe(
           Layer.provideMerge(McpServer.McpServer.layer),
           Layer.provide(tools),
-          Layer.provide(liveThreadsLayer),
+          Layer.provide(threads),
         ),
       ),
     );
