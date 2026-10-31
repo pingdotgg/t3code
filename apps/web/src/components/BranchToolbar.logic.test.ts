@@ -8,6 +8,7 @@ import {
   resolveEffectiveEnvMode,
   resolveBranchToolbarPrBranch,
   resolveLocalCheckoutBranchMismatch,
+  resolveWorktreeBaseBranchCandidate,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
@@ -252,5 +253,55 @@ describe("sanitizeNewRefName", () => {
   it("does not collapse dashes the user typed", () => {
     expect(sanitizeNewRefName("new - branch")).toBe("new---branch");
     expect(sanitizeNewRefName("foo--bar")).toBe("foo--bar");
+  });
+});
+
+describe("resolveWorktreeBaseBranchCandidate", () => {
+  const ref = (name: string, overrides: Partial<VcsRef> = {}): VcsRef => ({
+    name,
+    current: false,
+    isDefault: false,
+    worktreePath: null,
+    ...overrides,
+  });
+
+  it("waits for the initial ref list", () => {
+    expect(
+      resolveWorktreeBaseBranchCandidate({
+        isInitialBranchesLoadPending: true,
+        refs: [],
+        currentGitBranch: "staging",
+      }),
+    ).toBeNull();
+  });
+
+  it("prefers the default branch", () => {
+    expect(
+      resolveWorktreeBaseBranchCandidate({
+        isInitialBranchesLoadPending: false,
+        refs: [ref("feature", { current: true }), ref("staging", { isDefault: true })],
+        currentGitBranch: "feature",
+      }),
+    ).toBe("staging");
+  });
+
+  it("falls back to the current branch when it is a listed ref", () => {
+    expect(
+      resolveWorktreeBaseBranchCandidate({
+        isInitialBranchesLoadPending: false,
+        refs: [ref("develop", { current: true })],
+        currentGitBranch: "develop",
+      }),
+    ).toBe("develop");
+  });
+
+  it("ignores an unborn HEAD while a clone is still running", () => {
+    expect(
+      resolveWorktreeBaseBranchCandidate({
+        isInitialBranchesLoadPending: false,
+        refs: [],
+        currentGitBranch: "main",
+      }),
+    ).toBeNull();
   });
 });
