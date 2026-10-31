@@ -49,7 +49,10 @@ describe("primary environment HTTP layer", { concurrent: false }, () => {
             wsBaseUrl: "ws://127.0.0.1:3773",
             bootstrapToken: "desktop-bootstrap-token",
           }),
-          getLocalEnvironmentBearerToken: vi.fn().mockResolvedValue("desktop-bearer-token"),
+          getLocalEnvironmentBearerToken: vi
+            .fn()
+            .mockResolvedValueOnce("desktop-bearer-token")
+            .mockResolvedValueOnce("renewed-bearer-token"),
         } as unknown as DesktopBridge,
       },
     });
@@ -60,6 +63,10 @@ describe("primary environment HTTP layer", { concurrent: false }, () => {
       const request = new Request(fetchMock.mock.calls[0]?.[0], fetchMock.mock.calls[0]?.[1]);
       expect(request.credentials).not.toBe("include");
       expect(request.headers.get("authorization")).toBe("Bearer desktop-bearer-token");
+
+      yield* HttpClient.get("http://127.0.0.1:3773/api/connect/link-state");
+      const renewed = new Request(fetchMock.mock.calls[1]?.[0], fetchMock.mock.calls[1]?.[1]);
+      expect(renewed.headers.get("authorization")).toBe("Bearer renewed-bearer-token");
     }).pipe(Effect.provide(PrimaryEnvironmentHttpLayer.layerForCurrentOrigin()));
   });
 });

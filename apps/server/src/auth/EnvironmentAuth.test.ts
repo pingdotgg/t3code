@@ -10,6 +10,8 @@ import {
 } from "@t3tools/shared/dpop";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
+import * as TestClock from "effect/testing/TestClock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -422,6 +424,47 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       expect(session.scopes).toEqual(["orchestration:read"]);
     }).pipe(
       Effect.provide(layerEnvironmentAuth({ desktopBootstrapToken: "desktop-bootstrap-token" })),
+    ),
+  );
+
+  it.effect("renews a legacy desktop bearer after its 30-day session expires", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const first = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        "desktop-bootstrap-token",
+        undefined,
+        requestMetadata,
+      );
+      const firstSession = yield* serverAuth.authenticateHttpRequest(
+        makeBearerRequest(first.access_token),
+      );
+      expect(first.expires_in).toBe(Duration.toSeconds(Duration.days(30)));
+
+      yield* TestClock.adjust(Duration.days(31));
+      const expired = yield* Effect.flip(
+        serverAuth.authenticateHttpRequest(makeBearerRequest(first.access_token)),
+      );
+      expect(expired._tag).toBe("ServerAuthInvalidCredentialError");
+      expect(expired.cause).toMatchObject({ _tag: "SessionTokenExpiredError" });
+
+      const renewed = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        "desktop-bootstrap-token",
+        undefined,
+        requestMetadata,
+      );
+      const renewedSession = yield* serverAuth.authenticateHttpRequest(
+        makeBearerRequest(renewed.access_token),
+      );
+      expect(renewedSession.sessionId).not.toBe(firstSession.sessionId);
+      expect(renewedSession.subject).toBe("desktop-bootstrap");
+      expect(renewedSession.scopes).toEqual(firstSession.scopes);
+    }).pipe(
+      Effect.provide(
+        layerEnvironmentAuth({
+          mode: "desktop",
+          desktopBootstrapToken: "desktop-bootstrap-token",
+        }).pipe(Layer.provideMerge(TestClock.layer())),
+      ),
     ),
   );
 
