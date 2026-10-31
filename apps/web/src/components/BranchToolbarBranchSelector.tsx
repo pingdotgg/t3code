@@ -707,7 +707,13 @@ export function BranchToolbarBranchSelector({
           : undefined
       }
       popupProps={{
-        ...(displayMode === "toolbar" ? { anchor: toolbarAnchorRef } : {}),
+        ...(displayMode === "toolbar"
+          ? {
+              anchor: () =>
+                toolbarAnchorRef.current?.closest<HTMLElement>('[data-slot="composer-shell"]') ??
+                toolbarAnchorRef.current,
+            }
+          : {}),
         align: "start",
         side: displayMode === "panel" ? "right" : "top",
         className: cn("flex flex-col", displayMode === "panel" ? "w-(--anchor-width)" : "w-90"),
