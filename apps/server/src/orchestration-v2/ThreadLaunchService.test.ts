@@ -212,6 +212,7 @@ function makeHarness(options: HarnessOptions = {}) {
       resolveWorktreeBaseRemote: () => Effect.succeed({ remoteName: "origin", branchName: "main" }),
       remoteExists: options.remoteExists ?? (() => Effect.succeed(true)),
       remoteBranchExists: () => Effect.succeed(true),
+      listLocalBranchNames: () => Effect.succeed([]),
       removeWorktree,
       deleteLocalBranch,
       ...options.git,
@@ -1177,6 +1178,34 @@ it.effect("fetches the origin base from the remote it already resolved", () => {
     });
   }).pipe(Effect.provide(harness.layer));
 });
+
+it.effect("suffixes a requested worktree branch that already exists locally", () =>
+  Effect.gen(function* () {
+    const setupStarted = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      git: {
+        listLocalBranchNames: () => Effect.succeed(["main", "jan/ENG-1-fix", "jan/eng-1-fix-2"]),
+      },
+      runSetup: () =>
+        Deferred.succeed(setupStarted, undefined).pipe(Effect.as({ status: "no-script" as const })),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "command:launch:taken-branch",
+          thread: "thread:launch:taken-branch",
+          workspace: { type: "worktree", baseRef: "main", branch: "jan/eng-1-fix" },
+        }),
+      );
+      yield* Deferred.await(setupStarted);
+      assert.equal(harness.createWorktree.mock.calls[0]?.[0]?.newRefName, "jan/eng-1-fix-3");
+      const projection = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(projection.thread.branch, "jan/eng-1-fix-3");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
 
 it.effect("shows the fetch diagnosis when preparing a worktree from origin fails", () => {
   const detail =

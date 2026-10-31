@@ -204,6 +204,19 @@ function failureDetail(error: unknown): string {
   return `Workspace preparation failed: ${error instanceof Error ? error.message : String(error)}`;
 }
 
+// Repeat launches from one Linear issue request the same branch; Linear still links `<name>-2`.
+// Refs collide by case on case-insensitive filesystems, and branch `a` blocks `a/b`.
+function freeBranchName(requested: string, existingBranchNames: readonly string[]): string {
+  const taken = existingBranchNames.map((name) => name.toLowerCase());
+  const isTaken = (candidate: string) => {
+    const lower = candidate.toLowerCase();
+    return taken.some((name) => name === lower || name.startsWith(`${lower}/`));
+  };
+  let candidate = requested;
+  for (let suffix = 2; isTaken(candidate); suffix += 1) candidate = `${requested}-${suffix}`;
+  return candidate;
+}
+
 const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const setupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
@@ -437,6 +450,14 @@ const make = Effect.gen(function* () {
             .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId))))
         ) {
           branch = flattenTemporaryWorktreeBranchName(branch);
+        }
+        if (requestedBranch !== undefined && branch !== null) {
+          branch = freeBranchName(
+            branch,
+            yield* git
+              .listLocalBranchNames(project.workspaceRoot)
+              .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId))),
+          );
         }
         yield* setupTracker.stageStatus(threadId, "checkout", "running");
         const worktree = yield* git
