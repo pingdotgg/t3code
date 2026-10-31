@@ -182,6 +182,60 @@ it.effect("leaves a newer service unchanged during onboarding without prompting"
   }),
 );
 
+const withTerminal = (isTTY: { readonly stdin: boolean; readonly stdout: boolean }) =>
+  Effect.acquireRelease(
+    Effect.sync(() =>
+      (
+        [
+          [process.stdin, isTTY.stdin],
+          [process.stdout, isTTY.stdout],
+        ] as const
+      ).map(([stream, value]) => {
+        const descriptor = Object.getOwnPropertyDescriptor(stream, "isTTY");
+        Object.defineProperty(stream, "isTTY", { configurable: true, value });
+        return { stream, descriptor };
+      }),
+    ),
+    (saved) =>
+      Effect.sync(() => {
+        for (const { stream, descriptor } of saved) {
+          if (descriptor === undefined) Reflect.deleteProperty(stream, "isTTY");
+          else Object.defineProperty(stream, "isTTY", descriptor);
+        }
+      }),
+  );
+
+it.effect.each([
+  { label: "stdin and stdout are", stdin: false, stdout: false },
+  { label: "stdin is", stdin: false, stdout: true },
+  { label: "stdout is", stdin: true, stdout: false },
+])("skips the onboarding service prompt when $label not a terminal", (isTTY) =>
+  Effect.gen(function* () {
+    yield* withTerminal(isTTY);
+    const { service, installOptions } = makeTestService({
+      ...status,
+      installed: false,
+      current: false,
+    });
+    const terminal = Terminal.make({
+      columns: Effect.succeed(80),
+      rows: Effect.succeed(24),
+      readInput: Effect.die("Onboarding must not prompt without a terminal."),
+      readLine: Effect.die("Onboarding must not prompt without a terminal."),
+      display: () => Effect.die("Onboarding must not prompt without a terminal."),
+    });
+
+    const ready = yield* offerServiceDuringOnboarding.pipe(
+      Effect.provideService(BootService.BootService, service),
+      Effect.provideService(Terminal.Terminal, terminal),
+      Effect.provide(NodeServices.layer),
+    );
+
+    expect(ready).toBe("skipped");
+    expect(installOptions).toEqual([]);
+  }),
+);
+
 // regression: #9602 diagnose incomplete headless server setup
 it.effect("keeps the manual-server fallback when background prerequisites fail", () =>
   Effect.gen(function* () {

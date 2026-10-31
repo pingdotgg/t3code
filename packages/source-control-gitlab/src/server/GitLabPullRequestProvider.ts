@@ -1,5 +1,8 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import type {
   PullRequestCapabilities,
   PullRequestReaction,
@@ -72,6 +75,16 @@ export function gitLabViewerPermissions(input: {
   };
 }
 
+/**
+ * One page view asks for the detail and then its checks within a second, and the poll that
+ * follows asks again. A minute keeps those to one `glab` call without hiding a pipeline for long;
+ * a refresh or a finished turn drops it sooner through `forgetChangeRequestReads`.
+ */
+const MERGE_REQUEST_DETAIL_TTL = Duration.minutes(1);
+/** A project's merge methods change in its settings, which nobody does between page views. */
+const PROJECT_MERGE_CAPABILITIES_TTL = Duration.minutes(15);
+const READ_CACHE_CAPACITY = 256;
+
 function gitLabProviderFailure(
   error: GitLabPullRequestCli.GitLabPullRequestCliError,
 ): PullRequestProviderFailure {
@@ -84,6 +97,62 @@ function gitLabProviderFailure(
 
 export const make = Effect.gen(function* () {
   const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+  // Keyed on the checkout as well: `glab` picks the host and the account to answer as from the
+  // checkout's remote and config, so two checkouts may read the same project as different people.
+  const mergeRequestDetails = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd, repository, number, host] = JSON.parse(key) as [string, string, number, string];
+      return cli.getMergeRequestDetail({ cwd, repository, number, host });
+    },
+    {
+      capacity: READ_CACHE_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? MERGE_REQUEST_DETAIL_TTL : Duration.zero),
+    },
+  );
+  const projectMergeCapabilities = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd, repository, host] = JSON.parse(key) as [string, string, string];
+      return cli.getProjectMergeCapabilities({ cwd, repository, host });
+    },
+    {
+      capacity: READ_CACHE_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? PROJECT_MERGE_CAPABILITIES_TTL : Duration.zero),
+    },
+  );
+
+  const detailKey = (input: {
+    readonly cwd: string;
+    readonly host: string;
+    readonly repository: string;
+    readonly number: number;
+  }) => JSON.stringify([input.cwd, input.repository, input.number, input.host]);
+  const mergeRequestDetail = (input: {
+    readonly cwd: string;
+    readonly host: string;
+    readonly repository: string;
+    readonly number: number;
+  }) => Cache.get(mergeRequestDetails, detailKey(input));
+
+  // Dropped on both sides, as the service does with its own reads: a read that starts while the
+  // write is in flight must not outlive it.
+  const writing =
+    <
+      I extends {
+        readonly cwd: string;
+        readonly host: string;
+        readonly repository: string;
+        readonly number: number;
+      },
+      A,
+      E,
+    >(
+      write: (input: I) => Effect.Effect<A, E>,
+    ) =>
+    (input: I): Effect.Effect<A, E> => {
+      const invalidate = Cache.invalidate(mergeRequestDetails, detailKey(input));
+      return invalidate.pipe(Effect.andThen(write(input)), Effect.ensuring(invalidate));
+    };
 
   const fail = (operation: string) => (error: GitLabPullRequestCli.GitLabPullRequestCliError) =>
     new PullRequestProviderError({
@@ -111,18 +180,44 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  // REST omits line counts; the CLI recovers optional stats failures per batch.
+  const mergeRequestWithStats = (
+    input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly repository: string;
+      readonly number: number;
+    },
+    detail = cli.getMergeRequestDetail(input),
+  ) =>
+    Effect.all(
+      [
+        detail,
+        cli.listMergeRequestStats({ cwd: input.cwd, host: input.host, changeRequests: [input] }),
+      ],
+      {
+        concurrency: 2,
+      },
+    ).pipe(
+      Effect.map(([mergeRequest, [stat]]) =>
+        stat === undefined
+          ? mergeRequest
+          : { ...mergeRequest, additions: stat.additions, deletions: stat.deletions },
+      ),
+    );
+
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("gitlab"),
     capabilities: CAPABILITIES,
     unavailableRequirement: UNAVAILABLE_REQUIREMENT,
 
-    getViewer: (input) =>
-      cli.getViewerUsername({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),
+    getViewer: (input) => cli.getViewerUsername(input).pipe(Effect.mapError(fail("getViewer"))),
 
     listChangeRequests: (input) =>
       cli
         .listMergeRequests({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           state: input.state,
           involvement: input.involvement,
@@ -137,8 +232,14 @@ export const make = Effect.gen(function* () {
           Effect.map((batch) => ({ ...batch, continues: true })),
         ),
 
+    getFileStats: (input) =>
+      cli.getMergeRequestFileStats(input).pipe(Effect.mapError(fail("getFileStats"))),
+
+    listChangeRequestStats: (input) =>
+      cli.listMergeRequestStats(input).pipe(Effect.mapError(fail("listChangeRequestStats"))),
+
     getChangeRequestChecks: (input) =>
-      cli.getMergeRequestDetail(input).pipe(
+      mergeRequestDetail(input).pipe(
         Effect.map(({ state, checks }) => ({ state, checks })),
         Effect.mapError(fail("getChangeRequestChecks")),
       ),
@@ -148,13 +249,16 @@ export const make = Effect.gen(function* () {
       cli.getMergeRequestDetail(input).pipe(Effect.mapError(fail("getChangeRequestPreview"))),
 
     getChangeRequestSummary: (input) =>
-      cli.getMergeRequestDetail(input).pipe(Effect.mapError(fail("getChangeRequestSummary"))),
+      mergeRequestWithStats(input).pipe(Effect.mapError(fail("getChangeRequestSummary"))),
 
     getChangeRequest: (input) =>
       Effect.all(
         [
-          cli.getMergeRequestDetail(input),
-          cli.getProjectMergeCapabilities({ cwd: input.cwd, repository: input.repository }),
+          mergeRequestWithStats(input, mergeRequestDetail(input)),
+          Cache.get(
+            projectMergeCapabilities,
+            JSON.stringify([input.cwd, input.repository, input.host]),
+          ),
         ],
         { concurrency: 2 },
       ).pipe(
@@ -209,10 +313,30 @@ export const make = Effect.gen(function* () {
         })),
       ),
 
+    // Straight from the host, never the shared read: this is what a write is refused or let
+    // through on, and access granted or withdrawn within the minute must count.
     getViewerPermissions: (input) =>
       cli
         .getMergeRequestDetail(input)
         .pipe(Effect.mapError(fail("getViewerPermissions")), Effect.map(gitLabViewerPermissions)),
+
+    forgetChangeRequestReads: (scope) =>
+      Cache.keys(mergeRequestDetails).pipe(
+        Effect.flatMap((keys) =>
+          Effect.forEach(
+            Array.from(keys).filter((key) => {
+              if (scope === undefined) return true;
+              const [, repository, number] = JSON.parse(key) as [string, string, number];
+              return (
+                repository.toLowerCase() === scope.repository.toLowerCase() &&
+                (scope.number === undefined || number === scope.number)
+              );
+            }),
+            (key) => Cache.invalidate(mergeRequestDetails, key),
+            { discard: true },
+          ),
+        ),
+      ),
 
     getDiff: (input) => cli.getMergeRequestDiff(input).pipe(Effect.mapError(fail("getDiff"))),
 
@@ -230,6 +354,7 @@ export const make = Effect.gen(function* () {
       cli
         .listReviewerCandidates({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
         })
@@ -237,77 +362,102 @@ export const make = Effect.gen(function* () {
 
     listRepositoryLabels: (input) =>
       cli
-        .listProjectLabels({ cwd: input.cwd, repository: input.repository, search: input.query })
+        .listProjectLabels({
+          cwd: input.cwd,
+          host: input.host,
+          repository: input.repository,
+          search: input.query,
+        })
         .pipe(Effect.mapError(fail("listRepositoryLabels"))),
 
     searchRepositoryAuthors: (input) =>
       cli
-        .listProjectUsers({ cwd: input.cwd, repository: input.repository, search: input.query })
+        .listProjectUsers({
+          cwd: input.cwd,
+          host: input.host,
+          repository: input.repository,
+          search: input.query,
+        })
         .pipe(Effect.mapError(fail("searchRepositoryAuthors"))),
 
-    setReviewerRequest: (input) =>
+    setReviewerRequest: writing((input) =>
       cli
         .setReviewerRequest({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           reviewers: input.reviewers,
           requested: input.requested,
         })
         .pipe(Effect.mapError(fail("setReviewerRequest"))),
+    ),
 
-    runAction: (input) =>
+    runAction: writing((input) =>
       cli
         .runMergeRequestAction({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           action: input.action,
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
         })
         .pipe(Effect.mapError(fail("runAction"))),
+    ),
 
-    updateChangeRequest: (input) =>
+    updateChangeRequest: writing((input) =>
       cli
         .updateMergeRequest({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           ...(input.title === undefined ? {} : { title: input.title }),
           ...(input.body === undefined ? {} : { description: input.body }),
         })
         .pipe(Effect.mapError(fail("updateChangeRequest"))),
+    ),
 
-    comment: (input) => cli.commentOnMergeRequest(input).pipe(Effect.mapError(fail("comment"))),
+    comment: writing((input) =>
+      cli.commentOnMergeRequest(input).pipe(Effect.mapError(fail("comment"))),
+    ),
 
-    updateComment: (input) =>
+    updateComment: writing((input) =>
       cli
         .updateNote({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           noteId: input.commentId,
           body: input.body,
         })
         .pipe(Effect.mapError(fail("updateComment"))),
+    ),
 
-    submitReview: (input) => cli.submitReview(input).pipe(Effect.mapError(fail("submitReview"))),
+    submitReview: writing((input) =>
+      cli.submitReview(input).pipe(Effect.mapError(fail("submitReview"))),
+    ),
 
-    replyToThread: (input) =>
+    replyToThread: writing((input) =>
       cli
         .replyToDiscussion({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           discussionId: input.threadId,
           body: input.body,
         })
         .pipe(Effect.mapError(fail("replyToThread"))),
+    ),
 
-    setReaction: (input) =>
+    setReaction: writing((input) =>
       cli
         .setReaction({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           ...(input.subjectId === undefined ? {} : { noteId: input.subjectId }),
@@ -315,17 +465,20 @@ export const make = Effect.gen(function* () {
           reacted: input.reacted,
         })
         .pipe(Effect.mapError(fail("setReaction"))),
+    ),
 
-    setThreadResolution: (input) =>
+    setThreadResolution: writing((input) =>
       cli
         .setDiscussionResolution({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           discussionId: input.threadId,
           resolved: input.resolved,
         })
         .pipe(Effect.mapError(fail("setThreadResolution"))),
+    ),
   };
 
   return provider;

@@ -698,7 +698,7 @@ describe("AcpRegistrySupport", () => {
     },
   );
 
-  it.effect("installs a tar archive containing a root directory entry", () => {
+  it.effect("installs a tar archive with a root entry and a listing larger than 1 MiB", () => {
     const downloadUrl = "https://registry.test/agent.tar.gz";
     const agent = makeAgent({
       binary: { "linux-x86_64": { archive: downloadUrl, cmd: "./agent" } },
@@ -709,6 +709,14 @@ describe("AcpRegistrySupport", () => {
       const source = `${cacheDir}/source`;
       yield* fileSystem.makeDirectory(source);
       yield* fileSystem.writeFileString(`${source}/agent`, "#!/bin/sh\necho managed\n");
+      // 5,000 long names list past the generic 1 MiB command output cap.
+      const entries = `${source}/entries`;
+      yield* fileSystem.makeDirectory(entries);
+      yield* Effect.forEach(
+        Array.from({ length: 5_000 }, (_, index) => index),
+        (index) => fileSystem.writeFileString(`${entries}/${index}-${"e".repeat(240)}`, ""),
+        { concurrency: 16 },
+      );
       const archivePath = `${cacheDir}/agent.tar.gz`;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const tar = yield* spawner.spawn(
@@ -1532,6 +1540,76 @@ describe("AcpRegistrySupport", () => {
                   new Response(binaryBytes.buffer as ArrayBuffer),
                 ),
               ),
+            );
+          }),
+        ),
+      );
+    });
+  });
+
+  it.effect("resolves an installed agent while another agent's download is still running", () => {
+    const slowArchiveUrl = "https://registry.test/slow-agent.bin";
+    const agent = makeAgent({
+      binary: { "linux-x86_64": { archive: archiveUrl, cmd: "./bin/example-agent" } },
+    });
+    const slowAgent = {
+      ...agent,
+      distribution: {
+        binary: { "linux-x86_64": { archive: slowArchiveUrl, cmd: "./bin/slow-agent" } },
+      },
+      id: "slow-agent",
+      name: "Slow Agent",
+    };
+    const binaryBytes = new TextEncoder().encode("#!/bin/sh\necho example\n");
+    return Effect.gen(function* () {
+      const downloadStarted = yield* Deferred.make<void>();
+      const releaseDownload = yield* Deferred.make<void>();
+      return yield* Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-parallel-install-",
+        });
+        const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        });
+
+        yield* resolver.resolve(settings(), "/workspace");
+
+        const prepareFiber = yield* resolver
+          .prepare({ agentId: slowAgent.id })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(downloadStarted);
+
+        const resolved = yield* resolver.resolve(settings(), "/workspace");
+        expect(resolved.spawn.command).toContain(
+          "/tools/example-agent/1.2.3/linux-x86_64/bin/example-agent",
+        );
+        expect(prepareFiber.pollUnsafe()).toBeUndefined();
+
+        yield* Deferred.succeed(releaseDownload, undefined);
+        expect(yield* Fiber.join(prepareFiber)).toMatchObject({ prepared: true });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerResolver((request) => {
+            if (request.url === registryUrl) {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(JSON.stringify({ version: "1.0.0", agents: [slowAgent, agent] })),
+                ),
+              );
+            }
+            const response = HttpClientResponse.fromWeb(
+              request,
+              new Response(binaryBytes.buffer as ArrayBuffer),
+            );
+            if (request.url !== slowArchiveUrl) return Effect.succeed(response);
+            return Deferred.succeed(downloadStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseDownload)),
+              Effect.as(response),
             );
           }),
         ),
