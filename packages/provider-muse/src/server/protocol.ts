@@ -44,6 +44,7 @@ export const MuseItem = Schema.Struct({
   failureReason: Schema.optional(Schema.String),
   fallbackText: Schema.optional(Schema.String),
   commandText: Schema.optional(Schema.String),
+  statusLine: Schema.optional(Schema.String),
   exitCode: Schema.optional(Schema.Int),
   durationMs: Schema.optional(Schema.Finite),
   subagentId: Schema.optional(Schema.String),

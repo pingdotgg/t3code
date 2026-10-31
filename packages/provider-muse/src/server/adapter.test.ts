@@ -1136,6 +1136,149 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("keeps a yielded command running past its turn and names it in Muse's wake", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const offered =
+        yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        { continuationRequests: { offer: (request) => Deferred.succeed(offered, request) } },
+      );
+      const { nativeId } = yield* startConversation(harness, fake);
+      const bash = (revision: number, status: string, extra: Record<string, unknown> = {}) => ({
+        itemId: "bash-1",
+        kind: "toolCall",
+        tool: "bash",
+        revision,
+        status,
+        turnId: nativeId,
+        args: JSON.stringify({
+          command: "vp test run",
+          description: "Run the test suite",
+          yield_time_ms: 300000,
+        }),
+        ...extra,
+      });
+      const latestRoster = () =>
+        harness.allEvents.findLast((event) => event.type === "provider_thread.updated")
+          ?.providerThread.pendingBackgroundTasks;
+      yield* fake.emit("item/started", { turnId: nativeId, item: bash(1, "inProgress") });
+      yield* fake.emit("item/updated", {
+        turnId: nativeId,
+        item: bash(2, "inProgress", { statusLine: "terminal process running" }),
+      });
+      yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "completed" });
+      assert.strictEqual((yield* harness.takeEvent("turn.terminal")).status, "completed");
+      const bashStatuses = harness.allEvents.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.nativeItemRef?.nativeId === "bash-1"
+          ? [event.turnItem.status]
+          : [],
+      );
+      assert.strictEqual(bashStatuses.at(-1), "running");
+      assert.deepStrictEqual(latestRoster(), [
+        { taskId: "bash-1", kind: "command", awaited: true, description: "Run the test suite" },
+      ]);
+      assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+
+      yield* fake.emit("item/completed", {
+        turnId: nativeId,
+        item: bash(3, "completed", { visibleOutput: "1 passed\n" }),
+      });
+      yield* fake.emit("turn/started", { turnId: "wake-1" });
+      const wake = yield* Deferred.await(offered);
+      assert.deepStrictEqual(wake.notification, {
+        source: { kind: "command" },
+        outcome: "completed",
+        summary: 'Command "Run the test suite" finished',
+      });
+      yield* harness.takeEvent(
+        "turn_item.updated",
+        (event) =>
+          event.turnItem.nativeItemRef?.nativeId === "bash-1" &&
+          event.turnItem.status === "completed",
+      );
+      assert.deepStrictEqual(latestRoster(), []);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("stops Muse's background work on an idle thread without waking the agent", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        { continuationRequests: { offer: (request) => Effect.sync(() => offers.push(request)) } },
+      );
+      const { nativeId, providerTurn } = yield* startConversation(harness, fake);
+      yield* fake.emit("item/updated", {
+        turnId: nativeId,
+        item: {
+          itemId: "bash-1",
+          kind: "toolCall",
+          tool: "bash",
+          revision: 2,
+          status: "inProgress",
+          turnId: nativeId,
+          statusLine: "terminal process running",
+        },
+      });
+      yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "completed" });
+      yield* harness.takeEvent("turn.terminal");
+
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId: providerTurn.id,
+        requestRuntimeRestart: true,
+      });
+      yield* fake.takeCall("task/stopAll");
+      yield* harness.takeEvent(
+        "turn_item.updated",
+        (event) =>
+          event.turnItem.nativeItemRef?.nativeId === "bash-1" &&
+          event.turnItem.status === "interrupted",
+      );
+      assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+
+      // Muse wakes the agent to report the stopped command.
+      yield* fake.emit("turn/started", { turnId: "stop-report" });
+      assert.strictEqual((yield* fake.takeCall("turn/interrupt")).params.turnId, "stop-report");
+      assert.lengthOf(offers, 0);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("stops yielded commands when Stop ends a running turn", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const { nativeId, providerTurn } = yield* startConversation(harness, fake);
+      const stopping = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: providerTurn.id,
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.forkScoped);
+      assert.strictEqual((yield* fake.takeCall("turn/interrupt")).params.turnId, nativeId);
+      yield* fake.takeCall("task/stopAll");
+      yield* fake.emit("turn/started", { turnId: "stop-report" });
+      assert.strictEqual((yield* fake.takeCall("turn/interrupt")).params.turnId, "stop-report");
+      yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "cancelled" });
+      yield* Fiber.join(stopping);
+      assert.strictEqual((yield* harness.takeEvent("turn.terminal")).status, "interrupted");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect.each([
     { when: "after its turn ended", turnEnded: true },
     { when: "while its turn runs", turnEnded: false },

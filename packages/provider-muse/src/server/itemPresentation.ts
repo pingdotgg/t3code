@@ -46,18 +46,27 @@ export function museItemStatus(item: MuseItem): OrchestrationV2TurnItemStatus {
   return "failed";
 }
 
+function toolArgs(item: MuseItem) {
+  if (!item.args) return undefined;
+  try {
+    return decodeToolArgs(item.args);
+  } catch {
+    // Streaming model-authored arguments may not be valid JSON yet.
+    return undefined;
+  }
+}
+
+export function museCommandLabel(item: MuseItem) {
+  const { description, command } = toolArgs(item) ?? {};
+  if (typeof description === "string" && description.trim()) return description;
+  return item.commandText ?? (typeof command === "string" ? command : undefined);
+}
+
 export function museToolPresentation(
   item: MuseItem,
   status = museItemStatus(item),
 ): MuseToolPresentation {
-  let args: Record<string, unknown> | undefined;
-  if (item.args) {
-    try {
-      args = decodeToolArgs(item.args);
-    } catch {
-      // Streaming model-authored arguments may not be valid JSON yet.
-    }
-  }
+  const args = toolArgs(item);
   const stringArg = (...keys: string[]) => {
     for (const key of keys) {
       const value = args?.[key];
