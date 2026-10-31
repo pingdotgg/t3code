@@ -27,13 +27,6 @@ describe("versionSkew", () => {
     expect(
       manualServerUpdateCommand("0.0.45", { kind: "npm-global", prefix: "/opt/maria's node" }),
     ).toBe("npm install --global --prefix '/opt/maria'\\''s node' t3@0.0.45");
-    // npx would otherwise run a newer installed t3 instead of the pinned version.
-    expect(manualServerUpdateCommand("0.0.45", { kind: "npx" }, "linux")).toBe(
-      "T3CODE_USE_NPM=1 npx t3@0.0.45",
-    );
-    expect(manualServerUpdateCommand("0.0.45", { kind: "pnpm-dlx" }, "windows")).toBe(
-      'cmd /c "set T3CODE_USE_NPM=1&& pnpm dlx t3@0.0.45"',
-    );
   });
   beforeEach(() => {
     branding.APP_VERSION = "0.0.34";

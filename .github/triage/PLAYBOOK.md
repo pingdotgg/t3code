@@ -24,7 +24,7 @@ the database.
 
 Its triage CLI version (called "Installed version" in older context files) is only
 the version of the `t3` that ran `t3 triage`. It is often not the build the bug
-happened on: `npx t3 triage` runs an installed `t3` at least as new as npm's, else npm's, while the user may
+happened on: `npx t3 triage` runs whatever `t3` npm resolves, while the user may
 run the desktop app, the background service, or a nightly. The server process line
 gives the local server's version when the server recorded one.
 

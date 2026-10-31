@@ -1,8 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - Effect's file info has no ctime, which a moved-in app keeps.
-import * as NodeFS from "node:fs";
-
 import * as Cause from "effect/Cause";
-import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -35,8 +31,6 @@ export const renderCliShim = (input: {
   readonly target: CliShimTarget;
   readonly shimPath: string;
   readonly t3Home: string;
-  /** Undefined leaves the version line out, so npx never runs this app in place of npm's t3. */
-  readonly version: string | undefined;
 }) => {
   const { target } = input;
   if (target.kind === "windows") {
@@ -77,8 +71,6 @@ export const renderCliShim = (input: {
   const header = [
     "#!/bin/sh",
     `# ${MARKER}`,
-    // The npm launcher reads this to prefer the app's t3 when it is at least as new.
-    ...(input.version === undefined ? [] : [`# T3 Code version: ${input.version}`]),
     `export T3CODE_CLI_PATH=${shellWord(input.shimPath)}`,
     `home=${shellWord(input.t3Home)}`,
     'export T3CODE_HOME="${T3CODE_HOME:-$home}"',
@@ -99,10 +91,9 @@ export const renderCliShim = (input: {
     // Extract-and-run would make the runtime start the app instead of mounting it.
     "unset APPIMAGE_EXTRACT_AND_RUN",
     // The runtime stays mounted until killed; traps unmount it because background jobs ignore Ctrl-C.
-    // 126 means T3 Code could not start, so the npm launcher runs its own copy instead.
-    // `command -p` finds helpers on the system PATH: under npx, PATH starts with a project's
+    // `command -p` finds helpers on the system PATH: in npm scripts, PATH starts with a project's
     // node_modules/.bin, and the CLI below still gets the user's PATH.
-    "work=$(command -p mktemp -d) || exit 126",
+    "work=$(command -p mktemp -d) || exit 1",
     '"$app" --appimage-mount >"$work/mount" 2>/dev/null &',
     "mounter=$!",
     `trap 'kill "$mounter" 2>/dev/null; wait "$mounter" 2>/dev/null; command -p rm -rf "$work"' EXIT`,
@@ -117,7 +108,7 @@ export const renderCliShim = (input: {
     "done",
     // Without FUSE the runtime cannot mount (it prints why and exits); extracting the image still works.
     'if [ -z "$mount" ]; then',
-    '  (cd "$work" && "$app" --appimage-extract >/dev/null) || { echo "Could not open $app." >&2; exit 126; }',
+    '  (cd "$work" && "$app" --appimage-extract >/dev/null) || { echo "Could not open $app." >&2; exit 1; }',
     '  mount="$work/squashfs-root"',
     "fi",
     // The shell must outlive the CLI to unmount, so it forwards TERM and HUP; the terminal sends
@@ -167,22 +158,7 @@ export const install = Effect.gen(function* () {
         }),
         onNone: () => ({ kind: "direct" as const, executable: process.execPath, entry }),
       });
-  // An app replaced on disk while this one runs (an update, or an older app moved in) may not be
-  // this version; the next app to start names its own.
-  const app = target.kind === "appimage" ? target.appImage : process.execPath;
-  const bundle = /^(.*\.app)\//.exec(app)?.[1];
-  const startedAt = (yield* Clock.currentTimeMillis) - process.uptime() * 1000;
-  const replaced = [app, bundle].some(
-    (file) =>
-      file !== undefined &&
-      (NodeFS.statSync(file, { throwIfNoEntry: false })?.ctimeMs ?? 0) > startedAt,
-  );
-  const content = renderCliShim({
-    target,
-    shimPath,
-    t3Home: environment.baseDir,
-    version: replaced ? undefined : environment.appVersion,
-  });
+  const content = renderCliShim({ target, shimPath, t3Home: environment.baseDir });
 
   return yield* Effect.gen(function* () {
     const existing = yield* fs.readFileString(shimPath).pipe(Effect.option);
@@ -197,12 +173,6 @@ export const install = Effect.gen(function* () {
       yield* fs.writeFileString(staging, content, { mode: 0o755 });
       yield* fs.rename(staging, shimPath);
       yield* logInfo("installed t3 launcher", { shimPath });
-    } else {
-      // npx trusts the version line only while the shim is newer than the app it runs.
-      // Any utimes moves the ctime npx compares; the times passed are in seconds. If it fails
-      // (a shim root once wrote), npx only falls back to npm's copy.
-      const now = (yield* Clock.currentTimeMillis) / 1000;
-      yield* fs.utimes(shimPath, now, now).pipe(Effect.ignore);
     }
     return Option.some(shimPath);
   }).pipe(

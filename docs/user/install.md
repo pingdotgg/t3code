@@ -49,9 +49,9 @@ for an independent server.
 To try T3 Code once without installing it, run `npx t3@latest` instead (needs
 Node.js for `npx`). It offers to install the `t3` command first. If you say no,
 it asks again at the next minor release, and `npx t3 install` installs it later.
-When a `t3` at least as new is already installed by the install script,
-`t3 install`, or the desktop app on macOS and Linux, `npx t3` runs that one. Set
-`T3CODE_USE_NPM=1` to run npm's version anyway.
+`npx t3` always runs the version npm picked, even when a `t3` is installed. On
+the nightly train, run your installed `t3` (for example `t3 connect`), not
+`npx t3`, which runs the latest stable release.
 
 ### Intel Macs
 

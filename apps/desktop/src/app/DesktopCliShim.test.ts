@@ -29,10 +29,7 @@ const writeExecutable = (path: string, content: string) => {
 
 const writeShim = (root: string, target: CliShimTarget) => {
   const shim = NodePath.join(root, "bin", "t3");
-  writeExecutable(
-    shim,
-    renderCliShim({ target, shimPath: shim, t3Home: `${root}/home`, version: "1.2.3" }),
-  );
+  writeExecutable(shim, renderCliShim({ target, shimPath: shim, t3Home: `${root}/home` }));
   return shim;
 };
 
@@ -107,8 +104,8 @@ describe("renderCliShim", () => {
   });
 
   it("extracts the AppImage where it cannot be mounted", () => {
-    const { root, shim, appImage } = fakeAppImage(false);
-    // Under npx a project's node_modules/.bin comes first on PATH; the shim's helpers skip it.
+    const { root, shim } = fakeAppImage(false);
+    // In npm scripts a project's node_modules/.bin comes first on PATH; the shim's helpers skip it.
     const projectBin = NodePath.join(root, "project-bin");
     for (const helper of ["mktemp", "head", "sleep", "rm"]) {
       writeExecutable(
@@ -125,9 +122,6 @@ describe("renderCliShim", () => {
     expect(result.stdout).toMatch(
       /squashfs-root\/resources\/app\.asar\/apps\/server\/dist\/bin\.mjs/,
     );
-    // Neither works: 126 tells the npm launcher to run its own copy instead.
-    writeExecutable(appImage, "#!/bin/sh\nexit 1\n");
-    expect(run(shim, ["--version"]).status).toBe(126);
   });
 
   it("keeps the install's T3 home under sudo, unless one is set", () => {
@@ -159,10 +153,6 @@ describe("renderCliShim", () => {
       "setup",
       "",
     ]);
-    // The npm launcher reads these two lines with the same patterns (scripts/npm-launcher/t3.mjs).
-    const script = NodeFS.readFileSync(shim, "utf8");
-    expect(/^# T3 Code version: (\S+)$/m.exec(script)?.[1]).toBe("1.2.3");
-    expect(/^app='(.*)'$/m.exec(script)?.[1]?.replaceAll(`'"'"'`, "'")).toBe(executable);
   });
 
   it("writes a Windows launcher that keeps cmd from reinterpreting paths", () => {
@@ -171,7 +161,6 @@ describe("renderCliShim", () => {
       target: { kind: "windows", executable, entry: "C:\\Apps\\server.asar\\bin.mjs" },
       shimPath: "C:\\Users\\José\\.t3\\bin\\t3.cmd",
       t3Home: "C:\\Users\\José\\.t3",
-      version: "1.2.3",
     });
     const lines = script.split("\r\n");
     expect(lines).toContain("setlocal EnableExtensions DisableDelayedExpansion");

@@ -294,7 +294,7 @@ export const offerCliInstall = Effect.fn("cli.install.offer")(function* <E, R, E
   const platform = yield* HostProcess.Platform;
   const environment = yield* HostProcess.Environment;
   if (!input.interactive || environment.CI || environment.SUDO_USER) return true;
-  if (environment.T3CODE_USE_NPM === "1" || environment.TERM === "dumb") return true;
+  if (environment.TERM === "dumb") return true;
   // `--json=true` and `-y=true` are the same flags.
   if (input.args.some((arg) => SKIPPED_ARGUMENTS.has(arg.split("=")[0]!))) return true;
   const command = topLevelCommand(input.args);

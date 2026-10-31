@@ -202,7 +202,6 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       yield* offer(false, { args: ["status", "--json"] });
       yield* offer(false, { args: ["up", "--yes"] });
       yield* offer(false, { args: ["status", "--json=true"] });
-      yield* offer(false, { env: { T3CODE_USE_NPM: "1" } });
       const globalBin = path.join(root, "global-bin");
       yield* fs.makeDirectory(globalBin);
       yield* fs.writeFileString(path.join(globalBin, "t3"), "");

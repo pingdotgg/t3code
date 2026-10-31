@@ -120,10 +120,7 @@ or `--tailscale-serve`.
 
 If you run the server with `npx` rather than an installed `t3`, there is
 nothing to update on the host: stop the server and relaunch it as
-`T3CODE_USE_NPM=1 npx t3@<client-version>` with the same subcommand and
-options. In PowerShell, run `$env:T3CODE_USE_NPM = "1"; npx t3@<client-version>`,
-and `Remove-Item Env:T3CODE_USE_NPM` afterwards. `T3CODE_USE_NPM=1` keeps npx
-from running a newer installed `t3`.
+`npx t3@<client-version>` with the same subcommand and options.
 
 ## If an update fails
 
