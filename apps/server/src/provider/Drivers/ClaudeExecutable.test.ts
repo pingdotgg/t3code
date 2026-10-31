@@ -18,7 +18,7 @@ function withWindowsResolution(input: {
   return <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.provideService(HostProcess.Platform, "win32"),
-      Effect.provideService(SpawnExecutableResolution, () => input.resolvedCommand),
+      Effect.provideService(SpawnExecutableResolution, async () => input.resolvedCommand),
       Effect.provideService(ClaudeExecutableFileCheck, (filePath) => existing.has(filePath)),
     );
 }

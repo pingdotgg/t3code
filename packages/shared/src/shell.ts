@@ -68,13 +68,13 @@ export type SpawnExecutableResolver = (
   command: string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
-) => string | undefined;
+) => string | undefined | Promise<string | undefined>;
 
-function resolveSpawnExecutableWithNode(
+async function resolveSpawnExecutableWithNode(
   command: string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
-): string | undefined {
+): Promise<string | undefined> {
   const path = platform === "win32" ? NodePath.win32 : NodePath.posix;
   const windowsPathExtensions = platform === "win32" ? resolveWindowsPathExtensions(env) : [];
   const candidates = resolveCommandCandidates(
@@ -83,20 +83,24 @@ function resolveSpawnExecutableWithNode(
     windowsPathExtensions,
     path.extname,
   );
-  const isExecutable = (candidate: string) => {
+  const isExecutable = async (candidate: string) => {
     try {
-      if (!NodeFS.statSync(candidate).isFile()) return false;
+      if (!(await NodeFS.promises.stat(candidate)).isFile()) return false;
       if (platform === "win32") {
         return windowsPathExtensions.includes(path.extname(candidate).toUpperCase());
       }
-      return canExecuteFile(candidate);
+      await NodeFS.promises.access(candidate, NodeFS.constants.X_OK);
+      return true;
     } catch {
       return false;
     }
   };
 
   if (command.includes("/") || command.includes("\\")) {
-    return candidates.find(isExecutable);
+    for (const candidate of candidates) {
+      if (await isExecutable(candidate)) return candidate;
+    }
+    return undefined;
   }
 
   for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
@@ -104,7 +108,7 @@ function resolveSpawnExecutableWithNode(
     if (normalizedPathEntry.length === 0) continue;
     for (const candidate of candidates) {
       const candidatePath = path.join(normalizedPathEntry, candidate);
-      if (isExecutable(candidatePath)) return candidatePath;
+      if (await isExecutable(candidatePath)) return candidatePath;
     }
   }
   return undefined;
@@ -791,18 +795,21 @@ const resolveMacosGit = Effect.fnUntraced(function* (
   const nowNanos = yield* Clock.currentTimeNanos;
   const cached = cache.get(cacheKey);
   // An Xcode update or removal deletes the binary; look again instead of failing the spawn.
-  if (
-    cached !== undefined &&
-    cached.expiresAtNanos > nowNanos &&
-    (cached.resolvedPath === null ||
-      resolveExecutable(cached.resolvedPath, "darwin", env) !== undefined)
-  ) {
-    return cached.resolvedPath ?? "git";
+  if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
+    const cachedPath = cached.resolvedPath;
+    if (
+      cachedPath === null ||
+      (yield* Effect.promise(async () => resolveExecutable(cachedPath, "darwin", env))) !==
+        undefined
+    ) {
+      return cachedPath ?? "git";
+    }
   }
-  const located =
-    resolveExecutable("git", "darwin", env) === MACOS_GIT_SHIM ? locateXcodeGit(env) : undefined;
+  const onPath = yield* Effect.promise(async () => resolveExecutable("git", "darwin", env));
+  const located = onPath === MACOS_GIT_SHIM ? locateXcodeGit(env) : undefined;
   const realGit =
-    located !== undefined && resolveExecutable(located, "darwin", env) !== undefined
+    located !== undefined &&
+    (yield* Effect.promise(async () => resolveExecutable(located, "darwin", env))) !== undefined
       ? located
       : null;
   cacheCommandResolution(cache, cacheKey, realGit, nowNanos);
@@ -840,10 +847,8 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
       shell: false,
     };
   }
-  // The scan is synchronous and runs before every child process, so it shares
-  // the PATH scan cache above. Explicit paths stay uncached for the same reason,
-  // and so do misses: a failed spawn is how providers report "not installed",
-  // and that has to clear the moment the binary appears.
+  // Cache successful PATH lookups. Explicit paths and misses stay uncached so
+  // newly installed executables are discoverable immediately.
   const explicitPath = command.includes("/") || command.includes("\\");
   const cache = yield* CommandResolutionCache;
   const cacheKey = [
@@ -861,7 +866,7 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
   if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
     resolvedExecutable = cached.resolvedPath;
   } else {
-    const found = resolveExecutable(command, platform, env);
+    const found = yield* Effect.promise(async () => resolveExecutable(command, platform, env));
     resolvedExecutable = found === undefined ? null : preferGitForWindowsBinary(found, env);
     if (!explicitPath && resolvedExecutable !== null) {
       cacheCommandResolution(cache, cacheKey, resolvedExecutable, nowNanos);
