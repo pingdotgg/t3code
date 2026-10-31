@@ -59,10 +59,14 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     const terminalFocusOwner = getTerminalFocusOwner();
     if (event.defaultPrevented && terminalFocusOwner === null) return;
     const shortcutContext = input.getShortcutContext(event.target);
+    const command = resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
+      context: shortcutContext,
+    });
 
     if (
       !shortcutContext.terminalFocus &&
       !shortcutContext.modelPickerOpen &&
+      !command &&
       shouldTypeToFocusComposer(event) &&
       input.composerRef.current?.insertTextAtEnd(event.key) === true
     ) {
@@ -71,9 +75,6 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       return;
     }
 
-    const command = resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
-      context: shortcutContext,
-    });
     if (!command) return;
     const run =
       input.commands[command] ??

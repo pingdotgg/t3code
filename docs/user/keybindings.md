@@ -35,6 +35,13 @@ To change effort one step without opening the picker, bind
 Both are unbound by default. Increase wraps from the highest level to the
 lowest, and decrease wraps from the lowest level to the highest.
 
+Outside text fields, editors, terminals, previews, and the model picker,
+`Shift+1` through `Shift+6` select Low, Medium, High, Extra High, Max, and Ultra
+directly. Unsupported levels leave the selection unchanged. `Shift+S` toggles
+Standard and Fast when the selected model supports them. Remap these under
+**Composer: Set Effort** and **Composer: Toggle Standard / Fast Speed** in
+Keybindings. Changes apply to your next message without interrupting a running turn.
+
 In the model picker, press Left in an empty search field or Shift+Tab to reach
 the provider list. Use Up/Down to move and Enter to choose. Right returns to
 model search. `mod+shift+up` and `mod+shift+down` switch providers directly and clear the

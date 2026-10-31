@@ -9,7 +9,14 @@ import {
 } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import {
+  getPromptControlledTraits,
+  getTraitSelectChange,
+  replaceDescriptorCurrentValue,
+  REASONING_SELECT_DESCRIPTOR_IDS,
+} from "@t3tools/client-runtime/model-traits";
+import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
+  buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
@@ -72,6 +79,73 @@ type TraitsRenderInput = {
 
 export function getComposerPromptInjectionState(prompt: string): ComposerPromptInjectionState {
   return isClaudeUltrathinkPrompt(prompt) ? "ultrathink" : "none";
+}
+
+export function getComposerDirectOptionChange(
+  input: ComposerProviderStateInput & {
+    instanceId: ProviderInstanceId;
+    reportedModelSelection?: ModelSelection | null | undefined;
+    prompt: string;
+    effort?: string;
+  },
+) {
+  if (
+    input.provider === "opencode" &&
+    !input.models.some((model) => model.slug === normalizeModelSlug(input.model, input.provider))
+  )
+    return null;
+  const { caps, selections } = resolveComposerOptionSelections(
+    input.models,
+    input.model,
+    input.provider,
+    input.modelOptions,
+    input.planModeEnabled,
+  );
+  const descriptors = getProviderOptionDescriptors({ caps, selections });
+  if (input.effort !== undefined) {
+    const descriptor = descriptors.find(
+      (entry) => entry.type === "select" && REASONING_SELECT_DESCRIPTOR_IDS.has(entry.id),
+    );
+    if (descriptor?.type !== "select") return null;
+    const option = descriptor.options.find((entry) => entry.id === input.effort);
+    if (!option) return null;
+    const change = getTraitSelectChange(
+      { ...getPromptControlledTraits(descriptors, input.prompt), descriptors },
+      descriptor,
+      input.prompt,
+      option.id,
+    );
+    return change ? { ...change, label: `Effort: ${option.label}` } : null;
+  }
+  const descriptor =
+    descriptors.find((entry) => entry.id === "serviceTier") ??
+    descriptors.find((entry) => entry.id === "fastMode" && entry.type === "boolean");
+  if (!descriptor) return null;
+  const current = getProviderOptionCurrentValue(
+    descriptor,
+    { instanceId: input.instanceId, model: input.model, options: selections ?? [] },
+    input.reportedModelSelection,
+  );
+  if (descriptor.type === "boolean") {
+    return {
+      prompt: input.prompt,
+      modelOptions: buildProviderOptionSelectionsFromDescriptors(
+        replaceDescriptorCurrentValue(descriptors, descriptor.id, current !== true),
+      ),
+      label: `Speed: ${current === true ? "Standard" : "Fast"}`,
+    };
+  }
+  const standard = descriptor.options.find((option) => option.id === "default");
+  const fast = descriptor.options.find((option) => option.label === "Fast");
+  if (!standard || !fast) return null;
+  const next = current === fast.id ? standard : fast;
+  return {
+    prompt: input.prompt,
+    modelOptions: buildProviderOptionSelectionsFromDescriptors(
+      replaceDescriptorCurrentValue(descriptors, descriptor.id, next.id),
+    ),
+    label: `Speed: ${next.id === standard.id ? "Standard" : "Fast"}`,
+  };
 }
 
 /** Cursor ACP can default Fast to true; T3 requires a user selection. */

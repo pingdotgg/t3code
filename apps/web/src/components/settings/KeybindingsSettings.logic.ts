@@ -373,6 +373,13 @@ export function commandLabel(command: KeybindingCommand): string {
   if (command === "composer.sendAlternate") return "Composer: Opposite Queue or Steer Action";
   if (command === "composer.sendBackground") return "Composer: Start in Background";
   if (command === "composer.sendAndNewThread") return "Composer: Send and Start New Thread";
+  if (command === "composer.setEffort.low") return "Composer: Set Effort to Low";
+  if (command === "composer.setEffort.medium") return "Composer: Set Effort to Medium";
+  if (command === "composer.setEffort.high") return "Composer: Set Effort to High";
+  if (command === "composer.setEffort.xhigh") return "Composer: Set Effort to Extra High";
+  if (command === "composer.setEffort.max") return "Composer: Set Effort to Max";
+  if (command === "composer.setEffort.ultra") return "Composer: Set Effort to Ultra";
+  if (command === "composer.toggleSpeed") return "Composer: Toggle Standard / Fast Speed";
   if (command === "thread.steerQueuedMessage") return "Queue: Send First Queued Message";
   if (command === "thread.editQueuedMessage") return "Queue: Edit Last Queued Message";
   if (command === "thread.copyReference") return "Pull Request: Copy Link or Thread";

@@ -34,6 +34,15 @@ export const MODEL_PICKER_JUMP_KEYBINDING_COMMANDS = [
 export type ModelPickerJumpKeybindingCommand =
   (typeof MODEL_PICKER_JUMP_KEYBINDING_COMMANDS)[number];
 
+export const COMPOSER_EFFORT_KEYBINDING_COMMANDS = [
+  "composer.setEffort.low",
+  "composer.setEffort.medium",
+  "composer.setEffort.high",
+  "composer.setEffort.xhigh",
+  "composer.setEffort.max",
+  "composer.setEffort.ultra",
+] as const;
+
 const THREAD_KEYBINDING_COMMANDS = [
   "thread.stop",
   "thread.steerQueuedMessage",
@@ -95,6 +104,8 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "composer.effort",
   "composer.increaseEffort",
   "composer.decreaseEffort",
+  ...COMPOSER_EFFORT_KEYBINDING_COMMANDS,
+  "composer.toggleSpeed",
   "composer.mode",
   "composer.workspace",
   "composer.previousWorktree",
