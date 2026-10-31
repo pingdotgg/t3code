@@ -53,6 +53,10 @@ export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (d
     layerSetup,
     NodeSqliteClient.layer({
       filename: dbPath,
+      // A long thread can exceed SQLite's default 2 MiB page cache. Apply these
+      // connection-local limits to the writer and its read-only worker.
+      cacheSizeKiB: 256 * 1024,
+      mmapSizeBytes: 2 * 1024 * 1024 * 1024,
       readerWorker: true,
       // Run checkpoint fsyncs off the event loop so slow disk flushes cannot stall clients.
       checkpointWorker: true,

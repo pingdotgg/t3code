@@ -2,6 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -9,6 +10,9 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
+import type * as Tracer from "effect/Tracer";
+import { readOnly } from "@t3tools/shared/nodeSqliteClient";
 
 import * as SqlitePersistence from "./Sqlite.ts";
 
@@ -93,6 +97,55 @@ it.effect("drops planner statistics a database already has", () => {
       );
     }).pipe(Effect.provide(persistence()));
   }).pipe(
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+  );
+});
+
+it.effect("configures the page cache and mapped reads on both file connections", () => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-cache-"));
+  const dbPath = NodePath.join(tempDir, "state.sqlite");
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE cache_probe(id INTEGER PRIMARY KEY)`;
+    yield* sql`INSERT INTO cache_probe VALUES (1)`;
+    const reference = new NodeSqlite.DatabaseSync(dbPath, { readOnly: true });
+    let expectedMmap;
+    try {
+      expectedMmap = reference.prepare("PRAGMA mmap_size = 2147483648").get()?.mmap_size;
+    } finally {
+      reference.close();
+    }
+    const spans: Array<Tracer.Span> = [];
+    const observe: Statement.Transformer = (statement, _sql, _fiber, span) =>
+      Effect.sync(() => {
+        spans.push(span);
+        return statement;
+      });
+    const probe = Effect.gen(function* () {
+      const cache = yield* sql<{ readonly cache_size: number }>`PRAGMA cache_size`;
+      const mmap = yield* sql<{ readonly mmap_size: number }>`PRAGMA mmap_size`;
+      const data = yield* sql<{ readonly id: number }>`SELECT id FROM cache_probe`;
+      assert.equal(cache[0]?.cache_size, -256 * 1024);
+      // SQLite may clamp the request to its platform-specific compile-time limit.
+      assert.equal(mmap[0]?.mmap_size, expectedMmap);
+      assert.deepEqual(data, [{ id: 1 }]);
+    }).pipe(
+      Effect.provideService(Statement.CurrentTransformer, observe),
+      Effect.provideService(Statement.SpanPropagationEnabled, true),
+    );
+    yield* probe;
+    assert.deepEqual(
+      spans.map((span) => span.attributes.get("db.connection")),
+      ["writer", "writer", "writer"],
+    );
+    spans.length = 0;
+    yield* probe.pipe(readOnly);
+    assert.deepEqual(
+      spans.map((span) => span.attributes.get("db.connection")),
+      ["reader", "reader", "reader"],
+    );
+  }).pipe(
+    Effect.provide(SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer))),
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
   );
 });
