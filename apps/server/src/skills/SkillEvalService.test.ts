@@ -536,7 +536,10 @@ it.effect("freezes task content and an immutable base commit before inserting a 
           taskIds: [taskId],
         }),
       );
-      assert.deepEqual(summary.config.judge, { instanceId: judgeInstanceId, model: "claude-fable-5-1" });
+      assert.deepEqual(summary.config.judge, {
+        instanceId: judgeInstanceId,
+        model: "claude-fable-5-1",
+      });
       assert.deepEqual(summary.config.variantRevisions, { "rule:variant": 2 });
       yield* Deferred.await(launched);
 
@@ -771,13 +774,15 @@ it.effect("resume launches only missing trials from frozen task snapshots", () =
           command.type === "thread.archive"
             ? Ref.update(archived, (current) => [...current, command.threadId])
             : Effect.void,
-        getProjectThreadRecords: (input: {threadId: string}) => Effect.succeed({ thread: { worktreePath: `/worktrees/${input.threadId}` }, runs: [] }),
+        getProjectThreadRecords: (input: { threadId: string }) =>
+          Effect.succeed({ thread: { worktreePath: `/worktrees/${input.threadId}` }, runs: [] }),
       } as unknown as ThreadManagement.ThreadManagementService["Service"]),
       Layer.succeed(GitVcsDriver.GitVcsDriver, {
         statusDetailsRemote: () => Effect.die("base refs are frozen in this test"),
       } as unknown as GitVcsDriver.GitVcsDriver["Service"]),
       Layer.succeed(GitWorkflow.GitWorkflowService, {
-        removeWorktree: (input: {path: string}) => Ref.update(removed, (paths) => [...paths, input.path]),
+        removeWorktree: (input: { path: string }) =>
+          Ref.update(removed, (paths) => [...paths, input.path]),
       } as unknown as GitWorkflow.GitWorkflowService["Service"]),
       Layer.succeed(SkillUsage.SkillUsageService, {
         finalizePending: () => Effect.succeed(0),
@@ -900,7 +905,10 @@ it.effect("resume launches only missing trials from frozen task snapshots", () =
       assert.deepEqual(yield* Ref.get(archived), ["thread:old"]);
       const removedBeforeCancel = yield* Ref.get(removed);
       assert.equal((yield* service.cancel(evalRunId)).status, "cancelled");
-      assert.include((yield* Ref.get(removed)).slice(removedBeforeCancel.length), "/worktrees/thread:control");
+      assert.include(
+        (yield* Ref.get(removed)).slice(removedBeforeCancel.length),
+        "/worktrees/thread:control",
+      );
       assert.deepEqual(yield* Ref.get(archived), ["thread:old", rows[1]?.thread_id ?? ""]);
     }).pipe(Effect.provide(testLayer));
   }),

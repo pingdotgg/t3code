@@ -71,6 +71,7 @@ cannot receive a verdict. Runs with 50–99 tasks must clear the stricter effect
 runs with 100 or more use the standard gate. Prompt-type slices
 are exploratory and do not receive verdicts. Observational usage is confounded and should guide what
 to test, not be read as a controlled comparison.
+
 ## Pin and archive projects
 
 Pinned projects come first in the project pickers: the project picker on a new thread, the

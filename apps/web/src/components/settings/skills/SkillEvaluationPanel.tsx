@@ -865,29 +865,33 @@ export function SkillEvaluationPanel({
         {selectedRunId && runDetail ? <RunDetail detail={runDetail} /> : null}
       </div>
 
-      {taskDialog.open ? <TaskDialog
-        key={taskDialog.task?.taskId ?? "new"}
-        open={taskDialog.open}
-        skillName={skillName}
-        projects={projects}
-        task={taskDialog.task}
-        busy={taskBusy}
-        onOpenChange={(open) => setTaskDialog((current) => ({ ...current, open }))}
-        onMutate={onMutateTask}
-      /> : null}
-      {runDialogOpen ? <StartRunDialog
-        key={`${cell.driver}:${cell.model}`}
-        open={runDialogOpen}
-        skillName={skillName}
-        cell={cell}
-        rules={rules}
-        tasks={tasks}
-        projects={projects}
-        candidateForProject={candidateForProject}
-        busy={runBusy}
-        onOpenChange={setRunDialogOpen}
-        onControl={onControlRun}
-      /> : null}
+      {taskDialog.open ? (
+        <TaskDialog
+          key={taskDialog.task?.taskId ?? "new"}
+          open={taskDialog.open}
+          skillName={skillName}
+          projects={projects}
+          task={taskDialog.task}
+          busy={taskBusy}
+          onOpenChange={(open) => setTaskDialog((current) => ({ ...current, open }))}
+          onMutate={onMutateTask}
+        />
+      ) : null}
+      {runDialogOpen ? (
+        <StartRunDialog
+          key={`${cell.driver}:${cell.model}`}
+          open={runDialogOpen}
+          skillName={skillName}
+          cell={cell}
+          rules={rules}
+          tasks={tasks}
+          projects={projects}
+          candidateForProject={candidateForProject}
+          busy={runBusy}
+          onOpenChange={setRunDialogOpen}
+          onControl={onControlRun}
+        />
+      ) : null}
     </section>
   );
 }

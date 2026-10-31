@@ -164,8 +164,17 @@ const decodeMessage = Schema.decodeUnknownEffect(
 );
 const decodeEvidence = Schema.decodeUnknownEffect(SkillTurnEvidence);
 
+export class SkillUsagePersistenceError extends Schema.TaggedError<SkillUsagePersistenceError>()(
+  "SkillUsagePersistenceError",
+  { operation: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not ${this.operation}.`;
+  }
+}
+
 const persistenceError = (operation: string, cause: unknown) =>
-  new Error(`Could not ${operation}.`, { cause });
+  new SkillUsagePersistenceError({ operation, cause });
 
 const normalizedAvailableSkills = (
   entries: ReadonlyArray<AvailableSkillCatalogEntry>,
@@ -268,18 +277,20 @@ const evidenceFromRow = (row: EvidenceRow) =>
 export class SkillUsageService extends Context.Service<
   SkillUsageService,
   {
-    readonly recordTurnStart: (input: SkillTurnStartInput) => Effect.Effect<void, Error>;
-    readonly finalizeRun: (runId: RunId) => Effect.Effect<boolean, Error>;
-    readonly finalizePending: (limit: number) => Effect.Effect<number, Error>;
+    readonly recordTurnStart: (
+      input: SkillTurnStartInput,
+    ) => Effect.Effect<void, SkillUsagePersistenceError>;
+    readonly finalizeRun: (runId: RunId) => Effect.Effect<boolean, SkillUsagePersistenceError>;
+    readonly finalizePending: (limit: number) => Effect.Effect<number, SkillUsagePersistenceError>;
     readonly listTurns: (
       input: SkillTurnListInput,
-    ) => Effect.Effect<ReadonlyArray<SkillTurnRecord>, Error>;
+    ) => Effect.Effect<ReadonlyArray<SkillTurnRecord>, SkillUsagePersistenceError>;
     readonly activatedOnProviderThread: (
       providerThreadId: ProviderThreadId,
-    ) => Effect.Effect<ReadonlyArray<ActivatedSkillContext>, Error>;
+    ) => Effect.Effect<ReadonlyArray<ActivatedSkillContext>, SkillUsagePersistenceError>;
     readonly observational: (input: {
       readonly skillName: string;
-    }) => Effect.Effect<ReadonlyArray<ObservationalGroupSummary>, Error>;
+    }) => Effect.Effect<ReadonlyArray<ObservationalGroupSummary>, SkillUsagePersistenceError>;
   }
 >()("t3/skills/SkillUsageService") {}
 

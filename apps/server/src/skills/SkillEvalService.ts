@@ -1820,8 +1820,19 @@ const make = Effect.gen(function* () {
     const config = yield* loadRunConfig(yield* loadRunRow(evalRunId));
     yield* Effect.gen(function* () {
       const project = yield* projectFor(config.projectId);
-      yield* cleanupTrialWorktrees({ evalRunId, projectId: config.projectId, projectRoot: project.workspaceRoot });
-    }).pipe(Effect.catchCause((cleanupCause) => Effect.logWarning("Failed to clean skill evaluation worktrees", {evalRunId, cause: cleanupCause})));
+      yield* cleanupTrialWorktrees({
+        evalRunId,
+        projectId: config.projectId,
+        projectRoot: project.workspaceRoot,
+      });
+    }).pipe(
+      Effect.catchCause((cleanupCause) =>
+        Effect.logWarning("Failed to clean skill evaluation worktrees", {
+          evalRunId,
+          cause: cleanupCause,
+        }),
+      ),
+    );
   });
 
   const spawnRun = Effect.fn("SkillEvalService.spawnRun")(function* (evalRunId: SkillEvalRunId) {
@@ -1903,7 +1914,10 @@ const make = Effect.gen(function* () {
     function* (input: { readonly evalRunId: SkillEvalRunId; readonly projectId: ProjectId }) {
       const trials = (yield* loadTrialRows(input.evalRunId)).map(trialFromRow);
       yield* Effect.forEach(
-        trials.filter((trial) => trial.threadId !== null && (trial.status === "running" || trial.status === "cancelled")),
+        trials.filter(
+          (trial) =>
+            trial.threadId !== null && (trial.status === "running" || trial.status === "cancelled"),
+        ),
         (trial) =>
           threadManagement
             .interruptThread({
@@ -1952,7 +1966,11 @@ const make = Effect.gen(function* () {
       if (fiber !== undefined) yield* Fiber.interrupt(fiber);
       yield* interruptTrialThreads({ evalRunId, projectId: config.projectId });
       const project = yield* projectFor(config.projectId);
-      yield* cleanupTrialWorktrees({ evalRunId, projectId: config.projectId, projectRoot: project.workspaceRoot });
+      yield* cleanupTrialWorktrees({
+        evalRunId,
+        projectId: config.projectId,
+        projectRoot: project.workspaceRoot,
+      });
     }
     const { trials: _trials, ...summary } = yield* getRun(evalRunId);
     return summary;

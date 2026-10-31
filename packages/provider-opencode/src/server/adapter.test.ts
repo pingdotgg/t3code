@@ -2838,7 +2838,6 @@ describe("OpenCodeAdapterV2", () => {
       Effect.scoped,
     ),
   );
-
 });
 
 it.effect.each([false, true])(
