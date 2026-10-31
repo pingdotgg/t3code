@@ -1,8 +1,10 @@
 import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
 import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "@t3tools/shared/remote";
 import { readHostedPairingRequest } from "../../hostedPairing";
+import { randomUUID } from "~/lib/utils";
 import {
   type ServerClientSessionRecord,
   type ServerPairingLinkRecord,
@@ -15,6 +17,10 @@ import {
   AuthTerminalOperateScope,
   AuthTerminalReadScope,
   type DesktopBridge,
+  type DesktopGatewayHeader,
+  type DesktopGatewayHeadersInput,
+  DesktopGatewayHeaderSchema,
+  isReservedGatewayHeaderName,
   type DesktopServerExposureState,
   type DesktopSshEnvironmentTarget,
   type DesktopUpdateState,
@@ -279,6 +285,143 @@ export function parseRemotePairingFields(input: {
     throw new Error("Enter a pairing code.");
   }
   return { host, pairingCode };
+}
+
+const isGatewayHeader = Schema.is(DesktopGatewayHeaderSchema);
+
+/** The origin gateway headers are saved for. A bare host means https, as it does when pairing. */
+export function resolveGatewayOrigin(host: string): string {
+  const trimmed = host.trim().replace(/^\/+/u, "");
+  if (trimmed.length === 0) throw new Error("Enter the environment address.");
+  let url: URL;
+  try {
+    url = new URL(/^[a-z][a-z\d+-]*:\/\//iu.test(trimmed) ? trimmed : `https://${trimmed}`);
+  } catch {
+    throw new Error("Enter a valid environment address.");
+  }
+  if (url.protocol === "ws:") url.protocol = "http:";
+  else if (url.protocol === "wss:") url.protocol = "https:";
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("The environment address must use http or https.");
+  }
+  return url.origin;
+}
+
+const CLOUDFLARE_ACCESS_HEADER_NAMES = ["CF-Access-Client-Id", "CF-Access-Client-Secret"] as const;
+
+export interface GatewayHeaderRow {
+  readonly id: string;
+  readonly name: string;
+  readonly value: string;
+}
+
+export interface GatewayHeadersDraft {
+  readonly kind: "cloudflare" | "custom";
+  readonly clientId: string;
+  readonly clientSecret: string;
+  readonly rows: ReadonlyArray<GatewayHeaderRow>;
+}
+
+export function makeGatewayHeaderRow(name = ""): GatewayHeaderRow {
+  return { id: randomUUID(), name, value: "" };
+}
+
+export function isCloudflareAccessHeaderNames(names: ReadonlyArray<string>): boolean {
+  return (
+    names.length === CLOUDFLARE_ACCESS_HEADER_NAMES.length &&
+    CLOUDFLARE_ACCESS_HEADER_NAMES.every((expected) =>
+      names.some((name) => name.toLowerCase() === expected.toLowerCase()),
+    )
+  );
+}
+
+/** Saved values never come back from the desktop app, so a replacement keeps only the names. */
+export function makeGatewayHeadersDraft(
+  savedHeaderNames: ReadonlyArray<string> = [],
+): GatewayHeadersDraft {
+  const cloudflare =
+    savedHeaderNames.length === 0 || isCloudflareAccessHeaderNames(savedHeaderNames);
+  return {
+    kind: cloudflare ? "cloudflare" : "custom",
+    clientId: "",
+    clientSecret: "",
+    rows: cloudflare ? [makeGatewayHeaderRow()] : savedHeaderNames.map(makeGatewayHeaderRow),
+  };
+}
+
+function validateGatewayHeaders(
+  headers: ReadonlyArray<DesktopGatewayHeader>,
+): ReadonlyArray<DesktopGatewayHeader> {
+  const seen = new Set<string>();
+  for (const header of headers) {
+    const { name, value } = header;
+    if (name.length === 0) throw new Error("Enter a name for each header.");
+    if (value.length === 0) throw new Error(`Enter a value for ${name}.`);
+    if (isReservedGatewayHeaderName(name)) throw new Error(`T3 Code sets ${name} itself.`);
+    if (!isGatewayHeader({ name, value: "x" })) {
+      throw new Error(`${name} is not a valid header name.`);
+    }
+    if (!isGatewayHeader(header)) throw new Error(`The value of ${name} has invalid characters.`);
+    if (seen.has(name.toLowerCase())) throw new Error(`${name} is listed twice.`);
+    seen.add(name.toLowerCase());
+  }
+  return headers;
+}
+
+/** Empty when nothing is filled in. Errors name a header but never echo a value. */
+export function gatewayHeadersFromDraft(
+  draft: GatewayHeadersDraft,
+): ReadonlyArray<DesktopGatewayHeader> {
+  if (draft.kind === "custom") {
+    return validateGatewayHeaders(
+      draft.rows
+        .map((row) => ({ name: row.name.trim(), value: row.value.trim() }))
+        .filter((row) => row.name.length > 0 || row.value.length > 0),
+    );
+  }
+  const clientId = draft.clientId.trim();
+  const clientSecret = draft.clientSecret.trim();
+  if (clientId.length === 0 && clientSecret.length === 0) return [];
+  if (clientId.length === 0) throw new Error("Enter the service token's client ID.");
+  if (clientSecret.length === 0) throw new Error("Enter the service token's client secret.");
+  return validateGatewayHeaders([
+    { name: CLOUDFLARE_ACCESS_HEADER_NAMES[0], value: clientId },
+    { name: CLOUDFLARE_ACCESS_HEADER_NAMES[1], value: clientSecret },
+  ]);
+}
+
+/** `origin` is set when replacing a saved origin's headers; otherwise `host` names it. */
+export function resolveGatewayHeadersInput(input: {
+  readonly origin: string | null;
+  readonly host: string;
+  readonly draft: GatewayHeadersDraft;
+}): DesktopGatewayHeadersInput {
+  const origin = input.origin ?? resolveGatewayOrigin(input.host);
+  const headers = gatewayHeadersFromDraft(input.draft);
+  if (headers.length === 0) {
+    throw new Error(
+      input.draft.kind === "cloudflare"
+        ? "Enter the service token's client ID and client secret."
+        : "Add at least one header.",
+    );
+  }
+  return { origin, headers };
+}
+
+/** An https origin on its default port reads as its host. */
+export function formatGatewayOrigin(origin: string): string {
+  const url = new URL(origin);
+  return url.protocol === "https:" ? url.host : origin;
+}
+
+export function formatDesktopBridgeError(error: unknown, fallback: string): string {
+  const rawMessage = error instanceof Error ? error.message : fallback;
+  return (
+    rawMessage
+      .replace(/^Error invoking remote method '[^']+':\s*/u, "")
+      .replace(/^[A-Za-z]+Error:\s*/u, "")
+      .trim() || fallback
+  );
 }
 
 export function formatDesktopSshConnectionError(error: unknown): string {
