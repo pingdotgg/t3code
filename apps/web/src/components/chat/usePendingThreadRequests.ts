@@ -25,6 +25,7 @@ import { useShallow } from "zustand/react/shallow";
 import { type DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { getUploadedAttachments, useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
+import { buildMessageContext } from "../../lib/composerContextRecords";
 import {
   buildPendingUserInputAnswers,
   setPendingUserInputCustomAnswer,
@@ -315,12 +316,7 @@ export function usePendingThreadRequests(input: {
       );
       if ((useQuestionAttachmentPreparation.getState().counts[target] ?? 0) > 0) return;
       const draft = useComposerDraftStore.getState().getComposerDraft(target);
-      providerAnswers[question.id] = projectPendingUserInputAnswer(
-        answers[question.id],
-        draft?.threadContexts ?? [],
-      );
       const attachments = draft ? [...draft.images, ...draft.files] : [];
-      if (attachments.length === 0) continue;
       const uploaded = getUploadedAttachments({ environmentId, images: attachments });
       if (!uploaded) {
         setThreadError(
@@ -329,7 +325,26 @@ export function usePendingThreadRequests(input: {
         );
         return;
       }
-      attachmentsByQuestionId.set(question.id, uploaded as UserInputAttachments[string]);
+      const context = draft
+        ? buildMessageContext({
+            terminalContexts: draft.terminalContexts,
+            reviewComments: draft.reviewComments,
+            previewAnnotations: draft.previewAnnotations,
+            threadContexts: draft.threadContexts,
+            environmentContexts: draft.environmentContexts,
+            attachments: attachments.flatMap((attachment, index) => {
+              const upload = uploaded[index];
+              return upload ? [{ attachment, attachmentId: upload.id }] : [];
+            }),
+          })
+        : undefined;
+      providerAnswers[question.id] = projectPendingUserInputAnswer(
+        answers[question.id],
+        context?.records ?? [],
+      );
+      if (uploaded.length > 0) {
+        attachmentsByQuestionId.set(question.id, uploaded as UserInputAttachments[string]);
+      }
     }
     userInputResponsesInFlight.current.add(responseKey);
 

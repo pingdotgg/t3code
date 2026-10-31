@@ -1,7 +1,11 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { formatInlineContextReference } from "./lib/composerContextReferences";
-import { threadContextReference } from "./lib/composerContextRecords";
+import {
+  reviewCommentContextRecord,
+  reviewCommentContextReference,
+  threadContextReference,
+} from "./lib/composerContextRecords";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 
 import {
@@ -25,6 +29,29 @@ describe("projectPendingUserInputAnswer", () => {
     expect(projectPendingUserInputAnswer(answer, [record])).toBe(
       "Compare [Reference work](t3-thread://v2/env-answer/reference-thread)",
     );
+  });
+
+  // regression: #28022 review comment chips in answers reached the agent as bare links
+  it("sends review comment chips with their comment text and diff", () => {
+    const comment = {
+      id: "comment-1",
+      sectionId: "section-1",
+      sectionTitle: "Working tree",
+      filePath: "docs/file.md",
+      startIndex: 16,
+      endIndex: 16,
+      rangeLabel: "+16",
+      text: "Rename this heading",
+      diff: "+## Old heading",
+    };
+    const answer = `Yes, and ${formatInlineContextReference(reviewCommentContextReference(comment))}`;
+    const projected = projectPendingUserInputAnswer(answer, [
+      record,
+      reviewCommentContextRecord(comment),
+    ]);
+    expect(projected).not.toContain("t3-context://");
+    expect(projected).toContain("Rename this heading");
+    expect(projected).toContain("+## Old heading");
   });
 
   // regression: #18789 answers to pending questions lost exact text and option values

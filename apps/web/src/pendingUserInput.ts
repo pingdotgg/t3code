@@ -1,5 +1,12 @@
-import type { ThreadContextRecord, UserInputQuestion } from "@t3tools/contracts";
-import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import type {
+  ComposerContextRecord,
+  ThreadContextRecord,
+  UserInputQuestion,
+} from "@t3tools/contracts";
+import {
+  projectComposerContextForProvider,
+  replaceComposerContextReferences,
+} from "@t3tools/shared/composerContextReferences";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import {
   buildPendingUserInputAnswers,
@@ -11,15 +18,24 @@ import {
 
 import { collectInlineContextIds } from "./lib/composerContextReferences";
 
+// Answers bypass the server's message-context expansion, so chips are expanded here.
 export function projectPendingUserInputAnswer(
   answer: unknown,
-  threadContexts: ReadonlyArray<ThreadContextRecord>,
+  records: ReadonlyArray<ComposerContextRecord>,
 ) {
-  if (typeof answer !== "string" || threadContexts.length === 0) return answer;
-  const recordsById = new Map(threadContexts.map((record) => [record.contextId, record]));
-  return replaceComposerContextReferences(answer, (reference) => {
-    const record = reference.kind === "thread" ? recordsById.get(reference.contextId) : undefined;
+  if (typeof answer !== "string" || records.length === 0) return answer;
+  const threadsById = new Map(
+    records.flatMap((record) =>
+      record.kind === "thread" && "threadId" in record ? [[record.contextId, record] as const] : [],
+    ),
+  );
+  const linked = replaceComposerContextReferences(answer, (reference) => {
+    const record = threadsById.get(reference.contextId);
     return record ? formatThreadLink(record, reference.label) : reference.source;
+  });
+  return projectComposerContextForProvider({
+    text: linked,
+    records: records.filter((record) => record.kind !== "thread"),
   });
 }
 
