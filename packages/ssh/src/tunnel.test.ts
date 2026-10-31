@@ -1,10 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
@@ -111,12 +113,8 @@ describe("ssh tunnel scripts", () => {
       username: "julius",
       port: 2222,
     } as const;
-    const spawnedCommands: Array<ReadonlyArray<string>> = [];
-    const spawner = ChildProcessSpawner.make((command) =>
-      Effect.sync(() => {
-        spawnedCommands.push(commandArgs(command));
-        return makeSuccessfulProcess('loaded nvm default\n{"remotePort":3774}\n');
-      }),
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(makeSuccessfulProcess('loaded nvm default\n{"remotePort":3774}\n')),
     );
     const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
     const layerProcess = Layer.merge(NodeServices.layer, layerSpawner);
@@ -124,9 +122,93 @@ describe("ssh tunnel scripts", () => {
     return Effect.gen(function* () {
       const result = yield* SshTunnel.launchOrReuseRemoteServer(target, undefined, ARCHIVE);
       assert.equal(result.remotePort, 3774);
-      assert.deepEqual(spawnedCommands[0]?.slice(-5, -1), ["sh", "-l", "-s", "--"]);
     }).pipe(Effect.provide(layerProcess));
   });
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "loads login settings without changing the POSIX bootstrap or its state key",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-login-" });
+        const startupFile = `${directory}/bash-env`;
+        // BASH_ENV checks login mode without replacing or relying on a user's profile.
+        yield* fs.writeFileString(
+          startupFile,
+          "if shopt -q login_shell; then export T3_SSH_LOGIN_ENV=loaded; fi\n",
+        );
+        const target = { alias: "login-test", hostname: "login-test", username: null, port: null };
+        let remoteCommand = "";
+        const capture = ChildProcessSpawner.make((command) =>
+          Effect.sync(() => {
+            const args = commandArgs(command);
+            remoteCommand = args.slice(args.indexOf(target.alias) + 1).join(" ");
+            return makeSuccessfulProcess('{"remotePort":3774}\n');
+          }),
+        );
+        yield* SshTunnel.launchOrReuseRemoteServer(target, undefined, ARCHIVE).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, capture),
+        );
+        yield* fs.writeFileString(
+          `${directory}/.zprofile`,
+          "if [[ -o login ]]; then export T3_SSH_LOGIN_ENV=loaded; fi\n",
+        );
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const cases = [
+          { shell: "/bin/bash", outerShell: "/bin/sh", expected: "loaded" },
+          { shell: "/bin/sh", outerShell: "/bin/sh", expected: "missing" },
+          { shell: "", outerShell: "/bin/sh", expected: "missing" },
+          { shell: "/unavailable/csh", outerShell: "/bin/sh", expected: "missing" },
+          { shell: "/unavailable/tcsh", outerShell: "/bin/sh", expected: "missing" },
+        ];
+        if (yield* fs.exists("/bin/zsh")) {
+          cases.push({ shell: "/bin/zsh", outerShell: "/bin/zsh", expected: "loaded" });
+        }
+        if (yield* fs.exists("/bin/tcsh")) {
+          cases.push({ shell: "/bin/tcsh", outerShell: "/bin/tcsh", expected: "missing" });
+        }
+        for (const { shell, outerShell, expected } of cases) {
+          const child = yield* spawner.spawn(
+            ChildProcess.make(outerShell, ["-c", remoteCommand], {
+              env: {
+                SHELL: shell,
+                BASH_ENV: startupFile,
+                ZDOTDIR: directory,
+                T3_SSH_LOGIN_ENV: "",
+              },
+              stdin: {
+                stream: Stream.make(
+                  new TextEncoder().encode('printf "%s:%s" "${T3_SSH_LOGIN_ENV:-missing}" "$1"'),
+                ),
+                endOnDone: true,
+              },
+            }),
+          );
+          const [stdout, stderr, exitCode] = yield* Effect.all(
+            [
+              child.stdout.pipe(
+                Stream.decodeText(),
+                Stream.runFold(
+                  () => "",
+                  (a, b) => a + b,
+                ),
+              ),
+              child.stderr.pipe(
+                Stream.decodeText(),
+                Stream.runFold(
+                  () => "",
+                  (a, b) => a + b,
+                ),
+              ),
+              child.exitCode,
+            ],
+            { concurrency: "unbounded" },
+          );
+          assert.equal(Number(exitCode), 0, stderr);
+          assert.match(stdout, new RegExp(`^${expected}:[a-f0-9]{16}$`), shell || "unset SHELL");
+        }
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
   it.effect("accepts pretty-printed pairing JSON after remote shell startup noise", () => {
     const target = {
@@ -297,7 +379,7 @@ describe("ssh tunnel scripts", () => {
               }
               return tunnel;
             }
-            if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
+            if (args.includes("-c")) {
               if (isTarget) {
                 launches += 1;
                 remoteRunning = true;
