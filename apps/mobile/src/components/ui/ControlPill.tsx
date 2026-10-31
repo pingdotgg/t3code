@@ -1,5 +1,5 @@
 import { type ComponentProps, type ReactNode, useRef } from "react";
-import { Platform, Pressable, View } from "react-native";
+import { Platform, Pressable, type StyleProp, View, type ViewStyle } from "react-native";
 import { cn } from "../../lib/cn";
 import { SymbolView } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
@@ -17,6 +17,7 @@ export function ControlPill(props: {
   readonly variant?: "circle" | "pill" | "primary" | "danger";
   readonly disabled?: boolean;
   readonly className?: string;
+  readonly style?: StyleProp<ViewStyle>;
 }) {
   const variant = props.variant ?? "circle";
   const { smallIconSize } = useAndroidControlSizing();
@@ -126,6 +127,7 @@ export function ControlPill(props: {
       onPressOut={props.activateOnPressIn ? handlePressOut : undefined}
       disabled={props.disabled}
       className={containerClassName}
+      style={props.style}
     >
       {props.iconNode ? (
         <View className="h-4 w-4 items-center justify-center">{props.iconNode}</View>

@@ -25,9 +25,11 @@ import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { ControlPill } from "../../components/ui/ControlPill";
+import { themeColorWithAlpha } from "../../lib/mobileTheme";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { BrowserPreviewButton } from "../browser/browser-preview-button";
 import { DevicePreviewButton } from "../devices/device-preview-button";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { FloatingWorkingStatus } from "./floating-working-status";
 import { ShimmeringWorkContent } from "./thread-work-log";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
@@ -79,6 +81,11 @@ export function FloatingWorkingControl(props: {
   readonly lift?: SharedValue<number>;
 }) {
   const { width: windowWidth } = useWindowDimensions();
+  const { themeVariables } = useAppearancePreferences();
+  // Nothing blurs behind the fallback pills, so feed text must not show through their fill.
+  const opaqueFallbackFill = {
+    backgroundColor: themeColorWithAlpha(themeVariables["--color-glass-fallback"], 1),
+  };
   const [overlayWidth, setOverlayWidth] = useState(windowWidth);
   const [queueWidth, setQueueWidth] = useState(0);
   const [actionWidth, setActionWidth] = useState(0);
@@ -311,7 +318,7 @@ export function FloatingWorkingControl(props: {
           <Animated.View
             pointerEvents={capsuleInteractive ? "box-none" : "none"}
             className="h-11 items-center justify-center overflow-hidden rounded-full border border-border bg-glass-fallback shadow-md shadow-black/10"
-            style={capsuleStyle}
+            style={[capsuleStyle, opaqueFallbackFill]}
           >
             {capsuleContent}
           </Animated.View>
@@ -326,6 +333,7 @@ export function FloatingWorkingControl(props: {
               accessibilityLabel="Scroll to end"
               activateOnPressIn
               className="h-11 w-11 border border-border bg-glass-fallback shadow-md shadow-black/10"
+              style={opaqueFallbackFill}
               disabled={!props.showScrollToEnd}
               icon={{ ios: "chevron.down", android: "keyboard_arrow_down" }}
               onPress={props.onScrollToEnd}
@@ -346,6 +354,7 @@ export function FloatingWorkingControl(props: {
           accessibilityLabel="Scroll to end"
           activateOnPressIn
           className="h-11 w-11 border border-border bg-glass-fallback shadow-md shadow-black/10"
+          style={opaqueFallbackFill}
           icon={{ ios: "chevron.down", android: "keyboard_arrow_down" }}
           onPress={props.onScrollToEnd}
         />
