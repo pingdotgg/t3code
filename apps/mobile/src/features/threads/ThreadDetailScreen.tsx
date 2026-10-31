@@ -200,6 +200,8 @@ import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
+import { useEnvironmentShellReadiness } from "../../state/shell";
+import { useSettledThreadView } from "./useSettledThreadView";
 
 export interface ThreadDetailScreenProps {
   readonly header?: React.ReactNode;
@@ -1115,14 +1117,16 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     }
   };
   const showContent = props.showContent ?? true;
-  // Showing the thread counts as viewing it, before its live shell arrives too.
-  useAtomMount(
-    threadVisitTracker(
-      showContent && !props.draftMode
-        ? { environmentId: props.environmentId, threadId: props.selectedThread.id }
-        : null,
-    ),
+  // Showing the thread counts as viewing it; after a resume or sync, only once it settles.
+  const shellSynchronizing =
+    useEnvironmentShellReadiness(props.environmentId).status === "synchronizing";
+  const viewedThread = useSettledThreadView(
+    showContent && !props.draftMode
+      ? { environmentId: props.environmentId, threadId: props.selectedThread.id }
+      : null,
+    shellSynchronizing,
   );
+  useAtomMount(threadVisitTracker(viewedThread));
   const layoutVariant = props.layoutVariant ?? "compact";
   const isSplitLayout = layoutVariant === "split";
   const contentMaxWidth =
