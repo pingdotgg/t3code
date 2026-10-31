@@ -25,7 +25,15 @@ import {
   XIcon,
 } from "lucide-react";
 import * as DateTime from "effect/DateTime";
-import { useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
+import {
+  useId,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type Ref,
+} from "react";
 
 import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
@@ -105,6 +113,8 @@ export function QueuedRunsControl({
   const [dropBeforeRunId, setDropBeforeRunId] = useState<RunId | null>(null);
   const [showAll, setShowAll] = useState(false);
   const queueListId = useId();
+  const queueListRef = useRef<HTMLOListElement>(null);
+  const previousRowTops = useRef(new Map<string, number>());
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
   const steerInFlightRef = useRef(false);
   // Run-only acknowledgements can resurrect pending rows after cancellation or startup.
@@ -218,6 +228,26 @@ export function QueuedRunsControl({
     },
   }));
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- animates queue rows from their previous layout after a drag preview or persisted reorder
+  useLayoutEffect(() => {
+    const nextTops = new Map<string, number>();
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    for (const row of queueListRef.current?.querySelectorAll<HTMLElement>("[data-queue-key]") ??
+      []) {
+      const key = row.dataset.queueKey!;
+      const nextTop = row.offsetTop;
+      const previousTop = previousRowTops.current.get(key);
+      nextTops.set(key, nextTop);
+      if (!reducedMotion && previousTop !== undefined && previousTop !== nextTop) {
+        row.animate(
+          [{ transform: `translateY(${previousTop - nextTop}px)` }, { transform: "translateY(0)" }],
+          { duration: 160, easing: "ease-out" },
+        );
+      }
+    }
+    previousRowTops.current = nextTops;
+  });
+
   if (items.length === 0) return null;
 
   const remove = async (runId: RunId) => {
@@ -229,8 +259,16 @@ export function QueuedRunsControl({
     setBusyRunId(null);
   };
 
+  const previewItems = [...items];
+  const draggedIndex = previewItems.findIndex((item) => item.runId === draggedRunId);
+  if (draggedRunId !== null && draggedIndex >= 0) {
+    const [dragged] = previewItems.splice(draggedIndex, 1);
+    const beforeIndex = previewItems.findIndex((item) => item.runId === dropBeforeRunId);
+    previewItems.splice(beforeIndex < 0 ? previewItems.length : beforeIndex, 0, dragged!);
+  }
   const collapsible = items.length > QUEUE_VISIBLE_ROWS;
-  const visibleItems = collapsible && !showAll ? items.slice(0, QUEUE_VISIBLE_ROWS - 1) : items;
+  const visibleItems =
+    collapsible && !showAll ? previewItems.slice(0, QUEUE_VISIBLE_ROWS - 1) : previewItems;
 
   return (
     <section
@@ -264,7 +302,7 @@ export function QueuedRunsControl({
       <span className="sr-only" aria-live="polite">
         {items.length} queued
       </span>
-      <ol className="flex flex-col" id={queueListId}>
+      <ol ref={queueListRef} className="flex flex-col" id={queueListId}>
         {visibleItems.map((item, position) => {
           const previewText = isAttachmentOnlyBootstrapPrompt(item.text)
             ? ""
@@ -277,6 +315,7 @@ export function QueuedRunsControl({
           return (
             <li
               key={item.key}
+              data-queue-key={item.key}
               aria-label={`Queued message ${position + 1} of ${items.length}, not sent`}
               aria-posinset={position + 1}
               aria-setsize={items.length}
@@ -284,7 +323,6 @@ export function QueuedRunsControl({
               className={cn(
                 "group/queued flex min-h-7 w-full min-w-0 items-center gap-1 rounded-control px-1 text-dim-foreground hover:bg-foreground/5 hover:text-muted-foreground focus-within:text-muted-foreground",
                 draggedRunId === item.runId && "bg-foreground/8 shadow-md",
-                draggedRunId !== null && dropBeforeRunId === item.runId && "border-t border-ring",
               )}
               onDragOver={(event) => {
                 if (draggedRunId && item.runId !== draggedRunId) {
@@ -310,8 +348,9 @@ export function QueuedRunsControl({
                   if (!item.runId) return;
                   event.dataTransfer.setData("text/plain", item.runId);
                   event.dataTransfer.effectAllowed = "move";
+                  setShowAll(true);
                   setDraggedRunId(item.runId);
-                  setDropBeforeRunId(null);
+                  setDropBeforeRunId(items[position + 1]?.runId ?? null);
                 }}
                 onDragEnd={() => {
                   setDraggedRunId(null);
