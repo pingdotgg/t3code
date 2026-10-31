@@ -38,6 +38,7 @@ vi.mock(import("../../state/environments"), async (original) => ({
         connection: { phase: "connected", error: null, traceId: null },
         refusedRouteIds: [],
         serverConfig: null,
+        pausedByFocus: false,
       },
     ],
     presentationById: new Map(),

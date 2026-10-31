@@ -14,6 +14,7 @@ function connectingEnvironment(
     displayUrl: "",
     isRelayManaged: false,
     isEnabled: true,
+    isPausedByFocus: false,
     connectionState,
     connectionError,
     connectionErrorTraceId: null,

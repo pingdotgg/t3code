@@ -207,6 +207,7 @@ function setup() {
           },
           connection: { phase: "connected", error: null, traceId: null },
           refusedRouteIds: [],
+          pausedByFocus: false,
           serverConfig: null,
         },
       ]),
