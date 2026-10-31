@@ -620,7 +620,12 @@ function ShortcutGrid({
   }>;
 }) {
   return (
-    <div className={cn("grid grid-cols-1 gap-6 sm:grid-cols-2", groups.length > 3 ? "md:grid-cols-4" : "md:grid-cols-3")}>
+    <div
+      className={cn(
+        "grid grid-cols-1 gap-6 sm:grid-cols-2",
+        groups.length > 3 ? "md:grid-cols-4" : "md:grid-cols-3",
+      )}
+    >
       {groups.map((group) => (
         <div key={group.label} className="flex min-w-0 flex-col gap-2">
           <div className="text-meta text-dim-foreground">{group.label}</div>
@@ -630,12 +635,12 @@ function ShortcutGrid({
               <div className="flex max-w-full flex-wrap gap-1">
                 {row.chords.map((chord) => (
                   <Kbd key={chord.modifiers}>
-                  <span key={chord.modifiers} className="flex items-center gap-1">
-                    {chord.modifiers ? <span>{chord.modifiers}</span> : null}
-                    {chord.keys.map((key) => (
-                      <span key={key}>{key}</span>
-                    ))}
-                  </span>
+                    <span key={chord.modifiers} className="flex items-center gap-1">
+                      {chord.modifiers ? <span>{chord.modifiers}</span> : null}
+                      {chord.keys.map((key) => (
+                        <span key={key}>{key}</span>
+                      ))}
+                    </span>
                   </Kbd>
                 ))}
               </div>

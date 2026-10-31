@@ -19,7 +19,14 @@ import {
   SquareTerminal,
   XIcon,
 } from "lucide-react";
-import { memo, useLayoutEffect, useRef, type ReactNode, type ComponentType, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  memo,
+  useLayoutEffect,
+  useRef,
+  type ReactNode,
+  type ComponentType,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 
 import {
   selectThreadRightPanelState,
@@ -84,10 +91,14 @@ export function LayoutPaneTabStrip({ children }: { children: ReactNode }) {
       else if (rect.right > bounds.right) strip.scrollLeft += rect.right - bounds.right;
     };
     const wheel = (event: WheelEvent) => {
-      if (event.ctrlKey || event.metaKey || event.altKey || strip.scrollWidth <= strip.clientWidth) return;
+      if (event.ctrlKey || event.metaKey || event.altKey || strip.scrollWidth <= strip.clientWidth)
+        return;
       event.preventDefault();
       event.stopPropagation();
-      strip.scrollLeft += wheelDeltaPx(Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY, event);
+      strip.scrollLeft += wheelDeltaPx(
+        Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY,
+        event,
+      );
     };
     setWheelScroller(strip, () => strip.scrollWidth > strip.clientWidth);
     strip.addEventListener("wheel", wheel, { passive: false });
@@ -99,7 +110,15 @@ export function LayoutPaneTabStrip({ children }: { children: ReactNode }) {
       strip.removeEventListener("wheel", wheel);
     };
   }, [tabId]);
-  return <div ref={stripRef} data-layout-tab-strip="" className="flex min-w-0 items-center gap-1 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">{children}</div>;
+  return (
+    <div
+      ref={stripRef}
+      data-layout-tab-strip=""
+      className="flex min-w-0 items-center gap-1 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+    >
+      {children}
+    </div>
+  );
 }
 
 /**

@@ -95,12 +95,24 @@ export function closeLayoutTabByUser(tabId: string, options: { bulk?: boolean } 
   }
   if (location && tab?.content.kind === "chat") {
     const target = tab.content.target;
-    const draft = target.kind === "draft" ? useComposerDraftStore.getState().getDraftSession(target.draftId) : null;
-    const threadRef = target.kind === "server" ? target.threadRef : draft ? draft.promotedTo ?? scopeThreadRef(draft.environmentId, draft.threadId) : null;
-    if (threadRef) useClosedViewStore.getState().remember({
-      kind: "chat", threadRef, paneId: location.pane.id, index: location.tabIndex,
-      ...(target.kind === "draft" ? { draftId: target.draftId } : {}),
-    });
+    const draft =
+      target.kind === "draft"
+        ? useComposerDraftStore.getState().getDraftSession(target.draftId)
+        : null;
+    const threadRef =
+      target.kind === "server"
+        ? target.threadRef
+        : draft
+          ? (draft.promotedTo ?? scopeThreadRef(draft.environmentId, draft.threadId))
+          : null;
+    if (threadRef)
+      useClosedViewStore.getState().remember({
+        kind: "chat",
+        threadRef,
+        paneId: location.pane.id,
+        index: location.tabIndex,
+        ...(target.kind === "draft" ? { draftId: target.draftId } : {}),
+      });
   }
   store.closeTabByUser(tabId);
 }

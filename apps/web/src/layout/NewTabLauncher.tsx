@@ -294,19 +294,24 @@ function NewTabLauncherBody({
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (!activeRef.current || event.defaultPrevented || isModalDialogOpen()) return;
-      const action = threadKeyAction(resolveShortcutCommand(event, appAtomRegistry.get(primaryServerKeybindingsAtom)));
+      const action = threadKeyAction(
+        resolveShortcutCommand(event, appAtomRegistry.get(primaryServerKeybindingsAtom)),
+      );
       if (action === null) return;
       event.preventDefault();
       event.stopPropagation();
       if (!event.repeat) action();
     };
-    return registerCommands({}, {
-      capture: true,
-      onKeyDown: (event) => {
-        handler(event);
-        return event.defaultPrevented;
+    return registerCommands(
+      {},
+      {
+        capture: true,
+        onKeyDown: (event) => {
+          handler(event);
+          return event.defaultPrevented;
+        },
       },
-    });
+    );
   }, []);
 
   return (
