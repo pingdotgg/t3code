@@ -1932,13 +1932,15 @@ code {
   list-style-type: disc;
 }
 
-/* --list-gutter defaults to the same 1.25rem as .chat-markdown ul, but
-   ChatMarkdown's `ol` renderer widens it (via inline style) for lists whose
-   widest marker has multiple characters so it isn't clipped by list-style-position:
-   outside painting the marker past the padding box. Reset it here too so a
-   nested ol without its own widened marker doesn't inherit the outer one. */
+/* list-style-position: outside paints the marker past the padding box, so the
+   gutter must fit a single-digit marker like `1. `, which takes 3ch in a
+   monospace font. CSS cannot measure the marker, so proportional fonts get the
+   same 3ch. ChatMarkdown's `ol` renderer widens it (via inline style) for lists
+   whose widest marker has multiple characters. Setting it here also resets a
+   nested ol without its own widened marker so it doesn't inherit the outer
+   one; `ch` resolves against each list's own font. */
 :is(.chat-markdown, .composer-tiptap) ol {
-  --list-gutter: 1.25rem;
+  --list-gutter: max(1.25rem, 3ch);
   padding-inline-start: var(--list-gutter, 1.25rem);
   list-style-type: decimal;
 }
@@ -1955,10 +1957,6 @@ code {
 
 /* The prompt font and size can differ from the interface, so its gutter must
    also follow the prompt's font metrics. */
-.composer-tiptap ol {
-  --list-gutter: max(1.25rem, 3ch);
-}
-
 .composer-tiptap ol:has(> li[data-marker-width="3"]) {
   --list-gutter: max(1.25rem, 4ch);
 }
