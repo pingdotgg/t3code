@@ -69,6 +69,78 @@ const catalogFromManifest = (data: ModelManifestData) =>
   resolveClaudeModelCatalog(resolveProviderCatalog(data, CLAUDE) ?? undefined);
 
 describe("Claude model catalog", () => {
+  it("opts custom routes into 1M without assuming their default context window", () => {
+    const catalog = scopeClaudeModelCatalog(catalogFromManifest(manifest()), [
+      "bare-route",
+      {
+        slug: "gateway-route",
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "contextWindow",
+              label: "Context Window",
+              type: "select",
+              options: [
+                { id: "default", label: "Provider default", isDefault: true },
+                { id: "1m", label: "1M" },
+                { id: "constructor", label: "Unmapped" },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+    const selection = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "gateway-route",
+    };
+    assert.strictEqual(resolveClaudeCatalogApiModelId(catalog, selection), "gateway-route");
+    assert.isUndefined(resolveClaudeCatalogContextWindowTokens(catalog, selection));
+    const unmapped = { ...selection, options: [{ id: "contextWindow", value: "constructor" }] };
+    assert.strictEqual(resolveClaudeCatalogApiModelId(catalog, unmapped), "gateway-route");
+    assert.isUndefined(resolveClaudeCatalogContextWindowTokens(catalog, unmapped));
+    const expanded = { ...selection, options: [{ id: "contextWindow", value: "1m" }] };
+    assert.strictEqual(resolveClaudeCatalogApiModelId(catalog, expanded), "gateway-route[1m]");
+    assert.strictEqual(resolveClaudeCatalogContextWindowTokens(catalog, expanded), 1_000_000);
+    const reset = { ...selection, options: [{ id: "contextWindow", value: "default" }] };
+    assert.strictEqual(resolveClaudeCatalogApiModelId(catalog, reset), "gateway-route");
+    assert.isUndefined(resolveClaudeCatalogContextWindowTokens(catalog, reset));
+    const undeclared = { ...expanded, model: "bare-route" };
+    assert.strictEqual(resolveClaudeCatalogApiModelId(catalog, undeclared), "bare-route");
+    assert.isUndefined(resolveClaudeCatalogContextWindowTokens(catalog, undeclared));
+  });
+
+  it("preserves already tagged custom routes and ignores unrecognized context choices", () => {
+    const catalog = scopeClaudeModelCatalog(catalogFromManifest(manifest()), [
+      {
+        slug: "gateway-route[1m]",
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "contextWindow",
+              label: "Context Window",
+              type: "select",
+              options: [
+                { id: "default", label: "Provider default", isDefault: true },
+                { id: "1m", label: "1M" },
+                { id: "large", label: "Large" },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+    for (const value of ["default", "1m", "large"]) {
+      const selection = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "gateway-route[1m]",
+        options: [{ id: "contextWindow", value }],
+      };
+      assert.strictEqual(resolveClaudeCatalogApiModelId(catalog, selection), "gateway-route[1m]");
+      assert.strictEqual(resolveClaudeCatalogContextWindowTokens(catalog, selection), 1_000_000);
+    }
+  });
+
   it("resolves capacity from selected options and fixed catalog windows without guessing custom models", () => {
     const source = manifest();
     const profile = source.providers!.claudeAgent!.profiles.synthetic!;

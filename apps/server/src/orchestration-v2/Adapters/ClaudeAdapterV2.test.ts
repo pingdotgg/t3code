@@ -128,6 +128,33 @@ const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 const AUTO_COMPACT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
   autoCompactWindow: "300000",
 });
+const CUSTOM_CONTEXT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
+  customModels: [
+    {
+      slug: "gateway-route",
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "contextWindow",
+            label: "Context Window",
+            type: "select",
+            options: [
+              { id: "default", label: "Provider default", isDefault: true },
+              { id: "1m", label: "1M" },
+            ],
+          },
+          { id: "thinking", label: "Thinking", type: "boolean" },
+          {
+            id: "effort",
+            label: "Reasoning",
+            type: "select",
+            options: [{ id: "high", label: "High", isDefault: true }],
+          },
+        ],
+      },
+    },
+  ],
+});
 const CUSTOM_MODEL_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
   customModels: [
     "opus",
@@ -5782,6 +5809,84 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     );
   });
 
+  it.effect("keeps custom context accounting and query reuse aligned with explicit options", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        settings: CUSTOM_CONTEXT_CLAUDE_SETTINGS,
+        freshQueueOnReopen: true,
+      });
+      for (const [index, [contextWindow, thinking, model, maxTokens, opens]] of (
+        [
+          ["default", false, "gateway-route", null, 1],
+          ["1m", false, "gateway-route", 1_000_000, 1],
+          ["1m", true, "gateway-route[1m]", 1_000_000, 2],
+          ["1m", true, "gateway-route[1m]", 1_000_000, 2],
+          ["default", false, "gateway-route", null, 3],
+        ] as const
+      ).entries()) {
+        const ordinal = index + 1;
+        const modelSelection = {
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          model: "gateway-route",
+          options: [
+            { id: "contextWindow", value: contextWindow },
+            { id: "thinking", value: thinking },
+          ],
+        } satisfies ModelSelection;
+        const turn = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`custom-options:${ordinal}`),
+          providerTurnOrdinal: ordinal,
+          text: "Reply OK.",
+          attachments: [],
+          modelSelection,
+        });
+        yield* harness.runtime.startTurn(turn);
+        assert.strictEqual(harness.getOpenedOptions()?.model, model);
+        assert.propertyVal(harness.getOpenedOptions()?.settings, "alwaysThinkingEnabled", thinking);
+        assert.lengthOf(harness.processQueues, opens);
+        assert.strictEqual(
+          harness.runtime.getModelContextWindow?.(modelSelection) ?? null,
+          maxTokens,
+        );
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({ uuid: `custom-text:${ordinal}`, text: "OK" }),
+        );
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: `custom-result:${ordinal}`, result: "OK" }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const usage = harness.events
+          .flatMap((event) =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.runAttemptId === turn.attemptId &&
+            event.providerTurn.tokenUsage
+              ? [event.providerTurn.tokenUsage]
+              : [],
+          )
+          .at(-1);
+        assert.isDefined(usage);
+        assert.strictEqual(usage?.maxTokens, maxTokens);
+      }
+      assert.deepEqual(harness.liveSelectionChanges, [
+        { model: "gateway-route[1m]" },
+        { effortLevel: "high", fastMode: null, ultracode: null },
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect(
     "applies model, effort and Fast changes to a process running a background shell, but not thinking or a cleared effort",
     () =>
@@ -7764,14 +7869,33 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("measures a model outside the catalog against the window Claude reports", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeWakeHarness;
-      const modelSelection = {
+  it.effect.each([
+    {
+      name: "a model outside the catalog",
+      modelSelection: {
         instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
         model: "gateway-model",
-      } satisfies ModelSelection;
-      assert.strictEqual(harness.runtime.getModelContextWindow?.(modelSelection), undefined);
+      },
+      initialWindow: undefined,
+      maxTokens: 1_048_576,
+    },
+    {
+      name: "a configured custom 1M model",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
+        model: "gateway-route",
+        options: [{ id: "contextWindow", value: "1m" }],
+      },
+      initialWindow: 1_000_000,
+      maxTokens: 1_000_000,
+    },
+  ])("measures $name against its configured or reported window", (testCase) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        settings: CUSTOM_CONTEXT_CLAUDE_SETTINGS,
+      });
+      const { modelSelection, initialWindow, maxTokens } = testCase;
+      assert.strictEqual(harness.runtime.getModelContextWindow?.(modelSelection), initialWindow);
       yield* harness.runtime.startTurn(
         makeClaudeTestTurnInput({
           threadId: harness.threadId,
@@ -7790,7 +7914,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           uuid: "00000000-0000-4000-8000-000000000680",
           result: "OK",
           modelUsage: {
-            "gateway-model": {
+            [modelSelection.model]: {
               inputTokens: 9_667,
               outputTokens: 2,
               cacheReadInputTokens: 0,
@@ -7811,8 +7935,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ? [event.providerTurn.tokenUsage.maxTokens]
           : [],
       );
-      assert.deepEqual(windows, [null, 1_048_576]);
-      assert.strictEqual(harness.runtime.getModelContextWindow?.(modelSelection), 1_048_576);
+      assert.deepEqual(windows, [initialWindow ?? null, maxTokens]);
+      assert.strictEqual(harness.runtime.getModelContextWindow?.(modelSelection), maxTokens);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
