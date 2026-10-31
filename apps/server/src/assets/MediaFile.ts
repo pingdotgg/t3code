@@ -77,10 +77,7 @@ export const openMediaFile = Effect.fn("openMediaFile")(function* (
           ) {
             return null;
           }
-          // Callers canonicalise with Effect's FileSystem.realPath, which is
-          // Node's JS realpath. fs/promises.realpath is the native binding and
-          // on Windows also expands 8.3 short names, so a path that is already
-          // canonical by the caller's rules would still look swapped here.
+          // Match FileSystem.realPath's JS behavior; native realpath expands Windows 8.3 names too.
           if ((await realpathLikeFileSystem(filePath)) !== filePath) return null;
           const after = await NodeFSP.lstat(filePath, { bigint: true });
           if (!after.isFile() || info.dev !== after.dev || info.ino !== after.ino) return null;
