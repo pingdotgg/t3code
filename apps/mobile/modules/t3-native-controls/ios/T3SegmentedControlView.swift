@@ -15,12 +15,15 @@ final class T3SegmentedControlView: ExpoView {
     }
   }
   var selectedIndex = -1 { didSet { updateSelection() } }
-  var trackColor: UIColor = .secondarySystemBackground { didSet { control.backgroundColor = trackColor } }
-  var selectedColor: UIColor = .secondarySystemFill { didSet { control.selectedSegmentTintColor = selectedColor } }
-  var textColor: UIColor = .label { didSet { updateColors() } }
-  var mutedColor: UIColor = .secondaryLabel { didSet { updateColors() } }
+  var trackColor: UIColor = .secondarySystemBackground { didSet { if trackColor != oldValue { control.backgroundColor = trackColor } } }
+  var selectedColor: UIColor = .secondarySystemFill { didSet { if selectedColor != oldValue { control.selectedSegmentTintColor = selectedColor } } }
+  var textColor: UIColor = .label { didSet { if textColor != oldValue { updateColors() } } }
+  var mutedColor: UIColor = .secondaryLabel { didSet { if mutedColor != oldValue { updateColors() } } }
   var appearance = "light" {
-    didSet { overrideUserInterfaceStyle = appearance == "dark" ? .dark : .light }
+    didSet {
+      guard appearance != oldValue else { return }
+      overrideUserInterfaceStyle = appearance == "dark" ? .dark : .light
+    }
   }
 
   required init(appContext: AppContext? = nil) {
@@ -31,11 +34,20 @@ final class T3SegmentedControlView: ExpoView {
 
   override func layoutSubviews() {
     super.layoutSubviews()
-    control.frame = bounds
+    guard control.frame != bounds else { return }
+    UIView.performWithoutAnimation {
+      control.frame = bounds
+    }
   }
 
   private func updateSelection() {
-    control.selectedSegmentIndex = labels.indices.contains(selectedIndex) ? selectedIndex : UISegmentedControl.noSegment
+    let index = labels.indices.contains(selectedIndex) ? selectedIndex : UISegmentedControl.noSegment
+    // React echoes native selections while UIKit is still settling the glass lens.
+    guard control.selectedSegmentIndex != index else { return }
+    UIView.performWithoutAnimation {
+      control.selectedSegmentIndex = index
+      control.layoutIfNeeded()
+    }
   }
 
   private func updateColors() {

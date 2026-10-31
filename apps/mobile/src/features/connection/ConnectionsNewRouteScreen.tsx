@@ -1,3 +1,4 @@
+import { ListRow } from "../../components/ui/ListRow";
 import * as Dialog from "../../components/ui/Dialog";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAuth } from "@clerk/expo";
@@ -11,8 +12,8 @@ import {
   type StaticScreenProps,
 } from "@react-navigation/native";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { AsyncResult } from "effect/reactivity";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import { useState } from "react";
 import { Linking, Pressable, StyleSheet, View } from "react-native";
 import Svg, { Defs, RadialGradient, Rect, Stop } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -23,14 +24,14 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { AppText as Text, AppTextInput, type AppTextInputProps } from "../../components/ui/AppText";
 import { FrostedCutout } from "../../components/ui/FrostedCutout";
 import { buildPairingUrl, extractPairingUrlFromQrPayload, parsePairingUrl } from "./pairing";
-import {
-  setPendingConnectionError,
-  useRemoteConnections,
-} from "../../state/use-remote-environment-registry";
+import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { CloudEnvironmentRows } from "./CloudEnvironmentRows";
+import { autoConnectReport, devAutoConnectAttemptAtom } from "./devAutoConnect";
 import { splitEnvironmentSections } from "./environmentSections";
+import { leaveSettingsPage } from "../settings/settings-navigation";
+import { workspaceHasColumns } from "../workspace/workspace-selection-store";
 
 type ConnectionsNewRouteParams = {
   readonly mode?: string;
@@ -42,72 +43,71 @@ type ConnectionsNewRouteParams = {
 export function ConnectionsNewRouteScreen({
   route,
 }: StaticScreenProps<ConnectionsNewRouteParams | undefined>) {
-  const {
-    connectionPairingUrl,
-    onChangeConnectionPairingUrl,
-    onConnectPress,
-    pairingConnectionError,
-  } = useRemoteConnections();
+  const params = route.params ?? {};
+  // Dev-only prefill prevents production links from supplying an attacker-chosen host and token.
+  const routePairingUrl = __DEV__ ? (params.pairingUrl?.trim() ?? "") : "";
+  // A new prefill link replaces whatever the form held.
+  return (
+    <PairingForm
+      key={routePairingUrl}
+      routePairingUrl={routePairingUrl}
+      routeFor={params.routeFor}
+    />
+  );
+}
+
+function PairingForm({
+  routePairingUrl,
+  routeFor,
+}: {
+  readonly routePairingUrl: string;
+  readonly routeFor: EnvironmentId | undefined;
+}) {
+  const { connectionPairingUrl, onChangeConnectionPairingUrl, onConnectPress } =
+    useRemoteConnections();
   const navigation = useNavigation();
   const routeName = useRoute().name;
-  const params = route.params ?? {};
-  // Deep-link prefill exists for development automation only. A production
-  // link must not arrive with attacker-chosen host and token already filled.
-  const routePairingUrl = __DEV__ ? (params.pairingUrl?.trim() ?? "") : "";
-  const shouldAutoConnect =
-    __DEV__ &&
-    routePairingUrl.length > 0 &&
-    (params.autoConnect === "1" || params.autoConnect === "true");
   const insets = useSafeAreaInsets();
-  const [hostInput, setHostInput] = useState("");
-  const [codeInput, setCodeInput] = useState("");
+  const [initialPairing] = useState(() => parsePairingUrl(routePairingUrl || connectionPairingUrl));
+  const [hostInput, setHostInput] = useState(initialPairing.host);
+  const [codeInput, setCodeInput] = useState(initialPairing.code);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  // The user's own edit or submit dismisses the dev auto-connect report.
+  const [ownAttempt, setOwnAttempt] = useState(false);
+  const autoConnect = autoConnectReport(
+    useAtomValue(devAutoConnectAttemptAtom),
+    routePairingUrl,
+    ownAttempt,
+  );
+  const connecting = isSubmitting || autoConnect.connecting;
+  const pairingConnectionError = submitError ?? autoConnect.error;
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const screenFocused = useIsFocused();
   const [scannerLocked, setScannerLocked] = useState(false);
   // A good scan parks the camera so it can't re-read the code over later edits.
   const [scanComplete, setScanComplete] = useState(false);
-  const attemptedAutoConnectRef = useRef<string | null>(null);
 
   const headerIconColor = useUniwindTheme()["--color-icon"];
 
-  const connectDisabled = isSubmitting || hostInput.trim().length === 0;
+  const connectDisabled = connecting || hostInput.trim().length === 0;
 
-  useEffect(() => {
-    const { host, code } = parsePairingUrl(connectionPairingUrl);
-    setHostInput(host);
-    setCodeInput(code);
-  }, [connectionPairingUrl]);
+  const clearError = () => {
+    setSubmitError(null);
+    setOwnAttempt(true);
+  };
 
-  useEffect(() => {
-    if (routePairingUrl.length === 0) {
-      return;
-    }
-
-    const { host, code } = parsePairingUrl(routePairingUrl);
-    setHostInput(host);
-    setCodeInput(code);
-  }, [routePairingUrl]);
-
-  useEffect(() => {
-    if (pairingConnectionError) {
-      setIsSubmitting(false);
-    }
-  }, [pairingConnectionError]);
-
-  const handleHostChange = useCallback((value: string) => {
+  const handleHostChange = (value: string) => {
     setHostInput(value);
-    setPendingConnectionError(null);
-  }, []);
+    clearError();
+  };
 
-  const handleCodeChange = useCallback((value: string) => {
+  const handleCodeChange = (value: string) => {
     setCodeInput(value);
-    setPendingConnectionError(null);
-  }, []);
+    clearError();
+  };
 
-  useEffect(() => () => setPendingConnectionError(null), []);
-
-  const handleScanPress = useCallback(async () => {
+  const handleScanPress = async () => {
     const permission = await requestCameraPermission();
     if (permission.granted) {
       setScanComplete(false);
@@ -122,75 +122,59 @@ export function ConnectionsNewRouteScreen({
         { text: "Open Settings", onPress: () => void Linking.openSettings() },
       ],
     );
-  }, [requestCameraPermission]);
+  };
 
-  const handleQrScan = useCallback(
-    ({ data }: { readonly data: string }) => {
-      if (scannerLocked) {
-        return;
-      }
-
-      setScannerLocked(true);
-
-      try {
-        const pairingUrl = extractPairingUrlFromQrPayload(data);
-        const { host, code } = parsePairingUrl(pairingUrl);
-        setHostInput(host);
-        setCodeInput(code);
-        onChangeConnectionPairingUrl(pairingUrl);
-        setScanComplete(true);
-        setScannerLocked(false);
-      } catch (error) {
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        Dialog.alert(
-          "Invalid QR code",
-          error instanceof Error ? error.message : "Scanned QR code was not recognized.",
-        );
-        setTimeout(() => {
-          setScannerLocked(false);
-        }, 600);
-      }
-    },
-    [onChangeConnectionPairingUrl, scannerLocked],
-  );
-
-  const connectAndClose = useCallback(
-    async (pairingUrl: string, replaceWithHome: boolean) => {
-      setIsSubmitting(true);
-      onChangeConnectionPairingUrl(pairingUrl);
-      try {
-        const result = await onConnectPress(pairingUrl, params.routeFor);
-        void Haptics.notificationAsync(
-          AsyncResult.isSuccess(result)
-            ? Haptics.NotificationFeedbackType.Success
-            : Haptics.NotificationFeedbackType.Error,
-        );
-        if (AsyncResult.isSuccess(result)) {
-          if (replaceWithHome || !navigation.canGoBack()) {
-            navigation.dispatch(StackActions.replace("Home"));
-          } else {
-            navigation.goBack();
-          }
-        }
-      } finally {
-        setIsSubmitting(false);
-      }
-    },
-    [navigation, onChangeConnectionPairingUrl, onConnectPress, params.routeFor],
-  );
-
-  const handleSubmit = useCallback(async () => {
-    await connectAndClose(buildPairingUrl(hostInput, codeInput), false);
-  }, [codeInput, connectAndClose, hostInput]);
-
-  useEffect(() => {
-    if (!shouldAutoConnect || attemptedAutoConnectRef.current === routePairingUrl) {
+  const handleQrScan = ({ data }: { readonly data: string }) => {
+    if (scannerLocked) {
       return;
     }
 
-    attemptedAutoConnectRef.current = routePairingUrl;
-    void connectAndClose(routePairingUrl, true);
-  }, [connectAndClose, routePairingUrl, shouldAutoConnect]);
+    setScannerLocked(true);
+
+    try {
+      const pairingUrl = extractPairingUrlFromQrPayload(data);
+      const { host, code } = parsePairingUrl(pairingUrl);
+      setHostInput(host);
+      setCodeInput(code);
+      onChangeConnectionPairingUrl(pairingUrl);
+      setScanComplete(true);
+      setScannerLocked(false);
+    } catch (error) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Dialog.alert(
+        "Invalid QR code",
+        error instanceof Error ? error.message : "Scanned QR code was not recognized.",
+      );
+      setTimeout(() => {
+        setScannerLocked(false);
+      }, 600);
+    }
+  };
+
+  const handleSubmit = async () => {
+    const pairingUrl = buildPairingUrl(hostInput, codeInput);
+    setOwnAttempt(true);
+    setSubmitError(null);
+    setIsSubmitting(true);
+    onChangeConnectionPairingUrl(pairingUrl);
+    const outcome = await onConnectPress(pairingUrl, routeFor);
+    setIsSubmitting(false);
+    setSubmitError(outcome.error);
+    void Haptics.notificationAsync(
+      outcome.ok
+        ? Haptics.NotificationFeedbackType.Success
+        : Haptics.NotificationFeedbackType.Error,
+    );
+    if (outcome.ok) {
+      // Replacing with Home would nest it inside any sheet below; return to the opener.
+      if (!navigation.canGoBack()) {
+        navigation.dispatch(StackActions.replace("Home"));
+      } else {
+        // Added from the Settings list, the new environment shows on Environments.
+        leaveSettingsPage(navigation, workspaceHasColumns(), "SettingsEnvironments");
+      }
+    }
+  };
 
   return (
     <SettingsScreen
@@ -198,8 +182,8 @@ export function ConnectionsNewRouteScreen({
       title="Add environment"
       actions={[
         {
-          accessibilityLabel: isSubmitting ? "Connecting" : "Add environment",
-          loading: isSubmitting,
+          accessibilityLabel: connecting ? "Connecting" : "Add environment",
+          loading: connecting,
           icon: "checkmark",
           tintColor: headerIconColor,
           disabled: connectDisabled,
@@ -392,26 +376,12 @@ function T3ConnectSection() {
           showHeader={false}
         />
       ) : (
-        <Pressable
-          accessibilityRole="button"
+        <ListRow
+          label="Sign in to T3 Connect"
+          description="Reach your machines from anywhere, no network setup."
           disabled={!isLoaded}
-          onPress={() => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" })}
-          className="min-h-13 flex-row items-center gap-3 rounded-[26px] border-continuous bg-grouped-card px-4 active:opacity-70"
-        >
-          <View className="min-w-0 flex-1 py-3">
-            <Text className="text-base text-foreground">Sign in to T3 Connect</Text>
-            <Text className="text-sm text-foreground-muted">
-              Reach your machines from anywhere, no network setup.
-            </Text>
-          </View>
-          <SymbolView
-            name="chevron.right"
-            size={14}
-            tintColorClassName="accent-chevron"
-            type="monochrome"
-            weight="semibold"
-          />
-        </Pressable>
+          onPress={() => navigation.navigate("SettingsAuth")}
+        />
       )}
     </View>
   );

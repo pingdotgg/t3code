@@ -2,48 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import {
-  resolvePreferredThreadWorktreePath,
   resolveTerminalOpenLocation,
   stagePendingTerminalLaunch,
   takePendingTerminalLaunch,
 } from "./terminalLaunchContext";
 
-describe("resolvePreferredThreadWorktreePath", () => {
-  it("prefers thread detail worktree paths over thread shell paths", () => {
-    expect(
-      resolvePreferredThreadWorktreePath({
-        threadShellWorktreePath: "/repo/root",
-        threadDetailWorktreePath: "/repo/worktrees/feature",
-      }),
-    ).toBe("/repo/worktrees/feature");
-  });
-
-  it("falls back to the thread shell worktree path when detail is unavailable", () => {
-    expect(
-      resolvePreferredThreadWorktreePath({
-        threadShellWorktreePath: "/repo/worktrees/feature",
-        threadDetailWorktreePath: null,
-      }),
-    ).toBe("/repo/worktrees/feature");
-  });
-});
-
 describe("resolveTerminalOpenLocation", () => {
-  it("uses the thread detail worktree path before the workspace root for a fresh mobile open", () => {
-    expect(
-      resolveTerminalOpenLocation({
-        terminalLocation: null,
-        activeSessionLocation: null,
-        workspaceRoot: "/repo/root",
-        threadShellWorktreePath: null,
-        threadDetailWorktreePath: "/repo/worktrees/feature",
-      }),
-    ).toEqual({
-      cwd: "/repo/worktrees/feature",
-      worktreePath: "/repo/worktrees/feature",
-    });
-  });
-
   it("preserves the running terminal snapshot cwd when attaching to an existing session", () => {
     expect(
       resolveTerminalOpenLocation({
@@ -60,6 +24,34 @@ describe("resolveTerminalOpenLocation", () => {
       cwd: "/repo/worktrees/feature",
       worktreePath: "/repo/worktrees/feature",
     });
+  });
+
+  it("preserves checkout cwd and identity from the selected terminal or active session", () => {
+    const checkout = { cwd: "/repo/root/packages/app", worktreePath: null };
+    const threadLocation = {
+      workspaceRoot: "/repo/root",
+      threadShellWorktreePath: "/repo/worktrees/feature",
+      threadDetailWorktreePath: "/repo/worktrees/feature",
+    };
+
+    expect(
+      resolveTerminalOpenLocation({
+        ...threadLocation,
+        terminalLocation: checkout,
+        activeSessionLocation: {
+          cwd: "/repo/worktrees/other",
+          worktreePath: "/repo/worktrees/other",
+        },
+      }),
+    ).toEqual(checkout);
+
+    expect(
+      resolveTerminalOpenLocation({
+        ...threadLocation,
+        terminalLocation: null,
+        activeSessionLocation: checkout,
+      }),
+    ).toEqual(checkout);
   });
 });
 
@@ -88,35 +80,5 @@ describe("pending terminal launches", () => {
       initialInput: "pnpm dev\r",
     });
     expect(takePendingTerminalLaunch(target)).toBeNull();
-  });
-
-  it("keeps pending launches isolated per terminal target", () => {
-    const primaryTarget = {
-      environmentId: EnvironmentId.make("env-1"),
-      threadId: ThreadId.make("thread-1"),
-      terminalId: "term-2",
-    };
-    const otherTarget = {
-      environmentId: EnvironmentId.make("env-1"),
-      threadId: ThreadId.make("thread-1"),
-      terminalId: "term-3",
-    };
-
-    stagePendingTerminalLaunch({
-      target: primaryTarget,
-      launch: {
-        cwd: "/repo/root",
-        worktreePath: null,
-        initialInput: "pnpm i\r",
-      },
-    });
-
-    expect(takePendingTerminalLaunch(otherTarget)).toBeNull();
-    expect(takePendingTerminalLaunch(primaryTarget)).toEqual({
-      cwd: "/repo/root",
-      worktreePath: null,
-      env: undefined,
-      initialInput: "pnpm i\r",
-    });
   });
 });

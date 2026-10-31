@@ -1,10 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
-import { Atom } from "effect/reactivity";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
+import { environmentIdsKey } from "~/state/environmentAtomList";
 import type { EnvironmentPresentation } from "~/state/environments";
-import { serverEnvironment } from "~/state/server";
+import { environmentUpdateStatesAtom } from "~/state/server";
 import {
   buildVersionMismatchDismissalKey,
   dismissServerUpdateFailure,
@@ -14,7 +14,6 @@ import {
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
   supportsDesktopAppUpdate,
-  supportsServerUpdateThreadContinuation,
 } from "~/versionSkew";
 import {
   ServerUpdateAction,
@@ -29,17 +28,15 @@ import { ComposerServerUpdateIcon } from "./ComposerServerUpdateStatus";
 export function useAutoBalanceUpdateBanner(
   environments: readonly EnvironmentPresentation[],
 ): ComposerBannerStackItem | null {
-  const statesAtom = useMemo(
-    () =>
-      Atom.make((get) =>
-        environments.map((environment) => ({
-          environment,
-          state: get(serverEnvironment.updateStateAtom(environment.environmentId)),
-        })),
-      ),
-    [environments],
+  const updateStates = useAtomValue(
+    environmentUpdateStatesAtom(
+      environmentIdsKey(environments.map(({ environmentId }) => environmentId)),
+    ),
   );
-  const states = useAtomValue(statesAtom);
+  const states = environments.flatMap((environment, index) => {
+    const state = updateStates[index];
+    return state ? [{ environment, state }] : [];
+  });
   const [dismissedNotices, setDismissedNotices] = useState<ReadonlySet<string | ServerUpdateState>>(
     () => new Set(),
   );
@@ -65,9 +62,6 @@ export function useAutoBalanceUpdateBanner(
         selfUpdate,
         installation: environment.serverConfig?.environment.capabilities.serverInstallation,
         desktopAppUpdate,
-        threadContinuation: supportsServerUpdateThreadContinuation(environment.serverConfig),
-        continueThreadsAfterServerUpdate:
-          environment.serverConfig?.settings.continueThreadsAfterServerUpdate ?? false,
         targetVersion: state.status === "idle" ? mismatch!.clientVersion : state.targetVersion,
         connected: environment.connection.phase === "connected",
         remoteUpdate: selfUpdate !== null && (selfUpdate !== "desktop-managed" || desktopAppUpdate),
@@ -91,7 +85,7 @@ export function useAutoBalanceUpdateBanner(
   return {
     id: `auto-balance-server-updates-${dismissedNotices.size}`,
     variant: failed ? "error" : "default",
-    priority: running ? "urgent" : "notice",
+    group: "environment",
     icon: <ComposerServerUpdateIcon status={status} />,
     title: (
       <Popover>

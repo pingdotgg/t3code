@@ -1,13 +1,17 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as TestClock from "effect/testing/TestClock";
 
 import { writeFileStringAtomically } from "./atomicWrite.ts";
+import * as HostProcess from "./HostProcess.ts";
 
 it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
   it.effect("keeps a symlinked file linked and rewrites its destination", () =>
@@ -89,19 +93,53 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
     }),
   );
 
-  it.effect("creates a missing file and its directory", () =>
+  it.effect("does not replace a newer save that landed while the lock was held", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
-      const filePath = path.join(root, "nested", "settings.json");
+      const filePath = path.join(root, "settings.json");
+      yield* fs.writeFileString(filePath, "before");
+      const firstAttempt = yield* Deferred.make<void>();
+      let attempts = 0;
+      const lockedOnce = FileSystem.make({
+        ...fs,
+        rename: (from, to) =>
+          Effect.suspend(() => {
+            attempts += 1;
+            return attempts === 1
+              ? Deferred.succeed(firstAttempt, undefined).pipe(
+                  Effect.andThen(Effect.fail(renameError("EBUSY", to))),
+                )
+              : fs.rename(from, to);
+          }),
+      });
 
-      yield* writeFileStringAtomically({ filePath, contents: "fresh" });
+      const stale = yield* writeFileStringAtomically({ filePath, contents: "stale" }).pipe(
+        Effect.provideService(FileSystem.FileSystem, lockedOnce),
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.exit,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(firstAttempt);
+      yield* writeFileStringAtomically({ filePath, contents: "newer" });
 
-      assert.strictEqual(yield* fs.readFileString(filePath), "fresh");
+      yield* TestClock.adjust("100 millis");
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(stale)));
+      assert.strictEqual(yield* fs.readFileString(filePath), "newer");
+      assert.deepStrictEqual(yield* fs.readDirectory(root), ["settings.json"]);
     }),
   );
 });
+
+const renameError = (code: string, path: string) =>
+  PlatformError.systemError({
+    _tag: "Unknown",
+    module: "FileSystem",
+    method: "rename",
+    pathOrDescriptor: path,
+    cause: Object.assign(new Error(`${code}, rename`), { code }),
+  });
 
 it.effect("surfaces an unreadable link instead of writing over it", () =>
   Effect.gen(function* () {
@@ -112,11 +150,12 @@ it.effect("surfaces an unreadable link instead of writing over it", () =>
       pathOrDescriptor: "/home/settings.json",
     });
 
-    const result = yield* Effect.exit(
-      writeFileStringAtomically({ filePath: "/home/settings.json", contents: "after" }),
-    );
+    const failure = yield* writeFileStringAtomically({
+      filePath: "/home/settings.json",
+      contents: "after",
+    }).pipe(Effect.flip);
 
-    assert.deepStrictEqual(result, Exit.fail(readLinkFailure));
+    assert.deepStrictEqual(failure, readLinkFailure);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(

@@ -14,6 +14,7 @@ import type {
   PreviewAnnotationSubmission,
 } from "@t3tools/contracts";
 
+import { createAnnotationIdSource } from "./AnnotationIds.ts";
 import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
 import { installRecordingCursor } from "./RecordingCursor.ts";
@@ -34,6 +35,7 @@ import {
   START_PICK_CHANNEL,
 } from "./GuestProtocol.ts";
 const OVERLAY_ATTRIBUTE = "data-t3code-annotation-ui";
+const INPUT_LAYER_ATTRIBUTE = "data-t3code-annotation-input";
 const Z_INDEX_OVERLAY = 2147483646;
 const PRIMARY = "var(--t3-primary)";
 const PRIMARY_FILL = "color-mix(in srgb, var(--t3-primary) 10%, transparent)";
@@ -133,7 +135,6 @@ interface AnnotationSession {
 }
 
 let activeSession: AnnotationSession | null = null;
-let idSequence = 0;
 let annotationTheme: DesktopPreviewAnnotationTheme | null = null;
 
 const applyAnnotationTheme = (
@@ -196,11 +197,7 @@ const navigationDirectionForButton = (button: number): "back" | "forward" | null
   return null;
 };
 
-// Chromium routes thumb-button history navigation to the *focused* WebContents,
-// so hovering this guest without focusing it sends the host app's router back
-// instead of the preview. Suppress Chromium's default here and drive this tab's
-// history explicitly so the buttons always navigate the browser the pointer is
-// over — never the host app.
+// Chromium routes thumb-button navigation to the focused WebContents; navigate this hovered guest explicitly.
 const suppressNavigationButton = (event: MouseEvent): void => {
   if (!event.isTrusted || navigationDirectionForButton(event.button) === null) return;
   event.preventDefault();
@@ -220,10 +217,7 @@ window.addEventListener("mousedown", suppressNavigationButton, true);
 window.addEventListener("mouseup", requestNavigationForButton, true);
 window.addEventListener("auxclick", suppressNavigationButton, true);
 
-const nextId = (prefix: string): string => {
-  idSequence += 1;
-  return `${prefix}_${idSequence.toString(36)}`;
-};
+const nextId = createAnnotationIdSource();
 
 const rectFromDomRect = (rect: DOMRect): PreviewAnnotationRect => ({
   x: rect.left,
@@ -255,15 +249,12 @@ function unionRects(
   const top = Math.min(...rects.map((rect) => rect.y));
   const right = Math.max(...rects.map((rect) => rect.x + rect.width));
   const bottom = Math.max(...rects.map((rect) => rect.y + rect.height));
-  const x = Math.max(0, left - padding);
-  const y = Math.max(0, top - padding);
-  const maxWidth = Math.max(1, window.innerWidth - x);
-  const maxHeight = Math.max(1, window.innerHeight - y);
+  // Main clips to the captured viewport; clipping here would lose offscreen bounds.
   return {
-    x,
-    y,
-    width: Math.min(maxWidth, right - left + padding * 2),
-    height: Math.min(maxHeight, bottom - top + padding * 2),
+    x: left - padding,
+    y: top - padding,
+    width: right - left + padding * 2,
+    height: bottom - top + padding * 2,
   };
 }
 
@@ -274,7 +265,7 @@ function isAnnotationNode(element: Element): boolean {
 function pickFromPoint(clientX: number, clientY: number): Element | null {
   for (const candidate of document.elementsFromPoint(clientX, clientY)) {
     if (!(candidate instanceof Element)) continue;
-    if (isAnnotationNode(candidate)) continue;
+    if (isAnnotationNode(candidate) || candidate.hasAttribute(INPUT_LAYER_ATTRIBUTE)) continue;
     if (candidate === document.documentElement || candidate === document.body) continue;
     return candidate;
   }
@@ -396,11 +387,7 @@ function toStackFrame(frame: {
   };
 }
 
-/**
- * `getElementContext` walks the inspected page's React internals, and some pages leave it
- * pending forever. Without a bound, the whole submit chain stalls and the overlay sits on
- * "Capturing…".
- */
+/** React-internals lookups can remain pending forever; bound them so submit cannot stall the overlay. */
 function withCaptureTimeout<A>(promise: Promise<A>, millis: number): Promise<A | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
@@ -413,11 +400,7 @@ function withCaptureTimeout<A>(promise: Promise<A>, millis: number): Promise<A |
 
 const HTML_PREVIEW_MAX_CHARS = 500;
 
-/**
- * The React context lookup can stall or throw on some pages, so the element is never dropped:
- * without context it still carries its tag, a short HTML preview, and its rect so the crop
- * stays on the pick instead of falling back to the whole viewport.
- */
+/** Preserve the tag, HTML, and crop rect when React context lookup fails or stalls. */
 async function captureElement(element: Element): Promise<PickedElementPayload> {
   const base = {
     pageUrl: location.href,
@@ -642,7 +625,18 @@ function startAnnotation(sendEnabled: boolean): void {
   const strokes: PreviewAnnotationStrokeTarget[] = [];
   const styleChanges = new Map<string, PreviewAnnotationStyleChange>();
   const toolButtons = new Map<AnnotationTool, HTMLButtonElement>();
-  let tool: AnnotationTool = "select";
+  // Chromium draws a PDF in its own viewer frame, so pointer and key input over it
+  // never reaches this document. A transparent layer above the viewer catches the
+  // pointer and takes focus for Escape and the tool keys. A PDF has no elements to
+  // select, so it starts on Region.
+  const isPdf = document.contentType === "application/pdf";
+  const inputLayer = isPdf ? document.createElement("div") : null;
+  if (inputLayer) {
+    inputLayer.setAttribute(INPUT_LAYER_ATTRIBUTE, "");
+    inputLayer.tabIndex = -1;
+    inputLayer.style.cssText = `position:fixed;inset:0;z-index:${Z_INDEX_OVERLAY - 1};cursor:crosshair;outline:none`;
+  }
+  let tool: AnnotationTool = isPdf ? "marquee" : "select";
   let dragStart: PreviewAnnotationPoint | null = null;
   let activeStroke: { target: PreviewAnnotationStrokeTarget; path: SVGPathElement } | null = null;
   let pendingCapture = false;
@@ -1362,6 +1356,7 @@ function startAnnotation(sendEnabled: boolean): void {
     ipcRenderer.off(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
     document.documentElement.removeAttribute("data-t3code-annotation-tool");
     cursorStyle.remove();
+    inputLayer?.remove();
     host.remove();
     activeSession = null;
     if (notifyMain) ipcRenderer.send(ELEMENT_PICKED_CHANNEL, null);
@@ -1392,8 +1387,7 @@ function startAnnotation(sendEnabled: boolean): void {
     pendingCapture = true;
     submit.disabled = true;
     submit.textContent = "Capturing…";
-    // The element context lookup can take up to its timeout, and the user can
-    // keep editing meanwhile; the annotation must describe what they submitted.
+    // Snapshot the submitted comment before context lookup lets the user edit it.
     const submittedComment = comment.value.trim();
     const submittedRegions = [...regions];
     const submittedStrokes = [...strokes];
@@ -1414,8 +1408,7 @@ function startAnnotation(sendEnabled: boolean): void {
       }),
     )
       .then((elements) => {
-        // The overlay may have been cancelled or replaced while the capture
-        // ran. A late submit must not deliver into the next pick's listener.
+        // A late submit must not reach a replacement pick's listener.
         if (finished) return;
         const annotation: PreviewAnnotationPayload = {
           id: nextId("annotation"),
@@ -1442,7 +1435,7 @@ function startAnnotation(sendEnabled: boolean): void {
           annotation,
           screenshotRect,
           submission === "send" && !sendEnabled ? "attach" : submission,
-          // Main crops a full-page capture, whose pixels are CSS px × this.
+          // Main crops a viewport capture, whose pixels are CSS px × this.
           window.devicePixelRatio,
         );
       })
@@ -1454,8 +1447,7 @@ function startAnnotation(sendEnabled: boolean): void {
   root.addEventListener("keydown", (event) => {
     const submission =
       event.target === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;
-    // Keep this in the bubble phase so editor inputs receive the event before
-    // it is isolated from listeners installed by the inspected page.
+    // Bubble phase lets editor inputs handle events before hiding them from the page.
     event.stopImmediatePropagation();
     if (!submission) return;
     event.preventDefault();
@@ -1473,6 +1465,10 @@ function startAnnotation(sendEnabled: boolean): void {
   window.addEventListener("resize", repaint, { passive: true });
   ipcRenderer.on(CANCEL_PICK_CHANNEL, onCancel);
   ipcRenderer.on(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
+  if (inputLayer) {
+    document.documentElement.appendChild(inputLayer);
+    inputLayer.focus({ preventScroll: true });
+  }
   document.documentElement.appendChild(host);
   rootResizeObserver.observe(document.documentElement);
   refreshToolButtons();

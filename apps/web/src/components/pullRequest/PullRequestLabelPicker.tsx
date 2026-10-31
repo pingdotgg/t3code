@@ -1,7 +1,7 @@
 import { useAtomCommand } from "~/state/use-atom-command";
 import type { EnvironmentId, PullRequestLabelCandidate, PullRequestRef } from "@t3tools/contracts";
 import { CheckIcon, TagIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
@@ -41,9 +41,8 @@ export function PullRequestLabelPicker({
     reportFailure: false,
   });
 
-  const candidates = useMemo(
-    () => (candidatesQuery.data?.candidates ?? []).filter((entry) => matches(entry, query)),
-    [candidatesQuery.data, query],
+  const candidates = (candidatesQuery.data?.candidates ?? []).filter((entry) =>
+    matches(entry, query),
   );
 
   const toggle = async (candidate: PullRequestLabelCandidate) => {

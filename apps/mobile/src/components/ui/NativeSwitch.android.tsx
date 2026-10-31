@@ -1,35 +1,30 @@
 import { NativeThemeHost } from "./NativeThemeHost.android";
 import { Switch as ComposeSwitch } from "@expo/ui/jetpack-compose";
-import { View } from "react-native";
+import { Pressable, View } from "react-native";
 import type { ThemedSwitchProps } from "./NativeSwitch.types";
 
 import { useControlTheme } from "./useControlTheme";
 
-/** Material's native switch, with the same palette and accessibility contract as our RN controls. */
+/** RN Pressable must own touch: Compose-handled switch taps can activate the parent row instead. */
 export function NativeSwitch(props: ThemedSwitchProps) {
   const { colors } = useControlTheme();
-  const toggle = () => {
-    if (!props.disabled) props.onValueChange?.(!props.value);
-  };
 
   return (
-    <View
-      accessible
+    <Pressable
+      disabled={props.disabled}
+      onPress={() => props.onValueChange?.(!props.value)}
       accessibilityLabel={props.accessibilityLabel}
       accessibilityHint={props.accessibilityHint}
       accessibilityRole="switch"
       accessibilityState={{ checked: Boolean(props.value), disabled: Boolean(props.disabled) }}
-      accessibilityActions={[{ name: "activate", label: "Toggle" }]}
-      onAccessibilityAction={toggle}
       style={props.style}
       testID={props.testID}
     >
-      <View importantForAccessibility="no-hide-descendants">
+      <View importantForAccessibility="no-hide-descendants" pointerEvents="none">
         <NativeThemeHost ignoreSafeAreaKeyboardInsets style={{ width: 52, height: 48 }}>
           <ComposeSwitch
             value={Boolean(props.value)}
             enabled={!props.disabled}
-            onCheckedChange={props.onValueChange ?? undefined}
             colors={{
               checkedTrackColor: colors["--color-switch-active-track"],
               checkedThumbColor: colors["--color-switch-active-thumb"],
@@ -41,6 +36,6 @@ export function NativeSwitch(props: ThemedSwitchProps) {
           />
         </NativeThemeHost>
       </View>
-    </View>
+    </Pressable>
   );
 }

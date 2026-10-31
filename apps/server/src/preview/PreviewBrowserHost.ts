@@ -16,10 +16,7 @@ export const sandboxDisabled = (env: Readonly<Record<string, string | undefined>
 const USERNS_RESTRICTION = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns";
 export const APPARMOR_PROFILE_PATH = "/etc/apparmor.d/t3-chrome-headless-shell";
 
-/**
- * Modelled on the profile Ubuntu ships for Google Chrome; `unconfined` adds
- * nothing beyond `userns`.
- */
+/** Match Ubuntu's Chrome profile; unconfined adds nothing beyond userns. */
 export const APPARMOR_PROFILE = `# Written by \`t3 browser setup\`: lets T3 Code's headless browser use Chrome's sandbox.
 abi <abi/4.0>,
 include <tunables/global>
@@ -31,10 +28,7 @@ profile t3-chrome-headless-shell /**/tools/chrome-headless-shell/*/*/chrome-head
 }
 `;
 
-/**
- * Ubuntu 24.04 and Debian 13 renamed some with a `t64` suffix; setup installs
- * whichever name the host's apt offers.
- */
+/** Ubuntu 24.04 and Debian 13 use some t64 library names; choose names available through apt. */
 export const DEBIAN_PACKAGES: ReadonlyArray<ReadonlyArray<string>> = [
   ["libnss3"],
   ["libglib2.0-0t64", "libglib2.0-0"],
@@ -73,7 +67,20 @@ export class PreviewBrowserLibrariesError extends Schema.TaggedError<PreviewBrow
   }
 }
 
-export type PreviewBrowserHostError = PreviewBrowserSandboxError | PreviewBrowserLibrariesError;
+/** Chrome will not start its sandbox as root (crbug.com/638180), which no host setup fixes. */
+export class PreviewBrowserRootError extends Schema.TaggedError<PreviewBrowserRootError>()(
+  "PreviewBrowserRootError",
+  {},
+) {
+  override get message(): string {
+    return "T3 server is running as root; Chrome's sandbox cannot start. Run T3 as a nonroot user. Otherwise set `T3CODE_SERVER_BROWSER_SANDBOX=0` in the T3 server's environment and restart the server; this disables Chrome's sandbox. Manual: `T3CODE_SERVER_BROWSER_SANDBOX=0 t3 serve`. Systemd: add `Environment=T3CODE_SERVER_BROWSER_SANDBOX=0` under `[Service]`, reload systemd, then restart the service. `t3 browser setup` cannot fix root sandboxing.";
+  }
+}
+
+export type PreviewBrowserHostError =
+  | PreviewBrowserSandboxError
+  | PreviewBrowserLibrariesError
+  | PreviewBrowserRootError;
 
 const MISSING_LIBRARY = /^\s*(\S+) => not found$/gm;
 const LOADER_ERROR = /error while loading shared libraries: ([^:\s]+)/;
@@ -86,7 +93,10 @@ export const diagnoseLaunchFailure = Effect.fn("PreviewBrowserHost.diagnoseLaunc
   }) {
     const { setupCommand } = input;
     if (input.output.includes(NO_SANDBOX_SIGNATURE)) {
-      return new PreviewBrowserSandboxError({ setupCommand });
+      // Playwright reports Chrome's refusal to sandbox as root as a sandbox failure too.
+      return (yield* HostProcess.UserId) === 0
+        ? new PreviewBrowserRootError()
+        : new PreviewBrowserSandboxError({ setupCommand });
     }
     if ((yield* HostProcess.Platform) !== "linux") return undefined;
     const libraries = yield* missingLibraries(input.executable);
@@ -96,11 +106,7 @@ export const diagnoseLaunchFailure = Effect.fn("PreviewBrowserHost.diagnoseLaunc
   },
 );
 
-/**
- * The browser's own `--version` decides whether any are missing; `ldd` only
- * lists them after the real loader fails, because it can report libraries a
- * host provides another way (NixOS's nix-ld).
- */
+/** Detect missing libraries with --version; ldd can report misses that NixOS nix-ld provides. */
 export const missingLibraries = Effect.fn("PreviewBrowserHost.missingLibraries")(function* (
   executable: string,
 ) {

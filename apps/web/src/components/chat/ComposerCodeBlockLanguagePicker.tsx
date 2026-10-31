@@ -1,5 +1,5 @@
 import { CheckIcon, ChevronDownIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import {
   CODE_BLOCK_LANGUAGES,
@@ -36,20 +36,15 @@ export function ComposerCodeBlockLanguagePicker(props: {
 }) {
   const [query, setQuery] = useState("");
   const current = codeLanguageEntry(props.language)?.id ?? props.language;
-  const items = useMemo<CodeBlockLanguage[]>(
-    () =>
-      CODE_BLOCK_LANGUAGES.some((entry) => entry.id === current)
-        ? [...CODE_BLOCK_LANGUAGES]
-        : [{ id: current, label: current }, ...CODE_BLOCK_LANGUAGES],
-    [current],
-  );
-  const filteredItems = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return items;
-    return items.filter(
-      (entry) => entry.label.toLowerCase().includes(needle) || entry.id.includes(needle),
-    );
-  }, [items, query]);
+  const items: CodeBlockLanguage[] = CODE_BLOCK_LANGUAGES.some((entry) => entry.id === current)
+    ? [...CODE_BLOCK_LANGUAGES]
+    : [{ id: current, label: current }, ...CODE_BLOCK_LANGUAGES];
+  const needle = query.trim().toLowerCase();
+  const filteredItems = needle
+    ? items.filter(
+        (entry) => entry.label.toLowerCase().includes(needle) || entry.id.includes(needle),
+      )
+    : items;
   const selected = items.find((entry) => entry.id === current) ?? null;
 
   return (

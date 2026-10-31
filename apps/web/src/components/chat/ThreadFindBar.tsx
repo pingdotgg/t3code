@@ -26,11 +26,16 @@ export const THREAD_FIND_BAR_RESERVED_HEIGHT = 36 + THREAD_DETAILS_CARD_GAP;
 export function ThreadFindBar(props: ThreadFindBarProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses and selects the input DOM node when the bar opens or a find shortcut fires
   useEffect(() => {
     if (!props.open) return;
     inputRef.current?.focus();
     inputRef.current?.select();
-  }, [props.focusRequestId, props.open]);
+  }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each find shortcut bumps the request id, so an already-open bar refocuses and reselects its query.
+    props.focusRequestId,
+    props.open,
+  ]);
 
   if (!props.open) return null;
 

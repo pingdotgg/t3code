@@ -4,6 +4,7 @@ import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   encodeComposerContextClipboardHtml,
 } from "@t3tools/shared/composerContextClipboard";
+import { useStableCallback } from "./useStableCallback";
 
 export class ClipboardApiUnavailableError extends Schema.TaggedError<ClipboardApiUnavailableError>()(
   "ClipboardApiUnavailableError",
@@ -206,20 +207,8 @@ export function useCopyToClipboard<TContext = void>({
 } = {}): { copyToClipboard: (value: string, ctx: TContext) => void; isCopied: boolean } {
   const [isCopied, setIsCopied] = React.useState(false);
   const timeoutIdRef = React.useRef<NodeJS.Timeout | null>(null);
-  const onCopyRef = React.useRef(onCopy);
-  const onErrorRef = React.useRef(onError);
-  const targetRef = React.useRef(target);
-  const timeoutRef = React.useRef(timeout);
-
-  onCopyRef.current = onCopy;
-  onErrorRef.current = onError;
-  const extraFlavorsRef = React.useRef(extraFlavors);
-  targetRef.current = target;
-  timeoutRef.current = timeout;
-  extraFlavorsRef.current = extraFlavors;
-
-  const copyToClipboard = React.useCallback((value: string, ctx: TContext): void => {
-    void writeTextToClipboard(value, targetRef.current, extraFlavorsRef.current).then(
+  const copyToClipboard = useStableCallback((value: string, ctx: TContext): void => {
+    void writeTextToClipboard(value, target, extraFlavors).then(
       (didCopy) => {
         if (!didCopy) return;
         if (timeoutIdRef.current) {
@@ -227,22 +216,23 @@ export function useCopyToClipboard<TContext = void>({
         }
         setIsCopied(true);
 
-        onCopyRef.current?.(ctx);
+        onCopy?.(ctx);
 
-        if (timeoutRef.current !== 0) {
+        if (timeout !== 0) {
           timeoutIdRef.current = setTimeout(() => {
             setIsCopied(false);
             timeoutIdRef.current = null;
-          }, timeoutRef.current);
+          }, timeout);
         }
       },
       (error) => {
         console.error(error);
-        onErrorRef.current?.(error, ctx);
+        onError?.(error, ctx);
       },
     );
-  }, []);
+  });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the copied-state reset timer on unmount
   React.useEffect(() => {
     return (): void => {
       if (timeoutIdRef.current) {
