@@ -10,6 +10,7 @@ import type {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import { providerFailurePresentation } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import * as Cause from "effect/Cause";
 
@@ -273,7 +274,7 @@ export function makeProviderFailureTurnItem(input: {
     parentItemId: null,
     ordinal: input.itemOrdinal,
     status: "failed",
-    title: input.failure.class === "usage_limit" ? "Usage limit reached" : "Provider error",
+    title: providerFailurePresentation(input.failure).title,
     startedAt: input.retryStartedAt ?? input.occurredAt,
     completedAt: input.occurredAt,
     updatedAt: input.occurredAt,
@@ -305,7 +306,7 @@ export function makeProviderRetryTurnItem(input: {
   if (input.status === "completed") {
     title = "Provider recovered";
   } else if (input.status === "failed") {
-    title = input.failure.class === "usage_limit" ? "Usage limit reached" : "Provider error";
+    title = providerFailurePresentation(input.failure).title;
   } else if (input.status === "interrupted" || input.status === "cancelled") {
     title = "Provider retry stopped";
   }

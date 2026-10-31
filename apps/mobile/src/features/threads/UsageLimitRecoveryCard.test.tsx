@@ -27,14 +27,19 @@ import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function failedThread(resetAt: string): EnvironmentThreadShell {
+function failedThread(resetAt: string, error?: string): EnvironmentThreadShell {
   return {
     id: "thread-1",
     updatedAt: new Date(0).toISOString(),
     snoozedUntil: null,
     latestRun: { runId: "run-1", completedAt: new Date(0).toISOString() },
     limitRecovery: null,
-    runtime: { status: "failed", lastErrorClass: "usage_limit", usageLimitResetAt: resetAt },
+    runtime: {
+      status: "failed",
+      lastErrorClass: "usage_limit",
+      usageLimitResetAt: resetAt,
+      ...(error === undefined ? {} : { lastErrorCode: "provider.rate-limit", lastError: error }),
+    },
   } as unknown as EnvironmentThreadShell;
 }
 
@@ -62,5 +67,34 @@ describe("UsageLimitRecoveryCard", () => {
     act(() => vi.advanceTimersByTime(30 * DAY_MS));
 
     expect(snooze()?.disabled).toBe(true);
+  });
+
+  it("shows provider capacity detail and keeps the reset resume action", () => {
+    using _format = vi
+      .spyOn(Date.prototype, "toLocaleString")
+      .mockReturnValue("Jan 31, 1970, 00:00");
+    using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
+    vi.useFakeTimers({ now: 0 });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+    const message =
+      "Upstream request failed: [ttft_admission_refused] the cell is at capacity; retry shortly (after 30 s)";
+    act(() =>
+      root.render(
+        <UsageLimitRecoveryCard
+          thread={failedThread(new Date(30 * DAY_MS).toISOString(), message)}
+          environmentId={"env-1" as EnvironmentId}
+        />,
+      ),
+    );
+
+    expect(container.textContent).toContain(message);
+    expect(container.textContent).toContain("Resets Jan 31, 1970, 00:00.");
+    expect(
+      [...container.querySelectorAll("button")].find(
+        (button) => button.textContent === "Resume at reset",
+      ),
+    ).toBeDefined();
   });
 });

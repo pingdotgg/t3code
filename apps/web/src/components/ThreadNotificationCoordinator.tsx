@@ -6,6 +6,7 @@ import {
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import type { AnyRouter } from "@tanstack/react-router";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
+import { providerFailurePresentation } from "@t3tools/shared/orchestrationV2ThreadError";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import * as Option from "effect/Option";
 import type { AtomRegistry } from "effect/reactivity";
@@ -91,7 +92,11 @@ export function startThreadNotifications(
         : status === "approval"
           ? "Approval needed"
           : status === "limited"
-            ? "Usage limit reached"
+            ? providerFailurePresentation({
+                class: "usage_limit",
+                code: thread.runtime?.lastErrorCode ?? null,
+                message: thread.runtime?.lastError ?? "",
+              }).title
             : status === "failed"
               ? "Thread failed"
               : status === "request"

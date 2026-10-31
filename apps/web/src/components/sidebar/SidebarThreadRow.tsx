@@ -26,6 +26,7 @@ import {
   type EnvironmentMachineKind,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import { providerFailurePresentation } from "@t3tools/shared/orchestrationV2ThreadError";
 
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
@@ -355,7 +356,14 @@ function SidebarThreadTooltip({
             <CircleAlertIcon className="size-3 shrink-0 stroke-current" />
             <div className="min-w-0 truncate">
               {thread.runtime.lastErrorClass === "usage_limit"
-                ? "Usage limit reached"
+                ? providerFailurePresentation(
+                    {
+                      class: thread.runtime.lastErrorClass,
+                      code: thread.runtime.lastErrorCode ?? null,
+                      message: thread.runtime.lastError,
+                    },
+                    "Usage limit reached",
+                  ).title
                 : "Error occurred"}
             </div>
           </div>

@@ -23,6 +23,7 @@ import {
   formatReadToolLabel,
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
+import { providerFailurePresentation } from "@t3tools/shared/orchestrationV2ThreadError";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import type { McpAppReference } from "@t3tools/shared/mcpApp";
@@ -366,10 +367,7 @@ export function providerErrorPresentation(
 ): { readonly label: string; readonly detail: string } {
   if (item.retry === undefined) {
     return {
-      label:
-        item.failure.class === "usage_limit"
-          ? "Usage limit reached"
-          : item.title?.trim() || "Provider error",
+      label: providerFailurePresentation(item.failure, item.title).title,
       detail: item.failure.message,
     };
   }
@@ -383,7 +381,7 @@ export function providerErrorPresentation(
       : item.status === "completed"
         ? `Provider recovered (${progress} retries)`
         : item.status === "failed"
-          ? `${item.failure.class === "usage_limit" ? "Usage limit reached" : "Provider error"} after ${progress} retries`
+          ? `${providerFailurePresentation(item.failure).title} after ${progress} retries`
           : `Provider retry stopped (${progress})`;
   const retryDelay =
     item.status === "running" && item.retry.retryDelayMs !== null && item.retry.retryDelayMs > 0
