@@ -222,7 +222,6 @@ it("keeps the Linear page's scope when a link on it opens another issue", async 
     </AppAtomRegistryProvider>,
     { router: "/linear?team=team-1" },
   );
-  using navigate = vi.spyOn(screen.router!, "navigate").mockResolvedValue(undefined);
   screen.container.addEventListener("click", (nativeEvent) => nativeEvent.preventDefault(), {
     once: true,
   });
@@ -232,10 +231,7 @@ it("keeps the Linear page's scope when a link on it opens another issue", async 
       .element()
       .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })),
   );
-  const search = navigate.mock.calls[0]?.[0].search as (previous: object) => object;
-  expect(search({ team: "team-1", q: "bug" })).toEqual({
-    team: "team-1",
-    q: "bug",
-    issue: "ATT-2",
-  });
+  await vi.waitFor(() =>
+    expect(screen.router!.state.location.search).toEqual({ team: "team-1", issue: "ATT-2" }),
+  );
 });
