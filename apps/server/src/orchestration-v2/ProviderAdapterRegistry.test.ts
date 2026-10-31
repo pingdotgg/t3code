@@ -81,6 +81,37 @@ it.effect("routes two configured instances of the same driver independently", ()
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("returns one adapter per instance build so sessions can detect a rebuild", () =>
+  Effect.gen(function* () {
+    const unused = () => Effect.die("unused auth operation");
+    const auth: ProviderAuthController = {
+      isChangingCredentials: Effect.succeed(false),
+      start: unused,
+      complete: unused,
+      cancel: unused,
+      logout: unused,
+      subscribe: () => Stream.empty,
+    };
+    let current: ProviderInstance = { ...instances[0], auth };
+    const registry = yield* Effect.service(ProviderAdapterRegistry.ProviderAdapterRegistryV2).pipe(
+      Effect.provide(
+        ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
+          Layer.provide(
+            Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+              getInstance: () => Effect.sync(() => current),
+            }),
+          ),
+        ),
+      ),
+    );
+    const built = yield* registry.get(personalId);
+
+    assert.strictEqual(yield* registry.get(personalId), built);
+    current = { ...instances[0], auth };
+    assert.notStrictEqual(yield* registry.get(personalId), built);
+  }),
+);
+
 it.effect(
   "blocks a new session while another instance changes their shared provider credentials",
   () =>
