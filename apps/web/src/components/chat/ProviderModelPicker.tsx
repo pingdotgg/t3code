@@ -90,6 +90,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   disabled?: boolean;
   terminalOpen?: boolean;
   open?: boolean;
+  popupAlign?: "start" | "end";
   triggerClassName?: string;
   triggerLabel?: string;
   triggerAriaLabel?: string;
@@ -392,7 +393,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           };
         }}
         initialFocus={searchInputRef}
-        align="start"
+        align={props.popupAlign ?? "start"}
+        collisionAvoidance={docked ? { align: "shift", fallbackAxisSide: "none" } : undefined}
         className="before:hidden"
         padding="none"
         touchBackdrop
