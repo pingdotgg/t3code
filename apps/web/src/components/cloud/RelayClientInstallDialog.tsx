@@ -141,7 +141,7 @@ export function RelayClientInstallDialog() {
         }
       }}
     >
-      <DialogPopup className="max-w-md" showCloseButton={isConfirming}>
+      <DialogPopup className="sm:max-w-110" showCloseButton={isConfirming}>
         <DialogHeader>
           {isConfirming ? (
             <div className="flex size-9 items-center justify-center rounded-control surface-well">
@@ -169,12 +169,13 @@ export function RelayClientInstallDialog() {
         {isConfirming ? (
           <DialogFooter>
             <Button
+              size="standard"
               variant="secondary"
               onClick={() => respondToRelayClientInstallConfirmation(false)}
             >
               Cancel
             </Button>
-            <Button onClick={() => respondToRelayClientInstallConfirmation(true)}>
+            <Button size="standard" onClick={() => respondToRelayClientInstallConfirmation(true)}>
               Download and install
             </Button>
           </DialogFooter>
@@ -183,13 +184,16 @@ export function RelayClientInstallDialog() {
             <p className="text-meta text-dim-foreground">Managed relay client</p>
             <div className="flex flex-col-reverse gap-2 sm:flex-row">
               <Button
+                size="standard"
                 disabled={!canCancelInstall}
                 onClick={cancelRelayClientInstall}
                 variant="secondary"
               >
-                {installingView.cancelling ? "Cancelling..." : "Cancel"}
+                {installingView.cancelling ? "Cancelling…" : "Cancel"}
               </Button>
-              <Button disabled>Installing...</Button>
+              <Button size="standard" disabled>
+                Installing…
+              </Button>
             </div>
           </DialogFooter>
         ) : null}
