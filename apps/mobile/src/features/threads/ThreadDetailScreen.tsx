@@ -307,6 +307,8 @@ export interface ThreadDetailScreenProps {
 
 const USAGE_LIMITS_PANEL_GAP = 12;
 const USAGE_LIMITS_PANEL_MIN_HEIGHT = 44;
+// The approval slot's `pb-3` at NativeWind's 14px rem.
+const PENDING_APPROVAL_SLOT_BOTTOM_PADDING = 10.5;
 
 const USER_INPUT_TOGGLE_TIMING = {
   duration: USER_INPUT_TOGGLE_DURATION_MS,
@@ -950,13 +952,26 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   // The question card reads the keyboard frame on the UI thread, in the same frame the sticky
   // view translates, so it gets the full height while the keyboard is closed and never crosses
   // the header while the keyboard moves.
-  const { height: keyboardTranslation } = useReanimatedKeyboardAnimation();
+  const { height: keyboardTranslation, progress: keyboardProgress } =
+    useReanimatedKeyboardAnimation();
   const pendingUserInputMaxHeight = useDerivedValue(() =>
     derivePendingUserInputMaxHeight({
       windowHeight: screenAreaHeight,
       keyboardHeight: keyboardStickyEnabled ? -keyboardTranslation.value : 0,
       navigationHeaderHeight,
       composerOverlapHeight: composerBottomInset,
+    }),
+  );
+  // The approval card sits above the visible composer, which the sticky view lifts by the
+  // keyboard less its opened offset.
+  const pendingApprovalMaxHeight = useDerivedValue(() =>
+    derivePendingUserInputMaxHeight({
+      windowHeight: screenAreaHeight,
+      keyboardHeight: keyboardStickyEnabled
+        ? -keyboardTranslation.value - keyboardProgress.value * composerKeyboardOffset
+        : 0,
+      navigationHeaderHeight,
+      composerOverlapHeight: composerOverlapHeight + PENDING_APPROVAL_SLOT_BOTTOM_PADDING,
     }),
   );
   // The usage panel stacks with the composer and any approval card, so it gets
@@ -1592,8 +1607,10 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                     >
                       {props.activePendingApproval ? (
                         <PendingApprovalCard
+                          key={props.activePendingApproval.requestId}
                           canOperateThread={props.canOperateThread}
                           approval={props.activePendingApproval}
+                          maxHeight={pendingApprovalMaxHeight}
                           respondingApprovalId={props.respondingApprovalId}
                           onRespond={props.onRespondToApproval}
                         />
