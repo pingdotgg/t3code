@@ -1368,6 +1368,7 @@ async function recordMessagesUntilTurnResults(input: {
   readonly entries: Array<ProviderReplayEntry>;
   readonly scenario: string;
   readonly resultCount: number;
+  readonly until?: (message: SDKMessage) => boolean;
 }): Promise<boolean> {
   let seenResults = 0;
   while (true) {
@@ -1384,6 +1385,9 @@ async function recordMessagesUntilTurnResults(input: {
       label: replayMessage.type,
       frame: replayMessage,
     });
+    if (input.until?.(next.value) === true) {
+      return true;
+    }
     if (replayMessage.type === "result") {
       seenResults += 1;
       if (seenResults >= input.resultCount) {
@@ -1760,6 +1764,21 @@ async function recordClaudeActiveSteeringQuery(input: {
   const iterator = queryRuntime[Symbol.asyncIterator]();
   try {
     offerPrompt(0);
+    // The adapter holds steers until the prompt's first root model frame.
+    const streamed = await recordMessagesUntilTurnResults({
+      iterator,
+      entries: input.entries,
+      scenario: input.scenario,
+      resultCount: 1,
+      until: (message) =>
+        (message.type === "stream_event" ||
+          (message.type === "assistant" && message.message.model !== "<synthetic>")) &&
+        message.parent_tool_use_id === null,
+    });
+    const last = input.entries.at(-1);
+    if (!streamed || (last?.type === "emit_inbound" && last.label === "result")) {
+      throw new Error("Claude active steering query ended before the prompt streamed.");
+    }
     offerSteeringPrompts();
     const completed = await recordMessagesUntilTurnResults({
       iterator,
