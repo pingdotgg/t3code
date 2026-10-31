@@ -21,6 +21,8 @@ import {
   toolOutputIndicatesFailure,
 } from "@t3tools/shared/toolOutput";
 
+// A checkpoint over vendored or generated trees can list 15k+ files; the card needs a prefix.
+const MAX_WIRE_CHECKPOINT_FILES = 200;
 const MAX_DETAIL_STRING_BYTES = 32_768;
 const MAX_DYNAMIC_VALUE_BYTES = 16_384;
 const MAX_ON_DEMAND_BYTES = 256 * 1024;
@@ -96,19 +98,73 @@ function summarizeDynamicValue(value: unknown): unknown {
   };
 }
 
+type CheckpointFiles = Pick<OrchestrationV2Checkpoint, "files" | "filesTotal">;
+
+// Same input, same output object: snapshot compaction relies on shared item identity.
+const cappedCheckpointFiles = new WeakMap<object, object>();
+
+function capCheckpointFiles<T extends CheckpointFiles>(value: T): T {
+  if (value.files.length <= MAX_WIRE_CHECKPOINT_FILES || value.filesTotal !== undefined) {
+    return value;
+  }
+  const cached = cappedCheckpointFiles.get(value);
+  if (cached !== undefined) return cached as T;
+  let additions = 0;
+  let deletions = 0;
+  for (const file of value.files) {
+    additions += file.additions;
+    deletions += file.deletions;
+  }
+  const capped = {
+    ...value,
+    files: value.files.slice(0, MAX_WIRE_CHECKPOINT_FILES),
+    filesTotal: { count: value.files.length, additions, deletions },
+  };
+  cappedCheckpointFiles.set(value, capped);
+  return capped;
+}
+
+/** Idempotent; bounded snapshots that skip `projectThreadProjectionForWire` still need it. */
+export function capProjectionCheckpointFilesForWire(
+  projection: OrchestrationV2ThreadProjection,
+): OrchestrationV2ThreadProjection {
+  const checkpoints = projection.checkpoints.map(capCheckpointFiles);
+  const turnItems = projection.turnItems.map(capCheckpointItemFiles);
+  const visibleTurnItems = projection.visibleTurnItems.map((row) => {
+    const item = capCheckpointItemFiles(row.item);
+    return item === row.item ? row : { ...row, item };
+  });
+  const unchanged = (next: ReadonlyArray<unknown>, previous: ReadonlyArray<unknown>) =>
+    next.every((value, index) => value === previous[index]);
+  return unchanged(checkpoints, projection.checkpoints) &&
+    unchanged(turnItems, projection.turnItems) &&
+    unchanged(visibleTurnItems, projection.visibleTurnItems)
+    ? projection
+    : { ...projection, checkpoints, turnItems, visibleTurnItems };
+}
+
+function capCheckpointItemFiles(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
+  return item.type === "checkpoint" ? capCheckpointFiles(item) : item;
+}
+
 export function projectTurnItemForWire(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
   switch (item.type) {
+    case "checkpoint":
+      return capCheckpointFiles(item);
     case "handoff": {
       const { summary: _summary, ...projected } = item;
       return projected;
     }
     case "command_execution": {
       const { output, ...projected } = item;
+      // A successful search can print "ENOENT" or "exit code 2", so output text
+      // decides only when the provider reported no exit code.
       const failed =
-        item.outputIndicatesFailure === true ||
-        (item.exitCode !== undefined && item.exitCode !== 0) ||
-        (output !== undefined &&
-          toolOutputIndicatesFailure(output.slice(0, MAX_DETAIL_STRING_BYTES)));
+        item.exitCode === undefined
+          ? item.outputIndicatesFailure === true ||
+            (output !== undefined &&
+              toolOutputIndicatesFailure(output.slice(0, MAX_DETAIL_STRING_BYTES)))
+          : item.exitCode !== 0;
       return {
         ...projected,
         ...(failed ? { outputIndicatesFailure: true } : {}),
@@ -200,8 +256,20 @@ export function projectTurnItemForDetail(item: OrchestrationV2TurnItem): Orchest
         result:
           item.result === null ? null : (truncateDetail(item.result, MAX_ON_DEMAND_BYTES) ?? null),
       };
-    case "handoff":
     case "file_change":
+      return {
+        ...projectTurnItemForWire(item),
+        ...(item.diffStr === undefined
+          ? {}
+          : { diffStr: truncateDetail(item.diffStr, MAX_ON_DEMAND_BYTES) }),
+        ...(!item.diffStr?.trim() && item.oldStr !== undefined
+          ? { oldStr: truncateDetail(item.oldStr, MAX_ON_DEMAND_BYTES) }
+          : {}),
+        ...(!item.diffStr?.trim() && item.newStr !== undefined
+          ? { newStr: truncateDetail(item.newStr, MAX_ON_DEMAND_BYTES) }
+          : {}),
+      };
+    case "handoff":
       return projectTurnItemForWire(item);
     default:
       return item;
@@ -229,6 +297,7 @@ export function projectThreadProjectionForWire(
   };
   return {
     ...projection,
+    checkpoints: projection.checkpoints.map(capCheckpointFiles),
     contextHandoffs: projection.contextHandoffs.map(projectContextHandoffForWire),
     turnItems: projection.turnItems.map(project),
     visibleTurnItems: projection.visibleTurnItems.map((row) => ({
@@ -245,7 +314,9 @@ export function projectDomainEventForWire(
     ? { ...event, payload: projectTurnItemForWire(event.payload) }
     : event.type === "context-handoff.updated"
       ? { ...event, payload: projectContextHandoffForWire(event.payload) }
-      : event;
+      : event.type === "checkpoint.captured"
+        ? { ...event, payload: capCheckpointFiles(event.payload) }
+        : event;
 }
 
 const LIVE_DEDUPE_MEMORY = 32;
