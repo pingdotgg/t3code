@@ -455,9 +455,7 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
         PATHEXT: ".COM;.EXE",
       });
 
-      // Windows 10+ can mark a directory case-sensitive, so the two spellings
-      // are not provably one directory and skipping the second could hide a
-      // command that is really there.
+      // Windows PATH directories can be case-sensitive; preserve both spellings.
       expect(probed).toHaveLength(8);
     }),
   );
@@ -556,8 +554,7 @@ describe("preferGitForWindowsBinary", () => {
   });
 
   it("keeps the launcher when MSYSTEM is set", () => {
-    // The real git.exe only adds its own folders to PATH when MSYSTEM is unset;
-    // without them a `#!/bin/sh` hook cannot start.
+    // git.exe adds hook dependencies to PATH only when MSYSTEM is unset.
     expect(
       preferGitForWindowsBinary(
         "C:\\Program Files\\Git\\cmd\\git.exe",
@@ -625,8 +622,7 @@ describe("npmShimExecutable", () => {
   });
 
   it("keeps a shim CMD would read differently", () => {
-    // CMD keeps trailing characters in an unquoted `SET` value, so these point
-    // `dp0`, and with it the executable, somewhere else.
+    // CMD preserves trailing SET whitespace, changing the executable path.
     for (const suffix of ["\u00a0", "\t", " "]) {
       const altered = NPM_OPENCODE_SHIM.replace("SET dp0=%~dp0", `SET dp0=%~dp0${suffix}`);
       expect(

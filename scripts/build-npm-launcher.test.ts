@@ -13,6 +13,8 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeEvents from "node:events";
 import * as NodeHttp from "node:http";
 
+import { npmReleaseDatabaseMigration } from "@t3tools/shared/cliRelease";
+
 import { buildNpmLauncher } from "./build-npm-launcher.ts";
 
 const VERSION = "1.2.3";
@@ -45,7 +47,6 @@ const run = Effect.fn("test.run")(function* (
   return { stdout, stderr, exitCode };
 }, Effect.scoped);
 
-/** A release archive for this host with a stub `t3` that echoes its args and launcher. */
 const serveFakeRelease = Effect.fn("test.serveFakeRelease")(function* (root: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -117,11 +118,10 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
         assert.equal(manifest.name, "t3");
         assert.equal(manifest.version, VERSION);
         assert.deepStrictEqual(manifest.bin, { t3: "./bin/t3.mjs" });
-        // Nothing for npm to resolve, so nothing that can lag behind the launcher.
         assert.isUndefined(manifest.dependencies);
         assert.isUndefined(manifest.optionalDependencies);
+        assert.isAbove(npmReleaseDatabaseMigration(manifest) ?? 0, 0);
 
-        // Run what npm would install: the published tarball, unpacked.
         const installed = path.join(root, "installed");
         yield* fs.makeDirectory(installed);
         const unpack = yield* run("tar", ["-xzf", output.tarball, "-C", installed], {
@@ -145,7 +145,6 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
         });
         assert.equal(first.stdout.trim(), `stub serve a b launcher=${launcher}`, first.stderr);
         assert.equal(first.exitCode, 7);
-        // The same layout the install scripts and `t3 update` use.
         const versionDir = path.join(home, "runtime/versions", VERSION);
         assert.equal(
           (yield* fs.readFileString(path.join(versionDir, ".install-complete"))).trim(),
@@ -157,14 +156,11 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
           [VERSION],
         );
 
-        // A second run reuses the download.
         const requestsAfterFirst = release.requests.length;
         const second = yield* run(process.execPath, [launcher, "--version"], { cwd: root, env });
         assert.equal(second.exitCode, 7);
         assert.equal(release.requests.length, requestsAfterFirst);
 
-        // Services installed before 0.0.41 fork dist/bin.mjs and talk to the
-        // server over IPC; the channel and SIGTERM must reach the executable.
         const ipcServer = path.join(home, "runtime/versions", VERSION, "t3");
         yield* fs.writeFileString(
           ipcServer,
@@ -187,7 +183,6 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
           assert.deepStrictEqual(await exit, [23, null]);
         });
 
-        // Two first runs at once both start, and neither removes the other's install.
         const raceHome = path.join(root, "race-home");
         const launch = run(process.execPath, [launcher, "--version"], {
           cwd: root,
@@ -200,7 +195,118 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
           VERSION,
         ]);
 
-        // A download that does not match the release checksums is never installed.
+        // A peer's executable and sidecar stay available after every later rename or removal,
+        // even when it publishes after our missing-marker read.
+        const staleHome = path.join(root, "stale-home");
+        const staleDir = path.join(staleHome, "runtime/versions", VERSION);
+        const peerDir = path.join(root, "peer-runtime");
+        yield* fs.makeDirectory(staleDir, { recursive: true });
+        yield* fs.writeFileString(path.join(staleDir, "t3"), "");
+        yield* fs.makeDirectory(peerDir);
+        yield* fs.writeFileString(path.join(peerDir, "t3"), '#!/bin/sh\necho "peer $*"\nexit 7\n');
+        yield* fs.chmod(path.join(peerDir, "t3"), 0o755);
+        yield* fs.writeFileString(path.join(peerDir, ".install-complete"), `${VERSION}\n`);
+        yield* fs.writeFileString(path.join(peerDir, "sidecar"), "peer sidecar");
+        const peerChecks = path.join(root, "peer-checks.txt");
+        // The peer publishes after the launcher's rename fails and it reads the marker.
+        const peerHook = path.join(root, "peer-publishes.mjs");
+        yield* fs.writeFileString(
+          peerHook,
+          `import fs from "node:fs";
+import { spawnSync } from "node:child_process";
+const dir = ${JSON.stringify(staleDir)};
+const { readFileSync, renameSync, rmSync } = fs;
+let checking = false;
+let published = false;
+const checkPeer = () => {
+  const child = spawnSync(dir + "/t3", ["--version"], { encoding: "utf8" });
+  let sidecar;
+  try {
+    sidecar = readFileSync(dir + "/sidecar", "utf8");
+  } catch (error) {
+    sidecar = error.code;
+  }
+  fs.appendFileSync(${JSON.stringify(peerChecks)},
+    [child.status, child.error?.code ?? child.stdout.trim(), sidecar].join("|") + "\\n");
+};
+fs.renameSync = (from, to) => {
+  try {
+    return renameSync(from, to);
+  } catch (error) {
+    checking ||= to === dir;
+    throw error;
+  } finally {
+    if (published) checkPeer();
+  }
+};
+fs.rmSync = (...args) => {
+  try {
+    return rmSync(...args);
+  } finally {
+    if (published) checkPeer();
+  }
+};
+fs.readFileSync = (file, ...rest) => {
+  try {
+    return readFileSync(file, ...rest);
+  } finally {
+    if (checking && file === dir + "/.install-complete") {
+      checking = false;
+      rmSync(dir, { recursive: true });
+      renameSync(${JSON.stringify(peerDir)}, dir);
+      published = true;
+      checkPeer();
+    }
+  }
+};
+`,
+        );
+        const recovered = yield* run(
+          process.execPath,
+          ["--import", peerHook, launcher, "--version"],
+          { cwd: root, env: { ...env, T3CODE_HOME: staleHome } },
+        );
+        const checks = (yield* fs.readFileString(peerChecks)).trim().split("\n");
+        assert.isAtLeast(checks.length, 2);
+        assert.deepStrictEqual([...new Set(checks)], ["7|peer --version|peer sidecar"]);
+        assert.equal(recovered.stdout.trim(), "peer --version", recovered.stderr);
+        assert.equal(recovered.exitCode, 7);
+        assert.deepStrictEqual(yield* fs.readDirectory(path.join(staleHome, "runtime/versions")), [
+          VERSION,
+        ]);
+
+        // While another launch holds the lock, a stale folder is left alone and the error says
+        // how to clear a lock left by a crash.
+        const staleOnlyHome = path.join(root, "stale-only-home");
+        const staleOnlyDir = path.join(staleOnlyHome, "runtime/versions", VERSION);
+        yield* fs.makeDirectory(staleOnlyDir, { recursive: true });
+        yield* fs.writeFileString(path.join(staleOnlyDir, "t3"), "incomplete");
+        yield* fs.makeDirectory(`${staleOnlyDir}.lock`);
+        const locked = yield* run(process.execPath, [launcher, "--version"], {
+          cwd: root,
+          env: { ...env, T3CODE_HOME: staleOnlyHome },
+        });
+        assert.equal(locked.exitCode, 1);
+        assert.include(locked.stderr, `delete ${staleOnlyDir}.lock`);
+        assert.equal(yield* fs.readFileString(path.join(staleOnlyDir, "t3")), "incomplete");
+
+        // Without a peer, the stale folder is replaced by our own download.
+        yield* fs.remove(`${staleOnlyDir}.lock`, { recursive: true });
+        const replaced = yield* run(process.execPath, [launcher, "--version"], {
+          cwd: root,
+          env: { ...env, T3CODE_HOME: staleOnlyHome },
+        });
+        assert.equal(
+          replaced.stdout.trim(),
+          `stub --version launcher=${launcher}`,
+          replaced.stderr,
+        );
+        assert.equal(replaced.exitCode, 7);
+        assert.deepStrictEqual(
+          yield* fs.readDirectory(path.join(staleOnlyHome, "runtime/versions")),
+          [VERSION],
+        );
+
         release.corruptChecksum();
         const corrupt = yield* run(process.execPath, [launcher, "--version"], {
           cwd: root,
