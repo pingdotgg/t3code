@@ -1,6 +1,7 @@
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
+import { useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
 import { AudioPreviewUnmountContext } from "../files/AudioPreview";
 import {
   ActivityShimmerOverlay,
@@ -107,6 +108,7 @@ import { Skeleton } from "../ui/skeleton";
 import { ExpandedImagePreview } from "./ExpandedImagePreview";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
+  readTimelineTopInset,
   readTimelinePosition,
   type RememberedTimelinePosition,
   rememberTimelinePosition,
@@ -178,6 +180,9 @@ function timelineListStateFor(identity: string): {
 }
 
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
+// Room for a pane header the viewport reaches under (--timeline-top-inset).
+const TIMELINE_TOP_INSET = <div className="h-[var(--timeline-top-inset,0px)]" />;
+
 const TIMELINE_LIST_FADE_HEADER = (
   <div className="h-[var(--workspace-titlebar-scroll-fade-height)]" />
 );
@@ -444,6 +449,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   topFadeEnabled = false,
   historyControls,
 }: MessagesTimelineProps) {
+  const layoutPaneFocusedRef = useLayoutPaneFocusedRef();
   const pendingRequest = pendingRequestProp?.blocking === false ? null : pendingRequestProp;
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
   // Snapshot restore positions on identity changes; ongoing scroll writes must not move them.
@@ -868,6 +874,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
+  // The pane header's height over the viewport, measured with the viewport.
+  const [topInset, setTopInset] = useState(0);
   const {
     target: readyCitationRequest,
     positioning: citationPositioning,
@@ -934,7 +942,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     rows,
     anchorMessageId,
     (row) => (row.kind === "message" && row.message.role === "user" ? row.message.id : null),
-    { anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET },
+    { anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET + topInset },
   );
   const anchoredEndSpace = anchoredEndSpaceConfig
     ? {
@@ -1011,7 +1019,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   } | null>(null);
   const rememberPosition = (followingEnd: boolean) => {
     const state = listRef.current?.getState?.();
-    if (restoringThreadPosition || state?.data !== rows) return;
+    if (restoringThreadPosition || state?.data !== rows) return undefined;
     const isAtEnd = resolveTimelineIsAtEnd(state);
     const position = state.data.length ? resolveWorkGroupScrollAnchor(state) : undefined;
     if (position && isAtEnd !== undefined) {
@@ -1046,6 +1054,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
     }
   };
 
+  const rememberPositionOnUnmount = useStableCallback(() =>
+    rememberPosition(liveFollowEnabled && !anchoredEndSpace),
+  );
+
   const handleScroll = () => {
     if (restoringThreadPosition || listRef.current?.getState?.().data !== rows) return;
     const isAtEnd = rememberPosition(liveFollowEnabled && !anchoredEndSpace);
@@ -1068,6 +1080,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       current === nextHasPersistentGutter ? current : nextHasPersistentGutter,
     );
     setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(viewportWidth, contentWidth));
+    setTopInset(readTimelineTopInset(listRef.current?.getScrollableNode()));
   };
   // Rows added, removed or rewrapped (chat width) change the content size,
   // which moves the scroll position, the overflow, and the content lane width.
@@ -1231,6 +1244,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     );
   const listHeader = (
     <>
+      {TIMELINE_TOP_INSET}
       {parentThreadLink === null ? listHeaderLeadingContent : null}
       {historyControls ? <TimelineHistoryControl {...historyControls} /> : null}
       {parentThreadLink !== null ? listHeaderLeadingContent : null}
@@ -1244,7 +1258,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     listRef.current = list;
     const scrollNode: HTMLElement | null = list?.getScrollableNode() ?? null;
     registerTimeline?.(scrollNode);
-    const viewport = scrollNode ? attachTimelineViewport(scrollNode) : null;
+    const viewport = scrollNode
+      ? attachTimelineViewport(scrollNode, () => layoutPaneFocusedRef.current)
+      : null;
     viewportRef.current = viewport;
     const detachViewport = viewport ? onViewportAttach?.(viewport) : undefined;
     const stopRememberingRelease = viewport?.onFollowReleased(rememberReleasedPosition);
@@ -1269,6 +1285,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       .listen("totalSize", () => scheduleContentSizeChanged());
     scheduleContentSizeChanged();
     return () => {
+      rememberPositionOnUnmount();
       stopListeningToContentSize?.();
       stopRememberingRelease?.();
       if (contentSizeFrame !== null) cancelAnimationFrame(contentSizeFrame);
@@ -1424,7 +1441,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         <TimelineRowActivityCtx value={activityState}>
           <TooltipScrollDismissArea
             ref={attachTimelineViewportElement}
-            className="relative h-full min-h-0"
+            className="relative -mt-[var(--timeline-top-inset,0px)] h-[calc(100%+var(--timeline-top-inset,0px))] min-h-0"
             data-assistant-citation-viewport="true"
           >
             {onCiteAssistantText && citationThreadRef ? (
@@ -1474,7 +1491,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               maintainScrollAtEndThreshold={1}
               onScroll={handleScroll}
               onItemSizeChanged={scheduleMinimapRefresh}
-              className="messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]"
+              className="messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 scroll-pt-[var(--timeline-top-inset,0px)] overflow-x-hidden overscroll-y-contain [overflow-anchor:none]"
               ListHeaderComponent={listHeader}
               ListFooterComponent={timelineListFooter}
             />
@@ -1490,7 +1507,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 void listRef.current?.scrollToIndex({
                   index: item.rowIndex,
                   animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
-                  viewOffset: 24,
+                  viewOffset: 24 + readTimelineTopInset(listRef.current?.getScrollableNode()),
                 });
               }}
             />
