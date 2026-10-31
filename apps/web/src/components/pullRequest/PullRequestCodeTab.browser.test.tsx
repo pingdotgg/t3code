@@ -173,11 +173,15 @@ async function expectFileHeaderShown(
   container: HTMLElement,
   path: string,
 ) {
-  const header = screen.getByText(path, { exact: true }).first();
-  await expect.element(header).toBeInTheDocument();
+  await expect.element(screen.getByText(path, { exact: true }).first()).toBeInTheDocument();
   await vi.waitFor(() => {
+    const header = screen
+      .getByText(path, { exact: true })
+      .elements()
+      .find((element) => element.checkVisibility());
+    if (!header) throw new Error(`No visible file header for ${path}`);
     const bounds = container.querySelector(".diff-render-surface")!.getBoundingClientRect();
-    const { top, bottom } = header.element().getBoundingClientRect();
+    const { top, bottom } = header.getBoundingClientRect();
     expect(top).toBeGreaterThanOrEqual(bounds.top);
     expect(bottom).toBeLessThanOrEqual(bounds.bottom);
   });
@@ -195,7 +199,7 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
   setup({ paged: true });
   const container = pagedContainer();
   await using screen = await render(tab(0), { container });
-  await expect.element(screen.getByText("early-0.ts", { exact: true }).first()).toBeVisible();
+  await expectFileHeaderShown(screen, container, "early-0.ts");
 
   await screen.rerender(tab(0, { path: "late.ts", nonce: 1 }));
 
