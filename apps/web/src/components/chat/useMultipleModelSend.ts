@@ -26,6 +26,7 @@ import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
+  composerDraftUserContentSignature,
   boundAttachmentIds,
   type ComposerSendSnapshot,
   type makeThreadErrorSetter,
@@ -113,6 +114,9 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
     /** False once a newer send from this composer started. */
     readonly isCurrentSend: () => boolean;
   }) => {
+    const draftContentForSend = composerDraftUserContentSignature(
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+    );
     const { attachments: attachmentsSnapshot, messageText } = sendSnapshot;
     const failedSelections: ModelSelection[] = [];
     let clearedDraft = false;
@@ -123,6 +127,13 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
     // fails every selection; the draft restore below still runs.
     const sendResult = await settlePromise(async () => {
       const attachments = await attachmentsPromise;
+      if (
+        composerDraftUserContentSignature(
+          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+        ) !== draftContentForSend
+      ) {
+        throw new Error("Draft changed while preparing this message. Review it and send again.");
+      }
       const fileBlockReason = readFileBlockReason();
       if (fileBlockReason !== null) throw new Error(fileBlockReason);
       const context = buildOutgoingMessageContext(
