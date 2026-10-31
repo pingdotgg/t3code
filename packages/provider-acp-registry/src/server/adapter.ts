@@ -14,6 +14,11 @@ import {
   extractCopilotSubagentUpdate,
   makeCopilotSubagentRouting,
 } from "./copilotAcp.ts";
+import {
+  normalizeCursorModelSelection,
+  cursorClientCapabilitiesMeta,
+  isCursorAcpAgent,
+} from "./cursorAcp.ts";
 import { defaultInstanceIdForDriver, ProviderDriverKind } from "@t3tools/contracts";
 import { readCustomModelEntries } from "@t3tools/shared/model";
 import { AcpRegistrySettings } from "../settings.ts";
@@ -244,6 +249,12 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           normalizeSessionUpdate: normalizeDevinSessionUpdate,
           normalizeToolCall: normalizeDevinToolCall,
           extractSubagentUpdate: extractDevinSubagentUpdate,
+        }
+      : {}),
+    ...(isCursorAcpAgent(options.settings)
+      ? {
+          clientCapabilitiesMeta: cursorClientCapabilitiesMeta,
+          normalizeModelSelection: normalizeCursorModelSelection,
         }
       : {}),
     ...(copilotRouting === undefined

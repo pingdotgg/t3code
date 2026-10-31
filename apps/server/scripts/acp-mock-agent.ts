@@ -153,6 +153,7 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
           { value: "composer-2", name: "Composer 2" },
           { value: "gpt-5.4", name: "GPT-5.4" },
           { value: "claude-opus-4-6", name: "Opus 4.6" },
+          { value: "claude-sonnet-4-6", name: "Sonnet 4.6" },
         ],
       },
     ];
@@ -214,10 +215,11 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
           },
         ];
       case "claude-opus-4-6":
+      case "claude-sonnet-4-6":
         return [
           ...baseOptions,
           {
-            configId: "reasoning",
+            configId: currentModelId === "claude-opus-4-6" ? "effort" : "reasoning_effort",
             name: "Reasoning",
             category: "thought_level",
             type: "select",
@@ -750,7 +752,10 @@ const program = Effect.gen(function* () {
       if (request.configId === "agent" && typeof request.value === "string") {
         currentAgent = request.value;
       }
-      if (request.configId === "reasoning" && typeof request.value === "string") {
+      if (
+        ["reasoning", "effort", "reasoning_effort"].includes(request.configId) &&
+        typeof request.value === "string"
+      ) {
         currentReasoning = request.value;
       }
       if (request.configId === "context" && typeof request.value === "string") {

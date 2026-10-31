@@ -61,6 +61,10 @@ function settingsWithProviderInstances(): UnifiedSettings {
   return {
     ...DEFAULT_UNIFIED_SETTINGS,
     providerInstances: {
+      [ProviderInstanceId.make("acpRegistry")]: {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        config: { agentId: "cursor" },
+      },
       [ProviderInstanceId.make("claudeAgent")]: {
         driver: ProviderDriverKind.make("claudeAgent"),
         config: { customModels: [] },
@@ -255,6 +259,11 @@ describe("instance-scoped model selection", () => {
       missingModel: "opencode/kimi-k3",
     },
     {
+      driverName: "acpRegistry",
+      availableModel: "composer-2",
+      missingModel: "composer-2[fast=true]",
+    },
+    {
       driverName: "antigravity",
       availableModel: "gemini-3.1-pro",
       missingModel: "gemini-3.1-pro-high",
@@ -334,37 +343,40 @@ describe("instance-scoped model selection", () => {
     });
   });
 
-  it("falls back from an explicit non-OpenCode draft with a missing model", () => {
-    const instanceId = ProviderInstanceId.make("codex");
-    const driver = ProviderDriverKind.make("codex");
-    const providers = [provider({ provider: driver, instanceId, models: ["gpt-5.6-sol"] })];
-    const state = deriveEffectiveComposerModelState({
-      draft: {
-        activeProvider: instanceId,
-        modelSelectionByProvider: {
-          [instanceId]: createModelSelection(instanceId, "gpt-missing", [
-            { id: "effort", value: "max" },
-          ]),
+  it.each(["codex", "acpRegistry"])(
+    "falls back from an explicit %s draft with a missing model",
+    (driverName) => {
+      const instanceId = ProviderInstanceId.make(driverName);
+      const driver = ProviderDriverKind.make(driverName);
+      const providers = [provider({ provider: driver, instanceId, models: ["gpt-5.6-sol"] })];
+      const state = deriveEffectiveComposerModelState({
+        draft: {
+          activeProvider: instanceId,
+          modelSelectionByProvider: {
+            [instanceId]: createModelSelection(instanceId, "gpt-missing", [
+              { id: "effort", value: "max" },
+            ]),
+          },
         },
-      },
-      providers,
-      selectedProvider: driver,
-      selectedInstanceId: instanceId,
-      threadModelSelection: null,
-      projectModelSelection: null,
-      settings: settingsWithProviderInstances(),
-    });
-    const dispatch = getComposerProviderState({
-      provider: driver,
-      model: state.selectedModel,
-      models: providers[0]!.models,
-      modelOptions: state.modelOptions?.[instanceId],
-      planModeEnabled: false,
-    });
+        providers,
+        selectedProvider: driver,
+        selectedInstanceId: instanceId,
+        threadModelSelection: null,
+        projectModelSelection: null,
+        settings: settingsWithProviderInstances(),
+      });
+      const dispatch = getComposerProviderState({
+        provider: driver,
+        model: state.selectedModel,
+        models: providers[0]!.models,
+        modelOptions: state.modelOptions?.[instanceId],
+        planModeEnabled: false,
+      });
 
-    expect(state.selectedModel).toBe("gpt-5.6-sol");
-    expect(dispatch.modelOptionsForDispatch).toBeUndefined();
-  });
+      expect(state.selectedModel).toBe("gpt-5.6-sol");
+      expect(dispatch.modelOptionsForDispatch).toBeUndefined();
+    },
+  );
 
   it("preserves an explicit draft OpenCode selection while the catalog is empty", () => {
     const instanceId = ProviderInstanceId.make("opencode_work");
@@ -541,35 +553,38 @@ describe("instance-scoped model selection", () => {
     ).toEqual([]);
   });
 
-  it("preserves saved options through dispatch when the model is absent from the catalog", () => {
-    const instanceId = ProviderInstanceId.make("opencode");
-    const driver = ProviderDriverKind.make("opencode");
-    const providers = [provider({ provider: driver, instanceId, models: ["opencode/big-pickle"] })];
-    const saved = createModelSelection(instanceId, "opencode/kimi-k3", [
-      { id: "variant", value: "max" },
-      { id: "agent", value: "build" },
-    ]);
-    const state = deriveEffectiveComposerModelState({
-      draft: null,
-      providers,
-      selectedProvider: driver,
-      selectedInstanceId: instanceId,
-      threadModelSelection: saved,
-      projectModelSelection: null,
-      settings: settingsWithProviderInstances(),
-    });
-    const dispatch = getComposerProviderState({
-      provider: driver,
-      model: state.selectedModel,
-      models: providers[0]!.models,
-      modelOptions: state.modelOptions?.[instanceId],
-      planModeEnabled: false,
-    });
+  it.each([
+    ["opencode", "opencode/big-pickle", "opencode/kimi-k3", "variant", "max"],
+    ["acpRegistry", "composer-2", "composer-2[fast=true]", "fast", "false"],
+  ])(
+    "preserves saved %s options through dispatch when the model is absent from the catalog",
+    (driverName, availableModel, missingModel, id, value) => {
+      const instanceId = ProviderInstanceId.make(driverName);
+      const driver = ProviderDriverKind.make(driverName);
+      const providers = [provider({ provider: driver, instanceId, models: [availableModel] })];
+      const saved = createModelSelection(instanceId, missingModel, [{ id, value }]);
+      const state = deriveEffectiveComposerModelState({
+        draft: null,
+        providers,
+        selectedProvider: driver,
+        selectedInstanceId: instanceId,
+        threadModelSelection: saved,
+        projectModelSelection: null,
+        settings: settingsWithProviderInstances(),
+      });
+      const dispatch = getComposerProviderState({
+        provider: driver,
+        model: state.selectedModel,
+        models: providers[0]!.models,
+        modelOptions: state.modelOptions?.[instanceId],
+        planModeEnabled: false,
+      });
 
-    expect(
-      createModelSelection(instanceId, state.selectedModel, dispatch.modelOptionsForDispatch),
-    ).toEqual(saved);
-  });
+      expect(
+        createModelSelection(instanceId, state.selectedModel, dispatch.modelOptionsForDispatch),
+      ).toEqual(saved);
+    },
+  );
 
   it("keeps a custom-instance draft model while dropping unsupported options", () => {
     const instanceId = ProviderInstanceId.make("claude_openrouter");
