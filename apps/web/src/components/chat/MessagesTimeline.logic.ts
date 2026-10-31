@@ -280,8 +280,10 @@ export function workEntryIsVisibleInGroup(
 }
 const TIMELINE_MINIMAP_ITEM_SPACING = 8;
 export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
-const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
+const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "max(1px, calc(100vh - 18rem))";
 const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 48;
+// Idle ticks are `h-0.5` (2px). Centers closer than this read as one bar.
+const TIMELINE_MINIMAP_MARK_MIN_SPACING_PX = 6;
 
 export interface WorkGroupScrollAnchor {
   readonly entryId: string;
@@ -336,6 +338,66 @@ export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boo
 export function resolveTimelineMinimapHeightStyle(itemCount: number): string {
   const naturalHeight = Math.max(1, (itemCount - 1) * TIMELINE_MINIMAP_ITEM_SPACING);
   return `min(${naturalHeight}px, ${TIMELINE_MINIMAP_MAX_HEIGHT_CSS})`;
+}
+
+/**
+ * Tick indices to draw once the height cap packs centers closer than 6px.
+ * The hovered message and the message in view are pinned so those marks stay
+ * on the exact row. Pointer hit-testing still walks every message.
+ */
+export function resolveTimelineMinimapMarkIndices(input: {
+  readonly itemCount: number;
+  readonly railHeightPx: number;
+  readonly pinnedIndices?: ReadonlyArray<number | null | undefined>;
+}): ReadonlyArray<number> {
+  const count = input.itemCount;
+  if (!Number.isFinite(count) || count <= 0) return [];
+  if (count === 1) return [0];
+
+  const height =
+    Number.isFinite(input.railHeightPx) && input.railHeightPx > 0
+      ? input.railHeightPx
+      : (count - 1) * TIMELINE_MINIMAP_ITEM_SPACING;
+  const spacing = height / (count - 1);
+  if (spacing >= TIMELINE_MINIMAP_MARK_MIN_SPACING_PX) {
+    return Array.from({ length: count }, (_, index) => index);
+  }
+
+  const minIndexGap = TIMELINE_MINIMAP_MARK_MIN_SPACING_PX / spacing;
+  const indices: number[] = [0];
+  let cursor = 0;
+  while (cursor + minIndexGap < count - 1) {
+    const next = Math.ceil(cursor + minIndexGap);
+    if (next <= cursor || next >= count - 1) break;
+    indices.push(next);
+    cursor = next;
+  }
+  if (count - 1 - cursor >= minIndexGap || indices.length === 1) {
+    indices.push(count - 1);
+  } else {
+    indices[indices.length - 1] = count - 1;
+  }
+
+  const pinned = new Set<number>();
+  for (const index of input.pinnedIndices ?? []) {
+    if (typeof index !== "number" || !Number.isInteger(index)) continue;
+    if (index < 0 || index >= count) continue;
+    pinned.add(index);
+  }
+  if (pinned.size === 0) return indices;
+
+  const painted = new Set(indices);
+  for (const pin of pinned) {
+    const crowded: number[] = [];
+    for (const index of painted) {
+      if (index === 0 || index === count - 1 || pinned.has(index)) continue;
+      const gap = (Math.abs(index - pin) / (count - 1)) * height;
+      if (gap < TIMELINE_MINIMAP_MARK_MIN_SPACING_PX - 1e-6) crowded.push(index);
+    }
+    for (const index of crowded) painted.delete(index);
+    painted.add(pin);
+  }
+  return Array.from(painted).sort((left, right) => left - right);
 }
 
 export function resolveTimelineMinimapTopPercent(index: number, itemCount: number): number {
