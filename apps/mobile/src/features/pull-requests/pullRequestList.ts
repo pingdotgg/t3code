@@ -11,6 +11,7 @@ import {
   type PullRequestListStatsInput,
 } from "@t3tools/contracts";
 import type { PullRequestListControls } from "../../persistence/mobile-preferences";
+import { compareTimestamps } from "../../lib/time";
 
 export const PR_LIST_PAGE_SIZE = 30;
 export type { PullRequestListControls } from "../../persistence/mobile-preferences";
@@ -242,7 +243,7 @@ export function mergePullRequestListEntries(
     const held = entries.get(key);
     if (!held || (entry.observedAt ?? 0) >= (held.observedAt ?? 0)) entries.set(key, entry);
   }
-  return [...entries.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return [...entries.values()].sort((a, b) => compareTimestamps(b.updatedAt, a.updatedAt));
 }
 
 export interface PullRequestListPages {
@@ -455,10 +456,10 @@ export function filterPullRequestList<
   }
   return [...unique.values()].sort((a, b) =>
     controls.sort === "created"
-      ? b.createdAt.localeCompare(a.createdAt)
+      ? compareTimestamps(b.createdAt, a.createdAt)
       : controls.sort === "oldest"
-        ? a.updatedAt.localeCompare(b.updatedAt)
-        : b.updatedAt.localeCompare(a.updatedAt),
+        ? compareTimestamps(a.updatedAt, b.updatedAt)
+        : compareTimestamps(b.updatedAt, a.updatedAt),
   );
 }
 

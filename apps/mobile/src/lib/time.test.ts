@@ -1,8 +1,26 @@
 import { describe, expect, it } from "vite-plus/test";
-import { msUntilRelativeTimeChange, relativeTime } from "./time";
+import { compareTimestamps, msUntilRelativeTimeChange, relativeTime } from "./time";
 
 const at = "2026-10-19T12:00:00.000Z";
 const timestamp = Date.parse(at);
+
+describe("timestamp order", () => {
+  it("orders host timestamps by instant across offsets and fractional seconds, missing ones first", () => {
+    const dates = [
+      "2026-07-05T00:30:00.5Z",
+      "2026-07-05T01:00:00+02:00",
+      "",
+      "2026-07-05T00:30:00Z",
+    ];
+
+    expect(dates.toSorted(compareTimestamps)).toEqual([
+      "",
+      "2026-07-05T01:00:00+02:00",
+      "2026-07-05T00:30:00Z",
+      "2026-07-05T00:30:00.5Z",
+    ]);
+  });
+});
 
 describe("relative time", () => {
   it.each([

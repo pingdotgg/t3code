@@ -9,7 +9,7 @@ import { Pressable, StyleSheet, View } from "react-native";
 import { parseMarkdownDocument } from "../../lib/markdownDocument";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
-import { relativeTime } from "../../lib/time";
+import { compareTimestamps, relativeTime } from "../../lib/time";
 import { PullRequestAvatar } from "./PullRequestPresentation";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestCommentFooter } from "./PullRequestReactions";
@@ -280,7 +280,7 @@ export function pullRequestTimelineRows(
         </TimelineEvent>
       ),
     })),
-  ].sort((a, b) => a.date.localeCompare(b.date));
+  ].sort((a, b) => compareTimestamps(a.date, b.date));
   if (activity.commentsTruncated || activity.reviewThreadsTruncated)
     events.push({
       key: "truncated",
