@@ -1,40 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Hashes a downloaded tarball with node:crypto to check its sha512 integrity.
-/**
- * Installs trusted plugins from an npm registry into directories the server
- * owns, then hands each one to the catalogue like any added directory.
- *
- * Installing runs nothing. One exact version is resolved, its tarball must
- * match the registry's sha512 integrity, and the archive is checked whole
- * before a byte is written (see `npmTarball.ts`). Package scripts never run
- * and dependencies are never installed: a package must bundle what it needs,
- * so a package with an install script, or whose dependencies (or theirs in
- * turn) do not resolve inside it, is refused. The catalogue then requires
- * consent to the unpacked digest before the plugin can be enabled.
- *
- * Layout under `<state>/plugins/npm/<key>/`:
- * - `package/` the installed version: the catalogue installation's directory.
- * - `npm.json` where it came from, and an update swap in progress, if any.
- * - `.staging-*` a version being unpacked or a staged update; never survives a restart.
- * - `.previous` the replaced version, only while an update is being applied.
- *
- * An update unpacks next to `package/` and leaves it running. Applying it
- * first journals the swap in `npm.json`, then hands the catalogue one step
- * (`PluginCatalog.replace`) that stops the installation, swaps the
- * directories, and persists the swap outcome with consent to the staged digest.
- * A failure before that commit point puts the old directory back. Another
- * catalogue step (`PluginCatalog.settleReplace`) uses the persisted outcome for that exact attempt to
- * finish or roll back the swap after the plugin has stopped. If cleanup fails,
- * the journal and `.previous` stay so settling can retry before every npm step,
- * after every catalogue change, and at startup.
- *
- * Every file move or deletion under the root is one catalogue step that
- * claims the paths first (`replace`, `settleReplace`, `changeFiles`): it is
- * refused while any installation is rooted there, whatever its id, and waits
- * until every process that ran from those files has exited. A deletion that
- * is refused or fails stays queued and is retried the same way.
- *
- * Removing the installation from the catalogue deletes its `<key>` directory.
- */
+// Verify integrity and the whole bounded archive before writing; run no package scripts or dependency installs.
+// Journal updates before the locked catalogue swap; persisted attempt outcomes decide crash recovery.
+// Retain journal and previous files until cleanup succeeds; every move/deletion claims paths and awaits old processes.
 import * as NodeCrypto from "node:crypto";
 
 import {
@@ -647,15 +614,8 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     for (const target of doomed) yield* release(target);
   });
 
-  /**
-   * Finishes or rolls back a journaled swap. The catalogue decides under its
-   * management lock, so a consent or enable from another client lands wholly
-   * before or after: finished when the persisted swap outcome is committed,
-   * otherwise `.previous` goes back once the plugin has stopped. The decision
-   * sets the reported version at once; the journal and `.previous` stay until
-   * the cleanup after it has worked, so a failure is retried later and never
-   * loses a version.
-   */
+  // The catalogue lock serializes recovery against consent/enable; persisted attempt outcomes decide the version.
+  // Retain journal and previous files until cleanup succeeds so failures remain retryable.
   const settle = Effect.fnUntraced(function* (entry: Installed) {
     const swap = entry.swap;
     if (swap === undefined) return;
@@ -727,6 +687,9 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     }),
   );
 
+  const managed = <A, E>(effect: Effect.Effect<A, E>) =>
+    lock.withPermit(tidy.pipe(Effect.andThen(effect)));
+
   const add = Effect.fn("PluginNpm.add")(function* (input: PluginNpmAddInput) {
     const registry = yield* normalizeRegistry(input.registry ?? defaultRegistry);
     const existing = [...installed.values()].find(
@@ -773,7 +736,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       }).pipe(Effect.uninterruptible);
       // Nothing in the catalogue points here; deleted now, or by a later collection.
     }).pipe(Effect.onError(() => collect));
-  });
+  }, managed);
 
   const discardStaged = (entry: Installed) =>
     Effect.suspend(() => {
@@ -825,119 +788,122 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     entry.staged = { update, directory: staging };
     doomed.delete(staging);
     return { package: toPackage(entry) };
-  });
+  }, managed);
 
-  const applyUpdate = Effect.fn("PluginNpm.applyUpdate")(function* (
-    input: PluginNpmApplyUpdateInput,
-  ) {
-    const entry = yield* findInstalled(input.installationId);
-    const staged = entry.staged;
-    if (staged === undefined)
-      return yield* new PluginCatalogError({
-        reason: "npm-no-update",
-        message: "There is no downloaded update to apply. Download it again.",
-        installationId: input.installationId,
-      });
-    if (staged.update.source.digest !== input.digest)
-      return yield* new PluginCatalogError({
-        reason: "source-changed",
-        message: "The downloaded update is not the one you reviewed. Review the current one.",
-        installationId: input.installationId,
-      });
-    const onDisk = yield* digestPluginSource(staged.directory, limits).pipe(Effect.option);
-    if (Option.isNone(onDisk) || onDisk.value.digest !== input.digest) {
-      yield* discardStaged(entry);
-      return yield* new PluginCatalogError({
-        reason: "source-changed",
-        message: "The downloaded update changed on disk after it was checked, so it was discarded.",
-        installationId: input.installationId,
-      });
-    }
-    // Consent records approval, not the bytes currently installed on disk.
-    const row = yield* catalogRow(input.installationId);
-    if (row.source?.digest === input.digest) {
-      yield* discardStaged(entry);
-      return yield* new PluginCatalogError({
-        reason: "npm-no-update",
-        message: "The downloaded update has the files already installed, so it was discarded.",
-        installationId: input.installationId,
-      });
-    }
-    const next: PluginNpmSource = {
-      ...entry.source,
-      version: staged.update.version,
-      integrity: staged.update.integrity,
-      installedAt: yield* now,
-    };
-    const previous = path.join(entry.home, ".previous");
+  const applyUpdate = Effect.fn("PluginNpm.applyUpdate")(
+    function* (input: PluginNpmApplyUpdateInput) {
+      const entry = yield* findInstalled(input.installationId);
+      const staged = entry.staged;
+      if (staged === undefined)
+        return yield* new PluginCatalogError({
+          reason: "npm-no-update",
+          message: "There is no downloaded update to apply. Download it again.",
+          installationId: input.installationId,
+        });
+      if (staged.update.source.digest !== input.digest)
+        return yield* new PluginCatalogError({
+          reason: "source-changed",
+          message: "The downloaded update is not the one you reviewed. Review the current one.",
+          installationId: input.installationId,
+        });
+      const onDisk = yield* digestPluginSource(staged.directory, limits).pipe(Effect.option);
+      if (Option.isNone(onDisk) || onDisk.value.digest !== input.digest) {
+        yield* discardStaged(entry);
+        return yield* new PluginCatalogError({
+          reason: "source-changed",
+          message:
+            "The downloaded update changed on disk after it was checked, so it was discarded.",
+          installationId: input.installationId,
+        });
+      }
+      // Consent records approval, not the bytes currently installed on disk.
+      const row = yield* catalogRow(input.installationId);
+      if (row.source?.digest === input.digest) {
+        yield* discardStaged(entry);
+        return yield* new PluginCatalogError({
+          reason: "npm-no-update",
+          message: "The downloaded update has the files already installed, so it was discarded.",
+          installationId: input.installationId,
+        });
+      }
+      const next: PluginNpmSource = {
+        ...entry.source,
+        version: staged.update.version,
+        integrity: staged.update.integrity,
+        installedAt: yield* now,
+      };
+      const previous = path.join(entry.home, ".previous");
 
-    // Nothing is stopped or moved before the journal is written, so a failure up to here
-    // leaves the installed version running and the staged one ready to apply again.
-    if (!(yield* release(previous)))
-      return yield* new PluginCatalogError({
-        reason: "storage",
-        message: "Could not delete the files an earlier update left behind.",
-        installationId: input.installationId,
+      // Nothing is stopped or moved before the journal is written, so a failure up to here
+      // leaves the installed version running and the staged one ready to apply again.
+      if (!(yield* release(previous)))
+        return yield* new PluginCatalogError({
+          reason: "storage",
+          message: "Could not delete the files an earlier update left behind.",
+          installationId: input.installationId,
+        });
+      const attemptId = NodeCrypto.randomUUID();
+      yield* writeRecord(entry.home, {
+        source: entry.source,
+        swap: { source: next, digest: input.digest, attemptId },
       });
-    const attemptId = NodeCrypto.randomUUID();
-    yield* writeRecord(entry.home, {
-      source: entry.source,
-      swap: { source: next, digest: input.digest, attemptId },
-    });
-    entry.swap = { previous: entry.source, next, digest: input.digest, attemptId };
+      entry.swap = { previous: entry.source, next, digest: input.digest, attemptId };
 
-    let movedOld = false;
-    let movedNew = false;
-    const replaced = yield* catalog
-      .replace(
-        { installationId: input.installationId, digest: input.digest, attemptId },
-        {
-          paths: [entry.home],
-          swap: fs.rename(entry.directory, previous).pipe(
-            Effect.andThen(
-              Effect.sync(() => {
-                movedOld = true;
-              }),
+      let movedOld = false;
+      let movedNew = false;
+      const replaced = yield* catalog
+        .replace(
+          { installationId: input.installationId, digest: input.digest, attemptId },
+          {
+            paths: [entry.home],
+            swap: fs.rename(entry.directory, previous).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  movedOld = true;
+                }),
+              ),
+              Effect.andThen(fs.rename(staged.directory, entry.directory)),
+              Effect.andThen(
+                Effect.sync(() => {
+                  movedNew = true;
+                }),
+              ),
+              Effect.catch(storageError),
             ),
-            Effect.andThen(fs.rename(staged.directory, entry.directory)),
-            Effect.andThen(
-              Effect.sync(() => {
-                movedNew = true;
-              }),
-            ),
-            Effect.catch(storageError),
-          ),
-          restore: Effect.suspend(() =>
-            movedOld
-              ? fs
-                  .remove(entry.directory, { recursive: true, force: true })
-                  .pipe(Effect.andThen(fs.rename(previous, entry.directory)))
-              : Effect.void,
-          ).pipe(Effect.catch(storageError)),
-        },
-      )
-      .pipe(Effect.exit);
-    // The commit point: the new version is the installed one from here, whatever
-    // the cleanup below does.
-    if (Exit.isSuccess(replaced)) entry.source = next;
-    // Staged files that never moved can be applied again.
-    if (movedNew || Exit.isSuccess(replaced)) entry.staged = undefined;
-    // After the commit a failure here is cleanup only: the apply still succeeds and
-    // reports the new version, and npm steps fail `storage` until the journal settles.
-    yield* settle(entry).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("Could not settle a plugin update; retrying later", {
-          installationId: entry.installationId,
-          detail: error.message,
-        }),
-      ),
-    );
-    // A step after the commit, such as enabling the plugin again, failed: the update still applied.
-    if (Exit.isFailure(replaced) && entry.source === next)
-      return { installation: yield* catalogRow(input.installationId), package: toPackage(entry) };
-    const { installation } = yield* replaced;
-    return { installation, package: toPackage(entry) };
-  });
+            restore: Effect.suspend(() =>
+              movedOld
+                ? fs
+                    .remove(entry.directory, { recursive: true, force: true })
+                    .pipe(Effect.andThen(fs.rename(previous, entry.directory)))
+                : Effect.void,
+            ).pipe(Effect.catch(storageError)),
+          },
+        )
+        .pipe(Effect.exit);
+      // The commit point: the new version is the installed one from here, whatever
+      // the cleanup below does.
+      if (Exit.isSuccess(replaced)) entry.source = next;
+      // Staged files that never moved can be applied again.
+      if (movedNew || Exit.isSuccess(replaced)) entry.staged = undefined;
+      // After the commit a failure here is cleanup only: the apply still succeeds and
+      // reports the new version, and npm steps fail `storage` until the journal settles.
+      yield* settle(entry).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not settle a plugin update; retrying later", {
+            installationId: entry.installationId,
+            detail: error.message,
+          }),
+        ),
+      );
+      // A step after the commit, such as enabling the plugin again, failed: the update still applied.
+      if (Exit.isFailure(replaced) && entry.source === next)
+        return { installation: yield* catalogRow(input.installationId), package: toPackage(entry) };
+      const { installation } = yield* replaced;
+      return { installation, package: toPackage(entry) };
+    },
+    Effect.uninterruptible,
+    managed,
+  );
 
   const discardUpdate = Effect.fn("PluginNpm.discardUpdate")(function* (
     input: PluginInstallationInput,
@@ -945,7 +911,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     const entry = yield* findInstalled(input.installationId);
     yield* discardStaged(entry);
     return { package: toPackage(entry) };
-  });
+  }, managed);
 
   /**
    * Reads what was installed before this start: staging directories are
@@ -1012,15 +978,12 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     Effect.forkIn(scope, { startImmediately: true }),
   );
 
-  const managed = <A, E>(effect: Effect.Effect<A, E>) =>
-    lock.withPermit(tidy.pipe(Effect.andThen(effect)));
-
   return PluginNpm.of({
     list,
-    add: (input) => managed(add(input)),
-    stageUpdate: (input) => managed(stageUpdate(input)),
-    applyUpdate: (input) => managed(applyUpdate(input).pipe(Effect.uninterruptible)),
-    discardUpdate: (input) => managed(discardUpdate(input)),
+    add,
+    stageUpdate,
+    applyUpdate,
+    discardUpdate,
   });
 });
 

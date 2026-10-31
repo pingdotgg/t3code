@@ -1,18 +1,5 @@
-/**
- * PluginSettingFields - Typed settings a plugin declares in its manifest.
- *
- * A plugin that declares the `settings` capability lists its fields under
- * `settings` in `t3-plugin.json`. Values belong to the installation: they
- * survive disable, re-enable, restarts and source changes, and are deleted
- * when the installation is removed. Every field applies to the whole
- * environment.
- *
- * Secret values are write-only. Clients can set, replace or clear a secret
- * and learn whether one is saved, but the server never sends a secret back.
- * Only the plugin itself reads it.
- *
- * @module PluginSettingFields
- */
+// Settings apply to the environment and persist with their installation through registration changes.
+// Secrets are write-only for clients; only the plugin can read their values.
 import * as Schema from "effect/Schema";
 
 import { ForwardCompatibleArray, TrimmedNonEmptyString } from "./baseSchemas.ts";

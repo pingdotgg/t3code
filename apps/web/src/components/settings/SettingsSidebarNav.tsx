@@ -137,7 +137,9 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
   const searchableItems = useAvailableSettingsSearchItems(scopeSearch);
   const hasPlugins = searchableItems.some((item) => item.to === "/settings/plugins");
-  const navPaths = SETTINGS_NAV_GROUPS.flatMap((group) => group.paths.filter((to) => to !== "/settings/plugins" || hasPlugins));
+  const navPaths = SETTINGS_NAV_GROUPS.flatMap((group) =>
+    group.paths.filter((to) => to !== "/settings/plugins" || hasPlugins),
+  );
   const sectionNavigation = useSettingsSectionNavigation(
     navPaths.find((to) => activePath === to || activePath.startsWith(`${to}/`)) ??
       navPaths[0] ??
@@ -403,30 +405,35 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                         </h3>
                       ) : null}
                       <SidebarMenu role="presentation">
-                        {group.paths.filter((to) => to !== "/settings/plugins" || hasPlugins).map((to) => {
-                          const Icon = SETTINGS_SECTION_ICONS[to];
-                          const isActive = activePath === to || activePath.startsWith(`${to}/`);
-                          return (
-                            <SidebarMenuItem key={to} role="presentation">
-                              <SidebarMenuButton
-                                data-settings-section={to}
-                                role="treeitem"
-                                tabIndex={sectionNavigation.tabIndexFor(to)}
-                                aria-selected={isActive}
-                                aria-current={isActive ? "page" : undefined}
-                                isActive={isActive}
-                                onClick={() => handleSectionClick(to)}
-                              >
-                                <Icon />
-                                <span
-                                  className={cn("truncate", !compactSearchOpen && "max-md:sr-only")}
+                        {group.paths
+                          .filter((to) => to !== "/settings/plugins" || hasPlugins)
+                          .map((to) => {
+                            const Icon = SETTINGS_SECTION_ICONS[to];
+                            const isActive = activePath === to || activePath.startsWith(`${to}/`);
+                            return (
+                              <SidebarMenuItem key={to} role="presentation">
+                                <SidebarMenuButton
+                                  data-settings-section={to}
+                                  role="treeitem"
+                                  tabIndex={sectionNavigation.tabIndexFor(to)}
+                                  aria-selected={isActive}
+                                  aria-current={isActive ? "page" : undefined}
+                                  isActive={isActive}
+                                  onClick={() => handleSectionClick(to)}
                                 >
-                                  {SETTINGS_SECTION_LABELS[to]}
-                                </span>
-                              </SidebarMenuButton>
-                            </SidebarMenuItem>
-                          );
-                        })}
+                                  <Icon />
+                                  <span
+                                    className={cn(
+                                      "truncate",
+                                      !compactSearchOpen && "max-md:sr-only",
+                                    )}
+                                  >
+                                    {SETTINGS_SECTION_LABELS[to]}
+                                  </span>
+                                </SidebarMenuButton>
+                              </SidebarMenuItem>
+                            );
+                          })}
                       </SidebarMenu>
                     </div>
                   ))}
