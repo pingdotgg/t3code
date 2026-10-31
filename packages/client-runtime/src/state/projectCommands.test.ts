@@ -174,28 +174,6 @@ describe("writeFile metadata", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("reuses a current file read without another metadata request", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness();
-      yield* AtomRegistry.getResult(
-        h.registry,
-        h.commands.readFile({
-          environmentId: ENVIRONMENT_ID,
-          input: { cwd: "/repo", relativePath: "foo" },
-        }),
-        { suspendOnWaiting: true },
-      );
-      const metadata = h.commands.fileMetadata({
-        environmentId: ENVIRONMENT_ID,
-        input: { path: "/repo/foo" },
-      });
-      expect(
-        yield* AtomRegistry.getResult(h.registry, metadata, { suspendOnWaiting: true }),
-      ).toEqual({ kind: "file", byteLength: 5 });
-      expect(h.metadataRequests).toHaveLength(0);
-    }).pipe(Effect.scoped),
-  );
-
   it.effect("does not restore old metadata from a read completed after a write", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();

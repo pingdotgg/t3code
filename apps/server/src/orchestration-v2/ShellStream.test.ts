@@ -3,53 +3,31 @@ import type {
   ApplicationStoredEvent,
   OrchestrationV2ShellSnapshot,
   OrchestrationV2ShellStreamItem,
-  OrchestrationV2StoredEvent,
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import { ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
-import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import {
-  archivedShellStreamItemFromThreadShell,
-  buildActiveShellSnapshot,
+  activeShellRowsForSubscriber,
   bufferShellLiveStream,
-  coalesceShellApplicationEvents,
-  coalesceStoredThreadEvents,
   composeShellStreamWithEnrichment,
   dedupeShellEnrichment,
-  loadShellSnapshotParts,
+  omitIdleSubagentShells,
+  omitOlderSettledShells,
   shellStreamItemFromEnrichmentRefresh,
-  shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
-  shellStreamItemsFromResumeSnapshot,
+  shouldPublishShellApplicationEvent,
   skipUnchangedThreadShells,
 } from "./ShellStream.ts";
-
-function project(sequence: number, id: string): ApplicationStoredEvent {
-  return {
-    sequence,
-    aggregateKind: "project",
-    aggregateId: id,
-  } as ApplicationStoredEvent;
-}
-
-function thread(sequence: number, id: string): ApplicationStoredEvent {
-  return {
-    sequence,
-    event: { threadId: id },
-  } as ApplicationStoredEvent;
-}
 
 const emptyShellSnapshot = {
   schemaVersion: 1,
@@ -58,6 +36,49 @@ const emptyShellSnapshot = {
   threads: [],
   archivedThreads: [],
 } as OrchestrationV2ShellSnapshot;
+
+describe("subagent shell events", () => {
+  const stored = (threadId: string, type: string) =>
+    ({ event: { threadId, type } }) as ApplicationStoredEvent;
+
+  it("keeps regular threads and subagent state changes while omitting subagent transcript updates", () => {
+    const subagents = new Set(["child"]);
+    expect(
+      shouldPublishShellApplicationEvent(stored("parent", "turn-item.updated"), subagents),
+    ).toBe(true);
+    expect(
+      shouldPublishShellApplicationEvent(stored("child", "turn-item.updated"), subagents),
+    ).toBe(false);
+    expect(shouldPublishShellApplicationEvent(stored("child", "node.updated"), subagents)).toBe(
+      false,
+    );
+    expect(
+      shouldPublishShellApplicationEvent(stored("child", "runtime-request.updated"), subagents),
+    ).toBe(true);
+    expect(shouldPublishShellApplicationEvent(stored("child", "run.updated"), subagents)).toBe(
+      true,
+    );
+  });
+
+  it("tracks subagents created after the subscription starts", () => {
+    const subagents = new Set<string>();
+    const created = {
+      event: {
+        threadId: "new-child",
+        type: "thread.created",
+        payload: { lineage: { relationshipToParent: "subagent" } },
+      },
+    } as ApplicationStoredEvent;
+    expect(shouldPublishShellApplicationEvent(created, subagents)).toBe(true);
+    expect(
+      shouldPublishShellApplicationEvent(stored("new-child", "message.updated"), subagents),
+    ).toBe(false);
+    expect(
+      shouldPublishShellApplicationEvent(stored("new-child", "thread.deleted"), subagents),
+    ).toBe(true);
+    expect(subagents.has("new-child")).toBe(true);
+  });
+});
 
 it.effect("coalesces a slow shell subscriber by identity and location in sequence order", () =>
   Effect.scoped(
@@ -117,229 +138,157 @@ it.effect("coalesces a slow shell subscriber by identity and location in sequenc
   ),
 );
 
-describe("buildActiveShellSnapshot", () => {
-  it("never duplicates archived rows into the regular shell", () => {
-    const active = shellFixture({ archivedAt: null });
-    const archived = shellFixture({
-      id: ThreadId.make("thread-archived"),
-      archivedAt: "2026-07-30T00:00:00.000Z" as never,
-    });
-
-    expect(
-      buildActiveShellSnapshot({
-        projects: [],
-        threads: {
-          schemaVersion: 1,
-          snapshotSequence: 4,
-          threads: [active],
-          archivedThreads: [archived],
-        },
-        snapshotSequence: 7,
-      }),
-    ).toEqual({
-      schemaVersion: 1,
-      snapshotSequence: 7,
-      projects: [],
-      threads: [active],
-      archivedThreads: [],
-    });
-  });
-});
-
-describe("coalesceShellApplicationEvents", () => {
-  it("keeps the newest event per aggregate and preserves sequence order", () => {
-    expect(
-      coalesceShellApplicationEvents([
-        thread(2, "thread-a"),
-        project(3, "project-a"),
-        thread(4, "thread-b"),
-        thread(5, "thread-a"),
-        project(6, "project-a"),
-      ]).map((event) => event.sequence),
-    ).toEqual([4, 5, 6]);
-  });
-});
-
-function storedThreadEvent(
-  sequence: number,
-  threadId: string,
-  event: Record<string, unknown> = {},
-): OrchestrationV2StoredEvent {
-  return { sequence, event: { threadId, ...event } } as OrchestrationV2StoredEvent;
-}
-
-describe("loadShellSnapshotParts", () => {
-  it.effect("decodes the threads after the read transaction releases the connection", () =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      const steps: Array<string> = [];
-      const step = <A>(name: string, value: A) =>
-        Effect.serviceOption(sql.transactionService).pipe(
-          Effect.map((transaction) => {
-            steps.push(`${name}:${Option.isSome(transaction) ? "in" : "out of"} transaction`);
-            return value;
-          }),
-        );
-      const thread = shellFixture({});
-
-      const snapshot = yield* loadShellSnapshotParts({
-        sql,
-        readThreads: step(
-          "read threads",
-          step("decode threads", {
-            schemaVersion: 1,
-            snapshotSequence: 3,
-            threads: [thread],
-            archivedThreads: [],
-          }),
-        ),
-        listProjects: step("list projects", []),
-        latestSequence: step("latest sequence", 7),
-      });
-
-      expect(steps).toEqual([
-        "read threads:in transaction",
-        "list projects:in transaction",
-        "latest sequence:in transaction",
-        "decode threads:out of transaction",
-      ]);
-      expect(snapshot.snapshotSequence).toBe(7);
-      expect(snapshot.threads.threads).toEqual([thread]);
-    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
-  );
-});
-
 function shellFixture(overrides: Partial<OrchestrationV2ThreadShell>): OrchestrationV2ThreadShell {
   return { id: "thread-a", archivedAt: null, ...overrides } as OrchestrationV2ThreadShell;
 }
 
-describe("coalesceStoredThreadEvents", () => {
-  it("keeps the newest stored event per thread and preserves sequence order", () => {
+describe("omitIdleSubagentShells", () => {
+  const row = (
+    id: string,
+    parent: string | null,
+    overrides: Partial<OrchestrationV2ThreadShell> = {},
+  ) =>
+    shellFixture({
+      id: ThreadId.make(id),
+      lineage: {
+        parentThreadId: parent === null ? null : ThreadId.make(parent),
+        relationshipToParent: parent === null ? null : "subagent",
+        rootThreadId: ThreadId.make("root"),
+      },
+      status: "completed",
+      activityRunStatus: null,
+      pendingRuntimeRequest: null,
+      pendingBackgroundTasks: [],
+      ...overrides,
+    });
+
+  it("drops idle leaf children but keeps live ones and the middle of nested chains", () => {
+    const threads = [
+      row("root", null),
+      row("idle", "root"),
+      row("running", "root", { activityRunStatus: "running" }),
+      row("queued", "root", { status: "queued" }),
+      row("asking", "root", {
+        pendingRuntimeRequest: {
+          id: "request" as never,
+          kind: "user_input",
+          createdAt: DateTime.makeUnsafe(0),
+        },
+      }),
+      row("background", "root", {
+        pendingBackgroundTasks: [{ kind: "subagent" } as never],
+      }),
+      // Idle, but a woken grandchild walks through it to reach the root's badge.
+      row("middle", "root"),
+      row("grandchild", "middle"),
+    ];
+    expect(omitIdleSubagentShells(threads).map((thread) => thread.id)).toEqual([
+      "root",
+      "running",
+      "queued",
+      "asking",
+      "background",
+      "middle",
+    ]);
+  });
+
+  it("still filters the transcript events of omitted children for a subscriber that opts in", () => {
+    const threads = [row("root", null), row("idle", "root")];
+    const omitted = activeShellRowsForSubscriber(threads, true);
+    expect(omitted.threads.map((thread) => thread.id)).toEqual(["root"]);
     expect(
-      coalesceStoredThreadEvents([
-        storedThreadEvent(2, "thread-a"),
-        storedThreadEvent(3, "thread-b"),
-        storedThreadEvent(5, "thread-a"),
-      ]).map((stored) => stored.sequence),
-    ).toEqual([3, 5]);
+      shouldPublishShellApplicationEvent(
+        { event: { threadId: "idle", type: "turn-item.updated" } } as ApplicationStoredEvent,
+        omitted.subagentThreadIds,
+      ),
+    ).toBe(false);
   });
 });
 
-describe("shellStreamItemFromThreadShell", () => {
-  it("emits an active thread update when the shell is not archived", () => {
-    const shell = shellFixture({ archivedAt: null });
-    expect(
-      shellStreamItemFromThreadShell({ stored: storedThreadEvent(4, "thread-a"), shell }),
-    ).toEqual({
-      kind: "thread.updated",
-      sequence: 4,
-      location: "active",
-      thread: shell,
+describe("omitOlderSettledShells", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const now = DateTime.makeUnsafe(100 * DAY);
+  const row = (
+    id: string,
+    settledDaysAgo: number | null,
+    overrides: Partial<OrchestrationV2ThreadShell> = {},
+  ) =>
+    shellFixture({
+      id: ThreadId.make(id),
+      projectId: ProjectId.make(id.startsWith("b-") ? "project-b" : "project-a"),
+      lineage: {
+        parentThreadId: null,
+        relationshipToParent: null,
+        rootThreadId: ThreadId.make(id),
+      },
+      status: "completed",
+      activityRunStatus: null,
+      pendingRuntimeRequest: null,
+      pendingBackgroundTasks: [],
+      settledOverride: settledDaysAgo === null ? null : "settled",
+      settledAt:
+        settledDaysAgo === null ? null : DateTime.makeUnsafe(100 * DAY - settledDaysAgo * DAY),
+      ...overrides,
+    });
+  const newest = Array.from({ length: 25 }, (_, index) => row(`new-${index}`, index / 10));
+  const omit = (threads: ReadonlyArray<OrchestrationV2ThreadShell>) =>
+    omitOlderSettledShells({ threads, snapshotSequence: 7, now });
+
+  it("keeps the 25 newest settled threads and counts the rest per project", () => {
+    const result = omit([...newest, row("old", 30), row("b-old", 40), row("unsettled", null)]);
+    expect(result.threads.map((thread) => thread.id)).toEqual([
+      ...newest.map((thread) => thread.id),
+      "unsettled",
+    ]);
+    expect(result.olderSettled).toEqual({
+      before: DateTime.formatIso(DateTime.makeUnsafe(100 * DAY - 2.4 * DAY)),
+      asOfSequence: 7,
+      counts: [
+        { projectId: "project-a", count: 1 },
+        { projectId: "project-b", count: 1 },
+      ],
     });
   });
 
-  it("removes archived threads from the active-only shell", () => {
-    const shell = shellFixture({ archivedAt: "2026-07-30T00:00:00.000Z" as never });
-    expect(
-      shellStreamItemFromThreadShell({ stored: storedThreadEvent(4, "thread-a"), shell }),
-    ).toEqual({
-      kind: "thread.removed",
-      sequence: 4,
-      location: "active",
-      threadId: "thread-a",
-    });
+  it("keeps threads tied with the 25th newest", () => {
+    const result = omit([...newest, row("tie", 2.4), row("older", 2.5)]);
+    expect(result.threads.map((thread) => thread.id).slice(25)).toEqual(["tie"]);
   });
 
-  it("emits an active-shell removal when an archived thread is deleted", () => {
-    expect(
-      shellStreamItemFromThreadShell({
-        stored: storedThreadEvent(6, "thread-a", {
-          type: "thread.deleted",
-          payload: { archivedAt: "2026-07-30T00:00:00.000Z" },
-        }),
-        shell: null,
+  it("omits nothing with fewer than 25 settled threads, however old", () => {
+    const old = Array.from({ length: 5 }, (_, index) => row(`old-${index}`, 300 + index));
+    const result = omit(old);
+    expect(result.threads).toEqual(old);
+    expect(result.olderSettled.counts).toEqual([]);
+  });
+
+  it("keeps older rows that are snoozed, live, or above a kept subagent, and still counts them", () => {
+    const threads = [
+      ...newest,
+      row("snoozed", 30, { snoozedUntil: DateTime.makeUnsafe(101 * DAY) }),
+      row("woke", 30, { snoozedUntil: DateTime.makeUnsafe(99 * DAY) }),
+      row("running", 30, { activityRunStatus: "running" }),
+      row("parent", 30),
+      shellFixture({
+        id: ThreadId.make("child"),
+        projectId: ProjectId.make("project-a"),
+        lineage: {
+          parentThreadId: ThreadId.make("parent"),
+          relationshipToParent: "subagent",
+          rootThreadId: ThreadId.make("parent"),
+        },
+        settledOverride: null,
+        settledAt: null,
       }),
-    ).toEqual({
-      kind: "thread.removed",
-      sequence: 6,
-      location: "active",
-      threadId: "thread-a",
-    });
-  });
-
-  it("emits a removal from the active list for other missing shells", () => {
-    expect(
-      shellStreamItemFromThreadShell({
-        stored: storedThreadEvent(6, "thread-a", {
-          type: "thread.deleted",
-          payload: { archivedAt: null },
-        }),
-        shell: null,
-      }),
-    ).toEqual({
-      kind: "thread.removed",
-      sequence: 6,
-      location: "active",
-      threadId: "thread-a",
-    });
-  });
-});
-
-describe("archivedShellStreamItemFromThreadShell", () => {
-  it("emits an update for an archived shell", () => {
-    const shell = shellFixture({ archivedAt: "2026-07-30T00:00:00.000Z" as never });
-    expect(
-      archivedShellStreamItemFromThreadShell({ stored: storedThreadEvent(4, "thread-a"), shell }),
-    ).toEqual({ kind: "thread.updated", sequence: 4, thread: shell });
-  });
-
-  it("ignores active threads that never touched the archive", () => {
-    expect(
-      archivedShellStreamItemFromThreadShell({
-        stored: storedThreadEvent(4, "thread-a", { type: "thread.settled" }),
-        shell: shellFixture({ archivedAt: null }),
-      }),
-    ).toBeNull();
-  });
-
-  it("emits a removal when a thread leaves the archive", () => {
-    expect(
-      archivedShellStreamItemFromThreadShell({
-        stored: storedThreadEvent(4, "thread-a", { type: "thread.unarchived" }),
-        shell: shellFixture({ archivedAt: null }),
-      }),
-    ).toEqual({ kind: "thread.removed", sequence: 4, threadId: "thread-a" });
-  });
-
-  it("emits a removal when an archived thread is deleted", () => {
-    expect(
-      archivedShellStreamItemFromThreadShell({
-        stored: storedThreadEvent(4, "thread-a", {
-          type: "thread.deleted",
-          payload: { archivedAt: "2026-07-30T00:00:00.000Z" },
-        }),
-        shell: null,
-      }),
-    ).toEqual({ kind: "thread.removed", sequence: 4, threadId: "thread-a" });
-  });
-});
-
-describe("shellStreamItemFromEnrichmentRefresh", () => {
-  it("batches nearby completion roots onto one snapshot item", () => {
-    expect(
-      shellStreamItemFromEnrichmentRefresh({
-        snapshot: emptyShellSnapshot,
-        changes: [
-          { workspaceRoot: "/workspace/a" },
-          { workspaceRoot: "/workspace/b" },
-          { workspaceRoot: "/workspace/a" },
-        ],
-      }),
-    ).toEqual({
-      kind: "snapshot",
-      snapshot: emptyShellSnapshot,
-      resolvedRepositoryIdentityRoots: ["/workspace/a", "/workspace/b"],
-    });
+    ];
+    const result = omit(threads);
+    expect(result.threads.map((thread) => thread.id).slice(25)).toEqual([
+      "snoozed",
+      "running",
+      "parent",
+      "child",
+    ]);
+    expect(result.olderSettled.counts).toEqual([{ projectId: "project-a", count: 4 }]);
   });
 });
 
@@ -371,50 +320,6 @@ describe("shellStreamItemsFromInitialSnapshot", () => {
       resolvedRepositoryIdentityRoots: ["/workspace/a"],
     });
     expect(JSON.stringify(items[1]).length).toBeLessThan(JSON.stringify(items[0]).length);
-  });
-
-  it("emits unmarked authoritative then same-sequence marked enrichment when roots resolved", () => {
-    const snapshot = {
-      ...emptyShellSnapshot,
-      snapshotSequence: 7,
-    } as OrchestrationV2ShellSnapshot;
-
-    expect(
-      shellStreamItemsFromInitialSnapshot({
-        snapshot,
-        resolvedRepositoryIdentityRoots: ["/workspace/a", "/workspace/a"],
-      }),
-    ).toEqual([
-      { kind: "snapshot", snapshot },
-      {
-        kind: "snapshot",
-        snapshot,
-        resolvedRepositoryIdentityRoots: ["/workspace/a"],
-      },
-    ]);
-  });
-
-  it("emits only the unmarked authoritative snapshot when no roots resolved", () => {
-    expect(
-      shellStreamItemsFromInitialSnapshot({
-        snapshot: emptyShellSnapshot,
-        resolvedRepositoryIdentityRoots: [],
-      }),
-    ).toEqual([{ kind: "snapshot", snapshot: emptyShellSnapshot }]);
-  });
-});
-
-describe("shellStreamItemsFromResumeSnapshot", () => {
-  it("never repeats the authoritative shell snapshot", () => {
-    expect(
-      shellStreamItemsFromResumeSnapshot({
-        snapshot: {
-          ...emptyShellSnapshot,
-          threads: [shellFixture({})],
-        },
-        resolvedRepositoryIdentityRoots: [],
-      }),
-    ).toEqual([]);
   });
 });
 
@@ -571,24 +476,6 @@ describe("composeShellStreamWithEnrichment", () => {
           expect(items[index]).toEqual(initialItems[index]);
         }
       }),
-  );
-
-  it.effect("still interleaves enrichment with the post-prefix tail after initials drain", () =>
-    Effect.gen(function* () {
-      const items = Array.from(
-        yield* composeShellStreamWithEnrichment({
-          initial: Stream.make("initial-unmarked", "initial-marked"),
-          tail: Stream.make("tail-a", "tail-b"),
-          enrichment: Stream.make("enrichment"),
-        }).pipe(Stream.runCollect),
-      );
-
-      expect(items.slice(0, 2)).toEqual(["initial-unmarked", "initial-marked"]);
-      expect(items).toContain("enrichment");
-      expect(items).toContain("tail-a");
-      expect(items).toContain("tail-b");
-      expect(items.indexOf("enrichment")).toBeGreaterThanOrEqual(2);
-    }),
   );
 });
 
@@ -763,21 +650,6 @@ describe("skipUnchangedThreadShells", () => {
       Stream.runCollect,
       Effect.map((items) => Array.from(items, (item) => ("sequence" in item ? item.sequence : -1))),
     );
-
-  it.effect("drops shells that only moved updatedAt, and resends them after a while", () =>
-    Effect.gen(function* () {
-      const sent = yield* run([
-        updated(1, shell("a")),
-        updated(2, shell("a", { updatedAt: at(100) })),
-        updated(3, shell("a", { updatedAt: at(200), itemCount: 2, visibleItemCount: 2 })),
-        updated(4, shell("a", { updatedAt: at(300), itemCount: 2, visibleItemCount: 2 })),
-        updated(5, shell("b")),
-        { advanceMs: 5_000 },
-        updated(6, shell("a", { updatedAt: at(5_300), itemCount: 2, visibleItemCount: 2 })),
-      ]);
-      expect(sent).toEqual([1, 3, 5, 6]);
-    }),
-  );
 
   it.effect("sends the next update after a removal", () =>
     Effect.gen(function* () {

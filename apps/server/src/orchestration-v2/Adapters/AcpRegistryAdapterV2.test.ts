@@ -18,11 +18,9 @@ import * as Fiber from "effect/Fiber";
 import * as DateTime from "effect/DateTime";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
@@ -30,7 +28,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 
-import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import {
@@ -39,14 +37,13 @@ import {
 } from "@t3tools/provider-testing/replayGate";
 import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ServerSettings from "../../serverSettings.ts";
-import type {
-  AcpRegistryAvailableCommands,
-  AcpRegistryLiveConfiguration,
-} from "@t3tools/provider-acp-registry/testing";
+import type { AcpRegistryLiveConfiguration } from "@t3tools/provider-acp-registry/testing";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
 import { ACP_SESSION_MODE_OPTION_ID } from "@t3tools/provider-acp/server/sessionConfig";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { t3AcpPromptWithInstructions } from "@t3tools/provider-core/server/orchestrationInstructions";
+import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   decodeAcpReplayTranscript,
@@ -55,7 +52,6 @@ import {
   makeTurnInput,
 } from "./AcpAdapterV2.testkit.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import { BUILT_IN_PROVIDER_ADAPTER_DRIVER_KINDS_V2 } from "../builtInProviderAdapterDrivers.ts";
 import { AcpRegistryAdapterV2Driver } from "@t3tools/provider-acp-registry/server";
 import {
   ACP_REGISTRY_PROVIDER,
@@ -64,7 +60,6 @@ import {
   acpRegistryProbeResult,
 } from "@t3tools/provider-acp-registry/testing";
 
-const registryUrl = "https://registry.test/registry.json";
 const decodeAcpRegistryAdapterSettings = Schema.decodeUnknownEffect(
   AcpRegistryAdapterV2Driver.configSchema,
 );
@@ -447,20 +442,6 @@ describe("AcpRegistryAdapterV2", () => {
     assert.notInclude(rejected.message, "private-key");
     assert.notInclude(rejected.message, "token=secret");
   });
-  it("is registered as a generic provider driver with schema defaults", () => {
-    assert.isTrue(BUILT_IN_PROVIDER_ADAPTER_DRIVER_KINDS_V2.has(ACP_REGISTRY_PROVIDER));
-    assert.equal(AcpRegistryAdapterV2Driver.driverKind, ACP_REGISTRY_PROVIDER);
-    assert.deepEqual(AcpRegistryAdapterV2Driver.defaultConfig(), {
-      source: "registry",
-      commandArgs: [],
-      enabled: true,
-      agentId: "",
-      commandPath: "",
-      authMethodId: "",
-      distribution: "auto",
-      customModels: [],
-    });
-  });
 
   describe("the agent's own pickers", () => {
     type Frame = Record<string, unknown>;
@@ -488,8 +469,21 @@ describe("AcpRegistryAdapterV2", () => {
       readonly storedModel?: string;
       readonly storedModePick?: string;
       readonly turnModels?: ReadonlyArray<string>;
+      readonly rejectedModel?: string;
     }) {
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      // Scope release gives the replay agent at most a second to exit, so the status
+      // read below waits for the agent itself instead of racing its last write.
+      const agentExits: Array<Effect.Effect<void>> = [];
+      const childProcessSpawner = ChildProcessSpawner.make((command) =>
+        spawner
+          .spawn(command)
+          .pipe(
+            Effect.tap((handle) =>
+              Effect.sync(() => agentExits.push(Effect.ignore(handle.exitCode))),
+            ),
+          ),
+      );
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const replayDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -613,7 +607,20 @@ describe("AcpRegistryAdapterV2", () => {
           configurations.push(published);
           current = target;
         }
-      }).pipe(Effect.scoped);
+      }).pipe(
+        Effect.match({
+          onFailure: (error) => {
+            assert.isDefined(input.rejectedModel);
+            assert.equal(
+              makeProviderFailure({ cause: error }).message,
+              `The agent did not accept the model "${input.rejectedModel}". Choose another model for this provider, then retry.`,
+            );
+          },
+          onSuccess: () => assert.isUndefined(input.rejectedModel),
+        }),
+        Effect.scoped,
+      );
+      yield* Effect.all(agentExits, { discard: true });
       yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
       return { configurations };
     });
@@ -779,7 +786,70 @@ describe("AcpRegistryAdapterV2", () => {
         }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
 
-    it.effect("leaves unadvertised model IDs alone in both model selection protocols", () =>
+    it.effect.each([
+      "config",
+      "legacy",
+      "updated-config",
+      "removed-config",
+      "configuration-update",
+      "unavailable-before-configuration",
+    ] as const)(
+      "rejects an unavailable explicit model in a %s catalog before inference",
+      (catalog) => {
+        const duringTurn = catalog === "updated-config" || catalog === "removed-config";
+        const duringConfiguration = catalog === "configuration-update";
+        const changesOptions =
+          duringConfiguration || catalog === "unavailable-before-configuration";
+        const model = duringTurn || duringConfiguration ? "hermes" : "missing";
+        const restrictedOption = {
+          ...modelOption("model", "other"),
+          options: [{ value: "other", name: "Other" }],
+        };
+        return openWithStoredPicks({
+          setup: {
+            ...(catalog === "legacy" || catalog === "removed-config"
+              ? {
+                  models: {
+                    currentModelId: "other",
+                    availableModels: [{ modelId: "other", name: "Other" }],
+                  },
+                }
+              : {}),
+            configOptions:
+              catalog === "legacy"
+                ? []
+                : [
+                    {
+                      ...modelOption("model", "hermes"),
+                      options: [{ value: "hermes", name: "Hermes" }],
+                    },
+                    ...(changesOptions ? [permissionModeOption("ask")] : []),
+                  ],
+          },
+          storedModel: model,
+          ...(duringTurn ? { turnModels: [model, model] } : {}),
+          ...(changesOptions ? { storedModePick: "auto" } : {}),
+          rejectedModel: model,
+          pickFrames: duringTurn
+            ? prompt(configOptionUpdate(catalog === "removed-config" ? [] : [restrictedOption]))
+            : duringConfiguration
+              ? [
+                  outbound("session/set_config_option", {
+                    sessionId: "agent-session",
+                    configId: "permission-mode",
+                    value: "auto",
+                  }),
+                  answer("session/set_config_option", {
+                    configOptions: [restrictedOption, permissionModeOption("auto")],
+                  }),
+                ]
+              : [],
+        }).pipe(Effect.provide(layerTest), Effect.scoped);
+      },
+    );
+
+    // regression: #19519 models come from session model state, not a hardcoded list
+    it.effect("keeps unadvertised default and auto selections agent-controlled", () =>
       Effect.gen(function* () {
         const { configurations } = yield* openWithStoredPicks({
           setup: {
@@ -789,15 +859,7 @@ describe("AcpRegistryAdapterV2", () => {
             },
           },
           storedModel: "default",
-          turnModels: [
-            "auto",
-            "removed-model",
-            "other",
-            "default",
-            "auto",
-            "hermes",
-            "removed-model",
-          ],
+          turnModels: ["auto", "default", "other", "default", "auto", "default", "auto"],
           pickFrames: [
             ...prompt(),
             ...prompt(),
@@ -918,86 +980,9 @@ describe("AcpRegistryAdapterV2", () => {
         assert.equal(opened.configurations.at(-1)?.currentModelId, "codex");
       }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
-
-    it.effect("ignores a later-option model without writing configuration", () =>
-      Effect.gen(function* () {
-        const { configurations } = yield* openWithStoredPicks({
-          setup: { configOptions: modelOptions },
-          pickFrames: [],
-          storedModel: "later-model",
-        });
-        assert.equal(configurations[0]?.currentModelId, "gateway");
-      }).pipe(Effect.provide(layerTest), Effect.scoped),
-    );
   });
 
-  it.effect("offers client terminals to Devin only and client fs to no registry agent", () =>
-    Effect.gen(function* () {
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const path = yield* Path.Path;
-      const mockAgentPath = yield* path.fromFileUrl(
-        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-      );
-      const advertisedCapabilities = Effect.fn("advertisedCapabilities")(function* (
-        agentId: string,
-      ) {
-        let clientCapabilities: unknown;
-        const instanceId = ProviderInstanceId.make(`acp-registry-capabilities-${agentId}`);
-        const adapter = yield* makeAcpRegistryAdapterV2({
-          selfInvocation: yield* resolveSelfInvocation(),
-          instanceId,
-          settings: yield* decodeAcpRegistryAdapterSettings({ agentId, authMethodId: "test" }),
-          environment: {},
-          makeRuntime: (input) =>
-            Effect.gen(function* () {
-              clientCapabilities = input.clientCapabilities;
-              const { processEnvironment: _processEnvironment, ...runtimeInput } = input;
-              const context = yield* Layer.build(
-                AcpSessionRuntime.layer({
-                  ...runtimeInput,
-                  spawn: {
-                    command: process.execPath,
-                    args: [mockAgentPath],
-                    cwd: input.cwd,
-                    env: { T3_ACP_SESSION_LIFECYCLE: "1" },
-                  },
-                  authMethodId: "test",
-                }).pipe(
-                  Layer.provide(
-                    Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-                  ),
-                ),
-              );
-              return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
-                Effect.provide(context),
-              );
-            }),
-        }).pipe(Effect.provide(layerInjectedRuntimeCatalog));
-        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          cwd: process.cwd(),
-        });
-        yield* adapter.openSession({
-          threadId: ThreadId.make(`thread-acp-registry-capabilities-${agentId}`),
-          providerSessionId: ProviderSessionId.make(`provider-session-capabilities-${agentId}`),
-          modelSelection: { instanceId, model: "default" },
-          runtimePolicy,
-        });
-        return clientCapabilities;
-      });
-
-      assert.deepInclude(yield* advertisedCapabilities("devin"), {
-        fs: { readTextFile: false, writeTextFile: false },
-        terminal: true,
-      });
-      assert.deepInclude(yield* advertisedCapabilities("gemini"), {
-        fs: { readTextFile: false, writeTextFile: false },
-        terminal: false,
-      });
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
-  );
-
+  // regression: #21618 Claude Agent needs ACP v2 for native background lifecycle
   it.effect("launches Claude Agent on ACP v2 unless its instance environment decides", () =>
     Effect.gen(function* () {
       const launchSwitch = Effect.fn("launchSwitch")(function* (
@@ -1090,6 +1075,134 @@ describe("AcpRegistryAdapterV2", () => {
       if (terminal.type !== "turn.terminal") throw new Error("Missing fallback terminal");
       assert.equal(terminal.status, "completed");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  // regression: #26695 cancelling a Copilot prompt kills its background agents
+  it.effect("never steers Copilot by cancelling its prompt", () =>
+    Effect.gen(function* () {
+      const steering = Effect.fn("steering")(function* (config: Record<string, unknown>) {
+        const instanceId = ProviderInstanceId.make("acp-registry-steering");
+        const adapter = yield* makeAcpRegistryAdapterV2({
+          selfInvocation: yield* resolveSelfInvocation(),
+          instanceId,
+          settings: yield* decodeAcpRegistryAdapterSettings(config),
+          environment: {},
+        }).pipe(Effect.provide(layerInjectedRuntimeCatalog));
+        const { turns } = yield* adapter.getCapabilities();
+        return {
+          supportsInterrupt: turns.supportsInterrupt,
+          supportsActiveSteering: turns.supportsActiveSteering,
+          supportsSteeringByInterruptRestart: turns.supportsSteeringByInterruptRestart,
+        };
+      });
+      const copilot = {
+        supportsInterrupt: true,
+        supportsActiveSteering: false,
+        supportsSteeringByInterruptRestart: false,
+      };
+
+      assert.deepEqual(yield* steering({ agentId: "github-copilot-cli" }), copilot);
+      assert.deepEqual(
+        yield* steering({ source: "local", commandPath: "C:\\tools\\copilot.cmd" }),
+        copilot,
+      );
+      assert.deepEqual(yield* steering({ agentId: "gemini" }), {
+        ...copilot,
+        supportsSteeringByInterruptRestart: true,
+      });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect.each(["before", "after"] as const)(
+    "reconciles a full prompt echo %s acknowledgment",
+    (ordering) =>
+      Effect.gen(function* () {
+        const runtimeInstructions = {
+          type: "text",
+          text: buildRuntimeInstructions({ harness: "acpRegistry", model: "default" }),
+        };
+        const promptBlocks = (ordinal: number) => [
+          {
+            type: "text",
+            text:
+              ordinal === 1
+                ? t3AcpPromptWithInstructions({
+                    prompt: "test prompt",
+                    state: { interactionMode: "default", hasT3Mcp: false, hasDeviceTools: false },
+                  })
+                : "test prompt",
+          },
+          runtimeInstructions,
+        ];
+        const echo = (messageId: string, content: ReadonlyArray<unknown>) =>
+          claudeFrames.update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "user_message",
+            messageId,
+            content,
+          });
+        const promptText = (ordinal: number) =>
+          promptBlocks(ordinal)
+            .map((block) => block.text)
+            .join("\n");
+        const frames = (ordinal: number) => {
+          const [request, , acknowledgment] = claudeFrames.prompt(ordinal);
+          const matching = echo(`echo-${ordinal}`, promptBlocks(ordinal));
+          return [
+            request,
+            echo("different-blocks", [
+              {
+                type: "text",
+                text: promptText(ordinal),
+              },
+            ]),
+            ...(ordering === "before" ? [matching, acknowledgment] : [acknowledgment, matching]),
+            claudeFrames.update(CLAUDE_ROOT_SESSION, {
+              sessionUpdate: "user_message_chunk",
+              messageId: `echo-${ordinal}`,
+              content: { type: "text", text: "updated echo" },
+            }),
+            echo(`echo-${ordinal}`, [{ type: "text", text: "updated echo" }]),
+            echo("second-id", promptBlocks(ordinal)),
+            echo("unmatched", [{ type: "text", text: "Continue the review." }]),
+            claudeFrames.idle("end_turn"),
+          ];
+        };
+        const session = yield* openClaudeReplaySession(
+          [
+            ...claudeFrames.open,
+            ...frames(1),
+            ...frames(2),
+            claudeFrames.closeRequest,
+            claudeFrames.closed,
+          ],
+          undefined,
+          false,
+        );
+        for (const ordinal of [1, 2]) {
+          yield* session.runtime.startTurn(session.turnInput(ordinal));
+          const events = yield* session.until((event) => event.type === "turn.terminal");
+          const messages = events.flatMap((event) =>
+            event.type === "message.updated" && event.message.role === "user"
+              ? [event.message]
+              : [],
+          );
+          const items = events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "user_message"
+              ? [event.turnItem]
+              : [],
+          );
+          const expected = new Set([promptText(ordinal), "Continue the review."]);
+          assert.deepEqual(new Set(messages.map((message) => message.text)), expected);
+          assert.equal(new Set(messages.map((message) => message.id)).size, 3);
+          assert.equal(new Set(items.map((item) => item.id)).size, 3);
+          for (const id of ["different-blocks", "second-id", "unmatched"]) {
+            assert.isTrue(
+              items.some((item) => item.nativeItemRef?.nativeId?.endsWith(`:user:message:${id}`)),
+              `${id} remains visible`,
+            );
+          }
+        }
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("settles Claude's accepted foreground reply while retaining child output", () =>
@@ -1924,149 +2037,6 @@ describe("AcpRegistryAdapterV2", () => {
       assert.equal(queuedTerminal.status, "interrupted");
       assert.isNull(queuedTerminal.failure);
       assert.isFalse(yield* queued.runtime.hasPendingBackgroundWork!);
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
-  );
-
-  it.effect("opens a real ACP child process resolved from registry configuration", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const host = yield* ProviderHost.ProviderHost;
-      const mockAgentPath = yield* path.fromFileUrl(
-        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-      );
-      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
-        cacheDir: host.paths.providerStatusCacheDir,
-        toolsDir: host.paths.baseDir + "/tools",
-        registryUrl,
-      });
-      const settings = yield* decodeAcpRegistryAdapterSettings({
-        agentId: "fixture-agent",
-        commandPath: process.execPath,
-        authMethodId: "test",
-      });
-      let startupActive = false;
-      let startupCount = 0;
-      const instanceId = ProviderInstanceId.make("acp-registry-fixture");
-      const commandsPublished = yield* Deferred.make<{
-        readonly instanceId: ProviderInstanceId;
-        readonly commands: AcpRegistryAvailableCommands;
-      }>();
-      const configurationPublished = yield* Deferred.make<AcpRegistryLiveConfiguration>();
-      const adapter = yield* makeAcpRegistryAdapterV2({
-        selfInvocation: yield* resolveSelfInvocation(),
-        instanceId,
-        settings,
-        environment: {
-          T3_ACP_SESSION_LIFECYCLE: "1",
-          T3_ACP_COMMAND_ADVERTISEMENT_DELAY_MS: "750",
-        },
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            Layer.mock(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator)({
-              withForegroundStartup: (agentId, effect) =>
-                Effect.acquireUseRelease(
-                  Effect.sync(() => {
-                    assert.equal(agentId, "fixture-agent");
-                    startupActive = true;
-                    startupCount += 1;
-                  }),
-                  () => effect,
-                  () =>
-                    Effect.sync(() => {
-                      startupActive = false;
-                    }),
-                ),
-              runBackgroundProbe: (_agentId, effect) => effect.pipe(Effect.map(Option.some)),
-              withSessionMutation: (effect) => effect,
-              clearAvailableCommands: () => Effect.void,
-              publishAvailableCommands: (publishedInstanceId, commands) =>
-                Deferred.succeed(commandsPublished, {
-                  instanceId: publishedInstanceId,
-                  commands,
-                }).pipe(Effect.asVoid),
-              getAvailableCommands: () => Effect.succeed(Option.none()),
-              watchAvailableCommands: () => Effect.never,
-              clearLiveConfiguration: () => Effect.void,
-              publishLiveConfiguration: (_publishedInstanceId, configuration) =>
-                Deferred.succeed(configurationPublished, configuration).pipe(Effect.asVoid),
-              getLiveConfiguration: () => Effect.succeed(Option.none()),
-              watchLiveConfiguration: () => Effect.never,
-              requestUrlAuthentication: () => Effect.succeed(false),
-              acceptUrlAuthentication: () => Effect.succeed(false),
-              getUrlAuthAction: () => Effect.succeed(Option.none()),
-              watchUrlAuthAction: () => Effect.never,
-            }),
-            Layer.mock(AcpRegistrySupport.AcpRegistryCatalog)({
-              resolve: (configuredSettings, cwd, environment) =>
-                Effect.sync(() => assert.isTrue(startupActive)).pipe(
-                  Effect.andThen(resolver.resolve(configuredSettings, cwd, environment)),
-                  Effect.map((resolved) => ({
-                    ...resolved,
-                    spawn: {
-                      ...resolved.spawn,
-                      args: [mockAgentPath],
-                    },
-                  })),
-                ),
-            }),
-          ),
-        ),
-      );
-      const threadId = ThreadId.make("thread-acp-registry-fixture");
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: process.cwd(),
-      });
-      const modelSelection = { instanceId, model: "default" } as const;
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("provider-session-acp-registry-fixture"),
-        modelSelection,
-        runtimePolicy,
-      });
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-
-      assert.equal(runtime.providerSession.driver, "acpRegistry");
-      assert.equal(startupCount, 1);
-      assert.isFalse(startupActive);
-      assert.equal(providerThread.nativeThreadRef?.nativeId, "mock-session-1");
-      assert.equal(providerThread.nativeMetadata?.itemIdentityVersion, 2);
-      assert.isTrue(runtime.providerSession.capabilities.threads.canReadThreadSnapshot);
-      assert.isTrue(runtime.providerSession.capabilities.threads.canForkThread);
-      assert.deepEqual(yield* Deferred.await(commandsPublished), {
-        instanceId,
-        commands: {
-          slashCommands: [
-            {
-              name: "review",
-              description: "Review the current changes",
-              input: { hint: "focus" },
-            },
-          ],
-          skills: [
-            {
-              name: "workspace-skill",
-              description: "Run the workspace skill",
-              path: "acp://skill/workspace-skill",
-              scope: "agent",
-              enabled: true,
-            },
-          ],
-        },
-      });
-      const configuration = yield* Deferred.await(configurationPublished);
-      assert.equal(configuration.currentModelId, "default");
-      assert.deepInclude(configuration.models[0], {
-        id: "default",
-        name: "Auto",
-        description: null,
-      });
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 });

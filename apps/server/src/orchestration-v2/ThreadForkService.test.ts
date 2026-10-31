@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  CommandId,
   ContextTransferId,
   MessageId,
   type ModelSelection,
@@ -130,19 +131,6 @@ const planFork = (
     });
   }).pipe(Effect.provide(ThreadForkService.layer));
 
-it("treats usage-limited and other provider-finished runs as forkable", () => {
-  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("completed"));
-  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("waiting"));
-  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("failed"));
-  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("interrupted"));
-  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("cancelled"));
-  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("running"));
-  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("starting"));
-  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("queued"));
-  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("preparing"));
-  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("rolled_back"));
-});
-
 it.effect("keeps a fork awake when its source thread is snoozed", () =>
   Effect.gen(function* () {
     const sourceThread = makeSourceThread();
@@ -172,14 +160,21 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
   }),
 );
 
-it.effect("forks from a usage-limited failed run", () =>
+it.effect("starts a fork without the source thread's pending title regeneration", () =>
   Effect.gen(function* () {
-    const result = yield* planFork(makeSourceRun("failed"));
-    assert.deepEqual(result.targetThread.forkedFrom, {
-      type: "run",
-      threadId: sourceThreadId,
-      runId: sourceRunId,
-    });
+    const sourceRun = makeSourceRun("completed");
+    const titleRegeneration = {
+      requestId: CommandId.make("command:fork-source-title"),
+      startedAt: snoozedAt,
+    };
+    const sourceProjection = {
+      ...makeSourceProjection(sourceRun),
+      thread: { ...makeSourceThread(), titleRegeneration },
+    };
+    const result = yield* planFork(sourceRun, sourceProjection);
+
+    assert.isNull(result.targetThread.titleRegeneration);
+    assert.deepEqual(sourceProjection.thread.titleRegeneration, titleRegeneration);
   }),
 );
 

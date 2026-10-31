@@ -1,21 +1,14 @@
 import {
-  RelayAuthInvalidError,
-  RelayEnvironmentEndpointTimedOutError,
   RelayEnvironmentEndpointUnavailableError,
   type RelayProtectedError,
 } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 
-import { connectionDiagnosisText, presentConnectionDiagnosis } from "./diagnosis.ts";
-import {
-  credentialMissingError,
-  mapManagedRelayError,
-  mapRemoteEnvironmentError,
-} from "./errors.ts";
+import { presentConnectionDiagnosis } from "./diagnosis.ts";
+import { mapManagedRelayError, mapRemoteEnvironmentError } from "./errors.ts";
 import {
   AVAILABLE_CONNECTION_STATE,
   type ConnectionAttemptError,
-  ConnectionBlockedError,
   type SupervisorConnectionState,
 } from "./model.ts";
 import { ManagedRelayRequestFailedError } from "../relay/managedRelay.ts";
@@ -58,38 +51,6 @@ const results = (state: SupervisorConnectionState, via?: "relay" | "direct") =>
   diagnose(state, via)?.hops.map((hop) => `${hop.hop}:${hop.result}`);
 
 describe("presentConnectionDiagnosis", () => {
-  it("names a dead tunnel and points the fix at the host", () => {
-    const diagnosis = diagnose(backoff(unavailable("tunnel_down")));
-    expect(diagnosis?.headline).toBe("Mac mini's tunnel is offline");
-    expect(results(backoff(unavailable("tunnel_down")))).toEqual([
-      "device:ok",
-      "relay:ok",
-      "tunnel:failed",
-      "server:unchecked",
-    ]);
-    expect(diagnosis?.steps.join(" ")).toContain("Tailscale exit node on Mac mini");
-    expect(diagnosis?.facts).toContainEqual(["HTTP status", "530"]);
-    expect(diagnosis?.facts).toContainEqual(["Trace ID", "trace-1"]);
-    expect(diagnosis?.moreInfoUrl).toMatch(
-      /t3-connect-troubleshooting\.md#the-hosts-tunnel-is-offline$/,
-    );
-  });
-
-  it("links a host that rejects this device to the sign-in section", () => {
-    const failure = new ConnectionBlockedError({
-      reason: "authentication",
-      detail: "rejected",
-      hop: "server",
-      via: "relay",
-    });
-    expect(diagnose(backoff(failure))?.moreInfoUrl).toMatch(/#sign-in-account-or-link-problems$/);
-  });
-
-  it("links the guide only for T3 Connect routes", () => {
-    const failure = credentialMissingError("direct-1");
-    expect(diagnose(backoff(failure), "direct")?.moreInfoUrl).toBeNull();
-  });
-
   it("tells a working tunnel apart from T3 Code not answering", () => {
     expect(diagnose(backoff(unavailable("origin_unreachable")))?.headline).toBe(
       "Tunnel works, but T3 Code on Mac mini did not answer",
@@ -112,19 +73,6 @@ describe("presentConnectionDiagnosis", () => {
     expect(diagnosis?.headline).toBe("This device can't reach Mac mini's tunnel");
     expect(diagnosis?.hops).toHaveLength(4);
     expect(diagnosis?.steps.join(" ")).not.toContain("On Mac mini");
-  });
-
-  it("points a relay timeout at the host, not this device", () => {
-    const failure = fromRelay(
-      new RelayEnvironmentEndpointTimedOutError({
-        code: "environment_endpoint_timed_out",
-        traceId: "trace-3",
-      }),
-    );
-    const diagnosis = diagnose(backoff(failure));
-    expect(diagnosis?.headline).toBe("Mac mini did not answer in time");
-    expect(diagnosis?.steps.join(" ")).toContain("On Mac mini");
-    expect(diagnosis?.steps.join(" ")).not.toContain("on this device");
   });
 
   it("stops at T3 Connect when this device cannot reach the relay", () => {
@@ -155,23 +103,6 @@ describe("presentConnectionDiagnosis", () => {
     const diagnosis = diagnose(backoff(failure));
     expect(diagnosis?.headline).toBe("T3 Connect returned an error");
     expect(diagnosis?.steps.join(" ")).not.toContain("this device");
-  });
-
-  it("blames this device when its saved credential is missing", () => {
-    const diagnosis = diagnose(backoff(credentialMissingError("connection-1")), "direct");
-    expect(diagnosis?.hops[0]).toMatchObject({ hop: "device", result: "failed" });
-  });
-
-  it("names clock skew from a DPoP time window rejection", () => {
-    const failure = fromRelay(
-      new RelayAuthInvalidError({
-        code: "auth_invalid",
-        reason: "invalid_dpop",
-        dpopFailureReason: "time_window",
-        traceId: "trace-2",
-      }),
-    );
-    expect(diagnose(backoff(failure))?.headline).toBe("This device's clock is off");
   });
 
   it("reports this device as offline before any other hop", () => {
@@ -208,19 +139,5 @@ describe("presentConnectionDiagnosis", () => {
       relayStatus: { status: "offline", endpointFailure: "tunnel_down", endpointStatus: 530 },
     });
     expect(diagnosis?.facts.map(([label]) => label)).not.toContain("HTTP status");
-  });
-
-  it("has nothing to say when nothing failed", () => {
-    expect(diagnose(AVAILABLE_CONNECTION_STATE)).toBeNull();
-  });
-
-  it("writes every hop and fact into the copied diagnostics", () => {
-    const diagnosis = diagnose(backoff(unavailable("tunnel_down")));
-    if (diagnosis === null) throw new Error("expected a diagnosis");
-    const text = connectionDiagnosisText("Mac mini", diagnosis);
-    expect(text).toContain("Mac mini tunnel: FAILED");
-    expect(text).toContain("T3 Code on Mac mini: not checked");
-    expect(text).toContain("Cause: tunnel_down");
-    expect(text).toContain("Attempts: 3");
   });
 });

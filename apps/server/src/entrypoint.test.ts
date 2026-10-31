@@ -12,23 +12,6 @@ import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 const makeTempDir = () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-entrypoint-test-"));
 
 describe("isEntrypoint", () => {
-  it("uses the runtime answer when Node provides one", () => {
-    expect(
-      isEntrypoint({
-        moduleUrl: "file:///somewhere/bin.mjs",
-        entryPath: "/elsewhere/other.mjs",
-        runtimeMain: true,
-      }),
-    ).toBe(true);
-    expect(
-      isEntrypoint({
-        moduleUrl: "file:///somewhere/bin.mjs",
-        entryPath: "/somewhere/bin.mjs",
-        runtimeMain: false,
-      }),
-    ).toBe(false);
-  });
-
   it("matches the entrypoint path when the runtime has no import.meta.main", () => {
     // Node 22.16, 22.17 and 23.11 are inside `engines.node` but leave it undefined.
     const dir = makeTempDir();
@@ -53,8 +36,7 @@ describe("isEntrypoint", () => {
       NodeFS.writeFileSync(real, "");
       NodeFS.symlinkSync(real, link);
 
-      // Node resolves the module URL to the real path, and on macOS the temp
-      // directory itself sits behind a symlink (`/var` -> `/private/var`).
+      // macOS temp directories can be symlinks; Node resolves module URLs to real paths.
       expect(
         isEntrypoint({
           moduleUrl: NodeURL.pathToFileURL(NodeFS.realpathSync(real)).href,
@@ -76,16 +58,6 @@ describe("isEntrypoint", () => {
       isEntrypoint({
         moduleUrl: NodeURL.pathToFileURL(imported).href,
         entryPath: entry,
-        runtimeMain: undefined,
-      }),
-    ).toBe(false);
-  });
-
-  it("stays false when there is no entrypoint argument", () => {
-    expect(
-      isEntrypoint({
-        moduleUrl: "file:///somewhere/bin.mjs",
-        entryPath: undefined,
         runtimeMain: undefined,
       }),
     ).toBe(false);

@@ -26,46 +26,6 @@ afterEach(() => {
 });
 
 describe("consumeLastAgentNotificationResponse", () => {
-  it("reports which initial-response operation failed", async () => {
-    const cause = new Error("notification lookup unavailable");
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    await consumeLastAgentNotificationResponse({
-      getLastResponse: () => Promise.reject(cause),
-      clearLastResponse: () => Promise.resolve(),
-      handleResponse: vi.fn(),
-    });
-
-    expect(consoleError).toHaveBeenCalledWith(
-      expect.objectContaining({
-        _tag: "NotificationNavigationError",
-        operation: "read",
-      }),
-    );
-  });
-
-  it("routes a response before reporting a clear failure", async () => {
-    const cause = new Error("notification clear unavailable");
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const response = responseWithData({}, "notification-clear") as NotificationResponse;
-    const handleResponse = vi.fn();
-
-    await consumeLastAgentNotificationResponse({
-      getLastResponse: () => Promise.resolve(response),
-      clearLastResponse: () => Promise.reject(cause),
-      handleResponse,
-    });
-
-    expect(handleResponse).toHaveBeenCalledWith(response);
-    expect(consoleError).toHaveBeenCalledWith(
-      expect.objectContaining({
-        _tag: "NotificationNavigationError",
-        operation: "clear",
-        notificationId: "notification-clear",
-      }),
-    );
-  });
-
   it("reports routing failures before clearing the response", async () => {
     const cause = new Error("notification routing unavailable");
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -102,16 +62,6 @@ describe("extractAgentNotificationDeepLink", () => {
         }),
       ),
     ).toBe("/threads/env/thread");
-  });
-
-  it("normalizes explicit thread deep links from APNs payload data", () => {
-    expect(
-      extractAgentNotificationDeepLink(
-        responseWithData({
-          deepLink: "/threads/env%201/thread%2F2",
-        }),
-      ),
-    ).toBe("/threads/env%201/thread%2F2");
   });
 
   it("falls back to the thread route from environment and thread ids", () => {

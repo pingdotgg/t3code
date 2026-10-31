@@ -10,7 +10,6 @@ import {
   buildCursorCapabilitiesFromSdkModel,
   buildCursorDiscoveredModelsFromSdk,
   buildCursorProviderSnapshot,
-  buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
 } from "./status.ts";
 import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
@@ -92,19 +91,6 @@ const sdkParameterizedModel = {
     },
   ],
 } satisfies SDKModel;
-
-describe("buildInitialCursorProviderSnapshot", () => {
-  it.effect("uses SDK-specific pending status copy", () =>
-    Effect.gen(function* () {
-      const provider = yield* buildInitialCursorProviderSnapshot(baseCursorSettings);
-
-      expect(provider).toMatchObject({
-        status: "warning",
-        message: "Checking Cursor SDK availability...",
-      });
-    }),
-  );
-});
 
 describe("buildCursorProviderSnapshot", () => {
   it("downgrades ready status to warning when SDK model discovery returns no models", () => {

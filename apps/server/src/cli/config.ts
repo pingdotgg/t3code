@@ -15,6 +15,7 @@ import * as LogLevel from "effect/LogLevel";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
+import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -22,6 +23,7 @@ import { Argument, Flag } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
 
 import { readBootstrapEnvelope } from "../bootstrap.ts";
+import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
@@ -403,13 +405,23 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     () => 443,
   );
   const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
-  const host = Option.getOrElse(
-    resolveOptionPrecedence(
-      normalizedFlags.host,
-      Option.fromUndefinedOr(env.host),
-      Option.fromUndefinedOr(bootstrap?.host),
-    ),
-    () => (mode === "desktop" ? "127.0.0.1" : undefined),
+  const explicitHost = resolveOptionPrecedence(
+    normalizedFlags.host,
+    Option.fromUndefinedOr(env.host),
+    Option.fromUndefinedOr(bootstrap?.host),
+  );
+  // A background service exists to be reached from other devices, so it
+  // listens on private networks unless `service.env` sets `T3CODE_HOST`.
+  // Clients then learn its LAN address and prefer it over T3 Connect.
+  const privateNetworkOnly =
+    Option.isNone(explicitHost) &&
+    mode === "web" &&
+    (yield* resolveServiceLauncherMode().pipe(
+      Effect.map((launcher) => launcher.managed),
+      Effect.orElseSucceed(() => false),
+    ));
+  const host = Option.getOrElse(explicitHost, () =>
+    privateNetworkOnly ? "0.0.0.0" : mode === "desktop" ? "127.0.0.1" : undefined,
   );
   const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
 
@@ -424,22 +436,28 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     otel,
     "traces",
     { url: env.otlpTracesUrl, export: signalExport },
-    bootstrap?.otlpTracesUrl,
-    persistedObservabilitySettings.otlpTracesUrl,
+    {
+      bootstrapUrl: bootstrap?.otlpTracesUrl,
+      settingsUrl: persistedObservabilitySettings.otlpTracesUrl,
+    },
   );
   const metrics = OtelEnvironment.resolveSignalEndpoint(
     otel,
     "metrics",
     { url: env.otlpMetricsUrl, export: signalExport },
-    bootstrap?.otlpMetricsUrl,
-    persistedObservabilitySettings.otlpMetricsUrl,
+    {
+      bootstrapUrl: bootstrap?.otlpMetricsUrl,
+      settingsUrl: persistedObservabilitySettings.otlpMetricsUrl,
+    },
   );
   const logs = OtelEnvironment.resolveSignalEndpoint(
     otel,
     "logs",
     { url: env.otlpLogsUrl, export: signalExport },
-    bootstrap?.otlpLogsUrl,
-    persistedObservabilitySettings.otlpLogsUrl,
+    {
+      bootstrapUrl: bootstrap?.otlpLogsUrl,
+      settingsUrl: persistedObservabilitySettings.otlpLogsUrl,
+    },
   );
 
   const config: ServerConfig.ServerConfig["Service"] = {
@@ -455,6 +473,12 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     otlpTracesExport: traces?.export ?? signalExport,
     otlpMetricsExport: metrics?.export ?? signalExport,
     otlpLogsExport: logs?.export ?? signalExport,
+    ...(traces !== undefined ? { otlpTracesSource: traces.source } : {}),
+    ...(traces?.variable !== undefined ? { otlpTracesVariable: traces.variable } : {}),
+    ...(metrics !== undefined ? { otlpMetricsSource: metrics.source } : {}),
+    ...(metrics?.variable !== undefined ? { otlpMetricsVariable: metrics.variable } : {}),
+    ...(logs !== undefined ? { otlpLogsSource: logs.source } : {}),
+    ...(logs?.variable !== undefined ? { otlpLogsVariable: logs.variable } : {}),
     otelEnvironment: otel,
     mode,
     port,
@@ -463,6 +487,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     ...derivedPaths,
     serverTracePath,
     host,
+    ...(privateNetworkOnly ? { privateNetworkOnly } : {}),
     staticDir,
     devUrl,
     ...(devAuthToken === undefined ? {} : { devAuthToken }),
@@ -489,8 +514,9 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
 export const resolveCliAuthConfig = (
   flags: CliAuthLocationFlags,
   cliLogLevel: Option.Option<LogLevel.LogLevel>,
-) =>
-  resolveServerConfig(
+  options?: { readonly quietLogs?: boolean },
+) => {
+  const resolved = resolveServerConfig(
     {
       mode: Option.none(),
       port: Option.none(),
@@ -507,6 +533,12 @@ export const resolveCliAuthConfig = (
     },
     cliLogLevel,
   );
+  // Logs go to stdout, where --json and --token-only print, and resolving can
+  // log, for example when it sweeps abandoned attachment uploads.
+  return options?.quietLogs === true
+    ? resolved.pipe(Effect.provideService(References.MinimumLogLevel, "Error"))
+    : resolved;
+};
 
 const DurationShorthandPattern = /^(?<value>\d+)(?<unit>ms|s|m|h|d|w)$/i;
 

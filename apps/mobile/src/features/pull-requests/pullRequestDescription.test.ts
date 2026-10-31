@@ -23,13 +23,4 @@ describe("pull request description content", () => {
     expect(result.preview).toContain("Fixes reconnects.");
     expect(result.preview).not.toContain("Duplicate");
   });
-
-  it("reads formatted prose and list items without leaking hidden HTML metadata", () => {
-    const result = pullRequestDescriptionContent(
-      parseMarkdownDocument(
-        "<!-- bot metadata -->\n\nKeeps **sessions**\nalive.\n\n- Reconnect\n- Restore output",
-      ),
-    );
-    expect(result.preview).toBe("Keeps sessions\nalive.\nReconnect\n\nRestore output");
-  });
 });

@@ -1,8 +1,9 @@
 import type { CodeViewDiffItem, FileDiffMetadata, SelectedLineRange } from "@pierre/diffs";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
-import { act, StrictMode, type ComponentProps } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { StrictMode, type ComponentProps } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+import { act, render } from "../../../test/render";
 
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileDiffIdentityKey } from "~/lib/diffRendering";
@@ -39,7 +40,7 @@ vi.mock("./StyledDiffCodeView", () => ({
           ) : null}
           {item.annotations?.map((annotation) => (
             <div key={`${annotation.side}:${annotation.lineNumber}`}>
-              {props.renderAnnotation?.(annotation, item)}
+              {props.renderAnnotation?.(annotation, item.fileDiff, item)}
             </div>
           ))}
         </section>
@@ -51,7 +52,6 @@ import type { StyledDiffCodeView } from "./StyledDiffCodeView";
 
 const target = DraftId.make("diff-draft-test");
 const range: SelectedLineRange = { start: 1, end: 1, side: "additions" };
-let root: Root;
 let container: HTMLDivElement;
 
 function file(
@@ -75,28 +75,26 @@ function file(
   };
 }
 
-function render(
+function view(
   files: ReturnType<typeof file>[],
   codeViewKey = "initial",
   pendingFiles: FileDiffMetadata[] = [],
 ) {
-  act(() =>
-    root.render(
-      <StrictMode>
-        <AnnotatableCodeView
-          codeViewKey={codeViewKey}
-          files={files}
-          pendingFiles={pendingFiles}
-          sectionId="unstaged"
-          sectionTitle="Uncommitted"
-          composerDraftTarget={target}
-          options={{}}
-          renderHeaderFilenameSuffix={() => null}
-          renderHeaderPrefix={() => null}
-          onRevealSearchMatch={() => {}}
-        />
-      </StrictMode>,
-    ),
+  return (
+    <StrictMode>
+      <AnnotatableCodeView
+        codeViewKey={codeViewKey}
+        files={files}
+        pendingFiles={pendingFiles}
+        sectionId="unstaged"
+        sectionTitle="Uncommitted"
+        composerDraftTarget={target}
+        options={{}}
+        renderHeaderFilenameSuffix={() => null}
+        renderHeaderPrefix={() => null}
+        onRevealSearchMatch={() => {}}
+      />
+    </StrictMode>
   );
 }
 
@@ -105,7 +103,7 @@ function click(label: string) {
     (node) => node.textContent === label,
   );
   if (!button) throw new Error(`Missing button: ${label}`);
-  act(() => button.click());
+  return act(() => button.click());
 }
 
 function editor() {
@@ -115,7 +113,7 @@ function editor() {
 }
 
 function typeComment(text: string) {
-  act(() => {
+  return act(() => {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
       editor(),
       text,
@@ -124,82 +122,35 @@ function typeComment(text: string) {
   });
 }
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
+function setup(): Disposable {
+  const reset = () => useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
+  reset();
   container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(() => {
-  act(() => root.unmount());
-  container.remove();
-  useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
-  vi.unstubAllGlobals();
-});
+  return { [Symbol.dispose]: reset };
+}
 
 describe("diff comment drafts", () => {
-  it.each(["removed file", "replaced rename"] as const)(
-    "allows a fresh comment after a %s loses its draft",
-    (scenario) => {
-      const original =
-        scenario === "removed file"
-          ? file("a.ts")
-          : file("shared.ts", 1, "rename-changed", "old.ts");
-      render([original, file("b.ts")]);
-      click(`Comment on ${original.filePath}`);
-      typeComment("Discard this draft");
-      const pending =
-        scenario === "removed file"
-          ? []
-          : [
-              {
-                ...file("shared.ts", 2, "rename-changed", "other.ts").fileDiff,
-                hunks: [],
-                cacheKey: "replacement:pending",
-              },
-            ];
-
-      render([file("b.ts")], "refreshed", pending);
-      expect(container.querySelector("textarea")).toBeNull();
-      click("Comment on b.ts");
-      expect(editor().value).toBe("");
-      typeComment("  Review b.ts  ");
-      click("Comment");
-
-      expect(useComposerDraftStore.getState().getComposerDraft(target)?.reviewComments).toEqual([
-        expect.objectContaining({
-          filePath: "b.ts",
-          text: "Review b.ts",
-          selection: { ...range, endSide: "additions" },
-        }),
-      ]);
-      render([original, file("b.ts")], "returned");
-      expect(container.querySelector("textarea")).toBeNull();
-      expect(container.querySelector("mark")).toBeNull();
-      expect(container.querySelector("p")?.textContent).toBe("Review b.ts");
-    },
-  );
-
-  it("keeps the text and selected line through refresh and a provisional lazy patch", () => {
+  it("keeps the text and selected line through refresh and a provisional lazy patch", async () => {
+    using _drafts = setup();
     const original = file("shared.ts", 1, "rename-pure", "old.ts");
-    render([original]);
-    click("Comment on shared.ts");
-    typeComment("Keep this draft");
+    await using screen = await render(view([original]), { container });
+    await click("Comment on shared.ts");
+    await typeComment("Keep this draft");
     const refreshed = file("shared.ts", 2, "rename-pure", "old.ts");
-    render([refreshed], "refreshed");
+    await screen.rerender(view([refreshed], "refreshed"));
     expect(editor().value).toBe("Keep this draft");
     expect(container.querySelector("mark")?.textContent).toBe("Line 1");
 
-    render([], "loading", [
-      { ...refreshed.fileDiff, type: "rename-changed", hunks: [], cacheKey: "shared:pending" },
-    ]);
+    await screen.rerender(
+      view([], "loading", [
+        { ...refreshed.fileDiff, type: "rename-changed", hunks: [], cacheKey: "shared:pending" },
+      ]),
+    );
     expect(container.querySelector("textarea")).toBeNull();
-    render([refreshed], "loaded");
+    await screen.rerender(view([refreshed], "loaded"));
     expect(editor().value).toBe("Keep this draft");
     expect(container.querySelector("mark")?.textContent).toBe("Line 1");
-    click("Comment");
+    await click("Comment");
     expect(useComposerDraftStore.getState().getComposerDraft(target)?.reviewComments).toEqual([
       expect.objectContaining({
         filePath: "shared.ts",

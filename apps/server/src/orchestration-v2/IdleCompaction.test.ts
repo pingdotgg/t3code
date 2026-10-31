@@ -3,6 +3,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   EventId,
   MessageId,
+  type OrchestrationV2ThreadProjection,
   NodeId,
   ProjectId,
   ProviderDriverKind,
@@ -11,22 +12,21 @@ import {
   ProviderTurnId,
   RunId,
   ThreadId,
-  type OrchestrationV2DomainEvent,
-  type OrchestrationV2ServerCommand,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
-import { TestClock } from "effect/testing";
+import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
 
-import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { idleCompactionWindow, type IdleCompactionRecords } from "./IdleCompaction.ts";
 import * as IdleCompactionService from "./IdleCompactionService.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+
+import { idleCompactionWindow, type IdleCompactionRecords } from "./IdleCompaction.ts";
 
 const NOW_MS = Date.parse("2026-10-19T12:00:00.000Z");
 const MINUTE_MS = 60_000;
@@ -148,18 +148,6 @@ function records(
 }
 
 describe("idleCompactionWindow", () => {
-  it("starts two minutes before the cache Claude reported expires", () => {
-    expect(idleCompactionWindow(records({ cacheExpiresInMs: 60 * MINUTE_MS }), NOW_MS)).toEqual({
-      runId,
-      startMs: NOW_MS + 58 * MINUTE_MS,
-      endMs: NOW_MS + 60 * MINUTE_MS,
-    });
-    // A 5m cache whose last request started 3 minutes before the run ended.
-    const late = records({ cacheExpiresInMs: 2 * MINUTE_MS });
-    expect(idleCompactionWindow(late, NOW_MS)).toMatchObject({ startMs: NOW_MS });
-    expect(idleCompactionWindow(late, NOW_MS + 2 * MINUTE_MS)).toBeNull();
-  });
-
   it("skips small contexts, unknown expiry, other providers, switched threads, and compactions", () => {
     const cache = { cacheExpiresInMs: 60 * MINUTE_MS };
     expect(idleCompactionWindow(records({ ...cache, usedTokens: 199_999 }), NOW_MS)).toBeNull();
@@ -181,89 +169,136 @@ describe("idleCompactionWindow", () => {
   });
 });
 
-const seed = Effect.fn("seedIdleThread")(function* (value: IdleCompactionRecords) {
-  const store = yield* ProjectionStore.ProjectionStoreV2;
-  const event = { threadId, occurredAt: at() };
-  yield* store.apply({
-    ...event,
-    id: EventId.make("e1"),
-    type: "thread.created",
-    payload: value.thread,
-  });
-  yield* store.apply({
-    ...event,
-    id: EventId.make("e2"),
-    type: "run.created",
-    payload: value.runs[0]!,
-  });
-  yield* store.apply({
-    ...event,
-    id: EventId.make("e3"),
-    type: "message.updated",
-    payload: value.messages[0]!,
-  });
-  yield* store.apply({
-    ...event,
-    id: EventId.make("e4"),
-    type: "provider-thread.updated",
-    payload: value.providerThreads[0]!,
-  });
-  yield* store.apply({
-    ...event,
-    id: EventId.make("e5"),
-    type: "provider-turn.updated",
-    payload: value.providerTurns[0]!,
-  });
+describe("IdleCompactionService", () => {
+  it.effect.each([
+    { mode: "onReturn", reads: 0 },
+    { mode: "off", reads: 0 },
+    { mode: "beforeCacheExpires", reads: 1 },
+    { mode: "beforeCacheExpires", override: "off", reads: 0 },
+    { mode: "onReturn", override: "beforeCacheExpires", reads: 1 },
+    { mode: "beforeCacheExpires", projectDisabled: true, reads: 0 },
+    { mode: "beforeCacheExpires", enabled: false, reads: 0 },
+    { mode: "beforeCacheExpires", driver: "codex", instance: "codex", reads: 0 },
+    { mode: "beforeCacheExpires", driver: "codex", instance: "custom-codex", reads: 0 },
+    { mode: "beforeCacheExpires", driver: "claudeAgent", instance: "custom-claude", reads: 1 },
+    { mode: "beforeCacheExpires", unconfigured: true, reads: 1 },
+  ] as const)(
+    "loads history only for eligible idle compaction: $mode/$override/$enabled/$projectDisabled/$instance/$unconfigured",
+    (scenario) => {
+      const test = {
+        override: "default",
+        enabled: true,
+        projectDisabled: false,
+        ...scenario,
+      } as const;
+      return Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(NOW_MS);
+          const selectedInstance = ProviderInstanceId.make(
+            "instance" in test ? test.instance : "claudeAgent",
+          );
+          const driver = ProviderDriverKind.make("driver" in test ? test.driver : "claudeAgent");
+          const base = records({ cacheExpiresInMs: 2 * MINUTE_MS });
+          const data: OrchestrationV2ThreadProjection = {
+            ...base,
+            thread: {
+              ...base.thread,
+              providerInstanceId: selectedInstance,
+              modelSelection: { ...base.thread.modelSelection, instanceId: selectedInstance },
+            },
+            runs: base.runs.map((run) => ({
+              ...run,
+              providerInstanceId: selectedInstance,
+              modelSelection: { ...run.modelSelection, instanceId: selectedInstance },
+            })),
+            providerThreads: base.providerThreads.map((thread) => ({
+              ...thread,
+              driver,
+              providerInstanceId: selectedInstance,
+            })),
+            attempts: [],
+            nodes: [],
+            subagents: [],
+            providerSessions: [],
+            plans: [],
+            checkpointScopes: [],
+            checkpoints: [],
+            contextHandoffs: [],
+            visibleTurnItems: [],
+            updatedAt: at(),
+          };
+          let historyReads = 0;
+          let dispatches = 0;
+          const done = yield* Deferred.make<void>();
+          const tracer = Tracer.make({
+            span(options) {
+              const span = new Tracer.NativeSpan(options);
+              const end = span.end.bind(span);
+              span.end = (...args) => {
+                end(...args);
+                if (span.name === "IdleCompactionService.compactWhenDue")
+                  Deferred.doneUnsafe(done, Effect.void);
+              };
+              return span;
+            },
+          });
+          const dependencies = Layer.mergeAll(
+            Layer.mock(Orchestrator.OrchestratorV2)({
+              streamDomainEvents: Stream.make({
+                id: EventId.make("idle-completed"),
+                type: "run.updated",
+                threadId,
+                runId,
+                occurredAt: at(),
+                payload: data.runs[0]!,
+              }),
+              dispatch: () =>
+                Effect.sync(() => {
+                  dispatches++;
+                  return { sequence: 1, storedEvents: [] };
+                }),
+            }),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getThread: () => Effect.succeed(data.thread),
+              getThreadRecords: () =>
+                Effect.sync(() => {
+                  historyReads++;
+                  return data;
+                }),
+            }),
+            Layer.mock(ServerSettings.ServerSettingsService)({
+              getSettings: Effect.succeed({
+                ...DEFAULT_SERVER_SETTINGS,
+                idleCompaction: test.mode,
+                providerInstances:
+                  "unconfigured" in test
+                    ? {}
+                    : {
+                        [selectedInstance]: {
+                          driver,
+                          enabled: test.enabled,
+                          config: { idleCompaction: test.override },
+                        },
+                      },
+                projectSettingsOverrides: test.projectDisabled
+                  ? {
+                      [data.thread.projectId]: {
+                        providerInstances: { [selectedInstance]: { enabled: false } },
+                      },
+                    }
+                  : {},
+              }),
+            }),
+          );
+          yield* Effect.gen(function* () {
+            const service = yield* IdleCompactionService.make;
+            yield* service.start();
+            yield* Deferred.await(done);
+          }).pipe(Effect.provide(dependencies), Effect.withTracer(tracer));
+          expect(historyReads).toBe(test.reads);
+          expect(dispatches).toBe(test.reads);
+        }),
+      );
+    },
+  );
 });
-
-it.effect("sends /compact as T3 Code once the cache is about to expire", () =>
-  Effect.gen(function* () {
-    yield* TestClock.setTime(NOW_MS);
-    const value = records({ cacheExpiresInMs: 5 * MINUTE_MS });
-    yield* seed(value);
-    const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
-    const commands = yield* Queue.unbounded<OrchestrationV2ServerCommand>();
-    const reads = yield* Queue.unbounded<void>();
-    const store = yield* ProjectionStore.ProjectionStoreV2;
-    const dependencies = Layer.mergeAll(
-      Layer.succeed(ProjectionStore.ProjectionStoreV2, {
-        ...store,
-        getThreadRecords: (...args) =>
-          store.getThreadRecords(...args).pipe(Effect.tap(() => Queue.offer(reads, undefined))),
-      }),
-      Layer.mock(ServerSettings.ServerSettingsService)({
-        getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, compactIdleThreads: true }),
-      }),
-      Layer.mock(Orchestrator.OrchestratorV2)({
-        streamDomainEvents: Stream.fromQueue(events),
-        dispatch: (command) =>
-          Queue.offer(commands, command).pipe(Effect.as({ sequence: 1, storedEvents: [] })),
-      }),
-    );
-    yield* Effect.gen(function* () {
-      const service = yield* IdleCompactionService.make;
-      yield* service.start();
-      yield* Queue.offer(events, {
-        id: EventId.make("completed"),
-        type: "run.updated",
-        threadId,
-        occurredAt: at(),
-        payload: value.runs[0]!,
-      });
-      yield* Queue.take(reads);
-      yield* TestClock.adjust("2 minutes");
-      expect(yield* Queue.size(commands)).toBe(0);
-      yield* TestClock.adjust("1 minute");
-      expect(yield* Queue.take(commands)).toMatchObject({
-        type: "message.dispatch",
-        threadId,
-        text: "/compact",
-        createdBy: "agent",
-        creationSource: "server",
-      });
-    }).pipe(Effect.provide(dependencies));
-  }).pipe(
-    Effect.provide(ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
-    Effect.scoped,
-  ),
-);

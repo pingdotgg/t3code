@@ -1,6 +1,7 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it, vi } from "@effect/vitest";
+import { assert, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -75,18 +76,28 @@ type Respond = (
   request: HttpClientRequest.HttpClientRequest,
 ) => Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>;
 
-/** The connection drops after the endpoint read the batch, so it may be stored. */
-const connectionReset: Respond = (request) =>
-  Effect.fail(
-    new HttpClientError.HttpClientError({
-      reason: new HttpClientError.TransportError({ request, cause: "connection reset" }),
-    }),
-  );
-
 const respondWithStatus =
   (status: number): Respond =>
   (request) =>
     Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, { status })));
+
+/**
+ * Answers 503 for `minutes` after the first send, then 204. `answers` holds each
+ * answer with its time in ms after the first send (the test clock runs on across tests).
+ */
+const failingFor = (minutes: number) => {
+  const answers: Array<{ readonly at: number; readonly status: number }> = [];
+  let firstSend: number | undefined;
+  const respond: Respond = (request) =>
+    Effect.flatMap(Clock.currentTimeMillis, (now) => {
+      firstSend ??= now;
+      const at = now - firstSend;
+      const status = at < minutes * 60_000 ? 503 : 204;
+      answers.push({ at, status });
+      return respondWithStatus(status)(request);
+    });
+  return { respond, answers };
+};
 
 const recordTwentyEvents = Effect.gen(function* () {
   const analytics = yield* AnalyticsService.AnalyticsService;
@@ -96,11 +107,12 @@ const recordTwentyEvents = Effect.gen(function* () {
 });
 
 /**
- * Runs `record` (20 events by default), then lets ten minutes of background
+ * Runs `record` (20 events by default), then lets `minutes` of background
  * flushes run against a client that answers every send with `respond`.
  * Returns the sent batches.
  */
-const sendForTenMinutes = (
+const sendFor = (
+  minutes: number,
   respond: Respond,
   record: Effect.Effect<
     void,
@@ -145,104 +157,18 @@ const sendForTenMinutes = (
 
     yield* Effect.gen(function* () {
       yield* record;
-      for (let second = 0; second < 600; second += 1) {
+      for (let second = 0; second < minutes * 60; second += 1) {
         yield* TestClock.adjust("1 second");
       }
     }).pipe(Effect.provide(runtimeLayer));
     return batches;
   });
 
-it("retryDelayMs doubles from 2s and stays under the 5 minute cap", () => {
-  assert.equal(AnalyticsService.retryDelayMs(1, 0), 1_000);
-  assert.equal(AnalyticsService.retryDelayMs(2, 0.999_999), 4_000);
-  assert.equal(AnalyticsService.retryDelayMs(30, 0), 150_000);
-  assert.equal(AnalyticsService.retryDelayMs(30, 0.999_999), 300_000);
-});
-
 it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
-  it.effect("a batch that keeps failing is retried with the same uuids, then dropped", () =>
-    Effect.gen(function* () {
-      const failures = {
-        "connection reset": connectionReset,
-        "408": respondWithStatus(408),
-        "429": respondWithStatus(429),
-        "503": respondWithStatus(503),
-      };
-      for (const [failure, respond] of Object.entries(failures)) {
-        const batches = yield* sendForTenMinutes(respond);
-        assert.equal(batches.length, 5, failure);
-        const uuids = batches.map((batch) => batch.map((event) => event.uuid).join(","));
-        assert.equal(new Set(uuids).size, 1, `${failure}: every retry carries the same uuids`);
-        assert.equal(new Set(batches[0]?.map((event) => event.uuid)).size, 20, failure);
-      }
-    }),
-  );
-
-  it.effect("a batch the endpoint rejects is dropped without a retry", () =>
-    Effect.gen(function* () {
-      for (const status of [400, 401, 413]) {
-        const batches = yield* sendForTenMinutes(respondWithStatus(status));
-        assert.equal(batches.length, 1, `status ${status}`);
-      }
-    }),
-  );
-
-  it.effect("events carry the build's telemetry channel, or dev when none is set", () =>
-    Effect.gen(function* () {
-      const channels = (batches: ReadonlyArray<ReadonlyArray<SentEvent>>) => [
-        ...new Set(batches.flat().map((event) => event.properties.telemetryChannel)),
-      ];
-      assert.deepEqual(channels(yield* sendForTenMinutes(respondWithStatus(204))), ["dev"]);
-
-      // Stands in for the value the bundler writes in at build time.
-      vi.stubGlobal("__T3CODE_TELEMETRY_CHANNEL__", "nightly");
-      assert.deepEqual(channels(yield* sendForTenMinutes(respondWithStatus(204))), ["nightly"]);
-    }).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllGlobals()))),
-  );
-
-  it.effect("each owner is sent once per process, and every event carries the install id", () =>
-    Effect.gen(function* () {
-      let identity: Effect.Success<typeof getTelemetryIdentity> | null = null;
-      const batches = yield* sendForTenMinutes(
-        respondWithStatus(204),
-        Effect.gen(function* () {
-          identity = yield* getTelemetryIdentity;
-          const analytics = yield* AnalyticsService.AnalyticsService;
-          const connect = { source: "connect", ownerId: "a".repeat(64) } as const;
-          yield* analytics.recordOwners([connect, connect], "server");
-          yield* analytics.recordOwners(
-            [connect, { source: "device", ownerId: "b".repeat(64) }],
-            "client",
-          );
-        }),
-      );
-      const events = batches.flat();
-
-      assert.deepEqual(
-        events.map((event) => [
-          event.event,
-          event.properties.ownerSource,
-          event.properties.observedBy,
-        ]),
-        [
-          ["install.owner_observed", "connect", "server"],
-          ["install.owner_observed", "connect", "client"],
-          ["install.owner_observed", "device", "client"],
-        ],
-      );
-      const { distinctId, installId } = identity!;
-      assert.isString(installId);
-      assert.isTrue(
-        events.every(
-          (event) => event.distinct_id === distinctId && event.properties.installId === installId,
-        ),
-      );
-    }),
-  );
-
   it.effect("client owner reports cannot use up the server's owner cap", () =>
     Effect.gen(function* () {
-      const batches = yield* sendForTenMinutes(
+      const batches = yield* sendFor(
+        10,
         respondWithStatus(204),
         Effect.gen(function* () {
           const analytics = yield* AnalyticsService.AnalyticsService;
@@ -262,6 +188,36 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
 
       assert.equal(owners.filter((observedBy) => observedBy === "client").length, 1_000);
       assert.equal(owners.filter((observedBy) => observedBy === "server").length, 1);
+    }),
+  );
+
+  it.effect("keeps a failed batch through a 20-minute outage and sends it once after", () =>
+    Effect.gen(function* () {
+      const ingest = failingFor(20);
+      const batches = yield* sendFor(40, ingest.respond);
+      const statuses = ingest.answers.map(({ status }) => status);
+      assert.equal(statuses.at(-1), 204);
+      assert.equal(statuses.filter((status) => status === 204).length, 1);
+      const sentUuids = new Set(batches.map((batch) => batch.map(({ uuid }) => uuid).join()));
+      assert.equal(sentUuids.size, 1);
+      assert.equal(batches[0]?.length, 20);
+    }),
+  );
+
+  it.effect("drops a batch that keeps failing for 30 minutes", () =>
+    Effect.gen(function* () {
+      const ingest = failingFor(Infinity);
+      yield* sendFor(60, ingest.respond);
+      const lastSend = ingest.answers.at(-1)?.at ?? 0;
+      assert.isAtLeast(lastSend, 30 * 60_000);
+      assert.isBelow(lastSend, 36 * 60_000);
+    }),
+  );
+
+  it.effect("drops a batch the endpoint rejects without sending it again", () =>
+    Effect.gen(function* () {
+      const batches = yield* sendFor(10, respondWithStatus(400));
+      assert.equal(batches.length, 1);
     }),
   );
 

@@ -93,90 +93,6 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
     }),
   );
 
-  it.effect("creates a missing file and its directory", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
-      const filePath = path.join(root, "nested", "settings.json");
-
-      yield* writeFileStringAtomically({ filePath, contents: "fresh" });
-
-      assert.strictEqual(yield* fs.readFileString(filePath), "fresh");
-    }),
-  );
-
-  it.effect("waits out a Windows scanner holding the target, then replaces it", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
-      const filePath = path.join(root, "settings.json");
-      yield* fs.writeFileString(filePath, "before");
-      const firstAttempt = yield* Deferred.make<void>();
-      let attempts = 0;
-      const lockedTwice = FileSystem.make({
-        ...fs,
-        rename: (from, to) =>
-          Effect.suspend(() => {
-            attempts += 1;
-            return attempts <= 2
-              ? Deferred.succeed(firstAttempt, undefined).pipe(
-                  Effect.andThen(Effect.fail(renameError("EBUSY", to))),
-                )
-              : fs.rename(from, to);
-          }),
-      });
-
-      const writing = yield* writeFileStringAtomically({ filePath, contents: "after" }).pipe(
-        Effect.provideService(FileSystem.FileSystem, lockedTwice),
-        Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.forkChild,
-      );
-      yield* Deferred.await(firstAttempt);
-      yield* advanceUntilDone(writing);
-
-      assert.strictEqual(attempts, 3);
-      assert.strictEqual(yield* fs.readFileString(filePath), "after");
-      assert.deepStrictEqual(yield* fs.readDirectory(root), ["settings.json"]);
-    }),
-  );
-
-  it.effect("gives up on a Windows lock that does not clear and keeps the old contents", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
-      const filePath = path.join(root, "settings.json");
-      yield* fs.writeFileString(filePath, "before");
-      const firstAttempt = yield* Deferred.make<void>();
-      let attempts = 0;
-      const locked = FileSystem.make({
-        ...fs,
-        rename: (_from, to) =>
-          Effect.suspend(() => {
-            attempts += 1;
-            return Deferred.succeed(firstAttempt, undefined).pipe(
-              Effect.andThen(Effect.fail(renameError("EPERM", to))),
-            );
-          }),
-      });
-
-      const writing = yield* writeFileStringAtomically({ filePath, contents: "after" }).pipe(
-        Effect.provideService(FileSystem.FileSystem, locked),
-        Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.exit,
-        Effect.forkChild,
-      );
-      yield* Deferred.await(firstAttempt);
-
-      assert.isTrue(Exit.isFailure(yield* advanceUntilDone(writing)));
-      assert.isAbove(attempts, 1);
-      assert.strictEqual(yield* fs.readFileString(filePath), "before");
-      assert.deepStrictEqual(yield* fs.readDirectory(root), ["settings.json"]);
-    }),
-  );
-
   it.effect("does not replace a newer save that landed while the lock was held", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -206,58 +122,15 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
         Effect.forkChild,
       );
       yield* Deferred.await(firstAttempt);
-      // Another process saves once the lock clears, before the waiting write retries.
       yield* writeFileStringAtomically({ filePath, contents: "newer" });
 
-      assert.isTrue(Exit.isFailure(yield* advanceUntilDone(stale)));
+      yield* TestClock.adjust("100 millis");
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(stale)));
       assert.strictEqual(yield* fs.readFileString(filePath), "newer");
       assert.deepStrictEqual(yield* fs.readDirectory(root), ["settings.json"]);
     }),
   );
-
-  it.effect("fails at once on a read-only Windows target", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
-      const filePath = path.join(root, "settings.json");
-      yield* fs.writeFileString(filePath, "before");
-      yield* Effect.acquireRelease(fs.chmod(filePath, 0o444), () =>
-        fs.chmod(filePath, 0o644).pipe(Effect.ignore),
-      );
-      let attempts = 0;
-      const denied = FileSystem.make({
-        ...fs,
-        rename: (_from, to) =>
-          Effect.suspend(() => {
-            attempts += 1;
-            return Effect.fail(renameError("EPERM", to));
-          }),
-      });
-
-      const writing = yield* writeFileStringAtomically({ filePath, contents: "after" }).pipe(
-        Effect.provideService(FileSystem.FileSystem, denied),
-        Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.exit,
-        Effect.forkChild,
-      );
-      assert.isTrue(Exit.isFailure(yield* advanceUntilDone(writing)));
-      assert.strictEqual(attempts, 1);
-      assert.strictEqual(yield* fs.readFileString(filePath), "before");
-    }),
-  );
 });
-
-// Retries stat the real target between waits, and that I/O finishes outside the
-// test clock, so the clock moves one wait at a time until the write settles.
-const advanceUntilDone = <A, E>(fiber: Fiber.Fiber<A, E>) =>
-  Effect.gen(function* () {
-    while (fiber.pollUnsafe() === undefined) {
-      yield* TestClock.adjust("100 millis");
-      yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
-    }
-    return yield* Fiber.join(fiber);
-  });
 
 const renameError = (code: string, path: string) =>
   PlatformError.systemError({

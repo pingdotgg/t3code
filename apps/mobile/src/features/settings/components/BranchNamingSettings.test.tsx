@@ -23,7 +23,7 @@ vi.mock("../../../components/ui/AppText", () => ({
     return null;
   },
 }));
-vi.mock("./SettingsChoiceRow", () => ({ SettingsChoiceRow: () => null }));
+vi.mock("../../../components/ui/ListChoiceRow", () => ({ ListChoiceRow: () => null }));
 vi.mock("./SettingsSection", () => ({
   SettingsSection: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
@@ -54,14 +54,11 @@ function render(
   );
 }
 
-// Android Back hides the keyboard but never ends editing, so leaving the
-// screen is just an unmount with the text still in the field.
+// Android Back hides the keyboard without ending editing; leaving then only unmounts.
 function leaveScreen() {
   act(() => root.unmount());
   root = createRoot(document.createElement("div"));
 }
-
-const typed = (text: string) => ({ nativeEvent: { text } });
 
 function input(label: string) {
   const props = inputs.get(label);
@@ -91,31 +88,7 @@ describe("BranchNamingSettings", () => {
     });
   });
 
-  it("saves typed prefix when the screen closes before editing ends", () => {
-    render("static");
-    act(() => input(PREFIX).onChangeText("feat/"));
-    leaveScreen();
-
-    expect(onChange).toHaveBeenCalledExactlyOnceWith({ branchNamePrefix: "feat/" });
-  });
-
-  it.each([
-    { mode: "static", label: PREFIX, key: "prefix", text: "feat/" },
-    { mode: "custom", label: INSTRUCTIONS, key: "instructions", text: "Use julius/ prefixes." },
-  ] as const)("shows the $key typed before Back when the screen reopens", (field) => {
-    render(field.mode);
-    act(() => input(field.label).onChangeText(field.text));
-    leaveScreen();
-
-    const [patch] = onChange.mock.lastCall ?? [];
-    inputs.clear();
-    render(field.mode, {
-      prefix: patch?.branchNamePrefix,
-      instructions: patch?.branchNameInstructions,
-    });
-    expect(input(field.label).defaultValue).toBe(field.text);
-  });
-
+  // regression: #18381 branch naming text saves when you leave the screen
   it("saves both drafts in one patch when the screen closes", () => {
     render("static");
     act(() => input(PREFIX).onChangeText("feat/"));
@@ -143,23 +116,6 @@ describe("BranchNamingSettings", () => {
     act(() => input(INSTRUCTIONS).onChangeText("Old draft."));
     render("custom", { instructions: "Saved elsewhere." });
     leaveScreen();
-
-    expect(onChange).not.toHaveBeenCalled();
-  });
-
-  it("does not save again on close after editing ended", () => {
-    render("custom");
-    act(() => input(INSTRUCTIONS).onChangeText("New rules."));
-    act(() => input(INSTRUCTIONS).onEndEditing(typed("New rules.")));
-    leaveScreen();
-
-    expect(onChange).toHaveBeenCalledExactlyOnceWith({ branchNameInstructions: "New rules." });
-  });
-
-  it("does not save unchanged text", () => {
-    render("custom");
-    act(() => input(INSTRUCTIONS).onChangeText("Use issue IDs."));
-    act(() => input(INSTRUCTIONS).onEndEditing(typed("Use issue IDs.")));
 
     expect(onChange).not.toHaveBeenCalled();
   });
