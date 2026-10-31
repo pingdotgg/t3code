@@ -21,6 +21,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  ProviderTurnId,
   RunAttemptId,
   RunId,
   ThreadId,
@@ -924,6 +925,31 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         },
       });
 
+      // Updates without usage inherit it from an earlier update, so the
+      // newest update carrying usage must outlive compaction.
+      const providerTurnEvent = (
+        suffix: string,
+        usedTokens: number | null,
+        providerTurnId = "provider-turn:foundation-compact",
+      ): OrchestrationV2DomainEvent => ({
+        id: EventId.make(`event:foundation-compact:${suffix}`),
+        type: "provider-turn.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: ProviderTurnId.make(providerTurnId),
+          providerThreadId: ProviderThreadId.make("provider-thread:foundation-compact"),
+          nodeId,
+          runAttemptId: null,
+          nativeTurnRef: null,
+          ordinal: providerTurnId === "provider-turn:foundation-compact" ? 1 : 2,
+          status: usedTokens === null ? "completed" : "running",
+          startedAt: now,
+          completedAt: null,
+          ...(usedTokens === null ? {} : { tokenUsage: { usedTokens, updatedAt: nowIso } }),
+        },
+      });
+
       yield* eventSink.write({
         events: [
           threadCreatedEvent({ id: "event:foundation-compact:create", thread, now }),
@@ -933,6 +959,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           nodeEvent("node-1", "running"),
           itemEvent("item-1", "streaming"),
           itemEvent("item-middle", "still streaming"),
+          providerTurnEvent("turn-1", null),
           ...Array.from({ length: 501 }, (_, index) =>
             threadStateEvent(`history-${index}`, "thread.visited"),
           ),
@@ -940,7 +967,17 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           messageEvent("message-2", "final"),
           nodeEvent("node-2", "completed"),
           itemEvent("item-2", "final"),
+          providerTurnEvent("turn-2", 10),
+          providerTurnEvent("other-turn", 30, "provider-turn:foundation-compact:other"),
         ],
+      });
+      const providerCommandId = CommandId.make("command:foundation-compact:provider-turn");
+      yield* eventSink.write({
+        commandId: providerCommandId,
+        events: [providerTurnEvent("turn-commanded", 15)],
+      });
+      yield* eventSink.write({
+        events: [providerTurnEvent("turn-3", 20), providerTurnEvent("turn-4", null)],
       });
       const beforeCompaction = yield* projections.getThreadProjection(threadId);
 
@@ -980,7 +1017,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       `;
 
       const summary = yield* maintenance.compactEventStore();
-      assert.isAtLeast(summary.deletedEventCount, 504);
+      assert.isAtLeast(summary.deletedEventCount, 505);
       assert.isAtLeast(summary.deletedReceiptCount, 1);
 
       const remaining = yield* sql<{ readonly event_id: string }>`
@@ -998,10 +1035,15 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           "event:foundation-compact:message-1",
           "event:foundation-compact:node-1",
           "event:foundation-compact:item-1",
+          "event:foundation-compact:turn-1",
           "event:foundation-compact:visit-2",
           "event:foundation-compact:message-2",
           "event:foundation-compact:node-2",
           "event:foundation-compact:item-2",
+          "event:foundation-compact:other-turn",
+          "event:foundation-compact:turn-commanded",
+          "event:foundation-compact:turn-3",
+          "event:foundation-compact:turn-4",
         ],
       );
 
@@ -1026,6 +1068,13 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         ["command:foundation-compact:pending"],
       );
 
+      const commandEvents = yield* eventSink
+        .readByCommandId({ commandId: providerCommandId })
+        .pipe(Stream.runCollect);
+      assert.deepEqual(
+        commandEvents.map((stored) => stored.event.id),
+        ["event:foundation-compact:turn-commanded"],
+      );
       assert.isTrue((yield* maintenance.verify).valid);
       assert.isTrue((yield* maintenance.rebuild).valid);
       assert.deepEqual(yield* projections.getThreadProjection(threadId), beforeCompaction);
