@@ -105,6 +105,7 @@ interface BranchToolbarProps {
   onComposerFocusRequest?: () => void;
   /** Shown at the end of the composer strip, such as the new thread's permissions. */
   trailing?: ReactNode;
+  afterBranch?: ReactNode;
   availableEnvironments?: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
   /** The thread's machine is offline or reconnecting. */
@@ -518,7 +519,7 @@ const RunContextSelector = memo(function RunContextSelector({
         className={cn(
           isPanel
             ? THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS
-            : "inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-1.75 font-normal text-dim-foreground text-xs sm:h-6",
+            : "inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-1.75 text-dim-foreground text-caption sm:h-6",
         )}
         onContextMenu={handleContextMenu}
         aria-label={
@@ -882,6 +883,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   availableEnvironments,
   onEnvironmentChange,
   trailing,
+  afterBranch,
   environmentUnavailable = false,
   panelPrRowsContainer,
 }: BranchToolbarProps) {
@@ -1070,6 +1072,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
         />
       ) : null}
+      {afterBranch}
       {trailing}
     </ComposerSurface.ContextStrip>
   );
