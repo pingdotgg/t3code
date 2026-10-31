@@ -4174,7 +4174,7 @@ export default function ChatView(props: ChatViewProps) {
       ) : null}
 
       <RevertConfirmHost threadKey={routeThreadKey} onConfirm={onConfirmRevertStable} />
-      {embedded ? null : <LinkPullRequestDialogHost />}
+      {embedded ? null : <LinkPullRequestDialogHost hostThreadRef={routeThreadRef} />}
       <ThreadVisitWatermark threadRef={routeThreadRef} />
       <ExpandedImageDialogHost threadKey={routeThreadKey} />
       {gitCwd && isGitRepo ? (

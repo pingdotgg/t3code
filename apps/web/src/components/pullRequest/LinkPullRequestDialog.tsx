@@ -13,27 +13,17 @@ import { useRef, useState } from "react";
 
 import { usePullRequestPreviewTarget } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
-import { RelativeTime } from "~/components/RelativeTime";
 import { useProjects, useThreadShell } from "~/state/entities";
-import { pullRequestEnvironment } from "~/state/pullRequests";
+import { linkedPullRequestDetailAtom } from "~/state/pullRequests";
 import { useDebouncedValue } from "~/state/queries";
 import { useEnvironmentQuery } from "~/state/query";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { Atom } from "effect/reactivity";
-import { SourceControlIconArtwork } from "../SourceControlIconArtwork";
 import { SubmitKbd } from "../SubmitKbd";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import {
-  Dialog,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogPanel,
-  DialogPopup,
-  DialogTitle,
-} from "../ui/dialog";
+import { Dialog, DialogDescription, DialogPopup, DialogTitle } from "../ui/dialog";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { resolvePullRequestState } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
@@ -55,11 +45,18 @@ interface LinkPullRequestDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-export function LinkPullRequestDialogHost() {
+export function LinkPullRequestDialogHost({ hostThreadRef }: { hostThreadRef?: ScopedThreadRef }) {
   const threadRef = useAtomValue(linkPullRequestDialogThreadAtom);
   const thread = useThreadShell(threadRef);
   const linking = usePullRequestLinking(threadRef?.environmentId);
   if (threadRef === null || linking.mode === "unsupported") return null;
+  // Retained chat views share the dialog atom; only its thread owns the overlay.
+  if (
+    hostThreadRef !== undefined &&
+    (hostThreadRef.environmentId !== threadRef.environmentId ||
+      hostThreadRef.threadId !== threadRef.threadId)
+  )
+    return null;
   return (
     <LinkPullRequestDialog
       open
@@ -101,7 +98,7 @@ function LinkPullRequestPreview({
   const settledUrl = useDebouncedValue(link.url, 300);
   const target = usePullRequestPreviewTarget(environmentId, settledUrl);
   const preview = useEnvironmentQuery(
-    target !== null && settledUrl === link.url ? pullRequestEnvironment.preview(target) : null,
+    target !== null && settledUrl === link.url ? linkedPullRequestDetailAtom(target) : null,
   ).data;
   if (preview === null) {
     return (
@@ -110,16 +107,19 @@ function LinkPullRequestPreview({
       </p>
     );
   }
-  const state = resolvePullRequestState({ state: preview.state, isDraft: preview.isDraft });
+  const state = resolvePullRequestState({
+    state: preview.state,
+    isDraft: preview.isDraft ?? false,
+  });
   const stateKey = preview.state === "open" && preview.isDraft ? "draft" : preview.state;
   const author = preview.author?.login ?? "ghost";
   return (
-    <div className="flex min-w-0 items-center gap-2.5 rounded-control border border-border surface-card px-3 py-2.5">
+    <div className="flex min-w-0 items-center gap-2.5 rounded-lg border border-border surface-card px-3 py-2.5">
       <state.Icon aria-hidden className={cn("size-4 shrink-0", state.toneClassName)} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <p className="truncate text-foreground text-label">{preview.title}</p>
         <p className="truncate text-dim-foreground text-meta">
-          #{preview.number} · {author} opened <RelativeTime timestamp={preview.createdAt} />
+          #{preview.number} · {author} wants to merge into {preview.baseBranch}
         </p>
       </div>
       <Badge variant={STATE_BADGE_VARIANT[stateKey]}>{state.label}</Badge>
@@ -198,66 +198,71 @@ function LinkPullRequestDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => (pending ? undefined : onOpenChange(next))}>
-      <DialogPopup className="max-w-110" initialFocus={inputRef}>
-        <DialogHeader>
-          <DialogTitle>Link {terminology.singular}</DialogTitle>
-          <DialogDescription>
-            Paste a {terminology.singular} URL or enter 123 / #123.
-          </DialogDescription>
-        </DialogHeader>
-        <DialogPanel>
-          <InputGroup>
-            <InputGroupAddon>
-              {definition.icon === null ? (
-                <PullRequestGlyph.pullRequest />
-              ) : (
-                <SourceControlIconArtwork icon={definition.icon} />
-              )}
-            </InputGroupAddon>
-            <InputGroupInput
-              ref={inputRef}
-              aria-label={`${capitalizeTerm(terminology.singular)} URL or number`}
-              font="mono"
-              placeholder={`${capitalizeTerm(terminology.singular)} URL or #42`}
-              value={reference}
-              onChange={(event) => {
-                setDirty(true);
-                setReference(event.target.value);
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter") return;
-                event.preventDefault();
-                void submit();
-              }}
-            />
-          </InputGroup>
-          {resolved !== null && "link" in resolved ? (
-            <LinkPullRequestPreview environmentId={threadRef.environmentId} link={resolved.link} />
-          ) : null}
-          {(validation ?? submitError) ? (
-            <p className="text-destructive text-meta">{validation ?? submitError}</p>
-          ) : null}
-        </DialogPanel>
-        <DialogFooter>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={() => onOpenChange(false)}
-            disabled={pending}
-          >
-            Cancel
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => void submit()}
-            disabled={pending || resolved === null || "error" in resolved}
-          >
-            {pending ? "Linking..." : "Link"}
-            <SubmitKbd />
-          </Button>
-        </DialogFooter>
+      <DialogPopup className="max-w-110" initialFocus={inputRef} showCloseButton={false}>
+        <div className="flex min-h-0 flex-col gap-4 px-5 pt-5 pb-4 [--type-title:0.9375rem] [--type-body:0.8125rem] [--type-label:0.8125rem] [--type-prompt:0.8125rem]">
+          <div className="flex flex-col gap-1">
+            <DialogTitle>Link {terminology.singular}</DialogTitle>
+            <DialogDescription>
+              Paste a {terminology.singular} URL or enter 123 / #123.
+            </DialogDescription>
+          </div>
+          <div className="flex flex-col gap-4">
+            <InputGroup>
+              <InputGroupAddon>
+                <PullRequestGlyph.link />
+              </InputGroupAddon>
+              <InputGroupInput
+                ref={inputRef}
+                size="sm"
+                aria-invalid={validation !== null || submitError !== null}
+                aria-label={`${capitalizeTerm(terminology.singular)} URL or number`}
+                font="mono"
+                placeholder={`${capitalizeTerm(terminology.singular)} URL or #42`}
+                value={reference}
+                onChange={(event) => {
+                  setDirty(true);
+                  setReference(event.target.value);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  event.preventDefault();
+                  void submit();
+                }}
+              />
+            </InputGroup>
+            {resolved !== null && "link" in resolved ? (
+              <LinkPullRequestPreview
+                environmentId={threadRef.environmentId}
+                link={resolved.link}
+              />
+            ) : null}
+            {(validation ?? submitError) ? (
+              <p role="alert" className="text-destructive text-meta">
+                {validation ?? submitError}
+              </p>
+            ) : null}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => onOpenChange(false)}
+              disabled={pending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => void submit()}
+              disabled={pending || resolved === null || "error" in resolved}
+            >
+              {pending ? "Linking..." : "Link"}
+              <SubmitKbd />
+            </Button>
+          </div>
+        </div>
       </DialogPopup>
     </Dialog>
   );
