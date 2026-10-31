@@ -19,7 +19,7 @@ export function PullRequestAgentRow(props: {
       title={props.title ?? action.title}
       icon="sparkles"
       accessibilityLabel={props.title ?? action.title}
-      menu={agent.chooseThread}
+      menu={agent.chooseThread && !action.attributes.disabled}
       onPress={
         action.attributes.disabled || agent.chooseThread ? undefined : () => agent.start(props.task)
       }
