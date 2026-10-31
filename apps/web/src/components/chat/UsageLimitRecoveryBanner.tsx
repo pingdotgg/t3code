@@ -1,5 +1,5 @@
+import { codexResetRedemptionMessage } from "@t3tools/shared/usageFormat";
 import {
-  type OrchestrationV2CodexResetRedemption,
   type OrchestrationV2LimitRecovery,
   type OrchestrationV2LimitRecoveryUpdate,
   type RunId,
@@ -47,26 +47,6 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
       .join(" · "),
     actions: canSchedule ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null,
   };
-}
-
-function codexResetRedemptionMessage(redemption: OrchestrationV2CodexResetRedemption) {
-  const account = redemption.accountLabel ?? "this Codex account";
-  if (redemption.outcome === "reset" && redemption.allowanceCleared)
-    return `Codex reported a reset for ${account}, and a fresh check found this usage limit clear.`;
-  switch (redemption.outcome) {
-    case "pending":
-      return `Checking whether Codex applied a reset for ${account}.`;
-    case "noCredit":
-      return `No reset credits were available for ${account}; this thread remains limited.`;
-    case "nothingToReset":
-      return `No reset was used for ${account}; this thread remains limited.`;
-    case "reset":
-      return `Codex reported a reset for ${account}, but this usage limit is still active.`;
-    case "unconfirmed":
-      return `Could not confirm a reset for ${account}; this thread remains limited.`;
-    case "declined":
-      return `Auto-reset skipped for ${account}; this thread remains limited.`;
-  }
 }
 
 function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: RecoveryProps) {

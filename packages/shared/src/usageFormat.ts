@@ -1,6 +1,7 @@
 // @effect-diagnostics globalDate:off -- Usage windows are calendar days in the viewer's zone, derived from wall-clock "now" via Intl.
 import {
   UsageDay,
+  type OrchestrationV2CodexResetRedemption,
   type UsageResolution,
   type UsageSource,
   type UsageSummaryInput,
@@ -294,4 +295,30 @@ export function makeWindow(
     timeZone,
     resolution,
   };
+}
+
+export function codexResetRedemptionMessage(
+  redemption: OrchestrationV2CodexResetRedemption,
+): string {
+  const account = redemption.accountLabel ?? "this Codex account";
+  if (
+    (redemption.outcome === "reset" || redemption.outcome === "alreadyRedeemed") &&
+    redemption.allowanceCleared
+  )
+    return `Codex reported a reset for ${account}, and a fresh check found this usage limit clear.`;
+  switch (redemption.outcome) {
+    case "pending":
+      return `Checking whether Codex applied a reset for ${account}.`;
+    case "noCredit":
+      return `No reset credits were available for ${account}; this thread remains limited.`;
+    case "nothingToReset":
+      return `No reset was used for ${account}; this thread remains limited.`;
+    case "reset":
+    case "alreadyRedeemed":
+      return `Codex reported a reset for ${account}, but this usage limit is still active.`;
+    case "unconfirmed":
+      return `Could not confirm a reset for ${account}; this thread remains limited.`;
+    case "declined":
+      return `Auto-reset skipped for ${account}; this thread remains limited.`;
+  }
 }
