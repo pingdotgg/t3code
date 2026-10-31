@@ -1,30 +1,34 @@
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import { Globe, History, RadioTower } from "lucide-react";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { Globe, Link } from "lucide-react";
 
 import type { BrowserHistoryEntry } from "~/browserHistoryStore";
-import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from "~/components/ui/empty";
-import { DiscoveryList } from "../ui/discovery-list";
+import { Button } from "~/components/ui/button";
 
 import { PreviewLocalServerCard } from "./PreviewLocalServerCard";
 import { PreviewRecentUrlCard } from "./PreviewRecentUrlCard";
 import { useDiscoveredLocalServers } from "./useDiscoveredLocalServers";
 
 interface Props {
-  threadRef: ScopedThreadRef;
   environmentId: EnvironmentId;
   configuredUrls?: ReadonlyArray<string> | undefined;
   recentEntries: ReadonlyArray<BrowserHistoryEntry>;
   onRemoveRecent: (url: string) => void;
   onOpenUrl: (url: string) => void;
+  /** Focuses the chrome row's address field. */
+  onFocusUrl?: () => void;
 }
 
+/**
+ * The browser's blank tab: a hero that points at the address field, then live
+ * local servers, then recently visited pages.
+ */
 export function PreviewEmptyState({
-  threadRef,
   environmentId,
   configuredUrls,
   recentEntries,
   onRemoveRecent,
   onOpenUrl,
+  onFocusUrl,
 }: Props) {
   const servers = useDiscoveredLocalServers({
     environmentId,
@@ -32,63 +36,52 @@ export function PreviewEmptyState({
   });
   const recents = recentEntries.filter((entry) => URL.canParse(entry.url)).slice(0, 8);
 
-  if (servers.length === 0 && recents.length === 0) {
-    return (
-      <Empty>
-        <EmptyMedia variant="icon">
-          <Globe className="size-4.5 text-muted-foreground" />
-        </EmptyMedia>
-        <EmptyTitle>No preview yet</EmptyTitle>
-        <EmptyDescription>
-          Type a URL above, or run a dev script. Local servers this thread starts will show up here
-          automatically.
-        </EmptyDescription>
-      </Empty>
-    );
-  }
-
   return (
-    <div className="scrollbar-gutter-both flex h-full min-h-0 overflow-y-auto px-5 py-8">
-      <div className="mx-auto flex w-full max-w-xl flex-col gap-6">
-        {recents.length > 0 ? (
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <History className="size-4 shrink-0" />
-              <h2 className="font-medium">Recently used</h2>
+    <div className="scrollbar-gutter-both flex h-full min-h-0 overflow-y-auto px-4 pt-4 pb-6">
+      <div className="mx-auto flex w-full max-w-xl flex-col gap-4.5">
+        <div className="flex flex-col items-center gap-2.5 px-4 py-6 text-center">
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-full surface-raised">
+            <Globe aria-hidden className="size-4.5 text-muted-foreground" />
+          </span>
+          <h2 className="text-base font-medium text-foreground">No preview yet</h2>
+          <p className="max-w-[300px] text-balance text-sm text-muted-foreground">
+            Start a dev server or open a URL. Agents can open pages here too.
+          </p>
+          {onFocusUrl ? (
+            <div className="pt-1.5">
+              <Button type="button" variant="secondary" size="xs" onClick={onFocusUrl}>
+                <Link />
+                Open URL
+              </Button>
             </div>
-            <DiscoveryList>
+          ) : null}
+        </div>
+        {servers.length > 0 ? (
+          <section className="flex flex-col gap-2">
+            <h3 className="text-xs font-medium text-dim-foreground">Local servers</h3>
+            {servers.map((server) => (
+              <PreviewLocalServerCard
+                key={`${server.host}:${server.port}`}
+                server={server}
+                onOpen={() => onOpenUrl(server.requestedUrl)}
+              />
+            ))}
+          </section>
+        ) : null}
+        {recents.length > 0 ? (
+          <section className="flex flex-col gap-2">
+            <h3 className="text-xs font-medium text-dim-foreground">Recently used</h3>
+            <div className="flex flex-col">
               {recents.map((entry) => (
                 <PreviewRecentUrlCard
                   key={entry.url}
-                  threadRef={threadRef}
                   entry={entry}
                   onOpen={() => onOpenUrl(entry.url)}
                   onRemove={() => onRemoveRecent(entry.url)}
                 />
               ))}
-            </DiscoveryList>
-          </div>
-        ) : null}
-        {servers.length > 0 ? (
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <RadioTower className="size-4 shrink-0" />
-              <h2 className="font-medium">Local servers</h2>
             </div>
-            <DiscoveryList>
-              {servers.map((server) => (
-                <PreviewLocalServerCard
-                  key={`${server.host}:${server.port}`}
-                  threadRef={threadRef}
-                  server={server}
-                  onOpen={() => onOpenUrl(server.requestedUrl)}
-                />
-              ))}
-            </DiscoveryList>
-            <p className="px-1 text-xs text-muted-foreground">
-              Select a live local server to open it in this browser tab.
-            </p>
-          </div>
+          </section>
         ) : null}
       </div>
     </div>
