@@ -6,7 +6,7 @@ import type {
   Project,
   ThreadId,
 } from "@t3tools/contracts";
-import { ProviderInstanceId, RuntimeRequestId } from "@t3tools/contracts";
+import { ProviderInstanceId, RuntimeRequestId, RunId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import { projectThreadAwarenessV2 } from "./agentAwareness.ts";
@@ -42,6 +42,7 @@ describe("projectThreadAwarenessV2", () => {
     title: "Integrate orchestration",
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
     status: "running" as const,
+    latestRunId: null,
     pendingRuntimeRequest: null,
     settledOverride: null,
     updatedAt,
@@ -61,6 +62,22 @@ describe("projectThreadAwarenessV2", () => {
         thread: { ...input.thread, latestRunStopRequested: true },
       }),
     ).toBeNull();
+  });
+
+  it("preserves the run identity when completed thread metadata changes", () => {
+    const thread = { ...v2Thread({ status: "completed" }), latestRunId: RunId.make("run-1") };
+    for (const updatedThread of [
+      thread,
+      { ...thread, title: "Renamed", updatedAt: DateTime.makeUnsafe("2026-05-22T12:01:00.000Z") },
+    ]) {
+      expect(
+        projectThreadAwarenessV2({
+          environmentId: "env-1" as EnvironmentId,
+          project,
+          thread: updatedThread,
+        }),
+      ).toMatchObject({ phase: "completed", runId: "run-1" });
+    }
   });
 
   it.each(["running", "completed", "failed"] as const)(

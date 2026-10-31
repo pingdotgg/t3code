@@ -26,6 +26,7 @@ import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
 import * as ApnsClient from "./ApnsClient.ts";
 import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
+import { makeAggregateState } from "./agentActivityAggregate.ts";
 
 const config = RelayConfiguration.RelayConfiguration.of({
   relayIssuer: "https://relay.example.test",
@@ -141,6 +142,7 @@ const target: LiveActivities.TargetRow = {
 function layerFor(input: {
   readonly attempts: Array<DeliveryAttempts.DeliveryAttemptInput>;
   readonly sourceJobClaims?: ReadonlyMap<string, DeliveryAttempts.DeliverySourceJobClaimResult>;
+  readonly claimedActivityAlerts?: Set<string>;
   readonly queuedJobs?: Array<SignedApnsDeliveryJob>;
   readonly markedDeliveries?: Array<
     Parameters<LiveActivities.LiveActivities["Service"]["markDelivery"]>[0]
@@ -185,6 +187,21 @@ function layerFor(input: {
             }),
         }),
         Layer.succeed(DeliveryAttempts.DeliveryAttempts, {
+          claimActivityAlert: (alert) =>
+            Effect.sync(() => {
+              const key = JSON.stringify([
+                alert.userId,
+                alert.deviceId,
+                alert.environmentId,
+                alert.threadId,
+                alert.phase,
+                alert.runId ?? alert.updatedAt,
+              ]);
+              const claims = input.claimedActivityAlerts;
+              if (claims?.has(key)) return false;
+              claims?.add(key);
+              return true;
+            }),
           pruneExpired: Effect.succeed(0),
           claimSourceJob: (attempt) =>
             Effect.sync(() => {
@@ -1110,6 +1127,222 @@ describe("live activity alert decisions", () => {
 });
 
 describe("fast completion delivery", () => {
+  it.effect("rings each completion once across display eviction and delivery restarts", () => {
+    const states = Array.from({ length: 6 }, (_, index) => ({
+      ...state,
+      threadId: ThreadId.make(`thread-${index}`),
+      phase: "completed" as const,
+      runId: `run-${index}`,
+    }));
+    const device = { ...target, last_aggregate_json: JSON.stringify(aggregate) };
+    const claimedActivityAlerts = new Set<string>();
+    const requests: Array<Record<string, unknown>> = [];
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.sync(() => {
+        if (request.body._tag === "Uint8Array") {
+          requests.push(JSON.parse(new TextDecoder().decode(request.body.body)));
+        }
+        return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+      });
+
+    return Effect.gen(function* () {
+      for (const index of [0, 1, 2, 3, 4, 5, 4, 5, 4, 5]) {
+        const jobs: SignedApnsDeliveryJob[] = [];
+        const marked: Array<
+          Parameters<LiveActivities.LiveActivities["Service"]["markDelivery"]>[0]
+        > = [];
+        yield* Effect.gen(function* () {
+          const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+          yield* deliveries.sendForTarget({
+            target: device,
+            aggregate: makeAggregateState({
+              activeStates: states,
+              terminalState: states[index]!,
+              nowMs: 0,
+            }),
+            nowMs: 0,
+          });
+          for (const job of jobs) yield* deliveries.processSignedJob(job);
+        }).pipe(
+          Effect.provide(
+            layerFor({
+              attempts: [],
+              queuedJobs: jobs,
+              markedDeliveries: marked,
+              claimedActivityAlerts,
+              currentTargets: [device],
+              activityStates: states,
+              config: signingConfig,
+              execute,
+            }),
+          ),
+        );
+        const delivered = marked.at(-1);
+        if (delivered) device.last_aggregate_json = JSON.stringify(delivered.aggregate);
+      }
+      expect(
+        requests.filter((request) => (request.aps as Record<string, unknown>).alert),
+      ).toHaveLength(6);
+    });
+  });
+
+  it.effect("rings once when separate completion jobs are consumed concurrently", () => {
+    const done = { ...state, phase: "completed" as const };
+    const completedAggregate = makeAggregateState({
+      activeStates: [done],
+      terminalState: done,
+      nowMs: 0,
+    })!;
+    const device = { ...target, last_aggregate_json: JSON.stringify(aggregate) };
+    const payload = {
+      kind: "live_activity_update" as const,
+      userId: device.user_id,
+      deviceId: device.device_id,
+      token: "activity-token",
+      aggregate: completedAggregate,
+      alert: { title: "Thread", body: "Done: Project" },
+      createdAt: state.updatedAt,
+      expiresAt: "1970-01-01T00:10:00.000Z",
+    };
+    const requests: Array<Record<string, unknown>> = [];
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.sync(() => {
+        if (request.body._tag === "Uint8Array")
+          requests.push(JSON.parse(new TextDecoder().decode(request.body.body)));
+        return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+      });
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* Effect.forEach(
+        ["first", "second"],
+        (jobId) =>
+          deliveries.processSignedJob(
+            signApnsDeliveryJob({
+              secret: config.apnsDeliveryJobSigningSecret,
+              payload: makeApnsDeliveryJobPayload({ ...payload, jobId }),
+            }),
+          ),
+        { concurrency: 2 },
+      );
+      expect(requests).toHaveLength(2);
+      expect(
+        requests.filter((request) => (request.aps as Record<string, unknown>).alert),
+      ).toHaveLength(1);
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts: [],
+          claimedActivityAlerts: new Set(),
+          currentTargets: [device],
+          activityStates: [done],
+          config: signingConfig,
+          execute,
+        }),
+      ),
+    );
+  });
+
+  it.effect("alerts a new run in the same thread even when the previous card was completed", () => {
+    const done = { ...state, phase: "completed" as const, runId: "run-new" };
+    const previous = makeAggregateState({
+      activeStates: [],
+      terminalState: { ...done, runId: "run-old" },
+      nowMs: 0,
+    })!;
+    const device = {
+      ...target,
+      last_aggregate_json: JSON.stringify(previous),
+      last_live_activity_delivery_at: state.updatedAt,
+    };
+    const jobs: SignedApnsDeliveryJob[] = [];
+    const requests: Array<Record<string, unknown>> = [];
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.sync(() => {
+        if (request.body._tag === "Uint8Array")
+          requests.push(JSON.parse(new TextDecoder().decode(request.body.body)));
+        return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+      });
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.sendForTarget({
+        target: device,
+        aggregate: makeAggregateState({ activeStates: [], terminalState: done, nowMs: 0 }),
+        nowMs: 0,
+      });
+      expect(jobs).toHaveLength(1);
+      yield* deliveries.processSignedJob(jobs[0]!);
+      expect(
+        requests.filter((request) => (request.aps as Record<string, unknown>).alert),
+      ).toHaveLength(1);
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts: [],
+          queuedJobs: jobs,
+          claimedActivityAlerts: new Set(),
+          currentTargets: [device],
+          activityStates: [done],
+          config: signingConfig,
+          execute,
+        }),
+      ),
+    );
+  });
+
+  it.effect("shares completion deduplication between Live Activities and ordinary pushes", () => {
+    const done = { ...state, phase: "completed" as const, runId: "run-1" };
+    const completed = makeAggregateState({ activeStates: [], terminalState: done, nowMs: 0 })!;
+    const device = {
+      ...target,
+      push_token: "push-token",
+      last_aggregate_json: JSON.stringify(aggregate),
+    };
+    const jobs: SignedApnsDeliveryJob[] = [];
+    const requests: Array<Record<string, unknown>> = [];
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.sync(() => {
+        if (request.body._tag === "Uint8Array")
+          requests.push(JSON.parse(new TextDecoder().decode(request.body.body)));
+        return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+      });
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.sendForTarget({ target: device, aggregate: completed, nowMs: 0 });
+      for (const job of jobs) yield* deliveries.processSignedJob(job);
+      yield* deliveries.sendPushNotification({
+        target: device,
+        token: "push-token",
+        sourceJobId: "push-job-1",
+        notification: {
+          title: "Thread",
+          body: "Done: Project",
+          environmentId: done.environmentId,
+          threadId: done.threadId,
+          phase: done.phase,
+          runId: done.runId,
+          updatedAt: done.updatedAt,
+          deepLink: "/",
+        },
+      });
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.aps).toMatchObject({
+        alert: expect.objectContaining({ title: "Thread", body: "Done: Project" }),
+      });
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts: [],
+          queuedJobs: jobs,
+          claimedActivityAlerts: new Set(),
+          currentTargets: [device],
+          activityStates: [done],
+          config: signingConfig,
+          execute,
+        }),
+      ),
+    );
+  });
+
   it.effect("keeps a completion alert when work finishes before running delivery", () => {
     const queuedJobs: SignedApnsDeliveryJob[] = [];
     const old = {

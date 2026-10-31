@@ -4,6 +4,7 @@ import type { RelayAgentActivityState } from "@t3tools/contracts/relay";
 import { makeAggregateState } from "./agentActivityAggregate.ts";
 import {
   attentionTransitionRows,
+  rowPhasesChanged,
   terminalTransitionRows,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
@@ -71,6 +72,25 @@ describe("shared agent activity policy", () => {
     expect(terminalTransitionRows({ ...input, includeUnobserved: true, nowMs: 180_000 })).toEqual(
       [],
     );
+  });
+
+  it.each([
+    [undefined, "run-new", true],
+    ["run-old", undefined, true],
+    ["run-old", "run-new", true],
+    [undefined, undefined, false],
+    ["run-same", "run-same", false],
+  ] as const)("detects terminal run identity %s -> %s", (before, after, changed) => {
+    const previousAggregate = aggregate([
+      { ...state, phase: "completed", ...(before === undefined ? {} : { runId: before }) },
+    ]);
+    const nextAggregate = aggregate([
+      { ...state, phase: "completed", ...(after === undefined ? {} : { runId: after }) },
+    ]);
+    expect(rowPhasesChanged(previousAggregate, nextAggregate)).toBe(changed);
+    expect(
+      terminalTransitionRows({ previousAggregate, nextAggregate, preferences, nowMs: 0 }),
+    ).toHaveLength(changed ? 1 : 0);
   });
 
   it("distinguishes equal thread IDs across environments", () => {
