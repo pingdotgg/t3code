@@ -199,7 +199,7 @@ it.effect("runs editor, remote open target and direct endpoint discovery side by
     const startThenAwait = <A>(started: Deferred.Deferred<void>, value: A) =>
       Deferred.succeed(started, undefined).pipe(
         Effect.andThen(
-          Effect.all([editorsStarted, targetsStarted, endpointsStarted].map(Deferred.await)),
+          Effect.forEach([editorsStarted, targetsStarted, endpointsStarted], Deferred.await),
         ),
         Effect.as(value),
       );

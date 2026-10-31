@@ -730,7 +730,11 @@ it.effect(
               Effect.sync(() => {
                 statCalls += 1;
                 return fileInfo;
-              }).pipe(Effect.tap(() => initialScanDone ? Deferred.succeed(rescanned, undefined) : Effect.void)),
+              }).pipe(
+                Effect.tap(() =>
+                  initialScanDone ? Deferred.succeed(rescanned, undefined) : Effect.void,
+                ),
+              ),
           }),
           Path.layer,
           Layer.succeed(

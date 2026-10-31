@@ -29,14 +29,14 @@ it.effect("serves the stale value while one background refresh replaces it", () 
     const calls = yield* Ref.make(0);
     const release = yield* Deferred.make<void>();
     const started = yield* Deferred.make<void>();
-    const refreshed = yield* Deferred.make<void>();
+    const refreshed = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
     const read = yield* makeStaleWhileRevalidate(
       Effect.gen(function* () {
         const call = yield* Ref.updateAndGet(calls, (count) => count + 1);
         if (call > 1) {
           yield* Deferred.succeed(started, undefined);
           yield* Deferred.await(release);
-          yield* Deferred.succeed(refreshed, undefined);
+          yield* Deferred.succeed(refreshed, yield* Effect.fiber);
         }
         return call;
       }),
@@ -53,7 +53,7 @@ it.effect("serves the stale value while one background refresh replaces it", () 
     assert.equal(yield* Ref.get(calls), 2);
 
     yield* Deferred.succeed(release, undefined);
-    yield* Deferred.await(refreshed);
+    yield* Fiber.await(yield* Deferred.await(refreshed));
     assert.equal(yield* read, 2);
   }),
 );
@@ -64,7 +64,10 @@ it.effect("shares one first scan that an interrupted caller does not cancel", ()
     const release = yield* Deferred.make<void>();
     const started = yield* Deferred.make<void>();
     const read = yield* makeStaleWhileRevalidate(
-      Ref.updateAndGet(calls, (count) => count + 1).pipe(Effect.tap(() => Deferred.succeed(started, undefined)), Effect.tap(() => Deferred.await(release))),
+      Ref.updateAndGet(calls, (count) => count + 1).pipe(
+        Effect.tap(() => Deferred.succeed(started, undefined)),
+        Effect.tap(() => Deferred.await(release)),
+      ),
       "60 seconds",
     );
 
@@ -85,7 +88,7 @@ it.effect("starts over after a failed first scan", () =>
     const calls = yield* Ref.make(0);
     const read = yield* makeStaleWhileRevalidate(
       Ref.updateAndGet(calls, (count) => count + 1).pipe(
-        Effect.flatMap((call) => (call === 1 ? Effect.die("probe crashed") : Effect.succeed(call))),
+        Effect.filterOrElse((call) => call !== 1, () => Effect.die("probe crashed")),
       ),
       "60 seconds",
     );
@@ -98,14 +101,23 @@ it.effect("starts over after a failed first scan", () =>
 it.effect("abandons a hung refresh so a later call can start another", () =>
   Effect.gen(function* () {
     const calls = yield* Ref.make(0);
-    const started = yield* Deferred.make<void>();
+    const started = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
     const interrupted = yield* Deferred.make<void>();
-    const refreshed = yield* Deferred.make<void>();
+    const refreshed = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
     const read = yield* makeStaleWhileRevalidate(
       Ref.updateAndGet(calls, (count) => count + 1).pipe(
-        Effect.flatMap((call) => call === 2
-          ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never), Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)))
-          : Effect.succeed(call).pipe(Effect.tap(() => call === 3 ? Deferred.succeed(refreshed, undefined) : Effect.void))),
+        Effect.flatMap((call) =>
+          call === 2
+            ? Effect.fiber.pipe(Effect.flatMap((fiber) => Deferred.succeed(started, fiber))).pipe(
+                Effect.andThen(Effect.never),
+                Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+              )
+            : Effect.succeed(call).pipe(
+                Effect.tap(() =>
+                  call === 3 ? Deferred.succeed(refreshed, undefined) : Effect.void,
+                ),
+              ),
+        ),
       ),
       "60 seconds",
     );
@@ -119,8 +131,9 @@ it.effect("abandons a hung refresh so a later call can start another", () =>
     // The hung refresh times out, releasing the claim for the next caller.
     yield* TestClock.adjust("30 seconds");
     yield* Deferred.await(interrupted);
+    yield* Fiber.await(yield* Deferred.await(started));
     assert.equal(yield* read, 1);
-    yield* Deferred.await(refreshed);
+    yield* Fiber.await(yield* Deferred.await(refreshed));
     assert.equal(yield* Ref.get(calls), 3);
     assert.equal(yield* read, 3);
   }).pipe(Effect.scoped),
@@ -134,10 +147,12 @@ it.effect("interrupts a background refresh when the owning scope closes", () =>
     const calls = yield* Ref.make(0);
     const read = yield* makeStaleWhileRevalidate(
       Ref.updateAndGet(calls, (count) => count + 1).pipe(
-        Effect.flatMap((call) =>
-          call === 1
-            ? Effect.succeed(call)
-            : Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never), Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined))),
+        Effect.filterOrElse(
+          (call) => call === 1,
+          () => Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Effect.never),
+            Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+          ),
         ),
       ),
       "60 seconds",
