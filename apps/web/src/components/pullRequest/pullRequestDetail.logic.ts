@@ -523,6 +523,18 @@ export function visibleBody(body: string): string | null {
   return body.replace(/<!--[\s\S]*?-->/gu, "").trim().length === 0 ? null : body.trim();
 }
 
+/** A body flattened to one plain line, for the quiet peek under a collapsed entry. */
+export function pullRequestBodyPreview(body: string): string {
+  return body
+    .replace(/<!--[\s\S]*?-->/gu, "")
+    .replace(/^\s*>?\s*\[!\w+\]\s*$/gmu, "")
+    .replace(/!?(\[([^\]]+)\])\([^)]*\)/gu, "$2")
+    .replace(/^[\s>#*-]+/gmu, "")
+    .replace(/[*`]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export type PullRequestConversationItem =
   | {
       readonly kind: "comment";
