@@ -11,7 +11,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
-  buildCollapsedProposedPlanPreviewMarkdown,
+  buildCollapsedProposedPlanPreview,
   buildProposedPlanMarkdownFilename,
   downloadPlanAsTextFile,
   normalizePlanMarkdownForExport,
@@ -86,7 +86,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   const canCollapse = planMarkdown.length > 900 || lineCount > 20;
   const displayedPlanMarkdown = stripDisplayedPlanMarkdown(planMarkdown);
   const collapsedPreview = canCollapse
-    ? buildCollapsedProposedPlanPreviewMarkdown(planMarkdown, { maxLines: 10 })
+    ? buildCollapsedProposedPlanPreview(planMarkdown, { maxLines: 10 })
     : null;
   const isCollapsed = canCollapse && !expanded;
   // Mount clipped plans during find to count hidden matches without revealing them.
@@ -203,14 +203,24 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
           data-thread-find-fold={isCollapsed ? "" : undefined}
         >
           {showPreview ? (
-            <ChatMarkdown
-              text={collapsedPreview ?? ""}
-              cwd={cwd}
-              environmentId={environmentId}
-              threadRef={threadRef}
-              isStreaming={false}
-              headingLevelOffset={3}
-            />
+            <>
+              <ChatMarkdown
+                text={collapsedPreview?.markdown ?? ""}
+                cwd={cwd}
+                environmentId={environmentId}
+                threadRef={threadRef}
+                isStreaming={false}
+                headingLevelOffset={3}
+              />
+              {collapsedPreview?.truncated ? (
+                <p
+                  aria-hidden="true"
+                  className="mt-[0.65rem] text-sm leading-relaxed text-foreground/[calc(90%+var(--appearance-contrast-boost)/10)]"
+                >
+                  ...
+                </p>
+              ) : null}
+            </>
           ) : (
             <ChatMarkdown
               text={displayedPlanMarkdown}
