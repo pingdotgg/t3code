@@ -1053,6 +1053,15 @@ export const layerQueryRunner: Layer.Layer<
               Effect.tap((queryRuntime) =>
                 restore(
                   Effect.gen(function* () {
+                    // Initialize bypass before the first prompt so its first tool cannot race init.
+                    if (
+                      options.permissionMode === "bypassPermissions" &&
+                      options.allowDangerouslySkipPermissions === true
+                    ) {
+                      yield* Effect.tryPromise(() =>
+                        queryRuntime.setPermissionMode("bypassPermissions"),
+                      ).pipe(Effect.timeout("10 seconds"), Effect.ignore);
+                    }
                     if (mcpServers !== undefined) {
                       // Errors and mcp_status can echo headers; log only server names.
                       const failed = yield* Effect.tryPromise(() =>
