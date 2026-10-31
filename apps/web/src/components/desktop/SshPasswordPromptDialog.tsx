@@ -161,11 +161,15 @@ function ActiveSshPasswordPrompt({
     >
       <DialogPopup className="max-w-100" initialFocus={inputRef} showCloseButton={false}>
         <DialogHeader>
-          <DialogTitle>SSH verification required</DialogTitle>
+          <DialogTitle>
+            {describeSshPrompt(request.prompt) === "Password"
+              ? "SSH Password Required"
+              : "SSH verification required"}
+          </DialogTitle>
           <DialogDescription>
-            Enter the password or verification code required by <code>{target}</code>. T3 Code
-            passes your response to the local SSH process and keeps it in memory to reuse for this
-            host. T3 Code does not write it to disk.
+            <code>{target}</code> asked for{" "}
+            {describeSshPrompt(request.prompt) === "Password" ? "a password" : "verification"} to
+            connect.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel scrollFade={false}>
@@ -195,6 +199,9 @@ function ActiveSshPasswordPrompt({
                 />
               </InputGroup>
             </div>
+            <p className="text-caption text-dim-foreground">
+              Your response stays in memory for this host and is never written to disk.
+            </p>
             {remainingLabel ? (
               <p
                 className={
@@ -213,10 +220,16 @@ function ActiveSshPasswordPrompt({
           </form>
         </DialogPanel>
         <DialogFooter>
-          <Button disabled={isResponding} type="button" variant="secondary" onClick={cancelPrompt}>
+          <Button
+            size="standard"
+            disabled={isResponding}
+            type="button"
+            variant="secondary"
+            onClick={cancelPrompt}
+          >
             {isExpired ? "Dismiss" : "Cancel"}
           </Button>
-          <Button disabled={isResponding || isExpired} form={formId} type="submit">
+          <Button size="standard" disabled={isResponding || isExpired} form={formId} type="submit">
             Connect
             <SubmitKbd />
           </Button>
