@@ -28,13 +28,7 @@ import { Textarea } from "../ui/textarea";
 
 import styles from "./PluginSettingsForm.module.css";
 
-/**
- * The settings a plugin declares, for one installation on one environment.
- * Renders nothing when the plugin declares none or the server cannot store
- * them. Secrets are write-only: the form shows whether one is saved and can
- * replace or clear it, never its value. Pass `readOnly` when the session
- * cannot save (saving needs administrative access).
- */
+// Secrets remain write-only; read-only sessions cannot save settings to the environment.
 export function PluginSettingsForm({
   environmentId,
   installation,

@@ -1,13 +1,5 @@
-/**
- * The web and desktop side of a mounted plugin view, kept free of React so
- * the handshake and lifetime rules can be tested without a DOM.
- *
- * `resolvePluginViewTarget` decides whether a plugin-view surface mounts and
- * under which key; a new key is a new mount, and the old one is torn down.
- * `awaitPluginViewReady` is the only window-message listener: it hands the
- * view exactly one port. `runPluginViewMount` serves that port through the
- * shared bridge until its scope closes.
- */
+// A new target key owns a new mount; its scope closes the old bridge.
+// The window handshake transfers exactly one port before shared bridge traffic begins.
 import type { PluginViewsView } from "@t3tools/client-runtime/state/pluginViews";
 import {
   makePluginViewBridge,

@@ -5,7 +5,7 @@ import {
   ThreadId,
   type PluginAction,
 } from "@t3tools/contracts";
-import { act, createElement, useState } from "react";
+import { act, createElement, useLayoutEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -19,19 +19,19 @@ const fixture = vi.hoisted(() => ({
 }));
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 vi.mock("../../state/queries", () => ({
+  useThreadSearch: () => undefined,
   useComposerPathSearch: () => ({ entries: [], isPending: false }),
   useComposerPullRequestSearch: () => ({ entries: [], isPending: false, error: null }),
 }));
 vi.mock("../../state/use-composer-drafts", () => ({
   getComposerDraftSnapshot: vi.fn(),
-  readComposerDraftSelection: () => null,
+  useComposerDraftSelection: () => null,
   setComposerDraftContext: vi.fn(),
 }));
 vi.mock("../../lib/uuid", () => ({ uuidv4: () => "context-id" }));
 vi.mock("../../state/server", () => ({
-  serverEnvironment: { refreshProviders: Symbol("refreshProviders") },
+  serverEnvironment: { providersValueAtom: vi.fn(), refreshProviders: Symbol("refreshProviders") },
 }));
-vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../../state/session", () => ({
   useEnvironmentScope: () => fixture.canOperate,
 }));
@@ -75,7 +75,6 @@ function Composer(props: {
   report: (menu: Menu, draft: string) => void;
 }) {
   const [draft, setDraft] = useState(props.initialDraft);
-  editDraft = setDraft;
   const menu = useComposerCommandMenu({
     draftMessage: draft,
     ownerKey: "draft-1",
@@ -93,7 +92,11 @@ function Composer(props: {
     onUpdateInteractionMode,
     onUsageLimits,
   });
-  props.report(menu, draft);
+  // Publish only committed callbacks to the test driver.
+  useLayoutEffect(() => {
+    editDraft = setDraft;
+    props.report(menu, draft);
+  });
   return null;
 }
 

@@ -1,14 +1,5 @@
-/**
- * Main-process navigation veto for isolated plugin view frames.
- *
- * A plugin view runs in an opaque-origin `about:srcdoc` frame inside a
- * policy wrapper frame of the same kind. A document's own CSP cannot stop its
- * frame navigating, so the main process refuses any navigation of a frame in
- * such a subtree unless the app's main frame started it. Loading
- * `about:srcdoc` stays allowed so the wrapper can mount its view. Electron
- * does not report `about:blank` or `data:` here: the wrapper's CSP refuses
- * `data:`, and the host's ping liveness check ends a view that blanked itself.
- */
+// A document's CSP cannot stop frame navigation; Electron vetoes isolated-subtree navigation unless the main frame starts it.
+// Allow about:srcdoc mounting; wrapper CSP blocks data: navigation and ping liveness detects about:blank.
 
 export interface NavigationFrame {
   readonly url: string;
