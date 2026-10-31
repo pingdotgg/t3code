@@ -213,9 +213,18 @@ export const CursorDriver: ProviderDriver<
       auth.withAccess,
     );
 
-    const checkProvider = auth.readApiKey.pipe(
-      Effect.orElseSucceed(() => undefined),
-      Effect.flatMap((apiKey) =>
+    const checkProvider = Effect.gen(function* () {
+      const storedLogin = auth.usesApiKey
+        ? undefined
+        : yield* auth.readStoredLogin.pipe(Effect.orElseSucceed(() => undefined));
+      const apiKey = auth.usesApiKey
+        ? yield* auth.readApiKey.pipe(Effect.orElseSucceed(() => undefined))
+        : storedLogin?.status === "valid"
+          ? storedLogin.apiKey
+          : undefined;
+      return { storedLogin, apiKey };
+    }).pipe(
+      Effect.flatMap(({ storedLogin, apiKey }) =>
         checkCursorProviderStatus(
           effectiveConfig,
           {
@@ -238,6 +247,7 @@ export const CursorDriver: ProviderDriver<
                     effectiveConfig,
                     { ...processEnv, CURSOR_API_KEY: apiKey },
                     settings.cursorKeychainUsageEnabled,
+                    storedLogin,
                   ),
                 ),
                 Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
