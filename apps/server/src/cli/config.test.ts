@@ -30,6 +30,7 @@ import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
 } from "../cloud/serviceProtocol.ts";
+import { BootstrapFdStatError } from "../bootstrap.ts";
 import { deriveServerPaths } from "../config.ts";
 import { resolveServerConfig } from "./config.ts";
 
@@ -753,6 +754,43 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     tailscaleServePort: Option.none<number>(),
     lan: Option.none<boolean>(),
   });
+
+  it.effect.each(["flag", "env"] as const)(
+    "rejects an unavailable bootstrap fd from %s before creating server state",
+    (source) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-bootstrap-required-" });
+        const baseDir = path.join(root, "server-home");
+        const fd = 2_147_483_647;
+
+        const error = yield* resolveServerConfig(
+          {
+            ...minimalWebFlags(baseDir),
+            mode: Option.none(),
+            bootstrapFd: source === "flag" ? Option.some(fd) : Option.none(),
+          },
+          Option.none(),
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              NetService.layer,
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({
+                  env: source === "env" ? { T3CODE_BOOTSTRAP_FD: String(fd) } : {},
+                }),
+              ),
+            ),
+          ),
+          Effect.flip,
+        );
+
+        assert.instanceOf(error, BootstrapFdStatError);
+        assert.equal(error.fd, fd);
+        expect(yield* fs.exists(baseDir)).toBe(false);
+      }),
+  );
 
   it.effect(
     "resolves each signal's endpoint through T3CODE_OTLP_*_URL, an OTEL endpoint, the bootstrap envelope, and persisted Settings, in that order",
