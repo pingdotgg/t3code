@@ -190,6 +190,47 @@ describe("observability", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("redacts WebSocket credentials from recorded and exported URLs", () =>
+    Effect.gen(function* () {
+      const delegates: Array<Tracer.NativeSpan> = [];
+      const records: Array<EffectTraceRecord> = [];
+      const tracer = yield* makeLocalFileTracer({
+        filePath: "unused",
+        maxBytes: 1024,
+        maxFiles: 1,
+        batchWindowMs: 10_000,
+        sink: {
+          filePath: "unused",
+          push: (record) => {
+            if (record.type === "effect-span") records.push(record);
+          },
+          flush: Effect.void,
+          close: () => Effect.void,
+        },
+        delegate: Tracer.make({
+          span: (options) => {
+            const span = new Tracer.NativeSpan(options);
+            delegates.push(span);
+            return span;
+          },
+        }),
+      });
+      yield* Effect.annotateCurrentSpan({
+        "url.full": "http://127.0.0.1:3773/ws?wsTicket=ticket-secret&clientSurface=web",
+        "url.query": "dpop=proof-secret&wsTicket=ticket-secret",
+        "url.path": "/ws",
+      }).pipe(Effect.withSpan("GET"), Effect.provideService(Tracer.Tracer, tracer));
+
+      const expected = {
+        "url.full": "http://127.0.0.1:3773/ws?wsTicket=<redacted>&clientSurface=web",
+        "url.query": "dpop=<redacted>&wsTicket=<redacted>",
+        "url.path": "/ws",
+      };
+      assert.deepInclude(records[0]?.attributes, expected);
+      assert.deepInclude(Object.fromEntries(delegates[0]!.attributes), expected);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it("normalizes circular arrays, maps, and sets without recursing forever", () => {
     const array: Array<unknown> = ["alpha"];
     array.push(array);

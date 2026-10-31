@@ -541,6 +541,16 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
   } satisfies TraceSink;
 });
 
+// WebSocket tickets and their DPoP proofs ride in the query and stay valid after the request.
+const URL_CREDENTIAL_PARAMS = /(^|[?&])(wsTicket|dpop)=[^&#]*/g;
+
+function redactUrlCredentials(key: string, value: unknown): unknown {
+  if ((key !== "url.full" && key !== "url.query") || typeof value !== "string") {
+    return value;
+  }
+  return value.replace(URL_CREDENTIAL_PARAMS, "$1$2=<redacted>");
+}
+
 class LocalFileSpan implements Tracer.Span {
   readonly _tag = "Span";
   readonly name: string;
@@ -598,8 +608,9 @@ class LocalFileSpan implements Tracer.Span {
   }
 
   attribute(key: string, value: unknown): void {
-    this.attributes.set(key, value);
-    this.delegate.attribute(key, value);
+    const recorded = redactUrlCredentials(key, value);
+    this.attributes.set(key, recorded);
+    this.delegate.attribute(key, recorded);
   }
 
   event(name: string, startTime: bigint, attributes?: Record<string, unknown>): void {
