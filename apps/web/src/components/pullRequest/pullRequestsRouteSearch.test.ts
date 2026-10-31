@@ -4,7 +4,10 @@ import {
   createRoute,
   createRouter,
 } from "@tanstack/react-router";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+// Importing the route also imports the diff viewer; its browser worker is unused by search.
+vi.mock("@pierre/diffs/worker/worker.js?worker", () => ({ default: vi.fn() }));
 
 import { Route as PullRequestsRoute } from "../../routes/_chat.pull-requests";
 
@@ -27,13 +30,15 @@ function matchedSearch(url: string) {
 }
 
 describe("pull requests route search", () => {
-  it("drops a q the URL parser turned into a number", () => {
-    expect(matchedSearch("/pull-requests?q=4089")?.q).toBeUndefined();
-    expect(matchedSearch("/pull-requests?q=true")?.q).toBeUndefined();
+  it("keeps a q the URL parser turned into a number or boolean as text", () => {
+    expect(matchedSearch("/pull-requests?q=4089")?.q).toBe("4089");
+    expect(matchedSearch("/pull-requests?q=true")?.q).toBe("true");
   });
 
   it("keeps a q that is text, including quoted digits", () => {
     expect(matchedSearch("/pull-requests?q=fix")?.q).toBe("fix");
     expect(matchedSearch("/pull-requests?q=%224089%22")?.q).toBe("4089");
+    expect(matchedSearch("/pull-requests?q=")?.q).toBeUndefined();
+    expect(matchedSearch("/pull-requests?q=null")?.q).toBeUndefined();
   });
 });
