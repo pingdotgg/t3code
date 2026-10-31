@@ -588,7 +588,7 @@ function LayoutShortcutSheet() {
 
   return (
     <div className="flex flex-col gap-5 p-5">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <h2 className="text-label text-strong-foreground">
           Keyboard shortcuts
           {cycle ? ` · Layout Mod is ${modifierLabel(cycle)}, same map as niri` : null}
@@ -620,23 +620,25 @@ function ShortcutGrid({
   }>;
 }) {
   return (
-    <div className={cn("grid gap-6", groups.length > 3 ? "grid-cols-4" : "grid-cols-3")}>
+    <div className={cn("grid grid-cols-1 gap-6 sm:grid-cols-2", groups.length > 3 ? "md:grid-cols-4" : "md:grid-cols-3")}>
       {groups.map((group) => (
         <div key={group.label} className="flex min-w-0 flex-col gap-2">
           <div className="text-meta text-dim-foreground">{group.label}</div>
           {group.rows.map((row) => (
             <div key={row.label} className="flex flex-col items-start gap-1">
               <span className="text-meta text-foreground">{row.label}</span>
-              <Kbd>
+              <div className="flex max-w-full flex-wrap gap-1">
                 {row.chords.map((chord) => (
+                  <Kbd key={chord.modifiers}>
                   <span key={chord.modifiers} className="flex items-center gap-1">
                     {chord.modifiers ? <span>{chord.modifiers}</span> : null}
                     {chord.keys.map((key) => (
                       <span key={key}>{key}</span>
                     ))}
                   </span>
+                  </Kbd>
                 ))}
-              </Kbd>
+              </div>
             </div>
           ))}
         </div>
