@@ -1,18 +1,30 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The process fixture runs real shell commands with isolated config files.
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NetService from "@t3tools/shared/Net";
+import { SshCommandError } from "@t3tools/ssh/errors";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
-import * as Sink from "effect/Sink";
-import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as NodeOS from "node:os";
 import { vi } from "vite-plus/test";
 
+import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopSshEnvironment from "../ssh/DesktopSshEnvironment.ts";
+import * as DesktopSshPasswordPrompts from "../ssh/DesktopSshPasswordPrompts.ts";
 import * as DesktopShellEnvironment from "./DesktopShellEnvironment.ts";
 
 vi.mock("node:os", { spy: true });
@@ -72,6 +84,9 @@ function runShellEnvironment(input: {
     command: ChildProcess.Command,
   ) => string | { output: string; exitCode: number };
   readonly failure?: PlatformError.PlatformError;
+  readonly exercise?: (
+    shell: DesktopShellEnvironment.DesktopShellEnvironment["Service"],
+  ) => Effect.Effect<void>;
 }) {
   const layerEnvironment = Layer.succeed(
     DesktopEnvironment.DesktopEnvironment,
@@ -96,6 +111,7 @@ function runShellEnvironment(input: {
     const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
     const prepared = yield* shellEnvironment.installIntoProcess;
     assert.equal(yield* shellEnvironment.installIntoProcess, prepared);
+    if (input.exercise) yield* input.exercise(shellEnvironment);
     return prepared;
   }).pipe(
     Effect.provide(
@@ -139,6 +155,43 @@ describe("DesktopShellEnvironment", () => {
       assert.deepEqual(commands, ["/bin/failing", "/usr/local/bin/fish"]);
       assert.equal(env.PATH, "/home/test/.local/bin:/usr/bin");
     }),
+  );
+
+  it.effect.each(["fallback shell", "launchctl"] as const)(
+    "retries a degraded %s capture after five seconds and retains recovery",
+    (fallback) => {
+      let ready = false;
+      let probes = 0;
+      return runShellEnvironment({
+        env: { SHELL: "/preferred-shell", PATH: "/usr/bin" },
+        platform: "darwin",
+        handler: (command) => {
+          if (command._tag !== "StandardCommand") return "";
+          if (command.command === "/preferred-shell") {
+            probes += 1;
+            return ready ? envOutput({ PATH: "/recovered/bin" }) : "";
+          }
+          return fallback === "fallback shell"
+            ? envOutput({ PATH: "/fallback/bin" })
+            : command.command === "/bin/launchctl"
+              ? "/fallback/bin"
+              : "";
+        },
+        exercise: (shell) =>
+          Effect.gen(function* () {
+            ready = true;
+            yield* TestClock.adjust("4999 millis");
+            assert.equal(yield* shell.installIntoProcess, false);
+            assert.equal(probes, 1);
+            yield* TestClock.adjust("1 millis");
+            assert.equal(yield* shell.installIntoProcess, true);
+            assert.equal(probes, 2);
+            yield* TestClock.adjust("1 hour");
+            assert.equal(yield* shell.installIntoProcess, true);
+            assert.equal(probes, 2);
+          }),
+      }).pipe(Effect.asVoid, Effect.provide(Logger.layer([])));
+    },
   );
 
   it.effect("hydrates PATH and missing SSH_AUTH_SOCK from the login shell on macOS", () =>
@@ -414,3 +467,237 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 });
+
+const target = {
+  alias: "managed-workspace",
+  hostname: "helper-missing.invalid",
+  username: null,
+  port: null,
+};
+
+function runRecoveryScenario(
+  operation: "resolve" | "connect" | "disconnect" | "still-unavailable" | "capture-pending",
+) {
+  return Effect.gen(function* () {
+    const paused = yield* Deferred.make<void>();
+    const resume = yield* Deferred.make<void>();
+    let pauseCapture = false;
+    let stops = 0;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-path-" });
+    const bin = path.join(home, "bin");
+    const helpers = path.join(home, "workspace tools");
+    const probes = path.join(home, "probes");
+    const ready = path.join(home, "ready");
+    const proxyReached = path.join(home, "proxy-reached");
+    const config = path.join(home, "ssh_config");
+    yield* fs.makeDirectory(bin);
+    yield* fs.makeDirectory(helpers);
+    const inheritedPath = `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`;
+    const shellPath = `${helpers}:${inheritedPath}`;
+    const preferredShell = path.join(bin, "preferred-shell");
+    yield* fs.writeFileString(
+      preferredShell,
+      `#!/bin/sh
+[ "$1" = "-ilc" ] || exec /bin/sh "$@"
+printf 'probe\n' >> '${probes}'
+[ -f '${ready}' ] || exit 1
+export PATH='${shellPath}'
+exec /bin/sh -c "$2"
+`,
+    );
+    yield* fs.chmod(preferredShell, 0o700);
+    yield* fs.writeFileString(
+      path.join(bin, "ssh"),
+      `#!/bin/sh\nexec /usr/bin/ssh -F '${config}' "$@"\n`,
+    );
+    yield* fs.chmod(path.join(bin, "ssh"), 0o700);
+    yield* fs.writeFileString(path.join(helpers, "workspace-check"), "#!/bin/sh\nexit 0\n");
+    yield* fs.chmod(path.join(helpers, "workspace-check"), 0o700);
+    yield* fs.writeFileString(
+      path.join(helpers, "workspace-proxy"),
+      `#!/bin/sh\nprintf 'proxy invoked %s\\n' "$1" > '${proxyReached}'\nexit 1\n`,
+    );
+    yield* fs.chmod(path.join(helpers, "workspace-proxy"), 0o700);
+    yield* fs.writeFileString(
+      config,
+      [
+        'Match originalhost managed-workspace exec "workspace-check"',
+        "  HostName helper-ready.invalid",
+        "Host managed-workspace",
+        "  HostName helper-missing.invalid",
+        "  ProxyCommand workspace-proxy %h",
+        "  ControlMaster no",
+        "  ControlPath none",
+        "",
+      ].join("\n"),
+    );
+
+    const layerEnvironment = DesktopEnvironment.layer({
+      dirname: home,
+      homeDirectory: home,
+      platform: "darwin",
+      processArch: yield* HostProcess.Architecture,
+      appVersion: "0.1.0",
+      appPath: home,
+      isPackaged: true,
+      resourcesPath: home,
+      runningUnderArm64Translation: false,
+    }).pipe(Layer.provide(DesktopConfig.layerTest({ T3CODE_HOME: home })));
+    const layerShell = DesktopShellEnvironment.layer.pipe(Layer.provide(layerEnvironment));
+    const layerSsh = DesktopSshEnvironment.layer({
+      resolveCliRunner: Effect.succeed({ archiveVersion: "0.1.0" }),
+    }).pipe(
+      Layer.provideMerge(layerShell),
+      Layer.provide(
+        Layer.succeed(DesktopSshPasswordPrompts.DesktopSshPasswordPrompts, {
+          request: () => Effect.die("Unexpected authentication prompt"),
+          resolve: () => Effect.die("Unexpected authentication response"),
+        }),
+      ),
+    );
+    const program = Effect.gen(function* () {
+      const shell = yield* DesktopShellEnvironment.DesktopShellEnvironment;
+      const ssh = yield* DesktopSshEnvironment.DesktopSshEnvironment;
+      assert.equal(yield* shell.installIntoProcess, false);
+      if (operation !== "still-unavailable") yield* fs.writeFileString(ready, "");
+      const initialProbes = "probe\n";
+      assert.equal(yield* shell.installIntoProcess, false);
+      assert.equal((yield* ssh.resolveHost(target.alias)).hostname, "helper-missing.invalid");
+      assert.equal(yield* fs.readFileString(probes), initialProbes);
+      yield* TestClock.adjust("4999 millis");
+      assert.equal((yield* ssh.resolveHost(target.alias)).hostname, "helper-missing.invalid");
+      assert.equal(yield* fs.readFileString(probes), initialProbes);
+      yield* TestClock.adjust("1 millis");
+      if (operation === "capture-pending") {
+        pauseCapture = true;
+        const preparing = yield* Effect.forkChild(Effect.result(ssh.ensureEnvironment(target)));
+        yield* Deferred.await(paused);
+        const stopping = yield* Effect.forkChild(Effect.result(ssh.disconnectEnvironment(target)), {
+          startImmediately: true,
+        });
+        yield* TestClock.adjust("0 millis");
+        const stopsWhileCapturing = stops;
+        yield* Deferred.succeed(resume, undefined);
+        yield* Fiber.join(preparing);
+        yield* Fiber.join(stopping);
+        assert.equal(stopsWhileCapturing, 0);
+        assert.equal(stops, 1);
+        return;
+      }
+      if (operation === "resolve") {
+        assert.equal((yield* ssh.resolveHost(target.alias)).hostname, "helper-ready.invalid");
+        assert.equal((yield* ssh.resolveHost(target.alias)).hostname, "helper-ready.invalid");
+      } else {
+        if (operation === "disconnect") {
+          assert.equal((yield* ssh.resolveHost(target.alias)).hostname, "helper-ready.invalid");
+        }
+        const result = yield* Effect.result(
+          operation === "disconnect"
+            ? ssh.disconnectEnvironment(target)
+            : ssh.ensureEnvironment(target),
+        );
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure") assert.instanceOf(result.failure, SshCommandError);
+        if (operation === "connect" || operation === "disconnect") {
+          assert.equal(
+            yield* fs.readFileString(proxyReached),
+            operation === "disconnect"
+              ? "proxy invoked helper-missing.invalid\n"
+              : "proxy invoked helper-ready.invalid\n",
+          );
+          assert.equal((yield* ssh.resolveHost(target.alias)).hostname, "helper-ready.invalid");
+        } else {
+          assert.equal(yield* fs.exists(proxyReached), false);
+          if (result._tag === "Failure") {
+            assert.include(result.failure.message, "workspace-proxy");
+          }
+          assert.equal((yield* ssh.resolveHost(target.alias)).hostname, "helper-missing.invalid");
+        }
+      }
+      assert.equal(yield* fs.readFileString(probes), "probe\nprobe\n");
+      assert.equal(process.env.PATH, operation === "still-unavailable" ? inheritedPath : shellPath);
+      yield* TestClock.adjust("1 hour");
+      assert.equal(
+        (yield* ssh.resolveHost(target.alias)).hostname,
+        operation === "still-unavailable" ? "helper-missing.invalid" : "helper-ready.invalid",
+      );
+      assert.equal(
+        yield* fs.readFileString(probes),
+        operation === "still-unavailable" ? "probe\nprobe\nprobe\n" : "probe\nprobe\n",
+      );
+    }).pipe(
+      Effect.provide(
+        layerSsh.pipe(
+          Layer.provideMerge(Layer.mergeAll(NodeHttpClient.layerUndici, NetService.layer)),
+        ),
+      ),
+    );
+
+    const nativeSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.gen(function* () {
+        if (ChildProcess.isStandardCommand(command)) {
+          if (command.args.some((arg) => arg.startsWith("HostName="))) stops += 1;
+          if (command.command === preferredShell && pauseCapture) {
+            yield* Deferred.succeed(paused, undefined);
+            yield* Deferred.await(resume);
+          }
+        }
+        return yield* nativeSpawner.spawn(
+          ChildProcess.isStandardCommand(command) &&
+            ["/bin/zsh", "/bin/bash"].includes(command.command)
+            ? ChildProcess.make("/bin/sh", ["-c", "exit 1"])
+            : command,
+        );
+      }),
+    );
+    yield* Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const previous = process.env;
+        process.env = {
+          ...previous,
+          HOME: home,
+          ZDOTDIR: home,
+          SHELL: preferredShell,
+          PATH: inheritedPath,
+        };
+        const spy = vi.spyOn(NodeOS, "userInfo").mockReturnValue({
+          ...NodeOS.userInfo(),
+          shell: preferredShell,
+        });
+        return { previous, spy };
+      }),
+      () => program.pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+      ({ previous, spy }) =>
+        Effect.sync(() => {
+          spy.mockRestore();
+          process.env = previous;
+        }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+}
+
+describe.runIf(HostProcess.Platform.defaultValue() !== "win32")(
+  "SSH shell PATH recovery with real OpenSSH",
+  () => {
+    it.effect("waits for a pending shell capture before disconnecting", () =>
+      runRecoveryScenario("capture-pending"),
+    );
+    it.effect(
+      "pins remote cleanup to the supplied host after PATH recovery changes alias resolution",
+      () => runRecoveryScenario("disconnect"),
+    );
+    it.effect(
+      "recovers a failed startup capture before resolving a host and caches the recovered PATH",
+      () => runRecoveryScenario("resolve"),
+    );
+    it.effect("recovers a failed startup capture before invoking a saved host's ProxyCommand", () =>
+      runRecoveryScenario("connect"),
+    );
+    it.effect("preserves the SSH error when PATH capture is still unavailable", () =>
+      runRecoveryScenario("still-unavailable"),
+    );
+  },
+);
