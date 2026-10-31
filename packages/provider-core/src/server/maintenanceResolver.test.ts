@@ -964,6 +964,34 @@ it.layer(
   );
 
   it.effect.skipIf(!symlinksSupported)(
+    "updates an npm-owned launcher in a native install location with npm",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-native-npm");
+        const prefix = NodePath.join(tempDir, ".local");
+        const packageBin = NodePath.join("node_modules", "@example", "native-package-tool", "bin");
+        writeExecutable(NodePath.join(prefix, "lib", packageBin, "native-package-tool.exe"));
+        const launcher = NodePath.join(prefix, "bin", "native-package-tool");
+        NodeFS.mkdirSync(NodePath.dirname(launcher), { recursive: true });
+        NodeFS.symlinkSync(
+          NodePath.join("..", "lib", packageBin, "native-package-tool.exe"),
+          launcher,
+        );
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          nativePackageToolUpdate,
+          { binaryPath: launcher, env: { PATH: "" } },
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+        expect(capabilities.update).toMatchObject({
+          executable: "npm",
+          args: expect.arrayContaining(["--prefix", prefix]),
+          lockKey: `npm-global:${normalizeCommandPath(prefix)}`,
+        });
+      }),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
     "prefers npm ownership over the Node keg the package lives under",
     () =>
       Effect.gen(function* () {
