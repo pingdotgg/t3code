@@ -157,7 +157,7 @@ export function ConnectAgentSurface() {
     return (
       <StandalonePage>
         <ConnectAgentHeading title="This sign-in cannot continue" description={loaded.message} />
-        <p className="mt-4 text-sm text-muted-foreground">
+        <p className="mt-4 text-body text-muted-foreground">
           Close this page and start the sign-in again from your agent.
         </p>
       </StandalonePage>
@@ -175,11 +175,11 @@ export function ConnectAgentSurface() {
         description={
           <>
             This agent wants to use the threads in every project on{" "}
-            <span className="font-medium text-foreground">{details.environmentHost}</span>.
+            <span className="text-label text-foreground">{details.environmentHost}</span>.
           </>
         }
       />
-      <p className="mt-2 text-xs text-muted-foreground">
+      <p className="mt-2 text-meta text-muted-foreground">
         {redirectsToThisComputer(details.redirectHost) ? (
           <>
             The name is chosen by the agent. Approval returns to {details.redirectHost} on the
@@ -188,8 +188,8 @@ export function ConnectAgentSurface() {
         ) : (
           <>
             The name is chosen by the agent. Approval gives access to whoever runs{" "}
-            <span className="font-medium text-foreground">{details.redirectHost}</span>. Only
-            approve a sign-in you just started there.
+            <span className="text-label text-foreground">{details.redirectHost}</span>. Only approve
+            a sign-in you just started there.
           </>
         )}
       </p>
@@ -202,7 +202,7 @@ export function ConnectAgentSurface() {
         }}
       >
         <div className="space-y-2">
-          <span id="connect-agent-access-label" className="text-sm font-medium">
+          <span id="connect-agent-access-label" className="text-label">
             What it may do
           </span>
           <RadioGroup
@@ -219,7 +219,7 @@ export function ConnectAgentSurface() {
               />
             ))}
           </RadioGroup>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-meta text-muted-foreground">
             Beyond read only, it can start, message and stop threads, and none of them can run with
             more than the mode you pick.
           </p>
@@ -227,7 +227,7 @@ export function ConnectAgentSurface() {
 
         {oneClick ? null : (
           <div className="space-y-2">
-            <label className="text-sm font-medium" htmlFor="connect-agent-pairing-code">
+            <label className="text-label" htmlFor="connect-agent-pairing-code">
               Pairing code
             </label>
             <Input
@@ -242,7 +242,7 @@ export function ConnectAgentSurface() {
               spellCheck={false}
               value={pairingCode}
             />
-            <p className="text-xs text-muted-foreground">
+            <p className="text-meta text-muted-foreground">
               Create one in Settings → Sharing & access, or run <code>t3 auth pairing create</code>{" "}
               on this machine.
             </p>
@@ -263,7 +263,7 @@ export function ConnectAgentSurface() {
             disabled={pending !== null}
             onClick={() => void decide("deny")}
             type="button"
-            variant="outline"
+            variant="secondary"
           >
             {pending === "deny" ? "Denying…" : "Deny"}
           </Button>
@@ -323,8 +323,10 @@ function AccessOption({
         )}
       />
       <span className="min-w-0">
-        <span className="block text-sm font-medium text-foreground">{label}</span>
-        <span className="block text-xs text-muted-foreground">{managedReason ?? description}</span>
+        <span className="block text-label text-foreground">{label}</span>
+        <span className="block text-meta text-muted-foreground">
+          {managedReason ?? description}
+        </span>
       </span>
     </RadioPrimitive.Root>
   );

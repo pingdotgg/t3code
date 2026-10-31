@@ -11,7 +11,8 @@ import {
 } from "./CommandPalette.logic";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectFavicon } from "./ProjectFavicon";
-import { COMMAND_PALETTE_META_ICON_CLASS, CommandPaletteMetaDot } from "./ThreadCommandSubtitle";
+import { COMMAND_PALETTE_META_ICON_CLASS } from "./ThreadCommandSubtitle";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 export interface CommandPaletteProjectLocation {
   readonly kind: "local" | "remote";
@@ -58,7 +59,18 @@ export function buildProjectSearchItems(input: ProjectItemsInput) {
         locationByEnvironmentId: input.locationByEnvironmentId,
       });
       return members.length > 1 ? (
-        <span className="truncate">{metadata.environmentLabels.join(" · ")}</span>
+        <Tooltip>
+          <TooltipTrigger render={<span tabIndex={0} />}>
+            {metadata.environmentLabels.length} machines
+          </TooltipTrigger>
+          <TooltipPopup>
+            {metadata.environmentLabels.map((label) => (
+              <span className="block" key={label}>
+                {label}
+              </span>
+            ))}
+          </TooltipPopup>
+        </Tooltip>
       ) : (
         <ProjectLocationDescription
           location={input.locationByEnvironmentId.get(project.environmentId)}
@@ -103,7 +115,7 @@ function ProjectLocationDescription(props: {
 }) {
   const location = props.location ?? UNKNOWN_PROJECT_LOCATION;
   return (
-    <span className="flex min-w-0 items-center gap-1">
+    <span className="flex min-w-0 flex-col gap-0.5">
       <span className="inline-flex min-w-0 items-center gap-1">
         {location.kind === "remote" ? (
           <EnvironmentMachineIcon
@@ -114,7 +126,6 @@ function ProjectLocationDescription(props: {
         ) : null}
         <span className="truncate">{location.label}</span>
       </span>
-      <CommandPaletteMetaDot />
       <span className="truncate">{props.workspaceRoot}</span>
     </span>
   );

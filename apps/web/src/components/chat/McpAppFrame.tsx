@@ -405,7 +405,7 @@ export function McpAppFrame(props: {
 
   if (closed) {
     return (
-      <div className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-muted-foreground text-xs">
+      <div className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-muted-foreground text-meta">
         <span>The {app.server} app was closed</span>
         <Button
           size="xs"
@@ -444,7 +444,7 @@ export function McpAppFrame(props: {
         {fullscreen ? (
           <div
             ref={attachFullscreenChrome}
-            className="flex h-10 shrink-0 items-center justify-between border-border border-b px-3 text-sm"
+            className="flex h-10 shrink-0 items-center justify-between border-border border-b px-3 text-body"
           >
             <span className="truncate">{app.server}</span>
             <Button
@@ -458,7 +458,7 @@ export function McpAppFrame(props: {
           </div>
         ) : null}
         {navigatedAway ? (
-          <p className="flex size-full items-center justify-center text-muted-foreground text-xs">
+          <p className="flex size-full items-center justify-center text-muted-foreground text-meta">
             The {app.server} app left its page and was stopped
           </p>
         ) : src !== null ? (
@@ -474,7 +474,7 @@ export function McpAppFrame(props: {
             style={{ colorScheme: theme.appearance }}
           />
         ) : asset._tag === "Failure" ? (
-          <p className="flex size-full items-center justify-center text-muted-foreground text-xs">
+          <p className="flex size-full items-center justify-center text-muted-foreground text-meta">
             Unable to load the {app.server} app
           </p>
         ) : null}

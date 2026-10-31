@@ -84,15 +84,15 @@ function StageIcon({ status }: { status: WorktreeSetupStage["status"] }) {
 function stageRowClassName(status: WorktreeSetupStage["status"]): string {
   switch (status) {
     case "failed":
-      return "text-destructive-foreground";
+      return "text-error-foreground";
     case "warning":
       return "text-warning-foreground";
     case "pending":
-      return "text-secondary-label opacity-40";
+      return "text-dim-foreground";
     case "running":
     case "skipped":
     case "done":
-      return "text-secondary-label";
+      return "text-foreground";
   }
 }
 
@@ -131,7 +131,7 @@ function SetupHeaderRow({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
     snapshot.phase === "done" && snapshot.stages.some((stage) => stage.status === "failed");
   const text = headerLabel(snapshot);
   const tone = failed
-    ? "text-destructive-foreground"
+    ? "text-error-foreground"
     : finishedWithFailedStage
       ? "text-warning-foreground"
       : "text-muted-foreground";
@@ -150,7 +150,7 @@ function SetupHeaderRow({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
           <span className="block truncate">{text}</span>
           {running ? <ShimmerOverlay>{text}</ShimmerOverlay> : null}
         </span>
-        <span className="ml-auto shrink-0 text-xs text-muted-foreground empty:hidden">
+        <span className="ml-auto shrink-0 text-xs text-dim-foreground empty:hidden">
           <Elapsed startedAt={snapshot.startedAt} endedAt={snapshot.endedAt} live={running} />
         </span>
       </div>
@@ -201,12 +201,12 @@ function StageRow({
       trailing={
         <>
           {trailing ? (
-            <span className="min-w-0 truncate text-xs text-muted-foreground tabular-nums">
+            <span className="min-w-0 truncate text-xs text-dim-foreground tabular-nums">
               {trailing}
             </span>
           ) : null}
           {stage.status !== "skipped" && stage.status !== "pending" ? (
-            <span className="shrink-0 text-xs text-muted-foreground tabular-nums empty:hidden">
+            <span className="shrink-0 text-xs text-dim-foreground tabular-nums empty:hidden">
               <Elapsed
                 startedAt={stage.startedAt}
                 // A stage interrupted by the setup ending stops with it.
@@ -232,10 +232,10 @@ function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: b
   return (
     <pre
       className={cn(
-        "mb-1 ml-8 overflow-hidden rounded-md border px-2.5 py-1.5 font-mono text-2xs leading-relaxed select-text",
+        "mb-1 ml-8 overflow-hidden rounded-control border px-2.5 py-1.5 font-mono text-2xs leading-relaxed select-text",
         failed
-          ? "border-destructive/20 bg-error-surface text-destructive-foreground"
-          : "border-border bg-code text-muted-foreground",
+          ? "border-error/20 bg-error/10 text-error-foreground"
+          : "border-border surface-card text-muted-foreground",
       )}
     >
       {rows.map(({ slot, line }) => (
@@ -249,10 +249,10 @@ function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: b
 
 function SetupDetails({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
   return (
-    <dl className="mt-1 mb-1.5 ml-8 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+    <dl className="mt-1 mb-1.5 ml-8 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs text-dim-foreground">
       {snapshot.branch ? (
         <>
-          <dt className="text-foreground/80">Branch</dt>
+          <dt className="text-foreground">Branch</dt>
           <dd className="min-w-0 font-mono">
             <MiddleTruncate value={snapshot.branch} className="flex" />
           </dd>
@@ -260,7 +260,7 @@ function SetupDetails({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
       ) : null}
       {snapshot.baseRef ? (
         <>
-          <dt className="text-foreground/80">Base</dt>
+          <dt className="text-foreground">Base</dt>
           <dd className="min-w-0 font-mono">
             <MiddleTruncate value={snapshot.baseRef} className="flex" />
           </dd>
@@ -268,7 +268,7 @@ function SetupDetails({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
       ) : null}
       {snapshot.worktreePath ? (
         <>
-          <dt className="text-foreground/80">Path</dt>
+          <dt className="text-foreground">Path</dt>
           <dd className="min-w-0 font-mono">
             <MiddleTruncate value={snapshot.worktreePath} className="flex" />
           </dd>
@@ -276,7 +276,7 @@ function SetupDetails({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
       ) : null}
       {snapshot.setupScript ? (
         <>
-          <dt className="text-foreground/80">Setup</dt>
+          <dt className="text-foreground">Setup</dt>
           <dd className="truncate font-mono">{snapshot.setupScript.command}</dd>
         </>
       ) : null}
@@ -303,7 +303,7 @@ function CollapsedSummaryRow({ snapshot }: { snapshot: WorktreeSetupSnapshot }) 
       }
       label={<span className={stageRowClassName(status)}>{label}</span>}
       trailing={
-        <span className="shrink-0 text-xs text-muted-foreground tabular-nums empty:hidden">
+        <span className="shrink-0 text-xs text-dim-foreground tabular-nums empty:hidden">
           <Elapsed startedAt={snapshot.startedAt} endedAt={snapshot.endedAt} live={false} />
         </span>
       }

@@ -88,7 +88,7 @@ export default function VirtualTablePreview(props: {
         <table
           ref={measureRef}
           aria-hidden="true"
-          className="invisible absolute top-0 border-separate border-spacing-0 text-xs"
+          className="invisible absolute top-0 border-separate border-spacing-0 text-meta/4"
           style={{ width: Math.max(width - rowHeader, props.columns * 128) }}
         >
           <thead>
@@ -96,7 +96,7 @@ export default function VirtualTablePreview(props: {
               {props.header.map((cell, i) => (
                 <th
                   key={i}
-                  className="min-w-32 max-w-80 border-b px-3 py-1.5 text-left font-medium whitespace-nowrap"
+                  className="min-w-32 max-w-80 border-b px-3 py-1.5 text-left text-meta/4 whitespace-nowrap"
                 >
                   {cell}
                 </th>
@@ -128,13 +128,13 @@ export default function VirtualTablePreview(props: {
           aria-label={props.name}
           aria-rowcount={props.count}
           aria-colcount={props.source ? undefined : props.columns}
-          className="flex h-full min-h-0 flex-col text-xs"
+          className="flex h-full min-h-0 flex-col text-meta/4"
           style={{ width: tableWidth }}
         >
           {!props.source ? (
             <div
               role="row"
-              className="relative z-10 flex min-h-[29px] shrink-0 border-b border-border bg-muted/60 font-medium backdrop-blur"
+              className="relative z-10 flex min-h-[29px] shrink-0 border-b border-border bg-card text-meta/4"
             >
               <div className="sticky left-0 z-10 w-14 shrink-0 border-r border-border bg-background" />
               <div style={{ width: offset(firstColumn), flexShrink: 0 }} />
@@ -206,7 +206,7 @@ function RowPage(
             className={
               props.source
                 ? `flex min-h-[29px] font-mono ${props.revealLine != null && Math.min(props.count, Math.max(1, props.revealLine)) === index + 1 ? "bg-primary/10" : ""}`
-                : `flex min-h-[29px] border-b border-border/60 ${(index - (props.header ? 1 : 0)) % 2 ? "bg-muted/30" : ""}`
+                : `flex min-h-[29px] border-b border-border ${(index - (props.header ? 1 : 0)) % 2 ? "surface-card" : ""}`
             }
             data-preview-reveal={
               props.revealLine != null &&
@@ -217,7 +217,7 @@ function RowPage(
           >
             <div
               role={props.source ? undefined : "rowheader"}
-              className={`${props.source ? "sticky left-0" : "relative"} z-1 shrink-0 border-r border-border bg-background px-2 py-1.5 text-right font-normal text-muted-foreground tabular-nums select-none`}
+              className={`${props.source ? "sticky left-0" : "relative"} z-1 shrink-0 border-r border-border bg-background px-2 py-1.5 text-right text-meta/4 text-muted-foreground tabular-nums select-none`}
               style={{
                 width: props.rowHeader,
                 transform: props.source ? undefined : "translateX(var(--preview-scroll-left, 0px))",
@@ -259,7 +259,11 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
   const ref = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const [layout, setLayout] = useState({ offset: 0, height: 0, rowHeight: 29 });
-  const [top, setTop] = useState(0);
+  const [{ top, remainder }, setPosition] = useState({ top: 0, remainder: 0 });
+  const setTop = (value: number) =>
+    setPosition((old) =>
+      value === 0 ? { top: 0, remainder: 0 } : { ...old, top: value + old.remainder },
+    );
   const handledReveal = useRef<string | null>(null);
   const pendingReveal = useRef<{ row: number; attempts: number } | null>(null);
   const pendingEnd = useRef(false);
@@ -286,8 +290,11 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
     const node = ref.current;
     if (!node || (previous.scale === scale && previous.maxFirst === maxFirst)) return;
     const previousEnd = previous.maxFirst * 29 * previous.scale;
-    let logicalTop = Math.min(previous.maxFirst * 29, node.scrollTop / previous.scale);
-    let remaining = Math.max(0, node.scrollTop - previousEnd);
+    let logicalTop = Math.min(
+      previous.maxFirst * 29,
+      (node.scrollTop + remainder) / previous.scale,
+    );
+    let remaining = Math.max(0, node.scrollTop + remainder - previousEnd);
     // Native-tail pixels cross rows of different heights before returning to the scaled track.
     for (const height of previous.heights) {
       logicalTop += Math.min(1, remaining / height) * 29;
@@ -301,8 +308,10 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
       remaining = Math.max(0, remaining - 1);
       if (!remaining) break;
     }
-    node.scrollTop = Math.min(maxFirst * 29, logicalTop) * scale + nativeOffset;
-    setTop(node.scrollTop);
+    const nextTop = Math.min(maxFirst * 29, logicalTop) * scale + nativeOffset;
+    node.scrollTop = nextTop;
+    // Keep the subpixel anchor that the browser rounds out of scrollTop.
+    setPosition({ top: nextTop, remainder: nextTop - node.scrollTop });
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Scroll the DOM viewport to a requested line after its virtual track has committed.
   useLayoutEffect(() => {
@@ -316,7 +325,7 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
     if (!node || !props.count || handledReveal.current === key) return;
     const row = Math.min(props.count, Math.max(1, props.revealLine)) - 1;
     node.scrollTop = Math.max(0, (row - headerRows) * 29) * scale;
-    setTop(node.scrollTop);
+    setPosition({ top: node.scrollTop, remainder: 0 });
     pendingEnd.current = false;
     pendingReveal.current = { row, attempts: 0 };
     handledReveal.current = key;
@@ -456,7 +465,7 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
           pendingEnd.current = event.key === "End";
           pendingReveal.current = null;
           node.scrollTop = event.key === "Home" ? 0 : node.scrollHeight;
-          setTop(node.scrollTop);
+          setPosition({ top: node.scrollTop, remainder: 0 });
         }
       }}
       onScroll={(event) => setTop(event.currentTarget.scrollTop)}
@@ -467,14 +476,15 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
           className="absolute inset-x-0"
           style={{
             top:
-              maxFirst === 0
+              (maxFirst === 0
                 ? 0
                 : nativeTail
                   ? maxFirst * scale * 29 - layout.offset
                   : position.top +
                     (atStart
                       ? 0
-                      : -layout.offset - ((position.top / scale / 29) % 1) * layout.rowHeight),
+                      : -layout.offset - ((position.top / scale / 29) % 1) * layout.rowHeight)) -
+              remainder,
           }}
         >
           {Array.from(

@@ -7,7 +7,15 @@ import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/s
 import { observeResize } from "~/lib/observeResize";
 import { tickTextContent } from "~/lib/tickTextContent";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
-import { memo, use, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  memo,
+  use,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { workEntryDisplayIndicatesToolFailure } from "../../session-logic";
 import ChatMarkdown from "../ChatMarkdown";
@@ -264,7 +272,7 @@ function ExpandedWorkGroupEntries({
           data-tool-group-scroll
           style={{ maxHeight: `calc(min(18rem, 50dvh) + ${expandedContentHeight}px)` }}
           className={cn(
-            "scrollbar-gutter-stable scroll-py-6 overflow-x-hidden rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+            "scrollbar-gutter-stable scroll-py-6 -me-(--chat-lane-reach) overflow-x-hidden rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
             getVirtualizedScrollFadeClassName(fades),
           )}
         />
@@ -292,8 +300,8 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
     "Working..."
   );
   return (
-    <div className="border-b border-border/60 pb-2 pt-1">
-      <div className="flex h-6 min-w-0 items-baseline gap-2 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
+    <div className="border-b border-(--timeline-working-rule,var(--border)) pb-2 pt-1">
+      <div className="flex h-6 min-w-0 items-baseline gap-2 px-1 text-sm font-medium leading-relaxed text-muted-foreground tabular-nums">
         <span
           ref={shimmer ? observeVisibleAnimation : undefined}
           className="relative shrink-0 overflow-hidden whitespace-nowrap"
@@ -370,14 +378,32 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
   const { groupId } = row;
   if (groupId === undefined) return activity;
   return (
-    <button
-      type="button"
-      className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+    <LiveWorkToggle
       aria-expanded={row.expanded === true}
       onClick={() => ctx.onToggleWorkGroup(groupId, row.id)}
     >
       {activity}
-    </button>
+    </LiveWorkToggle>
+  );
+}
+
+/** A live activity row that is its work group's disclosure: the whole row toggles it. */
+function LiveWorkToggle({
+  stacked = false,
+  ...props
+}: Omit<ComponentProps<"button">, "type" | "className"> & {
+  /** Stacks a thought line above the status row. */
+  stacked?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        "group/live-work flex w-full max-w-full cursor-pointer rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+        stacked ? "flex-col items-start" : "min-h-6 items-center",
+      )}
+      {...props}
+    />
   );
 }
 
@@ -446,12 +472,12 @@ function LiveActivityContent({
         iconName ? (
           <span
             className={cn(
-              "flex size-4 items-center justify-center",
+              "flex size-3.5 items-center justify-center",
               failed
                 ? failedToolIconClassName
                 : highlighted
                   ? "text-foreground"
-                  : "text-icon-muted",
+                  : "text-muted-foreground",
             )}
             role={announceFailure ? "img" : undefined}
             aria-label={announceFailure ? "Tool call failed" : undefined}
@@ -459,7 +485,7 @@ function LiveActivityContent({
             <ToolActivityIconView
               icon={toolIcon}
               fallbackName={iconName}
-              className="block size-4 shrink-0 stroke-2"
+              className="block size-3.5 shrink-0 stroke-2"
               muted={!highlighted}
             />
           </span>
@@ -505,12 +531,8 @@ export function LiveWorkEntryTimelineRow({
   const thoughtIsStatus = thoughtLine !== "" && row.entry === row.thought;
 
   return (
-    <button
-      type="button"
-      className={cn(
-        "group/live-work flex w-full max-w-full cursor-pointer rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
-        thoughtLine ? "flex-col items-start" : "min-h-6 items-center",
-      )}
+    <LiveWorkToggle
+      stacked={thoughtLine !== ""}
       aria-label={
         failed
           ? `${thoughtLine ? `${thoughtLine} ` : ""}${threadLabel?.text ?? label}, tool call failed`
@@ -576,7 +598,7 @@ export function LiveWorkEntryTimelineRow({
         failed={failed}
         active={row.active}
       />
-    </button>
+    </LiveWorkToggle>
   );
 }
 
@@ -619,11 +641,11 @@ function WorkGroupHeader(props: {
         <ToolActivityIconView
           icon={props.toolIcon}
           fallbackName={props.iconName}
-          className="size-4 shrink-0 stroke-2 text-icon-muted"
+          className="size-3.5 shrink-0 stroke-2 text-muted-foreground"
           muted
         />
       }
-      label={<span className="block truncate">{props.label}</span>}
+      label={<span className="block truncate font-medium">{props.label}</span>}
       trailing={
         <TimelineRowTimestamp createdAt={props.createdAt} timestampFormat={props.timestampFormat} />
       }
