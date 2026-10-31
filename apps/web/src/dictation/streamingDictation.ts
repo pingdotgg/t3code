@@ -163,7 +163,7 @@ export function createStreamingDictation(input: {
         throw new VoiceTranscriptionError("unavailable", "No environment can transcribe.");
       }
       // A start that never answers must not hold dictation open after a cancel.
-      const failure = await Promise.race([current.ready, rejectOnAbort(signal)]);
+      const failure = await Promise.race([current.ready, current.lost, rejectOnAbort(signal)]);
       if (failure !== null) throw new VoiceTranscriptionError("preparation-failed", failure);
       const sessionId = current.sessionId;
       if (signal.aborted || sessionId === null) close(current);
@@ -227,17 +227,16 @@ export function createStreamingDictation(input: {
     dependencies: {
       recorder,
       getTranscriber: () => (input.resolveEnvironmentId() === null ? null : transcriber),
-      // Opening the microphone is the browser's permission prompt. The session
-      // request goes out first so the network round trip overlaps it, and
-      // capture starts the moment the microphone is live.
+      // Permission prompts can outlive server sessions, so request a session only after consent.
       requestPermission: async () => {
         const environmentId = input.resolveEnvironmentId();
         close(session);
-        session = environmentId === null ? null : begin(environmentId);
+        session = null;
         const access = await capture.open();
         if (!access.granted) {
           return { granted: false, canAskAgain: true, message: access.message };
         }
+        session = environmentId === null ? null : begin(environmentId);
         await capture.prepare();
         const current = session;
         captureStartedAt = Date.now();

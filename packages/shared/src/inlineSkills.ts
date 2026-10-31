@@ -22,7 +22,7 @@ export function formatProviderSkillDisplayName(
 }
 
 const SKILL_TOKEN_REGEX =
-  /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
+  /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|[.,!?;:]|$)/gu;
 
 export function* matchInlineSkills<Skill extends InlineSkill>(
   text: string,
@@ -131,7 +131,10 @@ export function replaceSpokenSkills(text: string, skills: readonly InlineSkill[]
     if (words[first]!.start < consumedUntil) continue;
     replacements.push({
       start: words[first]!.start,
-      end: words[match.last]!.end,
+      end:
+        words[match.last]!.start +
+        text.slice(words[match.last]!.start, words[match.last]!.end).replace(/[^\p{L}\p{N}]+$/u, "")
+          .length,
       token: `$${match.skill.name}`,
     });
     consumedUntil = words[match.last]!.end;

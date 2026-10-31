@@ -15,11 +15,16 @@ describe("replaceSpokenSkills", () => {
     expect([...matchInlineSkills(text, skills)].map((match) => match.skill.name)).toEqual([
       "review",
     ]);
+    const sentences = replaceSpokenSkills("Use the review skill. Then run tests.", skills);
+    expect(sentences).toBe("Use $review. Then run tests.");
+    expect([...matchInlineSkills(sentences, skills)].map((match) => match.skill.name)).toEqual([
+      "review",
+    ]);
   });
 
   it("matches multi-word names, split words, and small recognition slips", () => {
     expect(replaceSpokenSkills("potato mode skill, fix the bug", skills)).toBe(
-      "$poteto-mode fix the bug",
+      "$poteto-mode, fix the bug",
     );
     expect(replaceSpokenSkills("run skill post plan read on it", skills)).toBe(
       "run $postplan-read on it",
