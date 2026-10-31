@@ -207,6 +207,9 @@ export function RightPanelColumns(props: {
                   onPointerDownCapture={() => {
                     if (!active) onActivate(surface);
                   }}
+                  onFocusCapture={() => {
+                    if (!active) onActivate(surface);
+                  }}
                 >
                   <span
                     aria-hidden

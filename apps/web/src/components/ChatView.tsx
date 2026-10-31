@@ -3343,6 +3343,7 @@ export default function ChatView(props: ChatViewProps) {
   ) => (
     <RightPanelTabs
       mode="embedded"
+      workspaceArea={view.active}
       environmentId={activeThreadRef?.environmentId ?? null}
       surfaces={surface ? [surface] : []}
       allSurfaces={columnSurfaces}

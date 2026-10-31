@@ -108,6 +108,7 @@ import { observeResize } from "~/lib/observeResize";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 
 export interface RightPanelTabsProps {
+  workspaceArea?: boolean;
   mode: PreviewPanelMode;
   maximized?: boolean;
   open?: boolean;
@@ -1340,7 +1341,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
 
   return (
     <PreviewPanelShell
-      workspaceArea
+      workspaceArea={props.workspaceArea ?? true}
       workspaceFocusKey={`panel:${props.environmentId}:${props.activeSurfaceId ?? "empty"}`}
       workspaceLabel={
         focusedSurface
