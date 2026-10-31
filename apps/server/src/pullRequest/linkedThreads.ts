@@ -1,7 +1,7 @@
 import {
   normalizeThreadPullRequestKey,
   threadPullRequestKeysEqual,
-} from "@t3tools/shared/threadPullRequests";
+} from "../sourceControl/threadPullRequests.ts";
 import {
   PullRequestLinkedThreadsResult,
   PullRequestOperationError,

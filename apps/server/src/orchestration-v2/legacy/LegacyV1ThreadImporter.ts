@@ -1,7 +1,7 @@
 import {
   threadPullRequestKeysEqual,
   threadPullRequestsOf,
-} from "@t3tools/shared/threadPullRequests";
+} from "../../sourceControl/threadPullRequests.ts";
 import {
   ChatAttachment,
   OrchestrationMessageContext,
@@ -677,10 +677,7 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  // `transcript_imported_at` is never reset to NULL, so a positive answer
-  // stays valid for the process lifetime; ensureTranscript runs on most
-  // thread reads and command dispatches, so skipping the lock + lookup here
-  // keeps that path off the database entirely after first confirmation.
+  // Both results are final for this process: transcript_imported_at never resets, and only startup shell reconciliation creates legacy rows.
   const confirmedTranscriptThreadIds = new Set<ThreadId>();
 
   const ensureTranscriptBase = (threadId: ThreadId) =>
@@ -695,14 +692,11 @@ const make = Effect.gen(function* () {
         `.pipe(NodeSqliteClient.readOnly);
         const imported = imports[0];
         if (imported === undefined || imported.transcript_imported_at !== null) {
-          if (imported !== undefined) {
-            confirmedTranscriptThreadIds.add(threadId);
-          }
+          confirmedTranscriptThreadIds.add(threadId);
           return { importedThreadCount: 0, importedMessageCount: 0 };
         }
         const messages = yield* listMessages(threadId);
-        // The thread's V1 events are still in the table here. Without the hint
-        // SQLite walks them through the stream index and reads past each payload.
+        // Hint the index to skip V1 events without scanning their payloads.
         const existingRows = yield* sql<{ readonly event_id: string }>`
           SELECT event_id
           FROM orchestration_events INDEXED BY idx_orchestration_events_agent_stream_sequence
