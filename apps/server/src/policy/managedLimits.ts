@@ -11,12 +11,20 @@ import type {
 } from "@t3tools/contracts";
 import {
   disableTailscaleServe,
-  readTailscaleServePortsProxyingTo,
+  disableTailscaleServeTcp,
+  readTailscaleServeRoutesTo,
+  tailscaleServeOffArgs,
+  readTailscaleStatus,
+  type TailscaleServeRoute,
   type TailscaleStderrDiagnostic,
 } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+
+import * as NetService from "@t3tools/shared/Net";
+
+import { loopbackBindAddress } from "../auth/utils.ts";
 
 type PolicyDocument = { readonly document: ManagedPolicyDocument | undefined };
 
@@ -82,6 +90,8 @@ const isMissingCli = (cause: unknown) =>
   (PlatformError.isPlatformError(cause) && cause.reason._tag === "NotFound") ||
   (cause instanceof Error && "code" in cause && cause.code === "ENOTDIR");
 
+const NOTHING_FORWARDED: ReadonlyArray<TailscaleServeRoute> = [];
+
 /** Tailscale answers that leave nothing forwarding here right now. */
 const NOTHING_TO_CLOSE: ReadonlySet<TailscaleStderrDiagnostic | undefined> = new Set([
   "not-running",
@@ -89,56 +99,113 @@ const NOTHING_TO_CLOSE: ReadonlySet<TailscaleStderrDiagnostic | undefined> = new
 ]);
 
 /**
- * Turns off Tailscale Serve that forwards to `port`, such as one `t3 pair --tailscale` left from
- * before the policy. Runs before the server binds, and fails when such a mapping stays on or
- * Tailscale's answer cannot be read. Without the CLI, or with Tailscale down or logged out,
- * nothing forwards, so nothing is closed.
+ * Turns off the Tailscale Serve routes that forward to the server at `target`, such as one
+ * `t3 pair --tailscale` left from before the policy, and keeps every other route. Runs before the
+ * server binds, and fails unless a fresh read shows no route here, since `off` can exit 0 and
+ * leave it. Without the CLI, or with Tailscale down or logged out, nothing forwards.
  */
 export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServeTo")(function* (
   policy: PolicyDocument,
-  port: number,
+  target: { readonly host: string; readonly port: number },
 ) {
   if (allowsRemoteClients(policy)) return;
-  const servePorts = yield* readTailscaleServePortsProxyingTo(port).pipe(
+  // Another app holds the port, so its routes are not ours to remove. It could let go before the
+  // bind, which would then take over those routes, so the server does not start.
+  if (!(yield* (yield* NetService.NetService).canListenOnHost(target.port, target.host))) {
+    return yield* refuseRemoteClients(
+      policy,
+      `so the server does not start while it cannot bind ${target.host}:${target.port}; if another app holds that port, the server would take over its Tailscale Serve routes`,
+    );
+  }
+  const readRoutes = readTailscaleServeRoutesTo(target).pipe(
     Effect.catchTags({
       // Only a CLI that is not there; one that will not run might still front a daemon.
       TailscaleCommandSpawnError: (error) =>
-        isMissingCli(error.cause) ? Effect.succeed([]) : Effect.fail(error),
+        isMissingCli(error.cause) ? Effect.succeed(NOTHING_FORWARDED) : Effect.fail(error),
       TailscaleCommandExitError: (error) =>
-        NOTHING_TO_CLOSE.has(error.stderrDiagnostic) ? Effect.succeed([]) : Effect.fail(error),
+        NOTHING_TO_CLOSE.has(error.stderrDiagnostic)
+          ? Effect.succeed(NOTHING_FORWARDED)
+          : Effect.fail(error),
     }),
     // Tailscale errors carry only labelled diagnostics, never raw stderr, so they are safe to log.
     Effect.tapError((cause) =>
       Effect.logWarning("Tailscale Serve could not be checked", { cause }),
     ),
-    Effect.mapError(() =>
+    Effect.mapError((error) =>
       refuseRemoteClients(
         policy,
-        "so the server does not start until Tailscale Serve can be checked",
+        error._tag === "TailscaleCommandTimeoutError"
+          ? // Seen on a Mac where Tailscale is installed but was never set up.
+            "so the server does not start until Tailscale Serve can be checked, and Tailscale did not answer; open Tailscale and finish setting it up, or remove it"
+          : "so the server does not start until Tailscale Serve can be checked",
       ),
     ),
   );
-  for (const servePort of servePorts) {
-    yield* disableTailscaleServe({ servePort }).pipe(
-      Effect.mapError(() =>
-        refuseRemoteClients(
-          policy,
-          `so Tailscale Serve on port ${servePort}, which forwards here, must be turned off first`,
-        ),
+  const found = yield* readRoutes;
+  if (found.length === 0) return;
+  // `off` acts on the machine's current name, so a web route under a former name stays.
+  const currentName = found.some((route) => route.mount !== undefined && route.owner === undefined)
+    ? yield* readTailscaleStatus.pipe(
+        Effect.map((status) => status.magicDnsName?.toLowerCase() ?? null),
+        Effect.orElseSucceed(() => null),
+      )
+    : null;
+  const formerName = (route: TailscaleServeRoute) =>
+    route.owner === undefined &&
+    route.host !== undefined &&
+    currentName !== null &&
+    route.host.toLowerCase() !== currentName;
+  // A Service is shared across the tailnet, and a foreground route lives as long as its command.
+  const removable = (route: TailscaleServeRoute) =>
+    route.owner === undefined &&
+    route.ambiguous === undefined &&
+    (route.mount === undefined || (currentName !== null && !formerName(route)));
+  for (const route of found.filter(removable)) {
+    yield* (
+      route.mount === undefined
+        ? disableTailscaleServeTcp(route.servePort)
+        : disableTailscaleServe(route)
+    ).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Tailscale Serve route could not be turned off", { ...route, cause }),
       ),
     );
-    yield* Effect.logInfo("Turned off Tailscale Serve the managed policy does not allow", {
-      servePort,
-    });
   }
+  const left = yield* readRoutes;
+  if (left.length > 0) {
+    const describe = (route: TailscaleServeRoute) => {
+      const where = `port ${route.servePort}${route.mount === undefined ? "" : ` at ${route.mount}`} here`;
+      const off = tailscaleServeOffArgs(route);
+      if (off === undefined) return `${where}; stop the "tailscale serve" command that runs it`;
+      if (formerName(route)) {
+        return `${where} under ${route.host}, a former name of this machine, which "tailscale serve ... off" cannot reach; run "tailscale serve reset" and set up your other routes again`;
+      }
+      const command = `"tailscale ${off.join(" ")}"`;
+      // Without the current name, `off` might act on another name's route at this path.
+      if (currentName === null && route.owner === undefined && route.host !== undefined) {
+        return `${where} under ${route.host}; if that is this machine's current name, turn it off with ${command}`;
+      }
+      return route.ambiguous !== undefined
+        ? `${where}, and its target ${route.ambiguous} might be another service on this port; check it, then turn it off with ${command}`
+        : `${where}; turn it off with ${command}`;
+    };
+    return yield* refuseRemoteClients(
+      policy,
+      `so the server does not start while Tailscale Serve forwards ${left.map(describe).join(", and ")}`,
+    );
+  }
+  yield* Effect.logInfo("Turned off Tailscale Serve the managed policy does not allow", {
+    routes: found,
+  });
 });
 
 export const refuseRemoteClients = (policy: PolicyDocument, detail?: string) =>
   refuse(policy, AUTH_POLICY_ACTION["remote-reachable"], detail);
 
 /**
- * Fails when the server would accept clients the policy leaves out. Runs before the server binds,
- * so a refused configuration never listens, not even briefly.
+ * Fails when the server would accept clients the policy leaves out; otherwise returns the address
+ * to bind. Runs before the server binds, so a refused configuration never listens, not even
+ * briefly. Without `remote` that address is the loopback literal the check approved, never a name.
  */
 export const checkServerReachability = Effect.fn("managedLimits.checkServerReachability")(
   function* (
@@ -147,15 +214,26 @@ export const checkServerReachability = Effect.fn("managedLimits.checkServerReach
       readonly authPolicy: ServerAuthPolicy;
       readonly host: string | undefined;
       readonly tailscaleServeEnabled: boolean;
+      /** The background service chose `host` to reach private networks; the user did not. */
+      readonly privateNetworkOnly?: boolean | undefined;
     },
   ) {
+    const cannotListen = () =>
+      refuseRemoteClients(
+        policy,
+        input.privateNetworkOnly === true
+          ? "so the background service cannot listen on private networks; set T3CODE_HOST=127.0.0.1 in its service.env"
+          : `so the server cannot listen on ${input.host === "" ? "every interface" : (input.host ?? "this host")}`,
+      );
     if (!allowsAuthPolicy(policy, input.authPolicy)) {
       return yield* input.authPolicy === "remote-reachable"
-        ? refuseRemoteClients(policy, `so the server cannot listen on ${input.host ?? "this host"}`)
+        ? cannotListen()
         : refuse(policy, AUTH_POLICY_ACTION[input.authPolicy]);
     }
-    if (input.tailscaleServeEnabled && !allowsRemoteClients(policy)) {
+    if (allowsRemoteClients(policy)) return input.host ?? "127.0.0.1";
+    if (input.tailscaleServeEnabled) {
       return yield* refuseRemoteClients(policy, "so Tailscale Serve cannot be turned on");
     }
+    return loopbackBindAddress(input.host) ?? (yield* cannotListen());
   },
 );

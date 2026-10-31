@@ -161,7 +161,7 @@ export const layer: Layer.Layer<
         ? ({} as ProviderInstanceConfigMap)
         : deriveProviderInstanceConfigMap(initialSettings);
 
-    // Drivers launch from the host environment, minus overrides a runtime-mode ceiling forbids.
+    // Drivers launch from the host environment, minus launch overrides a policy ignores.
     const hostEnvironment = ManagedProviders.providerHostEnvironment(
       serverSettings.managedPolicy,
       yield* HostProcess.Environment,

@@ -1,31 +1,47 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
+
+import * as HostProcess from "./HostProcess.ts";
 
 import {
   MACOS_MANAGED_PREFERENCES_PATH,
   managedPolicyPath,
   readManagedPolicy,
   WINDOWS_POLICY_KEY,
+  layerWindowsRegistry,
+  WindowsRegistry,
+  WindowsRegistryError,
 } from "./managedPolicyFile.ts";
 
 const policy = JSON.stringify({ schemaVersion: 1, organization: "Example Corp" });
 
-/** What a command prints and exits with; `exitCode: "hang"` never exits. */
-type Result = { readonly stdout: string; readonly exitCode: number | "hang" };
+/** What a command prints and exits with. */
+type Result = { readonly stdout: string; readonly exitCode: number };
 
-/** Files that exist, and what a command prints and exits with, by command name and arguments. */
+/** The registry's `Policy` value: its text, absent, or the Win32 error reading it fails with. */
+type RegistryAnswer = string | undefined | { readonly code?: number };
+
+/** Files that exist, what a command prints and exits with by command name, and the registry. */
 const machine = (
   files: Readonly<Record<string, string>>,
-  commands: Readonly<Record<string, Result | ((args: ReadonlyArray<string>) => Result)>>,
+  commands: Readonly<Record<string, Result>>,
+  registry: RegistryAnswer,
 ) =>
   Layer.mergeAll(
+    Layer.succeed(
+      WindowsRegistry,
+      WindowsRegistry.of({
+        readMachineString: () =>
+          typeof registry === "object"
+            ? Effect.fail(new WindowsRegistryError(registry))
+            : Effect.succeed(registry),
+      }),
+    ),
     FileSystem.layerNoop({
       exists: (path) => Effect.succeed(path in files),
       readFileString: (path) => Effect.succeed(files[path] ?? ""),
@@ -33,19 +49,12 @@ const machine = (
     Layer.succeed(
       ChildProcessSpawner.ChildProcessSpawner,
       ChildProcessSpawner.make((command) => {
-        const { command: name, args } = command as unknown as {
-          readonly command: string;
-          readonly args: ReadonlyArray<string>;
-        };
-        const answer = commands[name] ?? { stdout: "", exitCode: 127 };
-        const result = typeof answer === "function" ? answer(args) : answer;
+        const { command: name } = command as unknown as { readonly command: string };
+        const result = commands[name] ?? { stdout: "", exitCode: 127 };
         return Effect.succeed(
           ChildProcessSpawner.makeHandle({
             pid: ChildProcessSpawner.ProcessId(1),
-            exitCode:
-              result.exitCode === "hang"
-                ? Effect.never
-                : Effect.succeed(ChildProcessSpawner.ExitCode(result.exitCode)),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.exitCode)),
             isRunning: Effect.succeed(false),
             kill: () => Effect.void,
             unref: Effect.succeed(Effect.void),
@@ -65,13 +74,14 @@ const read = (
   platform: NodeJS.Platform,
   files: Readonly<Record<string, string>>,
   commands: Parameters<typeof machine>[1] = {},
+  registry: RegistryAnswer = undefined,
 ) =>
   readManagedPolicy(platform).pipe(
     Effect.map((found) => found?.source),
     Effect.catchTags({
       ManagedPolicyFileError: (error) => Effect.succeed(`error: ${error.reason}`),
     }),
-    Effect.provide(machine(files, commands)),
+    Effect.provide(machine(files, commands, registry)),
   );
 
 describe("readManagedPolicy", () => {
@@ -128,50 +138,53 @@ describe("readManagedPolicy", () => {
     }),
   );
 
-  it.effect("reads the Windows Policies registry value, and treats a missing one as none", () =>
-    Effect.gen(function* () {
-      // The Policies root answers unless the registry itself cannot be read.
-      const reg = (
-        stdout: string,
-        exitCode: number | "hang" = 0,
-        rootExitCode: number | "hang" = 0,
-      ) => ({
-        "C:\\Windows\\System32\\reg.exe": (args: ReadonlyArray<string>) =>
-          args.includes("/v") ? { stdout, exitCode } : { stdout: "", exitCode: rootExitCode },
-      });
-      const output = (type: string, value: string) =>
-        `\r\n${WINDOWS_POLICY_KEY}\r\n    Policy    ${type}    ${value}\r\n\r\n`;
+  it.effect(
+    "reads the Windows Policies registry value, and treats only an absent one as none",
+    () =>
+      Effect.gen(function* () {
+        const file = { [managedPolicyPath("win32")]: policy };
+        const win32 = (files: Readonly<Record<string, string>>, registry: RegistryAnswer) =>
+          read("win32", files, {}, registry);
 
-      assert.equal(yield* read("win32", {}, reg(output("REG_SZ", policy))), WINDOWS_POLICY_KEY);
-      assert.isUndefined(yield* read("win32", {}, reg("", 1)));
-      // Where reg cannot read the registry at all, the file still applies.
-      assert.isUndefined(yield* read("win32", {}, reg("", 1, 1)));
-      assert.equal(
-        yield* read("win32", { [managedPolicyPath("win32")]: policy }, reg("", 1, 1)),
-        managedPolicyPath("win32"),
-      );
-      // Once reg works, a failed query of the value is not read as no policy.
-      assert.include(yield* read("win32", {}, reg("", 5)), "cannot be read as a string");
-      assert.equal(
-        yield* read("win32", { [managedPolicyPath("win32")]: policy }, reg("", 1)),
-        managedPolicyPath("win32"),
-      );
-      assert.include(yield* read("win32", {}, reg(output("REG_DWORD", "0x1"))), "as a string");
-      assert.include(
-        yield* read("win32", {}, reg(output("REG_SZ", "{ not json"))),
-        "does not match the policy schema",
-      );
-      // A hung query times out: the root as unreadable, the value as a failure.
-      const timedOut = (stdout: string, exitCode: number | "hang", rootExitCode: number | "hang") =>
-        Effect.gen(function* () {
-          const fiber = yield* read("win32", {}, reg(stdout, exitCode, rootExitCode)).pipe(
-            Effect.forkChild,
+        assert.equal(yield* win32({}, policy), WINDOWS_POLICY_KEY);
+        assert.isUndefined(yield* win32({}, undefined));
+        assert.equal(yield* win32(file, undefined), managedPolicyPath("win32"));
+        assert.include(yield* win32(file, policy), "deploy the policy one way");
+        // A read that fails, here access denied, is not read as no policy, file or not.
+        for (const files of [{}, file]) {
+          assert.include(
+            yield* win32(files, { code: 5 }),
+            "the registry cannot be read (Windows error 5)",
           );
-          yield* TestClock.adjust("10 seconds");
-          return yield* Fiber.join(fiber);
-        });
-      assert.isUndefined(yield* timedOut("", 1, "hang"));
-      assert.include(yield* timedOut("", "hang", 0), "registry cannot be read");
-    }),
+        }
+        assert.include(yield* win32({}, {}), "cannot load its registry reader; reinstall T3 Code");
+        assert.include(
+          yield* win32({}, { code: 1630 }),
+          "its Policy value is not a string (REG_SZ)",
+        );
+        assert.include(yield* win32({}, "{ not json"), "does not match the policy schema");
+      }),
+  );
+
+  it.effect.runIf(HostProcess.Platform.defaultValue() === "win32")(
+    "reads REG_SZ values through the Win32 API, and refuses other types",
+    () =>
+      Effect.gen(function* () {
+        const registry = yield* WindowsRegistry;
+        const version = "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion";
+        assert.match((yield* registry.readMachineString(version, "ProductName")) ?? "", /Windows/);
+        assert.isUndefined(yield* registry.readMachineString(version, "T3CodeNoSuchValue"));
+        assert.isUndefined(
+          yield* registry.readMachineString("SOFTWARE\\T3CodeNoSuchKey", "Policy"),
+        );
+        // REG_DWORD, and REG_EXPAND_SZ, which would otherwise expand the user's variables.
+        for (const [key, value] of [
+          [version, "CurrentMajorVersionNumber"],
+          ["SOFTWARE\\Microsoft\\Windows\\CurrentVersion", "ProgramFilesPath"],
+        ] as const) {
+          const error = yield* registry.readMachineString(key, value).pipe(Effect.flip);
+          assert.equal(error.code, 1630);
+        }
+      }).pipe(Effect.provide(layerWindowsRegistry(() => import("ffi-rs")))),
   );
 });

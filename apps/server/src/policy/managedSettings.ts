@@ -273,6 +273,15 @@ export function makeManagedSettings(
         reason: `"${lock.path}" can be overridden by "${unheld[1]}"; lock "${unheld[1]}" too`,
       };
     }
+    // An instance's fields override each other: a variable replaces launch arguments, a home
+    // path rewrites a home variable, and a setup mode brings its own runtime.
+    const [head, instanceId] = lock.segments;
+    if (head === "providerInstances" && instanceId !== undefined && lock.segments.length > 2) {
+      return {
+        _tag: "Invalid",
+        reason: `"${lock.path}" is one field of a provider instance whose fields override each other; lock "providerInstances.${instanceId}" as a whole, or pin fields with limits.providers.instances`,
+      };
+    }
   }
 
   // Apply every entry to the built-in defaults at once, and read each value back: a typo in a

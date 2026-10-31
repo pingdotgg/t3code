@@ -65,7 +65,7 @@ export class DevServeFailedError extends Schema.TaggedError<DevServeFailedError>
     const port = String(this.webPort);
     const base =
       this.stage === "clear-existing"
-        ? `could not clear the existing mapping for port ${port}. Run \`tailscale serve --https=${port} off\` and retry`
+        ? `could not clear the existing mapping for port ${port}. Run \`tailscale serve --https=${port} --set-path=/ off\` and retry`
         : `could not serve port ${port} on the tailnet (it is no longer served; any previous mapping for it was cleared before this attempt)`;
     return this.explanation ? `${base}: ${this.explanation}` : base;
   }

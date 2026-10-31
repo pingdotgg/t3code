@@ -406,7 +406,7 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
       ),
     );
     notes.push(
-      `Tailscale Serve now maps ${baseUrl} to this server and persists across restarts. Remove it with \`tailscale serve --https=${String(input.servePort)} off\`.`,
+      `Tailscale Serve now maps ${baseUrl} to this server and persists across restarts. Remove it with \`tailscale serve --https=${String(input.servePort)} --set-path=/ off\`.`,
     );
 
     const probed = yield* awaitEnvironmentDescriptor(baseUrl);

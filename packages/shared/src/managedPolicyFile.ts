@@ -1,13 +1,16 @@
 import { ManagedPolicyDocument } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+
+import * as HostProcess from "./HostProcess.ts";
 
 export class ManagedPolicyFileError extends Schema.TaggedError<ManagedPolicyFileError>()(
   "ManagedPolicyFileError",
@@ -18,7 +21,7 @@ export class ManagedPolicyFileError extends Schema.TaggedError<ManagedPolicyFile
   },
 ) {
   override get message(): string {
-    return `The managed policy at ${this.path} is invalid: ${this.reason}. T3 Code will not start until an administrator fixes or removes it.`;
+    return `T3 Code cannot use the managed policy at ${this.path}: ${this.reason}. It will not start until an administrator fixes this.`;
   }
 }
 
@@ -87,12 +90,123 @@ export const readManagedPolicyFile = Effect.fn("readManagedPolicyFile")(function
 /** Where a configuration profile's managed preferences land on macOS. */
 export const MACOS_MANAGED_PREFERENCES_PATH =
   "/Library/Managed Preferences/com.t3tools.t3code.plist";
+const WINDOWS_POLICY_SUBKEY = "SOFTWARE\\Policies\\T3Tools\\T3Code";
 /** The registry key Group Policy and Intune write to on Windows; `Policy` holds the JSON. */
-export const WINDOWS_POLICY_KEY = "HKLM\\SOFTWARE\\Policies\\T3Tools\\T3Code";
-const WINDOWS_POLICIES_ROOT = "HKLM\\SOFTWARE\\Policies";
-// Absolute paths: an earlier PATH entry could otherwise answer that there is no policy.
+export const WINDOWS_POLICY_KEY = `HKLM\\${WINDOWS_POLICY_SUBKEY}`;
+// An absolute path: an earlier PATH entry could otherwise answer that there is no policy.
 const PLUTIL = "/usr/bin/plutil";
-const REG = "C:\\Windows\\System32\\reg.exe";
+
+export class WindowsRegistryError extends Schema.TaggedError<WindowsRegistryError>()(
+  "WindowsRegistryError",
+  {
+    /** The Win32 error, such as 5 for access denied; absent when the registry API cannot load. */
+    code: Schema.optional(Schema.Number),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return this.code === undefined ? "the registry API cannot load" : `Windows error ${this.code}`;
+  }
+}
+
+/**
+ * Reads the registry through the Win32 API in this process. A missing value and a failed read
+ * come back apart, and blocked registry tools such as reg.exe do not matter.
+ */
+export class WindowsRegistry extends Context.Service<
+  WindowsRegistry,
+  {
+    /** The REG_SZ `value` of HKLM\\`subkey` in the 64-bit view; undefined when either is absent. */
+    readonly readMachineString: (
+      subkey: string,
+      value: string,
+    ) => Effect.Effect<string | undefined, WindowsRegistryError>;
+  }
+>()("@t3tools/shared/managedPolicyFile/WindowsRegistry") {}
+
+// (HKEY)(LONG)0x80000002, sign-extended to 64 bits.
+const HKEY_LOCAL_MACHINE = -0x7ffffffen;
+const RRF_RT_REG_SZ = 0x2;
+const RRF_SUBKEY_WOW6464KEY = 0x10000;
+// Without it a REG_EXPAND_SZ value passes as REG_SZ, with the user's variables filled in.
+const RRF_NOEXPAND = 0x10000000;
+const ERROR_FILE_NOT_FOUND = 2;
+const ERROR_MORE_DATA = 234;
+const ERROR_UNSUPPORTED_TYPE = 1630;
+
+/**
+ * Each app passes how it loads ffi-rs: a server single-executable resolves packages on disk only
+ * through `require`, and the desktop's CommonJS bundle loads them with `import()`.
+ */
+export const layerWindowsRegistry = (loadFfi: () => Promise<typeof import("ffi-rs")>) =>
+  Layer.effect(
+    WindowsRegistry,
+    Effect.gen(function* () {
+      const architecture = yield* HostProcess.Architecture;
+      const loadGetValue = yield* Effect.cached(
+        Effect.tryPromise({
+          try: async () => {
+            // HKEY_LOCAL_MACHINE and the pointer arguments below are 64-bit.
+            if (architecture !== "x64" && architecture !== "arm64") {
+              throw new Error(`no registry access on ${architecture}`);
+            }
+            const { DataType, load, open } = await loadFfi();
+            open({ library: "t3-advapi32", path: "advapi32.dll" });
+            return (subkey: string, value: string, data: Buffer, size: Buffer): number =>
+              load({
+                library: "t3-advapi32",
+                funcName: "RegGetValueW",
+                retType: DataType.I32,
+                paramsType: [
+                  DataType.BigInt,
+                  DataType.WString,
+                  DataType.WString,
+                  DataType.U32,
+                  DataType.BigInt,
+                  DataType.U8Array,
+                  DataType.U8Array,
+                ],
+                paramsValue: [
+                  HKEY_LOCAL_MACHINE,
+                  subkey,
+                  value,
+                  RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY | RRF_NOEXPAND,
+                  0n,
+                  data,
+                  size,
+                ],
+              });
+          },
+          catch: (cause) => new WindowsRegistryError({ cause }),
+        }),
+      );
+      return WindowsRegistry.of({
+        readMachineString: Effect.fn("WindowsRegistry.readMachineString")(
+          function* (subkey, value) {
+            const getValue = yield* loadGetValue;
+            const attempt = (bytes: number) =>
+              Effect.try({
+                try: () => {
+                  const data = Buffer.alloc(bytes);
+                  const size = Buffer.alloc(4);
+                  size.writeUInt32LE(bytes);
+                  const code = getValue(subkey, value, data, size);
+                  return { code, data, bytes: size.readUInt32LE() };
+                },
+                catch: (cause) => new WindowsRegistryError({ cause }),
+              });
+            let result = yield* attempt(64 * 1024);
+            // The value grew past the buffer; the API reported the size it needs.
+            if (result.code === ERROR_MORE_DATA) result = yield* attempt(result.bytes);
+            if (result.code === ERROR_FILE_NOT_FOUND) return undefined;
+            if (result.code !== 0) return yield* new WindowsRegistryError({ code: result.code });
+            // The size counts the terminating null RegGetValueW adds.
+            return result.data.subarray(0, result.bytes).toString("utf16le").replace(/\0+$/, "");
+          },
+        ),
+      });
+    }),
+  );
 
 // A hung query must not hang startup; a timeout reads as a failed query.
 const run = Effect.fnUntraced(
@@ -110,12 +224,6 @@ const run = Effect.fnUntraced(
   Effect.scoped,
   Effect.timeout(Duration.seconds(10)),
 );
-
-/** The JSON in `reg query` output for the `Policy` value, or undefined when it has none. */
-function parseRegistryPolicy(output: string): string | undefined {
-  const match = /^\s*Policy\s+REG_SZ\s+(.*?)\s*$/m.exec(output);
-  return match?.[1];
-}
 
 const decodeJsonExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 // Strict: keys beside the wrapper, or more than one entry, decode as a plain document and fail.
@@ -175,33 +283,26 @@ const readPlatformPolicy = Effect.fnUntraced(function* (platform: NodeJS.Platfor
   }
   if (platform === "win32") {
     const path = WINDOWS_POLICY_KEY;
-    const query = (args: ReadonlyArray<string>) =>
-      run(REG, ["query", ...args, "/reg:64"]).pipe(
+    const raw = yield* (yield* WindowsRegistry)
+      .readMachineString(WINDOWS_POLICY_SUBKEY, "Policy")
+      .pipe(
         Effect.mapError(
           (cause) =>
-            new ManagedPolicyFileError({ path, reason: "the registry cannot be read", cause }),
+            new ManagedPolicyFileError({
+              path,
+              reason:
+                cause.code === ERROR_UNSUPPORTED_TYPE
+                  ? "its Policy value is not a string (REG_SZ)"
+                  : cause.code === undefined
+                    ? "this T3 Code install cannot load its registry reader; reinstall T3 Code"
+                    : `the registry cannot be read (${cause.message})`,
+              cause,
+            }),
         ),
       );
-    // reg exits 1 both for a missing value and for a failed query. The Policies key exists on
-    // every Windows install, so reading it first separates the two. When reg cannot read even
-    // that, as where registry tools are blocked, only the policy file can apply.
-    const root = yield* query([WINDOWS_POLICIES_ROOT]).pipe(Effect.option);
-    if (Option.isNone(root) || root.value.exitCode !== 0) {
-      yield* Effect.logWarning(
-        "The Windows registry cannot be read; only the policy file applies.",
-      );
-      return undefined;
-    }
-    const queried = yield* query([path, "/v", "Policy"]);
-    if (queried.exitCode === 1) return undefined;
-    const raw = parseRegistryPolicy(queried.stdout);
-    if (queried.exitCode !== 0 || raw === undefined) {
-      return yield* new ManagedPolicyFileError({
-        path,
-        reason: "its Policy value cannot be read as a string",
-      });
-    }
-    return { source: path, document: yield* decodeDocument(path, raw) };
+    return raw === undefined
+      ? undefined
+      : { source: path, document: yield* decodeDocument(path, raw) };
   }
   return undefined;
 });

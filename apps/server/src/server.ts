@@ -204,7 +204,12 @@ import * as OrchestrationHttp from "./orchestration-v2/http.ts";
 import * as ProjectHttp from "./project/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
-import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
+import {
+  disableTailscaleServe,
+  ensureTailscaleServe,
+  readTailscaleServeRoutesTo,
+  readTailscaleStatus,
+} from "@t3tools/tailscale";
 import * as ServerActivation from "./serverActivation.ts";
 
 // Escaped MCP handoff provenance can exceed find-my-way's 100-character segment default.
@@ -330,12 +335,13 @@ const layerHttpServer = Layer.unwrap(
     const config = yield* ServerConfig.ServerConfig;
     // Before binding: a host the policy does not allow must never listen, not even briefly.
     const policy = yield* ManagedPolicy.ManagedPolicy;
-    yield* ManagedLimits.checkServerReachability(policy, {
+    const bindHost = yield* ManagedLimits.checkServerReachability(policy, {
       authPolicy: EnvironmentAuthPolicy.resolveServerAuthPolicy(config),
       host: config.host,
       tailscaleServeEnabled: config.tailscaleServeEnabled,
+      privateNetworkOnly: config.privateNetworkOnly,
     });
-    yield* ManagedLimits.closeTailscaleServeTo(policy, config.port);
+    yield* ManagedLimits.closeTailscaleServeTo(policy, { host: bindHost, port: config.port });
     return NodeHttpServer.layer(
       () => {
         const server = rejectRequestsUntilServing(
@@ -351,7 +357,7 @@ const layerHttpServer = Layer.unwrap(
         return server;
       },
       {
-        host: config.host ?? "127.0.0.1",
+        host: bindHost,
         port: config.port,
         gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
         // Context takeover stays enabled (ws default) so the compression
@@ -847,6 +853,7 @@ const layerMakeServer = Layer.unwrap(
           config,
           port: address.port,
           serviceManaged: launcher.managed,
+          managedPolicy: yield* ManagedPolicy.loadedPolicy(yield* ManagedPolicy.ManagedPolicy),
         });
         yield* ownership
           .publish(state)
@@ -870,12 +877,17 @@ const layerMakeServer = Layer.unwrap(
               }
 
               const localPort = address.port;
+              const localHost = loopbackUrlHostForAddress(address);
               return yield* ensureTailscaleServe({
                 localPort,
                 servePort: config.tailscaleServePort,
-                localHost: loopbackUrlHostForAddress(address),
+                localHost,
               }).pipe(
-                Effect.as({ localPort, servePort: config.tailscaleServePort }),
+                Effect.as({
+                  localPort,
+                  localHost: localHost.replace(/^\[|\]$/gu, ""),
+                  servePort: config.tailscaleServePort,
+                }),
                 Effect.tap(() =>
                   Effect.logInfo("Tailscale Serve configured", {
                     localPort,
@@ -893,11 +905,44 @@ const layerMakeServer = Layer.unwrap(
             }),
             (configured) =>
               configured
-                ? disableTailscaleServe({ servePort: configured.servePort }).pipe(
-                    Effect.tap(() =>
-                      Effect.logInfo("Tailscale Serve disabled", {
-                        servePort: configured.servePort,
+                ? Effect.all(
+                    [
+                      readTailscaleServeRoutesTo({
+                        host: configured.localHost,
+                        port: configured.localPort,
                       }),
+                      readTailscaleStatus,
+                    ],
+                    { concurrency: 2 },
+                  ).pipe(
+                    // Another service may hold the root route by now, or it may sit under a
+                    // former name, where `off` would act on the current one; only ours goes.
+                    Effect.map(([routes, status]) =>
+                      routes.some(
+                        (route) =>
+                          route.servePort === configured.servePort &&
+                          route.mount === "/" &&
+                          route.owner === undefined &&
+                          route.ambiguous === undefined &&
+                          route.host?.toLowerCase() === status.magicDnsName?.toLowerCase(),
+                      ),
+                    ),
+                    Effect.orElseSucceed(() => false),
+                    Effect.flatMap((ours) =>
+                      ours
+                        ? disableTailscaleServe({ servePort: configured.servePort }).pipe(
+                            Effect.tap(() =>
+                              Effect.logInfo("Tailscale Serve disabled", {
+                                servePort: configured.servePort,
+                              }),
+                            ),
+                          )
+                        : Effect.logInfo(
+                            "Tailscale Serve left on; its root route is not known to be ours",
+                            {
+                              servePort: configured.servePort,
+                            },
+                          ),
                     ),
                     Effect.catch((cause) =>
                       Effect.logWarning("Failed to disable Tailscale Serve", {

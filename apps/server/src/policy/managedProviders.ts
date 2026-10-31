@@ -53,13 +53,17 @@ const PACKAGED_CLIENTS: ReadonlyArray<ProviderClientDefinition> = [
 
 /**
  * Fields that make an instance launch without the settings a pin sets: managed Codex runs T3's own
- * runtime against OpenAI. A policy that owns a pin owns these too, holding each at the value given
- * here, which clients still send when they add an instance.
+ * runtime against OpenAI, and a server URL points OpenCode at a server it does not start. A policy
+ * that owns a pin owns these too, holding each at the value given here, which clients still send
+ * when they add an instance.
  */
 const PIN_BYPASS_FIELDS: ReadonlyMap<
   ProviderDriverKind,
   Readonly<Record<string, unknown>>
-> = new Map([[ProviderDriverKind.make("codex"), { setupMode: "existing" }]]);
+> = new Map<ProviderDriverKind, Readonly<Record<string, unknown>>>([
+  [ProviderDriverKind.make("codex"), { setupMode: "existing" }],
+  [ProviderDriverKind.make("opencode"), { serverUrl: "" }],
+]);
 
 /** Drivers this build knows, by the names users see; a policy naming any other is refused. */
 const KNOWN_DRIVERS: ReadonlyMap<ProviderDriverKind, KnownDriver> = new Map([
@@ -140,9 +144,9 @@ export const disallowedDriverReason = (
 };
 
 /**
- * Host variables that replace a provider's launch configuration. They come from whoever starts
- * the server, so a runtime-mode ceiling, which makes launch configuration the administrator's,
- * ignores them.
+ * Variables that replace a provider's launch configuration. From the environment that starts the
+ * server they are ignored under any policy, which can lock launch arguments in more than one way;
+ * from an instance's own variables they are ignored when the policy locks launch arguments.
  */
 const LAUNCH_OVERRIDE_VARIABLES = ["T3CODE_CODEX_LAUNCH_ARGS"] as const;
 
@@ -151,11 +155,27 @@ export const providerHostEnvironment = (
   summary: ManagedPolicySummary | undefined,
   environment: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv => {
-  if (summary?.limits?.maxRuntimeMode === undefined) return environment;
+  if (summary === undefined) return environment;
   const next = { ...environment };
-  for (const name of LAUNCH_OVERRIDE_VARIABLES) delete next[name];
+  for (const name of Object.keys(next)) {
+    if (LAUNCH_OVERRIDE_VARIABLES.some((override) => override === name.toUpperCase())) {
+      delete next[name];
+    }
+  }
   return next;
 };
+
+/** Each driver's home variable, and the settings that rewrite it at launch. */
+const HOME_VARIABLES: ReadonlyMap<
+  ProviderDriverKind,
+  { readonly variable: string; readonly fields: ReadonlyArray<string> }
+> = new Map([
+  [ProviderDriverKind.make("claudeAgent"), { variable: "CLAUDE_CONFIG_DIR", fields: ["homePath"] }],
+  [
+    ProviderDriverKind.make("codex"),
+    { variable: "CODEX_HOME", fields: ["homePath", "shadowHomePath"] },
+  ],
+]);
 
 const configRecord = (instance: ProviderInstanceConfig | undefined): Record<string, unknown> =>
   instance?.config !== null &&
@@ -204,6 +224,7 @@ const pinnedValue = (pin: ManagedProviderInstance | undefined, field: string): u
 const overlayInstance = (
   instance: ProviderInstanceConfig,
   rule: DriverRule,
+  variableKey: (name: string) => string,
 ): ProviderInstanceConfig => {
   const config = { ...configRecord(instance) };
   for (const field of rule.config) {
@@ -219,20 +240,28 @@ const overlayInstance = (
     value: variable.value,
     sensitive: false,
   }));
-  const pinnedByName = new Map(pinnedEnvironment.map((variable) => [variable.name, variable]));
+  const pinnedByName = new Map(
+    pinnedEnvironment.map((variable) => [variableKey(variable.name), variable]),
+  );
   const environment: Array<NonNullable<ProviderInstanceConfig["environment"]>[number]> =
     rule.environment === "all" ? pinnedEnvironment : [];
   if (rule.environment !== "all") {
     const seen = new Set<string>();
+    // A user's override would replace launch arguments the administrator locked.
+    const overrides = rule.config.includes("launchArgs")
+      ? new Set(LAUNCH_OVERRIDE_VARIABLES.map(variableKey))
+      : new Set<string>();
     // The last entry for a name wins at launch, so a lock replaces every entry with that name.
     for (const variable of instance.environment ?? []) {
-      const pinned = rule.environment === "locked" ? pinnedByName.get(variable.name) : undefined;
+      const key = variableKey(variable.name);
+      if (overrides.has(key)) continue;
+      const pinned = rule.environment === "locked" ? pinnedByName.get(key) : undefined;
       if (pinned === undefined) environment.push(variable);
-      else if (!seen.has(variable.name)) environment.push(pinned);
-      seen.add(variable.name);
+      else if (!seen.has(key)) environment.push(pinned);
+      seen.add(key);
     }
     for (const pinned of pinnedEnvironment) {
-      if (!seen.has(pinned.name)) environment.push(pinned);
+      if (!seen.has(variableKey(pinned.name))) environment.push(pinned);
     }
   }
   const { config: _config, environment: _environment, ...envelope } = instance;
@@ -250,10 +279,13 @@ const overlayInstance = (
  */
 export function makeManagedProviders(
   limits: ManagedProviderLimits,
-  maxRuntimeMode?: RuntimeMode,
+  maxRuntimeMode: RuntimeMode | undefined,
+  platform: NodeJS.Platform,
 ):
   | { readonly _tag: "Valid"; readonly providers: ManagedProviders }
   | { readonly _tag: "Invalid"; readonly reason: string } {
+  // Windows reads a variable name without regard to case, so there a lock covers every spelling.
+  const variableKey = (name: string) => (platform === "win32" ? name.toUpperCase() : name);
   for (const driver of limits.allowedDrivers ?? []) {
     if (!KNOWN_DRIVERS.has(driver)) {
       return { _tag: "Invalid", reason: `"${driver}" in allowedDrivers is not a known provider` };
@@ -273,7 +305,7 @@ export function makeManagedProviders(
         reason: `the ${known.label} provider has no ${unsupported} setting`,
       };
     }
-    const names = (pin.environment ?? []).map((variable) => variable.name);
+    const names = (pin.environment ?? []).map((variable) => variableKey(variable.name));
     if (new Set(names).size !== names.length) {
       return { _tag: "Invalid", reason: `instances.${driver}.environment repeats a variable` };
     }
@@ -295,9 +327,19 @@ export function makeManagedProviders(
         environment: "all",
       });
     } else if (pin !== undefined) {
+      // A home path setting rewrites the provider's home variable at launch, so a lock on that
+      // variable owns the setting too.
+      const home = HOME_VARIABLES.get(driver);
+      const homeLocked =
+        home !== undefined &&
+        (pin.environment ?? []).some(
+          (variable) => variableKey(variable.name) === variableKey(home.variable),
+        );
       rules.set(driver, {
         pin,
-        config: pin.locked ? [...pinnedFields(pin), ...bypasses] : [],
+        config: pin.locked
+          ? [...pinnedFields(pin), ...bypasses, ...(homeLocked ? home.fields : [])]
+          : [],
         fill: pin.locked ? [] : pinnedFields(pin),
         environment: pin.locked ? "locked" : "fill",
       });
@@ -332,7 +374,9 @@ export function makeManagedProviders(
     }
     for (const [instanceId, instance] of Object.entries(providerInstances)) {
       const rule = rules.get(instance.driver);
-      if (rule !== undefined) providerInstances[instanceId] = overlayInstance(instance, rule);
+      if (rule !== undefined) {
+        providerInstances[instanceId] = overlayInstance(instance, rule, variableKey);
+      }
     }
     // A cleared selection falls back to the text generation model, which is resolved afterwards.
     const result: ServerSettings = {
@@ -371,7 +415,7 @@ export function makeManagedProviders(
       } => {
     const pinned = rule.pin?.environment ?? [];
     const storedVariable = (name: string) =>
-      stored?.environment?.find((existing) => existing.name === name);
+      stored?.environment?.find((existing) => variableKey(existing.name) === variableKey(name));
     const storedUnchanged = (variable: ProviderInstanceEnvironmentVariable) =>
       (stored?.environment ?? []).some((existing) => sameVariable(variable, existing));
     const echoed = (variable: ProviderInstanceEnvironmentVariable) =>
@@ -387,16 +431,18 @@ export function makeManagedProviders(
     }
     let environment: ReadonlyArray<ProviderInstanceEnvironmentVariable> = next.environment ?? [];
     for (const variable of pinned) {
-      const sent = environment.find((existing) => existing.name === variable.name);
+      const sent = environment.find(
+        (existing) => variableKey(existing.name) === variableKey(variable.name),
+      );
       const kept = storedVariable(variable.name);
       if ((sent !== undefined && echoed(sent)) || sameVariable(sent, kept)) {
         // Put the user's own entries back where it was sent, or drop the echoed policy value.
         const storedEntries = (stored?.environment ?? []).filter(
-          (existing) => existing.name === variable.name,
+          (existing) => variableKey(existing.name) === variableKey(variable.name),
         );
         let restored = false;
         environment = environment.flatMap((existing) => {
-          if (existing.name !== variable.name) return [existing];
+          if (variableKey(existing.name) !== variableKey(variable.name)) return [existing];
           if (restored) return [];
           restored = true;
           return storedEntries;
@@ -407,6 +453,16 @@ export function makeManagedProviders(
           path: `providerInstances.${instanceId}.environment.${variable.name}`,
         };
       }
+    }
+    // The client never saw a launch override the lock hides, so keep the stored one.
+    if (rule.config.includes("launchArgs")) {
+      const overrides = new Set(LAUNCH_OVERRIDE_VARIABLES.map(variableKey));
+      environment = [
+        ...environment.filter((variable) => !overrides.has(variableKey(variable.name))),
+        ...(stored?.environment ?? []).filter((variable) =>
+          overrides.has(variableKey(variable.name)),
+        ),
+      ];
     }
     return { _tag: "Kept", environment };
   };
