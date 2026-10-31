@@ -846,7 +846,7 @@ export default function DiffPanel({
               </span>
             )
           ) : null}
-          <DropdownMenuContent align="start" className="w-49">
+          <DropdownMenuContent align="start" variant="scope" className="w-49">
             <DropdownMenuRadioGroup value={selectedScopeValue} onValueChange={selectScopeValue}>
               <DropdownMenuRadioItem value="unstaged" closeOnClick>
                 <span>Working tree</span>
@@ -861,7 +861,7 @@ export default function DiffPanel({
             <DropdownMenuSeparator />
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>Turn</DropdownMenuSubTrigger>
-              <DropdownMenuSubContent>
+              <DropdownMenuSubContent variant="scope" className="w-50">
                 <DropdownMenuRadioGroup value={selectedTurnValue} onValueChange={selectScopeValue}>
                   {orderedTurnDiffSummaries.map((summary) => {
                     const turnCount = summary.checkpointTurnCount;
