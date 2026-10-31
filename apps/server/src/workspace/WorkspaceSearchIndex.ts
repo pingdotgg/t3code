@@ -293,19 +293,19 @@ function withDirectoryAncestors(entries: ReadonlyArray<ProjectEntry>): ProjectEn
 // Submodules and nested worktrees surface their `.git` gitlink file; it is repository metadata.
 const GITLINK_CONSTRAINT = "!**/.git";
 const GITIGNORE_SOURCE = /(^|[\\/])\.gitignore$/;
-// A collapsed `dir/` that fits in one fff query token: no whitespace, glob, or negation syntax.
-const QUERY_SAFE_DIRECTORY = /^[^\s*?[\]{}!\\]+\/$/;
+// A collapsed `dir/` or file path that fits in one fff glob token: no whitespace or glob syntax.
+const QUERY_SAFE_PATH = /^[^\s*?[\]{},!\\]+$/;
 
 /**
  * fff applies `.gitignore` files but not `.git/info/exclude` or `core.excludesFile`, where tools
- * commonly hide nested worktrees. Directories git excludes through those sources become
- * root-anchored `!dir/**` query constraints.
+ * commonly hide nested worktrees. Paths git excludes through those sources become root-anchored
+ * query constraints: `dir/` entries as `!dir/**`, files as `!{path,}`.
  */
-const loadExcludedDirectories = Effect.fn("WorkspaceSearchIndex.loadExcludedDirectories")(
+const loadExcludedPaths = Effect.fn("WorkspaceSearchIndex.loadExcludedPaths")(
   function* (vcsProcess: VcsProcess.VcsProcess["Service"], cwd: string) {
     const runGit = (args: ReadonlyArray<string>, stdin?: string) =>
       vcsProcess.run({
-        operation: "WorkspaceSearchIndex.loadExcludedDirectories",
+        operation: "WorkspaceSearchIndex.loadExcludedPaths",
         command: "git",
         args: ["-c", "core.fsmonitor=false", ...args],
         cwd,
@@ -314,7 +314,7 @@ const loadExcludedDirectories = Effect.fn("WorkspaceSearchIndex.loadExcludedDire
         timeoutMs: 10_000,
         maxOutputBytes: 4 * 1024 * 1024,
       });
-    // `--directory` collapses a wholly ignored folder into one `name/` entry.
+    // `--directory` collapses a wholly ignored folder into one `name/` entry; files stay listed.
     const listed = yield* runGit([
       "ls-files",
       "--others",
@@ -325,13 +325,11 @@ const loadExcludedDirectories = Effect.fn("WorkspaceSearchIndex.loadExcludedDire
       "-z",
     ]);
     if (listed.exitCode !== 0) return [];
-    const directories = listed.stdout
-      .split("\0")
-      .filter((entry) => QUERY_SAFE_DIRECTORY.test(entry));
-    if (directories.length === 0) return [];
+    const paths = listed.stdout.split("\0").filter((entry) => QUERY_SAFE_PATH.test(entry));
+    if (paths.length === 0) return [];
     const classified = yield* runGit(
       ["check-ignore", "--verbose", "-z", "--stdin"],
-      `${directories.join("\0")}\0`,
+      `${paths.join("\0")}\0`,
     );
     if (classified.exitCode !== 0) return [];
     // Records are `source NUL line NUL pattern NUL path NUL`.
@@ -434,15 +432,22 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const hasIncompleteInitialScan = () => initialScanTimedOut && finder.isScanning();
 
   const vcsProcess = yield* VcsProcess.VcsProcess;
-  let excludedDirectories = yield* loadExcludedDirectories(vcsProcess, cwd);
+  let excludedPaths = yield* loadExcludedPaths(vcsProcess, cwd);
+  // A slash-free file glob such as `!secret.env` matches at any depth, and grep ignores `!{a}`;
+  // the empty brace alternative keeps a file exclusion exact in every search mode.
   const exclusionConstraints = () =>
-    [GITLINK_CONSTRAINT, ...excludedDirectories.map((directory) => `!${directory}**`)].join(" ");
+    [
+      GITLINK_CONSTRAINT,
+      ...excludedPaths.map((path) => (path.endsWith("/") ? `!${path}**` : `!{${path},}`)),
+    ].join(" ");
   const withExclusions = (query: string) =>
     [query, exclusionConstraints()].filter(Boolean).join(" ");
   const isExcludedPath = (path: string) =>
     path === ".git" ||
     path.endsWith("/.git") ||
-    excludedDirectories.some((directory) => path.startsWith(directory));
+    excludedPaths.some((excluded) =>
+      excluded.endsWith("/") ? path.startsWith(excluded) : path === excluded,
+    );
 
   const runSearch = Effect.fn("WorkspaceSearchIndex.runSearch")(function* <A>(
     query: string,
@@ -500,7 +505,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           cause,
         }),
     );
-    excludedDirectories = yield* loadExcludedDirectories(vcsProcess, cwd);
+    excludedPaths = yield* loadExcludedPaths(vcsProcess, cwd);
   });
 
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(

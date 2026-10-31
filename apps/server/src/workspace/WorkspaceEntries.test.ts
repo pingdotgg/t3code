@@ -437,6 +437,66 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("excludes exact files hidden by .git/info/exclude from every query", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({
+          prefix: "t3code-workspace-info-exclude-file-",
+          git: true,
+        });
+        yield* writeTextFile(cwd, ".git/info/exclude", "/secret.env\nlib/creds.txt\n");
+        for (const relativePath of [
+          "secret.env",
+          "lib/creds.txt",
+          "src/secret.env",
+          "src/lib/creds.txt",
+        ]) {
+          yield* writeTextFile(cwd, relativePath, "needle token\n");
+        }
+        // `--directory` neither lists files inside untracked folders nor names a folder that holds
+        // only excluded files, so the excluded file sits in a tracked folder.
+        yield* writeTextFile(cwd, "lib/index.ts", "export {};\n");
+        yield* git(cwd, ["add", "lib/index.ts"]);
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const kept = ["src/lib/creds.txt", "src/secret.env"];
+        const fixturePaths = (entries: ReadonlyArray<{ readonly path: string }>) =>
+          entries
+            .map((entry) => entry.path)
+            .filter((path) => /(secret\.env|creds\.txt)$/.test(path))
+            .toSorted();
+        expect(fixturePaths((yield* workspaceEntries.list({ cwd })).entries)).toEqual(kept);
+        for (const query of ["", "secret.env", "creds.txt"]) {
+          const paths = fixturePaths(
+            (yield* searchWorkspaceEntries({ cwd, query, limit: 100 })).entries,
+          );
+          expect(paths, query).not.toContain("secret.env");
+          expect(paths, query).not.toContain("lib/creds.txt");
+          expect(paths, query).toEqual(
+            expect.arrayContaining(kept.filter((path) => path.endsWith(query))),
+          );
+        }
+        // Single plain tokens, single regex tokens, and multi-token queries take separate paths.
+        for (const { query, useRegex } of [
+          { query: "needle", useRegex: false },
+          { query: "need.e", useRegex: true },
+          { query: "needle token", useRegex: false },
+        ]) {
+          const contents = yield* workspaceEntries.searchContents({
+            cwd,
+            query,
+            limit: 100,
+            caseSensitive: true,
+            wholeWord: false,
+            useRegex,
+          });
+          expect(
+            contents.matches.map((match) => match.path).toSorted(),
+            `${query} (regex: ${useRegex})`,
+          ).toEqual(kept);
+        }
+      }),
+    );
+
     it.effect("excludes tracked paths that match ignore rules", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({
