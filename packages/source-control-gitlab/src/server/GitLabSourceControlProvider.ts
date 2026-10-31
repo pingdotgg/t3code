@@ -3,10 +3,7 @@ import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
-import {
-  parseGitRemoteHost,
-  unknownRemoteProvider as unknownHostProvider,
-} from "@t3tools/source-control-core/shared/definition";
+import { unknownRemoteProvider as unknownHostProvider } from "@t3tools/source-control-core/shared/definition";
 
 import * as GitLabCli from "./GitLabCli.ts";
 import * as GitLabChangeRequestTemplate from "./gitLabChangeRequestTemplate.ts";
@@ -66,7 +63,7 @@ function parseGitLabAuth(input: SourceControlAuthProbeInput) {
       /Logged in to .* account\s+([^\s(]+)/iu,
       /account:\s*([^\s(]+)/iu,
     ]);
-  const host = authenticatedHost?.host ?? parseCliHost(output);
+  const host = authenticatedHost?.host.toLowerCase() ?? parseCliHost(output);
 
   if (account) {
     return providerAuth({ status: "authenticated", account, host });
@@ -94,7 +91,7 @@ function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementIn
   const host = input.context.provider.name.toLowerCase();
   const output = combinedAuthOutput(input.auth);
   const authenticated = parseGitLabAuthStatusHosts(output).some(
-    (entry) => entry.account !== null && entry.host === host,
+    (entry) => entry.account !== null && entry.host.toLowerCase() === host,
   );
 
   if (!authenticated) {
@@ -110,9 +107,7 @@ function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementIn
 
 /** The caller refines only an identity no host recognised, so its remote is on an unknown host. */
 function unknownRemoteProvider(remoteUrl: string) {
-  // Remote host parsing does not recognize userless SCP remotes.
-  const scpHost = /^([^@:/\\\s]{2,}):\/?[^/\s]+(?:\/[^/\s]+)+$/u.exec(remoteUrl.trim())?.[1];
-  const remote = parseGitRemoteHost(scpHost ? `ssh://${scpHost}` : remoteUrl);
+  const remote = GitLabCli.parseGitLabRemoteHost(remoteUrl);
   return remote === null ? null : unknownHostProvider(remote);
 }
 

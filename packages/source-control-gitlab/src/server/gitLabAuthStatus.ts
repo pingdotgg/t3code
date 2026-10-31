@@ -28,7 +28,7 @@ export function parseGitLabAuthStatusHosts(text: string): ReadonlyArray<GitLabAu
       rawLine.length === rawLine.trimStart().length && HOST_LINE_PATTERN.test(line);
     if (isHostLine) {
       flush();
-      currentHost = line.toLowerCase();
+      currentHost = line;
       continue;
     }
 
