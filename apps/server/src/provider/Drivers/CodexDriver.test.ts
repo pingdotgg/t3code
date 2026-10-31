@@ -19,6 +19,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -103,7 +104,7 @@ const noSpawn = ChildProcessSpawner.make(() =>
 const encodeCredentials = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.layer(layerTest)("CodexDriver", (it) => {
-  const checkManagedAccount = (replacementTiming: "unchanged" | "during-probe") =>
+  const checkManagedAccount = (replacementTiming: "unchanged" | "during-probe" | "probe-timeout") =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("restored-managed-account");
       const credentials = new Map<string, Uint8Array>();
@@ -156,6 +157,18 @@ it.layer(layerTest)("CodexDriver", (it) => {
         const installation = yield* CodexInstallation.CodexInstallation;
         const serverConfig = yield* ServerConfig.ServerConfig;
         const sharedHome = NodePath.join(serverConfig.stateDir, "shared-codex-home");
+        const fs = yield* FileSystem.FileSystem;
+        const shadowHome = NodePath.join(
+          serverConfig.stateDir,
+          "providers",
+          "codex",
+          instanceId,
+          "shadow",
+        );
+        yield* fs.makeDirectory(sharedHome, { recursive: true });
+        yield* fs.makeDirectory(shadowHome, { recursive: true });
+        yield* fs.writeFileString(NodePath.join(sharedHome, "logs_2.sqlite-shm"), "shared shm");
+        yield* fs.writeFileString(NodePath.join(shadowHome, "logs_2.sqlite-shm"), "local shm");
         const launches: Array<
           Parameters<CodexAdapterV2.CodexAppServerClientFactoryShape["open"]>[0]
         > = [];
@@ -209,6 +222,10 @@ it.layer(layerTest)("CodexDriver", (it) => {
             ChildProcessSpawner.ChildProcessSpawner,
             ChildProcessSpawner.make(() =>
               Effect.gen(function* () {
+                if (replacementTiming === "probe-timeout") {
+                  yield* Deferred.succeed(probeEntered, undefined);
+                  return yield* Effect.never;
+                }
                 if (replacementTiming === "during-probe") {
                   yield* Deferred.succeed(probeEntered, undefined);
                   yield* Deferred.await(resumeProbe);
@@ -235,6 +252,10 @@ it.layer(layerTest)("CodexDriver", (it) => {
         );
         yield* Deferred.await(startupChecksInterrupted);
         const refresh = yield* instance.snapshot.refresh.pipe(Effect.forkChild);
+        if (replacementTiming === "probe-timeout") {
+          yield* Deferred.await(probeEntered);
+          yield* TestClock.adjust("20 seconds");
+        }
         if (replacementTiming === "during-probe") {
           yield* Deferred.await(probeEntered);
           yield* replaceAccount;
@@ -250,10 +271,20 @@ it.layer(layerTest)("CodexDriver", (it) => {
         }
         expect(catalogTokens).toEqual(["Bearer dummy-owned-access"]);
         expect(restored.auth.email).toBe("account@example.test");
+        expect(restored.auth.status).toBe("authenticated");
+        expect(Option.isSome(yield* store.get)).toBe(true);
         expect(restored.runtimePaths?.homePath).toBe(sharedHome);
         expect(restored.runtimePaths?.shadowHomePath).toContain(
-          `providers/codex/${instanceId}/shadow`,
+          NodePath.join("providers", "codex", instanceId, "shadow"),
         );
+        expect(yield* fs.readFileString(NodePath.join(shadowHome, "logs_2.sqlite-shm"))).toBe(
+          "local shm",
+        );
+        if (replacementTiming === "probe-timeout") {
+          expect(restored.status).toBe("error");
+          expect(restored.message).toContain("Timed out while checking Codex");
+          return;
+        }
         const scan = yield* instance.snapshotForCwd!(serverConfig.stateDir).pipe(Effect.exit);
         expect(Exit.isFailure(scan)).toBe(true);
         failAcquire = true;
@@ -286,6 +317,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
         expect(launch.settings.launchArgs).not.toContain("dummy-owned-access");
         expect(launch.environment.OPENAI_API_KEY).toBeUndefined();
         expect(launch.environment.CODEX_HOME).toBe(launch.settings.homePath);
+        expect(launch.environment.CODEX_SQLITE_HOME).toBe(shadowHome);
         const before = yield* instance.auth!.subscribe("test-owner").pipe(Stream.runHead);
         expect(Option.getOrThrow(before).phase).toBe("idle");
         yield* instance.auth!.logout(Effect.void);
@@ -331,7 +363,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
     }).pipe(Effect.scoped);
   // regression: a sign-in that replaces the account mid-probe must not label the old
   // account's catalog with the new identity.
-  it.effect.each(["unchanged", "during-probe"] as const)(
+  it.effect.each(["unchanged", "during-probe", "probe-timeout"] as const)(
     "managed catalog keeps its account label and token together: %s",
     checkManagedAccount,
   );

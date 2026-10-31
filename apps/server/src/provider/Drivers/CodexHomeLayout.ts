@@ -33,6 +33,9 @@ const KNOWN_SHARED_DIRECTORIES = [
 const PRIVATE_ENTRY_NAMES = new Set(["auth.json", "auth.lock", "models_cache.json"]);
 // Finder maintains metadata separately for each directory, including shadow homes.
 const SHADOW_LOCAL_ENTRY_NAMES = new Set(["log", "memories", "tmp", ".DS_Store"]);
+// SQLite can create WAL/SHM beside the link on Windows. Route databases through
+// CODEX_SQLITE_HOME instead; never replace existing databases or live sidecars.
+const SQLITE_ENTRY_NAME = /\.sqlite(?:-(?:shm|wal|journal))?$/u;
 // Shadow homes may create local runtime locks first; replace them with shared links because they guard shared state.
 const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Set([
   "mcp-oauth-locks",
@@ -136,6 +139,40 @@ export const CodexShadowHomeError = Schema.Union([
   CodexShadowHomePrivateEntrySymlinkError,
 ]);
 export type CodexShadowHomeError = typeof CodexShadowHomeError.Type;
+
+export const codexHomeEnvironment = Effect.fn("codexHomeEnvironment")(function* (
+  layout: CodexHomeLayout,
+  environment: NodeJS.ProcessEnv,
+) {
+  const effectiveHomePath = layout.effectiveHomePath;
+  if (layout.mode !== "authOverlay" || !effectiveHomePath) return environment;
+  const override = environment.CODEX_SQLITE_HOME?.trim();
+  if (override) return { ...environment, CODEX_SQLITE_HOME: override };
+
+  const fileSystem = yield* FileSystem.FileSystem;
+  const entries = yield* fileSystem.readDirectory(effectiveHomePath).pipe(
+    Effect.catchTags({
+      PlatformError: (cause) =>
+        cause.reason._tag === "NotFound"
+          ? Effect.succeed([])
+          : new CodexShadowHomeFileSystemError({
+              sharedHomePath: layout.sharedHomePath,
+              effectiveHomePath,
+              operation: "readDirectory",
+              path: effectiveHomePath,
+              cause,
+            }),
+    }),
+  );
+  // Keep existing databases on their original path so SQLite can recover WAL in place,
+  // including when another Codex process still owns a connection there.
+  return {
+    ...environment,
+    CODEX_SQLITE_HOME: entries.some((entry) => SQLITE_ENTRY_NAME.test(entry))
+      ? effectiveHomePath
+      : layout.sharedHomePath,
+  };
+});
 
 type LinkState =
   | {
@@ -402,7 +439,11 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
   );
   const entries = new Set<string>(KNOWN_SHARED_DIRECTORIES);
   for (const entryName of sharedEntryNames) {
-    if (!PRIVATE_ENTRY_NAMES.has(entryName) && !SHADOW_LOCAL_ENTRY_NAMES.has(entryName)) {
+    if (
+      !PRIVATE_ENTRY_NAMES.has(entryName) &&
+      !SHADOW_LOCAL_ENTRY_NAMES.has(entryName) &&
+      !SQLITE_ENTRY_NAME.test(entryName)
+    ) {
       entries.add(entryName);
     }
   }

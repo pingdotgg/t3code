@@ -111,6 +111,7 @@ import {
 } from "../../provider/CodexMcpElicitation.ts";
 import {
   materializeCodexShadowHome,
+  codexHomeEnvironment,
   resolveCodexHomeLayout,
 } from "../../provider/Drivers/CodexHomeLayout.ts";
 import {
@@ -1561,7 +1562,12 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   const serverConfig = yield* ServerConfig;
   const homeLayout = yield* resolveCodexHomeLayout(config);
 
-  yield* materializeCodexShadowHome(homeLayout).pipe(
+  const environmentOverrides = yield* mergeProviderInstanceEnvironment(
+    environment,
+    hostEnvironment,
+  );
+  const processEnv = yield* materializeCodexShadowHome(homeLayout).pipe(
+    Effect.andThen(() => codexHomeEnvironment(homeLayout, environmentOverrides)),
     Effect.mapError(
       (cause) =>
         new ProviderAdapterDriverCreateError({
@@ -1583,7 +1589,7 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   return yield* makeCodexAdapterV2({
     instanceId,
     settings,
-    environment: yield* mergeProviderInstanceEnvironment(environment, hostEnvironment),
+    environment: processEnv,
     clientFactory,
     crypto,
     fileSystem,
