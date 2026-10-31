@@ -21,19 +21,14 @@ export function Sheet(props: SheetProps) {
       onNativeDismiss={props.onClose}
     >
       <RoutedFormSheetContext value={false}>
-        {/* Android FormSheet does not bound flex children. */}
-        <View collapsable={false} className="absolute inset-0 bg-header">
-          <ScreenContent
-            header={
-              <AndroidSheetHeader
-                title={props.title}
-                onBack={() => setIsOpen(false)}
-                hideBottomBorder
-              />
-            }
-          >
-            {props.children}
-          </ScreenContent>
+        {/* Android FormSheet does not bound flex children. Material drags target the first scroll view, so place content before the header. */}
+        <View collapsable={false} className="absolute inset-0 flex-col-reverse bg-header">
+          <ScreenContent>{props.children}</ScreenContent>
+          <AndroidSheetHeader
+            title={props.title}
+            onBack={() => setIsOpen(false)}
+            hideBottomBorder
+          />
           <View
             pointerEvents="none"
             className="absolute top-1 h-1 w-8 self-center rounded-full bg-header-foreground/40"
