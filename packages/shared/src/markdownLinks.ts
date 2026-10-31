@@ -18,10 +18,10 @@ const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 // explicit folder link may end in `/` (`patches/`, `docs/My Folder/`). A bare name with no
 // slash still fails.
 const RELATIVE_FILE_PATH_PATTERN =
-  /^(?:[\p{L}\p{M}\p{N}._-]+(?: +[\p{L}\p{M}\p{N}._-]+)*\/)+(?:[\p{L}\p{M}\p{N}._-]+(?: +[\p{L}\p{M}\p{N}._-]+)*(?::\d+){0,2})?$/u;
+  /^(?:[\p{L}\p{M}\p{N}.&#;_-]+(?: +[\p{L}\p{M}\p{N}.&#;_-]+)*\/)+(?:[\p{L}\p{M}\p{N}.&#;_-]+(?: +[\p{L}\p{M}\p{N}.&#;_-]+)*(?::\d+){0,2})?$/u;
 
 const RELATIVE_FILE_NAME_PATTERN =
-  /^[\p{L}\p{M}\p{N}._-]+(?: +[\p{L}\p{M}\p{N}._-]+)*\.[\p{L}\p{M}\p{N}_-]+(?::\d+){0,2}$/u;
+  /^[\p{L}\p{M}\p{N}.&#;_-]+(?: +[\p{L}\p{M}\p{N}.&#;_-]+)*\.[\p{L}\p{M}\p{N}&#;_-]+(?::\d+){0,2}$/u;
 
 const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
 
