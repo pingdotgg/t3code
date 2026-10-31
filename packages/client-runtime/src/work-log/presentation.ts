@@ -356,6 +356,8 @@ export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupActio
 }
 
 export function workEntryViewedImagePath(entry: WorkLogPresentationEntry): string | null {
+  // The file may not exist until the call finishes, and a failed asset URL stays cached.
+  if (entry.toolLifecycleStatus === "inProgress") return null;
   const viewedImagePath = entry.viewedImagePath?.trim();
   if (
     viewedImagePath !== undefined &&
