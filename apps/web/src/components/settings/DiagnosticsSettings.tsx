@@ -164,9 +164,8 @@ function OverviewTile({
   value: string;
   tooltip?: ReactNode;
 }) {
-  // The transparent border matches SettingsGroup's, so the text sits on the rows' text line (card edge + 17).
   return (
-    <div className="min-w-0 rounded-card border border-transparent surface-card-settings px-4 py-3">
+    <div className="min-w-0 rounded-xl surface-card-settings px-3 py-2.5">
       <div className="flex min-w-0 items-center gap-1.5 text-meta text-dim-foreground">
         <span className="min-w-0 truncate">{label}</span>
         {tooltip ? <StatTooltip label={label}>{tooltip}</StatTooltip> : null}
@@ -949,7 +948,7 @@ function DiagnosticsSettingsBody() {
   return (
     <SettingsPageContainer width="expanded">
       <section className="space-y-2">
-        <h2 className="flex min-h-7 items-center text-label text-dim-foreground">Overview</h2>
+        <h2 className="text-meta text-dim-foreground">Overview</h2>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <OverviewTile
             label="Server PID"
