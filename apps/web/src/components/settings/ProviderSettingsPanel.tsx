@@ -306,7 +306,7 @@ interface ProviderSettingsTarget {
 
 export function ProviderSettingsPanel(target: ProviderSettingsTarget) {
   return (
-    <SettingsPageContainer className="@container/providers">
+    <SettingsPageContainer className="@container/providers max-w-[808px]">
       <ProviderSettingsPanelContent
         key={`${target.environmentId ?? ""}:${target.instanceId ?? ""}`}
         {...target}
@@ -991,43 +991,9 @@ export function EnvironmentProviderSettings({
       <SettingsSection
         {...searchableSetting("providers")}
         variant="plain"
-        titleAction={
-          canAddProvider ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon-xs"
-                    variant="ghost-muted"
-                    onClick={() => setIsAddInstanceDialogOpen(true)}
-                    aria-label="Add provider"
-                  >
-                    <PlusIcon />
-                  </Button>
-                }
-              />
-              <TooltipPopup side="top">Add provider</TooltipPopup>
-            </Tooltip>
-          ) : null
-        }
+        title="Providers"
         headerAction={
           <div className="flex min-w-0 items-center gap-2">
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon-xs"
-                    variant="ghost-muted"
-                    aria-label="Import conversations"
-                    render={<Link to="/welcome" hash={`agents:${environmentId}`} />}
-                  >
-                    <DownloadIcon />
-                  </Button>
-                }
-              />
-              <TooltipPopup>Import conversations</TooltipPopup>
-            </Tooltip>
-            <ProviderUpdatesAction />
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -1052,6 +1018,23 @@ export function EnvironmentProviderSettings({
               />
               <TooltipPopup side="top">Refresh provider status</TooltipPopup>
             </Tooltip>
+            {canAddProvider ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="ghost-muted"
+                      onClick={() => setIsAddInstanceDialogOpen(true)}
+                      aria-label="Add provider"
+                    >
+                      <PlusIcon />
+                    </Button>
+                  }
+                />
+                <TooltipPopup side="top">Add provider</TooltipPopup>
+              </Tooltip>
+            ) : null}
           </div>
         }
       >
@@ -1101,22 +1084,12 @@ export function EnvironmentProviderSettings({
               className="flex min-w-0 flex-col gap-0.5 border-divider p-1.5 @max-[44rem]/providers:border-b @min-[44rem]/providers:border-r"
             >
               {rows.map((row) => renderProviderInstance(row, "list"))}
-              {canAddProvider ? (
-                <Button
-                  variant="ghost-muted"
-                  className="w-full justify-start"
-                  onClick={() => setIsAddInstanceDialogOpen(true)}
-                >
-                  <PlusIcon />
-                  Add provider
-                </Button>
-              ) : null}
             </nav>
             {selectedRow ? (
               // Groups inside the detail sink to the page color so they read against the split card.
               <div
                 key={selectedRow.instanceId}
-                className="min-w-0 space-y-7 p-4 [--card-settings-fill:var(--background)]"
+                className="min-w-0 space-y-4 p-4 [--card-settings-fill:var(--background)]"
               >
                 {renderProviderInstance(selectedRow, "editor")}
               </div>
@@ -1144,7 +1117,29 @@ export function EnvironmentProviderSettings({
         />
       ) : null}
 
-      <SettingsSection title="Advanced">
+      <SettingsSection
+        title="Advanced"
+        headerAction={
+          <div className="flex items-center gap-2">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost-muted"
+                    aria-label="Import conversations"
+                    render={<Link to="/welcome" hash={`agents:${environmentId}`} />}
+                  >
+                    <DownloadIcon />
+                  </Button>
+                }
+              />
+              <TooltipPopup>Import conversations</TooltipPopup>
+            </Tooltip>
+            <ProviderUpdatesAction />
+          </div>
+        }
+      >
         <SettingsRow
           id={searchableSetting("provider-health-check-interval").id}
           title={
@@ -1211,7 +1206,7 @@ export function EnvironmentProviderSettings({
         <CompactIdleThreadsRow />
       </SettingsSection>
 
-      {isAddInstanceDialogOpen && !readOnly ? (
+      {isAddInstanceDialogOpen && canAddProvider ? (
         <AddProviderInstanceDialog
           open
           environmentId={environmentId}
