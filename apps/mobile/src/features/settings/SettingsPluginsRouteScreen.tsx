@@ -22,7 +22,7 @@ import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSym
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { pluginEnvironment } from "../../state/plugins";
 import { useEnvironmentQuery } from "../../state/query";
-import { SettingsActionRow } from "./components/SettingsActionRow";
+import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import {
   AndroidSettingsEnvironmentFilter,
   SettingsEnvironmentFilterHeader,

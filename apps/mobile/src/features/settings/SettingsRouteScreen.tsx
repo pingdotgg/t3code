@@ -260,7 +260,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
         serverPage("SettingsThreads", "text.bubble", "Threads"),
         page("SettingsScheduledTasks", "clock", "Scheduled tasks"),
         ...(selectedTargets.some(supportsPlugins)
-          ? [page("SettingsPlugins", "shippingbox", "Plugins")]
+          ? [page("SettingsPlugins", "cube", "Plugins")]
           : []),
       ],
     },

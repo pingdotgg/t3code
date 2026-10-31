@@ -483,6 +483,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
       )
       postInvalidateOnAnimation()
     } else {
+      verticalScroller.forceFinished(true)
       canvasView.setVerticalOffset(target)
     }
   }

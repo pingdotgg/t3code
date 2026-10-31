@@ -14,6 +14,7 @@ import {
   findHighlightedCommandPaletteItem,
   type CommandPaletteActionItem,
   type CommandPaletteGroup,
+  newThreadNoProjectIndex,
   buildNestedSearchItems,
   resolveCommandPaletteProject,
   buildThreadActionItems,
@@ -1064,4 +1065,26 @@ it("resolves project metadata and browse roots within the active environment", (
   );
   expect(resolveCommandPaletteProject(projects, null, sharedId)).toBeUndefined();
   expect(resolveCommandPaletteProject(projects, EnvironmentId.make("local"), null)).toBeUndefined();
+});
+
+describe("newThreadNoProjectIndex", () => {
+  const entry = (pinned = false, isPreferred = false, isScratch = false) => ({
+    pinned,
+    isPreferred,
+    isScratch,
+  });
+
+  it("goes after the pinned projects and the first unpinned one", () => {
+    expect(newThreadNoProjectIndex([entry(true), entry(true), entry(false, true), entry()])).toBe(
+      3,
+    );
+    expect(newThreadNoProjectIndex([entry(false, true), entry(), entry(false, false, true)])).toBe(
+      1,
+    );
+  });
+
+  it("keeps a pinned or current scratch project in its own place", () => {
+    expect(newThreadNoProjectIndex([entry(false, true, true), entry()])).toBe(0);
+    expect(newThreadNoProjectIndex([entry(true), entry(true, false, true), entry()])).toBe(1);
+  });
 });
