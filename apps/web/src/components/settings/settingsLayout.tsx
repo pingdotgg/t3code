@@ -1,3 +1,4 @@
+import { SettingsScopeSentence } from "./SettingsScopeSentence";
 import { SettingsGroup } from "./SettingsGroup";
 import {
   InfoIcon,
@@ -370,7 +371,7 @@ export function SettingsUnavailableGroup({
   if (!unavailable) return children;
 
   return (
-    <div className="rounded-[inherit] [&>*+*]:border-t [&>*+*]:border-divider [&>[data-slot=settings-row]]:rounded-none [&>[data-slot=settings-row]:first-child]:rounded-t-card-inner [&>[data-slot=settings-row]:last-child]:rounded-b-card-inner [&_h3]:opacity-64 [&_p]:opacity-64">
+    <div className="rounded-[inherit] [&>*+*]:border-t [&>*+*]:border-divider [&>[data-slot=settings-row]]:rounded-none [&>[data-slot=settings-row]:first-child]:rounded-t-card [&>[data-slot=settings-row]:last-child]:rounded-b-card [&_h3]:opacity-64 [&_p]:opacity-64">
       {children}
     </div>
   );
@@ -654,18 +655,17 @@ export function SettingsRow({
         className,
       )}
     >
-      <div className="flex flex-col gap-3 @min-[26rem]/settings-row:grid @min-[26rem]/settings-row:grid-cols-[minmax(0,1fr)_minmax(10rem,auto)] @min-[26rem]/settings-row:items-center @min-[26rem]/settings-row:gap-6">
+      <div className="flex flex-col gap-3 @min-[26rem]/settings-row:grid @min-[26rem]/settings-row:grid-cols-[minmax(0,1fr)_auto] @min-[26rem]/settings-row:items-center @min-[26rem]/settings-row:gap-6">
         <div
           className={cn(
             "flex min-w-0 flex-1 items-center gap-3",
-            // With no control, a trailing indicator ends the row.
-            trailing && !renderedControl && "col-span-full",
+            !renderedControl && "col-span-full",
           )}
         >
           {leading ? <SettingsRowTile>{leading}</SettingsRowTile> : null}
           <div className="min-w-0 flex-1 space-y-0.75">
             <div className="flex min-h-5 items-center gap-1.5">
-              <h3 className="text-label text-foreground [--type-label:0.8125rem]">{title}</h3>
+              <h3 className="text-label text-foreground">{title}</h3>
               {renderedInheritance ? (
                 <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
                   {renderedInheritance}
@@ -681,7 +681,12 @@ export function SettingsRow({
               ) : null}
             </div>
             {description ? (
-              <p className="max-w-xl text-meta leading-normal text-dim-foreground">{description}</p>
+              <p
+                data-settings-description
+                className="text-body text-muted-foreground [--type-body:var(--type-meta)]"
+              >
+                {description}
+              </p>
             ) : null}
             {renderedStatus ? (
               <div className="pt-0.5 text-body text-muted-foreground [--type-body:var(--type-meta)]">
@@ -909,6 +914,7 @@ export function SettingsPageContainer({
 }) {
   const navigate = useNavigate();
   const hash = useLocation({ select: (location) => location.hash });
+  const pathname = useLocation({ select: (location) => location.pathname });
   const highlightTarget = useLocation({
     select: (location) => location.state.settingsTargetHighlight !== false,
   });
@@ -938,6 +944,7 @@ export function SettingsPageContainer({
             className,
           )}
         >
+          <SettingsScopeSentence pathname={pathname} />
           {children}
         </WorkspacePageContainer>
       </div>

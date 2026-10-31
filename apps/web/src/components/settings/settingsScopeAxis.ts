@@ -118,7 +118,7 @@ export function selectSingleEnvironmentScope(
   return selected ? { ...search, machine: selected.environmentId } : search;
 }
 
-/** Pages whose every row is saved on this client; the tab reads "This device" there. */
+/** Pages whose settings belong to this device and do not offer scope selection. */
 export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   "/settings/general",
   "/settings/appearance",

@@ -42,7 +42,7 @@ export function FoldedSettingsSection({
               className="flex min-h-7 items-start justify-between gap-4"
             >
               <h2>
-                <CollapsibleTrigger className="flex min-h-7 items-center gap-2 rounded-md text-sm font-normal text-foreground/70 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+                <CollapsibleTrigger className="flex min-h-7 items-center gap-2 rounded-md text-title text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
                   {title}
                   <ChevronRightIcon
                     aria-hidden
