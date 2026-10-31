@@ -37,7 +37,7 @@ export default function PreviewImageContent(props: {
   if (failed) return <FileSurfaceFailure message="Unable to load image." />;
   return (
     <>
-      <div className="flex min-h-10 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/60 px-3 py-1 text-xs text-muted-foreground">
+      <div className="flex min-h-10 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/60 px-3 py-1 text-meta text-muted-foreground">
         <span className="tabular-nums">
           {natural.width
             ? `${natural.width.toLocaleString()} × ${natural.height.toLocaleString()}`

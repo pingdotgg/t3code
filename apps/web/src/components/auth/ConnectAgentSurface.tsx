@@ -236,7 +236,7 @@ export function McpConsent({
     return (
       <StandalonePage>
         <ConnectAgentHeading title="This sign-in cannot continue" description={loaded.message} />
-        <p className="mt-4 text-sm text-muted-foreground">
+        <p className="mt-4 text-body text-muted-foreground">
           Close this page and start the sign-in again from your agent.
         </p>
         {footer}
@@ -261,20 +261,20 @@ export function McpConsent({
         description={
           <>
             This agent wants to use the threads in every project on{" "}
-            <span className="font-medium text-foreground">
+            <span className="text-label text-foreground">
               {environmentLabel ?? details.environmentHost}
             </span>
             {environmentLabel ? ` (${details.environmentHost})` : null}.
           </>
         }
       />
-      <dl className="mt-4 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm">
+      <dl className="mt-4 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-body">
         <dt className="text-muted-foreground">App</dt>
         <dd className="min-w-0 break-words">
-          {details.clientName} <span className="text-muted-foreground">· name set by the app</span>
+          {details.clientName} <span className="text-muted-foreground">(name set by the app)</span>
         </dd>
         <dt className="text-muted-foreground">Access goes to</dt>
-        <dd className="min-w-0 break-words font-medium">
+        <dd className="min-w-0 break-words text-label">
           {details.redirectHost}
           {redirectsToThisComputer(details.redirectHost) ? (
             <span className="font-normal text-muted-foreground">
@@ -284,12 +284,12 @@ export function McpConsent({
           ) : (
             <span className="font-normal text-muted-foreground">
               {" "}
-              · whoever runs it gets this access
+              (whoever runs it gets this access)
             </span>
           )}
         </dd>
       </dl>
-      <p className="mt-2 text-xs text-muted-foreground">Only approve a sign-in you just started.</p>
+      <p className="mt-2 text-meta text-muted-foreground">Only approve a sign-in you just started.</p>
 
       <form
         className="mt-6 space-y-5"
@@ -300,7 +300,7 @@ export function McpConsent({
       >
         {acceptsCode ? (
           <div className="space-y-2">
-            <label className="text-sm font-medium" htmlFor="connect-agent-pairing-code">
+            <label className="text-label" htmlFor="connect-agent-pairing-code">
               Sign-in code
             </label>
             <Input
@@ -315,7 +315,7 @@ export function McpConsent({
               spellCheck={false}
               value={pairingCode}
             />
-            <p className="text-xs text-muted-foreground">
+            <p className="text-meta text-muted-foreground">
               Get one from Use T3 Code in another app (MCP), Settings → Sharing & access, or{" "}
               <code>t3 auth pairing create</code> on this machine.
             </p>
@@ -323,13 +323,13 @@ export function McpConsent({
         ) : null}
 
         {codeAccess ? (
-          <p className="text-sm">
+          <p className="text-body">
             <span className="text-muted-foreground">Access</span>{" "}
-            <span className="font-medium">{accessConfig[codeAccess].label}</span>
+            <span className="text-label">{accessConfig[codeAccess].label}</span>
           </p>
         ) : (
           <div className="space-y-2">
-            <span id="connect-agent-access-label" className="text-sm font-medium">
+            <span id="connect-agent-access-label" className="text-label">
               What it may do
             </span>
             <RadioGroup
@@ -346,7 +346,7 @@ export function McpConsent({
                 />
               ))}
             </RadioGroup>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-meta text-muted-foreground">
               Beyond read only, it can start, message and stop threads, and none of them can run
               with more than the mode you pick.
             </p>
@@ -371,7 +371,7 @@ export function McpConsent({
             disabled={pending !== null}
             onClick={() => void decide("deny", details)}
             type="button"
-            variant="outline"
+            variant="secondary"
           >
             {pending === "deny" ? "Denying…" : "Deny"}
           </Button>
@@ -437,9 +437,9 @@ export function AccessOption({
         )}
       />
       <span className="min-w-0">
-        <span className="block text-sm font-medium text-foreground">{label}</span>
+        <span className="block text-label text-foreground">{label}</span>
         {detail === null ? null : (
-          <span className="block text-xs text-muted-foreground">{detail}</span>
+          <span className="block text-meta text-muted-foreground">{detail}</span>
         )}
       </span>
     </RadioPrimitive.Root>

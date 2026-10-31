@@ -1,13 +1,12 @@
 import {
+  ListFilterIcon,
   PanelBottomIcon,
   PanelRightIcon,
-  SquareMenuIcon,
   Maximize2Icon,
   Minimize2Icon,
 } from "lucide-react";
-import { memo, type ReactNode } from "react";
 
-import { cn } from "~/lib/utils";
+import { memo, type ReactNode } from "react";
 
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
@@ -62,7 +61,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       variant="ghost"
       size="sm"
     >
-      <SquareMenuIcon className="size-4" />
+      <ListFilterIcon className="size-3.5" />
     </Toggle>
   );
   const threadPanelControl = (
@@ -86,7 +85,6 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
       data-panel-layout-controls
     >
-      {showThreadPanelControl ? threadPanelControl : null}
       {showTerminalControl ? (
         <Tooltip>
           <TooltipTrigger render={<span className="flex shrink-0" />}>
@@ -99,7 +97,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               size="sm"
               disabled={!terminalAvailable}
             >
-              <PanelBottomIcon className="size-4" />
+              <PanelBottomIcon className="size-3.5" />
             </Toggle>
           </TooltipTrigger>
           <TooltipPopup side="bottom">
@@ -122,7 +120,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               size="sm"
               disabled={!rightPanelAvailable}
             >
-              <PanelRightIcon className="size-4" />
+              <PanelRightIcon className="size-3.5" />
             </Toggle>
           </TooltipTrigger>
           <TooltipPopup side="bottom">
@@ -132,6 +130,9 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
           </TooltipPopup>
         </Tooltip>
       ) : null}
+      {/* The workspace menu (pen ZVAPz) closes the cluster at the pane's
+          top-right corner; the pane toggles sit to its left. */}
+      {showThreadPanelControl ? threadPanelControl : null}
     </div>
   );
 });
@@ -157,9 +158,9 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
             size="sm"
           >
             {maximized ? (
-              <Minimize2Icon className="size-4" />
+              <Minimize2Icon className="size-3.5" />
             ) : (
-              <Maximize2Icon className="size-4" />
+              <Maximize2Icon className="size-3.5" />
             )}
           </Toggle>
         }
@@ -173,7 +174,7 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
 export function ThreadPanelHeaderControl(props: PanelLayoutControlsProps) {
   return (
     <div
-      className="absolute top-[var(--workspace-controls-top)] right-[calc(env(safe-area-inset-right)+0.75rem)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]"
+      className="absolute top-[var(--workspace-pane-local-controls-top)] right-[calc(env(safe-area-inset-right)+0.75rem)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag] md:right-[calc(env(safe-area-inset-right)+0.5rem)]"
       data-workspace-titlebar-controls
     >
       <PanelLayoutControls {...props} showTerminalControl={false} showRightPanelControl={false} />
@@ -181,41 +182,13 @@ export function ThreadPanelHeaderControl(props: PanelLayoutControlsProps) {
   );
 }
 
-/** The window's top-right panel controls, with the maximize toggle while the panel is open. */
-export function WorkspaceTitlebarControls(props: {
-  readonly showMaximizeControl: boolean;
-  readonly rightPanelOpen: boolean;
-  readonly animationsActive: boolean;
-  readonly maximized: boolean;
-  readonly onToggleMaximized: () => void;
-  readonly children: ReactNode;
-}) {
+/** The window's top-right panel controls. */
+export function WorkspaceTitlebarControls(props: { readonly children: ReactNode }) {
   return (
     <div
       className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]"
       data-workspace-titlebar-controls
     >
-      {props.showMaximizeControl ? (
-        <span
-          aria-hidden={!props.rightPanelOpen}
-          // Fading out on close would show it beside the thread details toggle that replaces it.
-          className={cn(
-            "flex shrink-0",
-            props.rightPanelOpen &&
-              props.animationsActive &&
-              "motion-safe:transition-opacity motion-safe:duration-(--panel-animation-duration) motion-safe:ease-out",
-            props.rightPanelOpen
-              ? "pointer-events-auto opacity-100"
-              : "pointer-events-none absolute right-full mr-1 opacity-0",
-          )}
-          inert={!props.rightPanelOpen}
-        >
-          <RightPanelMaximizeControl
-            maximized={props.maximized}
-            onToggle={props.onToggleMaximized}
-          />
-        </span>
-      ) : null}
       <div className="pointer-events-auto flex h-full items-center">{props.children}</div>
     </div>
   );

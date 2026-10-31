@@ -245,7 +245,7 @@ export function PullRequestActionsMenu({
           Refresh
         </MenuItem>
         <MenuItem disabled={handoff !== null} onClick={askAboutPullRequest}>
-          <MessageCircleQuestionIcon className="mt-1 size-3.5 shrink-0 self-start" />
+          <MessageCircleQuestionIcon className="mt-1 size-3.5 shrink-0 self-start sm:mt-0.5" />
           <span className="flex min-w-0 flex-col">
             <span>{handoff === "ask" ? "Opening..." : "Ask a question"}</span>
             <span className="text-xs text-muted-foreground">
@@ -256,7 +256,7 @@ export function PullRequestActionsMenu({
           </span>
         </MenuItem>
         <MenuItem disabled={handoff !== null} onClick={explainPullRequest}>
-          <BookOpenIcon className="mt-1 size-3.5 shrink-0 self-start" />
+          <BookOpenIcon className="mt-1 size-3.5 shrink-0 self-start sm:mt-0.5" />
           <span className="flex min-w-0 flex-col">
             <span>
               {handoff === "explain" ? "Opening..." : `Explain this ${terminology.shortLabel}`}
@@ -298,12 +298,12 @@ export function PullRequestActionsMenu({
             >
               <span className="flex max-w-xs flex-col gap-0.5">
                 <span>Allow edits from maintainers</span>
-                <span id={maintainerEditsHintId} className="text-xs text-muted-foreground">
+                <span id={maintainerEditsHintId} className="text-meta text-muted-foreground">
                   Maintainers can push to this branch. If your fork has workflows, this can also
                   give access to its secrets.
                 </span>
                 {maintainerEditsSaving ? (
-                  <span role="status" className="text-xs text-muted-foreground">
+                  <span role="status" className="text-meta text-muted-foreground">
                     Saving…
                   </span>
                 ) : null}
@@ -467,7 +467,7 @@ export function PullRequestActionsMenu({
                 <span>
                   {pendingAction === "delete-branch" ? "Deleting branch..." : "Delete branch"}
                 </span>
-                <span className="truncate text-xs text-muted-foreground">
+                <span className="truncate text-caption text-muted-foreground">
                   {environmentConnected ? detail.headBranch : "Reconnect to delete this branch"}
                 </span>
               </span>

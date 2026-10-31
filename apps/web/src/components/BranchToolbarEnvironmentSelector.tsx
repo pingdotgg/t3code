@@ -1,3 +1,4 @@
+import { Kbd } from "./ui/kbd";
 import { ComposerSelectControl } from "./chat/ComposerControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
@@ -68,7 +69,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   if (envLocked || (onEnvironmentChange === undefined && onAddToMachine === undefined)) {
     const lockedRow = (
       <span
-        className="inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 border border-transparent px-1.75 font-normal text-muted-foreground/70 text-sm sm:h-6 sm:text-xs"
+        className="inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 border border-transparent px-1.75 font-normal text-dim-foreground text-xs sm:h-6"
         data-composer-context-control
       >
         <EnvironmentMachineIcon
@@ -126,8 +127,10 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           </ComposerContextLabel>
         </TooltipTrigger>
         <TooltipPopup>
-          {autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}
-          {shortcutLabel ? ` · ${shortcutLabel}` : null}
+          <span className="flex items-center gap-2">
+            <span>{autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}</span>
+            {shortcutLabel ? <Kbd>{shortcutLabel}</Kbd> : null}
+          </span>
         </TooltipPopup>
       </Tooltip>
       <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>

@@ -80,7 +80,7 @@ export function WizardSteps({
   const Step = onStepChange ? "button" : "div";
   return (
     <ol
-      className="grid auto-cols-fr grid-flow-col gap-1 rounded-xl bg-background p-1 ring-1 ring-black/5 dark:bg-white/4 dark:ring-white/5"
+      className="grid auto-cols-fr grid-flow-col gap-1 rounded-xl bg-muted p-1 ring-1 ring-hairline"
       role="list"
       aria-label="Setup progress"
     >
@@ -91,11 +91,10 @@ export function WizardSteps({
               ? { type: "button" as const, disabled: isStepDisabled?.(index) }
               : {})}
             className={cn(
-              "flex w-full min-w-0 items-center gap-2 rounded-lg px-2.5 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring max-sm:justify-center max-sm:px-2",
+              "flex w-full min-w-0 items-center gap-2 rounded-[var(--control-radius)] px-2.5 py-2 text-left outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring max-sm:justify-center max-sm:px-2",
               onStepChange &&
-                "cursor-pointer hover:bg-card disabled:cursor-default disabled:hover:bg-transparent",
-              index === currentStep &&
-                "bg-card text-foreground shadow-xs ring-1 ring-inset ring-black/5 hover:bg-card dark:shadow-none dark:ring-white/5",
+                "cursor-pointer hover:surface-ghost-hover disabled:cursor-default disabled:hover:bg-none",
+              index === currentStep && "surface-selected text-strong-foreground",
             )}
             aria-current={index === currentStep ? "step" : undefined}
             aria-label={`${step}, step ${index + 1}${index < currentStep && summaries?.[index] ? `, ${summaries?.[index]}` : ""}`}
@@ -103,12 +102,12 @@ export function WizardSteps({
           >
             <span
               className={cn(
-                "grid size-5 shrink-0 place-items-center rounded-full text-sm font-medium ring-1",
+                "grid size-5 shrink-0 place-items-center rounded-full text-label ring-1",
                 index < currentStep
                   ? "bg-primary text-primary-foreground ring-primary"
                   : index === currentStep
                     ? "bg-primary/10 text-primary ring-primary/30"
-                    : "bg-card text-muted-foreground ring-black/10 dark:bg-white/5 dark:ring-white/10",
+                    : "bg-card text-muted-foreground ring-border",
               )}
               aria-hidden
             >
@@ -116,7 +115,7 @@ export function WizardSteps({
             </span>
             <span
               className={cn(
-                "min-w-0 truncate text-sm font-medium max-sm:hidden",
+                "min-w-0 truncate text-label max-sm:hidden",
                 index === currentStep ? "text-foreground" : "text-muted-foreground",
               )}
             >
@@ -135,17 +134,20 @@ export function WizardSteps({
 export function WizardPanel({
   children,
   holdHeight = false,
+  surface = "default",
   className,
 }: {
   readonly children: ReactNode;
   readonly holdHeight?: boolean;
+  readonly surface?: "default" | "bare";
   readonly className?: string;
 }) {
   return (
     <div
       data-slot="dialog-panel"
       className={cn(
-        "min-w-0 space-y-4 bg-background/80 px-6 py-5 ring-1 ring-black/5 dark:bg-white/2 dark:ring-white/5",
+        "min-w-0 space-y-4 px-6 py-5",
+        surface === "default" && "bg-muted ring-1 ring-hairline",
         className,
       )}
     >
