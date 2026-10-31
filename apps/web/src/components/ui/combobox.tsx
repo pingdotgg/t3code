@@ -140,6 +140,7 @@ function ComboboxPopup({
   alignOffset,
   align = "start",
   anchor: anchorProp,
+  maxHeight = "default",
   ...props
 }: ComboboxPrimitive.Popup.Props & {
   align?: ComboboxPrimitive.Positioner.Props["align"];
@@ -147,6 +148,7 @@ function ComboboxPopup({
   alignOffset?: ComboboxPrimitive.Positioner.Props["alignOffset"];
   side?: ComboboxPrimitive.Positioner.Props["side"];
   anchor?: ComboboxPrimitive.Positioner.Props["anchor"];
+  maxHeight?: "default" | "available";
 }) {
   const { chipsRef, multiple } = React.use(ComboboxContext);
   const anchor = anchorProp ?? (multiple ? chipsRef : undefined);
@@ -169,7 +171,12 @@ function ComboboxPopup({
           )}
         >
           <ComboboxPrimitive.Popup
-            className="flex min-w-0 max-h-[min(var(--available-height),23rem)] flex-1 flex-col overflow-hidden text-foreground"
+            className={cn(
+              "flex min-w-0 flex-1 flex-col overflow-hidden text-foreground",
+              maxHeight === "available"
+                ? "max-h-(--available-height)"
+                : "max-h-[min(var(--available-height),23rem)]",
+            )}
             data-slot="combobox-popup"
             {...props}
           >

@@ -10,6 +10,8 @@ import {
   buildSidebarProjectSnapshots,
   resolveSidebarProjectScopeKey,
   getSidebarProjectSettingsKey,
+  filterSidebarProjectScopeKeysByEnvironment,
+  toggleSidebarProjectScopeKey,
 } from "./sidebarProjectGrouping";
 import type { Project } from "./types";
 
@@ -104,6 +106,17 @@ describe("environment grouping", () => {
       expect(
         resolveSidebarProjectScopeKey({ groups, key, settings, canClearMissingScope: true }),
       ).toBe(groups[0]?.projectKey);
+      const mergedKey = groups[0]!.projectKey;
+      expect(
+        toggleSidebarProjectScopeKey({
+          groups,
+          keys: [key, mergedKey, "unloaded-project"],
+          activeKeys: [mergedKey],
+          key: mergedKey,
+          settings,
+          excludedEnvironmentIds: new Set(),
+        }),
+      ).toEqual(["unloaded-project"]);
     },
   );
 
@@ -123,6 +136,107 @@ describe("environment grouping", () => {
     });
     const key = deriveLogicalProjectKeyFromSettings(ordinary, defaultGroupingSettings);
     expect(resolveSidebarProjectScopeKey({ groups, key, canClearMissingScope: true })).toBe(key);
+  });
+
+  it("suspends a project scope when its last visible environment member disappears", () => {
+    const local = makeProject({ repositoryIdentity });
+    const remote = makeProject({
+      id: ProjectId.make("remote-project"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const input = {
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    };
+    const groups = buildSidebarProjectSnapshots({ ...input, projects: [local, remote] });
+    const key = groups[0]!.projectKey;
+    const scope = {
+      key,
+      previousExcludedEnvironmentIds: new Set<EnvironmentId>(),
+      excludedEnvironmentIds: new Set([remoteEnvironmentId]),
+    };
+    expect(resolveSidebarProjectScopeKey({ ...scope, groups })).toBe(key);
+    const persistedKeys = [key, "unloaded-project"];
+    expect(
+      filterSidebarProjectScopeKeysByEnvironment({
+        ...scope,
+        groups,
+        keys: persistedKeys,
+      }),
+    ).toEqual(persistedKeys);
+
+    const remainingGroups = buildSidebarProjectSnapshots({ ...input, projects: [remote] });
+    expect(remainingGroups[0]!.projectKey).toBe(key);
+    expect(resolveSidebarProjectScopeKey({ ...scope, groups: remainingGroups })).toBeNull();
+    expect(
+      filterSidebarProjectScopeKeysByEnvironment({
+        ...scope,
+        groups: remainingGroups,
+        keys: persistedKeys,
+      }),
+    ).toEqual(["unloaded-project"]);
+    expect(
+      filterSidebarProjectScopeKeysByEnvironment({
+        groups: remainingGroups,
+        keys: persistedKeys,
+        previousExcludedEnvironmentIds: scope.excludedEnvironmentIds,
+        excludedEnvironmentIds: new Set([
+          remoteEnvironmentId,
+          EnvironmentId.make("unrelated-environment"),
+        ]),
+      }),
+    ).toEqual(persistedKeys);
+    expect(
+      filterSidebarProjectScopeKeysByEnvironment({
+        groups: remainingGroups,
+        keys: persistedKeys,
+        previousExcludedEnvironmentIds: scope.excludedEnvironmentIds,
+        excludedEnvironmentIds: new Set(),
+      }),
+    ).toEqual(persistedKeys);
+    expect(
+      resolveSidebarProjectScopeKey({ groups: remainingGroups, key, canClearMissingScope: true }),
+    ).toBe(key);
+    expect(
+      resolveSidebarProjectScopeKey({
+        ...scope,
+        groups: remainingGroups,
+        excludedEnvironmentIds: new Set(),
+      }),
+    ).toBe(key);
+  });
+
+  it("preserves suspended and unloaded scopes when toggling another project", () => {
+    const remote = makeProject({ environmentId: remoteEnvironmentId, repositoryIdentity });
+    const local = makeProject({ id: ProjectId.make("other-project"), workspaceRoot: "/other" });
+    const groups = buildSidebarProjectSnapshots({
+      projects: [remote, local],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+    const suspendedKey = groups.find(
+      (group) => group.environmentId === remoteEnvironmentId,
+    )!.projectKey;
+    const key = groups.find((group) => group.environmentId === primaryEnvironmentId)!.projectKey;
+    const savedKeys = [suspendedKey, "unloaded-project"];
+    const input = {
+      groups,
+      key,
+      settings: defaultGroupingSettings,
+      excludedEnvironmentIds: new Set([remoteEnvironmentId]),
+    };
+    const selectedKeys = toggleSidebarProjectScopeKey({
+      ...input,
+      keys: savedKeys,
+      activeKeys: [],
+    });
+    expect(selectedKeys).toEqual([...savedKeys, key]);
+    expect(
+      toggleSidebarProjectScopeKey({ ...input, keys: selectedKeys, activeKeys: [key] }),
+    ).toEqual(savedKeys);
   });
 
   it("dedupes stale project rows with the same environment and workspace path", () => {
@@ -277,6 +391,32 @@ describe("environment grouping", () => {
       environmentId: primaryEnvironmentId,
       id: fallbackPrimary.id,
     });
+    const filtered = buildSidebarProjectPickerEntries({
+      groups,
+      preferredProjectRef: null,
+      excludedEnvironmentIds: new Set([primaryEnvironmentId]),
+    });
+    expect(
+      filtered.find(
+        (entry) => entry.group.projectKey === destinationRepositoryIdentity.canonicalKey,
+      )?.targetProject,
+    ).toMatchObject({ environmentId: remoteEnvironmentId, id: destinationRemote.id });
+    expect(filtered.some((entry) => entry.group.displayName === "fallback")).toBe(false);
+    expect(
+      buildSidebarProjectPickerEntries({
+        groups,
+        preferredProjectRef: null,
+        excludedEnvironmentIds: new Set([remoteEnvironmentId]),
+      }).find((entry) => entry.group.projectKey === destinationRepositoryIdentity.canonicalKey)
+        ?.targetProject,
+    ).toMatchObject({ environmentId: primaryEnvironmentId, id: destinationPrimary.id });
+    expect(
+      buildSidebarProjectPickerEntries({
+        groups,
+        preferredProjectRef: null,
+        excludedEnvironmentIds: new Set([primaryEnvironmentId, remoteEnvironmentId]),
+      }),
+    ).toEqual([]);
   });
 
   it("puts the preferred project after pinned projects", () => {

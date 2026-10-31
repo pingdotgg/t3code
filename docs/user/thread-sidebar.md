@@ -55,6 +55,17 @@ in a new thread's model picker to add or remove them. A regular click returns to
 single model. Choose a base branch and send. Each selection starts a separate thread
 and worktree while you stay in the new thread composer. This requires a Git project.
 
+## Filter the thread list
+
+On web and desktop, open the filter beside Search to choose a project. Expand
+**All environments** at the bottom to select one or more environments. The
+project list and threads follow both filters, including drafts and sidebar search.
+Collapsing the environment choices keeps the filter active; **All environments**
+restores every environment. Environment choices last until you reload the client,
+and newly connected environments are shown by default.
+If you deselect every environment for the selected project, the project filter
+resets to **All projects**.
+
 ## Pin and reorder threads
 
 Pin a thread from its menu to keep it above your active work.

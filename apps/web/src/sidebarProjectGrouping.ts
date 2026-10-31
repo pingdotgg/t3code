@@ -73,6 +73,7 @@ export function resolveSidebarProjectScopeKey(input: {
   readonly key: string | null;
   readonly settings?: ProjectGroupingSettings;
   readonly canClearMissingScope?: boolean;
+  readonly excludedEnvironmentIds?: ReadonlySet<EnvironmentId>;
 }): string | null {
   if (input.key === null) return null;
   const group =
@@ -83,6 +84,14 @@ export function resolveSidebarProjectScopeKey(input: {
         resolveScratchProjectScopeKey(input.key, candidate.memberProjects, input.settings) ===
           candidate.projectKey,
     );
+  const excludedIds = input.excludedEnvironmentIds;
+  if (
+    group &&
+    excludedIds &&
+    group.memberProjectRefs.every((ref) => excludedIds.has(ref.environmentId))
+  ) {
+    return null;
+  }
   return group?.projectKey ?? (input.canClearMissingScope ? null : input.key);
 }
 
@@ -91,10 +100,41 @@ export function resolveSidebarProjectScopeKeys(input: {
   readonly keys: ReadonlyArray<string>;
   readonly settings?: ProjectGroupingSettings;
   readonly canClearMissingScope?: boolean;
+  readonly excludedEnvironmentIds?: ReadonlySet<EnvironmentId>;
 }): string[] {
   return [
     ...new Set(input.keys.flatMap((key) => resolveSidebarProjectScopeKey({ ...input, key }) ?? [])),
   ];
+}
+
+export function filterSidebarProjectScopeKeysByEnvironment(input: {
+  readonly groups: ReadonlyArray<SidebarProjectSnapshot>;
+  readonly keys: readonly string[];
+  readonly settings?: ProjectGroupingSettings;
+  readonly previousExcludedEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly excludedEnvironmentIds: ReadonlySet<EnvironmentId>;
+}): string[] {
+  return input.keys.filter(
+    (key) =>
+      resolveSidebarProjectScopeKey({
+        ...input,
+        key,
+        excludedEnvironmentIds: input.previousExcludedEnvironmentIds,
+      }) === null || resolveSidebarProjectScopeKey({ ...input, key }) !== null,
+  );
+}
+
+export function toggleSidebarProjectScopeKey(input: {
+  readonly groups: ReadonlyArray<SidebarProjectSnapshot>;
+  readonly keys: readonly string[];
+  readonly activeKeys: readonly string[];
+  readonly key: string;
+  readonly settings?: ProjectGroupingSettings;
+  readonly excludedEnvironmentIds: ReadonlySet<EnvironmentId>;
+}): string[] {
+  return input.activeKeys.includes(input.key)
+    ? input.keys.filter((key) => resolveSidebarProjectScopeKey({ ...input, key }) !== input.key)
+    : [...new Set([...input.keys, input.key])];
 }
 
 export function buildPhysicalToLogicalProjectKeyMap(input: {
@@ -188,32 +228,38 @@ export function buildSidebarProjectSnapshots(input: {
 export function buildSidebarProjectPickerEntries(input: {
   groups: ReadonlyArray<SidebarProjectSnapshot>;
   preferredProjectRef: ScopedProjectRef | null;
+  excludedEnvironmentIds?: ReadonlySet<EnvironmentId>;
 }) {
   const preferredProjectRef = input.preferredProjectRef;
   const entries = input.groups.flatMap((group): SidebarProjectPickerEntry[] => {
+    const excludedIds = input.excludedEnvironmentIds;
+    const memberProjects = excludedIds
+      ? group.memberProjects.filter((project) => !excludedIds.has(project.environmentId))
+      : group.memberProjects;
     const isPreferred = preferredProjectRef
-      ? group.memberProjectRefs.some(
+      ? !excludedIds?.has(preferredProjectRef.environmentId) &&
+        group.memberProjectRefs.some(
           (projectRef) =>
             projectRef.environmentId === preferredProjectRef.environmentId &&
             projectRef.projectId === preferredProjectRef.projectId,
         )
       : false;
     const preferredProject = preferredProjectRef
-      ? (group.memberProjects.find(
+      ? (memberProjects.find(
           (project) =>
             project.environmentId === preferredProjectRef.environmentId &&
             project.id === preferredProjectRef.projectId,
         ) ??
-        group.memberProjects.find(
+        memberProjects.find(
           (project) => project.environmentId === preferredProjectRef.environmentId,
         ))
       : null;
     const targetProject =
       preferredProject ??
-      group.memberProjects.find(
+      memberProjects.find(
         (project) => project.environmentId === group.environmentId && project.id === group.id,
       ) ??
-      group.memberProjects[0];
+      memberProjects[0];
     if (!targetProject) return [];
 
     return [{ group, targetProject, isPreferred }];
