@@ -702,7 +702,7 @@ it.effect(
       const expectedSettings = [duringDiscovery, latestSettings].map(
         ServerSettings.redactServerSettingsForClient,
       );
-      const expectedKeybindings = [duringAck, latestKeybindings];
+      const expectedKeybindings = [duringAck.keybindings, latestKeybindings.keybindings];
       // The two sources can interleave, but each must retain its own publication order.
       for (let i = 0; i < 4; i++) {
         const event = yield* Queue.take(responses);
