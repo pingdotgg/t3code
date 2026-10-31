@@ -26,6 +26,7 @@ function setup({ sent = 0, writable = true, alreadyStarred = false } = {}) {
   starred.duringCheck = () => {};
   const store = new Map([["t3code:github-star-prompt:sent", String(sent)]]);
   vi.stubGlobal("window", {
+    addEventListener: vi.fn(),
     localStorage: {
       getItem: (key: string) => store.get(key) ?? null,
       setItem: (key: string, value: string) => {

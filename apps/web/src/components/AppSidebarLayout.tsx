@@ -52,9 +52,14 @@ import {
 import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import ThreadSidebar from "./Sidebar";
-import { isAppModalPage } from "./sidebar/mainAppLocation";
+import { getMainAppHref, isAppModalPage } from "./sidebar/mainAppLocation";
+import { selectFocusedTab } from "../layout/layoutModel";
+import { useLayoutStore } from "../layout/layoutStore";
+import { isLayoutDragActive } from "../layout/layoutDrag";
+import { isModalDialogOpen } from "../lib/modalDialog";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
+import { WorkspacePlane } from "../layout/WorkspacePlane";
 import { ChromeChannelArt, useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
 import {
   clampThreadSidebarWidth,
@@ -220,10 +225,26 @@ function registerPullRequestsEscapeCommand(router: AnyRouter): () => void {
     {
       observe: (event, consumed) => {
         if (consumed || event.repeat || event.isComposing || event.key !== "Escape") return;
-        if (router.state.location.pathname !== "/pull-requests") return;
+        if (
+          router.state.location.pathname !== "/pull-requests" ||
+          isCommandPaletteOpen() ||
+          isModalDialogOpen() ||
+          isLayoutDragActive()
+        )
+          return;
+        const inPane = router.state.location.search.pane === 1;
+        if (
+          inPane &&
+          selectFocusedTab(useLayoutStore.getState().layout)?.content.kind !== "pull-requests"
+        )
+          return;
         event.preventDefault();
         const activeElement = document.activeElement;
         if (activeElement instanceof HTMLElement) activeElement.blur();
+        if (!inPane) {
+          void router.navigate({ href: getMainAppHref() ?? "/" });
+          return;
+        }
         if (router.state.location.state.__TSR_index !== 0) {
           window.history.back();
           return;
@@ -318,7 +339,7 @@ function registerAppShellCommands(router: AnyRouter, shellElement: Element): () 
     registerPullRequestsEscapeCommand(router),
     registerMenuAction("open-settings", () => {
       if (!/^\/settings(\/|$)/.test(router.state.location.pathname))
-        void router.navigate({ to: "/settings" });
+        void router.navigate({ to: "/settings", search: { pane: undefined } });
     }),
   ];
   return () => {
@@ -349,13 +370,19 @@ function SidebarControl() {
       ) {
         return;
       }
+      const composer =
+        event.target instanceof HTMLElement
+          ? event.target.closest('[data-composer-rich-text="true"]')
+          : null;
+      const selection = window.getSelection();
       if (
-        isRichTextBoldShortcut(event, window.getSelection()) &&
-        event.target instanceof HTMLElement &&
-        event.target.closest('[data-composer-rich-text="true"]')
+        isRichTextBoldShortcut(event, selection) &&
+        composer &&
+        selection &&
+        composer.contains(selection.anchorNode)
       ) {
-        // The rich-text composer claims Mod+B only to bold selected text;
-        // the toggle stays available everywhere else.
+        // The rich-text composer claims Mod+B to bold text selected in it;
+        // with just a caret, and everywhere else, it toggles the sidebar.
         return;
       }
       if (
@@ -595,7 +622,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           )}
           <SidebarRail onDoubleClick={resetSidebarWidth} />
         </Sidebar>
-        {children}
+        <WorkspacePlane>{children}</WorkspacePlane>
         <BackgroundThreadAnnouncer />
         {isElectron ? (
           // The chrome strip above the inset pane moves the window like the

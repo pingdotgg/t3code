@@ -338,7 +338,9 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       });
 
       const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
-      assert.isFalse(persisted.some((entry) => entry.command === "terminal.toggle"));
+      assert.isFalse(
+        persisted.some((entry) => entry.command === "terminal.toggle" && entry.key === "mod+j"),
+      );
       assert.isTrue(persisted.some((entry) => entry.command === "script.custom-action.run"));
 
       assert.isTrue(
@@ -352,6 +354,38 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       ),
     );
   });
+
+  it.effect("drops a retired default so its replacement takes the key", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+d", command: "diff.toggle", when: "!terminalFocus" },
+        { key: "mod+shift+d", command: "diff.toggle" },
+        { key: "mod+w", command: "rightPanel.close", when: "(!terminalFocus)" },
+      ]);
+
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings.Keybindings;
+        yield* keybindings.syncDefaultKeybindingsOnStartup;
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.isFalse(
+        persisted.some((entry) => entry.command === "diff.toggle" && entry.key === "mod+d"),
+      );
+      assert.isTrue(
+        persisted.some((entry) => entry.command === "diff.toggle" && entry.key === "mod+shift+d"),
+      );
+      assert.isTrue(
+        persisted.some((entry) => entry.command === "layout.splitRight" && entry.key === "mod+d"),
+      );
+      assert.deepInclude(persisted, {
+        key: "mod+w",
+        command: "rightPanel.close",
+        when: "(!terminalFocus)",
+      });
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
 
   it.effect("appends additional custom keybindings for the same command", () =>
     Effect.gen(function* () {
