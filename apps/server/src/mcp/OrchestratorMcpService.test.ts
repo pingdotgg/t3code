@@ -2246,6 +2246,12 @@ describe("OrchestratorMcpService provider resolution", () => {
           ],
         },
       };
+      const fallbackProvider = providerSnapshot({
+        instanceId: fallbackInstanceId,
+        driver: ProviderDriverKind.make("claudeAgent"),
+        model: fallbackModelSelection.model,
+      });
+      const providers = [exhaustedProvider, fallbackProvider];
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(ThreadManagementService.ThreadManagementService)({
@@ -2283,14 +2289,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             ),
         }),
         ServerSettings.layerTest({ fallbackModelSelection }),
-        providerRegistryLayer([
-          exhaustedProvider,
-          providerSnapshot({
-            instanceId: fallbackInstanceId,
-            driver: ProviderDriverKind.make("claudeAgent"),
-            model: fallbackModelSelection.model,
-          }),
-        ]),
+        providerRegistryLayer(providers),
         adapterRegistryLayer([codexInstanceId, fallbackInstanceId]),
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
@@ -2300,6 +2299,7 @@ describe("OrchestratorMcpService provider resolution", () => {
 
       yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const settings = yield* ServerSettings.ServerSettingsService;
         const capabilities = yield* service.capabilities(scope);
         assert.deepEqual(capabilities.fallbackModelSelection, {
           providerInstanceId: fallbackInstanceId,
@@ -2346,6 +2346,64 @@ describe("OrchestratorMcpService provider resolution", () => {
         });
         assert.deepEqual(selections[3], { instanceId: codexInstanceId, model: "gpt-5.5" });
 
+        const unusableFallbacks = [
+          {
+            name: "missing-model",
+            provider: {
+              ...fallbackProvider,
+              models: [
+                {
+                  slug: "different-model",
+                  name: "Different model",
+                  isCustom: false,
+                  capabilities: null,
+                },
+              ],
+            },
+          },
+          {
+            name: "invalid-options",
+            provider: {
+              ...fallbackProvider,
+              models: [
+                {
+                  slug: fallbackModelSelection.model,
+                  name: fallbackModelSelection.model,
+                  isCustom: false,
+                  capabilities: {
+                    optionDescriptors: [
+                      {
+                        id: "effort",
+                        label: "Effort",
+                        type: "select",
+                        options: [
+                          { id: "low", label: "Low" },
+                          { id: "high", label: "High" },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+          { name: "constrained-provider", provider: { ...fallbackProvider, installed: false } },
+        ] satisfies ReadonlyArray<{ name: string; provider: ServerProvider }>;
+        for (const row of unusableFallbacks) {
+          providers[1] = row.provider;
+          assert.isFalse((yield* service.capabilities(scope)).fallbackAppliesToInherited);
+          yield* service.delegateTask(scope, {
+            task: "Summarize the diff.",
+            mode: "async",
+            clientRequestId: `unusable-fallback-${row.name}`,
+          });
+          const dispatched = (yield* Ref.get(dispatches)).at(-1) as {
+            readonly modelSelection: ModelSelection;
+          };
+          assert.deepEqual(dispatched.modelSelection, parentModelSelection);
+        }
+        providers[1] = fallbackProvider;
+
         const original = commands[0] as { readonly commandId: CommandId };
         accepted = true;
         projectedTask = {
@@ -2355,6 +2413,8 @@ describe("OrchestratorMcpService provider resolution", () => {
           driver: ProviderDriverKind.make("claudeAgent"),
           model: fallbackModelSelection.model,
         };
+        yield* settings.updateSettings({ fallbackModelSelection: null });
+        providers.splice(1, 1);
         yield* service.delegateTask(scope, {
           task: "Summarize the diff.",
           mode: "async",
@@ -2366,7 +2426,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.equal(retried.modelSelection.instanceId, fallbackInstanceId);
         assert.equal(retried.modelSelection.model, fallbackModelSelection.model);
         assert.deepEqual(retried.modelSelection, fallbackModelSelection);
-      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provideMerge(dependencies))));
     }),
   );
 

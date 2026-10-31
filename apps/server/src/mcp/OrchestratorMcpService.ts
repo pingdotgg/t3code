@@ -1310,6 +1310,21 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(threadManagementFailure));
 
   const resolveTargetRechecking = (input: Parameters<typeof resolveTarget>[0]) => {
+    // Accepted receipts replay committed targets without starting provider work.
+    if (
+      input.skipProjectEnablementFilter === true &&
+      input.target?.providerInstanceId !== undefined &&
+      input.target.model !== undefined
+    ) {
+      return Effect.succeed({
+        modelSelection: {
+          instanceId: input.target.providerInstanceId,
+          model: input.target.model,
+          ...(input.target.options === undefined ? {} : { options: input.target.options }),
+        },
+        supportedRuntimeModes: undefined,
+      } satisfies ResolvedTarget);
+    }
     const instanceId =
       input.target?.providerInstanceId ??
       (input.target?.driverKind === undefined
