@@ -9,7 +9,7 @@ import { PlusIcon, ScaleIcon } from "lucide-react";
 import { memo } from "react";
 
 import { ADD_TO_MACHINE_LABEL_CLASS, type EnvironmentOption } from "./BranchToolbar.logic";
-import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { EnvironmentBadgeIcon } from "./EnvironmentBadgeIcon";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
   Select,
@@ -71,7 +71,8 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
         className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 border border-transparent px-1.75 font-normal text-muted-foreground/70 text-sm sm:h-6 sm:text-xs"
         data-composer-context-control
       >
-        <EnvironmentMachineIcon
+        <EnvironmentBadgeIcon
+          environmentId={environmentId}
           kind={activeEnvironment?.machine ?? "server"}
           className="size-3 shrink-0"
         />
@@ -116,7 +117,8 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           {autoEnvironmentLabel ? (
             <ScaleIcon className="size-3 shrink-0" aria-hidden="true" />
           ) : (
-            <EnvironmentMachineIcon
+            <EnvironmentBadgeIcon
+              environmentId={environmentId}
               kind={activeEnvironment?.machine ?? "server"}
               className="size-3 shrink-0"
             />
@@ -153,7 +155,11 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
               disabled={onEnvironmentChange === undefined && env.environmentId !== environmentId}
             >
               <span className="inline-flex items-center gap-1.5">
-                <EnvironmentMachineIcon kind={env.machine} className="size-3" />
+                <EnvironmentBadgeIcon
+                  environmentId={env.environmentId}
+                  kind={env.machine}
+                  className="size-3"
+                />
                 {env.label}
               </span>
             </SelectItem>
