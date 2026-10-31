@@ -5,10 +5,23 @@ import {
   deriveLayout,
   deriveThreadFeedInitialContentInset,
   deriveThreadFeedTopGeometry,
+  deriveThreadArrangementSizing,
   deriveThreadWorkLogSizing,
   deriveWorkspacePaneLayout,
   isPrimarySidebarPinned,
 } from "./layout";
+
+describe("thread arrangement text sizing", () => {
+  it("fits two title lines and section labels with combined app and system text scaling", () => {
+    const sizing = deriveThreadArrangementSizing({ baseFontSize: 22, fontScale: 1.3 });
+    expect(sizing.rowHeight).toBeGreaterThanOrEqual(2 * 32 * 1.3 + 10);
+    expect(sizing.headerHeight).toBeGreaterThanOrEqual(26 * 1.3 + 24);
+    expect(deriveThreadArrangementSizing({ baseFontSize: 16, fontScale: 1 })).toEqual({
+      rowHeight: 56,
+      headerHeight: 48,
+    });
+  });
+});
 
 describe("thread work-log text sizing", () => {
   it.each([
@@ -50,42 +63,72 @@ describe("deriveThreadFeedInitialContentInset", () => {
   });
 });
 
-describe("deriveThreadFeedTopGeometry", () => {
-  it("keeps the first row and an anchored message below a strip under an opaque header", () => {
-    expect(
-      deriveThreadFeedTopGeometry({
-        usesNativeAutomaticInsets: false,
-        headerInset: 0,
-        topOverlayInset: 48,
-      }),
-    ).toEqual({ spacerHeight: 48, anchorTopInset: 48 });
+describe("native workspace sizing", () => {
+  it.each([
+    { width: 669, height: 951, hasHinge: true, nativeWorkspace: true, overlay: true },
+    { width: 951, height: 669, hasHinge: true, nativeWorkspace: true, overlay: false },
+    { width: 669, height: 951, hasHinge: false, nativeWorkspace: true, overlay: false },
+    { width: 669, height: 951, hasHinge: true, nativeWorkspace: false, overlay: false },
+  ])(
+    "overlays only a native unfolded portrait Duo sidebar: %j",
+    ({ overlay, nativeWorkspace, ...size }) => {
+      const nativeMetrics = {
+        ...size,
+        horizontalSizeClass: "regular" as const,
+        verticalBarEdge: "none" as const,
+        safeArea: { top: 24, bottom: 20, left: 0, right: 0 },
+        reservedRegions: [],
+      };
+      const layout = deriveLayout({ ...size, nativeMetrics, nativeWorkspace });
+      expect(layout.primarySidebarOverlaysContent).toBe(overlay);
+      for (const primarySidebarPreferredVisible of [true, false]) {
+        expect(
+          deriveWorkspacePaneLayout({
+            layout,
+            viewportWidth: size.width,
+            primarySidebarPreferredVisible,
+            auxiliaryPanePreferredVisible: false,
+          }).contentPaneWidth,
+        ).toBe(
+          !overlay && primarySidebarPreferredVisible
+            ? size.width - (layout.listPaneWidth ?? 0)
+            : size.width,
+        );
+      }
+    },
+  );
+
+  it("keeps the detail mounted in a narrow iPad window while UIKit still has two columns", () => {
+    const nativeMetrics = {
+      width: 715,
+      height: 1013.5,
+      hasHinge: false,
+      horizontalSizeClass: "regular" as const,
+      verticalBarEdge: "none" as const,
+      safeArea: { top: 32, bottom: 20, left: 0, right: 0 },
+      reservedRegions: [],
+    };
+    expect(deriveLayout({ ...nativeMetrics, nativeMetrics, nativeWorkspace: true })).toMatchObject({
+      usesSplitView: true,
+      listPaneWidth: 280,
+    });
   });
 
-  it("adds only the strip to content under a glass header, whose inset UIKit applies", () => {
+  it.each([
+    { width: 600, horizontalSizeClass: "regular" as const, split: true },
+    { width: 599, horizontalSizeClass: "regular" as const, split: false },
+    { width: 715, horizontalSizeClass: "compact" as const, split: false },
+  ])("respects UIKit collapse and native column minimums: %j", ({ split, ...size }) => {
+    const nativeMetrics = {
+      ...size,
+      height: 800,
+      verticalBarEdge: "none" as const,
+      safeArea: { top: 32, bottom: 20, left: 0, right: 0 },
+      reservedRegions: [],
+    };
     expect(
-      deriveThreadFeedTopGeometry({
-        usesNativeAutomaticInsets: true,
-        headerInset: 106,
-        topOverlayInset: 44,
-      }),
-    ).toEqual({ spacerHeight: 44, anchorTopInset: 150 });
-  });
-
-  it("leaves the feed where it was when nothing floats over it", () => {
-    expect(
-      deriveThreadFeedTopGeometry({
-        usesNativeAutomaticInsets: true,
-        headerInset: 106,
-        topOverlayInset: 0,
-      }),
-    ).toEqual({ spacerHeight: 0, anchorTopInset: 106 });
-    expect(
-      deriveThreadFeedTopGeometry({
-        usesNativeAutomaticInsets: false,
-        headerInset: 0,
-        topOverlayInset: 0,
-      }),
-    ).toEqual({ spacerHeight: 0, anchorTopInset: 0 });
+      deriveLayout({ ...nativeMetrics, nativeMetrics, nativeWorkspace: true }).usesSplitView,
+    ).toBe(split);
   });
 });
 
@@ -99,6 +142,26 @@ describe("isPrimarySidebarPinned", () => {
 });
 
 describe("deriveWorkspacePaneLayout", () => {
+  it("lets UIKit keep the sidebar independent of the inspector in landscape", () => {
+    const layout = deriveLayout({ width: 1_194, height: 834 });
+    for (const primarySidebarPreferredVisible of [true, false]) {
+      expect(
+        deriveWorkspacePaneLayout({
+          layout,
+          viewportWidth: 1_194,
+          nativeWorkspace: true,
+          primarySidebarPreferredVisible,
+          auxiliaryPanePreferredVisible: true,
+          auxiliaryPaneRole: "inspector",
+        }),
+      ).toMatchObject({
+        primarySidebarVisible: primarySidebarPreferredVisible,
+        primarySidebarSuppressedByAuxiliary: false,
+        auxiliaryPaneVisible: true,
+      });
+    }
+  });
+
   it("keeps an explicitly hidden thread sidebar hidden when the file inspector is visible", () => {
     const layout = deriveLayout({ width: 1_024, height: 1_366 });
 
@@ -136,5 +199,44 @@ describe("alignListPaneToHinge", () => {
     };
     expect(alignListPaneToHinge(narrowList)).toBe(layout);
     expect(alignListPaneToHinge(narrowDetail)).toBe(layout);
+  });
+});
+
+describe("deriveThreadFeedTopGeometry", () => {
+  it("keeps the first row and an anchored message below a strip under an opaque header", () => {
+    expect(
+      deriveThreadFeedTopGeometry({
+        usesNativeAutomaticInsets: false,
+        headerInset: 0,
+        topOverlayInset: 48,
+      }),
+    ).toEqual({ spacerHeight: 48, anchorTopInset: 48 });
+  });
+
+  it("adds only the strip to content under a glass header, whose inset UIKit applies", () => {
+    expect(
+      deriveThreadFeedTopGeometry({
+        usesNativeAutomaticInsets: true,
+        headerInset: 106,
+        topOverlayInset: 44,
+      }),
+    ).toEqual({ spacerHeight: 44, anchorTopInset: 150 });
+  });
+
+  it("leaves the feed where it was when nothing floats over it", () => {
+    expect(
+      deriveThreadFeedTopGeometry({
+        usesNativeAutomaticInsets: true,
+        headerInset: 106,
+        topOverlayInset: 0,
+      }),
+    ).toEqual({ spacerHeight: 0, anchorTopInset: 106 });
+    expect(
+      deriveThreadFeedTopGeometry({
+        usesNativeAutomaticInsets: false,
+        headerInset: 0,
+        topOverlayInset: 0,
+      }),
+    ).toEqual({ spacerHeight: 0, anchorTopInset: 0 });
   });
 });

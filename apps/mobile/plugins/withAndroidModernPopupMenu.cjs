@@ -87,16 +87,14 @@ function withPopupMenuStyles(config) {
         "textAppearanceSmallPopupMenu",
         "@style/AppPopupMenu.TextAppearance",
       );
-      // Submenu popups show their parent item as a header row that reads a
-      // separate theme attribute, so it needs the same themed text color.
+      // Submenu headers read a separate text appearance.
       assignStyleItem(
         appTheme,
         "textAppearancePopupMenuHeader",
         "@style/AppPopupMenu.HeaderTextAppearance",
       );
       assignStyleItem(appTheme, "android:listMenuViewStyle", "@style/AppPopupMenuListMenuView");
-      // Both framework and AppCompat attrs are set since the popup may inflate either CheckBox
-      // flavor.
+      // Popups may inflate framework or AppCompat CheckBoxes.
       assignStyleItem(appTheme, "android:checkboxStyle", "@style/AppPopupMenuCheckBox");
       assignStyleItem(appTheme, "checkboxStyle", "@style/AppPopupMenuCheckBoxCompat");
     }
@@ -140,8 +138,7 @@ function withPopupMenuStyles(config) {
           { _: "@font/xml_dm_sans_regular", $: { name: "android:fontFamily" } },
         ],
       },
-      // The framework default (Widget.Material.ListMenuView) only carries
-      // subMenuArrow, so replacing the style wholesale is safe.
+      // The framework default only carries subMenuArrow.
       {
         $: { name: "AppPopupMenuListMenuView" },
         item: [{ _: "@drawable/popup_menu_submenu_arrow", $: { name: "android:subMenuArrow" } }],
