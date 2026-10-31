@@ -1,19 +1,22 @@
 import { useAtomValue } from "@effect/atom-react";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  resolveProviderInstanceDisplayName,
+  shouldShowInstanceBadge,
+} from "@t3tools/client-runtime/state/provider-instance-display";
 import { summarizeSubagentStatuses } from "@t3tools/client-runtime/state/subagent-display";
 import { isActiveSubagentStatus } from "@t3tools/client-runtime/state/subagentRuntime";
 import type {
   EnvironmentId,
   OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
-  ServerProvider,
 } from "@t3tools/contracts";
 import { Pressable, View, type ColorValue } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { ProviderIcon } from "../../components/ProviderIcon";
+import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
 import { serverEnvironment } from "../../state/server";
@@ -21,6 +24,7 @@ import { environmentThreadDetails } from "../../state/threads";
 import { subagentCardElapsed } from "./subagent-card-presentation";
 import { useEnvironments } from "../../state/environments";
 import { useServerConfigs } from "../../state/entities";
+import { resolveBadgeProviders, type BadgeProvider } from "./thread-provider-instance";
 import { SubagentRow } from "./SubagentRow";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 import { subagentThreadTarget } from "./threadAgentsPresentation";
@@ -42,12 +46,15 @@ function SubagentElapsed({ agents }: { readonly agents: ReadonlyArray<AgentTimin
 
 function SubagentAvatar(props: {
   readonly item: SubagentItem;
-  readonly provider: ServerProvider | undefined;
+  readonly providers: ReadonlyArray<BadgeProvider>;
+  readonly surfaceColor: string;
 }) {
+  const provider = props.providers.find(
+    (candidate) => candidate.instanceId === props.item.providerInstanceId,
+  );
   // A remote task's own driver is only a "remote" label.
   const driver =
-    props.provider?.driver ??
-    (props.item.remoteChild === undefined ? props.item.driver : undefined);
+    provider?.driver ?? (props.item.remoteChild === undefined ? props.item.driver : undefined);
   return (
     <View
       accessible={false}
@@ -55,8 +62,18 @@ function SubagentAvatar(props: {
     >
       {driver === undefined ? (
         <SymbolView name="sparkles" size={13} tintColorClassName="accent-icon-muted" />
+      ) : provider !== undefined && shouldShowInstanceBadge(provider, props.providers) ? (
+        <ProviderInstanceIcon
+          provider={driver}
+          iconUrl={provider.iconUrl}
+          size={15}
+          displayName={resolveProviderInstanceDisplayName(provider)}
+          accentColor={provider.accentColor}
+          showBadge
+          surfaceColor={props.surfaceColor}
+        />
       ) : (
-        <ProviderIcon provider={driver} iconUrl={props.provider?.iconUrl} size={15} />
+        <ProviderIcon provider={driver} iconUrl={provider?.iconUrl} size={15} />
       )}
     </View>
   );
@@ -68,6 +85,7 @@ export function ThreadSubagentGroup(props: {
   readonly anchorKey: string;
   readonly expandedRows: Readonly<Record<string, boolean>>;
   readonly iconSubtleColor: ColorValue;
+  readonly edgeFadeColor: string;
   readonly onToggleRow: (rowId: string, anchorKey: string) => void;
 }) {
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
@@ -100,11 +118,10 @@ export function ThreadSubagentGroup(props: {
   const expanded = props.expandedRows[props.anchorKey] ?? false;
   const serverConfigs = useServerConfigs();
   // A task in a linked environment runs a provider instance of that environment.
-  const providerOf = (item: SubagentItem) =>
-    (item.remoteChild === undefined
-      ? config
-      : serverConfigs.get(item.remoteChild.environmentId)
-    )?.providers.find((provider) => provider.instanceId === item.providerInstanceId);
+  const providersOf = (item: SubagentItem) =>
+    resolveBadgeProviders(
+      item.remoteChild === undefined ? config : serverConfigs.get(item.remoteChild.environmentId),
+    );
   return (
     <WorkLogBlock>
       {grouped ? (
@@ -117,8 +134,16 @@ export function ThreadSubagentGroup(props: {
         >
           <View className="flex-row items-center">
             {agents.slice(0, 3).map((agent, index) => (
-              <View key={agent.item.id} style={{ marginLeft: index === 0 ? 0 : -7 }}>
-                <SubagentAvatar item={agent.item} provider={providerOf(agent.item)} />
+              // Earlier avatars stack on top so each bottom-right account badge stays visible.
+              <View
+                key={agent.item.id}
+                style={{ marginLeft: index === 0 ? 0 : -7, zIndex: 3 - index }}
+              >
+                <SubagentAvatar
+                  item={agent.item}
+                  providers={providersOf(agent.item)}
+                  surfaceColor={props.edgeFadeColor}
+                />
               </View>
             ))}
             {agents.length > 3 ? (

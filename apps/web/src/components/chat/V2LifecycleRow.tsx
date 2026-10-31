@@ -28,6 +28,7 @@ import {
   type OrchestrationV2Subagent,
   type ProviderInstanceId,
   type ServerProvider,
+  type ServerSettings,
   type ThreadId,
   type EnvironmentId,
   type NodeId,
@@ -47,6 +48,7 @@ import {
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import {
   applyProviderInstanceSettings,
+  deriveProviderEntriesByEnvironment,
   deriveProviderInstanceEntries,
   shouldShowInstanceBadge,
   type ProviderInstanceEntry,
@@ -206,14 +208,18 @@ function SubagentAvatar({
   driver,
   displayName,
   iconUrl,
+  accentColor,
+  showBadge = false,
   status,
   className,
 }: {
   driver?: ProviderDriverKind | undefined;
   displayName?: string | undefined;
   iconUrl?: string | undefined;
+  accentColor?: string | undefined;
+  showBadge?: boolean;
   status?: OrchestrationV2TurnItem["status"] | undefined;
-  className?: string;
+  className?: string | undefined;
 }) {
   return (
     <span
@@ -227,9 +233,12 @@ function SubagentAvatar({
         <ProviderInstanceIcon
           driverKind={driver}
           displayName={displayName ?? driver}
+          accentColor={accentColor}
           acpRegistryIconUrl={iconUrl}
+          showBadge={showBadge}
+          size="compact"
           className="z-auto"
-          iconClassName="size-3.5"
+          indicatorBackground="var(--background)"
         />
       ) : (
         <BotIcon className="size-3.5 text-muted-foreground" />
@@ -237,7 +246,8 @@ function SubagentAvatar({
       {status ? (
         <span
           className={cn(
-            "absolute -right-px -bottom-px size-2 rounded-full ring-2 ring-background",
+            "absolute size-2 rounded-full ring-2 ring-background",
+            showBadge ? "-top-px -left-px" : "-right-px -bottom-px",
             subagentStatusVisual(status).dotClass,
           )}
         />
@@ -246,7 +256,24 @@ function SubagentAvatar({
   );
 }
 
-// Select strings; status pushes replace providers even when avatar fields are unchanged.
+// Same entries and badge rule as the sidebar row.
+function subagentProviderBadge(
+  environmentId: EnvironmentId,
+  providers: ReadonlyArray<ServerProvider> | null | undefined,
+  settings: ServerSettings | null,
+  instanceId: ProviderInstanceId,
+) {
+  const scoped = providers ?? EMPTY_SERVER_PROVIDERS;
+  const entries = deriveProviderEntriesByEnvironment([
+    settings ? [environmentId, scoped, settings] : [environmentId, scoped],
+  ]).get(environmentId);
+  const entry = entries?.get(instanceId);
+  return entry !== undefined && shouldShowInstanceBadge(entry, entries?.values() ?? [])
+    ? entry
+    : undefined;
+}
+
+// Select primitives; status pushes replace providers even when avatar fields are unchanged.
 export function EnvironmentSubagentAvatar({
   environmentId,
   providerInstanceId,
@@ -260,10 +287,11 @@ export function EnvironmentSubagentAvatar({
   /** A task in a linked environment runs a provider instance there; its driver here is only a label. */
   remote?: OrchestrationV2RemoteTaskChild | undefined;
   status?: OrchestrationV2TurnItem["status"] | undefined;
+  className?: string | undefined;
 }) {
-  const providersAtom = serverEnvironment.providersValueAtom(
-    remote?.environmentId ?? environmentId,
-  );
+  const providerEnvironmentId = remote?.environmentId ?? environmentId;
+  const providersAtom = serverEnvironment.providersValueAtom(providerEnvironmentId);
+  const settings = useAtomValue(serverEnvironment.settingsValueAtom(providerEnvironmentId));
   const providerDriver = useAtomValue(
     providersAtom,
     (providers) =>
@@ -279,12 +307,26 @@ export function EnvironmentSubagentAvatar({
     (providers) =>
       providers?.find((provider) => provider.instanceId === providerInstanceId)?.iconUrl,
   );
+  const badgeLabel = useAtomValue(
+    providersAtom,
+    (providers) =>
+      subagentProviderBadge(providerEnvironmentId, providers, settings, providerInstanceId)
+        ?.displayName,
+  );
+  const accentColor = useAtomValue(
+    providersAtom,
+    (providers) =>
+      subagentProviderBadge(providerEnvironmentId, providers, settings, providerInstanceId)
+        ?.accentColor,
+  );
   return (
     <SubagentAvatar
       {...props}
       driver={providerDriver ?? (remote === undefined ? driver : undefined)}
-      displayName={displayName}
+      displayName={badgeLabel ?? displayName}
       iconUrl={iconUrl}
+      accentColor={accentColor}
+      showBadge={badgeLabel !== undefined}
     />
   );
 }
