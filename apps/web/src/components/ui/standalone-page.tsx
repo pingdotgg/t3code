@@ -94,13 +94,15 @@ export function StandaloneCardHeader({
 }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <h1 className="text-title text-strong-foreground">{title}</h1>
-      <p className="text-body text-muted-foreground">{description}</p>
+      <h1 className="text-title [font-size:1.125rem] text-strong-foreground">{title}</h1>
+      <p className="text-body sm:[font-size:0.8125rem] leading-[1.45] text-muted-foreground">
+        {description}
+      </p>
     </div>
   );
 }
 
 /** Dim footnote under the auth card's actions. */
 export function StandaloneCardNote({ children }: { readonly children: ReactNode }) {
-  return <p className="text-meta text-dim-foreground">{children}</p>;
+  return <p className="text-meta leading-[1.45] text-dim-foreground">{children}</p>;
 }
