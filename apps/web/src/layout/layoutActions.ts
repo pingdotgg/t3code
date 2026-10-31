@@ -2,6 +2,9 @@
  * Layout actions shared by the keyboard, the tab menu and the notch buttons.
  */
 import { closeThreadSurface } from "../components/ThreadSurfaceTab";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useClosedViewStore } from "../closedViewStore";
+import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { getLayoutBehavior } from "./layoutBehavior";
 import {
   createLayoutLauncherContent,
@@ -13,6 +16,67 @@ import {
 import type { ThreadRouteTarget } from "../threadRoutes";
 import { useLayoutStore, type LayoutNewTabRequest } from "./layoutStore";
 import type { LauncherSurfaceKind } from "../components/SurfaceLauncher";
+import type { ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
+import { threadlessSurfacesRef } from "../threadlessSurfaces";
+
+/** Remove a parked or discarded thread everywhere, without settling it again. */
+export function closeLayoutThread(threadRef: ScopedThreadRef): void {
+  const matches = (target: ThreadRouteTarget): boolean => {
+    const draft =
+      target.kind === "draft"
+        ? useComposerDraftStore.getState().getDraftSession(target.draftId)
+        : null;
+    const ref =
+      target.kind === "server"
+        ? target.threadRef
+        : draft
+          ? (draft.promotedTo ?? scopeThreadRef(draft.environmentId, draft.threadId))
+          : null;
+    return ref?.environmentId === threadRef.environmentId && ref.threadId === threadRef.threadId;
+  };
+  const store = useLayoutStore.getState();
+  store.closeTabsWhere((tab) =>
+    tab.content.kind === "chat"
+      ? matches(tab.content.target)
+      : tab.content.kind === "surface" &&
+        matches({ kind: "server", threadRef: tab.content.threadRef }),
+  );
+  // The final close leaves a launcher. It must not offer the discarded thread's surfaces.
+  for (const workspace of useLayoutStore.getState().layout.workspaces) {
+    for (const column of workspace.columns) {
+      for (const pane of column.panes) {
+        for (const tab of pane.tabs) {
+          if (
+            tab.content.kind === "launcher" &&
+            tab.content.context &&
+            matches(tab.content.context)
+          ) {
+            store.replaceTabContent(tab.id, createLayoutLauncherContent(null));
+          }
+        }
+      }
+    }
+  }
+}
+
+/** Project removal also clears unsent drafts and surfaces with no chat. */
+export function closeLayoutProject(
+  projectRef: ScopedProjectRef,
+  threadRefs: readonly ScopedThreadRef[] = [],
+): void {
+  for (const threadRef of threadRefs) closeLayoutThread(threadRef);
+  const drafts = useComposerDraftStore.getState();
+  for (const [draftId, draft] of Object.entries(drafts.draftThreadsByThreadKey)) {
+    if (
+      draft.environmentId !== projectRef.environmentId ||
+      draft.projectId !== projectRef.projectId
+    )
+      continue;
+    closeLayoutThread(scopeThreadRef(draft.environmentId, draft.threadId));
+    drafts.clearDraftThread(DraftId.make(draftId));
+  }
+  closeLayoutThread(threadlessSurfacesRef(projectRef.environmentId, projectRef.projectId));
+}
 
 type NewThreadAction = (request: LayoutNewTabRequest) => void;
 let newThreadAction: NewThreadAction | null = null;
@@ -83,11 +147,21 @@ export function splitLayoutTab(tabId: string, side: "right" | "down"): void {
  */
 export function closeLayoutTabByUser(tabId: string, options: { bulk?: boolean } = {}): void {
   const store = useLayoutStore.getState();
-  const tab = findLayoutTab(store.layout, (candidate) => candidate.id === tabId)?.tab;
+  const location = findLayoutTab(store.layout, (candidate) => candidate.id === tabId);
+  const tab = location?.tab;
   // A surface closes through its store, which closes its tab once it is done.
   if (tab?.content.kind === "surface") {
     void closeThreadSurface(tab.content.threadRef, tab.content.surfaceId, options);
     return;
+  }
+  if (location && tab?.content.kind === "chat") {
+    const target = tab.content.target;
+    const draft = target.kind === "draft" ? useComposerDraftStore.getState().getDraftSession(target.draftId) : null;
+    const threadRef = target.kind === "server" ? target.threadRef : draft ? draft.promotedTo ?? scopeThreadRef(draft.environmentId, draft.threadId) : null;
+    if (threadRef) useClosedViewStore.getState().remember({
+      kind: "chat", threadRef, paneId: location.pane.id, index: location.tabIndex,
+      ...(target.kind === "draft" ? { draftId: target.draftId } : {}),
+    });
   }
   store.closeTabByUser(tabId);
 }
