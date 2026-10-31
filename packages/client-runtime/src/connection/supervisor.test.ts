@@ -334,6 +334,22 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
+  it.effect("explicit retry connects while the network still reports offline", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ networkStatus: "offline" });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "offline");
+      yield* supervisor.retryNow;
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+    }),
+  );
+
   it.effect("keeps the latest failure visible throughout the next connection attempt", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({

@@ -1044,7 +1044,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     let replacing = false;
 
     for (;;) {
-      if (yield* Ref.getAndSet(resetRetryState, false)) {
+      const retryRequested = yield* Ref.getAndSet(resetRetryState, false);
+      if (retryRequested) {
         failureCount = 0;
         latestFailure = null;
         pendingRetry = Option.none();
@@ -1058,7 +1059,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         yield* waitForSignal;
         continue;
       }
-      if (currentIntent.network === "offline" && !replacing) {
+      // The platform's offline report can stay wrong after the network is back,
+      // so an explicit retry still tries instead of waiting for it to change.
+      const ignoreOffline = replacing || retryRequested;
+      if (currentIntent.network === "offline" && !ignoreOffline) {
         yield* clearLease;
         yield* setState(offlineState(currentIntent, generation, failureCount + 1, latestFailure));
         const applicationActivated = yield* waitForSignal;
@@ -1071,7 +1075,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       const attempt = failureCount + 1;
       const nextGeneration = generation + 1;
       const outcome: AttemptOutcome = yield* Effect.scoped(
-        runAttempt(attempt, nextGeneration, latestFailure, pendingRetry, replacing),
+        runAttempt(attempt, nextGeneration, latestFailure, pendingRetry, ignoreOffline),
       );
       replacing = false;
       const failedProbe = yield* Ref.getAndSet(probeUnanswered, false);
