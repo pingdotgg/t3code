@@ -3011,45 +3011,76 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* emitSubagentProviderTurnStarted(subagent, pendingTurn);
             }
             if (task.model === null) {
-              yield* client.raw
-                .request("thread/read", { threadId: input.nativeThreadId, includeTurns: false })
-                .pipe(
-                  Effect.flatMap(decodeCodexChildThread),
-                  Effect.map((response): typeof CodexChildSelection.Type | null =>
-                    response.thread.id === input.nativeThreadId && response.thread.model?.trim()
-                      ? {
-                          thread: response.thread,
-                          model: response.thread.model,
-                          reasoningEffort: response.thread.reasoningEffort,
-                        }
-                      : null,
-                  ),
-                  Effect.orElseSucceed(() => null),
-                  Effect.filterOrElse(
-                    (response) => !(response === null),
-                    (_response) =>
-                      client.raw
-                        .request("thread/resume", {
-                          threadId: input.nativeThreadId,
-                          excludeTurns: true,
-                        })
-                        .pipe(Effect.flatMap(decodeCodexChildModel)),
-                  ),
-                  Effect.timeout("5 seconds"),
-                  Effect.flatMap((response) =>
-                    response.thread.id === input.nativeThreadId &&
-                    !subagentSelections.has(input.nativeThreadId)
-                      ? updateSubagentSelection(
-                          input.nativeThreadId,
-                          response.model,
-                          response.reasoningEffort,
-                          response.serviceTier,
-                        )
-                      : Effect.void,
-                  ),
-                  Effect.ignore,
-                  Effect.forkIn(scope),
+              const metadataNeeded = Effect.fn("CodexAdapterV2.childMetadataNeeded")(function* () {
+                const current = (yield* Ref.get(subagentThreads)).get(input.nativeThreadId);
+                return (
+                  current !== undefined &&
+                  !subagentSelections.has(input.nativeThreadId) &&
+                  current.task.status !== "interrupted" &&
+                  current.task.status !== "cancelled" &&
+                  current.task.status !== "failed" &&
+                  !(yield* Ref.get(terminalizedNonCompletedNativeTurns)).has(
+                    subagent.parentContext.nativeTurnId,
+                  )
                 );
+              });
+              yield* Effect.gen(function* () {
+                // Empty rollouts can outlive registration; bound retries to this session's scope.
+                for (let attempt = 0; attempt < 6; attempt++) {
+                  if (!(yield* metadataNeeded())) return;
+                  if (attempt > 0) {
+                    yield* Effect.sleep(`${2 ** (attempt - 1)} seconds`);
+                    if (!(yield* metadataNeeded())) return;
+                  }
+                  const response = yield* client.raw
+                    .request("thread/read", { threadId: input.nativeThreadId, includeTurns: false })
+                    .pipe(
+                      Effect.flatMap(decodeCodexChildThread),
+                      Effect.map((response): typeof CodexChildSelection.Type | null =>
+                        response.thread.id === input.nativeThreadId && response.thread.model?.trim()
+                          ? {
+                              thread: response.thread,
+                              model: response.thread.model,
+                              reasoningEffort: response.thread.reasoningEffort,
+                            }
+                          : null,
+                      ),
+                      Effect.orElseSucceed(() => null),
+                      Effect.filterOrElse(
+                        (response) => response !== null,
+                        () =>
+                          metadataNeeded().pipe(
+                            Effect.flatMap((needed) =>
+                              needed
+                                ? client.raw
+                                    .request("thread/resume", {
+                                      threadId: input.nativeThreadId,
+                                      excludeTurns: true,
+                                    })
+                                    .pipe(Effect.flatMap(decodeCodexChildModel))
+                                : Effect.succeed(null),
+                            ),
+                          ),
+                      ),
+                      Effect.timeout("5 seconds"),
+                      Effect.orElseSucceed(() => null),
+                    );
+                  if (
+                    response !== null &&
+                    response.thread.id === input.nativeThreadId &&
+                    response.model?.trim() &&
+                    (yield* metadataNeeded())
+                  ) {
+                    yield* updateSubagentSelection(
+                      input.nativeThreadId,
+                      response.model,
+                      response.reasoningEffort,
+                      response.serviceTier,
+                    );
+                    return;
+                  }
+                }
+              }).pipe(Effect.forkIn(scope));
             }
           });
 

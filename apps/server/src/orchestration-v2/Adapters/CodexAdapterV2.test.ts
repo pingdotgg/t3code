@@ -6721,6 +6721,132 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("recovers a native child's actual model after transient empty rollout lookups", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const initialLookupFailed = yield* Deferred.make<void>();
+        const requests: Array<string> = [];
+        const harness = yield* makeCodexReplayHarness(
+          resumeSubagentTranscript,
+          undefined,
+          undefined,
+          (threadId, method) =>
+            Effect.gen(function* () {
+              requests.push(method);
+              if (requests.length <= 2) {
+                if (method === "thread/resume") {
+                  yield* Deferred.succeed(initialLookupFailed, undefined);
+                }
+                return yield* new CodexError.CodexAppServerRequestError({
+                  code: -32603,
+                  errorMessage:
+                    method === "thread/read" ? "rollout is empty" : "temporary worktree fault",
+                  method,
+                });
+              }
+              return {
+                thread: { id: threadId, model: "gpt-6-luna", reasoningEffort: "high" },
+                model: "gpt-6-luna",
+                reasoningEffort: "high",
+              };
+            }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-child-metadata-recovery"),
+            text: RESUME_PROMPT,
+          }),
+        );
+        yield* Deferred.await(initialLookupFailed);
+        assert.deepEqual(requests, ["thread/read", "thread/resume"]);
+        assert.isNull(harness.subagentUpdates().at(-1)?.subagent.model);
+        yield* TestClock.adjust("3 minutes");
+        const updates = harness.subagentUpdates();
+        assert.isFalse(
+          updates.some((event) => event.subagent.model === CODEX_TEST_MODEL_SELECTION.model),
+          "the parent's model must never be reported as the child's model",
+        );
+        assert.equal(updates.at(-1)?.subagent.model, "gpt-6-luna");
+        assert.deepEqual(updates.at(-1)?.subagent.modelSelection, {
+          instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+          model: "gpt-6-luna",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("stops native child metadata lookups after interruption", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const lookupStarted = yield* Deferred.make<void>();
+        const releaseLookup = yield* Deferred.make<void>();
+        const childCommandStarted = yield* Deferred.make<void>();
+        const requests: Array<string> = [];
+        const harness = yield* makeCodexReplayHarness(
+          interruptSubagentCommandTranscript,
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === INTERRUPT_CHILD_COMMAND_ITEM &&
+            event.turnItem.status === "running"
+              ? Deferred.succeed(childCommandStarted, undefined)
+              : Effect.void,
+          undefined,
+          (_threadId, method) =>
+            Effect.gen(function* () {
+              requests.push(method);
+              yield* Deferred.succeed(lookupStarted, undefined);
+              yield* Deferred.await(releaseLookup);
+              return yield* new CodexError.CodexAppServerRequestError({
+                code: -32603,
+                errorMessage: "rollout is empty",
+                method,
+              });
+            }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-child-metadata-interrupt"),
+            text: INTERRUPT_PROMPT,
+          }),
+        );
+        yield* Deferred.await(lookupStarted);
+        yield* Deferred.await(childCommandStarted);
+        const providerTurnId = harness.events.find(
+          (event) => event.type === "provider_turn.updated" && event.threadId === harness.threadId,
+        );
+        assert.equal(providerTurnId?.type, "provider_turn.updated");
+        if (providerTurnId?.type !== "provider_turn.updated")
+          return yield* Effect.die("Missing root turn");
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: providerTurnId.providerTurn.id,
+        });
+        yield* harness.awaitTerminal(1);
+        assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "interrupted");
+        const requestsAtInterrupt = [...requests];
+        yield* Deferred.succeed(releaseLookup, undefined);
+        yield* TestClock.adjust("3 minutes");
+        assert.deepEqual(requests, requestsAtInterrupt);
+        assert.isTrue(harness.subagentUpdates().every((event) => event.subagent.model === null));
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["model/rerouted"] as const)(
     "keeps %s child metadata when an older lookup finishes later",
     (method) =>
