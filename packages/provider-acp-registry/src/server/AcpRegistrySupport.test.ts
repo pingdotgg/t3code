@@ -614,6 +614,70 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  it.effect("keeps a prepared binary ready after the registry advances its version", () => {
+    const makeBinaryAgent = (version: string) => ({
+      ...makeAgent({
+        binary: {
+          "linux-x86_64": {
+            archive: `https://registry.test/example-agent-${version}.bin`,
+            cmd: "./bin/example-agent",
+          },
+        },
+      }),
+      version,
+    });
+    let agent = makeBinaryAgent("1.2.3");
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-advance-",
+      });
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+      yield* resolver.prepare({ agentId: agent.id });
+
+      agent = makeBinaryAgent("1.2.4");
+      yield* TestClock.adjust("6 minutes");
+      yield* resolver.search({ query: "example" });
+
+      expect(yield* resolver.inspect(settings())).toMatchObject({
+        status: "ready",
+        distribution: "binary",
+      });
+      const resolved = yield* resolver.resolve(settings(), "/workspace", {});
+      expect(resolved.spawn.command).toContain(
+        "/tools/example-agent/1.2.4/linux-x86_64/bin/example-agent",
+      );
+      expect(yield* fileSystem.readFileString(resolved.spawn.command)).toBe(
+        "#!/bin/sh\necho 1.2.4\n",
+      );
+
+      expect(yield* resolver.uninstallManagedBinary({ agentId: agent.id })).toMatchObject({
+        removed: true,
+      });
+      expect(yield* resolver.inspect(settings())).toMatchObject({ status: "unprepared" });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(
+                request.url === registryUrl
+                  ? makeRegistry(agent)
+                  : `#!/bin/sh\necho ${agent.version}\n`,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
   it.effect(
     "prepares the registry version despite an older PATH binary and permits explicit overrides",
     () => {
