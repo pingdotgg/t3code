@@ -5095,6 +5095,31 @@ body {
   position: relative;
 }
 
+.composer-prompt-body {
+  grid-template-areas: "attachments" "prompt";
+}
+
+/* Reserve only the first line beside the actions. Following lines use the
+   full width, so native wrapping never switches the composer to an empty row. */
+.composer-prompt-body [data-testid="composer-editor"]::before {
+  content: "";
+  float: inline-end;
+  width: calc(var(--composer-actions-width, 100px) + 6px);
+  height: 1lh;
+}
+
+.composer-prompt-body[data-composer-scrolling] {
+  grid-template-areas: "attachments" "prompt" "actions";
+}
+
+[data-composer-scrolling] .composer-prompt-editor {
+  padding-block: 0;
+}
+
+[data-composer-scrolling] [data-chat-composer-actions="right"] {
+  grid-area: actions;
+}
+
 .composer-tiptap p {
   margin: 0;
 }

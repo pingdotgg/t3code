@@ -9,6 +9,7 @@ import {
   ArrowUpIcon,
   CheckIcon,
   ChevronLeftIcon,
+  ChevronDownIcon,
   CornerUpRightIcon,
   ListPlusIcon,
   Minimize2Icon,
@@ -17,6 +18,9 @@ import {
 import { formatContextWindowTokens } from "~/lib/contextWindow";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { useShortcutModifierState } from "../../shortcutModifierState";
+import { Group, GroupSeparator } from "../ui/group";
+import { Menu, MenuTrigger, MenuItem, MenuPopup } from "../ui/menu";
+import { composerFloatingLayerProps } from "./composerEventScope";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -43,6 +47,7 @@ interface ComposerPrimaryActionsProps {
   canSteer?: boolean;
   alternateShortcutLabel?: string | null;
   showPlanFollowUpPrompt: boolean;
+  onImplementPlanInNewThread?: () => void;
   promptHasText: boolean;
   isSendBusy: boolean;
   sendDisabledReason: string | null;
@@ -112,6 +117,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   canSteer = true,
   alternateShortcutLabel = null,
   showPlanFollowUpPrompt,
+  onImplementPlanInNewThread,
   promptHasText,
   isSendBusy,
   sendDisabledReason,
@@ -227,6 +233,32 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     return renderStopGenerationButton(false);
   }
 
+  if (showPlanFollowUpPrompt && onImplementPlanInNewThread) {
+    return (
+      <Group data-chat-composer-implement-actions="true">
+        <Button
+          type="submit"
+          size="sm"
+          variant="default"
+          disabled={isSendBusy || isSendDisabled || isEnvironmentUnavailable}
+        >
+          {isSendBusy ? "Sending…" : promptHasText ? "Refine" : "Implement"}
+        </Button>
+        <GroupSeparator />
+        <Menu>
+          <MenuTrigger
+            disabled={isSendBusy || isSendDisabled || isEnvironmentUnavailable}
+            render={<Button size="icon-sm" variant="default" aria-label="Implementation actions" />}
+          >
+            <ChevronDownIcon />
+          </MenuTrigger>
+          <MenuPopup side="top" align="end" {...composerFloatingLayerProps}>
+            <MenuItem onClick={onImplementPlanInNewThread}>Implement in a new thread</MenuItem>
+          </MenuPopup>
+        </Menu>
+      </Group>
+    );
+  }
   const showResume = canResume && !hasSendableContent && !isEditingQueuedMessage;
 
   const compactTokens =
