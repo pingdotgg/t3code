@@ -66,6 +66,7 @@ function withFakeClaudeEnv<A, E, R>(
     configDirMustBe?: string;
     cwdMustNotBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
+    proxy?: { readonly url: string; readonly apiKey: string };
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
@@ -190,15 +191,16 @@ function withFakeClaudeEnv<A, E, R>(
       config,
       undefined,
       Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
+      input.proxy,
     );
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
 }
 
 it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
-  it.effect(
-    "keeps canonical built-in capabilities when a custom model collides with its alias",
-    () =>
+  it.effect.each([false, true])(
+    "keeps canonical built-in capabilities when a custom model collides with its alias (proxy: %s)",
+    (proxied) =>
       withFakeClaudeEnv(
         {
           output: JSON.stringify({
@@ -207,7 +209,12 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
               body: "Body",
             },
           }),
-          argsMustContain: `--model ${SYNTHETIC_CLAUDE_CAPABLE_MODEL}[expanded] --effort max --settings {"disableAllHooks":true,"fastMode":true}`,
+          argsMustContain: proxied
+            ? '"ANTHROPIC_BASE_URL":"http://proxy.test:8317"'
+            : `--model ${SYNTHETIC_CLAUDE_CAPABLE_MODEL}[expanded] --effort max --settings {"disableAllHooks":true,"fastMode":true}`,
+          ...(proxied
+            ? { proxy: { url: "http://proxy.test:8317", apiKey: "proxy-test-key" } }
+            : {}),
           claudeConfig: { customModels: [SYNTHETIC_CLAUDE_COLLIDING_ALIAS] },
         },
         (textGeneration) =>

@@ -201,6 +201,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       effectiveConfig,
       processEnv,
       modelCatalog,
+      proxy,
     );
 
     // Per-instance capabilities cache: keyed on binary + resolved HOME so

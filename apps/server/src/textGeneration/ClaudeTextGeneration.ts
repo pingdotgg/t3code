@@ -7,6 +7,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { type ClaudeSettings, TextGenerationError } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import type { ProviderProxyRoute } from "@t3tools/provider-core/server/providerProxy";
 
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import {
@@ -31,6 +32,7 @@ import {
 } from "../provider/ClaudeModelCatalog.ts";
 import {
   hasClaudeManagedMcpConfig,
+  claudeProxySettingsEnvironment,
   makeClaudeEnvironment,
 } from "../provider/Drivers/ClaudeHome.ts";
 
@@ -81,6 +83,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
   modelCatalog: Effect.Effect<ClaudeModelCatalog> = Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
+  proxy?: ProviderProxyRoute,
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -171,6 +174,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       fastModeDescriptor?.type === "boolean" ? fastModeDescriptor.currentValue : undefined;
     const settings = {
       disableAllHooks: true,
+      ...(proxy === undefined ? {} : { env: claudeProxySettingsEnvironment(proxy) }),
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
       ...(fastMode ? { fastMode: true } : {}),
       ...(ultracode ? { ultracode: true } : {}),

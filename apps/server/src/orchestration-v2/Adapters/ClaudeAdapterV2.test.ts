@@ -1085,7 +1085,7 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
 
   // regression: #15073 the SDK replaced the --settings launch argument with T3's settings
   it.effect.each([
-    `--settings '{"skillOverrides":{"lint":"off"},"showThinkingSummaries":false}'`,
+    `--settings '{"skillOverrides":{"lint":"off"},"showThinkingSummaries":false,"env":{"OTHER":"kept","ANTHROPIC_BASE_URL":"https://old.example.test"}}'`,
     "--settings user-settings.json",
   ])("merges %s beneath T3's settings", (launchArgs) =>
     Effect.scoped(
@@ -1094,7 +1094,7 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
         const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-settings-" });
         yield* fileSystem.writeFileString(
           NodePath.join(cwd, "user-settings.json"),
-          '{"skillOverrides":{"lint":"off"},"showThinkingSummaries":false}',
+          '{"skillOverrides":{"lint":"off"},"showThinkingSummaries":false,"env":{"OTHER":"kept","ANTHROPIC_BASE_URL":"https://old.example.test"}}',
         );
         const { exit, opened } = yield* startTurnWithLaunchArgs(launchArgs, cwd);
         assert.isTrue(Exit.isSuccess(exit));
@@ -1109,6 +1109,7 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
         assert.deepInclude(routed.opened[0]!.settings, {
           skillOverrides: { lint: "off" },
           env: {
+            OTHER: "kept",
             ANTHROPIC_BASE_URL: proxy.url,
             ANTHROPIC_AUTH_TOKEN: proxy.apiKey,
             ANTHROPIC_API_KEY: "",
