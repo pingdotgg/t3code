@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  type FilesystemBrowseEntry,
   type PreviewEvent,
   type TerminalAttachInput,
   type TerminalAttachStreamEvent,
@@ -34,6 +35,7 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import type * as RpcSession from "../rpc/session.ts";
 import { createPreviewEnvironmentAtoms } from "./preview.ts";
+import { createFilesystemEnvironmentAtoms } from "./filesystem.ts";
 import type { QueryPersistence } from "./queryPersistence.ts";
 import { createTerminalEnvironmentAtoms } from "./terminal.ts";
 import {
@@ -926,6 +928,53 @@ describe("environment query lifecycle", () => {
             suspendOnWaiting: true,
           }),
         ).toBe("updated");
+      }),
+    ),
+  );
+
+  it.effect("filesystem browse lists the directory afresh when a picker reopens it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeEnvironmentQueryHarness(Effect.void);
+        const entry = (name: string): FilesystemBrowseEntry => ({
+          name,
+          fullPath: `/tmp/t3-11476-repro/${name}`,
+        });
+        let onDisk = [entry("existing")];
+        const client = {
+          [WS_METHODS.filesystemBrowse]: () =>
+            Effect.sync(() => ({ parentPath: "/tmp/t3-11476-repro/", entries: onDisk })),
+        } as unknown as RpcSession.RpcSession["client"];
+        yield* SubscriptionRef.set(
+          harness.supervisorSession,
+          Option.some({ ...QUERY_RPC_SESSION, client }),
+        );
+        const atom = createFilesystemEnvironmentAtoms(harness.runtime).browse({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { partialPath: "/tmp/t3-11476-repro/" },
+        });
+        const registry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+        // Stale-while-revalidate refreshes from a task on the registry scheduler;
+        // queue behind it so the read sees the revalidation instead of racing it.
+        const afterScheduledTasks = Effect.callback<void>((resume) => {
+          registry.schedulerAsync.makeDispatcher().scheduleTask(() => resume(Effect.void), 0);
+        });
+        const listNames = afterScheduledTasks.pipe(
+          Effect.andThen(readEnvironmentQuery(registry, atom)),
+          Effect.map((result) => result.entries.map((browseEntry) => browseEntry.name)),
+        );
+
+        const closePicker = registry.mount(atom);
+        expect(yield* listNames).toEqual(["existing"]);
+        closePicker();
+        // A closed picker stays closed past the registry's scheduled node
+        // removal; a remount within the same tick keeps the live node.
+        yield* afterScheduledTasks;
+
+        onDisk = [entry("created-externally"), entry("existing")];
+        registry.mount(atom);
+        expect(yield* listNames).toEqual(["created-externally", "existing"]);
       }),
     ),
   );

@@ -25,6 +25,7 @@
       // release-desktop.yml runs the desktop launch check through xvfb-run, which knip
       // does not trace.
       "entry": [
+        "folder-picker-evidence-fixture.ts",
         // These fixture scripts are injected into a browser page by path.
         "fixtures/*/*.js",
         "knip-schemas.ts",

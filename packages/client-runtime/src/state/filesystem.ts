@@ -121,6 +121,10 @@ export function createFilesystemEnvironmentAtoms<R, E>(
     browse: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:filesystem:browse",
       tag: WS_METHODS.filesystemBrowse,
+      // A listing mirrors a directory that can change outside the app, so
+      // reopening a picker lists it again.
+      staleTimeMs: 0,
+      revalidateOnRemount: true,
     }),
   };
 }
