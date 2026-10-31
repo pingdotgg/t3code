@@ -6,7 +6,7 @@ import {
   type DesktopSnapShotSetupAction,
   type SnapShotShortcut,
 } from "@t3tools/contracts";
-import { PlayIcon } from "lucide-react";
+import { CameraIcon } from "lucide-react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import { useContext, useRef, useState } from "react";
@@ -39,6 +39,7 @@ import {
   snapShotDescription,
   snapShotAccessibilityUnavailableMessage,
   snapShotSetupComplete,
+  snapShotCaptureHelperStatus,
   type SnapShotSoundSelection,
 } from "./SnapShotSettings.logic";
 import {
@@ -49,8 +50,8 @@ import {
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { Button } from "../ui/button";
-import { Menu, MenuItem, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
-import { SelectButton } from "../ui/select";
+import { Badge } from "../ui/badge";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Switch } from "../ui/switch";
 import { SnapShotSetupDialog } from "./SnapShotSetupDialog";
 import { useSnapShotShortcutRecorder } from "./useSnapShotShortcutRecorder";
@@ -60,8 +61,6 @@ import {
   captureSetupShouldDisableOnClose,
   type CaptureSetupStep,
 } from "./SnapShotSetupDialog.logic";
-
-const soundOptionRowClassName = "grid grid-cols-[1fr_auto]";
 
 type ShortcutCheck =
   | { readonly status: "idle"; readonly availability: null }
@@ -135,8 +134,11 @@ export function SnapShotSettings() {
       : { status: "idle", availability: null };
   const shortcutCheckIdRef = useRef(0);
   const unavailableMessage = snapShotUnavailableMessage(Boolean(bridge));
+  // In a browser there is nothing to update: say where snapshots live instead of warning.
+  const webOnly = !bridge && !(typeof window !== "undefined" && window.desktopBridge);
   const captureAvailable = Boolean(bridge) && state !== null && state.mode !== "unavailable";
   const feedbackUnavailable = snapShotFeedbackUnavailableMessage(state);
+  const captureHelper = snapShotCaptureHelperStatus(state);
   const managedShortcut = state?.linuxBackend === "niri" || state?.linuxBackend === "hyprland";
   const shortcutChanged = !managedShortcut && !sameSnapShotShortcut(candidate, savedShortcut);
   const displayShortcut = shortcutChanged ? candidate : (state?.shortcut ?? savedShortcut);
@@ -350,8 +352,21 @@ export function SnapShotSettings() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection id="snap-shot" title="SnapShots">
-        <SettingsUnavailableGroup message={unavailableMessage}>
+      {webOnly ? (
+        <SettingsSection title="Desktop app" hideTitle>
+          <SettingsRow
+            leading={<CameraIcon />}
+            title="SnapShots run in the desktop app"
+            description="Capture any window with a shortcut and drop it into your draft."
+          />
+        </SettingsSection>
+      ) : null}
+      <SettingsSection
+        id="snap-shot"
+        title="Capture"
+        warning={webOnly ? undefined : unavailableMessage}
+      >
+        <SettingsUnavailableGroup unavailable={!webOnly && unavailableMessage !== undefined}>
           <SettingsRow
             {...searchableSetting("snap-shot-enabled")}
             description={snapShotDescription(state)}
@@ -392,24 +407,6 @@ export function SnapShotSettings() {
           />
           {settings.snapShotEnabled && captureAvailable ? (
             <>
-              <SettingsRow
-                {...searchableSetting("snap-shot-accessibility")}
-                description="Include text and controls when the app makes them available."
-                status={snapShotAccessibilityUnavailableMessage(state)}
-                control={
-                  <Switch
-                    checked={
-                      !snapShotAccessibilityUnavailableMessage(state) &&
-                      settings.snapShotIncludeAccessibility
-                    }
-                    disabled={
-                      !captureAvailable || Boolean(snapShotAccessibilityUnavailableMessage(state))
-                    }
-                    aria-label="Include app text in snapshots"
-                    onCheckedChange={(checked) => void saveIncludeAccessibility(checked)}
-                  />
-                }
-              />
               <SettingsRow
                 {...searchableSetting("snap-shot-shortcut")}
                 description={
@@ -471,88 +468,20 @@ export function SnapShotSettings() {
                 }
               />
               <SettingsRow
-                {...searchableSetting("snap-shot-sound")}
-                description="Choose the sound played when capture starts."
-                control={
-                  <Menu>
-                    <MenuTrigger
-                      aria-label={"Snapshot sound: " + soundLabel}
-                      render={<SelectButton size="sm" />}
-                      className="w-auto min-w-0"
-                      disabled={!captureAvailable}
-                    >
-                      {soundSelection === "off" ? (
-                        "Off"
-                      ) : soundSelection === "soft-pop" ? (
-                        <>
-                          Whoosh <span className="text-muted-foreground">(Default)</span>
-                        </>
-                      ) : (
-                        "Click"
-                      )}
-                    </MenuTrigger>
-                    <MenuPopup align="end">
-                      <MenuRadioGroup
-                        onValueChange={(value) =>
-                          void save(snapShotSoundPatch(value as SnapShotSoundSelection))
-                        }
-                        value={soundSelection}
-                      >
-                        <MenuRadioItem closeOnClick value="off">
-                          Off
-                        </MenuRadioItem>
-                        <div className={soundOptionRowClassName}>
-                          <MenuRadioItem closeOnClick value="soft-pop">
-                            Whoosh <span className="text-muted-foreground">(Default)</span>
-                          </MenuRadioItem>
-                          <MenuItem
-                            aria-label="Play Whoosh"
-                            closeOnClick={false}
-                            onClick={() => playSnapShotSound("soft-pop")}
-                          >
-                            <PlayIcon />
-                          </MenuItem>
-                        </div>
-                        <div className={soundOptionRowClassName}>
-                          <MenuRadioItem closeOnClick value="camera-shutter">
-                            Click
-                          </MenuRadioItem>
-                          <MenuItem
-                            aria-label="Play Click"
-                            closeOnClick={false}
-                            onClick={() => playSnapShotSound("camera-shutter")}
-                          >
-                            <PlayIcon />
-                          </MenuItem>
-                        </div>
-                      </MenuRadioGroup>
-                    </MenuPopup>
-                  </Menu>
-                }
-              />
-              <SettingsRow
-                {...searchableSetting("snap-shot-flash")}
-                description="Show a gentle cue on the captured window."
-                status={feedbackUnavailable}
+                {...searchableSetting("snap-shot-accessibility")}
+                description="Include text and controls when the app makes them available."
+                status={snapShotAccessibilityUnavailableMessage(state)}
                 control={
                   <Switch
-                    checked={!feedbackUnavailable && settings.snapShotFlash}
-                    disabled={!captureAvailable || Boolean(feedbackUnavailable)}
-                    aria-label="Flash captured window"
-                    onCheckedChange={(checked) => void save({ snapShotFlash: checked })}
-                  />
-                }
-              />
-              <SettingsRow
-                {...searchableSetting("snap-shot-animations")}
-                description="Animate captured windows into your draft."
-                status={feedbackUnavailable}
-                control={
-                  <Switch
-                    checked={!feedbackUnavailable && settings.snapShotAnimations}
-                    disabled={!captureAvailable || Boolean(feedbackUnavailable)}
-                    aria-label="Animate snapshots"
-                    onCheckedChange={(checked) => void save({ snapShotAnimations: checked })}
+                    checked={
+                      !snapShotAccessibilityUnavailableMessage(state) &&
+                      settings.snapShotIncludeAccessibility
+                    }
+                    disabled={
+                      !captureAvailable || Boolean(snapShotAccessibilityUnavailableMessage(state))
+                    }
+                    aria-label="Include app text in snapshots"
+                    onCheckedChange={(checked) => void saveIncludeAccessibility(checked)}
                   />
                 }
               />
@@ -560,6 +489,81 @@ export function SnapShotSettings() {
           ) : null}
         </SettingsUnavailableGroup>
       </SettingsSection>
+      {settings.snapShotEnabled && captureAvailable && unavailableMessage === undefined ? (
+        <SettingsSection id="snap-shot-feedback" title="Feedback">
+          <SettingsRow
+            {...searchableSetting("snap-shot-sound")}
+            description="Choose the sound played when capture starts."
+            control={
+              <ToggleGroup
+                aria-label={"Snapshot sound: " + soundLabel}
+                value={[soundSelection]}
+                disabled={!captureAvailable}
+                onValueChange={(values) => {
+                  const next = values[0] as SnapShotSoundSelection | undefined;
+                  if (!next || next === soundSelection) return;
+                  // Choosing a sound previews it, replacing the old menu's play buttons.
+                  if (next !== "off") playSnapShotSound(next);
+                  void save(snapShotSoundPatch(next));
+                }}
+              >
+                <Toggle value="soft-pop">Whoosh</Toggle>
+                <Toggle value="camera-shutter">Click</Toggle>
+                <Toggle value="off">None</Toggle>
+              </ToggleGroup>
+            }
+          />
+          <SettingsRow
+            {...searchableSetting("snap-shot-flash")}
+            description="Show a gentle cue on the captured window."
+            status={feedbackUnavailable}
+            control={
+              <Switch
+                checked={!feedbackUnavailable && settings.snapShotFlash}
+                disabled={!captureAvailable || Boolean(feedbackUnavailable)}
+                aria-label="Flash captured window"
+                onCheckedChange={(checked) => void save({ snapShotFlash: checked })}
+              />
+            }
+          />
+          <SettingsRow
+            {...searchableSetting("snap-shot-animations")}
+            description="Animate captured windows into your draft."
+            status={feedbackUnavailable}
+            control={
+              <Switch
+                checked={!feedbackUnavailable && settings.snapShotAnimations}
+                disabled={!captureAvailable || Boolean(feedbackUnavailable)}
+                aria-label="Animate snapshots"
+                onCheckedChange={(checked) => void save({ snapShotAnimations: checked })}
+              />
+            }
+          />
+        </SettingsSection>
+      ) : null}
+      {settings.snapShotEnabled && captureHelper && unavailableMessage === undefined ? (
+        <SettingsSection id="snap-shot-advanced" title="Advanced">
+          <SettingsRow
+            title="Capture helper"
+            description={captureHelper.description}
+            control={
+              <>
+                {captureHelper.needsSetup ? (
+                  <Button
+                    size="xs"
+                    variant="secondary"
+                    disabled={setupBusy}
+                    onClick={() => void openSetup("access")}
+                  >
+                    Set up
+                  </Button>
+                ) : null}
+                <Badge variant={captureHelper.tone}>{captureHelper.label}</Badge>
+              </>
+            }
+          />
+        </SettingsSection>
+      ) : null}
       {wizard && state ? (
         <SnapShotSetupDialog
           state={state}

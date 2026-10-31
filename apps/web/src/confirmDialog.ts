@@ -1,26 +1,32 @@
 import type { ConfirmDialogOptions, ConfirmDialogVariant } from "@t3tools/contracts";
 
-export type ConfirmDialogState =
-  | { readonly status: "idle" }
-  | {
-      readonly status: "confirming";
-      readonly message: string;
-      readonly variant: ConfirmDialogVariant;
-      readonly initialFocus: ConfirmDialogOptions["initialFocus"];
-    }
-  | {
-      readonly status: "closing";
-      readonly message: string;
-      readonly variant: ConfirmDialogVariant;
-      readonly initialFocus: ConfirmDialogOptions["initialFocus"];
-    };
-
-type PendingConfirmation = {
+/** What the host shows: the message, plus the caller's explicit title and action label. */
+type ConfirmDialogRequest = {
   readonly message: string;
   readonly variant: ConfirmDialogVariant;
+  readonly title?: string | undefined;
+  readonly confirmLabel?: string | undefined;
   readonly initialFocus: ConfirmDialogOptions["initialFocus"];
+};
+
+export type ConfirmDialogState =
+  | { readonly status: "idle" }
+  | ({ readonly status: "confirming" } & ConfirmDialogRequest)
+  | ({ readonly status: "closing" } & ConfirmDialogRequest);
+
+type PendingConfirmation = ConfirmDialogRequest & {
   readonly resolve: (confirmed: boolean) => void;
 };
+
+function requestOf(confirmation: ConfirmDialogRequest): ConfirmDialogRequest {
+  return {
+    message: confirmation.message,
+    variant: confirmation.variant,
+    title: confirmation.title,
+    confirmLabel: confirmation.confirmLabel,
+    initialFocus: confirmation.initialFocus,
+  };
+}
 
 const idleState: ConfirmDialogState = { status: "idle" };
 let state: ConfirmDialogState = idleState;
@@ -73,6 +79,8 @@ export function requestConfirmDialog(
       message,
       variant: options?.variant ?? "default",
       initialFocus: options?.initialFocus,
+      title: options?.title,
+      confirmLabel: options?.confirmLabel,
       resolve,
     } satisfies PendingConfirmation;
     if (activeConfirmation || state.status === "closing") {
@@ -81,12 +89,7 @@ export function requestConfirmDialog(
     }
 
     activeConfirmation = pending;
-    publish({
-      status: "confirming",
-      message,
-      variant: pending.variant,
-      initialFocus: pending.initialFocus,
-    });
+    publish({ status: "confirming", ...requestOf(pending) });
   });
 
   return confirmation;
@@ -102,12 +105,7 @@ export function respondToConfirmDialog(confirmed: boolean): void {
   const confirmation = activeConfirmation;
   activeConfirmation = null;
   confirmation.resolve(confirmed);
-  publish({
-    status: "closing",
-    message: state.message,
-    variant: state.variant,
-    initialFocus: state.initialFocus,
-  });
+  publish({ status: "closing", ...requestOf(state) });
 }
 
 export function completeConfirmDialogClose(): void {
@@ -120,12 +118,7 @@ export function completeConfirmDialogClose(): void {
   }
 
   activeConfirmation = next;
-  publish({
-    status: "confirming",
-    message: next.message,
-    variant: next.variant,
-    initialFocus: next.initialFocus,
-  });
+  publish({ status: "confirming", ...requestOf(next) });
 }
 
 export function resetConfirmDialogForTests(): void {
