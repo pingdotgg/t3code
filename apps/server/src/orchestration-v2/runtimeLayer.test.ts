@@ -7874,7 +7874,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           type: "thread.metadata.update",
           commandId: CommandId.make("recovery:arm-before-settle:settled"),
           threadId,
-          limitRecovery: { runId: run.id, resetAt, autoResume: true },
+          limitRecovery: { runId: run.id, resetAt, autoResume: true, snooze: true },
         });
         yield* orchestrator.dispatch({
           type: "thread.settle",
