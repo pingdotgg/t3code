@@ -118,6 +118,28 @@ describe("HTML in native Markdown", () => {
   });
 });
 
+it("keeps code literal across many ranges while converting HTML between and after them", () => {
+  const blocks = Array.from(
+    { length: 100 },
+    (_, index) => `\`<img src="literal-${index}.png">\` <img src="image-${index}.png">`,
+  );
+  const expected = Array.from(
+    { length: 100 },
+    (_, index) => `\`<img src="literal-${index}.png">\` ![](<image-${index}.png>)`,
+  );
+  expect(markdownHtmlContent(blocks.join("\n") + "<br>after")).toBe(
+    expected.join("\n") + "  \nafter",
+  );
+});
+
+it("keeps tags after an unclosed fence literal even when later inline ranges overlap it", () => {
+  const content =
+    '<div>before</div>\n```html\n<img src="one.png">\n`<img src="two.png">`\n<img src="three.png">';
+  expect(markdownHtmlContent(content)).toBe(
+    '\n\nbefore\n\n\n```html\n<img src="one.png">\n`<img src="two.png">`\n<img src="three.png">',
+  );
+});
+
 describe("file embeds in native thread and file Markdown", () => {
   const input = {
     environmentId: EnvironmentId.make("environment-1"),

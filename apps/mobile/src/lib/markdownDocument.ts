@@ -172,9 +172,14 @@ function markdownHtmlTags(content: string): RegExpExecArray[] {
     codeRanges.push({ start: opening.index, end: closing.index + closing[0].length });
     index = closingIndex;
   }
-  return tags.filter(
-    (tag) => !codeRanges.some((range) => tag.index >= range.start && tag.index < range.end),
-  );
+  let codeRangeIndex = 0;
+  return tags.filter((tag) => {
+    while (codeRanges[codeRangeIndex] && tag.index >= codeRanges[codeRangeIndex]!.end) {
+      codeRangeIndex += 1;
+    }
+    const range = codeRanges[codeRangeIndex];
+    return !range || tag.index < range.start;
+  });
 }
 
 /**
