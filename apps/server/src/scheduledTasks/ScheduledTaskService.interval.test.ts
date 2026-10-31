@@ -130,9 +130,21 @@ it.effect.each([
   ),
 );
 
+// Each launch takes two minutes, so a manual run can start before the run time and end after it.
+const slowLaunchLayer = ScheduledTaskService.layer.pipe(
+  Layer.provide(
+    Layer.merge(
+      dependencies,
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+        launch: () => TestClock.adjust("2 minutes").pipe(Effect.andThen(Effect.die("synthetic"))),
+      }),
+    ),
+  ),
+);
+
 it.effect("runs a one-time schedule once and rejects past times", () =>
   Effect.gen(function* () {
-    yield* TestClock.setTime(Date.parse("2026-11-01T06:30:00.000Z"));
+    yield* TestClock.setTime(Date.parse("2026-11-01T07:59:00.000Z"));
     yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
       const decoded = yield* decodeInput({
@@ -143,11 +155,10 @@ it.effect("runs a one-time schedule once and rejects past times", () =>
       expect(created.task.schedule).toEqual({ type: "once", runAt: "2026-11-01T08:00:00.000Z" });
       expect(created.task.nextRunAt).toBe("2026-11-01T08:00:00.000Z");
 
-      // A manual run before the time keeps the scheduled run.
+      // A manual run that starts before the time keeps the scheduled run, even if it ends after.
       const early = yield* service.runNow({ id: created.task.id });
       expect(early.task.nextRunAt).toBe("2026-11-01T08:00:00.000Z");
 
-      yield* TestClock.setTime(Date.parse("2026-11-01T08:00:30.000Z"));
       const due = yield* service.runNow({ id: created.task.id });
       expect(due.task.nextRunAt).toBeNull();
       expect((yield* service.list()).tasks[0]?.nextRunAt).toBeNull();
@@ -162,7 +173,7 @@ it.effect("runs a one-time schedule once and rejects past times", () =>
         .upsert({ ...decoded, commandId: undefined, title: "Late" })
         .pipe(Effect.flip);
       expect(past.message).toBe("The run time has passed. Pick a time in the future.");
-    }).pipe(Effect.provide(serviceLayer));
+    }).pipe(Effect.provide(slowLaunchLayer));
   }).pipe(
     Effect.provideService(ServerActivation, Effect.never),
     Effect.provide(SqlitePersistence.layerMemory),

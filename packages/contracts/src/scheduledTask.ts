@@ -45,16 +45,23 @@ const ScheduledTaskFixedTimeSchedule = Schema.Struct({
   ),
 });
 
-const ISO_WITH_OFFSET = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+const ISO_WITH_OFFSET =
+  /^(\d{4})-(\d{2})-(\d{2})T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+
+/** Date.parse rolls impossible days like Feb 30 into the next month, so check the day too. */
+function isIsoWithOffset(value: string): boolean {
+  const match = ISO_WITH_OFFSET.exec(value);
+  if (!match || !Number.isFinite(Date.parse(value))) return false;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDate() === day && month <= 12;
+}
 
 // Checked by filter, not pattern, to keep the MCP tool schema small.
 const ScheduledTaskOnceSchedule = Schema.Struct({
   type: Schema.Literal("once"),
   runAt: TrimmedNonEmptyString.check(
     Schema.makeFilter(
-      (value) =>
-        (ISO_WITH_OFFSET.test(value) && Number.isFinite(Date.parse(value))) ||
-        "Expected an ISO date and time with an offset.",
+      (value) => isIsoWithOffset(value) || "Expected an ISO date and time with an offset.",
     ),
   ),
 });

@@ -912,7 +912,11 @@ export const layer = Layer.effect(
           ...scheduleSource,
           updatedAt: iso(completedAt),
           lastRunAt: startedAtIso,
-          nextRunAt: nextRunAt(scheduleSource, completedAt),
+          // A manual run that starts before a one-time run must not use it up.
+          nextRunAt: nextRunAt(
+            scheduleSource,
+            scheduleSource.schedule.type === "once" ? startedAt : completedAt,
+          ),
           lastRunStatus,
           lastRunError,
           runCount: scheduleSource.runCount + 1,

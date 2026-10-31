@@ -27,7 +27,12 @@ describe("ScheduledTaskSchedule", () => {
     for (const runAt of ["2026-11-03T09:00Z", "2026-11-03T09:00:00.000-08:00"]) {
       expect(decodeUpsertSchedule({ type: "once", runAt })).toEqual({ type: "once", runAt });
     }
-    for (const runAt of ["2026-11-03T09:00", "2026-13-03T09:00Z", "tomorrow"]) {
+    for (const runAt of [
+      "2026-11-03T09:00",
+      "2026-13-03T09:00Z",
+      "2026-02-30T09:00Z",
+      "tomorrow",
+    ]) {
       expect(() => decodeUpsertSchedule({ type: "once", runAt })).toThrow();
     }
   });
