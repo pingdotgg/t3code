@@ -1,9 +1,4 @@
-// Stands in for the plugin child runtime to drive the server's IPC directly, as a plugin
-// writing raw lines to fd 3 could. `raw-child.json` in the working directory (the plugin
-// directory) picks the behaviour; summaries go back as Log messages.
-//   echo:  answers every Invoke with its input.
-//   flood: sends `requests` HostCalls of `method` and stops reading until SIGUSR2.
-//   burst: sends `requests` HostCalls of `method` and reads every answer.
+// Drives raw IPC from a configured child; flood pauses reads until SIGUSR2 and burst reads every answer.
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
 
