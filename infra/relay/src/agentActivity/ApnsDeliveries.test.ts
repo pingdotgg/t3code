@@ -1214,19 +1214,20 @@ describe("fast completion delivery", () => {
       ).toBe(true);
     }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs, currentTargets: [device] })));
   });
-  it.effect("replays a newly visible completion without alerting", () => {
+  it.effect("replays a newly visible completion without consuming another thread's alert", () => {
     const queuedJobs: SignedApnsDeliveryJob[] = [];
+    const markedDeliveries: Array<
+      Parameters<LiveActivities.LiveActivities["Service"]["markDelivery"]>[0]
+    > = [];
+    const other = { ...aggregate.activities[0]!, threadId: ThreadId.make("other") };
     const done = {
       ...aggregate,
-      activeCount: 0,
-      activities: [{ ...aggregate.activities[0]!, phase: "completed" as const }],
-    };
-    const previous = {
-      ...aggregate,
       activities: [
-        { ...aggregate.activities[0]!, threadId: "other" as RelayAgentActivityState["threadId"] },
+        { ...aggregate.activities[0]!, phase: "completed" as const },
+        { ...other, phase: "completed" as const },
       ],
     };
+    const previous = { ...aggregate, activities: [other] };
     const device = { ...target, last_aggregate_json: JSON.stringify(previous) };
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
@@ -1235,10 +1236,33 @@ describe("fast completion delivery", () => {
         aggregate: done,
         nowMs: 0,
         replay: true,
+        replayThread: { environmentId: state.environmentId, threadId: state.threadId },
       });
       expect(queuedJobs).toHaveLength(1);
       expect(queuedJobs[0]?.payload.alert).toBeUndefined();
-    }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
+      const result = yield* deliveries.processSignedJob(queuedJobs[0]!);
+      expect(result.ok).toBe(true);
+      expect(markedDeliveries[0]?.aggregate?.activities).toEqual([other, done.activities[0]]);
+      device.last_aggregate_json = JSON.stringify(markedDeliveries[0]?.aggregate);
+      yield* deliveries.sendForTarget({ target: device, aggregate: done, nowMs: 0 });
+      expect(queuedJobs[1]?.payload.alert).toMatchObject({ title: "Thread" });
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts: [],
+          queuedJobs,
+          markedDeliveries,
+          config: signingConfig,
+          currentTargets: [device],
+          activityStates: [
+            { ...state, phase: "completed" },
+            { ...state, threadId: other.threadId, phase: "completed" },
+          ],
+          execute: (request) =>
+            Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 200 }))),
+        }),
+      ),
+    );
   });
 });
 

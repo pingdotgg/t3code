@@ -543,6 +543,17 @@ describe("AgentAwarenessRelay", () => {
         yield* relay.drain;
         assert.equal(publications.length, 3);
         assert.equal(publications[2]?.state, null);
+        yield* Ref.set(currentShell, terminal);
+        yield* Queue.offer(events, {
+          id: EventId.make("event:pinned"),
+          type: "thread.pinned",
+          threadId: THREAD_ID,
+          occurredAt: now,
+          payload: { ...terminal, lastVisitedAt: null, settledAt: null },
+        });
+        yield* Queue.take(pulls);
+        yield* relay.drain;
+        assert.equal(publications.at(-1)?.state?.phase, status);
       }).pipe(Effect.scoped),
   );
 

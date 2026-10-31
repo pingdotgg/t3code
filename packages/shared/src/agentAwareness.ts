@@ -97,7 +97,9 @@ export function projectThreadAwarenessV2(
     snoozeWakeAt != null &&
     DateTime.toEpochMillis(snoozeWakeAt) <= input.now &&
     (thread.lastVisitedAt == null ||
-      DateTime.toEpochMillis(thread.lastVisitedAt) < DateTime.toEpochMillis(snoozeWakeAt));
+      DateTime.toEpochMillis(thread.lastVisitedAt) < DateTime.toEpochMillis(snoozeWakeAt)) &&
+    (thread.latestRunCompletedAt == null ||
+      DateTime.toEpochMillis(thread.latestRunCompletedAt) < DateTime.toEpochMillis(snoozeWakeAt));
   const runPhase = resolveThreadAwarenessPhaseV2(thread);
   const phase = woke && (runPhase === null || runPhase === "completed") ? "woke" : runPhase;
   if (phase === null) {

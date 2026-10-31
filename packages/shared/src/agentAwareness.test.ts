@@ -74,6 +74,14 @@ describe("projectThreadAwarenessV2", () => {
           thread: { ...base.thread, settledOverride: "settled" },
         }),
       ).toBeNull();
+      if (status === "completed") {
+        expect(
+          projectThreadAwarenessV2({
+            ...base,
+            thread: { ...base.thread, latestRunCompletedAt: snoozedUntil },
+          }),
+        ).toMatchObject({ phase: "completed", unread: true });
+      }
       for (const visit of [snoozedUntil, DateTime.makeUnsafe("2026-05-22T13:01:00.000Z")]) {
         expect(
           projectThreadAwarenessV2({ ...base, thread: { ...base.thread, lastVisitedAt: visit } })

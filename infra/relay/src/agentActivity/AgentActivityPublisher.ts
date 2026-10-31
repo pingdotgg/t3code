@@ -109,6 +109,14 @@ const make = Effect.gen(function* () {
             apnsDeliveries.sendForTarget({
               target,
               aggregate: liveActivityAggregate,
+              ...(input.replay && input.state
+                ? {
+                    replayThread: {
+                      environmentId: input.state.environmentId,
+                      threadId: input.state.threadId,
+                    },
+                  }
+                : {}),
               nowMs: input.nowMs,
               replay: input.replay ?? false,
             }),
