@@ -384,6 +384,13 @@ export const DesktopSshEnvironmentTargetSchema = Schema.Struct({
   hostname: Schema.String,
   username: Schema.NullOr(Schema.String),
   port: Schema.NullOr(Schema.Number),
+  // Resolved values are snapshots; only overrides pin future SSH config reads.
+  overrides: Schema.optionalKey(
+    Schema.Struct({
+      username: Schema.NullOr(Schema.String),
+      port: Schema.NullOr(Schema.Number),
+    }),
+  ),
 });
 export type DesktopSshEnvironmentTarget = typeof DesktopSshEnvironmentTargetSchema.Type;
 

@@ -102,6 +102,20 @@ type SshEnvironmentEffectError =
   | SshPasswordPromptError
   | NetService.NetError;
 
+const resolveEnvironmentTarget = Effect.fn("ssh/tunnel.resolveEnvironmentTarget")(function* (
+  target: DesktopSshEnvironmentTarget,
+) {
+  // Older saved targets have no override provenance, so retain their explicit values.
+  const overrides = target.overrides ?? { username: target.username, port: target.port };
+  const resolved = yield* resolveSshTarget(target.alias || target.hostname);
+  return {
+    ...resolved,
+    username: overrides.username ?? resolved.username,
+    port: overrides.port ?? resolved.port,
+    overrides,
+  };
+});
+
 function isNodeScriptRunner(runner: RemoteT3RunnerOptions | undefined): boolean {
   return Boolean(runner?.nodeScriptPath?.trim());
 }
@@ -1681,12 +1695,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...sshTargetLogFields(target),
       issuePairingToken: requestOptions?.issuePairingToken === true,
     });
-    const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
-    const resolvedTarget: DesktopSshEnvironmentTarget = {
-      ...baseResolved,
-      ...(target.username !== null ? { username: target.username } : {}),
-      ...(target.port !== null ? { port: target.port } : {}),
-    };
+    const resolvedTarget = yield* resolveEnvironmentTarget(target);
     const key = targetConnectionKey(resolvedTarget);
     yield* Effect.logDebug("ssh.environment.target.resolved", {
       ...sshTargetLogFields(resolvedTarget),
@@ -1723,7 +1732,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           issuedPairingToken: pairingToken !== null,
         });
         return {
-          target: entry.target,
+          target: resolvedTarget,
           httpBaseUrl: entry.httpBaseUrl,
           wsBaseUrl: entry.wsBaseUrl,
           pairingToken,
@@ -1738,12 +1747,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     target: DesktopSshEnvironmentTarget,
   ): Effect.fn.Return<void, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
     yield* Effect.logInfo("ssh.environment.disconnect.start", sshTargetLogFields(target));
-    const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
-    const resolvedTarget: DesktopSshEnvironmentTarget = {
-      ...baseResolved,
-      ...(target.username !== null ? { username: target.username } : {}),
-      ...(target.port !== null ? { port: target.port } : {}),
-    };
+    const resolvedTarget = yield* resolveEnvironmentTarget(target);
     const key = targetConnectionKey(resolvedTarget);
     yield* withTargetLock(
       key,

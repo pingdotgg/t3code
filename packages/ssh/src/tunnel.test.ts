@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
+import { DesktopSshEnvironmentBootstrapSchema } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -8,6 +9,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
@@ -80,6 +82,7 @@ function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
 }
 
 const ARCHIVE = { archiveVersion: "1.2.3-preview.20260911.4" } as const;
+const decodeBootstrap = Schema.decodeUnknownEffect(DesktopSshEnvironmentBootstrapSchema);
 
 describe("ssh tunnel scripts", () => {
   it("rejects archive versions that are not a single exact version segment", () => {
@@ -361,6 +364,85 @@ describe("ssh tunnel scripts", () => {
           Effect.scoped,
         );
       }),
+  );
+
+  it.effect.each([
+    { name: "SSH config", username: null, port: null },
+    { name: "an explicit username", username: "override", port: null },
+    { name: "an explicit port", username: null, port: 2200 },
+    { name: "explicit username and port", username: "override", port: 2200 },
+  ])("reconnects a saved target using $name after SSH config changes", (overrides) =>
+    Effect.gen(function* () {
+      let configPort = 40_001;
+      let configUsername = "original";
+      const tunnelCommands: Array<ReadonlyArray<string>> = [];
+      const stopCommands: Array<ReadonlyArray<string>> = [];
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          const args = commandArgs(command);
+          if (args.includes("-G")) {
+            return makeSuccessfulProcess(
+              `hostname 127.0.0.1\nuser ${configUsername}\nport ${configPort}\n`,
+            );
+          }
+          if (args.includes("-N")) {
+            tunnelCommands.push(args);
+            return makeRunningProcess(() => undefined);
+          }
+          if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
+            return makeSuccessfulProcess('{"remotePort":3773}\n');
+          }
+          stopCommands.push(args);
+          return makeSuccessfulProcess('{"stopped":true}\n');
+        }),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, testHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        yield* manager.ensureEnvironment({
+          alias: "devbox",
+          hostname: "devbox",
+          username: overrides.username ?? configUsername,
+          port: overrides.port ?? configPort,
+        });
+        const first = yield* manager.ensureEnvironment({
+          alias: "devbox",
+          hostname: "devbox",
+          username: overrides.username,
+          port: overrides.port,
+        });
+        assert.lengthOf(tunnelCommands, 1);
+        configPort = 40_002;
+        configUsername = "updated";
+
+        const saved = yield* decodeBootstrap(JSON.parse(JSON.stringify(first)));
+        yield* manager.disconnectEnvironment(saved.target);
+        const reconnected = yield* manager.ensureEnvironment(saved.target);
+        const username = overrides.username ?? configUsername;
+        const port = overrides.port ?? configPort;
+        assert.equal(reconnected.target.username, username);
+        assert.equal(reconnected.target.port, port);
+        assert.deepEqual(reconnected.target.overrides, {
+          username: overrides.username,
+          port: overrides.port,
+        });
+        const tunnel = tunnelCommands.at(-1)!;
+        assert.equal(tunnel[tunnel.indexOf("-p") + 1], String(port));
+        assert.include(tunnel, `${username}@devbox`);
+
+        yield* manager.disconnectEnvironment(reconnected.target);
+        const stop = stopCommands.at(-1)!;
+        assert.equal(stop[stop.indexOf("-p") + 1], String(port));
+        assert.include(stop, `${username}@devbox`);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
   );
 });
 
