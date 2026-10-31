@@ -1,32 +1,6 @@
-/**
- * Offers pending provider approvals to the enabled plugins that declare the
- * `approvals` capability, and records the first answer through the
- * orchestrator.
- *
- * It watches committed runtime requests and approval cards. Once a pending,
- * live approval of a kind some plugin declares and its card, with the prompt,
- * are both committed, it calls each such plugin's `t3.approval.decide` handler
- * at once, each with its own deadline. Providers commit the two in either
- * order; a request whose card never arrives, or has no prompt, is left to the
- * user. An approve
- * or deny becomes a `runtime-request.plugin-respond` command, which the
- * orchestrator accepts only while the request is still pending, so the first
- * answer recorded wins, whether it came from the user or a plugin. Abstaining,
- * an invalid answer, a failure, the deadline, and disabling the plugin all
- * leave the request to the user. When the request stops being pending, calls
- * still running are cancelled.
- *
- * Plugins decide on the whole request or not at all: when its prompt or subject
- * is longer than a plugin may receive, no plugin is asked. Work is bounded: at
- * most `maxActiveOffers` requests are being offered and `maxActiveCalls` plugin
- * calls are running at once; past either limit the request, or that plugin's
- * call, is left to the user at once rather than queued.
- *
- * Only requests committed while this service runs are offered: after a
- * restart, an older pending request waits for the user. Plugin work never runs
- * on EventSink's commit path; the subscription is bounded and resumes from the
- * last event it saw when it falls behind.
- */
+// Offer only live, fully committed approvals with complete prompts and bounded concurrency.
+// The first committed response wins; cancellation, revocation, abstention and timeouts leave approval to the user.
+// Never offer historical requests after restart or run plugin work on the event commit path.
 import {
   CommandId,
   PLUGIN_APPROVAL_HANDLER,
@@ -347,12 +321,7 @@ export const make = Effect.fn("PluginApprovals.make")(function* (
       finished.delete(finished.values().next().value as string);
   };
 
-  /**
-   * Starts the offer of a pending request once its approval card, with the
-   * prompt, is committed too. The watch handles one event at a time and this
-   * reads both after its event committed, so whichever of the two commits
-   * second starts the offer. Nothing to ask starts no process.
-   */
+  // Request and card may commit in either order; offer once both are present with a prompt.
   const consider = Effect.fn("PluginApprovals.consider")(
     function* (
       threadId: ThreadId,

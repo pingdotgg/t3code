@@ -1,44 +1,5 @@
-/**
- * PluginApprovals - Lets a plugin answer the approvals a provider asks for.
- *
- * A plugin declares the `approvals` capability (with `proposedApi: true`) and
- * the request kinds it wants in its manifest, and registers one handler:
- *
- * ```js
- * // Exactly these complete command lines; anything else, including
- * // `git status && rm -rf build`, is left to the user.
- * const READ_ONLY = new Set(["git status", "git diff"]);
- * export function activate(context) {
- *   context.proposed.handle("t3.approval.decide", ({ kind, subject }) =>
- *     kind === "command" && READ_ONLY.has(subject)
- *       ? { decision: "approve", reason: "Read-only git command." }
- *       : { decision: "abstain" },
- *   );
- * }
- * ```
- *
- * Match a whole, narrowly defined request and abstain from everything else: a
- * prefix of a shell command says nothing about the rest of it.
- *
- * When a provider asks to approve a request of a declared kind, the server
- * calls the handler of every enabled plugin that declares it, all at once. The
- * user can answer the request in the app at any time. The first answer the
- * server records wins, whether it came from the user or a plugin; later
- * answers change nothing, and plugins still deciding are cancelled.
- *
- * `abstain`, `null`, an invalid answer, a failure, a crash, the deadline, and
- * disabling the plugin all leave the request pending for the user. A plugin
- * never approves anything by failing, and never decides on part of a request:
- * when its prompt or subject is longer than `maxPromptLength`, no plugin is
- * asked, nor about a request whose approval card has no prompt.
- *
- * Plugins see only the approvals providers raise; this is not an interception
- * layer. Full-access normally bypasses provider tool approval gates, but
- * explicit extension or runtime confirmation requests can still reach T3
- * (including Pi's) and are offered like any other.
- *
- * @module PluginApprovals
- */
+// Approval plugins must match the whole operation narrowly and abstain otherwise; shell prefixes are insufficient.
+// Answers race with the user through the orchestrator’s authoritative pending-request guard.
 import * as Schema from "effect/Schema";
 
 import { EnvironmentId, ProjectId, RunId, RuntimeRequestId, ThreadId } from "./baseSchemas.ts";
@@ -85,17 +46,8 @@ export const PluginApprovalDeclaration = Schema.Struct({
 });
 export type PluginApprovalDeclaration = typeof PluginApprovalDeclaration.Type;
 
-/**
- * What the handler receives. `prompt` is what the provider asked, as the
- * approval card shows it: a command, a path, a tool's description, or the
- * provider's reason; it is always present. `subject` is the tool call the
- * approval is for, as the thread shows it, when the provider reported one
- * first: the command line, the changed paths (one per line), or the tool name
- * and its JSON input. Both are user and agent content and may contain
- * anything the agent wrote. Both are sent whole, never cut. Without a
- * `subject` the plugin has only the prompt, which may be a description rather
- * than the operation; a policy that needs the operation should abstain then.
- */
+// Prompt and subject are untrusted agent/user content, delivered whole.
+// Without a concrete subject, policies requiring the operation must abstain.
 export const PluginApprovalRequest = Schema.Struct({
   requestId: RuntimeRequestId,
   kind: PluginApprovalKind,
