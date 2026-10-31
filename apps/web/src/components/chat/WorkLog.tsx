@@ -68,7 +68,7 @@ function WorkLogLine({ icon, label, trailing, wrapLabel }: RowContent) {
         ) : null}
         <div
           className={cn(
-            "min-w-0 flex-1 text-muted-foreground",
+            "min-w-0 flex-1 text-secondary-label",
             !wrapLabel && "truncate [&_*]:whitespace-nowrap",
           )}
         >
@@ -80,13 +80,55 @@ function WorkLogLine({ icon, label, trailing, wrapLabel }: RowContent) {
   );
 }
 
+/** The action word of a row ("Read", "Ran", "Edit"): the label role in the text tier. */
+export function WorkLogVerb({
+  children,
+  tone = "default",
+}: {
+  children: ReactNode;
+  /** `error` for an action that failed, `muted` for one still running or stopped. */
+  tone?: "default" | "error" | "muted";
+}) {
+  return (
+    <span
+      className={cn(
+        "shrink-0 text-label",
+        tone === "error"
+          ? "text-error-foreground"
+          : tone === "muted"
+            ? "text-muted-foreground"
+            : "text-foreground",
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+/**
+ * What the action touched ("ChatComposer.tsx", a command): body type in the dim
+ * tier, truncating first. `mono` for commands and code.
+ */
+export function WorkLogTarget({ children, mono = false }: { children: ReactNode; mono?: boolean }) {
+  return (
+    <span className={cn("min-w-0 truncate text-body text-dim-foreground", mono && "font-mono")}>
+      {children}
+    </span>
+  );
+}
+
+/** A group's one-line summary ("Read 3 files and ran 2 commands"): label type, muted. */
+export function WorkLogSummary({ children }: { children: ReactNode }) {
+  return <span className="block truncate text-label text-muted-foreground">{children}</span>;
+}
+
 const interactionClassName =
-  "cursor-pointer hover:surface-ghost-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+  "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70";
 
 function useRowClassName(interactive: boolean) {
   const grouped = use(GroupedRows);
   return cn(
-    "group/timeline-row relative w-full min-w-0 rounded-row px-0.5 text-left transition-colors",
+    "group/timeline-row relative w-full min-w-0 rounded-md px-0.5 text-left transition-colors",
     grouped ? "py-0" : "py-0.5",
     interactive && interactionClassName,
   );
