@@ -12,6 +12,7 @@ import {
   type ProviderProxyRoute,
 } from "@t3tools/provider-core/server/providerProxy";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -19,6 +20,7 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
 import * as Settings from "../serverSettings.ts";
+import * as SecretResolver from "../secrets/SecretResolver.ts";
 import { BUILT_IN_DRIVERS, type BuiltInDriversEnv } from "./builtInDrivers.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
@@ -42,6 +44,8 @@ type ProviderInstanceRegistryHydrationEnv =
   | ServerConfig.ServerConfig
   | Path.Path
   | FileSystem.FileSystem
+  // Secret provider reads.
+  | Crypto.Crypto
   // The Claude runner counts its CLIs as running agents for port discovery.
   | PortScanner.PortDiscovery;
 
@@ -156,7 +160,8 @@ const layerSettingsWatcher = (settingsChanges: Stream.Stream<ServerSettings>) =>
   );
 
 export const layer: Layer.Layer<
-  ProviderInstanceRegistry.ProviderInstanceRegistry,
+  | ProviderInstanceRegistry.ProviderInstanceRegistry
+  | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
   never,
   ProviderInstanceRegistryHydrationEnv
 > = Layer.unwrap(
@@ -182,12 +187,14 @@ export const layer: Layer.Layer<
       Layer.provide(ProviderOrchestrationAdapterInfrastructure.layer),
       Layer.provide(AcpRegistrySupport.layerFromHost),
       Layer.provide(ProviderHostLive.layer),
+      Layer.provide(SecretResolver.layer),
     );
 
     return layerSettingsWatcher(settingsChanges).pipe(Layer.provideMerge(layerMutable));
   }),
 ) as Layer.Layer<
-  ProviderInstanceRegistry.ProviderInstanceRegistry,
+  | ProviderInstanceRegistry.ProviderInstanceRegistry
+  | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
   never,
   ProviderInstanceRegistryHydrationEnv
 >;
