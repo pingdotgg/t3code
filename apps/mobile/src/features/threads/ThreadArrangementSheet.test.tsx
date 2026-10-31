@@ -31,6 +31,7 @@ type Layout = (event: { nativeEvent: { layout: { height: number } } }) => void;
 const native = vi.hoisted(() => ({
   atoms: {
     threads: Symbol(),
+    environments: Symbol(),
     configs: Symbol(),
     queued: Symbol(),
     pending: Symbol(),
@@ -67,6 +68,7 @@ function FragmentRow({ children }: { children: ReactNode }) {
 
 vi.mock("react-native", () => ({
   View: NativeView,
+  useWindowDimensions: () => ({ fontScale: 1 }),
   Modal: Children,
   Pressable: Children,
   FlatList: NativeList,
@@ -155,6 +157,13 @@ vi.mock("@effect/atom-react", () => ({
 vi.mock("../../state/threads", () => ({
   environmentThreadShells: { navigationThreadShellsAtom: native.atoms.threads },
 }));
+vi.mock("../../state/presentation", () => ({
+  threadListEnvironmentsAtom: native.atoms.environments,
+}));
+vi.mock("../settings/appearance/AppearancePreferencesProvider", () => ({
+  useAppearancePreferences: () => ({ appearance: { baseFontSize: 14 } }),
+}));
+vi.mock("./use-thread-list-now", () => ({ useThreadListNow: () => Date.UTC(2026, 0, 1) }));
 vi.mock("../../state/server", () => ({ environmentServerConfigsAtom: native.atoms.configs }));
 vi.mock("../../state/use-thread-outbox", () => ({ queuedThreadKeysAtom: native.atoms.queued }));
 vi.mock("../../state/thread-order", () => ({
@@ -221,6 +230,10 @@ function setup(count = 30) {
       ],
     ]),
   );
+  native.values.set(native.atoms.environments, {
+    pinReorderEnvironmentIds: new Set([threads[0]!.environmentId]),
+    activeReorderEnvironmentIds: new Set([threads[0]!.environmentId]),
+  });
   native.values.set(native.atoms.queued, new Set());
   native.values.set(native.atoms.pending, null);
   native.values.set(native.atoms.busy, false);
