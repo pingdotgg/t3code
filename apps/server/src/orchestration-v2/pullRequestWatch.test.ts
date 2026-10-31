@@ -8,6 +8,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   PULL_REQUEST_WATCH_WAKE_LIMIT,
   evaluatePullRequestWatch as evaluate,
+  pullRequestWatchMessage,
 } from "./pullRequestWatch.ts";
 
 // These cases read the head once or at one moment, so the no-checks notice never comes due.
@@ -226,6 +227,76 @@ describe("evaluatePullRequestWatch", () => {
       { kind: "checks-failed", failed: [check("e2e", "failure")] },
     ]);
     assert.deepEqual(evaluatePullRequestWatch(failure.next, broke, noRemarks).changes, []);
+
+    // A failure while another owed check still runs keeps that one owed.
+    const unitBroke = detail({
+      checks: [sonar, check("unit", "failure"), check("e2e", "pending")],
+    });
+    const second = evaluatePullRequestWatch(first.next, unitBroke, noRemarks);
+    assert.deepEqual(second.changes, [
+      { kind: "checks-failed", failed: [check("unit", "failure")] },
+    ]);
+    const settled = detail({ checks: [sonar, check("unit", "failure"), check("e2e", "success")] });
+    const last = evaluatePullRequestWatch(second.next, settled, noRemarks);
+    assert.deepEqual(last.changes, [
+      { kind: "checks-finished", failing: [sonar, check("unit", "failure")] },
+    ]);
+  });
+
+  it("wakes once when the other required checks finish after a required one failed", () => {
+    const required = (name: string, status: PullRequestCheck["status"]) => ({
+      ...check(name, status),
+      required: true,
+    });
+    const early = detail({
+      checks: [
+        required("lint", "failure"),
+        required("unit", "pending"),
+        check("bot", "failure"),
+        check("e2e", "pending"),
+      ],
+    });
+    const first = evaluatePullRequestWatch(watch(), early, noRemarks);
+    assert.equal(first.changes.length, 1);
+    assert.deepEqual(first.next.owedChecks, ["unit"]);
+
+    const done = detail({
+      checks: [
+        required("lint", "failure"),
+        required("unit", "success"),
+        check("bot", "failure"),
+        check("e2e", "pending"),
+      ],
+    });
+    const final = evaluatePullRequestWatch(first.next, done, noRemarks);
+    assert.deepEqual(final.changes, [
+      { kind: "checks-finished", failing: [required("lint", "failure")] },
+    ]);
+    assert.deepEqual(evaluatePullRequestWatch(final.next, done, noRemarks).changes, []);
+    const message = pullRequestWatchMessage({
+      number: 7,
+      url: "https://github.com/o/r/pull/7",
+      baseBranch: "main",
+      headSha: "aaaaaaaaaa",
+      report: final,
+    });
+    assert.deepEqual(message.notification.outcome, "failed");
+    assert.equal(message.notification.summary, "#7: checks finished");
+    assert.include(
+      message.text,
+      "- The checks still running when one failed have finished on aaaaaaa. Still failing:\n  - lint https://ci.example/lint",
+    );
+
+    // A rerun of the failed required check is not the gate finishing, even with an advisory failure.
+    const rerun = detail({
+      checks: [
+        required("lint", "pending"),
+        required("unit", "success"),
+        check("bot", "failure"),
+        check("e2e", "pending"),
+      ],
+    });
+    assert.deepEqual(evaluatePullRequestWatch(first.next, rerun, noRemarks).changes, []);
   });
 
   it("clears old-head owed checks when a new head is pushed", () => {
