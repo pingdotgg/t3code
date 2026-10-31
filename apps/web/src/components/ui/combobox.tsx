@@ -109,12 +109,24 @@ function ComboboxSearchInput({
   separator = true,
   variant = "default",
   ...props
-}: React.ComponentProps<typeof ComboboxInput> & { separator?: boolean; variant?: "default" | "inset" }) {
+}: React.ComponentProps<typeof ComboboxInput> & {
+  separator?: boolean;
+  variant?: "default" | "inset";
+}) {
   if (variant === "inset") {
     return (
-      <div className="relative m-1.5 shrink-0 rounded-control surface-field">
-        <SearchIcon aria-hidden className="pointer-events-none absolute top-1/2 left-2.5 z-10 size-[13px] -translate-y-1/2 text-dim-foreground" />
-        <ComboboxInput {...props} showTrigger={false} size="sm" unstyled className="[&_input]:h-7 [&_input]:ps-7.75 [&_input]:pe-2.5 [&_input]:text-meta [&_input]:font-normal" />
+      <div className="relative m-1.5 shrink-0 rounded-control surface-well">
+        <SearchIcon
+          aria-hidden
+          className="pointer-events-none absolute top-1/2 left-2.5 z-10 size-[13px] -translate-y-1/2 text-dim-foreground"
+        />
+        <ComboboxInput
+          {...props}
+          showTrigger={false}
+          size="sm"
+          unstyled
+          className="[&_input]:h-7 [&_input]:ps-7.75 [&_input]:pe-2.5 [&_input]:text-meta [&_input]:font-normal"
+        />
       </div>
     );
   }
