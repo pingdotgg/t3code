@@ -23,6 +23,15 @@ const GatewayModels = Schema.Struct({
 });
 type GatewayModel = (typeof GatewayModels.Type)["data"][number];
 
+const CLOUD_PROVIDER_FLAGS = [
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_VERTEX",
+  "CLAUDE_CODE_USE_FOUNDRY",
+  "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+  "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+  "CLAUDE_CODE_USE_MANTLE",
+] as const;
+
 export const discoverClaudeGatewayModels = Effect.fn("discoverClaudeGatewayModels")(
   function* (
     config: Pick<ClaudeSettings, "homePath">,
@@ -35,6 +44,13 @@ export const discoverClaudeGatewayModels = Effect.fn("discoverClaudeGatewayModel
       cwd,
       claudeEnvironment,
     );
+    // Cloud backends ignore ANTHROPIC_BASE_URL, even when it remains in the environment.
+    if (
+      CLOUD_PROVIDER_FLAGS.some((name) =>
+        ["1", "true", "yes", "on"].includes(env[name]?.trim().toLowerCase() ?? ""),
+      )
+    )
+      return undefined;
     const endpoint = URL.parse(env.ANTHROPIC_BASE_URL?.trim() ?? "");
     if (
       !endpoint ||
@@ -48,9 +64,9 @@ export const discoverClaudeGatewayModels = Effect.fn("discoverClaudeGatewayModel
     endpoint.hash = "";
     endpoint.searchParams.set("limit", "1000");
 
-    const headers: Record<string, string> = { "anthropic-version": "2023-06-01" };
+    const headers = new Headers({ "anthropic-version": "2023-06-01" });
     if (env.ANTHROPIC_AUTH_TOKEN?.trim()) {
-      headers.authorization = `Bearer ${env.ANTHROPIC_AUTH_TOKEN.trim()}`;
+      headers.set("authorization", `Bearer ${env.ANTHROPIC_AUTH_TOKEN.trim()}`);
     } else {
       let key = env.ANTHROPIC_API_KEY?.trim();
       if (!key && apiKeyHelper?.trim()) {
@@ -66,7 +82,11 @@ export const discoverClaudeGatewayModels = Effect.fn("discoverClaudeGatewayModel
         if (result.code !== 0) return undefined;
         key = result.stdout.trim();
       }
-      if (key) headers["x-api-key"] = key;
+      if (key) headers.set("x-api-key", key);
+    }
+    for (const line of env.ANTHROPIC_CUSTOM_HEADERS?.split("\n") ?? []) {
+      const colon = line.indexOf(":");
+      if (colon >= 0) headers.set(line.slice(0, colon).trim(), line.slice(colon + 1).trim());
     }
 
     const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
@@ -74,7 +94,9 @@ export const discoverClaudeGatewayModels = Effect.fn("discoverClaudeGatewayModel
     const cursors = new Set<string>();
     while (true) {
       const response = yield* client.execute(
-        HttpClientRequest.get(endpoint.toString()).pipe(HttpClientRequest.setHeaders(headers)),
+        HttpClientRequest.get(endpoint.toString()).pipe(
+          HttpClientRequest.setHeaders(Object.fromEntries(headers)),
+        ),
       );
       const page = yield* HttpClientResponse.schemaBodyJson(GatewayModels)(response);
       for (const model of page.data) {
