@@ -11,7 +11,9 @@ import {
   ProviderInstanceId,
   ProviderDriverKind,
   RunId,
+  TaskDocumentError,
   TaskDocumentId,
+  type CreateTaskDocumentInput,
   ThreadId,
   TurnItemId,
   WS_METHODS,
@@ -68,6 +70,8 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly projectionRequests?: ThreadId[];
   readonly advertiseThreadStop?: boolean;
   readonly advertiseTaskDocuments?: boolean;
+  readonly taskCreations?: CreateTaskDocumentInput[];
+  readonly failTaskCreation?: boolean;
 }) {
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
@@ -91,6 +95,12 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
           resumed: false,
         };
       }),
+    [WS_METHODS.taskDocumentsCreate]: (creation: CreateTaskDocumentInput) =>
+      input.failTaskCreation === true
+        ? Effect.fail(new TaskDocumentError({ reason: "io" }))
+        : Effect.sync(() => {
+            input.taskCreations?.push(creation);
+          }),
     [WS_METHODS.projectsMutate]: (mutation: ProjectMutation) =>
       Effect.sync(() => {
         input.projects.push(mutation);
@@ -338,6 +348,61 @@ describe("V2 environment commands", () => {
       ).toMatchObject({ _tag: "EnvironmentRpcUnavailableError" });
       expect(launches).toHaveLength(3);
       expect(commands).toHaveLength(2);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect("creates a new task's file before launch, and a failure stops the launch", () =>
+    Effect.gen(function* () {
+      const launches: OrchestrationV2ThreadLaunchInput[] = [];
+      const taskCreations: CreateTaskDocumentInput[] = [];
+      const taskDocumentId = TaskDocumentId.make("aaaaaaaa-aaaa-4aaa-8aaa-bbbbbbbbbbbb");
+      const start = (supervisor: EnvironmentSupervisor.EnvironmentSupervisor["Service"]) =>
+        startThreadTurn({
+          threadId: v2ThreadId,
+          message: {
+            messageId: MessageId.make("new-task-message"),
+            role: "user",
+            text: "work",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          bootstrap: {
+            task: { taskDocumentId, updateInstructionsPath: "/tasks/update.md", enrichment: true },
+            createTask: { title: "New task", description: "Do it", directory: "/tasks" },
+            createThread: {
+              ...v2Projection.thread,
+              createdAt: "2026-06-20T00:00:00.000Z",
+              branch: null,
+              worktreePath: null,
+            },
+          },
+        }).pipe(
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
+        );
+      const created = yield* makeSupervisor({
+        commands: [],
+        projects: [],
+        launches,
+        taskCreations,
+        advertiseTaskDocuments: true,
+      });
+      yield* start(created);
+      expect(taskCreations).toEqual([
+        { taskDocumentId, title: "New task", description: "Do it", directory: "/tasks" },
+      ]);
+      expect(launches.at(-1)?.task).toMatchObject({ taskDocumentId, enrichment: true });
+
+      const failing = yield* makeSupervisor({
+        commands: [],
+        projects: [],
+        launches,
+        failTaskCreation: true,
+        advertiseTaskDocuments: true,
+      });
+      expect(yield* start(failing).pipe(Effect.flip)).toMatchObject({ reason: "io" });
+      expect(launches).toHaveLength(1);
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 

@@ -42,6 +42,16 @@ export const TaskDocumentRef = Schema.Struct({ taskDocumentId: TaskDocumentId })
 export type TaskDocumentRef = typeof TaskDocumentRef.Type;
 export const RegisterTaskDocumentInput = Schema.Struct({ path: TrimmedNonEmptyString });
 export type RegisterTaskDocumentInput = typeof RegisterTaskDocumentInput.Type;
+/** The id is minted by the caller so a retried creation finds its own file instead of making another. */
+export const CreateTaskDocumentInput = Schema.Struct({
+  taskDocumentId: TaskDocumentId,
+  title: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+  description: Schema.String.check(Schema.isMaxLength(20_000)),
+  directory: Schema.optional(TrimmedNonEmptyString),
+});
+export type CreateTaskDocumentInput = typeof CreateTaskDocumentInput.Type;
+export const TaskDocumentFolder = Schema.Struct({ directory: Schema.String });
+export type TaskDocumentFolder = typeof TaskDocumentFolder.Type;
 export const SaveTaskDocumentInput = Schema.Struct({
   ...TaskDocumentRef.fields,
   locatorVersion: NonNegativeInt,

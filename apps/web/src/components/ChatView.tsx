@@ -358,6 +358,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { observeResize } from "~/lib/observeResize";
+import { useNewTaskStore } from "~/newTaskStore";
 import { ThreadVisitWatermark } from "./chat/ThreadVisitWatermark";
 import { ChatTerminalDrawers } from "./chat/ChatTerminalDrawers";
 import { ListChecksIcon } from "lucide-react";
@@ -1079,9 +1080,15 @@ export default function ChatView(props: ChatViewProps) {
   const draftTaskDocumentId = useComposerDraftStore((store) =>
     draftId === null ? null : (store.getDraftSession(draftId)?.taskDocumentId ?? null),
   );
+  // A task the draft will create has no document to show until the thread is sent.
+  const draftTaskIsPlanned = useNewTaskStore(
+    (store) => draftTaskDocumentId !== null && draftTaskDocumentId in store.byId,
+  );
   const activeTaskDocumentId = isServerThread
     ? (activeThreadShell?.taskDocumentId ?? null)
-    : draftTaskDocumentId;
+    : draftTaskIsPlanned
+      ? null
+      : draftTaskDocumentId;
   // A narrow window or a maximized tool has no room beside the chat, so the document moves to a drawer.
   const taskPanePinned =
     activeTaskDocumentId !== null && !prefersPlanSidebarSheet && !rightPanelMaximized;

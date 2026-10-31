@@ -16,6 +16,14 @@ export function createTaskDocumentEnvironmentAtoms<R, E>(
       label: "task-documents:register",
       tag: WS_METHODS.taskDocumentsRegister,
     }),
+    create: createEnvironmentRpcCommand(runtime, {
+      label: "task-documents:create",
+      tag: WS_METHODS.taskDocumentsCreate,
+    }),
+    defaultFolder: createEnvironmentRpcCommand(runtime, {
+      label: "task-documents:default-folder",
+      tag: WS_METHODS.taskDocumentsDefaultFolder,
+    }),
     open: createEnvironmentRpcCommand(runtime, {
       label: "task-documents:open",
       tag: WS_METHODS.taskDocumentsOpen,

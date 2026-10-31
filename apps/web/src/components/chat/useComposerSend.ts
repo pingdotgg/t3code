@@ -83,6 +83,7 @@ import {
 } from "../../lib/composerContextRecords";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { readTaskUpdateInstructionsPath } from "../../state/taskDocuments";
+import { useNewTaskStore } from "../../newTaskStore";
 import { threadEnvironment } from "../../state/threads";
 import { runMobileComposerTransition } from "./draftHeroTransition";
 import { useClientSettingsHydrated, useEnvironmentSettings } from "../../hooks/useSettings";
@@ -490,6 +491,10 @@ export function useComposerSend(input: ComposerSendInput) {
       draftId === null
         ? null
         : (useComposerDraftStore.getState().getDraftSession(draftId)?.taskDocumentId ?? null);
+    const newTaskPlan =
+      draftTaskDocumentId === null
+        ? undefined
+        : useNewTaskStore.getState().byId[draftTaskDocumentId];
     const taskUpdateInstructionsPath =
       draftTaskDocumentId === null ? null : readTaskUpdateInstructionsPath(environmentId);
     if (draftTaskDocumentId !== null && taskUpdateInstructionsPath === null) {
@@ -1269,7 +1274,19 @@ export function useComposerSend(input: ComposerSendInput) {
                     task: {
                       taskDocumentId: draftTaskDocumentId,
                       updateInstructionsPath: taskUpdateInstructionsPath!,
+                      ...(newTaskPlan?.enrich ? { enrichment: true } : {}),
                     },
+                    ...(newTaskPlan === undefined
+                      ? {}
+                      : {
+                          createTask: {
+                            title: newTaskPlan.title,
+                            description: newTaskPlan.description,
+                            ...(newTaskPlan.directory === null
+                              ? {}
+                              : { directory: newTaskPlan.directory }),
+                          },
+                        }),
                   }
                 : {}),
               ...(isLocalDraftThread
@@ -1358,6 +1375,7 @@ export function useComposerSend(input: ComposerSendInput) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        if (newTaskPlan !== undefined) useNewTaskStore.getState().forget(draftTaskDocumentId!);
         setKeepFullHistory(routeThreadKey, false);
         clearUsageLimitsFor(routeThreadKey);
         if (turnUsesAttachmentUploads) {

@@ -469,6 +469,8 @@ export type TaskThreadInitializationSummary = typeof TaskThreadInitializationSum
 export const TaskThreadLaunchOptions = Schema.Struct({
   taskDocumentId: TaskDocumentId,
   updateInstructionsPath: TrimmedNonEmptyString,
+  /** Only a task's first thread enriches it; a retry keeps the choice the first attempt froze. */
+  enrichment: Schema.optional(Schema.Boolean),
 });
 export type TaskThreadLaunchOptions = typeof TaskThreadLaunchOptions.Type;
 export const TaskThreadInitializationEnvelope = Schema.Struct({
@@ -477,6 +479,7 @@ export const TaskThreadInitializationEnvelope = Schema.Struct({
   canonicalPath: TaskThreadInitializationSummary.fields.canonicalPath,
   revision: TaskThreadInitializationSummary.fields.revision,
   templateVersion: PositiveInt,
+  enrichment: Schema.optional(Schema.Boolean),
   text: Schema.String.check(Schema.isMaxLength(16000)),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   modelSelection: ModelSelection,

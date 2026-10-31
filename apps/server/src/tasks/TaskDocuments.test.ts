@@ -482,4 +482,73 @@ describe("TaskDocuments", () => {
         yield* Fiber.interrupt(watcher);
       }).pipe(Effect.scoped, Effect.provide(layer)),
   );
+
+  describe("create", () => {
+    const newId = (suffix: string) => TaskDocumentId.make(`aaaaaaaa-aaaa-4aaa-8aaa-${suffix}`);
+    const input = (suffix: string, directory?: string) => ({
+      taskDocumentId: newId(suffix),
+      title: 'Ship "the" café plan: 雪',
+      description: "Line one\nstate: not a field",
+      ...(directory === undefined ? {} : { directory }),
+    });
+    const taskFiles = (fs: FileSystem.FileSystem, directory: string) =>
+      fs
+        .readDirectory(directory)
+        .pipe(Effect.map((names) => names.filter((name) => name.startsWith("TASK-"))));
+
+    it.effect("writes a compatible registered file in the managed folder by default", () =>
+      Effect.gen(function* () {
+        const { fs, path, service } = yield* setup;
+        const config = yield* ServerConfig.ServerConfig;
+        const managed = path.join(config.baseDir, "tasks");
+        expect(yield* service.defaultFolder()).toEqual({ directory: managed });
+        const created = yield* service.create(input("000000000001"));
+        expect(path.dirname(created.summary.canonicalPath)).toBe(yield* fs.realPath(managed));
+        expect(path.basename(created.summary.canonicalPath)).toMatch(
+          /^TASK-\d{8}-\d{4}-ship-the-caf.-plan-.+\.md$/u,
+        );
+        expect(created.summary).toMatchObject({
+          taskDocumentId: newId("000000000001"),
+          registered: true,
+          availability: "available",
+          title: 'Ship "the" café plan: 雪',
+          state: "todo",
+          pinned: false,
+        });
+        expect(created.contents).toMatch(
+          /^---\nid: aaaaaaaa-aaaa-4aaa-8aaa-000000000001\n[\s\S]*\n---\n# Ship "the" café plan: 雪\n\n## Source prompt\nLine one\nstate: not a field\n\n## Activity Log\n- \*\*\d{4}-\d\d-\d\d \d\d:\d\d\*\* - Task created in T3 Code\n$/u,
+        );
+        expect(yield* fs.readFileString(created.summary.canonicalPath)).toBe(created.contents);
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+    );
+
+    it.effect("is idempotent per id and never overwrites a same-titled file", () =>
+      Effect.gen(function* () {
+        const { fs, directory, service } = yield* setup;
+        const first = yield* service.create(input("000000000002", directory));
+        const replay = yield* service.create(input("000000000002", directory));
+        const other = yield* service.create(input("000000000003", directory));
+        expect(replay).toEqual(first);
+        expect(other.summary.canonicalPath).not.toBe(first.summary.canonicalPath);
+        expect(yield* taskFiles(fs, directory)).toHaveLength(2);
+        expect(yield* fs.readFileString(first.summary.canonicalPath)).toBe(first.contents);
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+    );
+
+    it.effect("leaves no file or registration when creation fails", () =>
+      Effect.gen(function* () {
+        const { fs, directory, service, target } = yield* setup;
+        const failure = (folder: string) =>
+          service.create(input("000000000004", folder)).pipe(Effect.flip);
+        expect(yield* failure("relative/tasks")).toMatchObject({ reason: "unsupported" });
+        expect(yield* failure(target)).toMatchObject({ reason: "io" });
+        expect(yield* service.list()).toEqual([]);
+        for (let index = 0; index < 64; index++) {
+          yield* service.create(input(`b${String(index).padStart(11, "0")}`, directory));
+        }
+        expect(yield* failure(directory)).toMatchObject({ reason: "limit" });
+        expect(yield* taskFiles(fs, directory)).toHaveLength(64);
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+    );
+  });
 });

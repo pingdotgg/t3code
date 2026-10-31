@@ -1,8 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off -- SHA-256 revisions use the host crypto implementation.
 import * as NodeCrypto from "node:crypto";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -28,6 +30,8 @@ import {
   type OpenTaskDocument,
   type TaskDocumentRef,
   type RegisterTaskDocumentInput,
+  type CreateTaskDocumentInput,
+  type TaskDocumentFolder,
   type SaveTaskDocumentInput,
   type RelinkTaskDocumentInput,
   type TaskDocumentRecoveryRef,
@@ -41,6 +45,10 @@ export class TaskDocuments extends Context.Service<
     readonly register: (
       input: RegisterTaskDocumentInput,
     ) => Effect.Effect<OpenTaskDocument, TaskDocumentOperationError>;
+    readonly create: (
+      input: CreateTaskDocumentInput,
+    ) => Effect.Effect<OpenTaskDocument, TaskDocumentOperationError>;
+    readonly defaultFolder: () => Effect.Effect<TaskDocumentFolder>;
     readonly open: (
       input: TaskDocumentRef,
     ) => Effect.Effect<OpenTaskDocument, TaskDocumentOperationError>;
@@ -99,6 +107,52 @@ function metadata(contents: string) {
     state: typeof state === "string" ? state.slice(0, 512) : null,
     pinned: get("pinned") === true,
   };
+}
+
+const pad = (value: number) => String(value).padStart(2, "0");
+
+/** Mirrors the Obsidian task template so the file stays editable there. */
+function taskTemplate(input: CreateTaskDocumentInput, title: string, now: Date) {
+  const iso = now.toISOString().replace(/\.\d{3}Z$/, "Z");
+  const logged = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const description = input.description.trim();
+  return `---
+id: ${input.taskDocumentId}
+tags:
+  - task
+  - task/todo
+state: "todo"
+title: ${JSON.stringify(title)}
+source:
+  type: "prompt"
+  id: ""
+  url: ""
+  captured: "${iso}"
+priority:
+  score: 0
+  deadline: ""
+  impact: "medium"
+  has-blocker: false
+  blocker-context: ""
+agent-actionable: false
+goal: []
+related: []
+pinned: false
+created: ${iso}
+updated: ${iso}
+---
+# ${title}
+${
+  description
+    ? `
+## Source prompt
+${description}
+`
+    : ""
+}
+## Activity Log
+- **${logged}** - Task created in T3 Code
+`;
 }
 
 const make = Effect.gen(function* () {
@@ -294,7 +348,7 @@ const make = Effect.gen(function* () {
         return yield* new TaskDocumentError({ reason: "duplicate-id" });
     }
   });
-  const register = Effect.fn("TaskDocuments.register")(function* (
+  const registerFile = Effect.fn("TaskDocuments.registerFile")(function* (
     input: RegisterTaskDocumentInput,
   ) {
     if (!path.isAbsolute(input.path))
@@ -320,6 +374,60 @@ const make = Effect.gen(function* () {
     yield* notify(id);
     yield* syncWatches();
     return yield* open({ taskDocumentId: id });
+  });
+  const register = Effect.fn("TaskDocuments.register")(
+    (input: RegisterTaskDocumentInput) => registerFile(input),
+    lock.withPermit,
+  );
+  const defaultFolder = () => Effect.succeed({ directory: path.join(config.baseDir, "tasks") });
+  const create = Effect.fn("TaskDocuments.create")(function* (input: CreateTaskDocumentInput) {
+    const existing = (yield* rows()).find((row) => row.taskDocumentId === input.taskDocumentId);
+    if (existing) return yield* open(existing);
+    const directory = input.directory ?? (yield* defaultFolder()).directory;
+    if (!path.isAbsolute(directory)) return yield* new TaskDocumentError({ reason: "unsupported" });
+    yield* mapIo(fs.makeDirectory(directory, { recursive: true }));
+    const now = DateTime.toDate(yield* DateTime.now);
+    const title = input.title.replace(/\s+/g, " ").trim();
+    const contents = taskTemplate(input, title, now);
+    if (encode(contents).length > TASK_DOCUMENT_MAX_BYTES)
+      return yield* new TaskDocumentError({ reason: "too-large" });
+    const slug =
+      title
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 60) || "task";
+    const base = `TASK-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}-${slug}`;
+    for (let attempt = 1; attempt <= 100; attempt++) {
+      const created = path.join(directory, `${base}${attempt === 1 ? "" : `-${attempt}`}.md`);
+      const written = yield* fs.writeFileString(created, contents, { flag: "wx" }).pipe(
+        Effect.as(true),
+        Effect.catchTags({
+          PlatformError: (cause) =>
+            cause.reason._tag === "AlreadyExists"
+              ? Effect.succeed(false)
+              : Effect.fail(ioError(cause)),
+        }),
+      );
+      if (!written) continue;
+      return yield* registerFile({ path: created }).pipe(
+        // onExit, not tapError: an interrupted request must not leave an unregistered file carrying the id.
+        // A row that already exists owns the file, so a later retry finds it instead of a missing one.
+        Effect.onExit((exit) =>
+          Exit.isSuccess(exit)
+            ? Effect.void
+            : rows().pipe(
+                Effect.flatMap((all) =>
+                  all.some((row) => row.taskDocumentId === input.taskDocumentId)
+                    ? Effect.void
+                    : fs.remove(created),
+                ),
+                Effect.ignore,
+              ),
+        ),
+      );
+    }
+    return yield* new TaskDocumentError({ reason: "io" });
   }, lock.withPermit);
 
   const recoveryPath = (input: TaskDocumentRecoveryRef) =>
@@ -608,6 +716,8 @@ const make = Effect.gen(function* () {
     );
   return TaskDocuments.of({
     register,
+    create,
+    defaultFolder,
     open,
     list,
     save,

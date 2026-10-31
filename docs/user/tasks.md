@@ -6,6 +6,12 @@ A task is a Markdown file on the machine running T3 Code. Threads can share a ta
 
 Choose **+** next to **Tasks** in the sidebar and enter the file's path on that machine. Importing does not change the file.
 
+## Create a task
+
+In a new thread, choose **Task > Create new task...**, then enter a title and an optional description. Nothing is written until you send the thread, so cancelling the draft leaves no file. Sending creates the file, keeping your description word for word, and starts the thread on it. The task folder defaults to a managed `tasks` folder in T3 Code's data directory; type another path to use your own. This client remembers the path per environment.
+
+By default the thread's agent also enriches the task: it adds a goal and context to the file and keeps your description unchanged. If that fails, the thread shows **Retry** and the task stays available. Later threads on the task only read it.
+
 ## Start a thread in a task
 
 Open a new thread and choose the task from **Task** below the composer, or choose **New thread in this task** in the document's header. Project, worktree, and No project choices work as usual. New threads start with **Task: None** unless you start them from a task.

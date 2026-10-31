@@ -35,7 +35,7 @@ vi.mock(import("~/state/taskDocuments"), async () => {
   return {
     taskDocumentEnvironment: {
       ...Object.fromEntries(
-        ["register", "open", "list", "save"].map((name) => [
+        ["register", "create", "open", "list", "save"].map((name) => [
           name,
           { name, permissionAtom: () => permitted },
         ]),

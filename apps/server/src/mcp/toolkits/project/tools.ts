@@ -29,6 +29,7 @@ import * as ServerSettings from "../../../serverSettings.ts";
 import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 import { Tool, Toolkit } from "effect/ai";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
@@ -125,7 +126,8 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     "Create one new top-level thread, bound to its workspace before the agent starts. Task in `message`. Omit `projectId`, model and modes to inherit yours (outside a thread, pass `projectId` or `scratch`); modes cannot exceed yours. After an error or lost reply, retry with the same `clientRequestId`. Follow it with `t3_thread_read` or `t3_thread_wait`. Mention it with its `link`.",
   parameters: Schema.Struct({
     task: Schema.optional(
-      TaskThreadLaunchOptions.annotate({
+      // Only a task's creator asks for enrichment; agents launch threads on tasks that exist.
+      TaskThreadLaunchOptions.mapFields(Struct.omit(["enrichment"])).annotate({
         description:
           "Optional registered task document and update-discipline path on the destination environment. Runs visible context initialization first. Omit message/attachments; send work after launch. No filesystem permission is added.",
       }),

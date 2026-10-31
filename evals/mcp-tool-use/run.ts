@@ -229,6 +229,7 @@ export const McpToolUseCase = Schema.Struct({
         taskDocumentId: Schema.String,
         canonicalPath: Schema.String,
         updateInstructionsPath: Schema.String,
+        enrichment: Schema.optional(Schema.Boolean),
         workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
       }),
     ),

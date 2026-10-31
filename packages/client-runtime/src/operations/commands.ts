@@ -25,6 +25,7 @@ import {
   type RuntimeRequestId,
   type ThreadId,
   type ThreadEnvMode,
+  type CreateTaskDocumentInput,
   type TaskThreadLaunchOptions,
   type UploadChatAttachment,
   type GuestMessageId,
@@ -34,7 +35,12 @@ import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 
-import { EnvironmentRpcUnavailableError, getInitialServerConfig, request } from "../rpc/client.ts";
+import {
+  EnvironmentRpcUnavailableError,
+  getInitialServerConfig,
+  request,
+  requestGuarded,
+} from "../rpc/client.ts";
 
 interface CommandMetadata {
   readonly commandId?: CommandId;
@@ -143,6 +149,8 @@ export interface SetThreadInteractionModeInput extends ThreadCommandInput {
 
 interface StartThreadBootstrap {
   readonly task?: TaskThreadLaunchOptions;
+  /** Writes the task's file for `task.taskDocumentId` first; if that fails the thread never launches. */
+  readonly createTask?: Omit<CreateTaskDocumentInput, "taskDocumentId">;
   readonly createThread?: {
     readonly projectId: ProjectId;
     readonly title: string;
@@ -668,6 +676,13 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       return yield* new EnvironmentRpcUnavailableError({
         environmentId: config.environment.environmentId,
         message: "This environment does not support task documents.",
+      });
+    }
+    if (input.bootstrap.createTask !== undefined) {
+      // Idempotent per id, so a retry after a failed launch finds the file it already made.
+      yield* requestGuarded(WS_METHODS.taskDocumentsCreate, {
+        ...input.bootstrap.createTask,
+        taskDocumentId: input.bootstrap.task.taskDocumentId,
       });
     }
   }

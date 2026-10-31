@@ -456,9 +456,18 @@ it.effect("freezes task launch retries and keeps membership independent of nativ
         task: { taskDocumentId, updateInstructionsPath: "/changed-update.md" },
       });
       assert.deepEqual(retry.projection.thread.taskInitialization, frozen);
+      assert.notProperty(frozen!, "enrichment");
+      assert.notInclude(frozen!.text, "enrich");
       assert.equal(yield* Ref.get(reads), beforeRetry);
       assert.equal(retry.projection.messages.length, 1);
       assert.equal(retry.projection.runs.length, 1);
+      const enriched = yield* launches.launch({
+        ...request,
+        commandId: CommandId.make("task:enriched"),
+        task: { ...request.task, enrichment: true },
+      });
+      assert.equal(enriched.projection.thread.taskInitialization?.enrichment, true);
+      assert.include(enriched.projection.thread.taskInitialization?.text, "Source prompt");
       assert.notInclude(JSON.stringify(frozen), "Canonical task contents");
       const shell = yield* threads.getThreadShell(first.threadId);
       assert.equal(shell?.taskDocumentId, taskDocumentId);
@@ -571,6 +580,7 @@ it.effect(
           canonicalPath: "/tasks/context.md",
           revision: "a".repeat(64),
           templateVersion: 1,
+          enrichment: true,
           text: "Read the task and wait.",
           workspaceStrategy: input.workspaceStrategy,
           modelSelection,
@@ -595,6 +605,8 @@ it.effect(
       });
       const thread = retried.projection.thread;
       assert.equal(thread.taskInitialization?.attemptId, "task:stranded-retry");
+      assert.equal(thread.taskInitialization?.enrichment, true);
+      assert.include(thread.taskInitialization?.text, "Source prompt");
       assert.equal(thread.taskInitialization?.title, thread.title);
       assert.equal(thread.taskInitialization?.interactionMode, thread.interactionMode);
       assert.notEqual(thread.interactionMode, "plan");

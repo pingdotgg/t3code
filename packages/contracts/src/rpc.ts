@@ -1,6 +1,8 @@
 import {
   TaskDocumentRef,
   RegisterTaskDocumentInput,
+  CreateTaskDocumentInput,
+  TaskDocumentFolder,
   SaveTaskDocumentInput,
   RelinkTaskDocumentInput,
   TaskDocumentRecoveryRef,
@@ -424,6 +426,8 @@ export const WS_METHODS = {
   shellOpenInEditor: "shell.openInEditor",
 
   taskDocumentsRegister: "taskDocuments.register",
+  taskDocumentsCreate: "taskDocuments.create",
+  taskDocumentsDefaultFolder: "taskDocuments.defaultFolder",
   taskDocumentsOpen: "taskDocuments.open",
   taskDocumentsList: "taskDocuments.list",
   taskDocumentsSave: "taskDocuments.save",
@@ -1356,6 +1360,18 @@ const WsTaskDocumentsRegisterRpc = Rpc.make(WS_METHODS.taskDocumentsRegister, {
   error: Schema.Union([TaskDocumentOperationError, EnvironmentAuthorizationError]),
 });
 
+const WsTaskDocumentsCreateRpc = Rpc.make(WS_METHODS.taskDocumentsCreate, {
+  payload: CreateTaskDocumentInput,
+  success: OpenTaskDocument,
+  error: Schema.Union([TaskDocumentOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsTaskDocumentsDefaultFolderRpc = Rpc.make(WS_METHODS.taskDocumentsDefaultFolder, {
+  payload: Schema.Struct({}),
+  success: TaskDocumentFolder,
+  error: Schema.Union([TaskDocumentOperationError, EnvironmentAuthorizationError]),
+});
+
 const WsTaskDocumentsOpenRpc = Rpc.make(WS_METHODS.taskDocumentsOpen, {
   payload: TaskDocumentRef,
   success: OpenTaskDocument,
@@ -2143,6 +2159,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsTaskDocumentsRegisterRpc,
+  WsTaskDocumentsCreateRpc,
+  WsTaskDocumentsDefaultFolderRpc,
   WsTaskDocumentsOpenRpc,
   WsTaskDocumentsListRpc,
   WsTaskDocumentsSaveRpc,

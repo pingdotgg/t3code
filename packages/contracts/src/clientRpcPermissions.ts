@@ -18,6 +18,8 @@ import { WS_METHODS } from "./rpc.ts";
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.taskDocumentsRegister]: AuthFilesystemWriteScope,
+  [WS_METHODS.taskDocumentsCreate]: AuthFilesystemWriteScope,
+  [WS_METHODS.taskDocumentsDefaultFolder]: AuthFilesystemReadScope,
   [WS_METHODS.taskDocumentsOpen]: AuthFilesystemReadScope,
   [WS_METHODS.taskDocumentsList]: AuthFilesystemReadScope,
   [WS_METHODS.taskDocumentsSave]: AuthFilesystemWriteScope,
@@ -108,6 +110,7 @@ export function clientRpcRequiredScopes(
   if (
     [
       WS_METHODS.taskDocumentsRegister,
+      WS_METHODS.taskDocumentsCreate,
       WS_METHODS.taskDocumentsSave,
       WS_METHODS.taskDocumentsRelink,
     ].some((tag) => tag === method)

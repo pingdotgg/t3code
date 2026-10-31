@@ -250,6 +250,10 @@ describe("command permissions", () => {
       scopes: [AuthFilesystemReadScope, AuthFilesystemWriteScope],
     },
     {
+      method: WS_METHODS.taskDocumentsCreate,
+      scopes: [AuthFilesystemReadScope, AuthFilesystemWriteScope],
+    },
+    {
       method: WS_METHODS.taskDocumentsSave,
       scopes: [AuthFilesystemReadScope, AuthFilesystemWriteScope],
     },
@@ -260,6 +264,7 @@ describe("command permissions", () => {
     { method: WS_METHODS.taskDocumentsUnregister, scopes: [AuthFilesystemWriteScope] },
     ...[
       WS_METHODS.taskDocumentsOpen,
+      WS_METHODS.taskDocumentsDefaultFolder,
       WS_METHODS.taskDocumentsList,
       WS_METHODS.taskDocumentsReadRecovery,
       WS_METHODS.taskDocumentsListRecovery,

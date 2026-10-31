@@ -1,4 +1,4 @@
-import type { EnvironmentId, TaskDocumentId } from "@t3tools/contracts";
+import { TaskDocumentId, type EnvironmentId } from "@t3tools/contracts";
 import { ListChecksIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -13,7 +13,10 @@ import {
   MenuTrigger,
 } from "~/components/ui/menu";
 import { useComposerDraftStore, type DraftId } from "~/composerDraftStore";
+import { randomUUID } from "~/lib/utils";
+import { useNewTaskStore } from "~/newTaskStore";
 
+import { TaskCreateDialog } from "./TaskCreateDialog";
 import { TaskImportDialog } from "./TaskImportDialog";
 import { useTaskCatalogue } from "./useTaskDocuments";
 
@@ -25,14 +28,28 @@ export function TaskPicker(props: {
   readonly draftId: DraftId;
   readonly taskDocumentId: TaskDocumentId | null;
 }) {
-  const { available, canRegister, tasks } = useTaskCatalogue(props.environmentId);
+  const { available, canCreate, canRegister, tasks } = useTaskCatalogue(props.environmentId);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
-  const [dialog, setDialog] = useState<"import" | "instructions" | null>(null);
+  const planned = useNewTaskStore((store) =>
+    props.taskDocumentId === null ? undefined : store.byId[props.taskDocumentId],
+  );
+  const forgetPlan = useNewTaskStore((store) => store.forget);
+  const [dialog, setDialog] = useState<"import" | "instructions" | "create" | null>(null);
+  // Every dialog gets a fresh id: a send may already have made the file for the old one, and create is idempotent per id.
+  const [mintedId, setMintedId] = useState(() => TaskDocumentId.make(randomUUID()));
   if (!available) return null;
-  const select = (taskDocumentId: TaskDocumentId | null) =>
+  const select = (taskDocumentId: TaskDocumentId | null) => {
+    if (props.taskDocumentId !== null && props.taskDocumentId !== taskDocumentId)
+      forgetPlan(props.taskDocumentId);
     setDraftThreadContext(props.draftId, { taskDocumentId });
+  };
   const selected = tasks.find((task) => task.taskDocumentId === props.taskDocumentId);
-  const label = props.taskDocumentId === null ? "None" : (selected?.title ?? "Selected");
+  const label =
+    props.taskDocumentId === null
+      ? "None"
+      : planned
+        ? `New: ${planned.title}`
+        : (selected?.title ?? "Selected");
   return (
     <>
       <Menu>
@@ -59,26 +76,51 @@ export function TaskPicker(props: {
             <MenuRadioItem value={NO_TASK} closeOnClick>
               None
             </MenuRadioItem>
-            {tasks.map((task) => (
-              <MenuRadioItem
-                key={task.taskDocumentId}
-                value={task.taskDocumentId}
-                closeOnClick
-                disabled={task.availability !== "available"}
-              >
-                <span className="truncate">{task.title}</span>
+            {planned && props.taskDocumentId !== null ? (
+              <MenuRadioItem value={props.taskDocumentId} closeOnClick>
+                <span className="truncate">New: {planned.title}</span>
               </MenuRadioItem>
-            ))}
+            ) : null}
+            {tasks
+              .filter((task) => !planned || task.taskDocumentId !== props.taskDocumentId)
+              .map((task) => (
+                <MenuRadioItem
+                  key={task.taskDocumentId}
+                  value={task.taskDocumentId}
+                  closeOnClick
+                  disabled={task.availability !== "available"}
+                >
+                  <span className="truncate">{task.title}</span>
+                </MenuRadioItem>
+              ))}
           </MenuRadioGroup>
           <MenuSeparator />
           {canRegister ? (
             <MenuItem onClick={() => setDialog("import")}>Import task file…</MenuItem>
           ) : null}
-          <MenuItem disabled>Create new task (not available yet)</MenuItem>
+          {canCreate ? (
+            <MenuItem
+              onClick={() => {
+                setMintedId(TaskDocumentId.make(randomUUID()));
+                setDialog("create");
+              }}
+            >
+              Create new task…
+            </MenuItem>
+          ) : null}
           <MenuItem onClick={() => setDialog("instructions")}>Update instructions file…</MenuItem>
         </MenuPopup>
       </Menu>
-      {dialog ? (
+      {dialog === "create" ? (
+        <TaskCreateDialog
+          environmentId={props.environmentId}
+          taskDocumentId={mintedId}
+          initial={planned}
+          onClose={() => setDialog(null)}
+          onPlanned={select}
+        />
+      ) : null}
+      {dialog === "import" || dialog === "instructions" ? (
         <TaskImportDialog
           environmentId={props.environmentId}
           mode={dialog}

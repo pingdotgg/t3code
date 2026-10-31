@@ -910,14 +910,25 @@ const make = Effect.gen(function* () {
         yield* fs
           .access(updateInstructionsPath, { readable: true })
           .pipe(Effect.mapError(mapError(input, "resolve-task")));
+        // A retry re-sends no enrichment choice; it keeps what the first attempt froze.
+        const enrichment =
+          task.enrichment ??
+          (input.retryTaskInitialization === true && priorThread !== null
+            ? (yield* threads
+                .getThreadRecords(priorThread.id, [])
+                .pipe(Effect.mapError(mapError(input, "read-receipt", priorThread.id)))).thread
+                .taskInitialization?.enrichment
+            : undefined);
         initialization = {
           attemptId: input.commandId,
           messageId: MessageIdSchema.make(`${input.commandId}:task-initialization`),
           canonicalPath: document.summary.canonicalPath,
           revision: document.revision,
           templateVersion: TASK_THREAD_TEMPLATE_VERSION,
+          ...(enrichment === true ? { enrichment } : {}),
           text: taskThreadStarter({
             ...task,
+            enrichment,
             canonicalPath: document.summary.canonicalPath,
             updateInstructionsPath,
             workspaceStrategy: input.workspaceStrategy,
