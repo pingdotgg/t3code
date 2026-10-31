@@ -3,6 +3,18 @@
 Connect a phone, browser, or another desktop app to T3 Code running on a different
 machine. That machine must stay running and reachable while you work.
 
+## Sandbox environments
+
+A sandbox is a cloud machine that runs its own T3 Code server. Open **Settings → Environments →
+Add environment**, choose **Sandbox**, and enter an API key for Boat or Daytona. The server creates
+the machine, installs T3 Code, exposes it on a public HTTPS URL, and pairs it. The new environment
+reconnects like any other remote environment.
+
+The key is saved on the T3 Code server that provisions the sandbox, not on the client. Creating a
+sandbox bills the provider account that owns the key, and the provider's dashboard remains the
+place to stop or delete machines. The default lifetime comes from the provider unless the driver
+sets one.
+
 ## T3 Connect
 
 T3 Connect makes an environment available to your other devices without setting

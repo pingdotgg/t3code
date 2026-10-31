@@ -27,6 +27,13 @@ import {
   PeerLinkSummary,
 } from "./peerLink.ts";
 import {
+  SandboxCreateInput,
+  SandboxCreateResult,
+  SandboxDeleteInput,
+  SandboxProviderError,
+  SandboxProvidersResult,
+} from "./sandbox.ts";
+import {
   ChatGptReconnectProfileInput,
   ChatGptReconnectProfile,
   ChatGptImportProfileInput,
@@ -594,6 +601,9 @@ export const WS_METHODS = {
   sourceControlSignInCancel: "sourceControl.signInCancel",
   sourceControlAppAccess: "sourceControl.appAccess",
   sourceControlStarred: "sourceControl.starred",
+  sandboxesProviders: "sandboxes.providers",
+  sandboxesCreate: "sandboxes.create",
+  sandboxesDelete: "sandboxes.delete",
   projectCloneStart: "projectClone.start",
   projectCloneCancel: "projectClone.cancel",
   projectCloneRetry: "projectClone.retry",
@@ -1252,6 +1262,24 @@ const WsSourceControlStarredRpc = Rpc.make(WS_METHODS.sourceControlStarred, {
 });
 
 // Returns when the project exists and cloning starts; progress uses the subscription.
+const WsSandboxesProvidersRpc = Rpc.make(WS_METHODS.sandboxesProviders, {
+  payload: Schema.Void,
+  success: SandboxProvidersResult,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsSandboxesCreateRpc = Rpc.make(WS_METHODS.sandboxesCreate, {
+  payload: SandboxCreateInput,
+  success: SandboxCreateResult,
+  error: Schema.Union([SandboxProviderError, EnvironmentAuthorizationError]),
+});
+
+const WsSandboxesDeleteRpc = Rpc.make(WS_METHODS.sandboxesDelete, {
+  payload: SandboxDeleteInput,
+  success: Schema.Void,
+  error: Schema.Union([SandboxProviderError, EnvironmentAuthorizationError]),
+});
+
 const WsProjectCloneStartRpc = Rpc.make(WS_METHODS.projectCloneStart, {
   payload: ProjectCloneStartInput,
   success: ProjectCloneStartResult,
@@ -2080,6 +2108,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlSignInCancelRpc,
   WsSourceControlAppAccessRpc,
   WsSourceControlStarredRpc,
+  WsSandboxesProvidersRpc,
+  WsSandboxesCreateRpc,
+  WsSandboxesDeleteRpc,
   WsProjectCloneStartRpc,
   WsProjectCloneCancelRpc,
   WsProjectCloneRetryRpc,
