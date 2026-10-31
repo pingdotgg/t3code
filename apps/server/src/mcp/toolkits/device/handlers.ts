@@ -4,6 +4,7 @@ import {
   type DeviceHostSummary,
   type DeviceId,
   type DevicePlatform,
+  type DeviceServiceState,
   type DeviceSummary,
   DeviceToolUnavailableError,
   LOCAL_DEVICE_HOST_ID,
@@ -123,6 +124,7 @@ const mapLocateErrors = <A, R>(
 const pickDevice = Effect.fn("handlers.pickDevice")(function* (
   state: {
     readonly hosts: ReadonlyArray<DeviceHostSummary>;
+    readonly hostStatuses: DeviceServiceState["hostStatuses"];
     readonly devices: ReadonlyArray<DeviceSummary>;
   },
   input: {
@@ -147,11 +149,14 @@ const pickDevice = Effect.fn("handlers.pickDevice")(function* (
       (input.platform === undefined || device.platform === input.platform),
   );
   if (candidates.length === 0) {
+    const status = state.hostStatuses[hostId];
     return yield* new DeviceToolUnavailableError({
       reason:
-        input.platform === undefined
-          ? "No simulators or emulators were found. Call device_list to see why."
-          : `No ${input.platform} devices were found on host ${hostId}. Call device_list to see why.`,
+        status?.status === "failed" && status.detail
+          ? status.detail
+          : input.platform === undefined
+            ? "No simulators or emulators were found. Call device_list to see why."
+            : `No ${input.platform} devices were found on host ${hostId}. Call device_list to see why.`,
     });
   }
   const platforms = new Set(candidates.map((device) => device.platform));
