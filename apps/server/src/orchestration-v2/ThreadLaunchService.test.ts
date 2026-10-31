@@ -1957,6 +1957,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
         text: "First [file](t3-context://v1/file/intake-file)",
         context: {
           version: 1 as const,
+          composerRecall: "First",
           records: [
             {
               version: 1 as const,
@@ -1999,6 +2000,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     );
     assert.isDefined(stored);
     assert.notEqual(stored.attachments[0]?.id, attachment.id);
+    assert.equal(stored.context?.composerRecall, "First");
     const record = stored.context?.records[0];
     assert.isDefined(record);
     assert.equal((record as { attachmentId: string }).attachmentId, stored.attachments[0]?.id);
@@ -2063,6 +2065,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       threadId: input.threadId,
       messageId: MessageId.make("intake-second"),
       text: "Second",
+      context: { version: 1, records: [], composerRecall: "Original draft" },
       attachments: [attachment],
       dispatchMode: { type: "queue_after_active" },
       createdBy: "user",
@@ -2080,6 +2083,19 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       (message) => message.id === queuedRun.userMessageId,
     );
     assert.isDefined(queuedMessage);
+    yield* ThreadMessageIntake.dispatchCommand({
+      type: "queued-run.edit",
+      commandId: CommandId.make("intake-unchanged-text"),
+      threadId: input.threadId,
+      runId: queuedRun.id,
+      text: queuedMessage.text,
+    });
+    assert.equal(
+      (yield* threads.getThreadProjection(input.threadId)).messages.find(
+        (message) => message.id === queuedMessage.id,
+      )?.context?.composerRecall,
+      "Original draft",
+    );
     const file: ChatAttachment = {
       type: "file",
       id: ChatAttachmentId.make(createPendingAttachmentId("pdf")),
@@ -2108,6 +2124,21 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       (message) => message.id === queuedRun.userMessageId,
     );
     assert.isDefined(editedMessage);
+    assert.isUndefined(editedMessage.context?.composerRecall);
+    yield* ThreadMessageIntake.dispatchCommand({
+      type: "queued-run.edit",
+      commandId: CommandId.make("intake-new-provenance"),
+      threadId: input.threadId,
+      runId: queuedRun.id,
+      text: "Ultrathink:\nEdited with a file",
+      context: { version: 1, records: [], composerRecall: "Edited with a file" },
+    });
+    const recaptured = yield* threads.getThreadProjection(input.threadId);
+    assert.equal(
+      recaptured.messages.find((message) => message.id === editedMessage.id)?.context
+        ?.composerRecall,
+      "Edited with a file",
+    );
     assert.equal(editedMessage.attachments.length, 2);
     assert.deepEqual(editedMessage.attachments[0], queuedMessage.attachments[0]);
     assert.notEqual(editedMessage.attachments[1]?.id, file.id);

@@ -454,6 +454,8 @@ export function useThreadComposerState() {
     }
     const payload = resolveQueuedEditPayload({
       edit,
+      text,
+      draftText: draft.text,
       draftContext: draft.context,
       draftAttachments: draft.attachments,
       uploaded: prepared.value.attachments,
@@ -467,7 +469,7 @@ export function useThreadComposerState() {
         edit: {
           messageId: edit.messageId,
           attachments: payload.attachments,
-          ...(payload.context ? { context: payload.context } : {}),
+          context: payload.context,
         },
       },
     });
@@ -663,7 +665,7 @@ export function useThreadComposerState() {
       threadId: selectedThreadShell.id,
       messageId,
       commandId: CommandId.make(metadata.commandId),
-      text,
+      text: draft.text,
       attachments,
       context: draft.context,
       modelSelection,
@@ -681,7 +683,7 @@ export function useThreadComposerState() {
       (error: unknown) => {
         // Restore with uncapped append; capped merge could drop attachments added during the failed write.
         void mergeComposerDraftContent(threadKey, {
-          text,
+          text: draft.text,
           context: draft.context,
           attachments: [],
         });

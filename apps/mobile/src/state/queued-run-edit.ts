@@ -13,6 +13,7 @@ import {
   type QueuedRunsAtom,
 } from "@t3tools/client-runtime/queued-run-edit";
 
+import { composerRecallContext } from "@t3tools/shared/composerContextReferences";
 import { uploadedComposerContext } from "../lib/composerContext";
 import { appAtomRegistry } from "./atom-registry";
 import { abortComposerDraftOperations } from "./composerDraftOperations";
@@ -159,12 +160,14 @@ export const startQueuedRunEditSave = queuedRunEdits.startSave;
 /** Attachments replace wholesale; resend kept server attachments with uploads in composer order. */
 export function resolveQueuedEditPayload(input: {
   readonly edit: QueuedRunEdit;
+  readonly text: string;
+  readonly draftText: string;
   readonly draftContext: OrchestrationMessageContext | undefined;
   readonly draftAttachments: ReadonlyArray<{ readonly id: string }>;
   readonly uploaded: ReadonlyArray<ChatAttachment | UploadChatAttachment>;
 }): {
   readonly attachments: ReadonlyArray<ChatAttachment | UploadChatAttachment>;
-  readonly context: OrchestrationMessageContext | undefined;
+  readonly context: OrchestrationMessageContext;
 } {
   const attachments = [...input.edit.existingAttachments, ...input.uploaded];
   const rebound = uploadedComposerContext(
@@ -172,7 +175,12 @@ export function resolveQueuedEditPayload(input: {
     input.draftAttachments,
     input.uploaded,
   );
-  if (rebound === undefined) return { attachments, context: undefined };
+  const recall = (context: OrchestrationMessageContext | undefined) =>
+    composerRecallContext(input.text, input.draftText, context, input.edit.originalText) ?? {
+      version: 1,
+      records: [],
+    };
+  if (rebound === undefined) return { attachments, context: recall(undefined) };
   const liveIds = new Set(
     attachments.flatMap((attachment) =>
       "id" in attachment && attachment.id ? [attachment.id] : [],
@@ -183,6 +191,6 @@ export function resolveQueuedEditPayload(input: {
   );
   return {
     attachments,
-    context: records.length > 0 ? { version: 1, records } : undefined,
+    context: recall({ ...rebound, records }),
   };
 }

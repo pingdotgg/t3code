@@ -1,5 +1,19 @@
-import type { EnvironmentId, ThreadContextRecord } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ThreadContextRecord,
+  OrchestrationMessageContext,
+} from "@t3tools/contracts";
 import { collectInlineContextIds } from "../../lib/composerContextReferences";
+
+/** Approval feedback accepts plain text, not attachments or supplemental context. */
+export function approvalFeedbackBlockReason(
+  attachmentCount: number,
+  context?: OrchestrationMessageContext,
+): string | null {
+  return attachmentCount > 0 || (context?.records.length ?? 0) > 0
+    ? "Send approval feedback without attachments or added context."
+    : null;
+}
 
 /** Attached threads the prompt still links to; replacing linked text leaves stale records. */
 export function referencedThreadContexts(draft: {

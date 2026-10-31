@@ -1007,6 +1007,23 @@ describe("snapshotComposerSend", () => {
   };
   const live = { ...expired, id: "ctx-live", text: "pnpm test", lineStart: 9, lineEnd: 9 };
 
+  it("preserves authored trailing spaces when an expired terminal pill is removed", () => {
+    const snapshot = snapshotComposerSend({
+      prompt: ensureInlineContextReferences("hello  ", [terminalContextReference(expired)]),
+      images: [],
+      files: [],
+      terminalContexts: [expired],
+      sendableTerminalContexts: [],
+      previewAnnotations: [],
+      reviewComments: [],
+      threadContexts: [],
+      environmentContexts: [],
+    });
+
+    expect(snapshot.composerText).toBe("hello  ");
+    expect(snapshot.messageText).toBe("hello");
+  });
+
   it("drops expired terminal contexts from the contexts and from the prompt", () => {
     const snapshot = snapshotComposerSend({
       prompt: ensureInlineContextReferences("run", [
