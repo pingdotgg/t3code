@@ -7,7 +7,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { parseSshResolveOutput, remoteStateKey, runSshCommand } from "./command.ts";
+import { baseSshArgs, parseSshResolveOutput, remoteStateKey, runSshCommand } from "./command.ts";
 import { SshCommandError } from "./errors.ts";
 
 const encoder = new TextEncoder();
@@ -70,6 +70,31 @@ describe("ssh command", () => {
       ),
     );
   });
+
+  // T3 always supplies its own command or only forwards ports, so a host alias's
+  // RemoteCommand and RequestTTY must be overridden on the command line.
+  it.effect("overrides an alias's RemoteCommand and RequestTTY", () =>
+    Effect.sync(() => {
+      assert.deepEqual(
+        baseSshArgs(
+          { alias: "devbox", hostname: "devbox", username: null, port: 2222 },
+          { batchMode: "yes" },
+        ),
+        [
+          "-o",
+          "BatchMode=yes",
+          "-o",
+          "ConnectTimeout=10",
+          "-o",
+          "RemoteCommand=none",
+          "-o",
+          "RequestTTY=no",
+          "-p",
+          "2222",
+        ],
+      );
+    }),
+  );
 
   // Remote servers store state under this key, so it must not change across releases.
   it.effect("derives a stable remote state key", () =>
