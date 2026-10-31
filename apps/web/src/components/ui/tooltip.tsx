@@ -132,7 +132,7 @@ function TooltipPopup({
   sideOffset?: TooltipPrimitive.Positioner.Props["sideOffset"];
   /** `code` renders monospace content that breaks anywhere, for paths and commands.
    * A Kbd inside uses the tooltip's contextual keycap colors. */
-  variant?: "default" | "popover" | "code";
+  variant?: "default" | "popover" | "code" | "thread";
   anchor?: TooltipPrimitive.Positioner.Props["anchor"];
 }) {
   return (
@@ -142,7 +142,8 @@ function TooltipPopup({
           className={cn(
             "kbd-in-popover relative flex origin-(--transform-origin) text-balance rounded-item font-normal text-popover-foreground text-xs transition-[scale,opacity] data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0 data-instant:duration-0 motion-reduce:transition-none",
             // popover floats over media with the popover recipe.
-            variant === "popover" ? "surface-popover" : "surface-tooltip",
+            variant === "popover" || variant === "thread" ? "surface-popover" : "surface-tooltip",
+            variant === "thread" && "rounded-card",
             // One wrap width for prose on a 16px line, so a one-line tooltip is a whole 26px;
             // code dumps get more room and break anywhere.
             variant === "code"
@@ -151,9 +152,13 @@ function TooltipPopup({
             className,
           )}
           data-slot="tooltip-popup"
+          data-variant={variant}
           {...props}
         >
-          <div className="min-w-0 px-2 py-1" data-slot="tooltip-viewport">
+          <div
+            className="min-w-0 px-2 py-1 in-data-[variant=thread]:p-3"
+            data-slot="tooltip-viewport"
+          >
             {children}
           </div>
         </TooltipPrimitive.Popup>
