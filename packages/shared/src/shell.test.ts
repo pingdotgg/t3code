@@ -1081,11 +1081,16 @@ describe("pathSetupCommand", () => {
     expect(pathSetupCommand({ directory, home: "/Users/theo", shell, platform })).toBe(expected);
   });
 
-  it("writes fish's startup file under XDG_CONFIG_HOME when it is set", () => {
+  it("writes the startup file fish and zsh read, under XDG_CONFIG_HOME or ZDOTDIR", () => {
     const setup = { directory: "/opt/t3/bin", home: "/home/theo", shell: "/usr/bin/fish" } as const;
     expect(pathSetup({ ...setup, platform: "linux", configHome: "/home/theo/cfg" })?.file).toBe(
       "/home/theo/cfg/fish/config.fish",
     );
     expect(pathSetup({ ...setup, platform: "linux" })?.file).toBe("~/.config/fish/config.fish");
+    // zsh reads .zshrc from ZDOTDIR when it is set.
+    expect(
+      pathSetup({ ...setup, shell: "/bin/zsh", platform: "darwin", zdotdir: "/Users/theo/.zsh" })
+        ?.file,
+    ).toBe("/Users/theo/.zsh/.zshrc");
   });
 });

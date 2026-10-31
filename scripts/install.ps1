@@ -248,10 +248,11 @@ if ($interactive) { [Console]::Error.Write("`r$esc[2K") }
 [Console]::Error.WriteLine("  ${green}Installed T3 Code $version$reset`n")
 if ($binDir.Contains(";")) {
   # PATH would split the folder at the `;`, so name the command in full instead.
-  Write-Host "  Run ${bold}$shim$reset to get started.`n"
+  Write-Host "  Run ${bold}& '$($shim.Replace("'", "''"))'$reset to get started.`n"
 } elseif (($env:PATH -split ";") -notcontains $binDir) {
   # `irm | iex` runs in the user's own session, so t3 works in this window right away.
-  $env:Path = "$binDir;$env:Path"
+  # Last, so it never shadows another t3.
+  $env:Path = "$env:Path;$binDir"
   Write-Host "  Run ${bold}t3$reset to get started. For new windows, add $binDir to your PATH.`n"
 } else {
   Write-Host "  Run ${bold}t3$reset to use T3 Code here, or ${bold}t3 up$reset to use it from your other devices.`n"

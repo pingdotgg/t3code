@@ -193,9 +193,15 @@ function newestInstalled(home) {
         if (!isComplete(path.join(versions, installed), installed)) continue;
         fs.accessSync(target, fs.constants.X_OK);
         // A Windows `t3.cmd` needs a shell; its target does not.
-        // Run the target just checked, not the link, which could change after the check. The
-        // link stays argv0, since `t3 update` and `t3 uninstall` find themselves through it.
-        found.push({ version: installed, command: target, argv0: launcher });
+        // Run the target just checked, not the link, which could change after the check. On
+        // POSIX the link stays argv0: `t3 update` and `t3 uninstall` find themselves through it.
+        // Windows finds its t3.cmd from the exe, so argv0 stays the exe there.
+        found.push({
+          version: installed,
+          command: target,
+          shown: launcher,
+          ...(process.platform === "win32" ? {} : { argv0: launcher }),
+        });
       } catch {}
     }
   } catch {}
@@ -221,7 +227,7 @@ function newestInstalled(home) {
           bundle ? fs.statSync(bundle).ctimeMs : 0,
         );
         if (changed <= info.ctimeMs) {
-          found.push({ version: desktop, command: shim, argv0: shim });
+          found.push({ version: desktop, command: shim, shown: shim });
         }
       }
     } catch {}
@@ -254,13 +260,13 @@ async function main() {
       : newestInstalled(home);
   if (installed && compareVersions(installed.version, version) >= 0) {
     note(
-      `using your installed t3 ${installed.version} (${installed.argv0}). Set T3CODE_USE_NPM=1 for npm's ${version}.`,
+      `using your installed t3 ${installed.version} (${installed.shown}). Set T3CODE_USE_NPM=1 for npm's ${version}.`,
     );
     const { T3CODE_NPM_LAUNCHER_PATH: _, ...env } = process.env;
     return run(installed.command, env, ipc, {
       argv0: installed.argv0,
       fallback: () => {
-        note(`your installed t3 at ${installed.argv0} could not run, so npm's ${version} runs.`);
+        note(`your installed t3 at ${installed.shown} could not run, so npm's ${version} runs.`);
         runNpm(home, ipc).catch(fail);
       },
     });

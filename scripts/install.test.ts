@@ -145,6 +145,15 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
       expect(climbing.code).not.toBe(0);
       expect(await NodeFSP.readlink(link)).toBe(`${home}/runtime/versions/../../other/t3`);
 
+      // Only `<version>/t3` counts, not another program inside a version.
+      await NodeFSP.rm(link);
+      await NodeFSP.symlink(NodePath.join(home, "runtime/versions/1.0.0/helper"), link);
+      const sibling = await installOver({ script: "install.sh", home, binDir });
+      expect(sibling.code).not.toBe(0);
+      expect(await NodeFSP.readlink(link)).toBe(
+        NodePath.join(home, "runtime/versions/1.0.0/helper"),
+      );
+
       // An upgrade over an older version's link, written through a symlinked T3 home.
       await NodeFSP.rm(link);
       await NodeFSP.symlink(NodePath.join(home, "runtime/versions/1.0.0/t3"), link);

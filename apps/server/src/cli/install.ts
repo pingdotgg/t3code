@@ -152,13 +152,37 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
   const normalize = (value: string) =>
     windows ? path.resolve(value).toLowerCase() : path.resolve(value);
   const same = (entry: string) => entry !== "" && normalize(entry) === normalize(binDir);
-  const onPath = (environment.PATH ?? environment.Path ?? "").split(windows ? ";" : ":").some(same);
+  const entries = (environment.PATH ?? environment.Path ?? "").split(windows ? ";" : ":");
+  const onPath = entries.some(same);
+  // A t3 earlier on PATH runs instead, and an added folder goes last. Runner caches (npx's own
+  // .bin) are not installs.
+  const firstOther = Effect.gen(function* () {
+    for (const entry of entries) {
+      if (same(entry)) return undefined;
+      if (!path.isAbsolute(entry) || detectCliRunner(`${entry}/`) !== null) continue;
+      for (const name of windows ? ["t3.cmd", "t3.exe"] : ["t3"]) {
+        const candidate = path.join(entry, name);
+        if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false))) return candidate;
+      }
+    }
+    return undefined;
+  });
+  const shadowedBy = yield* firstOther;
   return {
     link,
-    onPath,
-    pathCommand: onPath
-      ? undefined
-      : pathSetupCommand({ directory: binDir, home, shell: environment.SHELL, platform }),
+    onPath: onPath && shadowedBy === undefined,
+    shadowedBy,
+    pathCommand:
+      onPath || shadowedBy !== undefined
+        ? undefined
+        : pathSetupCommand({
+            directory: binDir,
+            home,
+            shell: environment.SHELL,
+            platform,
+            configHome: environment.XDG_CONFIG_HOME,
+            zdotdir: environment.ZDOTDIR,
+          }),
     binDir,
   };
 });
@@ -167,6 +191,11 @@ const reportInstalled = Effect.fn("cli.install.report")(function* (
   installed: Effect.Success<ReturnType<typeof installCli>>,
 ) {
   yield* Console.log(`Installed t3 ${packageJson.version} at ${installed.link}.`);
+  if (installed.shadowedBy !== undefined) {
+    return yield* Console.log(
+      `Another t3 at ${installed.shadowedBy} runs first, so run ${installed.link} to use this one.`,
+    );
+  }
   if (installed.onPath) return yield* Console.log("Run `t3` to get started.");
   if (installed.pathCommand === undefined) {
     return yield* Console.log(`Add ${installed.binDir} to your PATH, then run \`t3\`.`);

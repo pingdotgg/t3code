@@ -68,6 +68,16 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       yield* fs.symlink(path.join(alias, "runtime/versions", VERSION, "t3"), link);
       const onPath = yield* provide(installCli(), { PATH: `/usr/bin:${path.join(root, "bin")}/` });
       assert.isTrue(onPath.onPath);
+      // Another t3 earlier on PATH still runs first, so `t3` would not run this one.
+      const otherBin = path.join(root, "other-bin");
+      yield* fs.makeDirectory(otherBin);
+      yield* fs.writeFileString(path.join(otherBin, "t3"), "");
+      const shadowed = yield* provide(installCli(), {
+        PATH: `${otherBin}:${path.join(root, "bin")}`,
+      });
+      assert.isFalse(shadowed.onPath);
+      assert.equal(shadowed.shadowedBy, path.join(otherBin, "t3"));
+      assert.isUndefined(shadowed.pathCommand);
       const recorded = yield* fs.readFileString(path.join(runtimeDir, "launchers"));
       assert.equal(recorded, `${yield* fs.realPath(path.join(root, "bin"))}/t3\n`);
 

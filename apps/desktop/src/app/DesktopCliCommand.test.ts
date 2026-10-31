@@ -205,6 +205,10 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       process.env.PATH = path.dirname(link!);
       expect((yield* after.state).onPath).toBe(false);
       process.env.PATH = "";
+      // Off PATH, Add to PATH would expose the other home's command, not this one.
+      expect((yield* after.state).pathSetup).toBeUndefined();
+      yield* Effect.flip(after.addToPath);
+      expect(yield* fs.exists(path.join(home, ".zshrc"))).toBe(false);
       expect((yield* after.state).installedPath).toBe(link);
       // Behind another t3 the install fails, and the old link still works.
       const shadow = path.join(home, "shadow");
@@ -369,6 +373,15 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       expect(registry.path).toBe(`${userPath};${launcherDir}`);
       yield* command.uninstall;
       expect(registry.path).toBe(userPath);
+
+      // A `;` in the folder would split it into two PATH entries, so nothing is written.
+      const split = fakePowerShell(userPath);
+      const semicolon = yield* commandIn(
+        { home, baseDir: `${home}\\T3;Home`, platform: "win32" },
+        split.spawner,
+      );
+      expect((yield* Effect.flip(semicolon.install)).message).toContain('has a ";"');
+      expect(split.registry).toMatchObject({ path: userPath, writes: 0 });
 
       // An inherited T3_SET=1 never turns a read into a write of the whole PATH.
       const inherited = fakePowerShell(userPath, { T3_SET: "1", T3_PATH: "C:\\other" });

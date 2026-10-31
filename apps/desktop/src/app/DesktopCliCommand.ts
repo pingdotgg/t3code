@@ -175,6 +175,13 @@ export const make = Effect.gen(function* () {
     return first;
   });
 
+  /** A link to this home's launcher; another home's link is marked too. */
+  const leadsHere = (link: string) =>
+    fs.readLink(link).pipe(
+      Effect.map((target) => target === launcher),
+      Effect.orElseSucceed(() => false),
+    );
+
   const installedAt = Effect.gen(function* () {
     if (windows) {
       if (!(yield* exists(ownedPathMarker))) return Option.none<string>();
@@ -198,6 +205,7 @@ export const make = Effect.gen(function* () {
       shell: process.env.SHELL || readUserLoginShell(),
       platform: environment.platform,
       configHome: process.env.XDG_CONFIG_HOME,
+      zdotdir: process.env.ZDOTDIR,
     });
     if (setup === undefined) return undefined;
     const file = setup.file.startsWith("~/")
@@ -236,6 +244,7 @@ export const make = Effect.gen(function* () {
       onPath ||
       Option.isSome(shadowedBy) ||
       Option.isNone(installed) ||
+      !(yield* leadsHere(installed.value)) ||
       (yield* folderOnPath(installed.value))
         ? undefined
         : startupLine(installed.value);
@@ -273,6 +282,12 @@ export const make = Effect.gen(function* () {
     if (!environment.isPackaged) return yield* fail("The t3 command needs an installed app.");
     yield* ensureLauncher;
     if (windows) {
+      // PATH would split the folder at the `;`, leaving two wrong entries behind.
+      if (binDirectory.includes(";")) {
+        return yield* fail(
+          `T3 Code cannot put ${binDirectory} on PATH because it has a ";". Run ${launcher} directly.`,
+        );
+      }
       const entries = pathEntries(yield* readUserPath, ";");
       if (!entries.some((entry) => sameWindowsPath(entry, binDirectory))) {
         yield* writeUserPath([...entries, binDirectory].join(";"));
@@ -362,7 +377,9 @@ export const make = Effect.gen(function* () {
   const addToPathPermit = yield* Semaphore.make(1);
   const addToPath: DesktopCliCommand["Service"]["addToPath"] = Effect.gen(function* () {
     const installed = yield* installedAt;
-    if (Option.isNone(installed)) return yield* fail("Install the t3 command first.");
+    if (Option.isNone(installed) || !(yield* leadsHere(installed.value))) {
+      return yield* fail("Install the t3 command first.");
+    }
     const setup = startupLine(installed.value);
     if (setup === undefined) return yield* fail("T3 Code cannot add t3 to this shell's PATH.");
     const shadowedBy = yield* foreignFirstOnPath;

@@ -973,6 +973,8 @@ interface PathSetupInput {
   readonly platform: NodeJS.Platform;
   /** `XDG_CONFIG_HOME`, where fish reads its startup file when set. */
   readonly configHome?: string | undefined;
+  /** `ZDOTDIR`, where zsh reads `.zshrc` when set. */
+  readonly zdotdir?: string | undefined;
 }
 
 /**
@@ -1004,11 +1006,13 @@ export function pathSetup(
   // macOS bash reads only the first of .bash_profile, .bash_login, and .profile; no file is safe.
   const file =
     shell === "zsh"
-      ? "~/.zshrc"
+      ? input.zdotdir?.startsWith("/") && /^[\w./-]+$/.test(input.zdotdir)
+        ? `${input.zdotdir}/.zshrc`
+        : "~/.zshrc"
       : shell === "bash" && input.platform !== "darwin"
         ? "~/.bashrc"
         : undefined;
-  return file && { file, line: `export PATH="$PATH:${directory}"` };
+  return file === undefined ? undefined : { file, line: `export PATH="$PATH:${directory}"` };
 }
 
 /** A command to paste that does what {@link pathSetup} describes. */
