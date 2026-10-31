@@ -3802,6 +3802,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
     );
 
+    // A foreign build may store the override as a JSON boolean, which json_extract reads as 1.
+    const normalizedSettledOverride = (alias: string) => {
+      const t = sql.literal(alias);
+      return sql`CASE
+        WHEN json_type(${t}.payload_json, '$.settledOverride') = 'true' THEN 'settled'
+        ELSE json_extract(${t}.payload_json, '$.settledOverride')
+      END`;
+    };
+
     const getLimitRecoveryCandidates = Effect.fn("ProjectionStore.getLimitRecoveryCandidates")(
       function* (options: Parameters<ProjectionStoreV2Shape["getLimitRecoveryCandidates"]>[0]) {
         const rows = yield* sql<{
@@ -3856,7 +3865,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 AND json_extract(failure.payload_json, '$.failure.class') = 'usage_limit'
             )
             AND json_extract(t.payload_json, '$.archivedAt') IS NULL
-            AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
+            AND ${normalizedSettledOverride("t")} IS NOT 'settled'
             AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
             AND json_extract(item.payload_json, '$.failure.resetAt') IS NOT NULL
             AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt')))
@@ -6064,7 +6073,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   : sql``
             }${
               unsettledOnly
-                ? sql` AND json_extract(t.payload_json, '$.settledAt') IS NULL AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'`
+                ? sql` AND json_extract(t.payload_json, '$.settledAt') IS NULL AND ${normalizedSettledOverride("t")} IS NOT 'settled'`
                 : sql``
             }${
               familyOf === undefined
@@ -6780,11 +6789,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           json_extract(t.payload_json, '$.lineage.parentThreadId') AS parent_thread_id,
           json_extract(t.payload_json, '$.lineage.rootThreadId') AS root_thread_id,
           json_extract(t.payload_json, '$.lineage.sideChat') AS side_chat,
-          -- Another build may store the override as a JSON boolean, which json_extract reads as 1.
-          CASE
-            WHEN json_type(t.payload_json, '$.settledOverride') = 'true' THEN 'settled'
-            ELSE json_extract(t.payload_json, '$.settledOverride')
-          END AS settled_override,
+          ${normalizedSettledOverride("t")} AS settled_override,
           json_extract(t.payload_json, '$.settledAt') AS settled_at,
           json_extract(t.payload_json, '$.pinnedAt') AS pinned_at,
           json_extract(t.payload_json, '$.snoozedUntil') AS snoozed_until,
@@ -6875,7 +6880,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           AND json_extract(t.payload_json, '$.archivedAt') IS NULL
           AND json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
           AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
-          AND json_extract(t.payload_json, '$.settledOverride') = 'settled'
+          AND ${normalizedSettledOverride("t")} = 'settled'
           AND json_extract(t.payload_json, '$.settledAt') IS NOT NULL${
             projectIds === undefined ? sql`` : sql` AND t.project_id IN ${sql.in(projectIds)}`
           }

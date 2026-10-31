@@ -1585,48 +1585,64 @@ it.effect("lists every thread in the shell snapshot past SQLite's bound variable
 );
 
 // regression: #28279 a foreign build stored the settled override as a JSON boolean
-it.effect("reads a boolean settled override in the active shell index", () =>
+it.effect("reads a boolean settled override consistently in SQL reads", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const sql = yield* SqlClient.SqlClient;
     const now = yield* DateTime.now;
-    const threadId = ThreadId.make("thread:boolean-override");
-    yield* store.apply({
-      id: EventId.make(`event:${threadId}:created`),
-      type: "thread.created",
-      threadId,
-      occurredAt: now,
-      payload: {
-        createdBy: "user",
-        creationSource: "web",
-        id: threadId,
-        projectId: ProjectId.make("project:boolean-override"),
-        title: "Boolean override",
-        providerInstanceId,
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-        activeProviderThreadId: null,
-        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
-        forkedFrom: null,
-        createdAt: now,
-        updatedAt: now,
-        archivedAt: null,
-        settledOverride: "settled",
-        settledAt: now,
-        lastVisitedAt: null,
-        deletedAt: null,
-      },
-    });
-    yield* sql`
+    const booleanOverride = (threadId: ThreadId) => sql`
       UPDATE orchestration_v2_projection_threads
       SET payload_json = json_set(payload_json, '$.settledOverride', json('true'))
       WHERE thread_id = ${threadId}
     `;
-    const entry = (yield* store.listActiveShellIndex()).find((row) => row.id === threadId);
+    const createThread = (threadId: ThreadId, settledAt: DateTime.Utc | null) =>
+      store.apply({
+        id: EventId.make(`event:${threadId}:created`),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:boolean-override"),
+          title: "Boolean override",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: settledAt === null ? null : "settled",
+          settledAt,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+    const settledId = ThreadId.make("thread:boolean-override");
+    const timelesslySettledId = ThreadId.make("thread:boolean-override-no-time");
+    yield* createThread(settledId, now);
+    yield* booleanOverride(settledId);
+    const entry = (yield* store.listActiveShellIndex()).find((row) => row.id === settledId);
     assert.deepEqual(entry?.settledOverride, "settled");
+    const older = yield* store.listOlderSettledThreads({
+      before: { settledAt: DateTime.formatIso(DateTime.add(now, { days: 1 })) },
+      limit: 10,
+    });
+    assert.include(older.threadIds, settledId);
+
+    yield* createThread(timelesslySettledId, null);
+    yield* booleanOverride(timelesslySettledId);
+    assert.notInclude(
+      (yield* store.getShellSnapshot({ unsettledOnly: true })).threads.map((row) => row.id),
+      timelesslySettledId,
+    );
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -4567,6 +4583,17 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         yield* sql`UPDATE orchestration_v2_projection_threads
           SET payload_json = ${originalRow!.payload_json} WHERE thread_id = ${threadId}`;
       }
+      // regression: #28279 a foreign build may store the override as a JSON boolean
+      yield* sql`UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.settledOverride', json('true'))
+        WHERE thread_id = ${threadId}`;
+      assert.isUndefined(
+        (yield* store.getLimitRecoveryCandidates({ now, autoResume: true, snooze: false })).find(
+          (row) => row.id === threadId,
+        ),
+      );
+      yield* sql`UPDATE orchestration_v2_projection_threads
+        SET payload_json = ${originalRow!.payload_json} WHERE thread_id = ${threadId}`;
       yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = ${DateTime.formatIso(now)} WHERE thread_id = ${threadId}`;
       assert.isUndefined(
         (yield* store.getLimitRecoveryCandidates({ now, autoResume: true, snooze: false })).find(
