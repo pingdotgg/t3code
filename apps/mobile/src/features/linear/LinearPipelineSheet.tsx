@@ -269,6 +269,7 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
         title="Run pipeline from issue"
         subtitle={issue ? `${issue.identifier} ${issue.title}` : undefined}
         onCancel={() => navigation.goBack()}
+        dismissDisabled={pending}
         accessibilityLabel="Cancel"
         confirm={{
           label: "Start pipeline",

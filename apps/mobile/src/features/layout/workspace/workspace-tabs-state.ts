@@ -21,6 +21,11 @@ export function workspaceUsesColumns(tab: WorkspaceTab, settingsOpen = false) {
   return settingsOpen || tab === "threads" || tab === "pullRequests";
 }
 
+/** The compact dock hides under pushed screens: column tabs, and Linear's pushed levels. */
+export function workspaceHidesDockOnPush(tab: WorkspaceTab, settingsOpen = false) {
+  return workspaceUsesColumns(tab, settingsOpen) || tab === "linear";
+}
+
 export interface WorkspaceTabState {
   readonly query: string;
   readonly searchMode: WorkspaceSearchMode;

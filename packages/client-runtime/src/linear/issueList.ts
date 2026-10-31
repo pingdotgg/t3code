@@ -93,6 +93,20 @@ export function formatLinearIssueCount(count: number, capped: boolean): string {
   return `${count} ${count === 1 ? "issue" : "issues"}`;
 }
 
+/** "1 of 5 issues" when a filtered list shows fewer than the total; otherwise the plain total. */
+export function formatLinearIssueCountShown(input: {
+  readonly shown: number | null;
+  readonly total: number;
+  readonly capped: boolean;
+  readonly truncated?: boolean;
+}): string {
+  const { shown, total, capped } = input;
+  if (shown === null || input.truncated === true || shown >= total) {
+    return formatLinearIssueCount(total, capped);
+  }
+  return `${shown} of ${formatLinearIssueCount(total, capped)}`;
+}
+
 export function formatProgressPercent(progress: number): number {
   return Math.round(Math.max(0, Math.min(1, progress)) * 100);
 }

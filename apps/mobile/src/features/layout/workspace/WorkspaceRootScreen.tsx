@@ -5,7 +5,7 @@ import { WorkspaceSettingsList } from "../../settings/SettingsRouteScreen";
 import { WorkspaceSectionToolbar } from "./WorkspaceSectionToolbar";
 import { useNavigation } from "@react-navigation/native";
 import { use } from "react";
-import { View, useWindowDimensions } from "react-native";
+import { Platform, View, useWindowDimensions } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -24,6 +24,7 @@ import { HomeRouteScreen } from "../../home/HomeRouteScreen";
 import { WorkspaceConnectionTitle } from "../../home/WorkspaceConnectionTitle";
 import { useAdaptiveWorkspaceLayout } from "../AdaptiveWorkspaceLayout";
 import { LinearTabScreen } from "../../linear/LinearTabScreen";
+import { useLinearEnvironmentId, useLinearStatus } from "../../linear/useLinearData";
 import { PullRequestsScreen } from "../../pull-requests/PullRequestsScreen";
 import {
   WorkspaceTabsContext,
@@ -90,6 +91,15 @@ function WorkspaceRootContent() {
   const { state } = workspace;
   // Settings is a workspace tab too; its list takes the place of the selected tab's.
   const settingsOpen = workspace.settingsOpen;
+  const linearHeader =
+    Platform.OS === "ios" &&
+    !sidebarNavigation &&
+    !settingsOpen &&
+    enabled.length > 0 &&
+    state.selectedTab === "linear";
+  const linearEnvironmentId = useLinearEnvironmentId();
+  const linearOrganization = useLinearStatus(linearHeader ? linearEnvironmentId : null).data
+    ?.organization?.name;
   const renderHeaderTitle = () => (
     <WorkspaceRootTitle
       columnWidth={width}
@@ -144,9 +154,12 @@ function WorkspaceRootContent() {
             // Beside a detail column the tab bar names the tab and the detail header the page,
             // so the sidebar keeps the brand.
             headerTitle:
-              sidebarNavigation || (!settingsOpen && state.selectedTab !== "usage")
+              sidebarNavigation ||
+              (!settingsOpen && state.selectedTab !== "usage" && state.selectedTab !== "linear")
                 ? renderHeaderTitle
                 : undefined,
+            unstable_headerSubtitle:
+              linearHeader && linearOrganization ? `${linearOrganization} workspace` : undefined,
           }}
         />
         <SafeAreaInsetsContext value={compactTabs ? { ...insets, bottom: 0 } : insets}>

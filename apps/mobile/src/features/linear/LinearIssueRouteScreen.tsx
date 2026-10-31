@@ -530,7 +530,7 @@ export function LinearIssueRouteScreen({
   const team = status.data?.teams.find((entry) => entry.id === issue?.team.id);
   return (
     <LinearScreen
-      title={issue?.team.key ?? "Issue"}
+      title={issue?.identifier ?? "Issue"}
       subtitle={
         issue
           ? `${issue.team.name}${issue.milestone ? ` › ${issue.milestone.name}` : ""}`

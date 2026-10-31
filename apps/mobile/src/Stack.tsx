@@ -748,6 +748,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
     LinearProjectPicker: createNativeStackScreen({
       screen: LinearProjectPickerSheet,
       options: {
+        ...(Platform.OS === "ios" ? SHEET_GLASS_HEADER_OPTIONS : undefined),
         ...HORIZONTAL_FORM_SHEET_OPTIONS,
         sheetAllowedDetents: formSheetDetents(0.6),
         sheetGrabberVisible: true,
@@ -756,6 +757,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
     LinearPipeline: createNativeStackScreen({
       screen: LinearPipelineSheet,
       options: {
+        ...(Platform.OS === "ios" ? SHEET_GLASS_HEADER_OPTIONS : undefined),
         ...HORIZONTAL_FORM_SHEET_OPTIONS,
         sheetAllowedDetents: formSheetDetents(0.9),
         sheetGrabberVisible: true,

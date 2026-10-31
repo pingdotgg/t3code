@@ -2,6 +2,7 @@ import type { LinearIssue, LinearMilestone } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  formatLinearIssueCountShown,
   groupLinearIssues,
   linearBadgeTextTone,
   listLinearMilestones,
@@ -122,5 +123,20 @@ describe("listLinearMilestones", () => {
       "a",
       "b",
     ]);
+  });
+});
+
+describe("formatLinearIssueCountShown", () => {
+  it.each([
+    { shown: null, total: 5, capped: false, truncated: false, text: "5 issues" },
+    { shown: 5, total: 5, capped: false, truncated: false, text: "5 issues" },
+    { shown: 1, total: 1, capped: false, truncated: false, text: "1 issue" },
+    { shown: 1, total: 5, capped: false, truncated: false, text: "1 of 5 issues" },
+    { shown: 1, total: 50, capped: true, truncated: false, text: "1 of 50+ issues" },
+    { shown: 60, total: 50, capped: true, truncated: false, text: "50+ issues" },
+    { shown: 1, total: 5, capped: false, truncated: true, text: "5 issues" },
+    { shown: 7, total: 5, capped: false, truncated: false, text: "5 issues" },
+  ])("formats $shown of $total (capped $capped, truncated $truncated)", ({ text, ...input }) => {
+    expect(formatLinearIssueCountShown(input)).toBe(text);
   });
 });

@@ -1,5 +1,6 @@
 import {
   formatLinearIssueCount,
+  formatLinearIssueCountShown,
   formatProgressPercent,
 } from "@t3tools/client-runtime/linear/issue-list";
 import { formatLinearTargetDate } from "@t3tools/client-runtime/linear/jump";
@@ -173,6 +174,8 @@ export function LinearProgressSummary(props: {
   readonly issueCount: number;
   readonly issueCountCapped: boolean;
   readonly targetDate: string | null;
+  readonly shown?: number | null;
+  readonly truncated?: boolean;
 }) {
   const target = formatLinearTargetDate(props.targetDate);
   return (
@@ -182,7 +185,13 @@ export function LinearProgressSummary(props: {
         {formatProgressPercent(props.progress)}%
       </Text>
       <Text className="text-xs tabular-nums text-foreground-muted">
-        · {formatLinearIssueCount(props.issueCount, props.issueCountCapped)}
+        ·{" "}
+        {formatLinearIssueCountShown({
+          shown: props.shown ?? null,
+          total: props.issueCount,
+          capped: props.issueCountCapped,
+          truncated: props.truncated,
+        })}
       </Text>
       {target ? <Text className="text-xs text-foreground-muted">· Target {target}</Text> : null}
     </View>

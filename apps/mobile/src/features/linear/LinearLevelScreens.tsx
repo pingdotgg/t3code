@@ -306,6 +306,8 @@ export function LinearMilestoneScreen({
                   issueCount={milestone.issueCount}
                   issueCountCapped={milestone.issueCountCapped}
                   targetDate={milestone.targetDate}
+                  shown={result?.issues.length ?? null}
+                  truncated={result?.truncated}
                 />
               </View>
             ) : null}

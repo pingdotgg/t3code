@@ -81,6 +81,7 @@ export function LinearProjectPickerSheet({
         presentation={Platform.OS === "android" ? "inline" : "native"}
         title={issue ? `Which project is ${issue.identifier} in?` : "Choose a project"}
         onCancel={() => navigation.goBack()}
+        dismissDisabled={opening !== null}
         accessibilityLabel="Cancel"
       />
       <ScreenContent fitToContents>

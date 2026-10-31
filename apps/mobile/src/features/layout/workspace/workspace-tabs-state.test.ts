@@ -10,6 +10,7 @@ import {
   resolveWorkspaceTabOrder,
   workspaceSearchBottomClearance,
   workspaceDockBottomClearance,
+  workspaceHidesDockOnPush,
   workspaceUsesColumns,
 } from "./workspace-tabs-state";
 
@@ -60,6 +61,14 @@ describe("workspace root navigation", () => {
     expect(workspaceUsesColumns("pullRequests")).toBe(true);
     expect(workspaceUsesColumns("linear")).toBe(false);
     expect(workspaceUsesColumns("linear", true)).toBe(true);
+  });
+
+  it("hides the compact dock under pushed screens for column tabs and Linear, not Usage", () => {
+    expect(workspaceHidesDockOnPush("threads")).toBe(true);
+    expect(workspaceHidesDockOnPush("pullRequests")).toBe(true);
+    expect(workspaceHidesDockOnPush("linear")).toBe(true);
+    expect(workspaceHidesDockOnPush("usage")).toBe(false);
+    expect(workspaceHidesDockOnPush("usage", true)).toBe(true);
   });
 
   it("keeps the registered defaults while customization is unavailable", () => {
