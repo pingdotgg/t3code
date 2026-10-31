@@ -2319,7 +2319,6 @@ export default function ChatView(props: ChatViewProps) {
     addPullRequestsSurfaceStable,
     closePreviewPanelStable,
     copyRightPanelFilePathStable,
-    createBrowserSurface,
     createBrowserSurfaceStable,
     moveRightPanelSurfaceStable,
     onOpenToolDiffStable,
@@ -3099,6 +3098,7 @@ export default function ChatView(props: ChatViewProps) {
   // and a host only forwards to a sender for the thread it was built for.
   // Updated after commit so a discarded render cannot lend its `onSend`.
   const annotationSenderRef = useRef<ThreadAnnotationSender | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- lends the committed composer sender to browser annotation callbacks
   useLayoutEffect(() => {
     annotationSenderRef.current = activeThreadKey
       ? {

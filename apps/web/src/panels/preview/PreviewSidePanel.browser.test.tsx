@@ -36,7 +36,11 @@ const BROWSER_DEFAULTS = {
 };
 
 vi.mock("~/components/preview/previewBridge", () => ({
-  previewBridge: { pickElement: mocks.pickElement, cancelPickElement: mocks.cancelPickElement },
+  previewBridge: {
+    pickElement: mocks.pickElement,
+    cancelPickElement: mocks.cancelPickElement,
+    setAnnotationSendEnabled: vi.fn(async () => undefined),
+  },
 }));
 vi.mock("~/components/preview/usePreviewSession", () => ({
   // Lives exactly as long as the PreviewView instance, so it counts remounts.
