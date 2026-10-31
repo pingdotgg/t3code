@@ -56,9 +56,13 @@ export function activate(context) {
     return { pid: process.pid, done: true };
   });
   // Ignores cancellation and never answers.
-  handle("stall", () => new Promise(() => {
-    log.info("stall-started");
-  }));
+  handle(
+    "stall",
+    () =>
+      new Promise(() => {
+        log.info("stall-started");
+      }),
+  );
   // Ignores cancellation and answers anyway, after the server stopped waiting.
   handle(
     "late",
