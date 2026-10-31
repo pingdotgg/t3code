@@ -65,7 +65,10 @@ query ReviewThreads(
   }
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      reviewThreads(first: 100, after: $after) {
+      # GitHub prices a page by the rows it may return, not the rows that exist: this read costs
+      # 14 points at a hundred threads a page even with no threads, and 6 at twenty-five. Only a
+      # pull request past fifty threads pays more, for its extra pages.
+      reviewThreads(first: 25, after: $after) {
         totalCount
         pageInfo {
           hasNextPage
@@ -79,8 +82,8 @@ query ReviewThreads(
           # Null once the thread's line has left the diff, which `isOutdated` reports.
           line
           diffSide
-          # Only ten comments ride with each thread. A hundred threads times a hundred comments
-          # made GitHub reserve 10,000 nested rows and charge 104 points; unfinished threads are
+          # Only ten comments ride with each thread. A hundred, on a hundred-thread page, made
+          # GitHub reserve 10,000 nested rows and charge 104 points; unfinished threads are
           # paged from their own cursor by `ReviewThreadComments`.
           comments(first: 10) {
             totalCount
