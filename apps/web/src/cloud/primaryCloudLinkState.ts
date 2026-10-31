@@ -38,6 +38,10 @@ const primaryCloudLinkStateAtom = Atom.family((key: string) => {
     );
 });
 
+export const primaryCloudLinkMutationAtom = Atom.family((_environmentId: EnvironmentId | null) =>
+  Atom.make(false).pipe(Atom.keepAlive),
+);
+
 const EMPTY_PRIMARY_CLOUD_LINK_STATE_ATOM = Atom.make(
   AsyncResult.success<EnvironmentCloudLinkStateResult | null>(null),
 ).pipe(Atom.keepAlive, Atom.withLabel("primary-cloud-link:null"));
@@ -79,6 +83,7 @@ export function usePrimaryCloudLinkState() {
       ? primaryCloudLinkStateAtom(targetKey(target))
       : EMPTY_PRIMARY_CLOUD_LINK_STATE_ATOM;
   const result = useAtomValue(atom);
+  const isMutating = useAtomValue(primaryCloudLinkMutationAtom(primary?.environmentId ?? null));
   const refresh = () => {
     refreshPrimaryCloudLinkState(target);
   };
@@ -91,7 +96,7 @@ export function usePrimaryCloudLinkState() {
   return {
     data: result._tag === "Failure" ? null : AsyncResult.getOrElse(result, () => null),
     error,
-    isPending: result.waiting,
+    isPending: result.waiting || isMutating,
     refresh,
     target,
   };

@@ -428,6 +428,8 @@ export const EnvironmentConnectReachability = Schema.Union([
     /** Null when cloudflared did not report a count. */
     readyConnections: Schema.NullOr(Schema.Int),
     protocol: Schema.NullOr(Schema.String),
+    /** The tunnel hostname that answered. Older servers leave it out. */
+    hostname: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     status: Schema.Literal("unreachable"),
@@ -450,6 +452,12 @@ export function formatConnectReachable(
     ...(count === null ? [] : [`${count} connection${count === 1 ? "" : "s"}`]),
     ...(result.protocol ? [result.protocol.toUpperCase()] : []),
   ].join(" · ");
+}
+
+export function connectReachableMcpUrl(
+  result: Extract<EnvironmentConnectReachability, { status: "reachable" }>,
+): string | null {
+  return result.hostname ? `https://${result.hostname}/mcp` : null;
 }
 
 /**
