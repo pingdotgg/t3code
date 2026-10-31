@@ -16,6 +16,7 @@ import { Button, type ButtonVariant } from "~/components/ui/button";
 import {
   DIALOG_APP_POPUP_CLASS,
   DIALOG_APP_PANEL_POPUP_CLASS,
+  DIALOG_APP_PANEL_BACKDROP_CLASS,
   DIALOG_BACKDROP_CLASS,
   DIALOG_MEDIA_BACKDROP_CLASS,
   DIALOG_MEDIA_POPUP_CLASS,
@@ -80,12 +81,16 @@ function DialogBackdrop({
   className,
   variant = "default",
   ...props
-}: DialogPrimitive.Backdrop.Props & { variant?: "default" | "media" }) {
+}: DialogPrimitive.Backdrop.Props & { variant?: "default" | "media" | "panel" }) {
   return (
     <DialogPrimitive.Backdrop
       forceRender
       className={cn(
-        variant === "media" ? DIALOG_MEDIA_BACKDROP_CLASS : DIALOG_BACKDROP_CLASS,
+        variant === "media"
+          ? DIALOG_MEDIA_BACKDROP_CLASS
+          : variant === "panel"
+            ? DIALOG_APP_PANEL_BACKDROP_CLASS
+            : DIALOG_BACKDROP_CLASS,
         className,
       )}
       data-slot="dialog-backdrop"
@@ -179,7 +184,7 @@ function DialogPopup({
       {/* Media opens from inside other overlays (a composer chip, a popover), so it sits above them. */}
       <DialogBackdrop
         className={variant === "media" ? "z-[60]" : undefined}
-        variant={variant === "media" ? "media" : "default"}
+        variant={variant === "media" ? "media" : variant === "app-panel" ? "panel" : "default"}
       />
       <DialogViewport
         variant={variant === "app" || variant === "app-panel" ? "app" : "default"}
