@@ -76,6 +76,9 @@ Webhook tasks only run when their URL is called, so they can't be run
 immediately.
 Leaving an edited form asks before discarding unsaved changes.
 
+A thread with tasks that post into it shows a calendar chip above the composer.
+Tap it to see those tasks, edit them, pause or resume them, or run them now.
+
 ## Webhook automations
 
 In **Settings → Scheduled tasks**, choose **On webhook**

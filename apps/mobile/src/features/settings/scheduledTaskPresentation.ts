@@ -1,3 +1,5 @@
+import type { ScheduledTask } from "@t3tools/contracts";
+
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
@@ -54,4 +56,59 @@ export function formatNextScheduledTaskRun(nextRunAt: string, now: number): stri
     ...(next.getFullYear() !== current.getFullYear() ? { year: "numeric" as const } : {}),
   });
   return `Next run ${date} at ${time}`;
+}
+
+export const SCHEDULE_WEEKDAYS = [
+  { index: 1, label: "Mon" },
+  { index: 2, label: "Tue" },
+  { index: 3, label: "Wed" },
+  { index: 4, label: "Thu" },
+  { index: 5, label: "Fri" },
+  { index: 6, label: "Sat" },
+  { index: 0, label: "Sun" },
+] as const;
+
+export function describeScheduledTaskSchedule(task: ScheduledTask): string {
+  if (task.schedule.type === "webhook") return "On webhook";
+  if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
+  const days = task.schedule.weekdays?.length
+    ? scheduledTaskRepeatLabel(task.schedule.weekdays)
+    : "Every day";
+  return `${days} at ${formatScheduledTaskTime(task.schedule.timeOfDay)}`;
+}
+
+export function formatScheduledTaskTime(value: string): string {
+  const [hours, minutes] = value.split(":").map(Number);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return value;
+  const time = new Date();
+  time.setHours(hours ?? 9, minutes ?? 0, 0, 0);
+  return time.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+export function scheduledTaskRepeatLabel(weekdays: ReadonlyArray<number>): string {
+  const days = new Set(weekdays);
+  if (days.size === 7) return "Every day";
+  if (days.size === 5 && [1, 2, 3, 4, 5].every((day) => days.has(day))) return "Weekdays";
+  return (
+    SCHEDULE_WEEKDAYS.filter((day) => days.has(day.index))
+      .map((day) => day.label)
+      .join(", ") || "Choose days"
+  );
+}
+
+export type RequestedScheduledTaskEnabled = {
+  readonly taskId: ScheduledTask["id"];
+  readonly enabled: boolean;
+  /** The task's `updatedAt` when the toggle was sent. */
+  readonly since: string;
+};
+
+/** A switch flips on tap; show the request until any newer version of the task arrives. */
+export function displayedScheduledTaskEnabled(
+  task: Pick<ScheduledTask, "id" | "enabled" | "updatedAt">,
+  requested: RequestedScheduledTaskEnabled | null,
+): boolean {
+  return requested?.taskId === task.id && requested.since === task.updatedAt
+    ? requested.enabled
+    : task.enabled;
 }
