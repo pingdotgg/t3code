@@ -4853,6 +4853,127 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect(
+    "keeps a bypass-downgraded process running background work when bypass resolves again",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const home = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-bypass-recovery-",
+          });
+          const remoteSettings = path.join(home, "remote-settings.json");
+          // Claude rewrites its remote policy cache in place; a concurrent read can see it empty.
+          yield* fileSystem.writeFileString(remoteSettings, "");
+          const harness = yield* makeWakeHarnessWithOptions({
+            settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: home },
+            close: Queue.shutdown,
+            freshQueueOnReopen: true,
+          });
+          const now = yield* DateTime.now;
+          const turn = (
+            ordinal: number,
+            origin: Pick<
+              Parameters<typeof makeClaudeTestTurnInput>[0],
+              "messageCreatedBy" | "messageCreationSource"
+            >,
+          ) =>
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(`attempt-bypass-recovery:${ordinal}`),
+              text: `Request ${ordinal}`,
+              attachments: [],
+              providerTurnOrdinal: ordinal,
+              ...origin,
+            });
+          yield* harness.runtime.startTurn(
+            turn(1, { messageCreatedBy: "agent", messageCreationSource: "mcp" }),
+          );
+          const downgradedOptions = harness.getOpenedOptions();
+          assert.equal(downgradedOptions?.permissionMode, "auto");
+          yield* harness.offerAndWait(wakeTaskStarted);
+          yield* harness.offerAndWait(turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+          // A denied ExitPlanMode leaves the retained process in plan mode.
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "status",
+              status: null,
+              permissionMode: "plan",
+              uuid: "00000000-0000-4000-8000-000000000601",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+
+          yield* fileSystem.writeFileString(remoteSettings, "{}");
+          for (const [ordinal, origin] of [
+            [2, { messageCreatedBy: "agent", messageCreationSource: "server" }],
+            [3, { messageCreatedBy: "user", messageCreationSource: "web" }],
+          ] as const) {
+            const started = yield* harness.runtime
+              .startTurn(turn(ordinal, origin))
+              .pipe(Effect.result);
+            assert.equal(
+              started._tag,
+              "Success",
+              `${origin.messageCreationSource} turn must not be refused as a setting change`,
+            );
+            const decision = yield* Effect.promise(() =>
+              downgradedOptions!.canUseTool!(
+                "Bash",
+                { command: "git status" },
+                {
+                  signal: new AbortController().signal,
+                  toolUseID: `bypass-recovery-command:${ordinal}`,
+                  requestId: `request-bypass-recovery-command:${ordinal}`,
+                },
+              ),
+            ).pipe(Effect.forkScoped);
+            const first = yield* Effect.raceFirst(
+              Queue.take(harness.runtimeRequestReceipts).pipe(
+                Effect.map((event) => ({ type: "request", event }) as const),
+              ),
+              Fiber.join(decision).pipe(
+                Effect.map((result) => ({ type: "decision", result }) as const),
+              ),
+            );
+            assert.equal(
+              first.type,
+              "request",
+              "the retained downgraded process must still ask for approval",
+            );
+            if (first.type !== "request") return;
+            yield* harness.runtime.respondToRuntimeRequest({
+              requestId: first.event.runtimeRequest.id,
+              decision: "decline",
+            });
+            assert.equal((yield* Fiber.join(decision))?.behavior, "deny");
+            yield* harness.offerAndWait(turnOneResult);
+            yield* Queue.take(harness.terminalReceipts);
+          }
+          assert.strictEqual(harness.getOpenedOptions(), downgradedOptions);
+          assert.deepEqual(harness.permissionModeChanges, ["auto"]);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+          yield* harness.offerAndWait(wakeNotification);
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+          yield* harness.runtime.startTurn(
+            turn(4, { messageCreatedBy: "user", messageCreationSource: "web" }),
+          );
+          assert.equal(harness.getOpenedOptions()?.permissionMode, "bypassPermissions");
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
   it.effect.each(["completed", "interrupted"] as const)(
     "projects Claude thinking blocks when %s",
     (status) =>

@@ -10078,6 +10078,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return false;
         });
 
+        // A denied ExitPlanMode leaves Claude in plan mode. Restore only from plan:
+        // Auto/default may reflect a policy restriction that forbids restoring bypass.
+        const restoreFromDeniedPlanExit = Effect.fnUntraced(function* (
+          live: ClaudeLiveQueryContext,
+        ) {
+          if (live.permissionMode === "plan" && live.openedPermissionMode !== "plan") {
+            live.permissionMode = yield* live.query
+              .setPermissionMode(live.openedPermissionMode)
+              .pipe(
+                Effect.as(live.openedPermissionMode),
+                Effect.catchTags({
+                  ClaudeAgentSdkQueryRunnerError: (error) =>
+                    live.openedPermissionMode === "bypassPermissions"
+                      ? live.query.setPermissionMode("default").pipe(Effect.as("default" as const))
+                      : Effect.fail(error),
+                }),
+              );
+          }
+          return live;
+        });
+
         const openQuery = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           nativeThreadId: string,
@@ -10135,24 +10156,31 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             !existing.stopping &&
             existing.selection.queryIdentity === compiledSelection.queryIdentity
           ) {
-            // A denied ExitPlanMode leaves Claude in plan mode. Restore only from plan:
-            // Auto/default may reflect a policy restriction that forbids restoring bypass.
-            if (existing.permissionMode === "plan" && existing.openedPermissionMode !== "plan") {
-              existing.permissionMode = yield* existing.query
-                .setPermissionMode(existing.openedPermissionMode)
-                .pipe(
-                  Effect.as(existing.openedPermissionMode),
-                  Effect.catchTags({
-                    ClaudeAgentSdkQueryRunnerError: (error) =>
-                      existing.openedPermissionMode === "bypassPermissions"
-                        ? existing.query
-                            .setPermissionMode("default")
-                            .pipe(Effect.as("default" as const))
-                        : Effect.fail(error),
+            return yield* restoreFromDeniedPlanExit(existing);
+          }
+
+          // A transient settings read can open bypass turns downgraded. Keeping that stricter
+          // process beats killing its background work; the next idle turn reopens in bypass.
+          if (
+            existing !== null &&
+            existing.nativeThreadId === nativeThreadId &&
+            !existing.stopping &&
+            queryPolicy.permissionMode === "bypassPermissions" &&
+            existing.selection.queryIdentity === compiledSelection.queryIdentity &&
+            [false, true].some(
+              (autoDisabled) =>
+                existing.queryPolicyKey ===
+                claudeEffectiveQueryPolicyKey(
+                  claudeRuntimeQueryPolicyForRuntimePolicy(turnInput.runtimePolicy, {
+                    bypassDisabled: true,
+                    autoDisabled,
                   }),
-                );
-            }
-            return existing;
+                  mcpOverrides,
+                ),
+            ) &&
+            (yield* liveProcessRunsBackgroundWork(existing))
+          ) {
+            return yield* restoreFromDeniedPlanExit(existing);
           }
 
           // Replacing this thread's process kills its background work, even with a new native identity.
