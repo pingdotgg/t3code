@@ -4751,7 +4751,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         input.cwd,
         [...checkoutArgs, "--"],
         {
-          timeoutMs: 10_000,
+          // Killing a checkout midway (large or LFS repos) leaves a half-updated working tree.
+          timeoutMs: null,
           fallbackErrorDetail: "git checkout failed",
           // Checking out a remote branch creates a local one that tracks it.
           writesSharedConfig: !localInputExists,
