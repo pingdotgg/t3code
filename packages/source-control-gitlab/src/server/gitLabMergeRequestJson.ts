@@ -1,3 +1,4 @@
+import { trimOptionalString as trimmed } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import * as Result from "effect/Result";
@@ -197,11 +198,6 @@ export interface GitLabMergeRequestDetail extends GitLabMergeRequestListItem {
   /** Absent means not counted, not up to date. */
   readonly divergedCommits?: number;
   readonly headSha?: string;
-}
-
-function trimmed(value: string | null | undefined): string | null {
-  const text = value?.trim() ?? "";
-  return text.length > 0 ? text : null;
 }
 
 function toActor(raw: Schema.Schema.Type<typeof RawUserSchema> | null | undefined) {
@@ -949,4 +945,119 @@ export function decodeRepositoryBlobsJson(
     blobs.set(path, oid);
   }
   return Result.succeed(blobs);
+}
+
+/**
+ * Line counts for merge requests of one project. The REST listing carries no line counts, and
+ * reading each diff to count them would cost a request per row, so GraphQL's per-merge-request
+ * summary is asked for in one read instead.
+ */
+export const MERGE_REQUEST_STATS_GRAPHQL_QUERY = `query($fullPath: ID!, $iids: [String!]) {
+  project(fullPath: $fullPath) {
+    mergeRequests(iids: $iids, first: 100) {
+      nodes { iid diffStatsSummary { additions deletions } }
+    }
+  }
+}`;
+
+const LineCountsSchema = Schema.Struct({ additions: Schema.Int, deletions: Schema.Int });
+
+const RawMergeRequestStatsSchema = Schema.Struct({
+  data: Schema.Struct({
+    project: Schema.NullOr(
+      Schema.Struct({
+        mergeRequests: Schema.NullOr(
+          Schema.Struct({
+            nodes: Schema.Array(
+              Schema.NullOr(
+                Schema.Struct({
+                  iid: Schema.String,
+                  diffStatsSummary: Schema.NullOr(LineCountsSchema),
+                }),
+              ),
+            ),
+          }),
+        ),
+      }),
+    ),
+  }),
+});
+
+const decodeMergeRequestStats = decodeJsonResult(RawMergeRequestStatsSchema);
+
+/**
+ * The counts by merge request number. A merge request GitLab returned no summary for is left
+ * out rather than counted as zero, so its row keeps whatever it already showed.
+ */
+export function decodeMergeRequestStatsJson(
+  raw: string,
+): Result.Result<
+  ReadonlyMap<number, { readonly additions: number; readonly deletions: number }>,
+  DecodeFailure
+> {
+  const decoded = decodeMergeRequestStats(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const stats = new Map<number, { readonly additions: number; readonly deletions: number }>();
+  for (const node of decoded.success.data.project?.mergeRequests?.nodes ?? []) {
+    const iid = Number(node?.iid);
+    if (!Number.isSafeInteger(iid) || iid <= 0 || node?.diffStatsSummary == null) continue;
+    stats.set(iid, node.diffStatsSummary);
+  }
+  return Result.succeed(stats);
+}
+
+/** Per-file line counts for one merge request, which the code/tests/generated breakdown sorts. */
+export const MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!) {
+  project(fullPath: $fullPath) {
+    mergeRequest(iid: $iid) {
+      diffStatsSummary { fileCount }
+      diffStats { path additions deletions }
+    }
+  }
+}`;
+
+const decodeMergeRequestFileStats = decodeJsonResult(
+  Schema.Struct({
+    data: Schema.Struct({
+      project: Schema.NullOr(
+        Schema.Struct({
+          mergeRequest: Schema.NullOr(
+            Schema.Struct({
+              diffStatsSummary: Schema.NullOr(Schema.Struct({ fileCount: Schema.Int })),
+              diffStats: Schema.NullOr(
+                Schema.Array(Schema.Struct({ path: Schema.String, ...LineCountsSchema.fields })),
+              ),
+            }),
+          ),
+        }),
+      ),
+    }),
+  }),
+);
+
+/**
+ * GitLab stops listing files past its diff limits while the summary still counts them all, so a
+ * shorter list is reported as truncated rather than as a breakdown that misses lines.
+ */
+export function decodeMergeRequestFileStatsJson(raw: string): Result.Result<
+  {
+    readonly files: ReadonlyArray<{
+      readonly path: string;
+      readonly additions: number;
+      readonly deletions: number;
+    }>;
+    readonly truncated: boolean;
+  },
+  DecodeFailure
+> {
+  const decoded = decodeMergeRequestFileStats(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const mergeRequest = decoded.success.data.project?.mergeRequest;
+  const files = mergeRequest?.diffStats ?? [];
+  const fileCount = mergeRequest?.diffStatsSummary?.fileCount;
+  return Result.succeed({ files, truncated: fileCount === undefined || files.length < fileCount });
 }

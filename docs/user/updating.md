@@ -22,9 +22,10 @@ restart from the update button when you are ready. A server still restarting
 finishes on its own, and the button keeps showing it after the desktop app
 restarts.
 
-Server updates appear only after that version is published to npm. Remote
-desktop apps do not wait for npm. The confirmation lists each machine it skips
-and why, such as a machine that is offline or needs a manual update. Use
+Each server checks that it can install the release before it restarts. If the
+release is not available to a server yet, its update fails, the server keeps
+running, and you can retry. The confirmation lists each machine it skips and
+why, such as a machine that is offline or needs a manual update. Use
 **Settings → Environments** for those.
 
 If a desktop app restarts on its old version, T3 Code tells you the update did
@@ -34,6 +35,29 @@ device asks. Use the update button on that machine to retry.
 The confirmation counts the running threads that the restarts will interrupt,
 and how many can resume afterwards. See **Continue threads after restarts**
 below.
+
+## Switch between Stable and Nightly
+
+In the desktop app, change **Settings → About → Update track**. T3 Code shows each
+connected machine it will move and each one it skips, then moves them in one
+step. Remote servers install the latest release on the new track. Remote desktop
+apps reinstall on the new track. This app reinstalls last. Your threads,
+settings, and data stay.
+
+A background service cannot move to an older release remotely. When Stable is
+older than its Nightly, run `t3 update --channel stable --allow-downgrade` on
+that machine.
+
+A switch is blocked for a machine whose database already has changes the
+target release does not support, or when T3 Code cannot confirm that it does.
+The dialog says why: update a machine on its current track first when its
+release is too old to check, or wait until the target track includes the
+changes. A Mac running the desktop app must switch on that Mac.
+
+Each machine keeps the new track even if its switch did not finish, but it
+moves to that track only through a switch. **Update track** shows how many
+machines still run the other track. **Review** opens the same dialog with fresh
+checks.
 
 ## Before you update
 
@@ -110,6 +134,24 @@ update can roll back to the previous version. If the update still fails:
 Only one server can use a T3 home directory at a time. If startup reports that
 another server owns it, stop that server before retrying, or use a separate home
 directory and pair with the running server.
+
+## If the desktop app does not start
+
+If the desktop app's server keeps failing at startup, T3 Code shows a "T3 Code
+could not start" window instead of the app. If a newer version is available,
+choose **Update** to install it. If not, the window links to the last version
+that started on your computer. Download and install it to go back. Use **Copy
+details** to include the error in a bug report.
+
+## Registries and proxies
+
+Each server checks T3 Code releases, and providers installed with npm, through
+its own npm, so the checks use npm's configured registry, authentication, and
+proxy settings. Providers installed with Homebrew or pnpm check through those
+tools.
+Configure npm on the server's machine. If that registry cannot be reached, the
+release shows as unavailable; T3 Code does not try the public registry instead.
+Machines without npm check the public npm registry directly.
 
 ## Update providers
 

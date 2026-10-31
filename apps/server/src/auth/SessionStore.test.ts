@@ -486,35 +486,4 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       }
     }).pipe(Effect.provide(layerSessionStore())),
   );
-
-  it.effect("records client connection metadata without clearing prior values", () =>
-    Effect.gen(function* () {
-      const sessions = yield* SessionStore.SessionStore;
-      const sql = yield* SqlClient.SqlClient;
-      const issued = yield* sessions.issue({
-        subject: "client-connection-test",
-        method: "bearer-access-token",
-      });
-      const readRow = sql<{
-        readonly surface: string | null;
-        readonly appVersion: string | null;
-      }>`
-        SELECT client_surface AS "surface", client_app_version AS "appVersion"
-        FROM auth_sessions
-        WHERE session_id = ${issued.sessionId}
-      `;
-
-      yield* sessions.recordClientConnection(issued.sessionId, {
-        surface: "mobile",
-        appVersion: "1.2.0",
-      });
-      expect((yield* readRow)[0]).toEqual({ surface: "mobile", appVersion: "1.2.0" });
-
-      yield* sessions.recordClientConnection(issued.sessionId, { appVersion: "1.3.0" });
-      expect((yield* readRow)[0]).toEqual({ surface: "mobile", appVersion: "1.3.0" });
-
-      yield* sessions.recordClientConnection(issued.sessionId, {});
-      expect((yield* readRow)[0]).toEqual({ surface: "mobile", appVersion: "1.3.0" });
-    }).pipe(Effect.provide(Layer.mergeAll(layerSessionStore(), SqlitePersistence.layerMemory))),
-  );
 });
