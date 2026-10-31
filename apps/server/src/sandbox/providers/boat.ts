@@ -36,6 +36,14 @@ const BoatCommand = Schema.Struct({
 
 const BoatHostedPort = Schema.Struct({ url: Schema.String });
 
+const BoatLifecycle = Schema.Struct({
+  sandbox: Schema.Struct({
+    id: Schema.String,
+    state: Schema.String,
+    error: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  }),
+});
+
 // Only flags, never `envContents` or `secretFiles`: those hold real credential values and must
 // not leave the server that owns the provider key.
 const BoatEnvironment = Schema.Struct({
@@ -88,7 +96,9 @@ export const boatDriver: SandboxProviderDriver = {
             ? { noEnv: true }
             : { environment: input.environment }),
           ttlSeconds: input.ttlMinutes === undefined ? 3600 : input.ttlMinutes * 60,
-          hostedPorts: [{ port: 3773, public: true, title: "T3 Code" }],
+          // `localhost` keeps the port reachable whether t3 binds 0.0.0.0 or the
+          // background service's loopback default.
+          hostedPorts: [{ port: 3773, public: true, localhost: true, title: "T3 Code" }],
         },
       ),
     });
@@ -160,6 +170,62 @@ export const boatDriver: SandboxProviderDriver = {
         { port: input.port, public: true },
       ),
     }).pipe(Effect.map((result) => result.url)),
+  stop: (input) =>
+    requestJson({
+      provider: "boat",
+      stage: "delete",
+      schema: Schema.Struct({ ok: Schema.optionalKey(Schema.Boolean) }),
+      request: authorize(
+        HttpClientRequest.post(
+          `${BOAT_API_BASE}/sandboxes/${encodeURIComponent(input.sandboxId)}/stop`,
+        ),
+        input.config.apiKey,
+      ),
+    }).pipe(Effect.asVoid),
+  resume: Effect.fn("Boat.resume")(function* (input) {
+    yield* requestJson({
+      provider: "boat",
+      stage: "start",
+      schema: Schema.Struct({ ok: Schema.optionalKey(Schema.Boolean) }),
+      request: jsonBody(
+        authorize(
+          HttpClientRequest.post(
+            `${BOAT_API_BASE}/sandboxes/${encodeURIComponent(input.sandboxId)}/resume`,
+          ),
+          input.config.apiKey,
+        ),
+        input.ttlMinutes === undefined ? {} : { ttlSeconds: input.ttlMinutes * 60 },
+      ),
+    });
+    for (let attempt = 0; attempt < 90; attempt++) {
+      const current = yield* requestJson({
+        provider: "boat",
+        stage: "start",
+        schema: BoatLifecycle,
+        request: authorize(
+          HttpClientRequest.get(
+            `${BOAT_API_BASE}/sandboxes/${encodeURIComponent(input.sandboxId)}`,
+          ),
+          input.config.apiKey,
+        ),
+      });
+      const state = current.sandbox.state;
+      if (state === "ready" || state === "idle" || state === "running") return {};
+      if (state === "error" || state === "archived") {
+        return yield* new SandboxProviderError({
+          provider: "boat",
+          stage: "start",
+          detail: current.sandbox.error?.trim() || `The sandbox stayed ${state}.`,
+        });
+      }
+      if (attempt < 89) yield* Effect.sleep("2 seconds");
+    }
+    return yield* new SandboxProviderError({
+      provider: "boat",
+      stage: "start",
+      detail: "Timed out waiting for the sandbox to resume.",
+    });
+  }),
   destroy: (input) => {
     const request = HttpClientRequest.delete(
       `${BOAT_API_BASE}/sandboxes/${encodeURIComponent(input.sandboxId)}`,

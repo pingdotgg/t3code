@@ -1,16 +1,43 @@
 import { it } from "@effect/vitest";
-import { SandboxProviderError } from "@t3tools/contracts";
+import { EnvironmentId, SandboxProviderError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { describe, expect } from "vite-plus/test";
 
 import * as SandboxProvisioner from "./SandboxProvisioner.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as SandboxRecords from "../persistence/SandboxRecords.ts";
+import type { SandboxRecord } from "@t3tools/contracts";
 import { boatDriver } from "./providers/boat.ts";
 import { daytonaDriver } from "./providers/daytona.ts";
 
 const boatSandboxId = "bx_abcdefgh";
+const testEnvironmentId = EnvironmentId.make("11111111-1111-4111-8111-111111111111");
+const descriptor = {
+  environmentId: testEnvironmentId,
+  label: "Boat live test",
+  platform: { os: "linux", arch: "x64" },
+  serverVersion: "0.1.6",
+  orchestrationProtocolVersion: 2,
+  capabilities: {},
+};
+
+const recordRepository = Layer.succeed(
+  SandboxRecords.SandboxRecordRepository,
+  SandboxRecords.SandboxRecordRepository.of({
+    list: Effect.succeed([]),
+    get: () => Effect.succeedNone,
+    put: () => Effect.void,
+    remove: () => Effect.void,
+  }),
+);
+
+const testLayer = SandboxProvisioner.layer.pipe(
+  Layer.provide(ServerSettings.layerTest()),
+  Layer.provide(recordRepository),
+);
 
 const boatResponse = (request: HttpClientRequest.HttpClientRequest) =>
   HttpClientResponse.fromWeb(
@@ -222,7 +249,7 @@ describe("boat credential environments", () => {
             environment: "base",
           }),
         ),
-        Effect.provide(SandboxProvisioner.layer.pipe(Layer.provide(ServerSettings.layerTest()))),
+        Effect.provide(testLayer),
         Effect.provideService(HttpClient.HttpClient, client),
         Effect.flip,
       );
@@ -235,6 +262,143 @@ describe("boat credential environments", () => {
   });
 });
 
+describe("SandboxProvisioner lifecycle", () => {
+  const memoryRepository = (initial: ReadonlyArray<SandboxRecord> = []) => {
+    const records = new Map(initial.map((record) => [record.environmentId, record]));
+    const layer = Layer.succeed(
+      SandboxRecords.SandboxRecordRepository,
+      SandboxRecords.SandboxRecordRepository.of({
+        list: Effect.sync(() => [...records.values()]),
+        get: (environmentId) =>
+          Effect.sync(() => Option.fromUndefinedOr(records.get(environmentId))),
+        put: (record) =>
+          Effect.sync(() => {
+            records.set(record.environmentId, record);
+          }),
+        remove: (environmentId) =>
+          Effect.sync(() => {
+            records.delete(environmentId);
+          }),
+      }),
+    );
+    return { layer, records };
+  };
+
+  const lifecycleClient = (requests: Array<string>) =>
+    HttpClient.make((request) => {
+      requests.push(`${request.method} ${request.url}`);
+      if (request.url.endsWith("/.well-known/t3/environment")) {
+        return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(descriptor)));
+      }
+      if (request.url.endsWith("/commands")) {
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json(
+              requests.filter((entry) => entry.endsWith("/commands")).length === 1
+                ? { exitCode: 0, stdout: "", stderr: "" }
+                : { exitCode: 0, stdout: "Token: pair_lifecycle\n", stderr: "" },
+            ),
+          ),
+        );
+      }
+      if (request.url.endsWith("/stop") || request.url.endsWith("/resume")) {
+        return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ ok: true })));
+      }
+      if (request.url.endsWith(`/sandboxes/${boatSandboxId}`)) {
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({ sandbox: { id: boatSandboxId, state: "ready", error: null } }),
+          ),
+        );
+      }
+      return Effect.succeed(boatResponse(request));
+    });
+
+  it.effect("stores a record, stops it, and resumes it", () => {
+    const requests: Array<string> = [];
+    const repository = memoryRepository();
+    return Effect.gen(function* () {
+      const result = yield* SandboxProvisioner.SandboxProvisioner.pipe(
+        Effect.flatMap((provisioner) =>
+          Effect.gen(function* () {
+            const created = yield* provisioner.create({
+              provider: "boat",
+              apiKey: "boat_test",
+              label: "Lifecycle sandbox",
+            });
+            const listed = yield* provisioner.list;
+            const stopped = yield* provisioner.stop({
+              environmentId: created.environmentId,
+            });
+            const resumed = yield* provisioner.resume({
+              environmentId: created.environmentId,
+            });
+            return { created, listed, stopped, resumed };
+          }),
+        ),
+        Effect.provide(
+          SandboxProvisioner.layer.pipe(
+            Layer.provide(ServerSettings.layerTest()),
+            Layer.provide(repository.layer),
+          ),
+        ),
+        Effect.provideService(HttpClient.HttpClient, lifecycleClient(requests)),
+      );
+
+      expect(result.created.environmentId).toBe(testEnvironmentId);
+      expect(result.listed.sandboxes).toHaveLength(1);
+      expect(result.listed.sandboxes[0]?.state).toBe("running");
+      expect(result.listed.sandboxes[0]?.ttlMinutes).toBe(480);
+      expect(result.listed.sandboxes[0]?.hardDeadlineAt).not.toBeNull();
+      expect(result.stopped.sandbox.state).toBe("stopped");
+      expect(result.stopped.sandbox.hardDeadlineAt).toBeNull();
+      expect(result.resumed.sandbox.state).toBe("running");
+      expect(result.resumed.sandbox.hardDeadlineAt).not.toBeNull();
+      expect(requests.some((request) => request.endsWith("/stop"))).toBe(true);
+      expect(requests.some((request) => request.endsWith("/resume"))).toBe(true);
+    });
+  });
+
+  it.effect("stops a running sandbox when its hard deadline passes", () => {
+    const expired: SandboxRecord = {
+      environmentId: testEnvironmentId,
+      provider: "boat",
+      sandboxId: boatSandboxId,
+      label: "Expired sandbox",
+      size: "small",
+      state: "running",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      httpBaseUrl: "https://boat.example/t3",
+      hardDeadlineAt: "1960-01-01T00:00:00.000Z",
+      ttlMinutes: 480,
+    };
+    const repository = memoryRepository([expired]);
+    const requests: Array<string> = [];
+    return Effect.gen(function* () {
+      yield* SandboxProvisioner.SandboxProvisioner.pipe(
+        Effect.flatMap((provisioner) => provisioner.sweepDeadlines),
+        Effect.provide(
+          SandboxProvisioner.layer.pipe(
+            Layer.provide(
+              ServerSettings.layerTest({
+                sandboxProviders: { boat: { apiKey: "boat_test" } },
+              }),
+            ),
+            Layer.provide(repository.layer),
+          ),
+        ),
+        Effect.provideService(HttpClient.HttpClient, lifecycleClient(requests)),
+      );
+
+      expect(repository.records.get(testEnvironmentId)?.state).toBe("stopped");
+      expect(requests.some((request) => request.endsWith("/stop"))).toBe(true);
+    });
+  });
+});
+
 describe("SandboxProvisioner", () => {
   it.effect("pairs a freshly created Boat sandbox and saves the API key", () => {
     let commandCall = 0;
@@ -243,6 +407,9 @@ describe("SandboxProvisioner", () => {
       requests.push(`${request.method} ${request.url}`);
       if (request.method === "POST" && request.url.endsWith("/sandboxes")) {
         return Effect.succeed(boatResponse(request));
+      }
+      if (request.url.endsWith("/.well-known/t3/environment")) {
+        return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(descriptor)));
       }
       if (request.url.endsWith("/commands")) {
         commandCall += 1;
@@ -276,13 +443,14 @@ describe("SandboxProvisioner", () => {
             return { result: created, providers: yield* provisioner.providers };
           }),
         ),
-        Effect.provide(SandboxProvisioner.layer.pipe(Layer.provide(ServerSettings.layerTest()))),
+        Effect.provide(testLayer),
         Effect.provideService(HttpClient.HttpClient, client),
       );
 
       expect(result).toEqual({
         provider: "boat",
         sandboxId: boatSandboxId,
+        environmentId: testEnvironmentId,
         label: "My sandbox",
         httpBaseUrl: "https://boat.example/t3",
         pairingCode: "pair_abc",
@@ -294,6 +462,7 @@ describe("SandboxProvisioner", () => {
         "POST https://boat.dev/api/v1/sandboxes",
         `POST https://boat.dev/api/v1/sandboxes/${boatSandboxId}/commands`,
         `POST https://boat.dev/api/v1/sandboxes/${boatSandboxId}/commands`,
+        "GET https://boat.example/t3/.well-known/t3/environment",
       ]);
     });
   });
@@ -321,7 +490,7 @@ describe("SandboxProvisioner", () => {
         Effect.flatMap((provisioner) =>
           provisioner.create({ provider: "boat", apiKey: "boat_test" }),
         ),
-        Effect.provide(SandboxProvisioner.layer.pipe(Layer.provide(ServerSettings.layerTest()))),
+        Effect.provide(testLayer),
         Effect.provideService(HttpClient.HttpClient, client),
         Effect.flip,
       );

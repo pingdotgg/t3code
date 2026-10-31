@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { TrimmedString } from "./baseSchemas.ts";
+import { EnvironmentId, TrimmedString } from "./baseSchemas.ts";
 
 /**
  * Sandbox providers are provisioned by the server a client is already connected to. The
@@ -85,6 +85,7 @@ export type SandboxCreateInput = typeof SandboxCreateInput.Type;
 export const SandboxCreateResult = Schema.Struct({
   provider: SandboxProviderKind,
   sandboxId: TrimmedString,
+  environmentId: EnvironmentId,
   label: TrimmedString,
   /** Public origin of the T3 server running in the sandbox. */
   httpBaseUrl: TrimmedString,
@@ -96,8 +97,57 @@ export type SandboxCreateResult = typeof SandboxCreateResult.Type;
 export const SandboxDeleteInput = Schema.Struct({
   provider: SandboxProviderKind,
   sandboxId: TrimmedString,
+  environmentId: EnvironmentId,
 });
 export type SandboxDeleteInput = typeof SandboxDeleteInput.Type;
+
+export const SandboxLifecycleState = Schema.Literals([
+  "provisioning",
+  "running",
+  "stopped",
+  "error",
+  "deleted",
+]);
+export type SandboxLifecycleState = typeof SandboxLifecycleState.Type;
+
+/** Server-side record that ties a provider machine to the T3 environment it became. */
+export const SandboxRecord = Schema.Struct({
+  environmentId: EnvironmentId,
+  provider: SandboxProviderKind,
+  sandboxId: TrimmedString,
+  label: TrimmedString,
+  size: TrimmedString,
+  state: SandboxLifecycleState,
+  createdAt: TrimmedString,
+  updatedAt: TrimmedString,
+  httpBaseUrl: TrimmedString,
+  /** Null disables the hard deadline. */
+  hardDeadlineAt: Schema.NullOr(TrimmedString),
+  ttlMinutes: Schema.Int,
+  credentialEnvironment: Schema.optionalKey(TrimmedString),
+});
+export type SandboxRecord = typeof SandboxRecord.Type;
+
+export const SandboxListResult = Schema.Struct({
+  sandboxes: Schema.Array(SandboxRecord),
+});
+export type SandboxListResult = typeof SandboxListResult.Type;
+
+export const SandboxLifecycleInput = Schema.Struct({
+  environmentId: EnvironmentId,
+});
+export type SandboxLifecycleInput = typeof SandboxLifecycleInput.Type;
+
+export const SandboxStopResult = Schema.Struct({
+  sandbox: SandboxRecord,
+});
+export type SandboxStopResult = typeof SandboxStopResult.Type;
+
+export const SandboxResumeResult = Schema.Struct({
+  sandbox: SandboxRecord,
+  httpBaseUrl: TrimmedString,
+});
+export type SandboxResumeResult = typeof SandboxResumeResult.Type;
 
 export const SandboxStage = Schema.Literals([
   "create",

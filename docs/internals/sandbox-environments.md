@@ -9,7 +9,8 @@ remote path. Nothing downstream knows the machine is a sandbox.
 ## The driver contract
 
 [`SandboxProviderDriver`](../../apps/server/src/sandbox/SandboxProvider.ts) is the whole extension
-point: `create`, `execute`, `exposePort`, and `destroy`, plus the presentation metadata in `info`.
+point: `create`, `execute`, `exposePort`, `destroy`, the optional `stop`/`resume` pair, and the
+presentation metadata in `info`.
 [`providers/index.ts`](../../apps/server/src/sandbox/providers/index.ts) is the registry. Add one
 file and one array entry; settings, RPC, provisioning, and the Add environment UI read the driver's
 `info`.
@@ -22,6 +23,23 @@ Drivers must keep two invariants:
 - **Cleanup.** `SandboxProvisioner` destroys the machine when any step after `create` fails, so a
   provisioned machine never bills without an environment pointing at it. Drivers must make
   `destroy` safe on a machine that never started.
+
+## Lifecycle and hard limits
+
+Every provisioned machine gets a row in `sandbox_records` (see
+[`SandboxRecords.ts`](../../apps/server/src/persistence/SandboxRecords.ts)) keyed by the environment
+id returned by `/.well-known/t3/environment`. Environments stay the source of truth for connection
+details; the record only adds what the provider needs to act on the machine: provider, sandbox id,
+size, credential environment, and the deadline.
+
+`ttlMinutes` defaults to 480. The server sweeps deadlines once a minute and calls the driver's
+`stop` when one passes; `logs` shows the stop attempt when it fails, and the record stays so the
+next sweep retries. Stop clears the deadline because a stopped machine cannot bill for running
+time, and resume starts a fresh window from the resume time.
+
+`stop` and `resume` are optional on the driver. A provider without them still provisions and
+connects; the settings UI hides the controls and the RPC returns a configuration error instead of
+inventing a lifecycle the provider does not have.
 
 ## Verification
 

@@ -1182,6 +1182,11 @@ export function createServerEnvironmentAtoms<R, E>(
     tag: WS_METHODS.sandboxesEnvironments,
     idleTtlMs: 0,
   });
+  const sandboxesList = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:sandboxes:list",
+    tag: WS_METHODS.sandboxesList,
+    idleTtlMs: 0,
+  });
 
   return {
     configValueAtom,
@@ -1205,6 +1210,15 @@ export function createServerEnvironmentAtoms<R, E>(
     updateStateAtom,
     sandboxesProviders,
     sandboxesEnvironments,
+    sandboxesList,
+    sandboxesStop: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:sandboxes:stop",
+      tag: WS_METHODS.sandboxesStop,
+    }),
+    sandboxesResume: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:sandboxes:resume",
+      tag: WS_METHODS.sandboxesResume,
+    }),
     sandboxesCreate: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:sandboxes:create",
       tag: WS_METHODS.sandboxesCreate,

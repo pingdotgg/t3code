@@ -156,6 +156,33 @@ export const daytonaDriver: SandboxProviderDriver = {
         input.config.apiKey,
       ),
     }).pipe(Effect.map((preview) => preview.url)),
+  stop: (input) =>
+    requestJson({
+      provider: "daytona",
+      stage: "delete",
+      schema: Schema.Struct({ id: Schema.optionalKey(Schema.String) }),
+      request: authorize(
+        HttpClientRequest.post(
+          `${DAYTONA_API_BASE}/sandbox/${encodeURIComponent(input.sandboxId)}/stop`,
+        ),
+        input.config.apiKey,
+      ),
+    }).pipe(Effect.asVoid),
+  resume: (input) =>
+    requestJson({
+      provider: "daytona",
+      stage: "start",
+      schema: DaytonaSandbox,
+      request: authorize(
+        HttpClientRequest.post(
+          `${DAYTONA_API_BASE}/sandbox/${encodeURIComponent(input.sandboxId)}/start`,
+        ),
+        input.config.apiKey,
+      ),
+    }).pipe(
+      Effect.flatMap((sandbox) => waitUntilStarted(input.config.apiKey, sandbox.id)),
+      Effect.map(() => ({})),
+    ),
   destroy: (input) =>
     requestJson({
       provider: "daytona",
