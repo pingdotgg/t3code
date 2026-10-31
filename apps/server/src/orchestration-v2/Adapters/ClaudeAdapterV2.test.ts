@@ -5235,11 +5235,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   it.effect.each(
     (["aborted_tools", "aborted_streaming"] as const).flatMap((terminalReason) =>
-      [true, false].map((steered) => ({ terminalReason, steered })),
+      [
+        { steered: false, queryExits: false },
+        { steered: true, queryExits: false },
+        { steered: true, queryExits: true },
+      ].map((scenario) => ({ terminalReason, ...scenario })),
     ),
-  )("handles $terminalReason with active steering=$steered", ({ terminalReason, steered }) =>
+  )("handles $terminalReason (steered=$steered, exits=$queryExits)", (scenario) =>
     Effect.scoped(
       Effect.gen(function* () {
+        const { terminalReason, steered, queryExits } = scenario;
         const harness = yield* makeWakeHarness;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const attemptId = RunAttemptId.make("attempt-steering-abort");
@@ -5271,8 +5276,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           });
           assert.equal(harness.offeredMessages[1]?.priority, "now");
         }
-        yield* Queue.offer(
-          harness.sdkMessages,
+        yield* harness.offerAndWait(
           makeResultFrame({
             uuid: "00000000-0000-4000-8000-000000000901",
             result: "",
@@ -5285,7 +5289,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             },
           }),
         );
-        if (steered) {
+        if (queryExits) {
+          yield* Queue.shutdown(harness.sdkMessages);
+        } else if (steered) {
           yield* Queue.offer(harness.sdkMessages, wakeAssistant);
           yield* Queue.offer(
             harness.sdkMessages,
@@ -5302,16 +5308,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
         }
         const terminal = yield* Queue.take(harness.terminalReceipts);
-        assert.equal(terminal.status, steered ? "completed" : "interrupted");
+        assert.equal(
+          terminal.status,
+          queryExits ? "failed" : steered ? "completed" : "interrupted",
+        );
         if (steered) {
-          assert.isTrue(
-            harness.events.some(
-              (event) =>
-                event.type === "turn_item.updated" &&
-                event.turnItem.type === "assistant_message" &&
-                event.turnItem.text === WAKE_ASSISTANT_TEXT,
-            ),
-          );
+          if (!queryExits)
+            assert.isTrue(
+              harness.events.some(
+                (event) =>
+                  event.type === "turn_item.updated" &&
+                  event.turnItem.type === "assistant_message" &&
+                  event.turnItem.text === WAKE_ASSISTANT_TEXT,
+              ),
+            );
           const completed = harness.events.findLast(
             (event) => event.type === "provider_turn.updated",
           );
@@ -5321,12 +5331,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               : undefined,
             {
               usageScope: "main_agent",
-              usageStatus: "complete",
+              usageStatus: queryExits ? "partial" : "complete",
               hasSubagents: false,
-              inputTokens: 603 + 2847 + 11455,
-              outputTokens: 46,
-              cachedInputTokens: 11455,
-              cacheCreationTokens: 2847,
+              inputTokens: queryExits ? 3100 : 603 + 2847 + 11455,
+              outputTokens: queryExits ? 40 : 46,
+              cachedInputTokens: queryExits ? 2000 : 11455,
+              cacheCreationTokens: queryExits ? 500 : 2847,
             },
           );
         }
