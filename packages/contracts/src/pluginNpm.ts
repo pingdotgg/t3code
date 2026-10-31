@@ -1,22 +1,5 @@
-/**
- * PluginNpm - Wire schemas for installing trusted plugins from an npm
- * registry.
- *
- * Installing downloads one exact package version, checks its tarball against
- * the registry's sha512 integrity, and unpacks it into a directory the server
- * owns. No package script ever runs, and dependencies are never installed: a
- * plugin package must bundle everything it needs. The result is an ordinary
- * catalogue installation that still needs consent to its digest before any
- * of its code runs.
- *
- * An update downloads the new version next to the installed one without
- * touching it. Applying the update is the consent to its digest: the server
- * swaps the directories and restores the old one if anything fails before
- * the consent is recorded. Removing the installation through `plugins.remove`
- * deletes the server's copy.
- *
- * @module PluginNpm
- */
+// Packages must bundle dependencies; installation runs no scripts and still requires consent to exact unpacked bytes.
+// Updates stage beside the running package and restore the old version on failure before consent commits.
 import * as Schema from "effect/Schema";
 
 import { IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas.ts";

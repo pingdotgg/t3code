@@ -45,13 +45,7 @@ export function canRunPluginActionsNow(environmentId: EnvironmentId): boolean {
   return readEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
 }
 
-/**
- * Runs a plugin action in the environment that listed it. A message from the
- * plugin or a failure is shown in an alert; a silent success taps a haptic.
- * The grant is read when the action runs, not when it was offered, so a
- * palette entry picked after the grant changed is refused. Resolves `true`
- * only when the plugin ran the action.
- */
+// Execution fixes the picked environment and target, then checks the live grant before running.
 export async function runPluginAction(input: {
   readonly environmentId: EnvironmentId;
   readonly action: PluginAction;

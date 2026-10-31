@@ -1,24 +1,5 @@
-/**
- * PluginViews - Isolated plugin views: what a plugin declares, what the
- * server delivers, and what crosses the bridge between a client host and a
- * running view.
- *
- * A plugin with the `views` capability lists its views under `views` in
- * `t3-plugin.json`. Each view is one script (and optionally one stylesheet)
- * from the plugin directory. The server serves those exact bytes, read under
- * the installation's consented digest and current generation, over the
- * authenticated environment RPC; nothing is exposed by URL. A client runs a
- * view in an opaque-origin sandboxed frame whose CSP pins the script hashes,
- * and talks to it over one MessagePort carrying the JSON text messages below.
- *
- * Authority comes from the host's binding of the port (environment,
- * installation, generation, view), never from message fields. The
- * installation generation is the revocation epoch: disable, remove, a byte
- * change, or a re-enable ends it, and the server refuses fetches and calls
- * for an old generation.
- *
- * @module PluginViews
- */
+// Authority comes from the host's port binding, never bridge message fields.
+// Installation generation is the revocation epoch; stale fetches and calls fail instead of reaching replacements.
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 

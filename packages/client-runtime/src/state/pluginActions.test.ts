@@ -86,6 +86,7 @@ const makeSession = (
   ) as WsRpcProtocolClient,
   initialConfig: Effect.succeed({ environment: { capabilities } } as ServerConfig),
   subscribeServerConfig: () => Stream.never,
+  inboundFrames: Effect.succeed(0),
   ready: Effect.void,
   probe: Effect.void,
   closed: Effect.never,

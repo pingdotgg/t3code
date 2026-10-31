@@ -1,15 +1,4 @@
-/**
- * PluginSettings - Wire schemas for reading and saving an installation's
- * setting values (`plugins.settings.*`, gated on the `pluginSettings`
- * environment capability).
- *
- * Values belong to the installation, not to one registration: they survive
- * disable, re-enable, restarts and source changes, and are deleted when the
- * installation is removed. A write is checked against the fields the
- * installation's manifest declares when the write arrives.
- *
- * @module PluginSettings
- */
+// Values persist with installations, while writes validate against the manifest current at arrival.
 import * as Schema from "effect/Schema";
 
 import { ForwardCompatibleArray } from "./baseSchemas.ts";

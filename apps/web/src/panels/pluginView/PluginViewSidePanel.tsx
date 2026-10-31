@@ -182,10 +182,12 @@ function PluginViewFrame(props: {
   const runtime = useAtomValue(connectionAtomRuntime);
   const services = AsyncResult.isSuccess(runtime) ? runtime.value : null;
   const onEndRef = useRef(props.onEnd);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- The iframe bridge must call the latest committed end handler.
   useLayoutEffect(() => {
     onEndRef.current = props.onEnd;
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the sandboxed iframe, message bridge and readiness timer for this mount.
   useEffect(() => {
     const container = containerRef.current;
     if (container === null || services === null) return;
