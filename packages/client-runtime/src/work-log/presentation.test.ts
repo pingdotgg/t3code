@@ -10,6 +10,7 @@ import {
   type WorkLogPresentationEntry,
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
+  workEntryViewedImagePath,
 } from "./presentation.js";
 
 function commandItem(
@@ -223,5 +224,23 @@ describe("resolveViewedImageAsset", () => {
       resolveViewedImageAsset("file:///repo/my%20shot.png", { threadId: ThreadId.make("thread") })
         ?.resource.path,
     ).toBe("/repo/my shot.png");
+  });
+});
+
+describe("workEntryViewedImagePath", () => {
+  it("withholds a Read's image preview until the Read has finished", () => {
+    const read: WorkLogPresentationEntry = {
+      id: "read",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      label: "Read",
+      tone: "tool",
+      itemType: "dynamic_tool",
+      viewedImagePath: "/repo/out/later3.png",
+    };
+
+    expect(workEntryViewedImagePath({ ...read, toolLifecycleStatus: "inProgress" })).toBeNull();
+    expect(workEntryViewedImagePath({ ...read, toolLifecycleStatus: "completed" })).toBe(
+      "/repo/out/later3.png",
+    );
   });
 });
