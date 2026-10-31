@@ -1,7 +1,9 @@
-import { ComposerSelectControl } from "./chat/ComposerControl";
+import { composerContextPillClassName, ComposerSelectControl } from "./chat/ComposerControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { FolderGit2Icon, FolderGitIcon, FolderIcon } from "lucide-react";
 import { memo, type MouseEvent as ReactMouseEvent } from "react";
+
+import { cn } from "~/lib/utils";
 
 import {
   resolveCurrentWorkspaceLabel,
@@ -73,7 +75,10 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   if (envLocked || forceNewWorktree) {
     const lockedRow = (
       <span
-        className="inline-flex h-7 min-w-0 items-center gap-1 border border-transparent px-1.75 font-normal text-muted-foreground/70 text-xs sm:h-6"
+        className={cn(
+          "inline-flex h-7 min-w-0 items-center gap-1 rounded-(--control-radius) border border-transparent px-1.75 font-normal text-muted-foreground/70 text-xs sm:h-6",
+          composerContextPillClassName,
+        )}
         data-composer-context-control
       >
         {activeWorktreePath ? (

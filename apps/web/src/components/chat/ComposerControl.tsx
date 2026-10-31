@@ -7,6 +7,18 @@ import { cn } from "~/lib/utils";
 
 export type ComposerControlSize = "sm" | "xs";
 
+/**
+ * The context row sits over the scrolling timeline with no surface of its own, so each control
+ * carries the app's glass over the page background to stay legible. `--accent` is translucent in
+ * some themes, so the hover state layers it over the glass, or over the opaque fallback without
+ * backdrop-filter, instead of replacing it.
+ */
+export const composerContextPillClassName = [
+  "in-data-[slot=composer-context-strip]:bg-background/(--glass-opacity) in-data-[slot=composer-context-strip]:backdrop-blur-(--glass-blur) in-data-[slot=composer-context-strip]:backdrop-saturate-(--glass-saturation)",
+  "in-data-[slot=composer-context-strip]:hover:bg-background/(--glass-opacity) in-data-[slot=composer-context-strip]:hover:bg-linear-to-r in-data-[slot=composer-context-strip]:hover:from-accent in-data-[slot=composer-context-strip]:hover:to-accent",
+  "not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:in-data-[slot=composer-context-strip]:bg-background not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:in-data-[slot=composer-context-strip]:hover:bg-background",
+].join(" ");
+
 function composerControlClassName(size: ComposerControlSize, className?: string) {
   return cn(
     "relative inline-flex shrink-0 cursor-pointer items-center justify-center whitespace-nowrap rounded-(--control-radius) border border-transparent text-base outline-none hover:bg-accent data-pressed:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 data-disabled:pointer-events-none data-disabled:opacity-64 pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 [&:active:not([aria-haspopup])]:scale-[0.97] [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg]:-mx-0.5 [&_svg[data-composer-control-icon]]:mx-0",
@@ -15,6 +27,7 @@ function composerControlClassName(size: ComposerControlSize, className?: string)
       ? "h-7 gap-1 px-1.75 font-normal text-foreground/70 text-sm hover:text-foreground dark:text-muted-foreground sm:h-6 sm:text-xs [&_svg:not([class*='size-'])]:size-4 sm:[&_svg:not([class*='size-'])]:size-3.5 [&_svg[data-composer-control-chevron]]:ms-0 [&_svg[data-composer-control-chevron]]:-me-1"
       : "h-7 gap-1.5 px-2 font-medium text-foreground/80 [&_svg:not([class*='text-'])]:text-muted-foreground hover:text-foreground sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4",
     "aria-pressed:bg-accent aria-pressed:text-accent-foreground aria-pressed:hover:bg-accent/80",
+    composerContextPillClassName,
     className,
   );
 }
