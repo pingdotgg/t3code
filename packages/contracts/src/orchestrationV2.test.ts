@@ -523,11 +523,8 @@ describe("thread settled override", () => {
     const thread = decodeOrchestrationV2AppThreadJson(threadShellJson);
     expect(encodeOrchestrationV2AppThreadJson(thread).settledOverride).toBe("settled");
     expect(() =>
-      encodeUnknownOrchestrationV2AppThreadJson({
-        ...threadShellJson,
-        settledOverride: true,
-      }),
-    ).toThrow();
+      encodeUnknownOrchestrationV2AppThreadJson({ ...thread, settledOverride: true }),
+    ).toThrow(/settledOverride/);
   });
 });
 

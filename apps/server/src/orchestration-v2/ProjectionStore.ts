@@ -6780,7 +6780,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           json_extract(t.payload_json, '$.lineage.parentThreadId') AS parent_thread_id,
           json_extract(t.payload_json, '$.lineage.rootThreadId') AS root_thread_id,
           json_extract(t.payload_json, '$.lineage.sideChat') AS side_chat,
-          json_extract(t.payload_json, '$.settledOverride') AS settled_override,
+          -- Another build may store the override as a JSON boolean, which json_extract reads as 1.
+          CASE
+            WHEN json_type(t.payload_json, '$.settledOverride') = 'true' THEN 'settled'
+            ELSE json_extract(t.payload_json, '$.settledOverride')
+          END AS settled_override,
           json_extract(t.payload_json, '$.settledAt') AS settled_at,
           json_extract(t.payload_json, '$.pinnedAt') AS pinned_at,
           json_extract(t.payload_json, '$.snoozedUntil') AS snoozed_until,

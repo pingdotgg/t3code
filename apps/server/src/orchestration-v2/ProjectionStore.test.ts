@@ -1584,6 +1584,52 @@ it.effect("lists every thread in the shell snapshot past SQLite's bound variable
   }).pipe(Effect.provide(layerTest)),
 );
 
+// regression: #28279 a foreign build stored the settled override as a JSON boolean
+it.effect("reads a boolean settled override in the active shell index", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:boolean-override");
+    yield* store.apply({
+      id: EventId.make(`event:${threadId}:created`),
+      type: "thread.created",
+      threadId,
+      occurredAt: now,
+      payload: {
+        createdBy: "user",
+        creationSource: "web",
+        id: threadId,
+        projectId: ProjectId.make("project:boolean-override"),
+        title: "Boolean override",
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: "settled",
+        settledAt: now,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+    });
+    yield* sql`
+      UPDATE orchestration_v2_projection_threads
+      SET payload_json = json_set(payload_json, '$.settledOverride', json('true'))
+      WHERE thread_id = ${threadId}
+    `;
+    const entry = (yield* store.listActiveShellIndex()).find((row) => row.id === threadId);
+    assert.deepEqual(entry?.settledOverride, "settled");
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.layer(layerTest)("ProjectionStoreV2", (it) => {
   // regression: #21969 keep corrupt plan JSON in the typed read error
   it.effect("returns a typed read error for malformed stored plan JSON", () =>
