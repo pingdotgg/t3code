@@ -25,6 +25,7 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
     onCloseSheet,
     maximized,
     layoutControls,
+    pinnedContent,
     ...tabs
   } = props;
   const inlineSize = usePreviewPanelInlineSize({
@@ -32,7 +33,15 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
     widthStorageKey,
   });
   if (!sheet) {
-    return <RightPanelTabs {...tabs} mode="inline" maximized={maximized} inlineSize={inlineSize} />;
+    return (
+      <RightPanelTabs
+        {...tabs}
+        mode="inline"
+        maximized={maximized}
+        inlineSize={inlineSize}
+        pinnedContent={pinnedContent}
+      />
+    );
   }
   return (
     <RightPanelSheet

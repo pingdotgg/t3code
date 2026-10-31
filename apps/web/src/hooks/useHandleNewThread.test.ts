@@ -336,6 +336,38 @@ describe("useNewThreadHandler", () => {
     expect(testState.draftStore.setPrompt).not.toHaveBeenCalled();
   });
 
+  it("starts every new thread with no task unless a task action asks for one", async () => {
+    const handler = useNewThreadHandler();
+    const project = { environmentId: "environment-ssh", projectId: "project-remote" } as never;
+    const taskDocumentId = "11111111-1111-4111-8111-111111111111" as never;
+    const lastTask = () =>
+      testState.draftStore.setLogicalProjectDraftThreadId.mock.lastCall?.at(-1)?.taskDocumentId;
+
+    testState.reset(null);
+    testState.openEmptyDraft("draft-open");
+    await handler(project);
+    expect(lastTask()).toBeNull();
+    await handler(project, { taskDocumentId });
+    expect(lastTask()).toBe(taskDocumentId);
+
+    testState.reset(null);
+    testState.completeProjectFileRead(null);
+    await handler(project);
+    expect(lastTask()).toBeNull();
+
+    testState.reset({
+      draftId: "draft-stored",
+      environmentId: "environment-ssh",
+      promotedTo: null,
+      threadId: "thread-stored",
+    });
+    testState.completeProjectFileRead(null);
+    await handler(project);
+    expect(testState.draftStore.setDraftThreadContext).toHaveBeenLastCalledWith("draft-stored", {
+      taskDocumentId: null,
+    });
+  });
+
   it("seeds the prompt into the empty draft that is already open", async () => {
     testState.reset(null);
     testState.openEmptyDraft("draft-open");

@@ -24,6 +24,7 @@ import {
   type ServerProvider,
   type ScopedProjectRef,
   type ScopedThreadRef,
+  TaskDocumentId,
   ThreadId,
   SnapShotSource,
 } from "@t3tools/contracts";
@@ -314,6 +315,7 @@ const PersistedDraftThreadState = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   envMode: DraftThreadEnvModeSchema,
   startFromOrigin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  taskDocumentId: Schema.optionalKey(Schema.NullOr(TaskDocumentId)),
   promotedTo: Schema.optionalKey(
     Schema.NullOr(
       Schema.Struct({
@@ -393,6 +395,8 @@ export function composerDraftHasUserContent(
   );
 }
 
+const isTaskDocumentId = Schema.is(TaskDocumentId);
+
 export interface DraftSessionState {
   threadId: ThreadId;
   environmentId: EnvironmentId;
@@ -407,6 +411,7 @@ export interface DraftSessionState {
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
   startFromOrigin: boolean;
+  taskDocumentId?: TaskDocumentId | null;
   promotedTo?: ScopedThreadRef | null;
 }
 
@@ -457,6 +462,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      taskDocumentId?: TaskDocumentId | null;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -473,6 +479,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      taskDocumentId?: TaskDocumentId | null;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -488,6 +495,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      taskDocumentId?: TaskDocumentId | null;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -1413,6 +1421,7 @@ function createDraftThreadState(
     createdAt?: string;
     envMode?: DraftThreadEnvMode;
     startFromOrigin?: boolean;
+    taskDocumentId?: TaskDocumentId | null;
     runtimeMode?: RuntimeMode;
     interactionMode?: ProviderInteractionMode;
     environmentSelection?: "auto" | "manual";
@@ -1465,6 +1474,13 @@ function createDraftThreadState(
     envMode:
       options?.envMode ?? (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
     startFromOrigin: nextStartFromOrigin,
+    // Registrations are environment-local, so an id never follows a draft to another environment.
+    taskDocumentId:
+      options?.taskDocumentId !== undefined
+        ? options.taskDocumentId
+        : existingThread?.environmentId === projectRef.environmentId
+          ? (existingThread.taskDocumentId ?? null)
+          : null,
     promotedTo: null,
   };
 }
@@ -1499,6 +1515,7 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.worktreePath === right.worktreePath &&
     left.envMode === right.envMode &&
     left.startFromOrigin === right.startFromOrigin &&
+    (left.taskDocumentId ?? null) === (right.taskDocumentId ?? null) &&
     scopedThreadRefsEqual(left.promotedTo, right.promotedTo)
   );
 }
@@ -1647,6 +1664,9 @@ function normalizePersistedDraftThreads(
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
         startFromOrigin,
+        ...(isTaskDocumentId(candidateDraftThread.taskDocumentId)
+          ? { taskDocumentId: candidateDraftThread.taskDocumentId }
+          : {}),
         ...(candidateDraftThread.environmentSelection === "manual" ||
         candidateDraftThread.environmentSelection === "auto"
           ? { environmentSelection: candidateDraftThread.environmentSelection }
@@ -1719,6 +1739,9 @@ function normalizePersistedDraftThreads(
           environmentId: projectRef.environmentId,
           projectId: projectRef.projectId,
           logicalProjectKey,
+          ...(existingDraftThread.environmentId === projectRef.environmentId
+            ? {}
+            : { taskDocumentId: null }),
         };
       }
     }
@@ -2396,6 +2419,7 @@ function toHydratedDraftThreadState(
     worktreePath: persistedDraftThread.worktreePath,
     envMode: persistedDraftThread.envMode,
     startFromOrigin: persistedDraftThread.startFromOrigin,
+    taskDocumentId: persistedDraftThread.taskDocumentId ?? null,
     ...(persistedDraftThread.environmentSelection
       ? { environmentSelection: persistedDraftThread.environmentSelection }
       : {}),
@@ -2687,6 +2711,12 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               envMode:
                 options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
               startFromOrigin: nextStartFromOrigin,
+              taskDocumentId:
+                options.taskDocumentId !== undefined
+                  ? options.taskDocumentId
+                  : nextProjectRef.environmentId === existing.environmentId
+                    ? (existing.taskDocumentId ?? null)
+                    : null,
               promotedTo: existing.promotedTo ?? null,
             };
             const isUnchanged =
@@ -2702,6 +2732,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftThread.worktreePath === existing.worktreePath &&
               nextDraftThread.envMode === existing.envMode &&
               nextDraftThread.startFromOrigin === existing.startFromOrigin &&
+              (nextDraftThread.taskDocumentId ?? null) === (existing.taskDocumentId ?? null) &&
               scopedThreadRefsEqual(nextDraftThread.promotedTo, existing.promotedTo);
             if (isUnchanged) {
               return state;

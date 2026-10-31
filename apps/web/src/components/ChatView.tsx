@@ -110,7 +110,16 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { useAtomValue } from "@effect/atom-react";
-import { type SetStateAction, use, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  type SetStateAction,
+  use,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
@@ -351,7 +360,12 @@ import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { observeResize } from "~/lib/observeResize";
 import { ThreadVisitWatermark } from "./chat/ThreadVisitWatermark";
 import { ChatTerminalDrawers } from "./chat/ChatTerminalDrawers";
+import { ListChecksIcon } from "lucide-react";
 import { ChatRightPanel } from "./chat/ChatRightPanel";
+import { RightPanelSheet } from "./RightPanelSheet";
+import { Button } from "./ui/button";
+import { Spinner } from "./ui/spinner";
+import { TaskPicker } from "./tasks/TaskPicker";
 import { useDraftEnvironmentRouting } from "./chat/useDraftEnvironmentRouting";
 import { branchMismatchBannerItem } from "./chat/ThreadActivityBanners";
 import { ThreadNow } from "./chat/ThreadNow";
@@ -403,6 +417,7 @@ type ChatViewProps =
       draftId: DraftId;
     };
 
+const TaskDocumentPane = lazy(() => import("./tasks/TaskDocumentPane"));
 const DismissedFallbackWindowSchema = Schema.NullOr(Schema.String);
 
 export default function ChatView(props: ChatViewProps) {
@@ -1053,7 +1068,6 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelPresent = rightPanelPresence.present;
   const rightPanelControlsInPanel =
     shouldUsePlanSidebarSheet && rightPanelPresent && rightPanelOpen;
-  const rightPanelControlsAtRoot = rightPanelPresent && !shouldUsePlanSidebarSheet;
   const renderedRightPanelSurface = rightPanelPresence.value?.activeSurface ?? null;
   const renderedRightPanelSurfaces = rightPanelPresence.value?.surfaces ?? [];
   const previewMiniPlayerVisible = shouldRenderPreviewMiniPlayer(
@@ -1062,7 +1076,21 @@ export default function ChatView(props: ChatViewProps) {
   );
   const canMaximizeRightPanel = rightPanelOpen;
   const rightPanelMaximized = canMaximizeRightPanel && rightPanelState.maximized === true;
-  const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
+  const draftTaskDocumentId = useComposerDraftStore((store) =>
+    draftId === null ? null : (store.getDraftSession(draftId)?.taskDocumentId ?? null),
+  );
+  const activeTaskDocumentId = isServerThread
+    ? (activeThreadShell?.taskDocumentId ?? null)
+    : draftTaskDocumentId;
+  // A narrow window or a maximized tool has no room beside the chat, so the document moves to a drawer.
+  const taskPanePinned =
+    activeTaskDocumentId !== null && !prefersPlanSidebarSheet && !rightPanelMaximized;
+  const taskDrawerAvailable = activeTaskDocumentId !== null && !taskPanePinned;
+  const [taskDrawerOpen, setTaskDrawerOpen] = useState(false);
+  const rightPanelControlsAtRoot =
+    (rightPanelPresent || taskPanePinned) && !shouldUsePlanSidebarSheet;
+  const inlineRightPanelOwnsTitleBar =
+    (rightPanelOpen || taskPanePinned) && !shouldUsePlanSidebarSheet;
   const [threadPanelPopoverHandle] = useState(PopoverCreateHandle);
   const [chatCanvasStore] = useState(createChatCanvasStore);
 
@@ -3165,10 +3193,24 @@ export default function ChatView(props: ChatViewProps) {
     onToggleRightPanel: toggleRightPanelStable,
   } satisfies PanelLayoutControlsProps;
   const panelToggleControls = (
-    <PanelLayoutControls
-      {...panelToggleControlProps}
-      showThreadPanelControl={!inlineRightPanelOwnsTitleBar}
-    />
+    <>
+      {taskDrawerAvailable ? (
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          aria-label="Show task document"
+          title="Show task document"
+          className="pointer-events-auto"
+          onClick={() => setTaskDrawerOpen(true)}
+        >
+          <ListChecksIcon />
+        </Button>
+      ) : null}
+      <PanelLayoutControls
+        {...panelToggleControlProps}
+        showThreadPanelControl={!inlineRightPanelOwnsTitleBar}
+      />
+    </>
   );
   const threadPanelHeaderControl = <ThreadPanelHeaderControl {...panelToggleControlProps} />;
   const panelLayoutControls = (
@@ -3672,15 +3714,24 @@ export default function ChatView(props: ChatViewProps) {
                                   ? {}
                                   : {
                                       trailing: (
-                                        <ComposerContextPermissions
-                                          runtimeMode={
-                                            resolveCompatibleRuntimeMode(
-                                              runtimeMode,
-                                              activeProviderStatus?.supportedRuntimeModes,
-                                            ).mode
-                                          }
-                                          onOpen={openComposerPermissionsStable}
-                                        />
+                                        <>
+                                          {draftId ? (
+                                            <TaskPicker
+                                              environmentId={activeThread.environmentId}
+                                              draftId={draftId}
+                                              taskDocumentId={draftTaskDocumentId}
+                                            />
+                                          ) : null}
+                                          <ComposerContextPermissions
+                                            runtimeMode={
+                                              resolveCompatibleRuntimeMode(
+                                                runtimeMode,
+                                                activeProviderStatus?.supportedRuntimeModes,
+                                              ).mode
+                                            }
+                                            onOpen={openComposerPermissionsStable}
+                                          />
+                                        </>
                                       ),
                                     })}
                               />
@@ -3814,8 +3865,23 @@ export default function ChatView(props: ChatViewProps) {
         />
       </div>
 
-      {rightPanelPresent && activeThreadRef ? (
+      {(rightPanelPresent || taskPanePinned) && activeThreadRef ? (
         <ChatRightPanel
+          pinnedContent={
+            taskPanePinned && activeTaskDocumentId !== null ? (
+              <Suspense fallback={<Spinner className="m-auto" />}>
+                <TaskDocumentPane
+                  key={`${activeThreadRef.environmentId}:${activeTaskDocumentId}`}
+                  environmentId={activeThreadRef.environmentId}
+                  taskDocumentId={activeTaskDocumentId}
+                  threadRef={isServerThread ? activeThreadRef : undefined}
+                  thread={isServerThread ? (activeThreadShell ?? undefined) : undefined}
+                  reserveTitlebarControls
+                  showOpenPage
+                />
+              </Suspense>
+            ) : null
+          }
           sheet={shouldUsePlanSidebarSheet}
           workspaceLayoutElement={workspaceLayoutElement}
           widthStorageKey={`t3code:preview-panel-width:${activeThreadKey}`}
@@ -3871,8 +3937,28 @@ export default function ChatView(props: ChatViewProps) {
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
           deviceAvailable={activeThreadRef !== null}
         >
-          {rightPanelContent}
+          {rightPanelPresent ? rightPanelContent : null}
         </ChatRightPanel>
+      ) : null}
+      {taskDrawerAvailable && activeThreadRef && activeTaskDocumentId !== null ? (
+        <RightPanelSheet
+          animationDurationMs={panelAnimationsActive ? panelAnimationDurationMs : 0}
+          open={taskDrawerOpen}
+          onClose={() => setTaskDrawerOpen(false)}
+        >
+          {taskDrawerOpen ? (
+            <Suspense fallback={<Spinner className="m-auto" />}>
+              <TaskDocumentPane
+                key={`${activeThreadRef.environmentId}:${activeTaskDocumentId}`}
+                environmentId={activeThreadRef.environmentId}
+                taskDocumentId={activeTaskDocumentId}
+                threadRef={isServerThread ? activeThreadRef : undefined}
+                thread={isServerThread ? (activeThreadShell ?? undefined) : undefined}
+                showOpenPage
+              />
+            </Suspense>
+          ) : null}
+        </RightPanelSheet>
       ) : null}
 
       <RevertConfirmHost threadKey={routeThreadKey} onConfirm={onConfirmRevertStable} />

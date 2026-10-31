@@ -227,6 +227,8 @@ interface ChatMarkdownProps {
   threadRef?: ScopedThreadRef | undefined;
   pullRequestPanelRef?: ScopedThreadRef | undefined;
   environmentId?: EnvironmentId | undefined;
+  /** Replaces opening file links in the thread's panel, whose paths resolve against its workspace. */
+  onOpenFileLink?: ((hostPath: string) => void) | undefined;
   onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
   isStreaming?: boolean;
   skills?: ReadonlyArray<ServerProviderSkill>;
@@ -439,6 +441,7 @@ function useChatMarkdownState({
   inline = false,
   cwd,
   threadRef,
+  onOpenFileLink,
   pullRequestPanelRef,
   environmentId: explicitEnvironmentId,
   onTaskListChange,
@@ -779,6 +782,10 @@ function useChatMarkdownState({
     return metadata._tag === "Success" && metadata.value.entries[0] === null ? match : null;
   };
   const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
+    if (onOpenFileLink) {
+      onOpenFileLink(fileLinkMeta.filePath);
+      return;
+    }
     if (!threadRef) return;
     // Every open supersedes pending lookups, including synchronous opens.
     const isLatestLookup = claimWorkspaceBasenameLookup();
@@ -851,6 +858,7 @@ function useChatMarkdownState({
           markdownFileCopyPaths(fileLinkMeta, await resolveHostPath(), cwd)
         }
         onOpenInPanel={(path) => openFileInPanel(fileLinkMeta, path)}
+        opensWithoutThread={onOpenFileLink !== undefined}
         onOpenMedia={
           threadRef && canPreviewMedia
             ? () => openMarkdownMedia(mediaPath, fileLinkMeta.filePath)

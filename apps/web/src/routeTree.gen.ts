@@ -49,6 +49,7 @@ import { Route as ChatSettingsAccessRouteImport } from './routes/_chat.settings.
 import { Route as ChatSettingsAboutRouteImport } from './routes/_chat.settings.about'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
+import { Route as ChatTaskEnvironmentIdTaskDocumentIdRouteImport } from './routes/_chat.task.$environmentId.$taskDocumentId'
 
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
@@ -254,6 +255,12 @@ const ChatEnvironmentIdThreadIdRoute =
     path: '/$environmentId/$threadId',
     getParentRoute: () => ChatRoute,
   } as any)
+const ChatTaskEnvironmentIdTaskDocumentIdRoute =
+  ChatTaskEnvironmentIdTaskDocumentIdRouteImport.update({
+    id: '/task/$environmentId/$taskDocumentId',
+    path: '/task/$environmentId/$taskDocumentId',
+    getParentRoute: () => ChatRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
@@ -295,6 +302,7 @@ export interface FileRoutesByFullPath {
   '/settings/storage': typeof ChatSettingsStorageRoute
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
+  '/task/$environmentId/$taskDocumentId': typeof ChatTaskEnvironmentIdTaskDocumentIdRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -336,6 +344,7 @@ export interface FileRoutesByTo {
   '/settings/storage': typeof ChatSettingsStorageRoute
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
+  '/task/$environmentId/$taskDocumentId': typeof ChatTaskEnvironmentIdTaskDocumentIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -379,6 +388,7 @@ export interface FileRoutesById {
   '/_chat/settings/storage': typeof ChatSettingsStorageRoute
   '/_chat/settings/threads': typeof ChatSettingsThreadsRoute
   '/_chat/settings/worktrees': typeof ChatSettingsWorktreesRoute
+  '/_chat/task/$environmentId/$taskDocumentId': typeof ChatTaskEnvironmentIdTaskDocumentIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -422,6 +432,7 @@ export interface FileRouteTypes {
     | '/settings/storage'
     | '/settings/threads'
     | '/settings/worktrees'
+    | '/task/$environmentId/$taskDocumentId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -463,6 +474,7 @@ export interface FileRouteTypes {
     | '/settings/storage'
     | '/settings/threads'
     | '/settings/worktrees'
+    | '/task/$environmentId/$taskDocumentId'
   id:
     | '__root__'
     | '/_chat'
@@ -505,6 +517,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/storage'
     | '/_chat/settings/threads'
     | '/_chat/settings/worktrees'
+    | '/_chat/task/$environmentId/$taskDocumentId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -799,6 +812,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatEnvironmentIdThreadIdRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/task/$environmentId/$taskDocumentId': {
+      id: '/_chat/task/$environmentId/$taskDocumentId'
+      path: '/task/$environmentId/$taskDocumentId'
+      fullPath: '/task/$environmentId/$taskDocumentId'
+      preLoaderRoute: typeof ChatTaskEnvironmentIdTaskDocumentIdRouteImport
+      parentRoute: typeof ChatRoute
+    }
   }
 }
 
@@ -872,6 +892,7 @@ interface ChatRouteChildren {
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
   ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
+  ChatTaskEnvironmentIdTaskDocumentIdRoute: typeof ChatTaskEnvironmentIdTaskDocumentIdRoute
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
@@ -882,6 +903,8 @@ const ChatRouteChildren: ChatRouteChildren = {
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
   ChatDraftDraftIdRoute: ChatDraftDraftIdRoute,
+  ChatTaskEnvironmentIdTaskDocumentIdRoute:
+    ChatTaskEnvironmentIdTaskDocumentIdRoute,
 }
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)

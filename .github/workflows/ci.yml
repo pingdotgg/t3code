@@ -201,6 +201,11 @@ jobs:
           cat "$RUNNER_TEMP/typecheck.log"
           exit "$(cat "$RUNNER_TEMP/typecheck-status")"
 
+      # Changed browser tests run here too, before the Test Web job's own install.
+      - name: Install Chromium for changed browser tests
+        if: ${{ github.event_name == 'pull_request' }}
+        run: node apps/web/node_modules/playwright/cli.js install --with-deps --only-shell chromium
+
       - name: Check changed files on Linux
         if: ${{ github.event_name == 'pull_request' }}
         env:

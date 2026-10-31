@@ -3,7 +3,12 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { DEFAULT_SERVER_SETTINGS, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  type ScopedProjectRef,
+  type TaskDocumentId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { type AnyRouter, useRouter } from "@tanstack/react-router";
 import {
   composerDraftHasUserContent,
@@ -85,6 +90,8 @@ export function createNewThreadHandler(router: AnyRouter) {
       replace?: boolean;
       /** Composer text for the draft, set before it shows. A draft with user text keeps it. */
       prompt?: string;
+      /** Only a task-specific action sets this; every other new thread starts with no task. */
+      taskDocumentId?: TaskDocumentId;
     },
   ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
     const projects = readProjects();
@@ -110,6 +117,7 @@ export function createNewThreadHandler(router: AnyRouter) {
       if (composerDraftHasUserContent(getComposerDraft(draftId))) return;
       setPrompt(draftId, options.prompt);
     };
+    const taskDocumentId = options?.taskDocumentId ?? null;
     const requestingRouteHref = router.state.location.href;
     const routeChangedSinceRequest = () => router.state.location.href !== requestingRouteHref;
     const currentRouteTarget = getCurrentRouteTarget();
@@ -312,6 +320,7 @@ export function createNewThreadHandler(router: AnyRouter) {
             ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
           },
         );
+        setDraftThreadContext(emptyStoredDraftThread.draftId, { taskDocumentId });
         const opened = {
           draftId: emptyStoredDraftThread.draftId,
           threadId: emptyStoredDraftThread.threadId,
@@ -353,6 +362,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         createdAt: latestActiveDraftThread.createdAt,
         runtimeMode: latestActiveDraftThread.runtimeMode,
         interactionMode: latestActiveDraftThread.interactionMode,
+        taskDocumentId,
         ...pickExplicitWorkspaceOptions(options),
       });
       seedPrompt(currentRouteTarget.draftId);
@@ -382,6 +392,7 @@ export function createNewThreadHandler(router: AnyRouter) {
           createdAt: racedDraft.createdAt,
           runtimeMode: racedDraft.runtimeMode,
           interactionMode: racedDraft.interactionMode,
+          taskDocumentId,
           ...pickExplicitWorkspaceOptions(options),
         });
         seedPrompt(racedDraft.draftId);
@@ -405,6 +416,7 @@ export function createNewThreadHandler(router: AnyRouter) {
             newWorktreesStartFromOrigin: projectSettings.settings.newWorktreesStartFromOrigin,
           }),
         runtimeMode: defaultRuntimeMode,
+        taskDocumentId,
         ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
       });
       applyStickyState(draftId);

@@ -187,6 +187,14 @@
       "types": "./src/state/git.ts",
       "default": "./src/state/git.ts"
     },
+    "./state/task-documents": {
+      "types": "./src/state/taskDocuments.ts",
+      "default": "./src/state/taskDocuments.ts"
+    },
+    "./task-document-session": {
+      "types": "./src/taskDocumentSession.ts",
+      "default": "./src/taskDocumentSession.ts"
+    },
     "./state/command-output": {
       "types": "./src/state/commandOutput.ts",
       "default": "./src/state/commandOutput.ts"

@@ -190,7 +190,14 @@ export function DraftHeroHeadline({
     pendingScratchRef.current = null;
     const currentDraft = getComposerDraft(draftId);
     if (!composerDraftHasUserContent(currentDraft)) {
-      void openProjectDraft(scopeProjectRef(project.environmentId, project.id));
+      // The task choice is independent of the workspace, so it survives picking a project second.
+      const session = useComposerDraftStore.getState().getDraftSession(draftId);
+      const taskDocumentId =
+        session?.environmentId === project.environmentId ? session.taskDocumentId : null;
+      void openProjectDraft(
+        scopeProjectRef(project.environmentId, project.id),
+        taskDocumentId ? { taskDocumentId } : undefined,
+      );
       return;
     }
     setLogicalProjectDraftThreadId(

@@ -11,6 +11,7 @@ import {
   ProviderInstanceId,
   ProviderDriverKind,
   RunId,
+  TaskDocumentId,
   ThreadId,
   TurnItemId,
   WS_METHODS,
@@ -34,6 +35,7 @@ import {
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
+import { RpcPermissionGuard } from "../rpc/client.ts";
 import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFixtures.ts";
 import {
   archiveThread,
@@ -65,6 +67,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly projection?: OrchestrationV2ThreadProjection;
   readonly projectionRequests?: ThreadId[];
   readonly advertiseThreadStop?: boolean;
+  readonly advertiseTaskDocuments?: boolean;
 }) {
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
@@ -110,9 +113,11 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
     client,
     initialConfig: Effect.succeed({
       environment: {
+        environmentId: TARGET.environmentId,
         capabilities: {
           repositoryIdentity: true,
           ...(input.advertiseThreadStop === true ? { threadStop: true } : {}),
+          ...(input.advertiseTaskDocuments === true ? { taskDocuments: true } : {}),
         },
       },
     } as never),
@@ -219,44 +224,120 @@ describe("V2 environment commands", () => {
   it.effect("preserves an existing worktree and branch during first-message launch", () =>
     Effect.gen(function* () {
       const launches: OrchestrationV2ThreadLaunchInput[] = [];
-      const supervisor = yield* makeSupervisor({ commands: [], projects: [], launches });
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({
+        commands,
+        projects: [],
+        launches,
+        advertiseTaskDocuments: true,
+      });
 
-      yield* startThreadTurn({
-        commandId: CommandId.make("launch-existing-worktree"),
+      for (const task of [
+        undefined,
+        {
+          taskDocumentId: TaskDocumentId.make("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+          updateInstructionsPath: "/tasks/update.md",
+        },
+      ]) {
+        const launch = startThreadTurn({
+          ...(task ? {} : { commandId: CommandId.make("launch-existing-worktree") }),
+          threadId: v2ThreadId,
+          message: {
+            messageId: MessageId.make("message-existing-worktree"),
+            role: "user",
+            text: "Continue here",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          titleSeed: "Continue here",
+          bootstrap: {
+            ...(task === undefined ? {} : { task }),
+            createThread: {
+              projectId: ProjectId.make("project-1"),
+              title: "Thread",
+              modelSelection: v2Projection.thread.modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: "feature",
+              worktreePath: "/workspace/project-worktrees/feature",
+              createdAt: "2026-06-20T00:00:00.000Z",
+            },
+          },
+        }).pipe(
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
+        );
+        yield* launch;
+
+        expect(launches.at(-1)).toMatchObject({
+          threadId: v2ThreadId,
+          title: "Continue here",
+          generateTitle: true,
+          workspaceStrategy: {
+            type: "existing_worktree",
+            worktreePath: "/workspace/project-worktrees/feature",
+            branch: "feature",
+          },
+        });
+        expect(launches.at(-1)?.initialMessage?.text).toBe(task ? undefined : "Continue here");
+        expect(launches.at(-1)?.task).toEqual(task);
+        if (task) {
+          expect(commands).toMatchObject([
+            {
+              type: "message.dispatch",
+              commandId: `${v2ThreadId}:task-launch:task-work`,
+              text: "Continue here",
+              messageId: "message-existing-worktree",
+              dispatchMode: { type: "queue_after_active" },
+            },
+          ]);
+          yield* launch;
+          expect(launches.at(-1)?.commandId).toBe(`${v2ThreadId}:task-launch`);
+          expect(commands.at(-1)?.commandId).toBe(`${v2ThreadId}:task-launch:task-work`);
+        } else {
+          expect(commands).toEqual([]);
+        }
+      }
+      const taskInput = {
+        commandId: CommandId.make("denied-task"),
         threadId: v2ThreadId,
         message: {
-          messageId: MessageId.make("message-existing-worktree"),
-          role: "user",
-          text: "Continue here",
+          messageId: MessageId.make("denied-message"),
+          role: "user" as const,
+          text: "work",
           attachments: [],
         },
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        titleSeed: "Continue here",
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
         bootstrap: {
+          task: {
+            taskDocumentId: TaskDocumentId.make("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            updateInstructionsPath: "/tasks/update.md",
+          },
           createThread: {
-            projectId: ProjectId.make("project-1"),
-            title: "Thread",
-            modelSelection: v2Projection.thread.modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: "feature",
-            worktreePath: "/workspace/project-worktrees/feature",
+            ...v2Projection.thread,
             createdAt: "2026-06-20T00:00:00.000Z",
+            branch: null,
+            worktreePath: null,
           },
         },
-      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-
-      expect(launches[0]).toMatchObject({
-        threadId: v2ThreadId,
-        title: "Continue here",
-        generateTitle: true,
-        workspaceStrategy: {
-          type: "existing_worktree",
-          worktreePath: "/workspace/project-worktrees/feature",
-          branch: "feature",
-        },
-      });
+      };
+      expect(
+        yield* startThreadTurn(taskInput).pipe(
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.flip,
+        ),
+      ).toMatchObject({ _tag: "EnvironmentAuthorizationError" });
+      const older = yield* makeSupervisor({ commands, projects: [], launches });
+      expect(
+        yield* startThreadTurn(taskInput).pipe(
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, older),
+          Effect.flip,
+        ),
+      ).toMatchObject({ _tag: "EnvironmentRpcUnavailableError" });
+      expect(launches).toHaveLength(3);
+      expect(commands).toHaveLength(2);
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 

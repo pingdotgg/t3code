@@ -38,6 +38,8 @@ interface MarkdownFileLinkProps {
   threadRef?: ScopedThreadRef | undefined;
   onOpen?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenInPanel: (panelPath: string, line: number | undefined) => void;
+  /** Without a thread there is no panel, unless the markdown's owner handles opening itself. */
+  opensWithoutThread?: boolean | undefined;
   resolveCopyPaths: () => Promise<ReturnType<typeof markdownFileCopyPaths>>;
   openInEditorMenuLabel: string;
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
@@ -62,6 +64,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   threadRef,
   onOpen,
   onOpenInPanel,
+  opensWithoutThread,
   openInEditorMenuLabel,
   onOpenInBrowser,
   onOpenMedia,
@@ -108,7 +111,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   };
 
   const handleOpenInFilePreview = () => {
-    if (threadRef && panelPath) {
+    if ((threadRef || opensWithoutThread) && panelPath) {
       onOpenInPanel(panelPath, line);
       return;
     }
@@ -308,7 +311,8 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
 
   const canOpenInEditor = onOpen !== undefined;
   const canOpenInBrowser = onOpenInBrowser !== undefined;
-  const canOpenInPanel = threadRef !== undefined && Boolean(panelPath);
+  const canOpenInPanel =
+    (threadRef !== undefined || opensWithoutThread === true) && Boolean(panelPath);
   const hasPrimaryAction = hasMarkdownFilePrimaryAction({
     canOpenInEditor,
     canOpenInBrowser,

@@ -32,7 +32,7 @@ import * as Layer from "effect/Layer";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
-import { createEnvironmentRpcCommand } from "./runtime.ts";
+import { createEnvironmentCommand, createEnvironmentRpcCommand } from "./runtime.ts";
 import { AVAILABLE_CONNECTION_STATE } from "../connection/model.ts";
 import { createPeerLinkEnvironmentAtoms } from "./peerLinks.ts";
 
@@ -69,6 +69,47 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("checks nested task RPCs at the shared command boundary", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const list = vi.fn(() => Effect.succeed([]));
+        const supervisor = {
+          target: { environmentId: env },
+          session: yield* SubscriptionRef.make(
+            Option.some({
+              client: { [WS_METHODS.taskDocumentsList]: list },
+            } as unknown as RpcSession),
+          ),
+        } as EnvironmentSupervisor["Service"];
+        const taskRuntime = Atom.runtime(
+          Layer.succeed(EnvironmentRegistry, {
+            run: (_id, effect) => Effect.provideService(effect, EnvironmentSupervisor, supervisor),
+          } as EnvironmentRegistry["Service"]),
+        );
+        const command = createEnvironmentCommand(taskRuntime, {
+          label: "test.task-command",
+          execute: () => requestGuarded(WS_METHODS.taskDocumentsList, {}),
+        });
+        const run = Effect.promise(() => command.run(registry, { environmentId: env, input: {} }));
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect((yield* run)._tag).toBe("Failure");
+        expect(list).not.toHaveBeenCalled();
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(true),
+            scopes: [AuthFilesystemReadScope],
+            permissions: [AuthFilesystemReadScope],
+          }),
+        );
+        expect((yield* run)._tag).toBe("Success");
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect((yield* run)._tag).toBe("Failure");
+        expect(list).toHaveBeenCalledTimes(1);
+      }),
+    ),
+  );
   it.effect.each([
     {
       method: ORCHESTRATION_V2_WS_METHODS.launchThread,

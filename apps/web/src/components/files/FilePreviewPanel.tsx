@@ -580,13 +580,13 @@ function useFileLineReveal(
   };
 }
 
-const createFileEditor: EditorFactory<FileCommentAnnotationGroup, undefined> = (
+export const createFileEditor: EditorFactory<FileCommentAnnotationGroup, undefined> = (
   editorType,
   options,
   editStateKey,
 ) => new Editor(editorType, options, editStateKey);
 
-function editableFileContents(
+export function editableFileContents(
   environmentId: EnvironmentId,
   cwd: string,
   relativePath: string,
@@ -615,7 +615,7 @@ function needsWorkerHighlight(workerPool: WorkerPoolManager | undefined, file: F
 
 /** Enable editing only after worker highlighting renders; active edit sessions highlight on the main
  * thread. */
-function useEditableAfterHighlight(file: FileContents) {
+export function useEditableAfterHighlight(file: FileContents) {
   const workerPool = useWorkerPool();
   const [highlightedFile, setHighlightedFile] = useState<FileContents | null>(null);
   const needsHighlight = needsWorkerHighlight(workerPool, file);

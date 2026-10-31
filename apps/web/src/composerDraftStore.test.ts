@@ -27,6 +27,7 @@ import {
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   RunId,
+  TaskDocumentId,
   ThreadId,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ShellSnapshot,
@@ -1238,6 +1239,35 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
   });
 
+  it("keeps a task choice across projects and reloads, but never across environments", () => {
+    const options = useComposerDraftStore.persist.getOptions() as unknown as {
+      merge: (
+        persisted: unknown,
+        current: unknown,
+      ) => ReturnType<typeof useComposerDraftStore.getState>;
+    };
+    const taskDocumentId = TaskDocumentId.make("11111111-1111-4111-8111-111111111111");
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    expect(store.getDraftThread(draftId)?.taskDocumentId).toBeNull();
+
+    store.setDraftThreadContext(draftId, { taskDocumentId });
+    store.setDraftThreadContext(draftId, { projectRef: otherProjectRef });
+    expect(store.getDraftThread(draftId)?.taskDocumentId).toBe(taskDocumentId);
+
+    const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+    expect(
+      options.merge(persisted, useComposerDraftStore.getState()).draftThreadsByThreadKey[draftId]
+        ?.taskDocumentId,
+    ).toBe(taskDocumentId);
+
+    store.setProjectDraftThreadId(remoteProjectRef, draftId, { threadId });
+    expect(store.getDraftThread(draftId)?.taskDocumentId).toBeNull();
+    store.setDraftThreadContext(draftId, { taskDocumentId });
+    store.setDraftThreadContext(draftId, { projectRef });
+    expect(store.getDraftThread(draftId)?.taskDocumentId).toBeNull();
+  });
+
   it("pins manual workspace choices and can return to automatic routing without losing the prompt", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });
@@ -1511,6 +1541,42 @@ describe("composerDraftStore draft promotion", () => {
     h.flush();
     await waitForDraftHeroTransition();
     expect(useComposerDraftStore.getState().getDraftSession(draftId)).toBeNull();
+  });
+
+  it("keeps task work on the draft when dispatch fails after its starter begins", async () => {
+    const h = draftPromotionHarness();
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      taskDocumentId: TaskDocumentId.make("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+    });
+    store.setPrompt(draftId, "task work");
+    const sent = useComposerDraftStore.getState().getDraftSession(draftId)!;
+    markPromotedDraftThreadByRef(threadRef);
+    beginBackgroundDraftSubmissionByRef(threadRef);
+    store.clearComposerContent(draftId);
+    h.arrive(threadRef, {
+      latestRun: { ...preparingRun, status: "running", startedAt: preparingRun.requestedAt },
+      latestUserMessageAt: preparingRun.requestedAt,
+    });
+    await waitForDraftHeroTransition();
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)).not.toBeNull();
+    expect(useComposerDraftStore.getState().getPromotedDraftRedirect(draftId)).toBeNull();
+
+    restoreFailedDraftThread(draftId, sent, threadId);
+    store.setPrompt(draftId, "task work");
+    h.flush();
+    await waitForDraftHeroTransition();
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)?.threadId).toBe(threadId);
+    expect(useComposerDraftStore.getState().getPromotedDraftRedirect(draftId)).toBeNull();
+    expect(draftByKey(draftId)?.prompt).toBe("task work");
+
+    markPromotedDraftThreadByRef(threadRef);
+    clearBackgroundDraftSubmissionByRef(threadRef);
+    h.flush();
+    await waitForDraftHeroTransition();
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)).toBeNull();
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("task work");
   });
 
   it("does not finalize a draft whose send failed and was restored", async () => {

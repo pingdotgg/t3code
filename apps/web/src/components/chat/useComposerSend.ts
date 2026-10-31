@@ -82,6 +82,7 @@ import {
   previewAnnotationContextReference,
 } from "../../lib/composerContextRecords";
 import { environmentServerConfigsAtom } from "../../state/server";
+import { readTaskUpdateInstructionsPath } from "../../state/taskDocuments";
 import { threadEnvironment } from "../../state/threads";
 import { runMobileComposerTransition } from "./draftHeroTransition";
 import { useClientSettingsHydrated, useEnvironmentSettings } from "../../hooks/useSettings";
@@ -485,6 +486,23 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
     const multipleModelSelections = sendCtx.multipleModelSelections;
+    const draftTaskDocumentId =
+      draftId === null
+        ? null
+        : (useComposerDraftStore.getState().getDraftSession(draftId)?.taskDocumentId ?? null);
+    const taskUpdateInstructionsPath =
+      draftTaskDocumentId === null ? null : readTaskUpdateInstructionsPath(environmentId);
+    if (draftTaskDocumentId !== null && taskUpdateInstructionsPath === null) {
+      setThreadError(
+        activeThread.id,
+        "Set the update instructions file from the Task menu before starting a task thread.",
+      );
+      return;
+    }
+    if (draftTaskDocumentId !== null && multipleModelSelections !== null) {
+      setThreadError(activeThread.id, "A task thread starts with one model. Choose one to send.");
+      return;
+    }
     const approvalFeedbackTarget = pendingApprovalsRef.current.find(
       (approval) =>
         approval.supportsFeedback && approval.requestId === sendCtx.shownPendingApprovalIds[0],
@@ -1246,6 +1264,14 @@ export function useComposerSend(input: ComposerSendInput) {
       const bootstrap =
         isLocalDraftThread || baseBranchForWorktree
           ? {
+              ...(isLocalDraftThread && draftTaskDocumentId !== null
+                ? {
+                    task: {
+                      taskDocumentId: draftTaskDocumentId,
+                      updateInstructionsPath: taskUpdateInstructionsPath!,
+                    },
+                  }
+                : {}),
               ...(isLocalDraftThread
                 ? {
                     createThread: {
@@ -1277,6 +1303,9 @@ export function useComposerSend(input: ComposerSendInput) {
           ? scopeThreadRef(environmentId, threadIdForSend)
           : null;
       if (backgroundThreadRef) beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
+      // A task launch is two calls; its starter's run must not promote the draft before the second.
+      else if (sentDraftThreadRef && draftTaskDocumentId !== null)
+        beginBackgroundDraftSubmissionByRef(sentDraftThreadRef);
       const startPromise = startThreadTurn({
         environmentId,
         input: {

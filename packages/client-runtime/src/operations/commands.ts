@@ -25,6 +25,7 @@ import {
   type RuntimeRequestId,
   type ThreadId,
   type ThreadEnvMode,
+  type TaskThreadLaunchOptions,
   type UploadChatAttachment,
   type GuestMessageId,
 } from "@t3tools/contracts";
@@ -33,7 +34,7 @@ import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 
-import { getInitialServerConfig, request } from "../rpc/client.ts";
+import { EnvironmentRpcUnavailableError, getInitialServerConfig, request } from "../rpc/client.ts";
 
 interface CommandMetadata {
   readonly commandId?: CommandId;
@@ -141,6 +142,7 @@ export interface SetThreadInteractionModeInput extends ThreadCommandInput {
 }
 
 interface StartThreadBootstrap {
+  readonly task?: TaskThreadLaunchOptions;
   readonly createThread?: {
     readonly projectId: ProjectId;
     readonly title: string;
@@ -653,7 +655,22 @@ export const setThreadInteractionMode = Effect.fn("EnvironmentCommands.setThread
 export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(function* (
   input: StartThreadTurnInput,
 ) {
-  const commandId = yield* allocateCommandId(input);
+  // A restored draft retries the same initial launch, even after a lost launch or queue reply.
+  const commandId = yield* allocateCommandId({
+    ...input,
+    ...(input.bootstrap?.task !== undefined && input.commandId === undefined
+      ? { commandId: CommandId.make(`${input.threadId}:task-launch`) }
+      : {}),
+  });
+  if (input.bootstrap?.task !== undefined) {
+    const config = yield* getInitialServerConfig();
+    if (config.environment.capabilities.taskDocuments !== true) {
+      return yield* new EnvironmentRpcUnavailableError({
+        environmentId: config.environment.environmentId,
+        message: "This environment does not support task documents.",
+      });
+    }
+  }
   const attachments = yield* persistAttachments(
     input.threadId,
     input.message.messageId,
@@ -692,7 +709,9 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
                 ? {}
                 : { branch: bootstrap.branch }),
             };
-    return yield* request(ORCHESTRATION_V2_WS_METHODS.launchThread, {
+    const task = input.bootstrap?.task;
+    const launch = yield* request(ORCHESTRATION_V2_WS_METHODS.launchThread, {
+      ...(task === undefined ? {} : { task }),
       commandId,
       creationSource: input.creationSource ?? "web",
       threadId: input.threadId,
@@ -704,12 +723,29 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       runtimeMode: input.runtimeMode,
       interactionMode: input.interactionMode,
       workspaceStrategy,
-      initialMessage: {
-        messageId: input.message.messageId,
-        text: input.message.text,
-        ...(context ? { context } : {}),
-        attachments,
-      },
+      ...(task === undefined
+        ? {
+            initialMessage: {
+              messageId: input.message.messageId,
+              text: input.message.text,
+              ...(context ? { context } : {}),
+              attachments,
+            },
+          }
+        : {}),
+    });
+    if (task === undefined) return launch;
+    return yield* dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make(`${commandId}:task-work`),
+      threadId: input.threadId,
+      messageId: input.message.messageId,
+      createdBy: "user",
+      creationSource: input.creationSource ?? "web",
+      text: input.message.text,
+      ...(context ? { context } : {}),
+      attachments,
+      dispatchMode: { type: "queue_after_active" },
     });
   }
 
