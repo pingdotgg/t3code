@@ -550,7 +550,7 @@ function ProjectDetail({
 
   return (
     <>
-      <SettingsPageContainer>
+      <SettingsPageContainer className="max-w-[688px]">
         <SettingsSection id="project-overview" title="Project">
           {!canEditGroup ? (
             <p className="px-3 py-2 text-body text-muted-foreground sm:px-4">
@@ -580,7 +580,7 @@ function ProjectDetail({
               <Input
                 key={`${group.projectKey}:${group.displayName}`}
                 size="sm"
-                className="w-full sm:w-64"
+                className="w-full sm:w-50"
                 aria-label="Project name"
                 disabled={!canEditGroup}
                 defaultValue={group.displayName}
@@ -631,7 +631,7 @@ function ProjectDetail({
               <div className="flex items-center gap-2">
                 <ProjectFavicon
                   project={{ ...representative, memberProjects: group.memberProjects }}
-                  className="size-6"
+                  className="size-7"
                 />
                 <Button
                   size="sm"
