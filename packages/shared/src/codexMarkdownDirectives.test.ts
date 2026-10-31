@@ -110,6 +110,7 @@ describe.each([
   // The directive attribute entity-escapes the literal ampersand, so the parsed path keeps it.
   it.each([
     { attribute: "/tmp/a&amp;copy;.txt", path: "/tmp/a&copy;.txt" },
+    { attribute: "./outputs/a&amp;copy;.txt", path: "./outputs/a&copy;.txt" },
     { attribute: "/tmp/a&amp;amp;b.txt", path: "/tmp/a&amp;b.txt" },
     { attribute: "/tmp/a&amp;b.txt", path: "/tmp/a&b.txt" },
     { attribute: "/tmp/a&amp;#35;b.txt", path: "/tmp/a&#35;b.txt" },
