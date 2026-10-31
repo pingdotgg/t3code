@@ -82,6 +82,37 @@ describe("checkFxProviderStatus", () => {
       // "Default" carries the model `fx status` reports, which the adapter selects for it.
       assert.deepEqual(signedIn.draft.models[0]?.aliases, ["anthropic/claude-opus-5.5"]);
       assert.isDefined(signedIn.draft.versionAdvisory);
+      // fx 0.0.13 lists no modes and has no full-access mode.
+      assert.deepEqual(signedIn.draft.supportedRuntimeModes, ["approval-required", "auto"]);
+
+      // fx 0.0.14 lists the ACP session modes (src/core/output/output_contracts.zig).
+      const withModes = yield* check(
+        JSON.stringify({
+          kind: "status",
+          model: "anthropic/claude-opus-5.5",
+          auth: "fx login",
+          permission_mode: "ask",
+          mode: "ask",
+          modes: [
+            {
+              id: "auto",
+              name: "Auto",
+              description: "Check actions with an automatic safety review instead of asking",
+            },
+            { id: "ask", name: "Ask", description: "Request permission before making any changes" },
+            {
+              id: "full-access",
+              name: "Full access",
+              description: "Run every action without asking, outside the sandbox",
+            },
+          ],
+        }),
+      );
+      assert.deepEqual(withModes.draft.supportedRuntimeModes, [
+        "approval-required",
+        "auto",
+        "full-access",
+      ]);
 
       const signedOut = yield* check(
         JSON.stringify({
