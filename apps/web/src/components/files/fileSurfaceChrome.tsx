@@ -8,18 +8,22 @@ import { DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
 
 export const FILE_SURFACE_SUBHEADER_CLASS =
-  "flex h-10 min-h-10 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent";
+  "flex h-10 min-h-10 shrink-0 items-center gap-2 border-b border-divider bg-background px-3 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-divider";
 
 export const FILE_LINK_REVEAL_ATTRIBUTE = "data-file-link-reveal";
 
 export const FILE_LINK_REVEAL_UNSAFE_CSS = `
   ${DIFF_SURFACE_THEME_UNSAFE_CSS}
 
+  :host {
+    --code-background: var(--code-surface, var(--background));
+  }
+
   diffs-container {
-    --diffs-bg: var(--code-background, var(--background)) !important;
-    --diffs-light-bg: var(--code-background, var(--background)) !important;
-    --diffs-dark-bg: var(--code-background, var(--background)) !important;
-    background-color: var(--code-background, var(--background)) !important;
+    --diffs-bg: var(--code-surface, var(--background)) !important;
+    --diffs-light-bg: var(--code-surface, var(--background)) !important;
+    --diffs-dark-bg: var(--code-surface, var(--background)) !important;
+    background-color: var(--code-surface, var(--background)) !important;
     color: var(--code-foreground, var(--foreground)) !important;
   }
 
@@ -137,12 +141,12 @@ export function FileSurfaceFailure(props: {
       role="alert"
       className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-xs leading-relaxed"
     >
-      <p className="text-destructive">{props.message}</p>
+      <p className="text-error-foreground">{props.message}</p>
       {props.onRetry ? (
         <button
           type="button"
           onClick={props.onRetry}
-          className="rounded-md border border-input px-2.5 py-1 text-xs text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          className="rounded-control surface-raised px-2.5 py-1 text-xs text-foreground hover:surface-raised-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         >
           Try again
         </button>

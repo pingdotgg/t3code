@@ -333,7 +333,7 @@ function PublishStep({
 }) {
   return (
     <div className="space-y-3">
-      <div className="rounded-lg border">
+      <div className="rounded-card border border-border surface-card">
         <OnboardingToggleRow
           title="Publish this environment"
           description="Make this environment available to your other devices through T3 Connect."
@@ -386,9 +386,9 @@ function OnboardingToggleRow({
   readonly onCheckedChange: (enabled: boolean) => void;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 border-t border-border/60 px-4 py-3 first:border-t-0">
+    <div className="flex items-start justify-between gap-4 border-t border-border px-4 py-3 first:border-t-0">
       <div className="min-w-0">
-        <p className="text-sm font-medium">{title}</p>
+        <p className="text-sm font-medium text-strong-foreground">{title}</p>
         <p className="mt-1 text-xs text-muted-foreground">{description}</p>
       </div>
       <Switch
@@ -409,7 +409,7 @@ function DevicesStep() {
   );
 
   return (
-    <div className="overflow-hidden rounded-lg border">
+    <div className="overflow-hidden rounded-card border border-border surface-card">
       <CloudEnvironmentConnectRows
         primaryEnvironmentId={primaryEnvironment?.environmentId ?? null}
         savedEnvironments={savedEnvironments}

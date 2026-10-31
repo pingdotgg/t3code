@@ -297,16 +297,16 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "color-scheme",
-    title: "Color scheme",
+    title: "Appearance mode",
     to: "/settings/appearance",
-    searchTerms: ["appearance light dark system mode"],
+    searchTerms: ["color scheme light dark system black chrome"],
     targetId: "appearance",
   },
   {
     id: "theme",
     title: "Themes",
     to: "/settings/appearance",
-    searchTerms: ["appearance colors palette custom import"],
+    searchTerms: ["appearance colors palette custom import export download"],
     targetId: "appearance",
   },
   {
@@ -315,13 +315,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Contrast",
     to: "/settings/appearance",
     searchTerms: ["colors borders interface"],
-  },
-  {
-    // Prefixed because the slider control already owns the `glass-opacity` id.
-    id: "setting-glass-opacity",
-    title: "Glass opacity",
-    to: "/settings/appearance",
-    searchTerms: ["transparent transparency solid menus dialogs composer"],
   },
   {
     id: "diff-color-scheme",
@@ -356,6 +349,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["latex tex katex equations formulas markdown"],
   },
   {
+    id: "surface-style",
+    title: "Style",
+    to: "/settings/appearance",
+    searchTerms: ["surface buttons composer toned aqua gradient rim flat soft gloss blue"],
+  },
+  {
     id: "panel-animations",
     title: "Panel animations",
     to: "/settings/appearance",
@@ -366,6 +365,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
     searchTerms: ["dev nightly latest channel artwork pill label hide none"],
     targetId: "appearance-interface",
+  },
+  {
+    id: "hide-window-controls",
+    title: "Hide window controls when the sidebar is collapsed",
+    to: "/settings/appearance",
+    searchTerms: ["traffic lights close minimize zoom buttons titlebar"],
+    desktopOnly: true,
+    macOnly: true,
   },
   {
     id: "interface-font",
@@ -409,11 +416,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Word wrap",
     to: "/settings/appearance",
     searchTerms: ["long lines code blocks diffs file previews"],
-  },
-  {
-    id: "composer-context",
-    title: "Composer context",
-    to: "/settings/appearance",
   },
   {
     id: "project-grouping",

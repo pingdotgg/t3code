@@ -308,7 +308,7 @@ export function summarizeAuthorizedClients(
       ? `${links.length} ${links.length === 1 ? "pairing link" : "pairing links"}`
       : null,
   ];
-  return parts.filter((part): part is string => part !== null).join(" · ");
+  return parts.filter((part): part is string => part !== null).join("\n");
 }
 
 export function sortDesktopClientSessions(sessions: ReadonlyArray<ServerClientSessionRecord>) {

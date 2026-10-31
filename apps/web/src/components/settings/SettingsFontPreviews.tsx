@@ -36,7 +36,7 @@ export function PromptFontPreview() {
     setCursor(nextCursor);
   };
   return (
-    <div className="mt-1 mb-2 rounded-lg border border-border bg-background px-3 py-2">
+    <div className="mt-1 mb-2 rounded-control surface-well px-3 py-2">
       <ComposerPromptEditor
         ariaLabel="Prompt font preview"
         editorRef={editorRef}
@@ -121,8 +121,9 @@ export function CodeFontPreview() {
   const [htmlByFile, setHtmlByFile] = useState(loadedHtml);
   if (loadedHtml !== null && loadedHtml !== htmlByFile) setHtmlByFile(loadedHtml);
   if (htmlByFile === null) return null;
+  // Boxed like the terminal preview below it.
   return (
-    <div className="mt-1 mb-2 space-y-2">
+    <div className="mt-1 mb-2 space-y-2 overflow-hidden rounded-control border border-border">
       {htmlByFile.map((html) => (
         <StaticDiffHtml key={html} html={html} />
       ))}
@@ -239,7 +240,7 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
   return (
     <div
       ref={mountSurface}
-      className="relative mt-1 mb-2 h-52 overflow-hidden rounded-lg border border-border"
+      className="relative mt-1 mb-2 h-52 overflow-hidden rounded-control border border-border"
       aria-label="Terminal font preview"
     />
   );

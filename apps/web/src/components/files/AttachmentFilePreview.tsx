@@ -384,8 +384,11 @@ export function AttachmentFilePreview(props: {
           <span className="shrink-0 px-0.5 text-muted-foreground">
             {props.origin ?? "Attachment"}
           </span>
-          <ChevronRightIcon className="mx-1 size-3.5 shrink-0 text-muted-foreground/60" />
-          <span aria-current="page" className="min-w-0 truncate px-0.5 font-medium text-foreground">
+          <ChevronRightIcon className="mx-1 size-3.5 shrink-0 text-dim-foreground" />
+          <span
+            aria-current="page"
+            className="min-w-0 truncate px-0.5 font-medium text-strong-foreground"
+          >
             {props.name}
           </span>
           {props.sizeBytes > 0 ? (

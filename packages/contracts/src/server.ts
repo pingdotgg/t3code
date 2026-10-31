@@ -654,6 +654,11 @@ export const ServerConfig = Schema.Struct({
    */
   lastEventLoopStall: Schema.optionalKey(ServerEventLoopStall),
   /**
+   * The server user's home folder, where surfaces opened without a project
+   * (a terminal, the file browser) work. Absent on servers that predate it.
+   */
+  homeDirectory: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
    * Never sent in a config snapshot: the theme stream emits the current set
    * before any change, so a snapshot carrying it too would hand every
    * subscriber the same array twice per connect.

@@ -49,7 +49,12 @@ export function CommandPaletteContent({
     <div className="contents" data-testid={testId}>
       <Command {...commandProps}>
         <div className="relative">
-          <CommandInput autoFocus={false} {...inputProps} ref={claimFocusInOpenDialog} />
+          <CommandInput
+            autoFocus={false}
+            endAddon={inputAccessory ? undefined : <Kbd>esc</Kbd>}
+            {...inputProps}
+            ref={claimFocusInOpenDialog}
+          />
           {inputAccessory}
         </div>
         <CommandPanel

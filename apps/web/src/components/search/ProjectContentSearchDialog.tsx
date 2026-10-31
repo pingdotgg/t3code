@@ -84,7 +84,7 @@ function EmptyContentSearchDialog() {
       aria-label="Search project contents"
       escapeLabel="Back"
       footerActionLabel="Open file"
-      inputProps={{ disabled: true, placeholder: "Search project contents…" }}
+      inputProps={{ disabled: true, placeholder: "Search project contents…", iconSize: "sm" }}
       mode="none"
       panelSize="fill"
       testId="project-content-search"
@@ -167,7 +167,7 @@ function OpenContentSearchDialog(props: {
       escapeLabel="Back"
       footerActionLabel="Open file"
       inputAccessory={
-        <div className="absolute inset-e-2.5 top-1/2 flex shrink-0 -translate-y-1/2 items-center gap-0.5 rounded-lg border bg-muted/30 p-0.5">
+        <div className="absolute inset-e-2.5 top-1/2 flex shrink-0 -translate-y-1/2 items-center gap-0.5 rounded-control border border-border surface-well p-0.5">
           <SearchOptionButton
             active={caseSensitive}
             disabled={!search.canReadFiles}
@@ -195,6 +195,7 @@ function OpenContentSearchDialog(props: {
         </div>
       }
       inputProps={{
+        iconSize: "sm",
         className: "pe-30",
         disabled: !search.canReadFiles,
         placeholder: `Search in ${target.projectName}`,
@@ -225,7 +226,7 @@ function OpenContentSearchDialog(props: {
       value={query}
     >
       {showSearchStatus ? (
-        <div className="flex h-9 shrink-0 items-center border-b px-3 text-xs text-muted-foreground">
+        <div className="flex h-9 shrink-0 items-center border-b border-divider px-3 text-xs text-dim-foreground">
           {search.isPending ? (
             <span className="flex items-center gap-2">
               <Spinner size="sm" /> Searching…
@@ -257,20 +258,20 @@ function OpenContentSearchDialog(props: {
               const path = splitPath(group.path);
               return (
                 <section className="pb-2" key={group.path}>
-                  <div className="sticky top-0 z-10 flex h-8 items-center gap-2 bg-popover/95 px-3 text-xs backdrop-blur-sm">
+                  <div className="sticky top-0 z-10 flex h-8 items-center gap-2 px-3 text-xs">
                     <PierreEntryIcon
                       pathValue={group.path}
                       kind="file"
                       theme={resolvedTheme}
                       className="size-3.5"
                     />
-                    <span className="font-medium text-foreground">{path.name}</span>
+                    <span className="font-normal text-muted-foreground">{path.name}</span>
                     {path.directory ? (
                       <span className="min-w-0 truncate text-muted-foreground">
                         {path.directory}
                       </span>
                     ) : null}
-                    <span className="ml-auto rounded-full bg-muted px-1.5 py-0.5 tabular-nums text-3xs text-muted-foreground">
+                    <span className="ml-auto px-1.5 py-0.5 tabular-nums text-3xs text-dim-foreground">
                       {group.matches.length}
                     </span>
                   </div>
@@ -282,14 +283,15 @@ function OpenContentSearchDialog(props: {
                         match.resultIndex === selectedIndex ? scrollSelectedRowIntoView : undefined
                       }
                       className={cn(
-                        "flex h-7 w-full min-w-0 items-center gap-3 px-3 text-left font-mono text-xs hover:bg-accent/60 disabled:pointer-events-none",
-                        match.resultIndex === selectedIndex && "bg-accent text-accent-foreground",
+                        "flex h-7 w-full min-w-0 items-center gap-3 px-3 text-left font-mono text-xs rounded-control hover:bg-(--search-hit-fill) disabled:pointer-events-none",
+                        match.resultIndex === selectedIndex &&
+                          "bg-(--search-hit-fill) text-strong-foreground",
                       )}
                       disabled={!canOpenMatches}
                       onMouseEnter={() => setSelectedIndex(match.resultIndex)}
                       onClick={() => openMatch(match)}
                     >
-                      <span className="w-10 shrink-0 text-right tabular-nums text-muted-foreground/70">
+                      <span className="w-10 shrink-0 text-right tabular-nums text-(--search-line-number)">
                         {match.lineNumber}
                       </span>
                       <span className="min-w-0 flex-1 truncate whitespace-pre">
