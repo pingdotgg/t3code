@@ -14,6 +14,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isTailnetHost } from "@t3tools/shared/hostClassification";
 
 import * as ServerConfig from "../config.ts";
@@ -49,7 +50,11 @@ const isTailscaleInterface = (
   /^tailscale/i.test(name) ||
   entries.some((entry) => entry.family === "IPv6" && isTailnetHost(entry.address));
 
+// Windows adapter names are mutable; Linux bridges can inherit these MACs.
+const WINDOWS_HOST_ADAPTER_MAC = /^(0a:00:27|00:50:56:c0:00):/i;
+
 export function resolveBoundEndpoints(input: {
+  readonly platform: NodeJS.Platform;
   readonly host: string | undefined;
   readonly port: number;
   readonly interfaces: NetworkInterfacesMap;
@@ -67,7 +72,10 @@ export function resolveBoundEndpoints(input: {
         .flatMap(([name, entries]) => (VIRTUAL_INTERFACE.test(name) ? [] : (entries ?? [])))
         .filter(
           (entry) =>
-            !entry.internal && entry.family === "IPv4" && isAdvertisableAddress(entry.address),
+            !entry.internal &&
+            entry.family === "IPv4" &&
+            isAdvertisableAddress(entry.address) &&
+            !(input.platform === "win32" && WINDOWS_HOST_ADAPTER_MAC.test(entry.mac)),
         )
         .map((entry) => entry.address)
     : [input.host!].filter(isAdvertisableAddress);
@@ -111,6 +119,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
+  const platform = yield* HostProcess.Platform;
   // Only the service default listens on every interface without being asked,
   // so only it checks once whether it runs in a cloud. The check starts now so
   // the first client does not wait for its timeout.
@@ -122,6 +131,7 @@ export const make = Effect.gen(function* () {
   const resolve = Effect.gen(function* () {
     const endpoints = [
       ...resolveBoundEndpoints({
+        platform,
         host: config.host,
         port: config.port,
         interfaces: NodeOS.networkInterfaces(),
