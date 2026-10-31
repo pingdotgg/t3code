@@ -83,7 +83,11 @@ function azureDevOpsProviderFailure(
   error: AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCliError,
 ): PullRequestProviderFailure {
   if (error._tag === "AzureDevOpsCliUnavailableError") return { reason: "missing-tool" };
-  if (error._tag === "AzureDevOpsCliAuthenticationError") return { reason: "unauthenticated" };
+  if (
+    error._tag === "AzureDevOpsCliAuthenticationError" ||
+    error._tag === "AzureDevOpsViewerAnonymousError"
+  )
+    return { reason: "unauthenticated" };
   if (error._tag === "AzureDevOpsCliRateLimitError") return { reason: "rate-limited" };
   if (error._tag === "AzureDevOpsPullRequestNotFoundError") return { reason: "not-found" };
   return { reason: "failed" };

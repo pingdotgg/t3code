@@ -1,5 +1,7 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
+import { decodeViewerJson } from "./azureDevOpsPullRequestJson.ts";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
@@ -13,21 +15,36 @@ import {
   type SourceControlCliDiscoverySpec,
 } from "@t3tools/source-control-core/server/discovery";
 
+// A nonzero exit is only a sign-in problem when Azure says so. Network, service, and CLI
+// failures leave the status indeterminate so a signed-in user is not told to log in again.
+const AZURE_AUTH_FAILURE =
+  /\baz (?:devops )?login\b|authentication failed|unauthori[sz]ed|\b401\b|TF400813|personal access token/i;
+
 function parseAzureAuth(input: SourceControlAuthProbeInput) {
-  const account = input.stdout.trim().split(/\r?\n/)[0]?.trim();
+  const output = combinedAuthOutput(input);
 
   if (input.exitCode !== 0) {
     return providerAuth({
-      status: "unauthenticated",
-      detail:
-        firstSafeAuthLine(combinedAuthOutput(input)) ?? "Run `az login` to authenticate Azure CLI.",
+      status: AZURE_AUTH_FAILURE.test(output) ? "unauthenticated" : "unknown",
+      detail: firstSafeAuthLine(output) ?? "Run `az devops login` to authenticate Azure DevOps.",
     });
   }
 
-  if (account !== undefined && account.length > 0) {
+  const decoded = decodeViewerJson(input.stdout);
+  const viewer = Result.isSuccess(decoded) ? decoded.success : null;
+
+  if (viewer?._tag === "Anonymous") {
+    return providerAuth({
+      status: "unauthenticated",
+      host: "dev.azure.com",
+      detail: "Run `az devops login` to authenticate Azure DevOps.",
+    });
+  }
+
+  if (viewer?._tag === "SignedIn" && viewer.account !== null) {
     return providerAuth({
       status: "authenticated",
-      account,
+      account: viewer.account,
       host: "dev.azure.com",
     });
   }
@@ -35,7 +52,7 @@ function parseAzureAuth(input: SourceControlAuthProbeInput) {
   return providerAuth({
     status: "unknown",
     host: "dev.azure.com",
-    detail: "Azure CLI account status could not be parsed.",
+    detail: "Azure DevOps did not return an authenticated identity.",
   });
 }
 
@@ -45,8 +62,9 @@ export const discovery = {
   label: "Azure DevOps",
   executable: "az",
   versionArgs: ["--version"],
-  authArgs: ["account", "show", "--query", "user.name", "-o", "tsv"],
+  authArgs: AzureDevOpsCli.connectionDataArgs,
   // `az --version` starts Python and takes ~6s on Windows, exceeding the default probe timeout.
+
   probeTimeoutMs: 20_000,
   parseAuth: parseAzureAuth,
   installHint:

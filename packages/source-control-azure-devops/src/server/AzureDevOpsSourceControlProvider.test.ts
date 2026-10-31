@@ -8,12 +8,24 @@ import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlPro
 const { parseAuth } = AzureDevOpsSourceControlProvider.discovery;
 
 it("reads the signed-in Azure account and says when az is signed out", () => {
-  assert.deepStrictEqual(parseAuth(processOutput("azure-user@example.com\n")), {
-    status: "authenticated",
-    account: Option.some("azure-user@example.com"),
-    host: Option.some("dev.azure.com"),
-    detail: Option.none(),
-  });
+  assert.deepStrictEqual(
+    parseAuth(
+      processOutput(
+        JSON.stringify({
+          authenticatedUser: {
+            id: "azure-user-id",
+            properties: { Account: { $value: "azure-user@example.com" } },
+          },
+        }),
+      ),
+    ),
+    {
+      status: "authenticated",
+      account: Option.some("azure-user@example.com"),
+      host: Option.some("dev.azure.com"),
+      detail: Option.none(),
+    },
+  );
   assert.strictEqual(
     parseAuth(
       processOutput("", {

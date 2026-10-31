@@ -257,52 +257,101 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("reads the signed-in account, which az reports as a bare value", () =>
+  it.effect("reads the extension's authenticated identity", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
-        Effect.succeed(output(JSON.stringify({ name: "bilal@acme.dev", type: "user" }))),
+        Effect.succeed(
+          output(
+            JSON.stringify({
+              authenticatedUser: {
+                id: "viewer-id",
+                providerDisplayName: "Bilal Hassan",
+                properties: { Account: { $value: "bilal@acme.dev" } },
+              },
+            }),
+          ),
+        ),
       );
       const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-      const viewer = yield* cli.getViewer({ cwd: "/w" });
-
-      assert.strictEqual(viewer, "bilal@acme.dev");
-      expect(argsOfCall(0)).toEqual([
-        "account",
-        "show",
-        "--query",
-        "user",
-        "--only-show-errors",
-        "--output",
-        "json",
-      ]);
+      assert.strictEqual(yield* cli.getViewer({ cwd: "/w" }), "bilal@acme.dev");
+      expect(argsOfCall(0)).toEqual(AzureDevOpsCli.connectionDataArgs);
     }),
   );
 
-  it.effect("names a token sign-in by the viewer's own pull request", () =>
+  it.effect("retains the extension viewer fallback when connection data is unavailable", () =>
     Effect.gen(function* () {
-      const notLoggedIn = new AzureDevOpsCli.AzureDevOpsCliAuthenticationError({
-        operation: "execute",
-        command: "az",
-        cwd: "/w",
-        argumentCount: 7,
-        cause: new Error("Please run 'az login' to setup account."),
-      });
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}"))).mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            JSON.stringify([
+              {
+                ...pullRequestRow,
+                createdBy: { id: "fallback-id", uniqueName: "fallback@example.com" },
+              },
+            ]),
+          ),
+        ),
+      );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      assert.strictEqual(yield* cli.getViewer({ cwd: "/w" }), "fallback@example.com");
+    }),
+  );
+
+  it.effect("rejects anonymous viewers even when the fallback could return a PR author", () =>
+    Effect.gen(function* () {
       mockedExecute
-        .mockReturnValueOnce(Effect.fail(notLoggedIn))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(JSON.stringify({ authenticatedUser: { descriptor: "System:PublicAccess" } })),
+          ),
+        )
         .mockReturnValueOnce(
           Effect.succeed(
             output(
-              JSON.stringify([{ ...pullRequestRow, createdBy: { uniqueName: "bilal@acme.dev" } }]),
+              JSON.stringify([
+                { ...pullRequestRow, createdBy: { uniqueName: "someone@example.com" } },
+              ]),
             ),
           ),
-        )
-        .mockReturnValueOnce(Effect.succeed(output("")))
-        .mockReturnValueOnce(Effect.succeed(output("[]")));
+        );
       const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      const error = yield* Effect.flip(cli.getViewer({ cwd: "/w" }));
+      assert.strictEqual(error._tag, "AzureDevOpsViewerAnonymousError");
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+    }),
+  );
 
-      assert.strictEqual(yield* cli.getViewer({ cwd: "/w" }), "bilal@acme.dev");
-      expect(argsOfCall(1)).toEqual(expect.arrayContaining(["--creator", "me", "--top", "1"]));
+  it.effect("does not substitute an identity id for a missing account login", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            JSON.stringify({
+              authenticatedUser: { id: "viewer-id", providerDisplayName: "Bilal Hassan" },
+            }),
+          ),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      const error = yield* Effect.flip(cli.getViewer({ cwd: "/w" }));
+      assert.strictEqual(error._tag, "AzureDevOpsViewerUnavailableError");
+    }),
+  );
+
+  it.effect("rejects a missing identity instead of using a display name", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            JSON.stringify({
+              authenticatedUser: { providerDisplayName: "Anonymous" },
+            }),
+          ),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
       const error = yield* Effect.flip(cli.getViewer({ cwd: "/w" }));
       assert.strictEqual(error._tag, "AzureDevOpsViewerUnavailableError");
     }),

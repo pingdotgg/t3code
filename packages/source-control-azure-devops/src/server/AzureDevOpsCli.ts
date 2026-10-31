@@ -22,6 +22,24 @@ import * as SourceControlProvider from "@t3tools/source-control-core/server/Sour
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+// Detection uses the repository's organization before the CLI's configured default.
+// `invoke` accepts the preview suffix but parses a numeric revision suffix as an invalid float.
+export const connectionDataArgs = [
+  "devops",
+  "invoke",
+  "--detect",
+  "true",
+  "--area",
+  "Location",
+  "--resource",
+  "connectionData",
+  "--api-version",
+  "7.1-preview",
+  "--only-show-errors",
+  "--output",
+  "json",
+] as const;
+
 const azureDevOpsCommandErrorFields = {
   operation: Schema.Literal("execute"),
   command: Schema.Literal("az"),
