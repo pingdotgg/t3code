@@ -114,12 +114,15 @@ const npmPackage = (staged: string | null = null): PluginNpmPackage => ({
           stagedAt: "2026-10-04T01:00:00.000Z",
         },
 });
-let registry: AtomRegistry.AtomRegistry;
 const fake = () => server.current!;
 const npmAtom = pluginNpmEnvironment.packages({ environmentId, input: {} });
 const catalogAtom = pluginEnvironment.catalog({ environmentId, input: {} });
 /** Resolves once `atom` holds a value `matches` accepts; the registry's own notification is the receipt. */
-function until<A>(atom: Atom.Atom<A>, matches: (value: A) => boolean) {
+function until<A>(
+  registry: AtomRegistry.AtomRegistry,
+  atom: Atom.Atom<A>,
+  matches: (value: A) => boolean,
+) {
   return act(
     () =>
       new Promise<void>((resolve) => {
@@ -139,14 +142,22 @@ function until<A>(atom: Atom.Atom<A>, matches: (value: A) => boolean) {
 }
 const nextCall = (method: string) => act(() => fake().next(method));
 /** Answers a list read and waits until the client holds that exact list. */
-async function answerList(call: HeldCall, list: PluginNpmListResult) {
+async function answerList(
+  registry: AtomRegistry.AtomRegistry,
+  call: HeldCall,
+  list: PluginNpmListResult,
+) {
   await act(async () => call.reply(list));
-  await until(npmAtom, (result) => result._tag === "Success" && result.value === list);
+  await until(registry, npmAtom, (result) => result._tag === "Success" && result.value === list);
 }
 /** Publishes a catalogue and waits for the client to deliver it. */
-async function publish(installations: ReadonlyArray<PluginInstallation>) {
+async function publish(
+  registry: AtomRegistry.AtomRegistry,
+  installations: ReadonlyArray<PluginInstallation>,
+) {
   fake().publish(installations);
   await until(
+    registry,
     catalogAtom,
     (result) =>
       result._tag === "Success" &&
@@ -181,6 +192,7 @@ const type = (input: HTMLInputElement, value: string) =>
   });
 const acknowledge = () => click(document.querySelector<HTMLElement>("[role=checkbox]")!);
 async function publishAndRender(
+  registry: AtomRegistry.AtomRegistry,
   screen: Screen,
   installations: ReadonlyArray<PluginInstallation>,
   target = environment,
@@ -195,6 +207,7 @@ async function publishAndRender(
       ),
   );
   await until(
+    registry,
     catalogAtom,
     (result) =>
       result._tag === "Success" &&
@@ -204,16 +217,19 @@ async function publishAndRender(
 }
 /** Mounts the environment's plugin list and answers its first npm list read with `list`. */
 async function mount(
+  registry: AtomRegistry.AtomRegistry,
   screen: Screen,
   installations: ReadonlyArray<PluginInstallation>,
   list: PluginNpmListResult,
 ) {
-  await publishAndRender(screen, installations);
-  await answerList(await nextCall(WS_METHODS.pluginsNpmList), list);
+  await publishAndRender(registry, screen, installations);
+  await answerList(registry, await nextCall(WS_METHODS.pluginsNpmList), list);
 }
 describe("installing a plugin from npm", () => {
   it("offers nothing from npm and reads no npm list on a server without it", async () => {
-    using _setup = await setup();
+    using fixture = await setup();
+    const { registry } = fixture;
+    // Plugin queries are driven directly; this suite does not navigate.
     await using screen = await renderScreen(null, { router: false });
     const older = {
       ...environment,
@@ -221,15 +237,17 @@ describe("installing a plugin from npm", () => {
         environment: { platform: { machine: "server" }, capabilities: { plugins: true } },
       },
     } as unknown as EnvironmentPresentation;
-    await publishAndRender(screen, [installation()], older);
+    await publishAndRender(registry, screen, [installation()], older);
     expect(elements("button", "Install from npm")).toEqual([]);
     expect(button("Review")).toBeTruthy();
     expect(fake().calls(WS_METHODS.pluginsNpmList)).toEqual([]);
   });
   it("downloads the exact version typed and keeps its reply over a list read that started before it", async () => {
-    using _setup = await setup();
+    using fixture = await setup();
+    const { registry } = fixture;
+    // Plugin queries are driven directly; this suite does not navigate.
     await using screen = await renderScreen(null, { router: false });
-    await mount(screen, [], { packages: [] });
+    await mount(registry, screen, [], { packages: [] });
     await click(button("Install from npm"));
     await type(field("Package"), " @acme/t3-notifier ");
     await type(field("Version or tag"), "1.2.3");
@@ -237,10 +255,10 @@ describe("installing a plugin from npm", () => {
     const add = await nextCall(WS_METHODS.pluginsNpmAdd);
     expect(add.input).toEqual({ name: "@acme/t3-notifier", version: "1.2.3" });
     // While the download runs, another client adds a plugin and the list is read again.
-    await publish([other]);
-    await answerList(await nextCall(WS_METHODS.pluginsNpmList), { packages: [] });
+    await publish(registry, [other]);
+    await answerList(registry, await nextCall(WS_METHODS.pluginsNpmList), { packages: [] });
     // The server lists the install just before replying, which starts another read.
-    await publish([other, installation()]);
+    await publish(registry, [other, installation()]);
     const readDuring = await nextCall(WS_METHODS.pluginsNpmList);
     const reply = npmPackage();
     await act(async () => add.reply({ installation: installation(), package: reply }));
@@ -249,7 +267,7 @@ describe("installing a plugin from npm", () => {
     expect(readDuring.interrupted).toBe(true);
     expect(reviewField("Package")).toBe("@acme/t3-notifier@1.0.0");
     expect(reviewField("Integrity")).toContain(INTEGRITY);
-    await answerList(afterInstall, { packages: [reply] });
+    await answerList(registry, afterInstall, { packages: [reply] });
     expect(reviewField("Package")).toBe("@acme/t3-notifier@1.0.0");
     await acknowledge();
     await click(button("Approve and enable"));
@@ -262,9 +280,11 @@ describe("installing a plugin from npm", () => {
     expect(enable.input).toEqual({ installationId });
   });
   it("sends nothing for a version range", async () => {
-    using _setup = await setup();
+    using fixture = await setup();
+    const { registry } = fixture;
+    // Plugin queries are driven directly; this suite does not navigate.
     await using screen = await renderScreen(null, { router: false });
-    await mount(screen, [], { packages: [] });
+    await mount(registry, screen, [], { packages: [] });
     await click(button("Install from npm"));
     await type(field("Package"), "t3-notifier");
     await type(field("Version or tag"), "^1.0.0");
@@ -275,9 +295,11 @@ describe("installing a plugin from npm", () => {
 });
 describe("reviewing an npm download", () => {
   it("discards an unapproved download by removing it, once", async () => {
-    using _setup = await setup();
+    using fixture = await setup();
+    const { registry } = fixture;
+    // Plugin queries are driven directly; this suite does not navigate.
     await using screen = await renderScreen(null, { router: false });
-    await mount(screen, [installation()], { packages: [npmPackage()] });
+    await mount(registry, screen, [installation()], { packages: [npmPackage()] });
     await click(button("Review"));
     expect(reviewField("Package")).toBe("@acme/t3-notifier@1.0.0");
     await click(button("Discard"));
@@ -289,12 +311,13 @@ describe("reviewing an npm download", () => {
 });
 describe("updating an npm plugin", () => {
   it("refreshes provenance after a catalogue failure recovers with changed files", async () => {
-    using _setup = await setup();
-    // This test drives the plugin queries directly, without navigation.
+    using fixture = await setup();
+    const { registry } = fixture;
+    // Plugin queries are driven directly; this suite does not navigate.
     await using screen = await renderScreen(null, { router: false });
-    await mount(screen, [approved], { packages: [npmPackage()] });
+    await mount(registry, screen, [approved], { packages: [npmPackage()] });
     await act(async () => fake().failCatalog(new Error("Catalogue unavailable")));
-    await until(catalogAtom, (result) => result._tag === "Failure");
+    await until(registry, catalogAtom, (result) => result._tag === "Failure");
     await expect.element(screen.getByText("Catalogue unavailable")).toBeVisible();
     const updated = [
       installation({ ...approved, generation: 2, source: { ...approved.source!, digest: STAGED } }),
@@ -302,6 +325,7 @@ describe("updating an npm plugin", () => {
     fake().publish(updated);
     await click(button("Retry"));
     await until(
+      registry,
       catalogAtom,
       (result) =>
         result._tag === "Success" &&
@@ -310,21 +334,27 @@ describe("updating an npm plugin", () => {
     );
     await expect.element(screen.getByText("Notifier", { exact: true })).toBeVisible();
     expect(fake().calls(WS_METHODS.pluginsNpmList)).toHaveLength(2);
-    await answerList(await nextCall(WS_METHODS.pluginsNpmList), { packages: [npmPackage()] });
+    await answerList(registry, await nextCall(WS_METHODS.pluginsNpmList), {
+      packages: [npmPackage()],
+    });
   });
 
   it("checks what is installed after a failed download, even when a list arrived during it", async () => {
-    using _setup = await setup();
+    using fixture = await setup();
+    const { registry } = fixture;
+    // Plugin queries are driven directly; this suite does not navigate.
     await using screen = await renderScreen(null, { router: false });
-    await mount(screen, [approved], { packages: [npmPackage()] });
+    await mount(registry, screen, [approved], { packages: [npmPackage()] });
     await click(button("Actions for Notifier"));
     await click(button("Details"));
     await type(field("Version or tag"), "1.1.0");
     await click(button("Download update"));
     const stage = await nextCall(WS_METHODS.pluginsNpmStageUpdate);
     expect(stage.input).toEqual({ installationId, version: "1.1.0" });
-    await publish([approved, other]);
-    await answerList(await nextCall(WS_METHODS.pluginsNpmList), { packages: [npmPackage()] });
+    await publish(registry, [approved, other]);
+    await answerList(registry, await nextCall(WS_METHODS.pluginsNpmList), {
+      packages: [npmPackage()],
+    });
     await act(async () => stage.fail(new Error("The registry did not answer.")));
     const afterFailure = await nextCall(WS_METHODS.pluginsNpmList);
     expect(elements("[role=status]", "Checking what is installed…")).toHaveLength(1);
@@ -332,7 +362,7 @@ describe("updating an npm plugin", () => {
       "The registry did not answer.",
     );
     // The download had landed after all: the next read shows it for review.
-    await answerList(afterFailure, { packages: [npmPackage(STAGED)] });
+    await answerList(registry, afterFailure, { packages: [npmPackage(STAGED)] });
     expect(reviewField("New version")).toBe("1.1.0");
     expect(button("Apply update").disabled).toBe(true);
     await acknowledge();
@@ -344,8 +374,9 @@ describe("updating an npm plugin", () => {
 
 async function setup() {
   fake().reset();
-  registry = AtomRegistry.make();
+  const registry = AtomRegistry.make();
   return {
+    registry,
     [Symbol.dispose]() {
       registry.dispose();
     },
