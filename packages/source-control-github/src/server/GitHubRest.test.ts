@@ -148,6 +148,13 @@ describe("GitHubRest", () => {
           response.end();
           return;
         }
+        if (request.url === "/cross-post-307" || request.url === "/cross-post-308") {
+          response.writeHead(Number(request.url.slice(-3)), {
+            location: "https://redirect.acme.test:8443/user",
+          });
+          response.end();
+          return;
+        }
         if (request.url === "/post-303" || request.url === "/post-307") {
           response.writeHead(request.url === "/post-303" ? 303 : 307, { location: "/user" });
           response.end();
@@ -300,6 +307,19 @@ describe("GitHubRest", () => {
             path: "/user",
             body: status === 303 ? "" : JSON.stringify({ query: "query { viewer { login } }" }),
           });
+        }
+        for (const status of [307, 308]) {
+          const before = requests.length;
+          const response = yield* http.execute(
+            HttpClientRequest.post(`https://api.github.com/cross-post-${status}`).pipe(
+              HttpClientRequest.bodyJsonUnsafe({ query: "query { viewer { login } }" }),
+              HttpClientRequest.bearerToken("placeholder"),
+            ),
+          );
+          yield* response.text;
+          expect(response.status).toBe(status);
+          expect(requests.slice(before)).toHaveLength(1);
+          expect(requests.at(-1)?.headers.host).toBe("api.github.com");
         }
         const instance = yield* driver.make.pipe(
           Effect.provide(
