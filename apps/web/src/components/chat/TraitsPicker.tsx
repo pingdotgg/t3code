@@ -43,7 +43,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerControl, ComposerControlIcon, type ComposerControlSize } from "./ComposerControl";
 import { focusRequestedPermission, useComposerMenuProps } from "./composerEventScope";
 import { useComposerMenuState } from "./useComposerMenuState";
-import { EffortGlyph, resolveEffortGlyph } from "./EffortGlyph";
+import { EffortGauge, EffortGlyph, resolveEffortGlyph } from "./EffortGlyph";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
@@ -319,7 +319,7 @@ interface TraitsMenuContentProps {
   planModeEnabled: boolean;
   triggerClassName?: string;
   isComposerOwned?: boolean;
-  /** Composer chips name the effort level unless the user picked bars. */
+  /** Composer chips name the effort level unless the user picked bars or the gauge. */
   effortDisplay?: EffortDisplay;
   /** Extra section shown below the traits in the picker popup (Permissions). */
   extraMenuContent?: ReactNode;
@@ -668,7 +668,11 @@ export const TraitsPicker = memo(function TraitsPicker({
           {effortGlyph ? (
             <span className="flex items-center gap-1.5">
               {effortWord === null ? (
-                <EffortGlyph count={effortGlyph.count} filled={effortGlyph.filled} size={size} />
+                effortDisplay === "gauge" ? (
+                  <EffortGauge count={effortGlyph.count} filled={effortGlyph.filled} size={size} />
+                ) : (
+                  <EffortGlyph count={effortGlyph.count} filled={effortGlyph.filled} size={size} />
+                )
               ) : null}
               {effortWord !== null ? (
                 <>

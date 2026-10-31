@@ -337,7 +337,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "effort-display",
     title: "Effort display",
     to: "/settings/appearance",
-    searchTerms: ["reasoning effort thinking bars graph word label level composer"],
+    searchTerms: ["reasoning effort thinking bars graph gauge word label level composer"],
   },
   {
     id: "math-rendering",

@@ -327,8 +327,8 @@ export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
 export type ChatWidth = typeof ChatWidth.Type;
 
-/** How the composer shows reasoning effort: the level's name, or rising bars. */
-export const EffortDisplay = Schema.Literals(["label", "bars"]);
+/** How the composer shows reasoning effort: the level's name, rising bars, or a gauge. */
+export const EffortDisplay = Schema.Literals(["label", "bars", "gauge"]);
 export type EffortDisplay = typeof EffortDisplay.Type;
 
 export const ModelFavorite = Schema.Struct({
