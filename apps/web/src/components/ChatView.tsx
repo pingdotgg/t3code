@@ -571,12 +571,13 @@ export default function ChatView(props: ChatViewProps) {
   });
   const router = useRouter();
   const linkedMessageState = useLocation({ select: (location) => location.state.linkedMessage });
-  const linkedMessageRequest = linkedMessageState
-    ? {
-        messageId: MessageId.make(linkedMessageState.messageId),
-        key: linkedMessageState.activation,
-      }
-    : null;
+  const linkedMessageRequest =
+    !embedded && linkedMessageState
+      ? {
+          messageId: MessageId.make(linkedMessageState.messageId),
+          key: linkedMessageState.activation,
+        }
+      : null;
   const onLinkedMessageHandled = useStableCallback((activation: string) => {
     const location = router.state.location;
     if (location.state.linkedMessage?.activation !== activation) return;
