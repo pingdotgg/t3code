@@ -179,6 +179,32 @@ interface GitRefsSnapshot {
   readonly hasPrimaryRemote: boolean;
 }
 
+interface RefsListIndex {
+  dedupedRemotes?: ReadonlyArray<VcsRef>;
+  readonly lowerNames: Map<ReadonlyArray<VcsRef>, ReadonlyArray<string>>;
+}
+
+// Snapshots are shared across listRefs calls; derive per-snapshot data once, not per keystroke.
+const refsListIndexes = new WeakMap<GitRefsSnapshot, RefsListIndex>();
+
+function refsListIndex(snapshot: GitRefsSnapshot): RefsListIndex {
+  let index = refsListIndexes.get(snapshot);
+  if (index === undefined) {
+    index = { lowerNames: new Map() };
+    refsListIndexes.set(snapshot, index);
+  }
+  return index;
+}
+
+function lowerRefNames(index: RefsListIndex, refs: ReadonlyArray<VcsRef>): ReadonlyArray<string> {
+  let names = index.lowerNames.get(refs);
+  if (names === undefined) {
+    names = refs.map((ref) => ref.name.toLowerCase());
+    index.lowerNames.set(refs, names);
+  }
+  return names;
+}
+
 interface ExecuteGitOptions {
   stdin?: string | undefined;
   timeoutMs?: number | null | undefined;
@@ -235,40 +261,6 @@ function parsePorcelainPath(record: string): string | null {
   if (fieldsBeforePath === undefined) return null;
   const filePath = record.split(" ").slice(fieldsBeforePath).join(" ");
   return filePath.length > 0 ? filePath : null;
-}
-
-function filterBranchesForListQuery(
-  refs: ReadonlyArray<VcsRef>,
-  query?: string,
-): ReadonlyArray<VcsRef> {
-  if (!query) {
-    return refs;
-  }
-
-  const normalizedQuery = query.toLowerCase();
-  return refs.filter((refName) => refName.name.toLowerCase().includes(normalizedQuery));
-}
-
-function paginateBranches(input: {
-  refs: ReadonlyArray<VcsRef>;
-  cursor?: number | undefined;
-  limit?: number | undefined;
-}): {
-  refs: ReadonlyArray<VcsRef>;
-  nextCursor: number | null;
-  totalCount: number;
-} {
-  const cursor = input.cursor ?? 0;
-  const limit = input.limit ?? GIT_LIST_BRANCHES_DEFAULT_LIMIT;
-  const totalCount = input.refs.length;
-  const refs = input.refs.slice(cursor, cursor + limit);
-  const nextCursor = cursor + refs.length < totalCount ? cursor + refs.length : null;
-
-  return {
-    refs,
-    nextCursor,
-    totalCount,
-  };
 }
 
 function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
@@ -3995,47 +3987,72 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         repositoryPaths.gitCommonDir,
         input.refresh === true,
       );
+      const index = refsListIndex(snapshot);
       const hasCurrentWorktreeBranch =
         repositoryPaths.worktreeRoot !== null &&
         snapshot.localBranches.some((ref) => ref.worktreePath === repositoryPaths.worktreeRoot);
-      const localBranches = snapshot.localBranches.map((ref) => ({
-        ...ref,
-        worktreePath:
-          ref.worktreePath ??
-          (ref.name === repositoryPaths.currentBranch ? repositoryPaths.worktreeRoot : null),
-        current: hasCurrentWorktreeBranch
+      const isCurrentLocal = (ref: VcsRef) =>
+        hasCurrentWorktreeBranch
           ? ref.worktreePath === repositoryPaths.worktreeRoot
-          : ref.name === repositoryPaths.currentBranch,
-      }));
-      const combinedBranches = input.includeMatchingRemoteRefs
-        ? [...localBranches, ...snapshot.remoteBranches]
-        : dedupeRemoteBranchesWithLocalMatches([...localBranches, ...snapshot.remoteBranches]);
-      const allBranches = combinedBranches.toSorted((left, right) => {
-        const leftPriority = left.current ? 0 : left.isDefault ? 1 : 2;
-        const rightPriority = right.current ? 0 : right.isDefault ? 1 : 2;
-        return leftPriority - rightPriority;
-      });
-      const branchesForKind =
-        input.refKind === "local"
-          ? allBranches.filter((ref) => !ref.isRemote)
-          : input.refKind === "remote"
-            ? allBranches.filter((ref) => ref.isRemote)
-            : allBranches;
-      const refs = paginateBranches({
-        refs: filterBranchesForListQuery(branchesForKind, input.query),
-        cursor: input.cursor,
-        limit: input.limit,
-      });
+          : ref.name === repositoryPaths.currentBranch;
+      const remotes = input.includeMatchingRemoteRefs
+        ? snapshot.remoteBranches
+        : (index.dedupedRemotes ??= dedupeRemoteBranchesWithLocalMatches([
+            ...snapshot.localBranches,
+            ...snapshot.remoteBranches,
+          ]).filter((ref) => ref.isRemote));
+      const query = input.query ? input.query.toLowerCase() : undefined;
+      const localLower = query === undefined ? [] : lowerRefNames(index, snapshot.localBranches);
+      const remoteLower = query === undefined ? [] : lowerRefNames(index, remotes);
+      const includeLocal = input.refKind !== "remote";
+      const includeRemote = input.refKind !== "local";
+      const cursor = input.cursor ?? 0;
+      const limit = input.limit ?? GIT_LIST_BRANCHES_DEFAULT_LIMIT;
+      const page: VcsRef[] = [];
+      let totalCount = 0;
+      // Current first, then the default branch, then the rest in snapshot order.
+      for (const priority of [0, 1, 2]) {
+        if (includeLocal) {
+          for (let i = 0; i < snapshot.localBranches.length; i++) {
+            const ref = snapshot.localBranches[i]!;
+            const current = isCurrentLocal(ref);
+            if ((current ? 0 : ref.isDefault ? 1 : 2) !== priority) continue;
+            if (query !== undefined && !localLower[i]!.includes(query)) continue;
+            if (totalCount >= cursor && page.length < limit) {
+              page.push({
+                ...ref,
+                worktreePath:
+                  ref.worktreePath ??
+                  (ref.name === repositoryPaths.currentBranch
+                    ? repositoryPaths.worktreeRoot
+                    : null),
+                current,
+              });
+            }
+            totalCount += 1;
+          }
+        }
+        if (includeRemote && priority > 0) {
+          for (let i = 0; i < remotes.length; i++) {
+            const ref = remotes[i]!;
+            if ((ref.isDefault ? 1 : 2) !== priority) continue;
+            if (query !== undefined && !remoteLower[i]!.includes(query)) continue;
+            if (totalCount >= cursor && page.length < limit) page.push(ref);
+            totalCount += 1;
+          }
+        }
+      }
+      const nextCursor = cursor + page.length < totalCount ? cursor + page.length : null;
 
       return {
         ...(repositoryPaths.isAtRepositoryRoot === undefined
           ? {}
           : { isAtRepositoryRoot: repositoryPaths.isAtRepositoryRoot }),
-        refs: [...refs.refs],
+        refs: page,
         isRepo: true,
         hasPrimaryRemote: snapshot.hasPrimaryRemote,
-        nextCursor: refs.nextCursor,
-        totalCount: refs.totalCount,
+        nextCursor,
+        totalCount,
       };
     },
   );

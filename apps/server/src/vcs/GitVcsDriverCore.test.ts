@@ -3595,6 +3595,36 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(remoteOnly.refs[0]?.name, `origin/${initialBranch}`);
         assert.equal(remoteOnly.refs[0]?.isRemote, true);
 
+        const everything = yield* driver.listRefs({ cwd, includeMatchingRemoteRefs: true });
+        const firstPage = yield* driver.listRefs({
+          cwd,
+          includeMatchingRemoteRefs: true,
+          limit: 1,
+        });
+        assert.equal(firstPage.totalCount, everything.refs.length);
+        assert.equal(firstPage.nextCursor, 1);
+        assert.equal(firstPage.refs[0]?.current, true);
+        const secondPage = yield* driver.listRefs({
+          cwd,
+          includeMatchingRemoteRefs: true,
+          cursor: 1,
+          limit: 1,
+        });
+        assert.deepEqual(secondPage.refs, everything.refs.slice(1, 2));
+        assert.equal(secondPage.nextCursor, 2);
+        const pastEnd = yield* driver.listRefs({
+          cwd,
+          includeMatchingRemoteRefs: true,
+          cursor: everything.refs.length,
+        });
+        assert.deepEqual([pastEnd.refs, pastEnd.nextCursor], [[], null]);
+        const matching = yield* driver.listRefs({ cwd, query: "LOCAL-ONLY" });
+        assert.deepEqual(
+          matching.refs.map((ref) => ref.name),
+          ["local-only"],
+        );
+        assert.equal(matching.totalCount, 1);
+
         const tracked = complete.refs.find((ref) => ref.name === "feature/a");
         assert.ok(tracked);
         assert.deepEqual(decodeVcsRef(tracked), {
