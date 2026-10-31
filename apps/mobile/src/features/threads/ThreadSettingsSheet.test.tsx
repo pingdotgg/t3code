@@ -173,6 +173,10 @@ const config = {
     },
   ],
 } as unknown as ServerConfig;
+const hiddenSettings = {
+  ...config.settings,
+  providerModelPreferences: { [codex]: { hiddenModels: ["gpt-6.1-sol"], modelOrder: [] } },
+};
 
 function mountSheet() {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -220,7 +224,7 @@ function mountSheet() {
 it("shows a tapped model as hidden while its hide request is still saving", async () => {
   const save = Promise.withResolvers<unknown>();
   mocks.updateSettings.mockReturnValue(save.promise);
-  using _resolve = { [Symbol.dispose]: () => save.resolve(AsyncResult.success(undefined)) };
+  using _resolve = { [Symbol.dispose]: () => save.resolve(AsyncResult.success(hiddenSettings)) };
   using sheet = mountSheet();
 
   act(() => sheet.button("Hide model: Codex, GPT-6.1-Sol")!.click());
@@ -244,21 +248,13 @@ it("holds a saved hidden state until the settings push and reverts a failed save
   using sheet = mountSheet();
   act(() => sheet.button("Hide model: Codex, GPT-6.1-Sol")!.click());
 
-  await act(async () => hide.resolve(AsyncResult.success(undefined)));
+  await act(async () => hide.resolve(AsyncResult.success(hiddenSettings)));
   expect(
     sheet.button("Show model: Codex, GPT-6.1-Sol"),
     "a response that lands before the push keeps the tapped state",
   ).not.toBeNull();
 
-  act(() =>
-    sheet.pushConfig({
-      ...config,
-      settings: {
-        ...config.settings,
-        providerModelPreferences: { [codex]: { hiddenModels: ["gpt-6.1-sol"], modelOrder: [] } },
-      },
-    }),
-  );
+  act(() => sheet.pushConfig({ ...config, settings: hiddenSettings }));
   expect(sheet.button("Show model: Codex, GPT-6.1-Sol")).not.toBeNull();
 
   const show = Promise.withResolvers<unknown>();
@@ -271,4 +267,14 @@ it("holds a saved hidden state until the settings push and reverts a failed save
     sheet.button("Show model: Codex, GPT-6.1-Sol"),
     "a failed save returns the row to the server's state",
   ).not.toBeNull();
+});
+
+it("returns the row to the server's state when the saved settings do not hide the model", async () => {
+  const hide = Promise.withResolvers<unknown>();
+  mocks.updateSettings.mockReturnValueOnce(hide.promise);
+  using sheet = mountSheet();
+  act(() => sheet.button("Hide model: Codex, GPT-6.1-Sol")!.click());
+
+  await act(async () => hide.resolve(AsyncResult.success(config.settings)));
+  expect(sheet.button("Hide model: Codex, GPT-6.1-Sol")).not.toBeNull();
 });

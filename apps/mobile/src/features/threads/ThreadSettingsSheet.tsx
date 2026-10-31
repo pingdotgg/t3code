@@ -294,7 +294,7 @@ export type ExistingThreadSettingsRouteParams = {
 
 type HiddenModelOverride = {
   readonly hidden: boolean;
-  /** Server settings when the save succeeded; `null` while it is in flight. */
+  /** Settings the save was confirmed against, held until the next push; `null` while in flight. */
   readonly settledSettings: ServerSettings | null;
 };
 
@@ -348,6 +348,7 @@ function ThreadSettingsSessionProvider(
   ).data;
   const connectionGeneration = connection?.phase === "connected" ? connection.generation : null;
   const [manageHidden, setManageHidden] = useState(false);
+  const pendingHidden = useRef(new Set<string>());
   const pendingFavorites = useRef(
     new Map<string, { favorite: boolean; settings: ServerSettings; pending: boolean }>(),
   );
@@ -470,7 +471,10 @@ function ThreadSettingsSessionProvider(
   };
   const toggleHidden = (option: ModelOption) => {
     const environmentId = props.environmentId;
-    if (!settings || !environmentId || !option.canHide) return;
+    if (!settings || !environmentId || !option.canHide || pendingHidden.current.has(option.key))
+      return;
+    pendingHidden.current.add(option.key);
+    const baseSettings = settings;
     const override: HiddenModelOverride = { hidden: !option.isHidden, settledSettings: null };
     setHiddenOverrides((current) => new Map(current).set(option.key, override));
     void Haptics.selectionAsync();
@@ -488,14 +492,19 @@ function ThreadSettingsSessionProvider(
         },
       },
     }).then((result) => {
-      const settledSettings = registry
-        .get(environmentServerConfigsAtom)
-        .get(environmentId)?.settings;
+      pendingHidden.current.delete(option.key);
+      const confirmed =
+        AsyncResult.isSuccess(result) &&
+        (result.value.providerModelPreferences?.[
+          option.selection.instanceId
+        ]?.hiddenModels.includes(option.selection.model) ?? false) === override.hidden;
+      // Once any push has landed since the tap, the server's settings are the truth.
+      const awaitingPush =
+        registry.get(environmentServerConfigsAtom).get(environmentId)?.settings === baseSettings;
       setHiddenOverrides((current) => {
-        if (current.get(option.key) !== override) return current;
         const next = new Map(current);
-        if (AsyncResult.isSuccess(result) && settledSettings) {
-          next.set(option.key, { ...override, settledSettings });
+        if (confirmed && awaitingPush) {
+          next.set(option.key, { ...override, settledSettings: baseSettings });
         } else {
           next.delete(option.key);
         }
@@ -545,7 +554,13 @@ function ThreadSettingsSessionProvider(
   );
   const commitPendingModel = () => {
     if (pendingModel) {
-      if (!canCommitPendingModel(pendingModel, props.providerGroups)) {
+      const committableGroups = manageHidden
+        ? providerGroups.map((group) => ({
+            ...group,
+            models: group.models.map(withHiddenOverride),
+          }))
+        : props.providerGroups;
+      if (!canCommitPendingModel(pendingModel, committableGroups)) {
         Dialog.alert(
           "Model unavailable",
           "Set up this provider on web or desktop, or select another model.",
