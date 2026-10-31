@@ -2182,9 +2182,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const expandMobileComposerStable = useStableCallback(expandMobileComposer);
 
   const promptSuggestion = usePromptSuggestion(environmentId, activeThread);
+  // Tab is the only way to accept one, so touch-only screens skip it.
+  const coarsePointer = useMediaQuery({ pointer: "coarse" });
   // Offered only where the default placeholder would show, so it never hides a pending question.
   const offeredPromptSuggestion =
     phase !== "running" &&
+    !coarsePointer &&
     composerContextRecords.size === 0 &&
     !isComposerApprovalState &&
     !activePendingProgress &&
