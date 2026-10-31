@@ -102,6 +102,34 @@ describe("tailClaudeTaskOutput", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
+
+  it.live("reads nothing when the session id leaves the Claude task directory", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* fileSystem.makeTempDirectoryScoped({ prefix: "claude-task-output-" });
+        const root = path.join(base, "claude-root");
+        yield* fileSystem.makeDirectory(path.join(root, "-private-tmp-project"), {
+          recursive: true,
+        });
+        const outside = path.join(base, "outside", "tasks");
+        yield* fileSystem.makeDirectory(outside, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(outside, `${TASK_ID}.output`), "secret\n");
+        const chunks: Array<string> = [];
+        const stop = yield* Deferred.make<void>();
+        yield* Deferred.succeed(stop, undefined);
+        yield* tailClaudeTaskOutput({
+          root,
+          sessionId: "../../outside",
+          taskId: TASK_ID,
+          stop,
+          onChunk: (chunk) => Effect.sync(() => chunks.push(chunk)),
+        });
+        assert.deepEqual(chunks, []);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
 
 describe("claudeTaskOutputRoot", () => {
