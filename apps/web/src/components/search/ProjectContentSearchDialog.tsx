@@ -1,3 +1,4 @@
+import { Badge } from "~/components/ui/badge";
 import { Spinner } from "~/components/ui/spinner";
 import { AuthFilesystemReadScope, type ProjectContentMatch } from "@t3tools/contracts";
 
@@ -20,6 +21,8 @@ import { HighlightedSearchLine } from "./HighlightedSearchLine";
 
 interface ProjectContentSearchDialogProps {
   readonly onOpenChange: (open: boolean) => void;
+  /** What Esc does here: "Back" to the palette, or "Close". */
+  readonly escapeLabel: string;
 }
 
 /** Syntax-highlighting all 500 result rows at once stalls the UI. */
@@ -28,6 +31,13 @@ const VISIBLE_MATCH_WINDOW = 100;
 interface MatchGroup {
   readonly path: string;
   readonly matches: ReadonlyArray<ProjectContentMatch & { readonly resultIndex: number }>;
+}
+
+function splitPath(path: string): { readonly name: string; readonly directory: string } {
+  const separator = path.lastIndexOf("/");
+  return separator === -1
+    ? { name: path, directory: "" }
+    : { name: path.slice(separator + 1), directory: path.slice(0, separator) };
 }
 
 function groupMatches(matches: ReadonlyArray<ProjectContentMatch>): MatchGroup[] {
@@ -72,11 +82,11 @@ function SearchOptionButton(props: {
   );
 }
 
-function EmptyContentSearchDialog() {
+function EmptyContentSearchDialog(props: { readonly escapeLabel: string }) {
   return (
     <CommandPaletteContent
       aria-label="Search project contents"
-      escapeLabel="Back"
+      escapeLabel={props.escapeLabel}
       footerActionLabel="Open file"
       inputProps={{ disabled: true, placeholder: "Search project contents…", iconSize: "sm" }}
       mode="none"
@@ -84,7 +94,7 @@ function EmptyContentSearchDialog() {
       testId="project-content-search"
       value=""
     >
-      <p className="m-auto px-6 text-center text-muted-foreground text-sm">
+      <p className="m-auto px-6 text-center text-muted-foreground text-body">
         Open a project to search its files.
       </p>
     </CommandPaletteContent>
@@ -97,6 +107,7 @@ const scrollSelectedRowIntoView = (row: HTMLElement | null) => {
 
 function OpenContentSearchDialog(props: {
   readonly onOpenChange: (open: boolean) => void;
+  readonly escapeLabel: string;
   readonly target: ActiveProjectTarget;
 }) {
   const { target } = props;
@@ -161,8 +172,7 @@ function OpenContentSearchDialog(props: {
   return (
     <CommandPaletteContent
       aria-label={`Search file contents in ${target.projectName}`}
-      // Escape returns to the command palette, so the hint says Back rather than the pen's Close.
-      escapeLabel="Back"
+      escapeLabel={props.escapeLabel}
       footerActionLabel="Open file"
       inputAccessory={
         <div className="absolute inset-e-2.5 top-1/2 flex shrink-0 -translate-y-1/2 items-center gap-0.5 rounded-control border border-border surface-well p-0.5">
@@ -231,7 +241,7 @@ function OpenContentSearchDialog(props: {
       value={query}
     >
       {showSearchStatus ? (
-        <div className="flex h-9 shrink-0 items-center border-b border-divider px-3 text-xs text-dim-foreground">
+        <div className="flex h-9 shrink-0 items-center border-b border-divider px-3 text-meta text-dim-foreground">
           {search.isPending ? (
             <span className="flex items-center gap-2">
               <Spinner size="sm" /> Searching…
@@ -245,7 +255,7 @@ function OpenContentSearchDialog(props: {
       ) : null}
 
       {matches.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">
+        <div className="flex flex-1 items-center justify-center px-6 text-center text-body text-muted-foreground">
           {search.isCheckingAccess
             ? "Checking file access…"
             : !search.canReadFiles
@@ -257,50 +267,56 @@ function OpenContentSearchDialog(props: {
       ) : (
         <ScrollArea className="min-h-0 flex-1" scrollFade>
           <div className="py-2">
-            {groups.map((group) => (
-              <section className="pb-2" key={group.path}>
-                <div className="sticky top-0 z-10 flex h-8 items-center gap-2 px-3 text-meta">
-                  <PierreEntryIcon
-                    pathValue={group.path}
-                    kind="file"
-                    theme={resolvedTheme}
-                    className="size-3.5"
-                  />
-                  <span className="min-w-0 truncate text-muted-foreground">{group.path}</span>
-                  <span className="ml-auto px-1.5 py-0.5 tabular-nums text-micro text-dim-foreground">
-                    {group.matches.length}
-                  </span>
-                </div>
-                {group.matches.map((match) => (
-                  <button
-                    type="button"
-                    key={`${match.path}:${match.lineNumber}:${match.resultIndex}`}
-                    ref={
-                      match.resultIndex === selectedIndex ? scrollSelectedRowIntoView : undefined
-                    }
-                    className={cn(
-                      "flex h-7 w-full min-w-0 items-center gap-3 px-3 text-left font-mono text-meta rounded-control hover:bg-(--search-hit-fill) disabled:pointer-events-none",
-                      match.resultIndex === selectedIndex &&
-                        "bg-(--search-hit-fill) text-strong-foreground",
-                    )}
-                    disabled={!canOpenMatches}
-                    onMouseEnter={() => setSelectedIndex(match.resultIndex)}
-                    onClick={() => openMatch(match)}
-                  >
-                    <span className="w-10 shrink-0 text-right tabular-nums text-(--search-line-number)">
-                      {match.lineNumber}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate whitespace-pre">
-                      <HighlightedSearchLine
-                        match={match}
-                        path={group.path}
-                        theme={renderedAppearance}
-                      />
-                    </span>
-                  </button>
-                ))}
-              </section>
-            ))}
+            {groups.map((group) => {
+              const path = splitPath(group.path);
+              return (
+                <section className="pb-2" key={group.path}>
+                  <div className="sticky top-0 z-10 flex h-8 items-center gap-2 px-3 text-meta">
+                    <PierreEntryIcon
+                      pathValue={group.path}
+                      kind="file"
+                      theme={resolvedTheme}
+                      className="size-3.5"
+                    />
+                    <span className="font-medium text-foreground">{path.name}</span>
+                    {path.directory ? (
+                      <span className="min-w-0 truncate text-dim-foreground">{path.directory}</span>
+                    ) : null}
+                    <Badge className="ml-auto" variant="secondary">
+                      {group.matches.length}
+                    </Badge>
+                  </div>
+                  {group.matches.map((match) => (
+                    <button
+                      type="button"
+                      key={`${match.path}:${match.lineNumber}:${match.resultIndex}`}
+                      ref={
+                        match.resultIndex === selectedIndex ? scrollSelectedRowIntoView : undefined
+                      }
+                      className={cn(
+                        "flex h-7 w-full min-w-0 items-center gap-3 px-3 text-left font-mono text-meta rounded-control hover:bg-(--search-hit-fill) disabled:pointer-events-none",
+                        match.resultIndex === selectedIndex &&
+                          "bg-(--search-hit-fill) text-strong-foreground",
+                      )}
+                      disabled={!canOpenMatches}
+                      onMouseEnter={() => setSelectedIndex(match.resultIndex)}
+                      onClick={() => openMatch(match)}
+                    >
+                      <span className="w-10 shrink-0 text-right tabular-nums text-(--search-line-number)">
+                        {match.lineNumber}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate whitespace-pre">
+                        <HighlightedSearchLine
+                          match={match}
+                          path={group.path}
+                          theme={renderedAppearance}
+                        />
+                      </span>
+                    </button>
+                  ))}
+                </section>
+              );
+            })}
             {matches.length > visibleCount ? (
               <div ref={observeLoadMoreSentinel} className="h-8" aria-hidden="true" />
             ) : null}
@@ -318,9 +334,10 @@ export function ProjectContentSearchDialog(props: ProjectContentSearchDialogProp
     <OpenContentSearchDialog
       key={`${target.environmentId}:${target.cwd}`}
       onOpenChange={props.onOpenChange}
+      escapeLabel={props.escapeLabel}
       target={target}
     />
   ) : (
-    <EmptyContentSearchDialog />
+    <EmptyContentSearchDialog escapeLabel={props.escapeLabel} />
   );
 }

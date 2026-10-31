@@ -324,8 +324,14 @@ const workEntryKey = (entry: TimelineWorkEntry) => entry.id;
 
 export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
   const ctx = use(TimelineRowCtx);
-  const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup, pendingRequest } =
-    use(TimelineRowActivityCtx);
+  const {
+    isCompacting,
+    isPreparingWorktree,
+    backgroundWorktreeSetup,
+    pendingRequest,
+    worktreeSetupCardOwnsHeader,
+  } = use(TimelineRowActivityCtx);
+  if (worktreeSetupCardOwnsHeader) return null;
   const window = row.window;
   const [fit, onOverflowChange] = useReducer(
     (current: { overflows: boolean; fade: boolean }, overflows: boolean) =>

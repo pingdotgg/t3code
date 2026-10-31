@@ -75,19 +75,26 @@ it.each([true, false])("runs scheduled work only with task permission (%s)", asy
   state.allowed = allowed;
   await renderPanel();
   const run = page.getByRole("menuitem", { name: "Run Daily review now" }).element();
+  expect(run).toBeDefined();
+  expect(run.getAttribute("aria-disabled")).toBe(allowed ? null : "true");
   await act(async () => run.dispatchEvent(new MouseEvent("click", { bubbles: true })));
   expect(state.run).toHaveBeenCalledTimes(allowed ? 1 : 0);
 });
 
 it("rejects a retained toggle after task permission is revoked", async () => {
   await using fixture = await setup();
-  const { renderPanel, byLabel } = fixture;
+  const { renderPanel, byLabel, screen } = fixture;
   await renderPanel();
+  const toggle = byLabel("Pause Daily review");
+  expect(toggle).toBeDefined();
   state.allowed = false;
-  await act(async () => byLabel("Pause Daily review").click());
+  await act(async () => toggle.click());
   expect(state.toggle).not.toHaveBeenCalled();
 
   state.allowed = true;
+  if (!document.querySelector('[role="menu"]')) {
+    await userEvent.click(screen.container.querySelector<HTMLElement>('[aria-haspopup="menu"]')!);
+  }
   await act(async () => byLabel("Pause Daily review").click());
   expect(state.toggle).toHaveBeenCalledOnce();
 });
