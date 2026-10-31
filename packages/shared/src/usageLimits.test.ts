@@ -566,6 +566,57 @@ describe("pools", () => {
     ]);
   });
 
+  it.each(["org-max", undefined])(
+    "keeps unidentified Claude hub quota separate from a same-email sibling with workspace %s",
+    (workspaceId) => {
+      const native = provider({
+        driver: claude,
+        auth: { status: "authenticated", email: "same@example.com", workspaceId },
+        ...(workspaceId
+          ? { usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 20 }] } }
+          : {}),
+      });
+      const hub = {
+        ...source,
+        accounts: [
+          {
+            id: "max.json",
+            driver: claude,
+            email: " SAME@example.com ",
+            workspaceId,
+            usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 20 }] },
+          },
+          {
+            id: "team.json",
+            driver: claude,
+            email: "same@example.com",
+            usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 80 }] },
+          },
+        ],
+      };
+      const pooled = collectLimitAccounts(
+        new Map([
+          [
+            EnvironmentId.make("env-a"),
+            {
+              ...laptop,
+              serverConfig: { providers: [native], usageLimitSources: [hub] },
+            },
+          ],
+        ]),
+      );
+      expect(pooled.map((account) => account.limits.windows[0]?.usedPercent)).toEqual([20, 80]);
+      const report = collectProviderUsageLimits(native.instanceId, [native], [hub], now);
+      expect(report?.accounts.map((account) => account.limits.windows[0]?.usedPercent)).toEqual([
+        20, 80,
+      ]);
+      expect(report?.accounts.map((account) => account.id)).toEqual([
+        workspaceId ? native.instanceId : "hub:max.json",
+        "hub:team.json",
+      ]);
+    },
+  );
+
   it("joins a report without a workspace to the only workspace signed in with its email", () => {
     const native = provider({
       driver: claude,

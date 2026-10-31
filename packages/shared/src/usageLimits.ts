@@ -214,7 +214,20 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
 });
 
 // Include every enabled login, even unreadable workspaces.
-function accountKeyResolver(reports: Iterable<AccountReport>) {
+function accountKeyResolver(reports: Iterable<AccountReport>, sources: UsageLimitSourceSnapshots) {
+  const ambiguous = new Set<string>();
+  for (const source of sources) {
+    const credentials = new Map<string, Set<string>>();
+    for (const account of source.accounts) {
+      const key = accountKey(account.driver, account.email);
+      if (key) credentials.set(key, (credentials.get(key) ?? new Set()).add(account.id));
+    }
+    for (const account of source.accounts) {
+      if (account.workspaceId) continue;
+      const key = accountKey(account.driver, account.email);
+      if (key && (credentials.get(key)?.size ?? 0) > 1) ambiguous.add(key);
+    }
+  }
   const workspaces = new Map<string, Set<string>>();
   for (const report of reports) {
     const key = accountKey(report.driver, report.email, report.usageLimits);
@@ -226,6 +239,7 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
     const key = accountKey(report.driver, report.email, report.usageLimits);
     if (!key) return null;
     if (report.workspaceId) return `${key}:${report.workspaceId}`;
+    if (ambiguous.has(key)) return null;
     const known = workspaces.get(key);
     if (!known) return key;
     return known.size === 1 ? `${key}:${[...known][0]}` : null;
@@ -313,6 +327,9 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         .map(nativeReport),
       ...(presentation.serverConfig?.usageLimitSources ?? []).flatMap((source) => source.accounts),
     ]),
+    [...presentations.values()].flatMap(
+      (presentation) => presentation.serverConfig?.usageLimitSources ?? [],
+    ),
   );
   for (const [environmentId, presentation] of presentations) {
     const label = presentation.entry.target.label;
@@ -737,10 +754,13 @@ export function collectProviderUsageLimits(
 ): UsageLimitsReport | null {
   const selected = providers.find((provider) => provider.instanceId === instanceId);
   if (!selected || !hasProviderUsageLimits(selected.driver, providers, sources)) return null;
-  const resolveKey = accountKeyResolver([
-    ...providers.filter((provider) => provider.enabled).map(nativeReport),
-    ...sources.flatMap((source) => source.accounts),
-  ]);
+  const resolveKey = accountKeyResolver(
+    [
+      ...providers.filter((provider) => provider.enabled).map(nativeReport),
+      ...sources.flatMap((source) => source.accounts),
+    ],
+    sources,
+  );
   type NativeSnapshot = { provider: ServerProvider; limits: ServerProviderUsageLimits };
   const nativeByAccount = new Map<
     string,
