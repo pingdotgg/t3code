@@ -208,8 +208,12 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
       }
     : options;
   const copilotRouting = isCopilot ? makeCopilotSubagentRouting() : undefined;
+  const enablePostSettleContinuation =
+    options.settings.source === "local" && options.settings.enablePostSettleContinuation;
   const flavor: AcpAdapterV2Flavor = {
     driver: ACP_REGISTRY_PROVIDER,
+    enablePostSettleContinuation,
+    deferFinalizeForBackgroundWork: enablePostSettleContinuation,
     // Cancelling a Copilot prompt also kills the background agents it started.
     capabilities: isCopilot
       ? {
