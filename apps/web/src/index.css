@@ -2185,7 +2185,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --timeline-divider-fill: linear-gradient(180deg, #fdfdfd, #f9f9f9);
   --hairline: #00000009;
   --divider: #00000006;
-  --toggle-pressed: #0000000c;
   --sidebar-toggle: #8d8d8d;
   --inline-code-fill: #0000000a;
   --code-header-fill: #00000003;
@@ -2328,7 +2327,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --timeline-divider-fill: linear-gradient(180deg, #1b1b1b, #1a1a1a);
   --hairline: #ffffff0f;
   --divider: #ffffff0a;
-  --toggle-pressed: #ffffff14;
   --sidebar-toggle: #727272;
   --inline-code-fill: #ffffff10;
   --code-header-fill: #ffffff05;
