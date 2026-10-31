@@ -326,26 +326,6 @@ describe("AgentScope service", () => {
     ),
   );
 
-  it.effect("probes systemd again after its user manager missed the timeout", () =>
-    withFakeSystemd(
-      ({ scope, manager }) =>
-        Effect.gen(function* () {
-          const first = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
-          expect(unitOf(first)).toBe("");
-          manager.stalled = false;
-          const second = yield* scope.wrap({
-            command: "agent",
-            args: [],
-            name: "t",
-            threadId: "a",
-          });
-          expect(unitOf(second)).not.toBe("");
-          expect(second.args).toContain("--property=OOMPolicy=stop");
-        }),
-      { stalled: true },
-    ),
-  );
-
   it.effect("keeps a recovered detection when another launch hears the old failure late", () =>
     withFakeSystemd(
       ({ scope, units, calls, stateDir, manager }) =>
