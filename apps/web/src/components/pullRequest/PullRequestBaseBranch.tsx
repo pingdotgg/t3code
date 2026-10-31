@@ -1,7 +1,8 @@
-import type { PullRequestUpdateMethod } from "@t3tools/contracts";
+import { mergeProps } from "@base-ui/react/merge-props";
+import { useRender } from "@base-ui/react/use-render";
+import { type PullRequestUpdateMethod } from "@t3tools/contracts";
 import { TriangleAlertIcon } from "lucide-react";
-import type { ReactNode } from "react";
-
+import { type ReactNode } from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { MiddleTruncate } from "../ui/middle-truncate";
@@ -12,6 +13,27 @@ import { PullRequestGlyph } from "./pullRequestIcons";
 interface BaseFreshness {
   readonly behindBy: number | null;
   readonly methods: ReadonlyArray<PullRequestUpdateMethod>;
+}
+
+function PullRequestFreshnessTrigger({
+  className,
+  render,
+  ...props
+}: useRender.ComponentProps<"button">) {
+  return useRender({
+    defaultTagName: "button",
+    render,
+    props: mergeProps<"button">(
+      {
+        type: "button",
+        className: cn(
+          "inline-flex min-w-0 shrink-0 cursor-help items-center gap-1 rounded-sm text-warning-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          className,
+        ),
+      },
+      props,
+    ),
+  });
 }
 
 function PullRequestBaseFreshnessWarning({
@@ -44,23 +66,14 @@ function PullRequestBaseFreshnessWarning({
         openOnHover
         delay={0}
         closeDelay={120}
-        render={
-          <button
-            type="button"
-            aria-label={summary}
-            className={cn(
-              "inline-flex min-w-0 shrink-0 cursor-help items-center gap-1 rounded-sm text-warning-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-              className,
-            )}
-          />
-        }
+        render={<PullRequestFreshnessTrigger aria-label={summary} className={className} />}
       >
         {children}
         <TriangleAlertIcon aria-hidden className={cn("size-3.5 shrink-0", iconClassName)} />
       </PopoverTrigger>
       <PopoverPopup align="start" side="bottom" className="max-w-80" padding="compact">
-        <p className="text-xs text-foreground">{summary}</p>
-        <p className="mt-0.5 text-xs text-muted-foreground">Changes can be cleanly merged.</p>
+        <p className="text-meta text-foreground">{summary}</p>
+        <p className="mt-0.5 text-meta text-muted-foreground">Changes can be cleanly merged.</p>
         {freshness.methods.length > 0 ? (
           <span className="mt-2 flex flex-wrap items-center gap-1.5">
             {freshness.methods.map((method) => (
@@ -90,6 +103,7 @@ export function PullRequestBaseBranch({
   pending,
   onUpdate,
   iconClassName,
+  compact = false,
 }: {
   readonly baseBranch: string;
   readonly freshness: BaseFreshness | null;
@@ -97,6 +111,7 @@ export function PullRequestBaseBranch({
   readonly pending: boolean;
   readonly onUpdate: (method: PullRequestUpdateMethod) => void;
   readonly iconClassName?: string;
+  readonly compact?: boolean;
 }) {
   const label = (
     <>
@@ -126,7 +141,12 @@ export function PullRequestBaseBranch({
     <Tooltip>
       <TooltipTrigger
         render={
-          <span className="inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1">
+          <span
+            className={cn(
+              "inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1",
+              compact && "@max-sm/pr-header:hidden",
+            )}
+          >
             {label}
           </span>
         }
