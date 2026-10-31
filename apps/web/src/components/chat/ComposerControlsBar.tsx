@@ -268,6 +268,7 @@ export function ComposerControlsBar(props: {
       size={composerControlsCollapsed ? "xs" : "sm"}
       triggerClassName={cn(
         "data-popup-open:bg-accent",
+        providerTraitsPicker !== null && !traitsBlockHidden && "rounded-e-none",
         composerControlsCollapsed ? "min-w-13 shrink text-xs!" : "min-w-13",
       )}
       terminalOpen={terminalOpen}
