@@ -298,14 +298,14 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
             <DialogFooter variant="bare">
               <Button
                 variant="secondary"
-                size="sm"
+                size="standard"
                 onClick={() => {
                   void openLink(publishResult.repository.url).catch(() => undefined);
                 }}
               >
                 Open on {providerOption.label}
               </Button>
-              <Button size="sm" onClick={() => handleOpenChange(false)}>
+              <Button size="standard" onClick={() => handleOpenChange(false)}>
                 Done
               </Button>
             </DialogFooter>
@@ -459,13 +459,13 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
             <DialogFooter variant="bare">
               <Button
                 variant="secondary"
-                size="sm"
+                size="standard"
                 disabled={isPending}
                 onClick={() => handleOpenChange(false)}
               >
                 Cancel
               </Button>
-              <Button size="sm" disabled={!canSubmit} onClick={submit}>
+              <Button size="standard" disabled={!canSubmit} onClick={submit}>
                 {isPending ? (
                   <>
                     <Spinner size="sm" aria-hidden />

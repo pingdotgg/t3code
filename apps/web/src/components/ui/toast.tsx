@@ -209,7 +209,7 @@ function ToastDescriptionAndExpandable({
   const labels = toastData?.expandableLabels ?? {};
   const descriptionTrigger = toastData?.expandableDescriptionTrigger ?? false;
   const descriptionClassName = cn(
-    "min-w-0 select-text wrap-break-word text-muted-foreground",
+    "min-w-0 select-text wrap-break-word text-meta leading-[1.45] text-muted-foreground",
     errorDescriptionClampClass(toastType, toastDescription),
   );
   const [open, setOpen] = useState(false);
@@ -361,7 +361,7 @@ function ToastBodyContent({
           {...props}
           className={className}
           key={id}
-          size="xs"
+          size="notice"
           type="button"
           variant={secondaryActionVariant}
         />
@@ -370,14 +370,14 @@ function ToastBodyContent({
         <Button
           {...secondaryActionRest}
           className={secondaryActionClassName}
-          size="xs"
+          size="notice"
           type="button"
           variant={secondaryActionVariant}
         />
       ) : null}
       {hasPrimaryAction ? (
         <Toast.Action
-          className={cn(buttonVariants({ size: "xs", variant: actionVariant }), "shrink-0")}
+          className={cn(buttonVariants({ size: "notice", variant: actionVariant }), "shrink-0")}
           data-slot="toast-action"
         >
           {actionProps?.children}
@@ -408,7 +408,10 @@ function ToastBodyContent({
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           {/* Padding keeps the title clear of the dismiss control. */}
           <Toast.Title
-            className={cn("min-w-0 wrap-break-word text-label", isNotification ? "pr-6" : "pr-2")}
+            className={cn(
+              "min-w-0 wrap-break-word text-label [font-size:0.8125rem]",
+              isNotification ? "pr-6" : "pr-2",
+            )}
             data-slot="toast-title"
           />
           <ToastDescriptionAndExpandable
