@@ -13,7 +13,10 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import { CHECKPOINT_DIFF_MAX_OUTPUT_BYTES } from "../vcs/VcsDriver.ts";
-import { checkpointRefForScopeOrdinal } from "../orchestration-v2/CheckpointService.ts";
+import {
+  checkpointRefForScopeOrdinal,
+  checkpointStartRefForScopeOrdinal,
+} from "../orchestration-v2/CheckpointService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import {
   CheckpointDiffResultInvalidError,
@@ -175,6 +178,20 @@ export const make = Effect.gen(function* () {
             )
           : undefined;
 
+      // A single-turn diff starts where the turn started, not where the previous turn ended.
+      const turnStartRef =
+        input.fromTurnCount === input.toTurnCount - 1
+          ? yield* checkpointStartRefForScopeOrdinal({
+              scopeId: toCheckpoint.scopeId,
+              ordinalWithinScope: toCheckpoint.ordinalWithinScope,
+            }).pipe(Effect.provideService(Crypto.Crypto, crypto))
+          : undefined;
+      const hasTurnStartRef =
+        turnStartRef !== undefined &&
+        (yield* checkpointStore
+          .hasCheckpointRef({ cwd: toScope.cwd, checkpointRef: turnStartRef })
+          .pipe(Effect.orElseSucceed(() => false)));
+
       const firstScope =
         input.fromTurnCount === 0
           ? projection.checkpointScopes.find((scope) => scope.kind === "root_run")
@@ -187,12 +204,14 @@ export const make = Effect.gen(function* () {
                 scopeId: firstScope.id,
                 ordinalWithinScope: 0,
               }).pipe(Effect.provideService(Crypto.Crypto, crypto))
-          : (
-              parentCheckpoint ??
-              readyCheckpoints.find(
-                (checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount,
-              )
-            )?.ref;
+          : hasTurnStartRef
+            ? turnStartRef
+            : (
+                parentCheckpoint ??
+                readyCheckpoints.find(
+                  (checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount,
+                )
+              )?.ref;
       if (fromCheckpointRef === undefined) {
         return yield* new CheckpointRefUnavailableError({
           operation,
