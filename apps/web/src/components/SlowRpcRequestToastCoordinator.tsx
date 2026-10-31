@@ -31,7 +31,7 @@ function SlowRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRe
             key={request.requestId}
           >
             <div className="wrap-break-word text-foreground">{label}</div>
-            <div className="mt-0.5 text-3xs font-normal text-muted-foreground/75">
+            <div className="mt-0.5 text-caption text-dim-foreground">
               Started {new Date(request.startedAt).toLocaleTimeString()}
             </div>
           </li>
