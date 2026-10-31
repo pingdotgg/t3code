@@ -24,6 +24,7 @@ import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/s
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import { observeResize } from "~/lib/observeResize";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { useEnvironmentSettings } from "../../hooks/useSettings";
 
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
 const EMPTY_PENDING_APPROVALS: ReadonlyArray<PendingApproval> = [];
@@ -404,6 +405,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
   topFadeEnabled = false,
   historyControls,
 }: MessagesTimelineProps) {
+  // Labs live-thinking: the live Thinking row expands into the streaming thought.
+  const liveThinkingEnabled = useEnvironmentSettings(
+    activeThreadEnvironmentId,
+    (settings) => settings.liveThinkingEnabled,
+  );
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
   // Snapshot restore positions on identity changes; ongoing scroll writes must not move them.
   // Find open at the opening is part of the snapshot: opening find later
@@ -684,6 +690,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     expandedAttemptIds: visibleExpandedAttemptIds,
     expandedWorkGroupIds,
     isWorking,
+    liveThinkingEnabled,
     runlessWorkActive,
     activeTurnStartedAt,
     turnDiffSummaries,
