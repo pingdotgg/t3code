@@ -23,6 +23,7 @@ import {
   shellOutput,
   shellRequest,
   summarize,
+  t3Default,
   t3SystemAppend,
   t3SubagentContext,
   withDevices,
@@ -68,6 +69,54 @@ it("accepts any tool listed as an alternative", () => {
   assert.deepEqual(failed(expect, run("list_thread_pull_requests")), [
     "calls link_pull_request|watch_pull_request",
   ]);
+});
+
+it("counts the new threads an agent asks for, one brief per thread, over both creation tools", () => {
+  const expect = { newThreads: ["~reconnect", "~csv", "~admin"] };
+  const run = (...calls: Array<{ tool: string; input: unknown; failed?: boolean }>): SampleRun => ({
+    calls: calls.map((call, step) => ({ step, ...call })),
+    text: "",
+    stopReason: "end_turn",
+  });
+  const batch = (...prompts: Array<string>) => ({
+    tool: "create_threads",
+    input: { threads: prompts.map((prompt) => ({ prompt })) },
+  });
+  const launch = (message: string, failed = false) => ({
+    tool: "t3_thread_launch",
+    input: { message },
+    failed,
+  });
+  const label = 'newThreads ["~reconnect","~csv","~admin"]';
+  assert.deepEqual(failed(expect, run(batch("Fix reconnect", "Fix CSV dates", "Fix admin"))), []);
+  assert.deepEqual(
+    failed(expect, run(launch("Fix reconnect"), batch("Fix CSV dates", "Fix admin"))),
+    [],
+  );
+  assert.deepEqual(
+    failed(expect, run(launch("Fix reconnect", true), batch("Fix reconnect", "csv", "admin"))),
+    [],
+  );
+  assert.deepEqual(failed(expect, run(batch("reconnect", "csv"), launch("csv and admin"))), []);
+  assert.deepEqual(failed(expect, run(batch("Fix reconnect, csv and admin"))), [label]);
+  assert.deepEqual(failed(expect, run(batch("reconnect, csv, admin", "csv", "csv"))), [label]);
+  assert.deepEqual(failed(expect, run(batch("reconnect", "csv", "admin", "docs"))), [label]);
+  for (const call of [
+    { tool: "t3_thread_launch", input: { prompt: "csv" } },
+    { tool: "create_threads", input: { threads: [{ message: "csv" }] } },
+  ]) {
+    assert.deepEqual(failed(expect, run(launch("reconnect"), launch("admin"), call)), [label]);
+  }
+  assert.deepEqual(
+    failed(
+      expect,
+      run(launch("reconnect"), launch("admin"), {
+        tool: "t3_thread_launch",
+        input: { title: "CSV", message: "Fix reconnect" },
+      }),
+    ),
+    [label],
+  );
 });
 
 it("runs code-mode calls without exposing host capabilities, including after await", async () => {
@@ -341,6 +390,57 @@ it("replays earlier capability results with the model under test as the caller",
     .flatMap((message) => message.content)
     .find((block) => block.type === "tool_result" && String(block.content).includes("inherited"));
   assert.include(String(replayed?.content), '"inheritedModel":"claude-opus-5-5"');
+});
+
+it("gives each launched thread its own id, and reading it back shows that thread's brief", () => {
+  const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
+  const sample = makeSample(childCase, base);
+  const one = t3Default(sample, "t3_thread_launch", {
+    title: "Reconnect",
+    message: "Fix reconnect",
+  });
+  const batch = t3Default(sample, "create_threads", {
+    threads: [
+      { title: "CSV", prompt: "Fix CSV dates" },
+      { prompt: "Fix admin expiry", target: { providerInstanceId: "muse", model: "muse-wonder" } },
+    ],
+  });
+  const created = (batch as { threads: Array<{ providerInstanceId: string; model: string }> })
+    .threads;
+  assert.deepEqual(
+    created.map((thread) => [thread.providerInstanceId, thread.model]),
+    [
+      ["claudeAgent", "claude-sonnet-5-5"],
+      ["muse", "muse-wonder"],
+    ],
+  );
+  const ids = [one, ...(batch as { threads: Array<unknown> }).threads].map(
+    (thread) => (thread as { threadId: string }).threadId,
+  );
+  assert.equal(new Set(ids).size, 3);
+  const read = (threadId: unknown) =>
+    t3Default(sample, "t3_thread_read", { threadId }) as {
+      thread: { title: string; status: string; createdBy?: string };
+      items: Array<{ text: string; createdBy: string; creationSource: string }>;
+    };
+  const idle = t3Default(sample, "create_threads", { threads: [{ title: "Later" }] }) as {
+    threads: Array<{ threadId: string; status: string; runId?: string }>;
+  };
+  assert.equal(idle.threads[0]?.status, "idle");
+  assert.isUndefined(idle.threads[0]?.runId);
+  assert.equal(read(idle.threads[0]?.threadId).thread.status, "idle");
+  assert.deepEqual(read(idle.threads[0]?.threadId).items, []);
+  assert.equal(read(ids[1]).thread.title, "CSV");
+  assert.equal(read(ids[2]).items[0]?.text, "Fix admin expiry");
+  assert.equal(read(ids[2]).thread.createdBy, "agent");
+  assert.deepEqual(
+    [read(ids[2]).items[0]?.createdBy, read(ids[2]).items[0]?.creationSource],
+    ["agent", "mcp"],
+  );
+  assert.equal(
+    read("11111111-1111-4111-8111-111111111111").thread.title,
+    "Fix the flaky reconnect test",
+  );
 });
 
 it("does not record a deferred tool called before it was loaded", () => {
