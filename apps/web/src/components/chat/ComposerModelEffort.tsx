@@ -379,7 +379,7 @@ function EffortRows(props: { control: ColumnControl; traits: TraitsSelection; lo
   const { control, traits } = props;
   const { descriptor } = control;
   if (control.kind === "boolean") {
-    return <OptionSwitchRow descriptor={control.descriptor} traits={traits} tabStop />;
+    return <OptionSwitchRow descriptor={control.descriptor} traits={traits} tabStop level />;
   }
   const { locked } = props;
   const value = traits.selectValue(control.descriptor);
@@ -547,6 +547,7 @@ function OptionSwitchRow(props: {
   descriptor: BooleanDescriptor;
   traits: TraitsSelection;
   tabStop: boolean;
+  level?: boolean;
 }) {
   const { descriptor, traits } = props;
   const checked = descriptor.currentValue === true;
@@ -559,6 +560,7 @@ function OptionSwitchRow(props: {
         onCheckedChange={(next) => traits.changeBoolean(descriptor.id, next)}
         aria-label={descriptor.label}
         data-effort-row
+        data-effort-level={props.level || undefined}
         tabIndex={props.tabStop ? 0 : -1}
       />
     </label>
