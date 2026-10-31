@@ -37,6 +37,7 @@ describe("splitMarkdownDetails", () => {
       "```html\n<details>\n<summary>Code</summary>\n</details>\n```",
       "Use `<details>` for folds.",
       "Text <details><summary>inline</summary>body</details> more",
+      "<!-- <details> -->\n\nVisible answer.",
     ]) {
       expect(splitMarkdownDetails(markdown)).toEqual([
         { kind: "markdown", markdown, sourceOffset: 0 },
@@ -50,6 +51,15 @@ describe("splitMarkdownDetails", () => {
     expect(splitMarkdownDetails(markdown)).toMatchObject([
       { kind: "details", summary: "Example", body: "\n```html\n</details>\n```\n" },
       { kind: "markdown", markdown: "\n\nAfter." },
+    ]);
+  });
+
+  it("closes a fold at a closing tag that ends a paragraph", () => {
+    expect(
+      splitMarkdownDetails("<details>\n<summary>Plan</summary>\n\nDone </details>\n\nNext step"),
+    ).toMatchObject([
+      { kind: "details", summary: "Plan", body: "\n\nDone " },
+      { kind: "markdown", markdown: "\n\nNext step" },
     ]);
   });
 
