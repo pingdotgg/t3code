@@ -43,6 +43,7 @@ import type {
   OrchestrationV2CreationSource,
   OrchestrationV2ExecutionNode,
   OrchestrationMessageContext,
+  OrchestrationV2Notification,
   OrchestrationV2ProjectedTurnItem,
   OrchestrationV2RunAttempt,
   OrchestrationV2RunStatus,
@@ -216,6 +217,8 @@ type ThreadFeedEntryContent =
       readonly toolSurface?: WorkLogPresentationEntry["toolSurface"];
       readonly toolIcon?: WorkLogPresentationEntry["toolIcon"];
       readonly summaryToolIcon?: "browser" | "device" | "t3-code" | "pull-request";
+      /** Set when the toggle folds back-to-back wake notifications rather than tool calls. */
+      readonly notificationIcon?: ThreadFeedActivity["icon"];
       readonly hasFailure: boolean;
       readonly live: boolean;
       readonly shimmer: boolean;
@@ -1429,10 +1432,14 @@ export function deriveThreadFeedPresentation(
       for (const entryId of fold.hiddenEntryIds) collapsedEntryIds.add(entryId);
     }
   }
+  let groupedFrom = tailStart;
   for (let sourceIndex = 0; sourceIndex < sourceFeed.length; sourceIndex += 1) {
     const entry = sourceFeed[sourceIndex]!;
     const feedIndex = retainedFeedIndices[sourceIndex]!;
     if (isUserMessageEntry(entry)) {
+      // Group before recording where this message's rows start; a user message ends every run of wakes.
+      groupConsecutiveNotificationRows(result, groupedFrom, expandedWorkGroupIds);
+      groupedFrom = result.length;
       restarts.push({ entry: feedIndex, rowsLength: result.length });
     }
     const runId = feedEntryRunId(entry);
@@ -1517,6 +1524,7 @@ export function deriveThreadFeedPresentation(
       );
     }
   }
+  groupConsecutiveNotificationRows(result, groupedFrom, expandedWorkGroupIds);
   if (
     isWorking &&
     activeWorkStartedAt !== null &&
@@ -1543,7 +1551,8 @@ export function deriveThreadFeedPresentation(
   for (let index = tailStart; index < result.length; index += 1) {
     const row = result[index]!;
     if (
-      (row.type === "run-fold" || row.type === "work-toggle") &&
+      (row.type === "run-fold" ||
+        (row.type === "work-toggle" && row.notificationIcon === undefined)) &&
       row.runId !== null &&
       checkpointByRunId.has(row.runId) &&
       (row.type === "run-fold" || !workRowByRunId.has(row.runId))
@@ -1614,6 +1623,134 @@ export function deriveThreadFeedPresentation(
 }
 
 const continuedWorkLogRows = new WeakMap<ThreadFeedEntry, ThreadFeedEntry>();
+
+const NOTIFICATION_SOURCE_NOUNS = {
+  delegated_task: "delegated tasks",
+  subagent: "subagents",
+  command: "commands",
+  monitor: "monitors",
+  background_task: "background tasks",
+  system: "notifications",
+} satisfies Record<OrchestrationV2Notification["source"]["kind"], string>;
+
+const NOTIFICATION_OUTCOME_VERBS = {
+  completed: "finished",
+  failed: "failed",
+  cancelled: "cancelled",
+  updated: "updated",
+  unknown: "ended",
+} satisfies Record<OrchestrationV2Notification["outcome"], string>;
+
+function notificationRowItem(row: ThreadFeedEntry | undefined) {
+  if (row?.type !== "activity-group" || row.activities.length !== 1) return null;
+  const activity = row.activities[0]!;
+  const item = activity.projectedItem.item;
+  return item.type === "notification" && !activity.groupedToolDetail ? item : null;
+}
+
+function notificationGroupSummary(notifications: ReadonlyArray<OrchestrationV2Notification>) {
+  const kinds = new Set(notifications.map((notification) => notification.source.kind));
+  const noun =
+    kinds.size === 1
+      ? NOTIFICATION_SOURCE_NOUNS[notifications[0]!.source.kind]
+      : NOTIFICATION_SOURCE_NOUNS.system;
+  // One delegated-task wake can report a batch of tasks.
+  const counts = new Map<OrchestrationV2Notification["outcome"], number>();
+  let total = 0;
+  for (const notification of notifications) {
+    const count =
+      notification.source.kind === "delegated_task"
+        ? Math.max(1, notification.source.taskIds.length)
+        : 1;
+    total += count;
+    counts.set(notification.outcome, (counts.get(notification.outcome) ?? 0) + count);
+  }
+  const outcomes = (
+    Object.keys(NOTIFICATION_OUTCOME_VERBS) as Array<OrchestrationV2Notification["outcome"]>
+  ).filter((outcome) => counts.has(outcome));
+  return outcomes.length === 1
+    ? `${total} ${noun} ${NOTIFICATION_OUTCOME_VERBS[outcomes[0]!]}`
+    : `${total} ${noun}: ${outcomes
+        .map((outcome) => `${counts.get(outcome)} ${NOTIFICATION_OUTCOME_VERBS[outcome]}`)
+        .join(", ")}`;
+}
+
+const notificationGroupRowsCache = new WeakMap<
+  ThreadFeedEntry,
+  {
+    readonly members: ReadonlyArray<ThreadFeedEntry>;
+    readonly expanded: boolean;
+    readonly rows: ReadonlyArray<ThreadFeedEntry>;
+  }
+>();
+
+/**
+ * Wake notifications stay visible when their run folds, so a long run of
+ * delegated work leaves one row per finished task. Back-to-back rows share
+ * one toggle instead.
+ */
+function groupConsecutiveNotificationRows(
+  rows: ThreadFeedEntry[],
+  start: number,
+  expandedWorkGroupIds: ReadonlySet<string>,
+): void {
+  for (let index = start; index < rows.length; index += 1) {
+    let end = index;
+    while (notificationRowItem(rows[end]) !== null) end += 1;
+    if (end - index < 2) continue;
+    const members = rows.slice(index, end) as ThreadFeedActivityGroup[];
+    const first = members[0]!;
+    const groupId = `notifications:${first.id}`;
+    const expanded = expandedWorkGroupIds.has(groupId);
+    let cached = notificationGroupRowsCache.get(first);
+    if (
+      !cached ||
+      cached.expanded !== expanded ||
+      cached.members.length !== members.length ||
+      cached.members.some((member, memberIndex) => member !== members[memberIndex])
+    ) {
+      const activities = members.map((member) => member.activities[0]!);
+      const icons = new Set(activities.map((activity) => activity.icon));
+      const toggle: ThreadFeedEntry = {
+        type: "work-toggle",
+        id: `work-toggle:${groupId}`,
+        createdAt: first.createdAt,
+        runId: first.runId,
+        groupId,
+        hiddenCount: activities.length,
+        expanded,
+        summary: notificationGroupSummary(members.map((member) => notificationRowItem(member)!)),
+        summaryKind: "other",
+        notificationIcon: icons.size === 1 ? activities[0]!.icon : "zap",
+        hasFailure: false,
+        live: false,
+        shimmer: false,
+      };
+      cached = {
+        members,
+        expanded,
+        rows: expanded
+          ? [
+              toggle,
+              {
+                type: "activity-group",
+                id: `work-details:${groupId}`,
+                createdAt: first.createdAt,
+                runId: first.runId,
+                activities: activities.map((activity) => ({
+                  ...activity,
+                  groupedToolDetail: true,
+                })),
+              },
+            ]
+          : [toggle],
+      };
+      notificationGroupRowsCache.set(first, cached);
+    }
+    rows.splice(index, members.length, ...cached.rows);
+    index += cached.rows.length - 1;
+  }
+}
 
 function isWorkLogFeedRow(row: ThreadFeedEntry | undefined): boolean {
   return (
