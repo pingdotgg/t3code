@@ -216,7 +216,10 @@ export function AddEnvironmentDialog({
         onErrorChange(null);
         try {
           const resolved = await desktopBridge.resolveSshHost(target.alias);
-          if (session !== savedBackendSessionRef.current) return;
+          if (session !== savedBackendSessionRef.current) {
+            setIsAddingSavedBackend(false);
+            return;
+          }
           target = {
             ...resolved,
             username: target.username ?? resolved.username,
@@ -225,10 +228,10 @@ export function AddEnvironmentDialog({
         } catch (error) {
           if (session === savedBackendSessionRef.current)
             onErrorChange(formatDesktopSshConnectionError(error));
-          return;
-        } finally {
           setIsAddingSavedBackend(false);
+          return;
         }
+        setIsAddingSavedBackend(false);
       }
       await connectSavedBackendSshTarget(target);
       return;
