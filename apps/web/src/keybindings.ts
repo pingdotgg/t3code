@@ -17,12 +17,23 @@ import {
   resolveEventKeys,
   type ShortcutEventLike,
   type ShortcutModifierStateLike,
+  type ShortcutKeyboardLayoutMap,
+  shortcutKeyFromEvent as sharedShortcutKeyFromEvent,
 } from "@t3tools/shared/keybindings";
 import { isElectron } from "./env";
 import { projectScriptIdFromCommand } from "./projectScripts";
+import { getKeyboardLayoutMap } from "./keyboardLayout";
 
 export type { ShortcutEventLike, ShortcutModifierStateLike } from "@t3tools/shared/keybindings";
-export { shortcutKeyFromEvent } from "@t3tools/shared/keybindings";
+export function shortcutKeyFromEvent(
+  event: Pick<ShortcutEventLike, "key" | "code"> & Partial<Pick<ShortcutEventLike, "altKey">>,
+  platform = navigator.platform,
+) {
+  return sharedShortcutKeyFromEvent(
+    event,
+    isMacPlatform(platform) && event.altKey ? getKeyboardLayoutMap() : undefined,
+  );
+}
 
 export interface ShortcutMatchContext {
   terminalFocus: boolean;
@@ -37,6 +48,7 @@ export interface ShortcutMatchContext {
 
 interface ShortcutMatchOptions {
   platform?: string;
+  keyboardLayoutMap?: ShortcutKeyboardLayoutMap;
   context?: Partial<ShortcutMatchContext>;
 }
 
@@ -182,7 +194,15 @@ export function resolveShortcutCommand(
     const binding = keybindings[index];
     if (!binding) continue;
     if (!matchesWhenClause(binding.whenAst, context)) continue;
-    if (!matchesKeybindingShortcut(event, shortcutForContext(binding, context), platform)) continue;
+    if (
+      !matchesKeybindingShortcut(
+        event,
+        shortcutForContext(binding, context),
+        platform,
+        options?.keyboardLayoutMap ?? getKeyboardLayoutMap(),
+      )
+    )
+      continue;
     return binding.command;
   }
   return null;
