@@ -112,11 +112,7 @@ export type CustomModelEntry = typeof CustomModelEntry.Type;
 export const CustomModelSetting = Schema.Union([Schema.String, CustomModelEntry]);
 export type CustomModelSetting = typeof CustomModelSetting.Type;
 
-/**
- * One benchmarked model at one reasoning effort. `model` is a benchmark family
- * id: a model slug with dots as dashes (`gpt-6.1-sol` is `gpt-6-1-sol`).
- * `effort` is an effort option id, or `default` for the model's default.
- */
+/** Benchmark family IDs replace model slug dots with dashes; effort may be `default`. */
 export const ModelBenchmarkVariant = Schema.Struct({
   model: TrimmedNonEmptyString,
   effort: TrimmedNonEmptyString,
@@ -126,7 +122,6 @@ export const ModelBenchmarkVariant = Schema.Struct({
 });
 export type ModelBenchmarkVariant = typeof ModelBenchmarkVariant.Type;
 
-/** Third-party coding benchmark scores, shipped in the model manifest. */
 export const ModelBenchmarks = Schema.Struct({
   source: TrimmedNonEmptyString,
   url: TrimmedNonEmptyString,
@@ -135,11 +130,7 @@ export const ModelBenchmarks = Schema.Struct({
 });
 export type ModelBenchmarks = typeof ModelBenchmarks.Type;
 
-/**
- * Optional benchmarks field that decodes a malformed or newer-shaped block to
- * `undefined`. Scores are an extra, so a bad block must never reject the
- * manifest or config payload that carries it.
- */
+// Malformed or newer-shaped scores must not reject the manifest or config payload.
 export const OptionalModelBenchmarks = Schema.optional(
   Schema.UndefinedOr(ModelBenchmarks).pipe(
     Schema.catchDecoding(() => Effect.succeedSome(undefined)),
