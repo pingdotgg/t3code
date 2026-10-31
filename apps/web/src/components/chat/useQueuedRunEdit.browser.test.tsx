@@ -122,7 +122,6 @@ function Harness(props: {
       onSubmitMessage={() => void result.saveEdit(savedContent(draft.prompt), () => {})}
       onPreviousPendingQuestion={() => {}}
       onInterrupt={() => {}}
-      onImplementPlanInNewThread={() => {}}
     />
   ) : null;
 }
