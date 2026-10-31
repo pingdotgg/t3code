@@ -90,6 +90,37 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
       }),
   );
 
+  it.effect("protect refuses root before creating any T3 directories", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
+      const baseDir = `${parent}/t3`;
+      vi.spyOn(BootService, "layer").mockReturnValue(
+        Layer.succeed(BootService.BootService, makeTestService(status).service),
+      );
+
+      const output = yield* Command.runWith(serviceCommand, { version: packageJson.version })([
+        "protect",
+        "--base-dir",
+        baseDir,
+      ]).pipe(
+        Effect.andThen(TestConsole.logLines),
+        Effect.map((lines) => lines.join("\n")),
+        Effect.provideService(HostProcess.Environment, {}),
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.UserId, 0),
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            Layer.fresh(TestConsole.layer),
+          ),
+        ),
+      );
+      expect(output).toContain("without sudo");
+      expect(yield* fs.exists(baseDir)).toBe(false);
+    }),
+  );
+
   // regression: #13239 a stale nvm-installed CLI reported "already using" its own version
   it.effect.each(["install", "update"] as const)(
     "%s names the CLI that found nothing to change",
@@ -138,6 +169,60 @@ it.effect("leaves a newer service unchanged during onboarding without prompting"
       readInput: Effect.die("Onboarding must not prompt to replace a newer service."),
       readLine: Effect.die("Onboarding must not prompt to replace a newer service."),
       display: () => Effect.die("Onboarding must not prompt to replace a newer service."),
+    });
+
+    const ready = yield* offerServiceDuringOnboarding.pipe(
+      Effect.provideService(BootService.BootService, service),
+      Effect.provideService(Terminal.Terminal, terminal),
+      Effect.provide(NodeServices.layer),
+    );
+
+    expect(ready).toBe("skipped");
+    expect(installOptions).toEqual([]);
+  }),
+);
+
+const withTerminal = (isTTY: { readonly stdin: boolean; readonly stdout: boolean }) =>
+  Effect.acquireRelease(
+    Effect.sync(() =>
+      (
+        [
+          [process.stdin, isTTY.stdin],
+          [process.stdout, isTTY.stdout],
+        ] as const
+      ).map(([stream, value]) => {
+        const descriptor = Object.getOwnPropertyDescriptor(stream, "isTTY");
+        Object.defineProperty(stream, "isTTY", { configurable: true, value });
+        return { stream, descriptor };
+      }),
+    ),
+    (saved) =>
+      Effect.sync(() => {
+        for (const { stream, descriptor } of saved) {
+          if (descriptor === undefined) Reflect.deleteProperty(stream, "isTTY");
+          else Object.defineProperty(stream, "isTTY", descriptor);
+        }
+      }),
+  );
+
+it.effect.each([
+  { label: "stdin and stdout are", stdin: false, stdout: false },
+  { label: "stdin is", stdin: false, stdout: true },
+  { label: "stdout is", stdin: true, stdout: false },
+])("skips the onboarding service prompt when $label not a terminal", (isTTY) =>
+  Effect.gen(function* () {
+    yield* withTerminal(isTTY);
+    const { service, installOptions } = makeTestService({
+      ...status,
+      installed: false,
+      current: false,
+    });
+    const terminal = Terminal.make({
+      columns: Effect.succeed(80),
+      rows: Effect.succeed(24),
+      readInput: Effect.die("Onboarding must not prompt without a terminal."),
+      readLine: Effect.die("Onboarding must not prompt without a terminal."),
+      display: () => Effect.die("Onboarding must not prompt without a terminal."),
     });
 
     const ready = yield* offerServiceDuringOnboarding.pipe(
