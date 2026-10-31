@@ -2,8 +2,10 @@ import { NodeHttpServer } from "@effect/platform-node";
 import { type ExecutionEnvironmentDescriptor, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -278,6 +280,448 @@ const serveRaw = <E, R>(
       }).pipe(Effect.provideContext(server)),
     ),
   );
+
+it.effect("starts the fallback preference window after route verification", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const probes = yield* Ref.make(0);
+      const slow = yield* serveRaw(() =>
+        Ref.update(probes, (count) => count + 1).pipe(
+          Effect.andThen(Deferred.succeed(entered, undefined)),
+          Effect.andThen(Deferred.await(release)),
+          Effect.as(HttpServerResponse.empty({ status: 404 })),
+        ),
+      );
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      yield* a.links.link({
+        url: b.url,
+        pairingCode: (yield* b.auth.issuePairingCredential()).credential,
+        access: "auto",
+      });
+      const urls = JSON.stringify([slow, b.url]);
+      yield* a.sql`UPDATE peer_environment_links SET urls_json = ${urls}`;
+      const resolving = yield* a.links.resolve(box.environmentId).pipe(Effect.forkScoped);
+      yield* Deferred.await(entered);
+      yield* TestClock.adjust(Duration.seconds(2));
+      yield* Deferred.succeed(release, undefined);
+      expect((yield* Fiber.join(resolving)).url).toBe(b.url);
+
+      yield* TestClock.adjust(Duration.seconds(59));
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+      expect(yield* Ref.get(probes)).toBe(1);
+      yield* TestClock.adjust(Duration.seconds(2));
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+      expect(yield* Ref.get(probes)).toBe(2);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "prefers a verified fallback briefly, rechecks identity, and retries the configured route",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const first = yield* serveApart(descriptorOf("environment-other", "Other"));
+        const b = yield* serveB(box);
+        const a = yield* makeA(laptop);
+        yield* a.links.link({
+          url: b.url,
+          pairingCode: (yield* b.auth.issuePairingCredential()).credential,
+          access: "auto",
+        });
+        const urls = JSON.stringify([first.url, b.url]);
+        yield* a.sql`UPDATE peer_environment_links SET urls_json = ${urls}`;
+        expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+        yield* Ref.set(first.probes, 0);
+        yield* Ref.set(b.probes, 0);
+        yield* TestClock.adjust(Duration.seconds(30));
+        expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+        expect(yield* Ref.get(first.probes)).toBe(0);
+        expect(yield* Ref.get(b.probes)).toBe(1);
+
+        // A recovered preferred address gets a turn, even under repeated demand.
+        yield* Ref.set(first.descriptor, box);
+        yield* TestClock.adjust(Duration.seconds(31));
+        expect((yield* a.links.resolve(box.environmentId)).url).toBe(first.url);
+        expect(yield* Ref.get(first.probes)).toBe(1);
+
+        // A remembered address that changes identity is skipped immediately.
+        yield* Ref.set(first.descriptor, descriptorOf("environment-other", "Other"));
+        expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+        expect(yield* Ref.get(first.bearers)).toEqual([]);
+
+        // When the remembered fallback stops answering as this peer, primary recovery
+        // clears that preference so later calls do not retry the failed fallback.
+        yield* Ref.set(first.descriptor, box);
+        yield* Ref.set(b.descriptor, descriptorOf("environment-other", "Other"));
+        expect((yield* a.links.resolve(box.environmentId)).url).toBe(first.url);
+        yield* Ref.set(b.probes, 0);
+        expect((yield* a.links.resolve(box.environmentId)).url).toBe(first.url);
+        expect(yield* Ref.get(b.probes)).toBe(0);
+
+        // Relinking restores the new configured order rather than the old preference.
+        yield* Ref.set(first.descriptor, box);
+        yield* a.links.link({
+          url: first.url,
+          alternateUrls: [b.url],
+          pairingCode: (yield* first.auth.issuePairingCredential()).credential,
+          access: "auto",
+        });
+        expect((yield* a.links.resolve(box.environmentId)).url).toBe(first.url);
+        yield* a.links.unlink(box.environmentId);
+        expect((yield* a.links.resolve(box.environmentId).pipe(Effect.flip)).reason).toBe(
+          "unknown_link",
+        );
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("listing uses but does not renew a verified fallback and still checks identity", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const first = yield* serveApart(descriptorOf("environment-other", "Other"));
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      yield* a.links.link({
+        url: b.url,
+        pairingCode: (yield* b.auth.issuePairingCredential()).credential,
+        access: "auto",
+      });
+      const urls = JSON.stringify([first.url, b.url]);
+      yield* a.sql`UPDATE peer_environment_links SET urls_json = ${urls}`;
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+      yield* Ref.set(first.probes, 0);
+      yield* Ref.set(b.probes, 0);
+      yield* TestClock.adjust(Duration.seconds(30));
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+      expect(yield* Ref.get(first.probes)).toBe(0);
+      expect(yield* Ref.get(b.probes)).toBe(1);
+
+      // Listing has not extended the original preference deadline.
+      yield* Ref.set(first.descriptor, box);
+      yield* TestClock.adjust(Duration.seconds(31));
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+      expect(yield* Ref.get(first.probes)).toBe(1);
+      expect(yield* Ref.get(b.probes)).toBe(1);
+
+      yield* Ref.set(first.descriptor, descriptorOf("environment-other", "Other"));
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+      yield* Ref.set(first.descriptor, box);
+      yield* Ref.set(b.descriptor, descriptorOf("environment-other", "Other"));
+      yield* Ref.set(first.probes, 0);
+      yield* Ref.set(b.probes, 0);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+      expect(yield* Ref.get(b.probes)).toBe(1);
+      expect(yield* Ref.get(first.probes)).toBe(1);
+      expect(yield* Ref.get(b.bearers)).toEqual([]);
+
+      // Once listing verifies the configured primary, a failed fallback is
+      // no longer preferred on the next listing.
+      yield* Ref.set(b.probes, 0);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+      expect(yield* Ref.get(b.probes)).toBe(0);
+
+      yield* Ref.set(first.descriptor, descriptorOf("environment-other", "Other"));
+      yield* Ref.set(b.descriptor, box);
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+      yield* Ref.set(first.descriptor, box);
+
+      // A removed address cannot be probed through an old preference.
+      const primaryOnly = JSON.stringify([first.url]);
+      yield* a.sql`UPDATE peer_environment_links SET urls_json = ${primaryOnly}`;
+      yield* Ref.set(b.probes, 0);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+      expect(yield* Ref.get(b.probes)).toBe(0);
+      yield* a.links.unlink(box.environmentId);
+      expect(yield* a.links.list).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("listing ignores an old resolve's preference after relinking", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const probes = yield* Ref.make(0);
+      const fallback = yield* serveRaw(() =>
+        Ref.update(probes, (count) => count + 1).pipe(
+          Effect.andThen(Deferred.succeed(entered, undefined)),
+          Effect.andThen(Deferred.await(release)),
+          Effect.as(HttpServerResponse.jsonUnsafe(box)),
+        ),
+      );
+      const first = yield* serveApart(descriptorOf("environment-other", "Other"));
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      yield* a.links.link({
+        url: b.url,
+        pairingCode: (yield* b.auth.issuePairingCredential()).credential,
+        access: "auto",
+      });
+      const urls = JSON.stringify([first.url, fallback]);
+      yield* a.sql`UPDATE peer_environment_links SET urls_json = ${urls}`;
+      const resolving = yield* a.links.resolve(box.environmentId).pipe(Effect.forkScoped);
+      yield* Effect.gen(function* () {
+        yield* Deferred.await(entered);
+        yield* Ref.set(first.descriptor, box);
+        yield* a.links.link({
+          url: first.url,
+          alternateUrls: [fallback],
+          pairingCode: (yield* first.auth.issuePairingCredential()).credential,
+          access: "auto",
+        });
+        // The old resolve finishes after relinking cleared its preference.
+        yield* Deferred.succeed(release, undefined);
+        expect((yield* Fiber.join(resolving)).url).toBe(fallback);
+        yield* Ref.set(first.probes, 0);
+        yield* Ref.set(probes, 0);
+        expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+        expect(yield* Ref.get(first.probes)).toBe(1);
+        expect(yield* Ref.get(probes)).toBe(0);
+      }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("listing drops a failed preference when a middle address recovers", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const first = yield* serveApart(descriptorOf("environment-other-a", "Other A"));
+      const middle = yield* serveApart(descriptorOf("environment-other-b", "Other B"));
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      yield* a.links.link({
+        url: b.url,
+        pairingCode: (yield* b.auth.issuePairingCredential()).credential,
+        access: "auto",
+      });
+      const urls = JSON.stringify([first.url, middle.url, b.url]);
+      yield* a.sql`UPDATE peer_environment_links SET urls_json = ${urls}`;
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(b.url);
+      yield* Ref.set(middle.descriptor, box);
+      yield* Ref.set(b.descriptor, descriptorOf("environment-other-c", "Other C"));
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+      yield* Ref.set(first.probes, 0);
+      yield* Ref.set(middle.probes, 0);
+      yield* Ref.set(b.probes, 0);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+      expect(yield* Ref.get(first.probes)).toBe(1);
+      expect(yield* Ref.get(middle.probes)).toBe(1);
+      expect(yield* Ref.get(b.probes)).toBe(0);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("cancelling a listing before fallback starts interrupts its preferred probe", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const hold = yield* Ref.make(false);
+      const preferred = yield* serveRaw(() =>
+        Effect.gen(function* () {
+          if (yield* Ref.get(hold)) {
+            yield* Deferred.succeed(entered, undefined);
+            yield* Deferred.await(release);
+          }
+          return HttpServerResponse.jsonUnsafe(box);
+        }),
+      );
+      const first = yield* serveApart(descriptorOf("environment-other", "Other"));
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      yield* a.links.link({
+        url: b.url,
+        pairingCode: (yield* b.auth.issuePairingCredential()).credential,
+        access: "auto",
+      });
+      const urls = JSON.stringify([first.url, preferred]);
+      yield* a.sql`UPDATE peer_environment_links SET urls_json = ${urls}`;
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(preferred);
+      yield* Ref.set(first.probes, 0);
+      yield* Ref.set(hold, true);
+      const listing = yield* a.links.list.pipe(Effect.forkScoped);
+      yield* Effect.gen(function* () {
+        yield* Deferred.await(entered);
+        expect(yield* Ref.get(first.probes)).toBe(0);
+        yield* Fiber.interrupt(listing);
+      }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
+      expect(yield* Ref.get(first.probes)).toBe(0);
+      yield* Ref.set(hold, false);
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect.each([
+  "fast-success",
+  "early-failure",
+  "hedged-success",
+  "slow-success",
+  "all-fail",
+  "cancel-before",
+  "cancel-after",
+  "replacement",
+] as const)("status fallback probes are delayed, validated and cancelled (%s)", (scenario) =>
+  Effect.gen(function* () {
+    const nativeFetch = yield* FetchHttpClient.Fetch;
+    const routes = new Set<string>();
+    const started = new Set<string>();
+    const aborted = new Set<string>();
+    let observing = false;
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      const origin = new URL(String(input)).origin;
+      if (observing && routes.has(origin)) {
+        started.add(origin);
+        init?.signal?.addEventListener("abort", () => aborted.add(origin), { once: true });
+      }
+      return nativeFetch(input, init);
+    };
+    return yield* Effect.scoped(
+      Effect.gen(function* () {
+        const preferredEntered = yield* Deferred.make<void>();
+        const firstEntered = yield* Deferred.make<void>();
+        const thirdEntered = yield* Deferred.make<void>();
+        const releasePreferred = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const preferredMode = yield* Ref.make<"ready" | "wrong" | "hold">("ready");
+        const firstMode = yield* Ref.make<"ready" | "wrong" | "hold">("wrong");
+        const thirdMode = yield* Ref.make<"ready" | "wrong">("wrong");
+        const wrong = descriptorOf("environment-other", "Other");
+        const preferred = yield* serveRaw(() =>
+          Effect.gen(function* () {
+            const mode = yield* Ref.get(preferredMode);
+            if (observing) yield* Deferred.succeed(preferredEntered, undefined);
+            if (mode === "hold") yield* Deferred.await(releasePreferred);
+            return HttpServerResponse.jsonUnsafe(mode === "wrong" ? wrong : box);
+          }),
+        );
+        const first = yield* serveRaw(() =>
+          Effect.gen(function* () {
+            const mode = yield* Ref.get(firstMode);
+            if (observing) yield* Deferred.succeed(firstEntered, undefined);
+            if (mode === "hold") yield* Deferred.await(releaseFirst);
+            return HttpServerResponse.jsonUnsafe(mode === "wrong" ? wrong : box);
+          }),
+        );
+        const third = yield* serveRaw(() =>
+          Effect.gen(function* () {
+            if (observing) yield* Deferred.succeed(thirdEntered, undefined);
+            return HttpServerResponse.jsonUnsafe(
+              (yield* Ref.get(thirdMode)) === "wrong" ? wrong : box,
+            );
+          }),
+        );
+        routes.add(preferred);
+        routes.add(first);
+        routes.add(third);
+        const b = yield* serveB(box);
+        const a = yield* makeA(laptop);
+        yield* a.links.link({
+          url: b.url,
+          pairingCode: (yield* b.auth.issuePairingCredential()).credential,
+          access: "auto",
+        });
+        const urls = JSON.stringify([first, third, preferred]);
+        yield* a.sql`UPDATE peer_environment_links SET urls_json = ${urls}`;
+        expect((yield* a.links.resolve(box.environmentId)).url).toBe(preferred);
+        const cancelling = scenario === "cancel-before" || scenario === "cancel-after";
+        yield* Ref.set(
+          preferredMode,
+          scenario === "early-failure" || scenario === "all-fail"
+            ? "wrong"
+            : scenario === "fast-success"
+              ? "ready"
+              : "hold",
+        );
+        yield* Ref.set(
+          firstMode,
+          cancelling || scenario === "replacement"
+            ? "hold"
+            : scenario === "slow-success" || scenario === "all-fail"
+              ? "wrong"
+              : "ready",
+        );
+        if (cancelling) yield* Ref.set(thirdMode, "ready");
+        observing = true;
+        yield* Effect.gen(function* () {
+          let completed = false;
+          const listing = yield* a.links.list.pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                completed = true;
+              }),
+            ),
+            Effect.forkScoped,
+          );
+          yield* Deferred.await(preferredEntered);
+          if (
+            scenario === "fast-success" ||
+            scenario === "early-failure" ||
+            scenario === "all-fail"
+          ) {
+            expect((yield* Fiber.join(listing)).map((link) => link.status)).toEqual([
+              scenario === "all-fail" ? "unreachable" : "reachable",
+            ]);
+            if (scenario === "fast-success") {
+              yield* TestClock.adjust(Duration.seconds(1));
+              expect([...started]).toEqual([preferred]);
+            } else expect(started.has(first)).toBe(true);
+            return;
+          }
+          if (scenario !== "cancel-before") {
+            yield* TestClock.adjust(Duration.millis(100));
+            expect(started.has(first)).toBe(true);
+            yield* Deferred.await(firstEntered);
+          }
+          if (scenario === "replacement") {
+            yield* Ref.set(preferredMode, "wrong");
+            yield* Ref.set(firstMode, "wrong");
+            yield* Ref.set(thirdMode, "ready");
+            expect((yield* a.links.resolve(box.environmentId)).url).toBe(third);
+            yield* Deferred.succeed(releaseFirst, undefined);
+            expect((yield* Fiber.join(listing)).map((link) => link.status)).toEqual(["reachable"]);
+            started.clear();
+            expect((yield* a.links.resolve(box.environmentId)).url).toBe(third);
+            expect([...started]).toEqual([third]);
+            return;
+          }
+          if (cancelling) {
+            expect(started.has(third)).toBe(false);
+            yield* Fiber.interrupt(listing);
+            expect(aborted.has(preferred)).toBe(true);
+            if (scenario === "cancel-after") expect(aborted.has(first)).toBe(true);
+            yield* TestClock.adjust(Duration.seconds(1));
+            expect(started.has(third)).toBe(false);
+            if (scenario === "cancel-before") expect(started.has(first)).toBe(false);
+          } else {
+            if (scenario === "slow-success") {
+              yield* Deferred.await(thirdEntered);
+              expect(completed).toBe(false);
+              yield* Deferred.succeed(releasePreferred, undefined);
+            }
+            expect((yield* Fiber.join(listing)).map((link) => link.status)).toEqual(["reachable"]);
+            if (scenario === "hedged-success") expect(aborted.has(preferred)).toBe(true);
+          }
+        }).pipe(
+          Effect.ensuring(
+            Effect.all([
+              Deferred.succeed(releasePreferred, undefined),
+              Deferred.succeed(releaseFirst, undefined),
+            ]),
+          ),
+        );
+      }),
+    ).pipe(
+      Effect.provide(NodeHttpServer.layerTest),
+      Effect.provideService(FetchHttpClient.Fetch, fetch),
+    );
+  }),
+);
 
 it.effect("never follows a peer's redirect with the pairing code", () =>
   Effect.scoped(
