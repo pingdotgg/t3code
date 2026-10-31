@@ -1,4 +1,5 @@
-import { formatPercent, formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
+import { formatPercent, formatTokens } from "@t3tools/shared/usageFormat";
+import { useUsageCurrency } from "./usageCurrency";
 import { isModelCostUnknown, type ModelTotals } from "@t3tools/shared/usageMerge";
 
 import { mergeAnsweredUsage, type EnvironmentUsageStatus } from "../../state/usage";
@@ -48,6 +49,7 @@ export function UsageModelDialog({
   readonly onSetPrice: () => void;
   readonly onClose: () => void;
 }) {
+  const currency = useUsageCurrency();
   const usage = mergeAnsweredUsage(
     environments,
     (bucket) => bucket.provider === model.provider && bucket.model === model.model,
@@ -58,9 +60,9 @@ export function UsageModelDialog({
   const hitRate = cacheHitRate(model);
   const perMillion = costPerMillionTokens(model);
   const stats = [
-    { label: "Cost", value: costUnknown ? "Unpriced" : formatUsd(model.costUsd) },
+    { label: "Cost", value: costUnknown ? "Unpriced" : currency.format(model.costUsd) },
     { label: "Tokens", value: formatTokens(model.totalTokens) },
-    perMillion === null ? null : { label: "Per 1M tokens", value: formatUsd(perMillion) },
+    perMillion === null ? null : { label: "Per 1M tokens", value: currency.format(perMillion) },
     hitRate === null ? null : { label: "Cache hit", value: formatPercent(hitRate) },
   ].filter((stat) => stat !== null);
 
@@ -116,7 +118,7 @@ export function UsageModelDialog({
                 <UsageShareBar
                   label="Cost by type"
                   segments={costTypeSegments(usage.categoryCost)}
-                  format={formatUsd}
+                  format={currency.format}
                 />
               )}
               <UsageShareBar
@@ -128,7 +130,7 @@ export function UsageModelDialog({
                 <UsageShareBar
                   label="Cost by speed"
                   segments={speedCostSegments(usage.speedCost)}
-                  format={formatUsd}
+                  format={currency.format}
                   aside={<SpeedPremium premiumUsd={usage.speedCost.premium} />}
                 />
               ) : null}
@@ -149,9 +151,10 @@ export function UsageModelDialog({
 }
 
 export function SpeedPremium({ premiumUsd }: { readonly premiumUsd: number }) {
+  const currency = useUsageCurrency();
   return (
     <span className="text-xs text-muted-foreground">
-      Premium <span className="text-foreground tabular-nums">{formatUsd(premiumUsd)}</span>
+      Premium <span className="text-foreground tabular-nums">{currency.format(premiumUsd)}</span>
     </span>
   );
 }

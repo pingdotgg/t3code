@@ -54,7 +54,6 @@ import {
   formatPercent,
   formatTokens,
   formatUsageContractMismatch,
-  formatUsd,
   makeWindow,
   usageSourceMessages,
 } from "@t3tools/shared/usageFormat";
@@ -85,6 +84,8 @@ import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart } from "./UsageProviderChart";
+import { UsageCurrencySelect } from "./UsageCurrencySelect";
+import { useUsageCurrency } from "./usageCurrency";
 import { SpeedPremium, UsageModelDialog } from "./UsageModelDialog";
 import { UsageShareBar } from "./UsageShareBar";
 import {
@@ -429,6 +430,7 @@ export function UsagePage() {
             </Toggle>
           ))}
         </ToggleGroup>
+        {showingLimits ? null : <UsageCurrencySelect />}
         <Button
           onClick={refreshWindow}
           aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
@@ -490,6 +492,7 @@ export function UsagePage() {
             ))}
           </SelectPopup>
         </Select>
+        {showingLimits ? null : <UsageCurrencySelect />}
         <Button
           onClick={refreshWindow}
           aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
@@ -633,6 +636,7 @@ function UsageOverview({
   readonly onCursorEnabled: () => void;
   readonly onSelectModel: (key: string) => void;
 }) {
+  const currency = useUsageCurrency();
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const shownHourly = shownWindow.resolution === "hour";
   const loading = usageLoading(showingKept, selectedEnvironments, refreshingUsage, hiddenProviders);
@@ -701,7 +705,9 @@ function UsageOverview({
                 figureClass(loadingPartial),
               )}
             >
-              {metric === "cost" ? formatUsd(merged.costUsd) : formatTokens(merged.totalTokens)}
+              {metric === "cost"
+                ? currency.format(merged.costUsd)
+                : formatTokens(merged.totalTokens)}
             </span>
             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
               <span>
@@ -790,7 +796,7 @@ function UsageOverview({
                     {awaitingData
                       ? "-"
                       : metric === "cost"
-                        ? formatUsd(totals?.costUsd ?? 0)
+                        ? currency.format(totals?.costUsd ?? 0)
                         : formatTokens(totals?.totalTokens ?? 0)}
                   </span>
                 </div>
@@ -803,7 +809,7 @@ function UsageOverview({
                 >
                   {metric === "cost"
                     ? `${formatPercent(share)} of cost · ${formatTokens(totals?.totalTokens ?? 0)} tokens`
-                    : `${formatPercent(share)} of tokens · ${formatUsd(totals?.costUsd ?? 0)}`}
+                    : `${formatPercent(share)} of tokens · ${currency.format(totals?.costUsd ?? 0)}`}
                 </span>
               </div>
             );
@@ -856,7 +862,7 @@ function UsageOverview({
           <Metric
             loading={loadingPartial}
             label="Cache savings"
-            value={formatUsd(merged.costQuality.cacheSavingsUsd)}
+            value={currency.format(merged.costQuality.cacheSavingsUsd)}
           />
         </div>
       </section>
@@ -876,13 +882,13 @@ function UsageOverview({
               <UsageShareBar
                 label="Cost by type"
                 segments={costTypeSegments(merged.categoryCost)}
-                format={formatUsd}
+                format={currency.format}
               />
               {merged.speedCost.fast + merged.speedCost.ultrafast > 0 ? (
                 <UsageShareBar
                   label="Cost by speed"
                   segments={speedCostSegments(merged.speedCost)}
-                  format={formatUsd}
+                  format={currency.format}
                   aside={<SpeedPremium premiumUsd={merged.speedCost.premium} />}
                 />
               ) : null}
@@ -975,7 +981,7 @@ function UsageOverview({
                         {isModelCostUnknown(model) ? (
                           <span className="text-muted-foreground">Unpriced</span>
                         ) : (
-                          formatUsd(model.costUsd)
+                          currency.format(model.costUsd)
                         )}
                       </td>
                       <td className={cn("hidden py-2.5 pl-6 sm:table-cell", rowFigures)}>
@@ -1042,7 +1048,7 @@ function UsageOverview({
                             figureClass(loadingProviders.has(provider)),
                           )}
                         >
-                          {formatUsd(period.byProvider.get(provider)?.costUsd ?? 0)}
+                          {currency.format(period.byProvider.get(provider)?.costUsd ?? 0)}
                         </td>
                       ))}
                       <td
@@ -1051,7 +1057,7 @@ function UsageOverview({
                           figureClass(loadingPartial),
                         )}
                       >
-                        {formatUsd(period.costUsd)}
+                        {currency.format(period.costUsd)}
                       </td>
                       <td
                         className={cn(

@@ -60,6 +60,24 @@ export function formatUsd(value: number): string {
   return CURRENCY.format(value);
 }
 
+const MONEY_FORMATTERS = new Map<string, Intl.NumberFormat>();
+
+/**
+ * Formats an amount that is already expressed in `currency` (an ISO 4217 code).
+ * Locale is fixed per currency so output is stable: USD stays "$1.00" and DKK
+ * reads "1,00 kr." the Danish way.
+ */
+export function formatMoney(value: number, currency: string, locale = "en-US"): string {
+  const key = `${locale}:${currency}`;
+  let formatter = MONEY_FORMATTERS.get(key);
+  if (formatter === undefined) {
+    // Each currency keeps its own minor-unit digits (JPY has none, USD has two).
+    formatter = new Intl.NumberFormat(locale, { style: "currency", currency });
+    MONEY_FORMATTERS.set(key, formatter);
+  }
+  return formatter.format(value);
+}
+
 export function formatCount(value: number): string {
   return INTEGER.format(Math.round(value));
 }

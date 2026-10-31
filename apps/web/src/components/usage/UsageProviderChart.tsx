@@ -8,10 +8,10 @@ import {
   formatHourShort,
   formatRelativeHourShort,
   formatTokens,
-  formatUsd,
 } from "@t3tools/shared/usageFormat";
 import { cn } from "~/lib/utils";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
+import { useUsageCurrency } from "./usageCurrency";
 import { observeResize } from "~/lib/observeResize";
 
 const VIEW_WIDTH = 960;
@@ -53,22 +53,24 @@ function valueFor(
   totals: DailyTotals | HourlyTotals | undefined,
   provider: UsageProviderKind,
   metric: UsageChartMetric,
+  costRate: number,
 ): number {
   const entry = totals?.byProvider.get(provider);
   if (entry === undefined) return 0;
-  return metric === "tokens" ? entry.totalTokens : entry.costUsd;
+  return metric === "tokens" ? entry.totalTokens : entry.costUsd * costRate;
 }
 
 export function buildPeriodColumns(
   periods: readonly string[],
   byPeriod: ReadonlyMap<string, DailyTotals | HourlyTotals>,
   metric: UsageChartMetric,
+  costRate = 1,
 ): readonly DayColumn[] {
   return periods.map((period) => {
     const entry = byPeriod.get(period);
     const bands = PROVIDER_ORDER.map((provider) => ({
       provider,
-      value: valueFor(entry, provider, metric),
+      value: valueFor(entry, provider, metric, costRate),
     }));
     return { bands, total: bands.reduce((sum, band) => sum + band.value, 0) };
   });
@@ -195,8 +197,9 @@ function buildChart(
   metric: UsageChartMetric,
   providers: readonly UsageProviderKind[],
   loadingProviders: ReadonlySet<UsageProviderKind>,
+  costRate: number,
 ) {
-  const columns = buildPeriodColumns(periods, byPeriod, metric);
+  const columns = buildPeriodColumns(periods, byPeriod, metric, costRate);
   const scale = chartScale(columns, loadingProviders);
   const stepX = periods.length < 2 ? 0 : VIEW_WIDTH / (periods.length - 1);
   const paths = providers.map((provider) => {
@@ -418,6 +421,7 @@ export function UsageProviderChart({
   timeZone,
   hour12,
 }: UsageProviderChartProps) {
+  const currency = useUsageCurrency();
   const periods = resolution === "hour" ? hours : days;
   const totals: readonly (DailyTotals | HourlyTotals)[] = resolution === "hour" ? hourly : daily;
   const byPeriod = new Map(
@@ -429,12 +433,14 @@ export function UsageProviderChart({
     metric,
     providers,
     loadingProviders,
+    currency.rate,
   );
 
   const toY = (value: number) => valueToY(value, scale.max);
   const seriesClassName = (loading: boolean) =>
     cn("transition-opacity", loading && "opacity-40 delay-150");
-  const format = metric === "tokens" ? formatTokens : formatUsd;
+  // Columns hold amounts already converted into the shown currency.
+  const format = metric === "tokens" ? formatTokens : currency.formatConverted;
   const formatPeriod = (period: string) =>
     resolution === "hour" ? formatHourShort(period, timeZone, hour12) : formatDayShort(period);
   const formatTooltipPeriod = (period: string) =>
