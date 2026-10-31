@@ -505,7 +505,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
   });
 
-  const waitForEstablishmentInterrupt = Effect.fnUntraced(function* () {
+  const waitForEstablishmentInterrupt = Effect.fnUntraced(function* (ignoreOffline: boolean) {
     for (;;) {
       const next = yield* Queue.take(signals);
       switch (next._tag) {
@@ -519,7 +519,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           }
           break;
         case "NetworkChanged":
-          if (next.network === "offline") {
+          if (next.network === "offline" && !ignoreOffline) {
             return false;
           }
           break;
@@ -695,7 +695,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           exit,
         })),
       ),
-      waitForEstablishmentInterrupt().pipe(
+      waitForEstablishmentInterrupt(ignoreOffline).pipe(
         Effect.map((resetRetry): EstablishmentEvent => ({
           _tag: "Interrupted",
           resetRetry,

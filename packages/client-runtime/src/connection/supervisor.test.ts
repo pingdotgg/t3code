@@ -359,6 +359,39 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
+  it.effect.each([
+    { label: "cancels connection setup", retry: false, phase: "offline", sessions: 0 },
+    { label: "does not cancel an explicit retry", retry: true, phase: "connected", sessions: 1 },
+  ])("an offline report during setup $label", ({ retry, phase, sessions }) =>
+    Effect.gen(function* () {
+      const firstAttemptStarted = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        prepare: () =>
+          Deferred.succeed(firstAttemptStarted, undefined).pipe(
+            Effect.andThen(Effect.sleep("1 second")),
+            Effect.as(PREPARED_CONNECTION),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(firstAttemptStarted);
+      if (retry) {
+        yield* supervisor.retryNow;
+      }
+      yield* harness.setNetworkStatus("offline");
+      yield* TestClock.adjust("1 second");
+      const settled = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" || state.phase === "offline",
+      );
+
+      expect(settled.phase).toBe(phase);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(sessions);
+    }),
+  );
+
   it.effect("keeps the latest failure visible throughout the next connection attempt", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
