@@ -2221,12 +2221,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `;
               if (event.type === "provider-session.attached") {
                 yield* sql`
-                INSERT OR IGNORE INTO orchestration_v2_projection_provider_session_bindings (
+                INSERT INTO orchestration_v2_projection_provider_session_bindings (
                   provider_session_id,
-                  thread_id
+                  thread_id,
+                  payload_json
                 )
-                VALUES (${event.payload.id}, ${event.threadId})
+                VALUES (${event.payload.id}, ${event.threadId}, ${payloadJson})
+                ON CONFLICT(provider_session_id, thread_id) DO UPDATE SET payload_json = excluded.payload_json
               `;
+              } else {
+                yield* sql`UPDATE orchestration_v2_projection_provider_session_bindings
+                  SET payload_json = ${payloadJson}
+                  WHERE provider_session_id = ${event.payload.id} AND thread_id = ${event.threadId}`;
               }
               break;
             }
@@ -3330,24 +3336,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ? Effect.succeed([])
             : window === undefined
               ? sql<PayloadRow>`
-            SELECT sessions.payload_json
+            SELECT COALESCE(bindings.payload_json, sessions.payload_json) AS payload_json
             FROM orchestration_v2_projection_provider_sessions AS sessions
             INNER JOIN orchestration_v2_projection_provider_session_bindings AS bindings
               ON bindings.provider_session_id = sessions.provider_session_id
             WHERE bindings.thread_id = ${threadId}
-            ORDER BY sessions.updated_at ASC, sessions.provider_session_id ASC
+            ORDER BY COALESCE(json_extract(bindings.payload_json, '$.updatedAt'), sessions.updated_at) ASC, sessions.provider_session_id ASC
           `
               : sql<PayloadRow>`
-            SELECT DISTINCT sessions.payload_json
+            SELECT DISTINCT COALESCE(bindings.payload_json, sessions.payload_json) AS payload_json
             FROM orchestration_v2_projection_provider_sessions AS sessions
             INNER JOIN orchestration_v2_projection_provider_session_bindings AS bindings
               ON bindings.provider_session_id = sessions.provider_session_id
             LEFT JOIN orchestration_v2_projection_provider_threads AS threads
               ON threads.provider_session_id = sessions.provider_session_id
             WHERE bindings.thread_id = ${threadId}
-              AND (sessions.status IN ('starting','running','waiting')
+              AND (COALESCE(json_extract(bindings.payload_json, '$.status'), sessions.status) IN ('starting','running','waiting')
                 OR threads.provider_thread_id IN (SELECT value FROM json_each(${cohortProviderThreadIds})))
-            ORDER BY sessions.updated_at ASC, sessions.provider_session_id ASC
+            ORDER BY COALESCE(json_extract(bindings.payload_json, '$.updatedAt'), sessions.updated_at) ASC, sessions.provider_session_id ASC
           `,
           fields !== undefined && !fields.includes("providerThreads")
             ? Effect.succeed([])
@@ -3814,14 +3820,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           SELECT t.payload_json, r.run_id, r.completed_at,
             item.payload_json AS failure_payload_json,
             (
-              SELECT json_extract(session.payload_json, '$.lastError')
+              SELECT json_extract(COALESCE(binding.payload_json, session.payload_json), '$.lastError')
               -- Keep bindings outermost: one provider instance can hold every session.
               FROM orchestration_v2_projection_provider_session_bindings binding
               CROSS JOIN orchestration_v2_projection_provider_sessions session
                 ON session.provider_session_id = binding.provider_session_id
               WHERE binding.thread_id = t.thread_id
                 AND session.provider_instance_id = t.provider_instance_id
-              ORDER BY session.updated_at DESC, session.provider_session_id DESC
+              ORDER BY COALESCE(json_extract(binding.payload_json, '$.updatedAt'), session.updated_at) DESC, session.provider_session_id DESC
               LIMIT 1
             ) AS last_error
           FROM orchestration_v2_projection_threads t
@@ -4026,7 +4032,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 FROM orchestration_v2_projection_provider_sessions AS sessions
                 CROSS JOIN orchestration_v2_projection_provider_session_bindings AS bindings
                   ON bindings.provider_session_id = sessions.provider_session_id
-                WHERE sessions.status NOT IN ('stopped', 'error')
+                WHERE COALESCE(json_extract(bindings.payload_json, '$.status'), sessions.status) NOT IN ('stopped', 'error')
                 UNION
                 -- A detach drops the binding but keeps the session's status.
                 SELECT sessions.thread_id
@@ -4301,11 +4307,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE thread_id = ${threadId} AND run_id = ${runId} ORDER BY ordinal ASC, turn_item_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeTurnItemPayload, threadId)));
             const providerSessions = yield* sql<PayloadRow>`
-              SELECT sessions.payload_json FROM orchestration_v2_projection_provider_sessions AS sessions
+              SELECT COALESCE(bindings.payload_json, sessions.payload_json) AS payload_json FROM orchestration_v2_projection_provider_sessions AS sessions
               INNER JOIN orchestration_v2_projection_provider_session_bindings AS bindings
                 ON bindings.provider_session_id = sessions.provider_session_id
               WHERE bindings.thread_id = ${threadId}
-              ORDER BY sessions.updated_at ASC, sessions.provider_session_id ASC
+              ORDER BY COALESCE(json_extract(bindings.payload_json, '$.updatedAt'), sessions.updated_at) ASC, sessions.provider_session_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeProviderSessionPayload, threadId)));
             const messages = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_messages
@@ -4508,16 +4514,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ORDER BY COALESCE(subagent.started_at, ''), subagent.subagent_id ASC
             `,
             sql<PayloadRow>`
-              SELECT session.payload_json
+              SELECT COALESCE(binding.payload_json, session.payload_json) AS payload_json
               FROM orchestration_v2_projection_provider_sessions AS session
+              LEFT JOIN orchestration_v2_projection_provider_session_bindings AS binding
+                ON binding.provider_session_id = session.provider_session_id AND binding.thread_id = ${threadId}
               WHERE (
-                  session.provider_session_id IN (
-                    SELECT binding.provider_session_id
-                    FROM orchestration_v2_projection_provider_session_bindings AS binding
-                    WHERE binding.thread_id = ${threadId}
-                  )
+                  binding.thread_id IS NOT NULL
                   AND (
-                    session.status NOT IN ('stopped', 'error')
+                    COALESCE(json_extract(binding.payload_json, '$.status'), session.status) NOT IN ('stopped', 'error')
                     OR session.provider_session_id IN (
                       SELECT provider_thread.provider_session_id
                       FROM orchestration_v2_projection_provider_threads AS provider_thread
@@ -4540,7 +4544,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     WHERE binding.provider_session_id = session.provider_session_id
                   )
                 )
-              ORDER BY session.updated_at ASC, session.provider_session_id ASC
+              ORDER BY COALESCE(json_extract(binding.payload_json, '$.updatedAt'), session.updated_at) ASC, session.provider_session_id ASC
             `,
             sql<PayloadRow>`
               SELECT provider_thread.payload_json
@@ -4942,11 +4946,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           Effect.gen(function* () {
             const thread = yield* getThread(threadId);
             const sessionRows = yield* sql<PayloadRow>`
-          SELECT session.payload_json FROM orchestration_v2_projection_provider_sessions AS session
+          SELECT COALESCE(binding.payload_json, session.payload_json) AS payload_json FROM orchestration_v2_projection_provider_sessions AS session
           JOIN orchestration_v2_projection_provider_session_bindings AS binding
             ON binding.provider_session_id = session.provider_session_id
           WHERE binding.thread_id = ${threadId}
-          ORDER BY session.updated_at ASC, session.provider_session_id ASC
+          ORDER BY COALESCE(json_extract(binding.payload_json, '$.updatedAt'), session.updated_at) ASC, session.provider_session_id ASC
         `;
             const threadRows =
               targetInstanceId === undefined
@@ -4997,7 +5001,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               request.responseCapability.type !== "live"
                 ? []
                 : yield* sql<PayloadRow>`
-          SELECT session.payload_json FROM orchestration_v2_projection_provider_sessions AS session
+          SELECT COALESCE(binding.payload_json, session.payload_json) AS payload_json FROM orchestration_v2_projection_provider_sessions AS session
           JOIN orchestration_v2_projection_provider_session_bindings AS binding
             ON binding.provider_session_id = session.provider_session_id
           WHERE binding.thread_id = ${threadId} AND session.provider_session_id = ${request.responseCapability.providerSessionId}`;
@@ -5191,7 +5195,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE thread_id = ${threadId} AND ordinal > ${targetOrdinal}
               AND status IN ('completed', 'interrupted', 'failed', 'cancelled')
             ORDER BY ordinal ASC`,
-                sql<PayloadRow>`SELECT session.payload_json
+                sql<PayloadRow>`SELECT COALESCE(binding.payload_json, session.payload_json) AS payload_json
             FROM orchestration_v2_projection_provider_sessions AS session
             JOIN orchestration_v2_projection_provider_session_bindings AS binding
               ON binding.provider_session_id = session.provider_session_id
@@ -5921,14 +5925,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LIMIT 1
               ) AS activity_run_started_at,
               (
-                SELECT json_extract(session.payload_json, '$.lastError')
+                SELECT json_extract(COALESCE(binding.payload_json, session.payload_json), '$.lastError')
                 -- Keep bindings outermost: one provider instance can hold every session.
                 FROM orchestration_v2_projection_provider_session_bindings binding
                 CROSS JOIN orchestration_v2_projection_provider_sessions session
                   ON session.provider_session_id = binding.provider_session_id
                 WHERE binding.thread_id = t.thread_id
                   AND session.provider_instance_id = t.provider_instance_id
-                ORDER BY session.updated_at DESC, session.provider_session_id DESC
+                ORDER BY COALESCE(json_extract(binding.payload_json, '$.updatedAt'), session.updated_at) DESC, session.provider_session_id DESC
                 LIMIT 1
               ) AS last_error,
               (

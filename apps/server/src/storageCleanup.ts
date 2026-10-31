@@ -1018,8 +1018,11 @@ const make = Effect.gen(function* () {
             return waitForStop("thread activity or shared worktree changed since check");
           // Sessions can outlive their run and can be shared across app threads.
           const sessionRows = yield* sql<{ payload_json: string }>`
-            SELECT payload_json FROM orchestration_v2_projection_provider_sessions
-            WHERE status != 'stopped'
+            SELECT DISTINCT COALESCE(binding.payload_json, session.payload_json) AS payload_json
+            FROM orchestration_v2_projection_provider_sessions AS session
+            LEFT JOIN orchestration_v2_projection_provider_session_bindings AS binding
+              ON binding.provider_session_id = session.provider_session_id
+            WHERE COALESCE(json_extract(binding.payload_json, '$.status'), session.status) != 'stopped'
           `.pipe(NodeSqliteClient.readOnly);
           const sessions = yield* Effect.forEach(sessionRows, (row) =>
             decodeCleanupSession(row.payload_json),

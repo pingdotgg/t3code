@@ -3811,3 +3811,157 @@ it.effect("keeps a failed root's still-running native children live while the ru
     );
   }),
 );
+
+it.effect.each([false, true])(
+  "settles an ordinary root tool on provider exit (superseded=%s)",
+  (superseded) =>
+    Effect.gen(function* () {
+      const key = `ordinary-tool-exit:${superseded}`;
+      const ids = backgroundScenarioIds(key);
+      const { finalEvents } = yield* captureRootRunTermination({
+        key,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        rejectTerminalWrite: superseded,
+        events: () => {
+          const node = {
+            ...makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
+            kind: "tool_call" as const,
+          };
+          const item = { ...backgroundTurnItemEvent(ids, "command_execution", "running", 1) };
+          if (item.type !== "turn_item.updated") throw new Error("expected tool");
+          return Stream.make(
+            { type: "node.updated" as const, driver, node },
+            { ...item, turnItem: { ...item.turnItem, nodeId: node.id, output: "partial output" } },
+            {
+              type: "node.updated" as const,
+              driver,
+              node: {
+                ...node,
+                id: NodeId.make("foreign-tool"),
+                providerTurnId: ProviderTurnId.make("foreign-turn"),
+              },
+            },
+            {
+              ...item,
+              turnItem: {
+                ...item.turnItem,
+                id: TurnItemId.make("foreign-item"),
+                nodeId: NodeId.make("foreign-tool"),
+                providerTurnId: ProviderTurnId.make("foreign-turn"),
+              },
+            },
+          ).pipe(
+            Stream.concat(
+              Stream.fail(
+                new ProviderAdapter.ProviderAdapterEventStreamError({
+                  driver,
+                  providerSessionId: ProviderSessionId.make(`session:${key}`),
+                  cause: "process exited",
+                }),
+              ),
+            ),
+          );
+        },
+      });
+      if (superseded) {
+        assert.deepEqual(finalEvents, []);
+        return;
+      }
+      const node = finalEvents.flatMap((event) =>
+        event.type === "node.updated" && event.payload.id === ids.subagentNodeId
+          ? [event.payload]
+          : [],
+      )[0];
+      const tool = finalEvents.flatMap((event) =>
+        event.type === "turn-item.updated" && event.payload.type === "command_execution"
+          ? [event.payload]
+          : [],
+      )[0];
+      assert.isFalse(
+        finalEvents.some(
+          (event) =>
+            (event.type === "node.updated" && event.payload.id === NodeId.make("foreign-tool")) ||
+            (event.type === "turn-item.updated" &&
+              event.payload.id === TurnItemId.make("foreign-item")),
+        ),
+      );
+      assert.equal(node?.status, "failed");
+      assert.isNotNull(node?.completedAt);
+      assert.equal(tool?.status, "failed");
+      assert.isNotNull(tool?.completedAt);
+      assert.equal(tool?.output, "partial output");
+    }),
+);
+
+it.effect.each([false, true])(
+  "settles native work after a completed root loses its provider (superseded=%s)",
+  (superseded) =>
+    Effect.gen(function* () {
+      const key = `completed-root-exit:${superseded}`;
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const ids = backgroundScenarioIds(key);
+      const finalized = yield* Ref.make(false);
+      const { finalEvents } = yield* captureRootRunTermination({
+        key,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        beforeTerminalWrite: () =>
+          Ref.getAndSet(finalized, true).pipe(
+            Effect.map((alreadyFinalized) => !superseded || !alreadyFinalized),
+          ),
+        events: () =>
+          Stream.make(
+            {
+              type: "subagent.updated" as const,
+              driver,
+              subagent: makeRunOwnedSubagentFixture({
+                ids,
+                providerInstanceId,
+                childThreadId: ids.childThreadId,
+                driver,
+                status: "running",
+              }),
+            },
+            {
+              type: "node.updated" as const,
+              driver,
+              node: makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
+            },
+            {
+              type: "turn_item.updated" as const,
+              driver,
+              turnItem: makeRunOwnedSubagentTurnItemFixture({
+                ids,
+                providerInstanceId,
+                childThreadId: ids.childThreadId,
+                driver,
+                status: "running",
+              }),
+            },
+            rootTerminalEvent(ids, "completed"),
+          ).pipe(
+            Stream.concat(
+              Stream.fail(
+                new ProviderAdapter.ProviderAdapterEventStreamError({
+                  driver,
+                  providerSessionId: ProviderSessionId.make(`session:${key}`),
+                  cause: "process exited",
+                }),
+              ),
+            ),
+          ),
+      });
+      assert.isTrue(
+        finalEvents.some(
+          (event) => event.type === "run.updated" && event.payload.status === "waiting",
+        ),
+      );
+      assert.isFalse(
+        finalEvents.some(
+          (event) => event.type === "run.updated" && event.payload.status === "failed",
+        ),
+      );
+      const cascaded = finalEvents.filter((event) => event.type === "subagent.updated");
+      assert.equal(cascaded.length, superseded ? 0 : 1);
+      if (!superseded) assert.equal(cascaded[0]?.payload.status, "failed");
+    }),
+);

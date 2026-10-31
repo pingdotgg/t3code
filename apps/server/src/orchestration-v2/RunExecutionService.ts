@@ -154,7 +154,7 @@ type SubagentTurnItem = Extract<OrchestrationV2TurnItem, { readonly type: "subag
 type OpenRunOwnedSubagentProjection = {
   readonly subagents: ReadonlyMap<NodeId, OrchestrationV2Subagent>;
   readonly turnItems: ReadonlyMap<NodeId, SubagentTurnItem>;
-  readonly childTurnItems: ReadonlyMap<TurnItemId, OrchestrationV2TurnItem>;
+  readonly ownedTurnItems: ReadonlyMap<TurnItemId, OrchestrationV2TurnItem>;
   readonly nodes: ReadonlyMap<NodeId, OrchestrationV2ExecutionNode>;
   readonly linkedChildThreadIds: ReadonlySet<ThreadId>;
 };
@@ -187,7 +187,7 @@ function emptyOpenRunOwnedSubagentProjection(): OpenRunOwnedSubagentProjection {
   return {
     subagents: new Map(),
     turnItems: new Map(),
-    childTurnItems: new Map(),
+    ownedTurnItems: new Map(),
     nodes: new Map(),
     linkedChildThreadIds: new Set(),
   };
@@ -296,8 +296,13 @@ export const cascadeTerminalizeRunOwnedSubagents = Effect.fn(
       });
     }
   }
-  for (const turnItem of input.open.childTurnItems.values()) {
-    if (!childThreadIds.has(turnItem.threadId) || isSettledTurnItemStatus(turnItem.status)) {
+  for (const turnItem of input.open.ownedTurnItems.values()) {
+    if (
+      (turnItem.threadId === input.run.threadId
+        ? turnItem.runId !== input.run.id
+        : !childThreadIds.has(turnItem.threadId)) ||
+      isSettledTurnItemStatus(turnItem.status)
+    ) {
       continue;
     }
     events.push({
@@ -693,7 +698,7 @@ export const layer: Layer.Layer<
         const hasOpenSubagentProjection =
           open.subagents.size > 0 ||
           open.turnItems.size > 0 ||
-          open.childTurnItems.size > 0 ||
+          open.ownedTurnItems.size > 0 ||
           open.nodes.size > 0;
         const cascadedSubagentEvents =
           isRunOwnedSubagentTerminalStatus(input.terminal.status) &&
@@ -1150,13 +1155,18 @@ export const layer: Layer.Layer<
             }
           }
           if (event.type === "node.updated") {
-            const belongsToRootSubagent =
-              event.node.kind === "subagent" && event.node.runId === input.run.id;
+            const belongsToRootNode =
+              event.node.runId === input.run.id &&
+              (event.node.kind === "subagent" ||
+                (event.node.id !== input.rootNode.id &&
+                  event.node.threadId === input.run.threadId &&
+                  (event.node.providerTurnId === null ||
+                    event.node.providerTurnId === routing.rootProviderTurnId)));
             const belongsToOwnedChildThread =
               event.node.threadId !== input.run.threadId &&
               routing.ownedThreadIds.has(event.node.threadId);
             if (
-              !belongsToRootSubagent &&
+              !belongsToRootNode &&
               !(
                 belongsToOwnedChildThread &&
                 (event.node.runId === null || event.node.runId === input.run.id)
@@ -1198,18 +1208,22 @@ export const layer: Layer.Layer<
               });
             }
             if (
-              belongsToOwnedChildThread &&
-              (event.turnItem.runId === null || belongsToRootRun) &&
+              ((belongsToOwnedChildThread && (event.turnItem.runId === null || belongsToRootRun)) ||
+                (belongsToRootRun &&
+                  event.turnItem.threadId === input.run.threadId &&
+                  event.turnItem.type !== "subagent" &&
+                  (event.turnItem.providerTurnId === null ||
+                    event.turnItem.providerTurnId === routing.rootProviderTurnId))) &&
               deliverable
             ) {
               yield* Ref.update(openRunOwnedSubagents, (current) => {
-                const childTurnItems = new Map(current.childTurnItems);
+                const ownedTurnItems = new Map(current.ownedTurnItems);
                 if (isSettledTurnItemStatus(event.turnItem.status)) {
-                  childTurnItems.delete(event.turnItem.id);
+                  ownedTurnItems.delete(event.turnItem.id);
                 } else {
-                  childTurnItems.set(event.turnItem.id, event.turnItem);
+                  ownedTurnItems.set(event.turnItem.id, event.turnItem);
                 }
-                return { ...current, childTurnItems };
+                return { ...current, ownedTurnItems };
               });
             }
             if (belongsToRootRun && event.turnItem.type === "subagent") {
@@ -1311,15 +1325,15 @@ export const layer: Layer.Layer<
                   for (const subagent of current.subagents.values()) {
                     if (subagent.threadId === moved.childThreadId) subagentIds.add(subagent.id);
                   }
-                  const childTurnItems = new Map(
-                    [...current.childTurnItems].filter(
+                  const ownedTurnItems = new Map(
+                    [...current.ownedTurnItems].filter(
                       ([, item]) => item.threadId !== moved.childThreadId,
                     ),
                   );
                   const turnItems = new Map(current.turnItems);
                   turnItems.delete(moved.id);
                   const detachedItems = new Set(
-                    [...current.childTurnItems.values(), ...current.turnItems.values()]
+                    [...current.ownedTurnItems.values(), ...current.turnItems.values()]
                       .filter(
                         (item) => item.threadId === moved.childThreadId || item.nodeId === moved.id,
                       )
@@ -1332,7 +1346,7 @@ export const layer: Layer.Layer<
                         [...current.subagents].filter(([id]) => !subagentIds.has(id)),
                       ),
                       turnItems,
-                      childTurnItems,
+                      ownedTurnItems,
                       nodes: new Map(
                         [...current.nodes].filter(
                           ([id, node]) => id !== moved.id && node.threadId !== moved.childThreadId,
@@ -1518,13 +1532,13 @@ export const layer: Layer.Layer<
                   runId: input.run.id,
                   cause,
                 });
-                if (yield* Ref.get(rootRunFinalized)) return;
+                const finalized = yield* Ref.get(rootRunFinalized);
                 const providerThread = yield* Ref.get(latestProviderThread);
                 const routing = yield* Ref.get(eventRouting);
                 const rootProviderTurn = yield* Ref.get(latestRootProviderTurn);
                 // Stop background work too; the failed consumer cannot persist terminal events.
                 const abandonedProviderTurn =
-                  routing.rootProviderTurnId !== null && !routing.rootTurnEnded
+                  !finalized && routing.rootProviderTurnId !== null && !routing.rootTurnEnded
                     ? yield* input.session
                         .interruptTurn({
                           providerThread,
@@ -1561,7 +1575,7 @@ export const layer: Layer.Layer<
                 const openSubagents = yield* Ref.get(openRunOwnedSubagents);
                 const squashed = Cause.squash(cause);
                 let nextRetryWarningAt = completedAt;
-                yield* writeFinalRunEvents({
+                const failRun = writeFinalRunEvents({
                   run: input.run,
                   rootNode: input.rootNode,
                   checkpointScope: input.checkpointScope,
@@ -1586,7 +1600,34 @@ export const layer: Layer.Layer<
                   ),
                   failureItemPersisted: false,
                   refreshAfterTurn,
-                }).pipe(
+                });
+                const failRemainingWork = Effect.gen(function* () {
+                  const events = yield* cascadeTerminalizeRunOwnedSubagents({
+                    run: input.run,
+                    open: openSubagents,
+                    status: "failed",
+                    completedAt,
+                    allocateEventId: () =>
+                      idAllocator.allocate.event({ threadId: input.run.threadId }),
+                  });
+                  if (events.length === 0) return;
+                  const terminal = yield* Ref.get(terminalEvent);
+                  const statuses =
+                    terminal?.status === "completed"
+                      ? (["waiting", "completed"] as const)
+                      : [terminal?.status ?? "failed"];
+                  for (const expectedStatus of statuses) {
+                    const result = yield* eventSink.writeIfRunCurrent({
+                      threadId: input.run.threadId,
+                      runId: input.run.id,
+                      activeAttemptId: input.attempt.id,
+                      expectedStatus,
+                      events,
+                    });
+                    if (result.committed) return;
+                  }
+                });
+                yield* (finalized ? failRemainingWork : failRun).pipe(
                   // Storage failures can be defects; retry both failure channels.
                   Effect.catchCause((writeCause) =>
                     Effect.gen(function* () {

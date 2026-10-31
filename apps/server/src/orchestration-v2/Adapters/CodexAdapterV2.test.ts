@@ -4168,7 +4168,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     );
   });
 
-  it.effect("Stop ends a background command no Codex process tracks any more", () =>
+  it.effect("settles a background command automatically after the Codex process exits", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -4244,27 +4244,19 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           yield* worker.drain();
           yield* Fiber.join(settled);
           yield* worker.drain();
-          const before = yield* orchestrator.getThreadShell(threadId);
-          assert.deepEqual(
-            before?.pendingBackgroundTasks?.map((task) => task.kind),
-            ["command"],
-            "the thread still shows the command the gone process never finished",
-          );
-          const run = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
-          yield* orchestrator.dispatch({
-            type: "run.interrupt",
-            commandId: CommandId.make("stop-background-untracked"),
-            threadId,
-            runId: run.id,
-            holdQueue: true,
-          });
-          yield* worker.drain();
           const projection = yield* orchestrator.getThreadProjection(threadId);
           assert.deepEqual(
             projection.turnItems.flatMap((item) =>
               item.type === "command_execution" ? [item.status] : [],
             ),
-            ["interrupted"],
+            ["failed"],
+          );
+          const command = projection.turnItems.find((item) => item.type === "command_execution");
+          assert.isDefined(command);
+          assert.isNotNull(command?.completedAt);
+          assert.notInclude(
+            projection.turnItems.map((item) => item.type),
+            "run_interrupt_request",
           );
           assert.equal(projection.runs.at(-1)?.status, "completed");
           assert.deepEqual(

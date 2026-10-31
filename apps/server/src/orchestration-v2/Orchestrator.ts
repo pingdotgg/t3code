@@ -10438,7 +10438,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             .map((node) => [node.id, node]),
         ),
         turnItems: new Map(),
-        childTurnItems: new Map(
+        ownedTurnItems: new Map(
           input.projection.turnItems
             .filter(
               (item) =>
