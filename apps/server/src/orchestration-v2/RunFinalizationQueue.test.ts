@@ -1,12 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import {
-  CheckpointScopeId,
-  CommandId,
-  GitCommandError,
-  RunId,
-  SkillVariantPersistenceError,
-  ThreadId,
-} from "@t3tools/contracts";
+import { CheckpointScopeId, CommandId, GitCommandError, RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -87,9 +80,9 @@ it.effect.each([
             Effect.gen(function* () {
               calls.push("skills");
               if (skillFinalizationFails)
-                return yield* new SkillVariantPersistenceError({
+                return yield* new SkillUsage.SkillUsagePersistenceError({
                   operation: "finalize skill evidence",
-                  message: "skill evidence unavailable",
+                  cause: new Error("skill evidence unavailable"),
                 });
               return true;
             }),
@@ -159,7 +152,7 @@ it.effect.each([
     );
     if (captureFails) assert.include(captured.lastError ?? "", "checkpoint storage unavailable");
     else if (skillFinalizationFails)
-      assert.include(captured.lastError ?? "", "skill evidence unavailable");
+      assert.include(captured.lastError ?? "", "Could not finalize skill evidence.");
     else assert.equal(captured.lastError, null);
   }).pipe(Effect.provide(Layer.fresh(worker)));
 });

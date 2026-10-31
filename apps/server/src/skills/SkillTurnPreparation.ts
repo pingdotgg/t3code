@@ -71,11 +71,11 @@ export class SkillTurnPreparationError extends Schema.TaggedError<SkillTurnPrepa
   {
     runId: Schema.String,
     stage: SkillTurnPreparationStage,
-    detail: Schema.String,
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Skill evaluation preparation failed during ${this.stage}: ${this.detail}`;
+    return `Skill evaluation preparation failed during ${this.stage}.`;
   }
 }
 
@@ -136,7 +136,7 @@ export const layer = Layer.effect(
                 new SkillTurnPreparationError({
                   runId: input.run.id,
                   stage,
-                  detail: Cause.pretty(cause),
+                  cause,
                 }),
               ),
         ),
@@ -180,7 +180,9 @@ export const layer = Layer.effect(
         return yield* new SkillTurnPreparationError({
           runId: input.run.id,
           stage: "provider-catalog",
-          detail: `Provider instance '${input.modelSelection.instanceId}' was not found in the loaded catalog.`,
+          cause: new Error(
+            `Provider instance '${input.modelSelection.instanceId}' was not found in the loaded catalog.`,
+          ),
         });
       }
       const exactWorkspaceSkills = provider?.workspaceSnapshots?.find(
@@ -289,7 +291,7 @@ const layerWithoutProviderCatalog = Layer.effect(
                 new SkillTurnPreparationError({
                   runId: input.run.id,
                   stage: "trial-identification",
-                  detail: Cause.pretty(cause),
+                  cause,
                 }),
               ),
         ),
@@ -298,7 +300,7 @@ const layerWithoutProviderCatalog = Layer.effect(
       return yield* new SkillTurnPreparationError({
         runId: input.run.id,
         stage: "provider-catalog",
-        detail: "The provider skill catalog is unavailable.",
+        cause: new Error("The provider skill catalog is unavailable."),
       });
     });
     return { prepare };

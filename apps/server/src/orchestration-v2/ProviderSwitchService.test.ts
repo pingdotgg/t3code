@@ -115,7 +115,12 @@ function layerTest(
     activatedOnProviderThread: () =>
       skillContext.activatedFailure === undefined
         ? Effect.succeed(skillContext.activated ?? [])
-        : Effect.fail(skillContext.activatedFailure),
+        : Effect.fail(
+            new SkillUsage.SkillUsagePersistenceError({
+              operation: "load activated skills",
+              cause: skillContext.activatedFailure,
+            }),
+          ),
   });
   const layerSkillVariants = Layer.mock(SkillVariants.SkillVariantService)({
     resolvePolicy: () =>

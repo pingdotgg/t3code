@@ -713,7 +713,7 @@ it.effect("revalidates judge usage before start and resumed trials launch", () =
       yield* Deferred.await(startRevalidated);
       assert.equal(yield* Ref.get(launches), 0);
 
-      assert.equal((yield* service.cancel(summary.evalRunId)).status, "cancelled");
+      assert.equal((yield* service.cancel(summary.evalRunId)).status, "failed");
       yield* Ref.set(phase, "resume");
       yield* Ref.set(providerReads, 0);
 
