@@ -109,7 +109,7 @@ export function detailFromCause(cause: unknown): Option.Option<string> {
   return Option.none();
 }
 
-export const unavailableInstallHint = Effect.fnUntraced(function* (input: {
+export const unavailableInstallHint = Effect.fn("unavailableInstallHint")(function* (input: {
   readonly executable: string;
   readonly installHint: string;
   readonly cause: unknown;
