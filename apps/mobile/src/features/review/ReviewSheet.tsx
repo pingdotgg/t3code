@@ -477,6 +477,9 @@ export function ReviewSheet(props: ReviewSheetProps) {
     cwd: selectedThreadCwd,
     selectedSection,
     draftMessage,
+    expandedFileIds: selectedSection?.id
+      ? reviewCache.expandedFileIdsBySection[selectedSection.id]
+      : undefined,
     draftContext,
   });
   // Expo may return null before registration or in older binaries; use the fallback.
@@ -582,7 +585,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const handleNativeToggleFile = (event: NativeSyntheticEvent<{ readonly fileId?: string }>) => {
     const { fileId } = event.nativeEvent;
     if (fileId) {
-      loadVisibleFile(fileId, true);
+      if (collapsedFileIds.includes(fileId)) loadVisibleFile(fileId, true);
       toggleExpandedFile(fileId);
     }
   };

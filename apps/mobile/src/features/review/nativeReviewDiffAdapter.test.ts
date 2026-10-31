@@ -11,7 +11,11 @@ import {
   getCachedNativeReviewDiffData,
 } from "./nativeReviewDiffAdapter";
 import type { ReviewInlineComment } from "./reviewCommentSelection";
-import { buildReviewParsedDiff, type ReviewParsedDiff } from "./reviewModel";
+import {
+  buildReviewParsedDiff,
+  type ReviewParsedDiff,
+  type ReviewRenderableFile,
+} from "./reviewModel";
 
 vi.mock("diff", { spy: true });
 
@@ -261,6 +265,45 @@ describe("getCachedNativeReviewDiffData", () => {
     for (const diff of [...variants, variants[0]!]) {
       const input = { parsedDiff: diff, comments: [makeComment("Coordinates")] };
       expect(getCachedNativeReviewDiffData(input)).toEqual(buildNativeReviewDiffData(input));
+    }
+
+    const originalDiff = variants[0]!;
+    if (originalDiff.kind !== "files") throw new Error("Expected parsed files");
+    const comparisons = vi.mocked(diffWordsWithSpace).mockClear();
+    const repeated = buildNativeReviewDiffData({
+      ...originalDiff,
+      files: originalDiff.files.map((file) => ({ ...file })),
+    });
+    expect(comparisons).not.toHaveBeenCalled();
+    expect(repeated).toEqual(buildNativeReviewDiffData(originalDiff));
+
+    const metadataChanges: ReadonlyArray<Partial<ReviewRenderableFile>> = [
+      { id: "another-file" },
+      { path: "another.ts" },
+      { previousPath: "before.ts" },
+      { changeType: "rename-changed" },
+      { additions: 10 },
+      { deletions: 20 },
+      { notice: "Current preview notice" },
+      { noEOFCRAdditions: true },
+      { noEOFCRDeletions: true },
+      {
+        rows: originalDiff.files[0]!.rows.map((row) =>
+          row.kind === "line" ? { ...row, content: `${row.content} changed` } : row,
+        ),
+      },
+    ];
+    for (const metadata of metadataChanges) {
+      const files = originalDiff.files.map((file, index) =>
+        index === 0 ? { ...file, ...metadata } : file,
+      );
+      const current = { ...originalDiff, files };
+      expect(buildNativeReviewDiffData(current)).toEqual(
+        buildNativeReviewDiffData({
+          ...current,
+          files: files.map((file) => ({ ...file, rows: [...file.rows] })),
+        }),
+      );
     }
   });
 });

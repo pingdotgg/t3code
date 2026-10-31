@@ -35,12 +35,16 @@ function cancelIdle(handle: number): void {
   clearTimeout(handle);
 }
 
-function prewarmReviewDiffSection(input: {
+export function prewarmReviewDiffSection(input: {
   readonly threadKey: string;
   readonly section: ReviewSectionItem;
 }): void {
   const { section, threadKey } = input;
-  if (section.diff === null || section.diff.length > MAX_CACHED_REVIEW_SOURCE_CHARACTERS) {
+  if (
+    section.diff === null ||
+    section.diff.length > MAX_CACHED_REVIEW_SOURCE_CHARACTERS ||
+    (section.source?.truncated && section.source.files)
+  ) {
     return;
   }
 
@@ -52,7 +56,7 @@ function prewarmReviewDiffSection(input: {
   getCachedNativeReviewDiffData({ parsedDiff, comments: [] });
 }
 
-function getReviewDiffPrewarmSections(input: {
+export function getReviewDiffPrewarmSections(input: {
   readonly threadKey: string;
   readonly sections: ReadonlyArray<ReviewSectionItem>;
   readonly selectedSectionId: string | null;
@@ -80,7 +84,11 @@ function getReviewDiffPrewarmSections(input: {
         return pendingSections;
       }
       const section = sections[index];
-      if (!section || section.diff === null) {
+      if (
+        !section ||
+        section.diff === null ||
+        (section.source?.truncated && section.source.files)
+      ) {
         continue;
       }
       const sectionCharacterCount = getReviewParsedDiffSourceCharacterCount({

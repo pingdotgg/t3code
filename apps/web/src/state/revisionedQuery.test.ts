@@ -32,6 +32,22 @@ function setup() {
 }
 
 describe("revisionedQuery", () => {
+  it("keeps answered content through hidden mutations and revalidates on show", async () => {
+    const { registry, query, mount, fetches } = setup();
+    (await mount("mutation-1"))();
+    const answered = registry.get(query);
+
+    for (const _mutation of ["mutation-2", "mutation-3", "mutation-4"]) {
+      (await mount(undefined))();
+      expect(registry.get(query)).toBe(answered);
+    }
+    expect(fetches()).toBe(1);
+
+    (await mount("mutation-4"))();
+    expect(fetches()).toBe(2);
+    registry.dispose();
+  });
+
   it("refetches once per new revision, not on the first read or a remount", async () => {
     const { mount, fetches } = setup();
 

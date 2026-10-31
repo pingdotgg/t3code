@@ -149,7 +149,10 @@ interface PreparedNativeReviewDiffData extends Omit<NativeReviewDiffData, "rows"
 }
 
 const nativeReviewDiffDataCache = new WeakMap<ReviewParsedDiff, CachedNativeReviewDiffData>();
-const nativeReviewFileRowsCache = new WeakMap<ReviewRenderableFile, PreparedNativeReviewFileRows>();
+const nativeReviewFileRowsCache = new WeakMap<
+  ReviewRenderableFile["rows"],
+  { file: ReviewRenderableFile; prepared: PreparedNativeReviewFileRows }
+>();
 
 function buildReviewCommentsCacheKey(comments: ReadonlyArray<ReviewInlineComment>): string {
   if (comments.length === 0) {
@@ -374,8 +377,24 @@ function mapLineRow(
 }
 
 function prepareFileRows(file: ReviewRenderableFile): PreparedNativeReviewFileRows {
-  const cached = nativeReviewFileRowsCache.get(file);
-  if (cached) return cached;
+  const cached = nativeReviewFileRowsCache.get(file.rows);
+  if (cached) {
+    const previous = cached.file;
+    if (
+      previous === file ||
+      (previous.id === file.id &&
+        previous.path === file.path &&
+        previous.previousPath === file.previousPath &&
+        previous.changeType === file.changeType &&
+        previous.additions === file.additions &&
+        previous.deletions === file.deletions &&
+        previous.notice === file.notice &&
+        previous.noEOFCRAdditions === file.noEOFCRAdditions &&
+        previous.noEOFCRDeletions === file.noEOFCRDeletions)
+    ) {
+      return cached.prepared;
+    }
+  }
   const commentTargetsByRowId = new Map<string, NativeReviewDiffCommentTarget>();
   const rowIdByCommentLineId = new Map<string, string>();
   const rows: NativeReviewDiffRow[] = [
@@ -442,7 +461,7 @@ function prepareFileRows(file: ReviewRenderableFile): PreparedNativeReviewFileRo
     rowIdByCommentLineId,
     commentedRows: null,
   };
-  nativeReviewFileRowsCache.set(file, prepared);
+  nativeReviewFileRowsCache.set(file.rows, { file, prepared });
   return prepared;
 }
 

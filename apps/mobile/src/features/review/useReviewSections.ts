@@ -95,7 +95,7 @@ export function useReviewSections(input: {
 
   const selectedCheckpoint =
     selectedSectionId === null ? undefined : checkpointBySectionId.get(selectedSectionId);
-  const activeCheckpoint = selectedCheckpoint ?? readyCheckpoints[0] ?? null;
+  const activeCheckpoint = selectedCheckpoint ?? null;
   const activeSectionId = activeCheckpoint
     ? getReviewSectionIdForCheckpoint(activeCheckpoint)
     : null;

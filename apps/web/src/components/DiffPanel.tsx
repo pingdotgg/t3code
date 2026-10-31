@@ -45,7 +45,6 @@ import { useRenderedAppearance } from "../hooks/useTheme";
 import { useStableCallback } from "../hooks/useStableCallback";
 import {
   buildFileDiffContentVersion,
-  buildFileDiffIdentityKey,
   getDiffLineStat,
   getRenderablePatch,
   resolveDiffThemeName,
@@ -102,7 +101,6 @@ import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices
 import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
 
 import { useReviewFilePatches } from "./diffs/useReviewFilePatches";
-import { DiffFileLoadingBoundary } from "./diffs/DiffFileLoadingBoundary";
 import { DiffFileStatus } from "./diffs/DiffFileStatus";
 import { useThreadRouteRef } from "../hooks/useThreadRouteTarget";
 import { projectCommitUrl } from "@t3tools/client-runtime/change-request-links";
@@ -113,7 +111,7 @@ const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
 const DIFF_FILE_TREE_STORAGE_KEY = "t3code.diffFileTreeOpen";
 const fileEntryCache = new WeakMap<
   FileDiffMetadata,
-  { fileDiff: FileDiffMetadata; fileKey: string; fileVersion: number }
+  { fileDiff: FileDiffMetadata; fileVersion: number }
 >();
 
 function getCachedFileEntry(fileDiff: FileDiffMetadata) {
@@ -121,7 +119,6 @@ function getCachedFileEntry(fileDiff: FileDiffMetadata) {
   if (cached) return cached;
   const entry = {
     fileDiff,
-    fileKey: buildFileDiffIdentityKey(fileDiff),
     fileVersion: buildFileDiffContentVersion(fileDiff),
   };
   fileEntryCache.set(fileDiff, entry);
@@ -134,13 +131,13 @@ function DiffFileCollapseToggle({
   filePath,
   fileKey,
   collapsed,
-  unavailable,
+  loading,
   onToggle,
 }: {
   filePath: string;
   fileKey: string;
   collapsed: boolean;
-  unavailable: boolean;
+  loading: boolean;
   onToggle: (fileKey: string) => void;
 }) {
   return (
@@ -153,7 +150,7 @@ function DiffFileCollapseToggle({
             className="-ms-0.5"
             aria-label={collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`}
             aria-expanded={!collapsed}
-            disabled={unavailable}
+            aria-busy={loading}
             onClick={(event) => {
               event.stopPropagation();
               onToggle(fileKey);
@@ -365,8 +362,7 @@ export default function DiffPanel({
       : undefined;
   const canRefreshGitDiff =
     isGitRepo && isGitSelection && activeThread != null && activeCwd != null;
-  // Read under the workspace mutation id, so each mutation refetches the diff; the panel stays
-  // mounted while hidden, so a mutation made then is already reflected when it shows.
+  // Hidden panels keep their answered content; missed mutations revalidate when shown.
   const branchDiffPreview = useEnvironmentQuery(
     branchDiffPreviewInput && activeThread
       ? revisionedQuery(
@@ -374,7 +370,7 @@ export default function DiffPanel({
             environmentId: activeThread.environmentId,
             input: branchDiffPreviewInput,
           }),
-          canRefreshGitDiff ? workspaceMutationId : undefined,
+          visible && canRefreshGitDiff ? workspaceMutationId : undefined,
         )
       : null,
   );
@@ -560,16 +556,17 @@ export default function DiffPanel({
     ...(baseRefQuery.trim().length === 0 ? [AUTOMATIC_BASE_REF] : []),
     ...matchingBaseRefChoices.map(valueForBaseRefChoice),
   ];
+  const [searchedFileScope, setSearchedFileScope] = useState<string | null>(null);
+  const storedCollapsedDiffFileKeys = useDiffPanelSessionStore((state) =>
+    collapseScopeKey ? state.collapsedFileKeysByScopeKey[collapseScopeKey] : undefined,
+  );
   const {
     scope: filePatchScope,
     isPending: areFilePatchesPending,
     fileStates,
     retry,
-    requestFile,
-    readyFilePaths,
     renderableFiles,
-    settledFileCount,
-    loadNextFiles,
+    fileKeys: diffFileKeys,
   } = useReviewFilePatches({
     environmentId: activeThread?.environmentId,
     cwd: branchDiffPreview.data?.cwd,
@@ -580,14 +577,15 @@ export default function DiffPanel({
     theme: resolvedTheme,
     previewInput: branchDiffPreviewInput,
     preview: renderablePatch,
+    collapsedFileKeys: storedCollapsedDiffFileKeys,
+    defaultCollapsed: settings.diffFilesCollapsed,
+    searchedScope: searchedFileScope,
   });
   const refreshBranchDiffPreview = refreshPreviewQuery;
   const diffRefreshKey = `diff:${activeThreadRefreshKey ?? ""}`;
 
-  // The panel stays mounted while hidden, and edits made outside T3 Code bump no mutation id, so
-  // showing it revalidates the diff; that also stands in for focus events missed while hidden.
-  // A git diff is too costly to repeat on a timer nobody asked for. A diff read within the floor,
-  // such as a mutation's refetch while hidden, already counts as that revalidation.
+  // External edits bump no mutation id, so showing the panel revalidates an old diff.
+  // Recent mutation/user refreshes count as revalidation; no periodic Git reads are needed.
   useLiveRefresh(
     branchDiffPreview.data !== null && !branchDiffPreview.isPending
       ? () => {
@@ -604,8 +602,10 @@ export default function DiffPanel({
   );
 
   const isRefreshingDiff = branchDiffPreview.isPending || areFilePatchesPending;
-  const renderableFileEntries = renderableFiles.map(getCachedFileEntry);
-  const diffFileKeys = renderableFileEntries.map((file) => file.fileKey);
+  const renderableFileEntries = renderableFiles.map((file, index) => ({
+    ...getCachedFileEntry(file),
+    fileKey: diffFileKeys[index]!,
+  }));
   const testFileCount = renderableFiles.filter((file) =>
     isTestChangedFile(resolveFileDiffPath(file)),
   ).length;
@@ -619,9 +619,6 @@ export default function DiffPanel({
   const defaultCollapsedDiffFileKeys = settings.diffFilesCollapsed
     ? new Set(diffFileKeys)
     : EMPTY_COLLAPSED_DIFF_FILE_KEYS;
-  const storedCollapsedDiffFileKeys = useDiffPanelSessionStore((state) =>
-    collapseScopeKey ? state.collapsedFileKeysByScopeKey[collapseScopeKey] : undefined,
-  );
   const collapsedDiffFileKeys = storedCollapsedDiffFileKeys ?? defaultCollapsedDiffFileKeys;
   const updateCollapsedDiffFiles = (
     update: (current: ReadonlySet<string>) => ReadonlySet<string>,
@@ -631,26 +628,14 @@ export default function DiffPanel({
       .getState()
       .updateCollapsedFileKeys(collapseScopeKey, defaultCollapsedDiffFileKeys, update);
   };
-  const renderLoadingBoundary = () =>
-    settledFileCount < renderableFiles.length ? (
-      <DiffFileLoadingBoundary
-        load={loadNextFiles}
-        count={renderableFiles.length - settledFileCount}
-      />
-    ) : null;
-  const codeViewFiles = shownFileEntries
-    .filter(
-      ({ fileDiff }) =>
-        !lazySource || !readyFilePaths || readyFilePaths.has(resolveFileDiffPath(fileDiff)),
-    )
-    .map(({ fileDiff, fileKey, fileVersion }) => ({
-      fileDiff,
-      filePath: resolveFileDiffPath(fileDiff),
-      fileKey,
-      fileVersion,
-      collapsed:
-        collapsedDiffFileKeys.has(fileKey) || fileDiff.cacheKey?.endsWith(":pending") === true,
-    }));
+  const codeViewFiles = shownFileEntries.map(({ fileDiff, fileKey, fileVersion }) => ({
+    fileDiff,
+    filePath: resolveFileDiffPath(fileDiff),
+    fileKey,
+    fileVersion,
+    collapsed:
+      collapsedDiffFileKeys.has(fileKey) || fileDiff.cacheKey?.endsWith(":pending") === true,
+  }));
   const pendingFiles = renderableFiles.filter(
     (file) => file.cacheKey?.endsWith(":pending") && isFileShown(file),
   );
@@ -669,9 +654,6 @@ export default function DiffPanel({
       next.delete(file.fileKey);
       return next;
     });
-    if (lazySource && index >= settledFileCount) {
-      requestFile(index);
-    }
     codeViewReveal.request(file.fileKey);
     return true;
   };
@@ -1334,6 +1316,17 @@ export default function DiffPanel({
               <div className="flex min-h-0 flex-1 overflow-hidden">
                 <div
                   className="min-h-0 min-w-0 flex-1"
+                  // The viewer opens find on this shortcut but reports no open event.
+                  onKeyDownCapture={(event) => {
+                    if (
+                      (event.metaKey || event.ctrlKey) &&
+                      !event.altKey &&
+                      !event.shiftKey &&
+                      (event.key.toLowerCase() === "f" || event.code === "KeyF")
+                    ) {
+                      setSearchedFileScope(filePatchScope);
+                    }
+                  }}
                   onClickCapture={(event) => {
                     const composedPath = event.nativeEvent.composedPath?.() ?? [];
                     for (const node of composedPath) {
@@ -1390,7 +1383,6 @@ export default function DiffPanel({
                     className="h-full min-h-0 overflow-auto"
                     files={codeViewFiles}
                     pendingFiles={pendingFiles}
-                    renderCodeViewFooter={renderLoadingBoundary}
                     sectionId={reviewSectionId}
                     sectionTitle={reviewSectionTitle}
                     composerDraftTarget={composerDraftTarget}
@@ -1424,13 +1416,16 @@ export default function DiffPanel({
                       : {})}
                     onRevealSearchMatch={unfoldDiffFile}
                     renderHeaderPrefix={(fileDiff, fileKey) => {
-                      const unavailable = fileDiff.cacheKey?.endsWith(":pending") === true;
                       return (
                         <DiffFileCollapseToggle
                           filePath={resolveFileDiffPath(fileDiff)}
                           fileKey={fileKey}
-                          collapsed={unavailable || collapsedDiffFileKeys.has(fileKey)}
-                          unavailable={unavailable}
+                          collapsed={collapsedDiffFileKeys.has(fileKey)}
+                          loading={
+                            !collapsedDiffFileKeys.has(fileKey) &&
+                            fileDiff.cacheKey?.endsWith(":pending") === true &&
+                            !fileStates.get(resolveFileDiffPath(fileDiff))?.error
+                          }
                           onToggle={toggleDiffFileCollapsed}
                         />
                       );
