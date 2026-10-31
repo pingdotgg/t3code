@@ -4,6 +4,7 @@ import { useId } from "react";
 
 import { APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
+import { useDevArtworkPreview } from "../devArtworkPreview";
 import { primaryServerConfigAtom } from "../state/server";
 
 export type SidebarStageBackdropVariant = "nightly" | "dev";
@@ -36,11 +37,15 @@ export function resolveEnvironmentIdentificationPillLabel(
 export function useEnvironmentStageLabel(): string {
   const primaryServerVersion =
     useAtomValue(primaryServerConfigAtom)?.environment.serverVersion ?? null;
+  const devArtworkPreview = useDevArtworkPreview();
 
-  return resolveServerBackedAppStageLabel({
-    primaryServerVersion,
-    fallbackStageLabel: APP_STAGE_LABEL,
-  });
+  return (
+    devArtworkPreview ??
+    resolveServerBackedAppStageLabel({
+      primaryServerVersion,
+      fallbackStageLabel: APP_STAGE_LABEL,
+    })
+  );
 }
 
 export function useSidebarStageBackdropVariant(
@@ -49,11 +54,59 @@ export function useSidebarStageBackdropVariant(
   return resolveSidebarStageBackdropVariant(useEnvironmentStageLabel(), mode);
 }
 
+/**
+ * Channel art across the whole window, behind the sidebar and the inset pane
+ * (pen Duxhn). Mount it first inside the sidebar wrapper so the pane and the
+ * sidebar paint over it. The paint lives in index.css, so the browser fetches
+ * only the image for the mounted channel and theme. Static: no motion or blur.
+ */
+export function ChromeChannelArt({ variant }: { variant: SidebarStageBackdropVariant }) {
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none fixed inset-0 z-0 hidden select-none overflow-hidden md:block"
+      data-chrome-art-layer={variant}
+    >
+      {variant === "dev" ? <DevDraftingSheetMarks /> : null}
+    </div>
+  );
+}
+
+// Layout-token calculations keep drafting-sheet marks aligned during sidebar resizing and collapse.
+function DevDraftingSheetMarks() {
+  return (
+    <>
+      <div data-bp="h" data-bp-at="pane-top" />
+      <div data-bp="h" data-bp-at="header-bottom" />
+      <div data-bp="h" data-bp-at="pane-bottom" />
+      <div data-bp="h center" data-bp-at="chrome-row" />
+      <div data-bp="v" data-bp-at="pane-left" />
+      <div data-bp="v" data-bp-at="pane-right" />
+      <div data-bp="v tick" data-bp-at="titlebar-control-0" />
+      <div data-bp="v tick" data-bp-at="titlebar-control-1" />
+      <div data-bp="v tick" data-bp-at="titlebar-control-2" />
+      <div data-bp="ring dashed" data-bp-at="titlebar-ring" />
+      <div data-bp-sidebar="">
+        <div data-bp="v" data-bp-at="content-left" />
+        <div data-bp="v" data-bp-at="content-right" />
+        <div data-bp="v center" data-bp-at="icon-column" />
+        <div data-bp="h center" data-bp-at="footer-row" />
+        <div data-bp="ring" data-bp-at="footer-ring-1" />
+        <div data-bp="ring dashed" data-bp-at="footer-ring-2" />
+      </div>
+    </>
+  );
+}
+
+/**
+ * Stage-channel header art for the mobile sidebar sheet, where the window art
+ * does not show; palettes mirror the per-channel app icons in `assets/`.
+ */
 export function SidebarStageBackdrop({ variant }: { variant: SidebarStageBackdropVariant }) {
   return (
     <div
       aria-hidden
-      className="sidebar-stage-backdrop pointer-events-none absolute inset-x-0 top-0 z-0 h-20 select-none overflow-hidden"
+      className="sidebar-stage-backdrop pointer-events-none absolute inset-x-0 top-0 z-0 h-20 select-none overflow-hidden md:hidden"
     >
       <StageBackdropArt variant={variant} />
     </div>
@@ -111,7 +164,7 @@ function NightlySkyArt({ compact = false }: { compact?: boolean }) {
   return (
     <svg
       data-stage-art="nightly"
-      className="h-full w-full"
+      className="h-full w-full brightness-80 grayscale"
       fill="none"
       preserveAspectRatio="xMinYMin slice"
       viewBox={compact ? "96 0 8192 96" : STAGE_BACKDROP_VIEW_BOX}

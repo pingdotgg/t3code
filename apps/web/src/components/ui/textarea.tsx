@@ -5,7 +5,7 @@ import type * as React from "react";
 import { cn } from "~/lib/utils";
 
 type TextareaProps = React.ComponentProps<"textarea"> & {
-  size?: "sm" | "default" | "lg" | number;
+  size?: "sm" | "default" | number;
   unstyled?: boolean;
 };
 
@@ -21,7 +21,7 @@ function Textarea({
       className={
         cn(
           !unstyled &&
-            "relative inline-flex w-full rounded-lg border border-input bg-background not-dark:bg-clip-padding text-base text-foreground shadow-xs/5 ring-ring/24 transition-shadow before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] has-focus-visible:has-aria-invalid:border-destructive/64 has-focus-visible:has-aria-invalid:ring-destructive/16 has-aria-invalid:border-destructive/36 has-focus-visible:border-ring has-disabled:opacity-64 has-[:disabled,:focus-visible,[aria-invalid]]:shadow-none has-focus-visible:ring-[3px] has-focus-visible:ring-inset not-has-disabled:has-not-focus-visible:not-has-aria-invalid:before:shadow-[0_1px_--theme(--color-black/4%)] sm:text-sm dark:bg-input/32 dark:has-aria-invalid:ring-destructive/24 dark:not-has-disabled:has-not-focus-visible:not-has-aria-invalid:before:shadow-[0_-1px_--theme(--color-white/6%)]",
+            "surface-well relative inline-flex w-full rounded-[var(--control-radius)] text-prompt text-foreground has-focus-visible:surface-focus has-aria-invalid:surface-invalid has-focus-visible:has-aria-invalid:surface-invalid-focus has-disabled:opacity-64",
           className,
         ) || undefined
       }
@@ -36,8 +36,6 @@ function Textarea({
               rows === undefined && "min-h-17.5 max-sm:min-h-20.5",
               size === "sm" && "px-[calc(--spacing(2.5)-1px)] py-[calc(--spacing(1)-1px)]",
               size === "sm" && rows === undefined && "min-h-16.5 max-sm:min-h-19.5",
-              size === "lg" && "py-[calc(--spacing(2)-1px)]",
-              size === "lg" && rows === undefined && "min-h-18.5 max-sm:min-h-21.5",
             )}
             // field-sizing: content ignores `rows`, so an explicit row count sets the minimum height.
             style={

@@ -9,7 +9,6 @@ export function TimelineSystemDivider(props: {
   readonly detail?: ReactNode | null;
   readonly tone?: "neutral" | "danger";
   readonly icon?: LucideIcon;
-  readonly showDetailSeparator?: boolean;
   readonly wrapDetail?: boolean;
   readonly actionLabel?: string;
   readonly onAction?: () => void;
@@ -17,28 +16,22 @@ export function TimelineSystemDivider(props: {
   const Icon = props.icon;
   const content = (
     <>
-      <span
-        className={cn(
-          "inline-flex items-baseline gap-1.5 align-baseline font-medium",
-          props.wrapDetail && "shrink-0 whitespace-nowrap",
-        )}
-      >
-        {Icon ? <Icon className="size-3 shrink-0 self-center" /> : null}
-        {props.label}
+      {Icon ? <Icon className="size-3 shrink-0" /> : null}
+      <span className="flex min-w-0 flex-col items-center gap-0.5">
+        <span className="text-meta">{props.label}</span>
+        {props.detail ? (
+          <span
+            className={cn(
+              "min-w-0 text-dim-foreground",
+              props.wrapDetail ? "wrap-anywhere text-center" : "inline-flex items-center",
+              typeof props.detail === "string" &&
+                (props.wrapDetail ? "whitespace-pre-wrap" : "max-w-80 truncate"),
+            )}
+          >
+            {props.detail}
+          </span>
+        ) : null}
       </span>
-      {props.detail ? (
-        <span
-          className={cn(
-            "min-w-0 opacity-70",
-            props.wrapDetail ? "ml-1.5 wrap-anywhere" : "inline-flex items-center",
-            typeof props.detail === "string" &&
-              (props.wrapDetail ? "whitespace-pre-wrap" : "max-w-80 truncate"),
-          )}
-        >
-          {props.showDetailSeparator === false ? null : "·\u00a0"}
-          {props.detail}
-        </span>
-      ) : null}
     </>
   );
 
@@ -46,10 +39,10 @@ export function TimelineSystemDivider(props: {
     <div
       className={cn(
         "flex min-w-0 items-center gap-2 py-2 text-2xs text-muted-foreground",
-        props.tone === "danger" && "text-destructive",
+        props.tone === "danger" && "text-error-foreground",
       )}
     >
-      <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
+      <span aria-hidden="true" className="h-px flex-1 bg-border" />
       {props.onAction ? (
         <Tooltip>
           <TooltipTrigger
@@ -58,10 +51,7 @@ export function TimelineSystemDivider(props: {
                 type="button"
                 aria-label={props.actionLabel}
                 onClick={props.onAction}
-                className={cn(
-                  "min-w-0 cursor-pointer rounded-full border border-border/70 bg-background px-2.5 py-1 transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
-                  props.wrapDetail ? "text-center" : "flex items-center gap-1.5",
-                )}
+                className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded-full border border-transparent surface-timeline-divider px-2.5 py-1 transition-colors hover:surface-ghost-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
               />
             }
           >
@@ -70,16 +60,11 @@ export function TimelineSystemDivider(props: {
           <TooltipPopup side="top">{props.actionLabel}</TooltipPopup>
         </Tooltip>
       ) : (
-        <span
-          className={cn(
-            "min-w-0 rounded-full px-2 py-1",
-            props.wrapDetail ? "text-center" : "flex flex-wrap items-center justify-center gap-1.5",
-          )}
-        >
+        <span className="flex min-w-0 flex-wrap items-center justify-center gap-1.5 rounded-full surface-timeline-divider px-2 py-1">
           {content}
         </span>
       )}
-      <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
+      <span aria-hidden="true" className="h-px flex-1 bg-border" />
     </div>
   );
 }

@@ -63,9 +63,13 @@ function endpointStatus(url: string, check: EndpointCheck | undefined) {
   if (result === null) return { label: "Checking…", dot: "bg-warning" };
   switch (result._tag) {
     case "Accepted":
-      return { label: `Connected · ${Math.round(result.latencyMs)} ms`, dot: "bg-success" };
+      return {
+        label: "Connected",
+        detail: `${Math.round(result.latencyMs)} ms`,
+        dot: "bg-success",
+      };
     case "Rejected":
-      return { label: `Rejected · HTTP ${result.status}`, dot: "bg-destructive" };
+      return { label: "Rejected", detail: `HTTP ${result.status}`, dot: "bg-destructive" };
     case "Unreachable":
       return { label: result.timedOut ? "Timed out" : "Unreachable", dot: "bg-destructive" };
   }
@@ -168,12 +172,12 @@ function TelemetryExportForm() {
           }
         }}
       >
-        <p className="text-xs text-muted-foreground">
+        <p className="text-meta text-muted-foreground">
           Send traces, metrics, and logs to an OTLP HTTP receiver. Restart the server to apply.
           Environment variables override these settings.
         </p>
         {!canEdit && (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-meta text-muted-foreground">
             This connection lacks permission to change settings on{" "}
             {environment?.label ?? "the selected environment"}.
           </p>
@@ -185,7 +189,7 @@ function TelemetryExportForm() {
           const check = canCheck ? endpointStatus(url, checks[key]) : null;
           const status = override
             ? {
-                label: check ? `${override.label} · ${check.label}` : override.label,
+                label: check?.label ?? override.label,
                 dot: check?.dot ?? "bg-muted-foreground/40",
               }
             : check;
@@ -196,7 +200,11 @@ function TelemetryExportForm() {
                   {status && <ConnectionStatusDot dotClassName={status.dot} />}
                   <Label htmlFor={key}>{label} endpoint</Label>
                 </div>
-                {status && <span className="text-xs text-muted-foreground">{status.label}</span>}
+                <span className="grid justify-items-end gap-1 text-meta text-muted-foreground">
+                  {override && check ? <span>{override.label}</span> : null}
+                  {status ? <span>{status.label}</span> : null}
+                  {check && "detail" in check ? <span>{check.detail}</span> : null}
+                </span>
               </div>
               <div className="flex gap-2">
                 <Input
@@ -223,7 +231,7 @@ function TelemetryExportForm() {
                   <Button
                     type="button"
                     size="sm"
-                    variant="outline"
+                    variant="secondary"
                     disabled={!isHttpUrl(url) || checks[key]?.result === null}
                     onClick={() => void checkEndpoint(key, signal, url)}
                   >
@@ -232,7 +240,7 @@ function TelemetryExportForm() {
                 )}
               </div>
               {(saved[key] !== (running?.[key] ?? "") || override?.variable) && (
-                <p className="break-all text-xs text-muted-foreground">
+                <p className="break-all text-meta text-muted-foreground">
                   Running: {running?.[key] || "Disabled"}
                   {override?.variable && (
                     <>
@@ -246,14 +254,14 @@ function TelemetryExportForm() {
           );
         })}
         <div className="flex items-center justify-between gap-3">
-          <p role="status" className="text-xs text-muted-foreground">
+          <p role="status" className="text-meta text-muted-foreground">
             {message}
           </p>
           <div className="flex shrink-0 gap-2">
             <Button
               type="button"
               size="xs"
-              variant="outline"
+              variant="secondary"
               disabled={!changed || saving || !canEdit}
               onClick={() => {
                 setDraft({});
