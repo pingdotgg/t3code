@@ -228,10 +228,7 @@ export function PullRequestsColumn({
         {rightPanelControl}
       </WorkspacePageHeader>
 
-      <div
-        ref={scrollRef}
-        className="topbar-scroll-fade scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto"
-      >
+      <div ref={scrollRef} className="scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto">
         <WorkspacePageContainer width="expanded" className="min-h-full gap-4">
           <div className="flex flex-col gap-3">
             <div ref={inFlowSearchRef} className="flex flex-wrap items-center gap-2">
@@ -242,7 +239,6 @@ export function PullRequestsColumn({
               {filtersMenu}
               <PullRequestCompactFilterMenu
                 label="Filter by provider"
-                outlined
                 iconOnly={host !== undefined}
                 triggerIcon={<Plug2Icon aria-hidden className="size-4" />}
                 triggerLabel="All"
@@ -276,7 +272,7 @@ function PullRequestRefreshControl({
   return (
     <Button
       size={compact ? "icon-sm" : "icon"}
-      variant={compact ? "ghost" : "outline"}
+      variant="ghost-muted"
       aria-label="Refresh pull requests"
       onClick={onRefresh}
       disabled={refreshing}

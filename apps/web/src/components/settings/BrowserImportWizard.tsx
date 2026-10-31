@@ -18,6 +18,7 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
+import { Text } from "../ui/text";
 import { Spinner } from "../ui/spinner";
 import {
   initialWizardStep,
@@ -198,7 +199,7 @@ function QuitStep({
         </DialogDescription>
       </DialogHeader>
       <DialogFooter>
-        <Button variant="outline" onClick={onCancel}>
+        <Button variant="secondary" onClick={onCancel}>
           Cancel
         </Button>
         <Button onClick={onRechecked}>I&rsquo;ve quit it</Button>
@@ -303,7 +304,7 @@ function FullDiskAccessStep({
         ) : null}
       </DialogPanel>
       <DialogFooter>
-        <Button variant="outline" onClick={onCancel}>
+        <Button variant="secondary" onClick={onCancel}>
           Cancel
         </Button>
         <PermissionContinueButton
@@ -352,9 +353,9 @@ function ConfigureStep({
       <DialogPanel>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
           <section className="flex-1 space-y-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <Text variant="meta" tone="dim" render={<h3 />}>
               From
-            </p>
+            </Text>
             {source.profiles.map((profile) => (
               <SelectableTile
                 key={profile.directory}
@@ -370,9 +371,9 @@ function ConfigureStep({
             <ArrowRightIcon className="hidden size-4 sm:block" />
           </div>
           <section className="flex-1 space-y-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <Text variant="meta" tone="dim" render={<h3 />}>
               Into
-            </p>
+            </Text>
             {canCreateProfile ? (
               <SelectableTile
                 selected={target.kind === "new"}
@@ -399,7 +400,7 @@ function ConfigureStep({
         ) : null}
       </DialogPanel>
       <DialogFooter>
-        <Button variant="outline" onClick={onCancel}>
+        <Button variant="secondary" onClick={onCancel}>
           Cancel
         </Button>
         <Button
@@ -430,14 +431,14 @@ function SelectableTile({
       aria-pressed={selected}
       onClick={onSelect}
       className={cn(
-        "flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+        "flex w-full cursor-pointer items-center justify-between gap-3 rounded-control border px-3 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
         selected
-          ? "border-primary bg-primary/8"
-          : "border-border/60 hover:border-border hover:bg-muted/40",
+          ? "border-border surface-selected-soft"
+          : "border-border/60 hover:border-border hover:surface-ghost-hover",
       )}
     >
       <span className="min-w-0">
-        <span className="block truncate text-sm font-medium text-foreground">{title}</span>
+        <span className="block truncate text-sm font-medium text-strong-foreground">{title}</span>
         {subtitle ? (
           <span className="block truncate text-xs tabular-nums text-muted-foreground">
             {subtitle}
@@ -537,9 +538,9 @@ function DoneStep({
       </DialogHeader>
       {skippedDomains.length > 0 ? (
         <DialogPanel>
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <Text variant="meta" tone="dim" render={<h3 />}>
             Skipped
-          </p>
+          </Text>
           <p className="mt-1 text-sm text-foreground">{formatSkippedDomains(skippedDomains)}</p>
         </DialogPanel>
       ) : null}
@@ -572,7 +573,7 @@ function BlockedStep({
         <DialogDescription>{message ?? BROWSER_IMPORT_FAILURE_COPY[reason]}</DialogDescription>
       </DialogHeader>
       <DialogFooter>
-        <Button variant="outline" onClick={onClose}>
+        <Button variant="secondary" onClick={onClose}>
           Close
         </Button>
         {onRetry ? <Button onClick={onRetry}>Try again</Button> : null}

@@ -189,7 +189,7 @@ function NoticeCard({
                 ? `Show full title: ${item.title}`
                 : "Show title details"
             }
-            className="min-w-0 truncate font-medium leading-7 sm:leading-6"
+            className="min-w-0 truncate font-medium text-foreground leading-7 sm:leading-6"
           >
             {item.title}
           </NoticeText>
@@ -200,7 +200,7 @@ function NoticeCard({
                   ? `Show details: ${item.title}`
                   : "Show notice details"
               }
-              className="w-0 min-w-0 grow truncate text-muted-foreground @max-[400px]:sr-only"
+              className="w-0 min-w-0 grow truncate font-medium text-muted-foreground @max-[400px]:sr-only"
             >
               {item.description}
             </NoticeText>

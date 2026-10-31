@@ -238,7 +238,7 @@ export function SettingsSection({
           className="flex min-h-7 items-start justify-between gap-4 px-3 sm:px-4"
         >
           <div className="flex min-w-0 items-center gap-1">
-            <h2 className="flex min-h-7 items-center gap-2 text-base font-semibold text-foreground">
+            <h2 className="flex min-h-7 items-center gap-2 text-sm font-medium text-dim-foreground">
               {icon}
               {title}
             </h2>
@@ -264,12 +264,14 @@ export function SettingsUnavailableGroup({
   if (message === undefined) return children;
 
   return (
-    <div className="border-border/60 bg-muted/20 py-1.5">
+    <div className="rounded-[inherit] border-border/50 surface-card-settings py-1.5">
       <div className="flex items-start gap-2 px-3 py-2 text-xs leading-relaxed text-muted-foreground sm:px-4">
         <InfoIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
         <p>{message}</p>
       </div>
-      <div className="[&_h3]:opacity-64 [&_p]:opacity-64">{children}</div>
+      <div className="[&>*+*]:border-t [&>*+*]:border-divider [&>[data-slot=settings-row]]:rounded-none [&_h3]:opacity-64 [&_p]:opacity-64">
+        {children}
+      </div>
     </div>
   );
 }
@@ -414,7 +416,7 @@ export function SettingsRow({
       >
         <div
           inert
-          className="flex w-full items-center gap-2 opacity-50 @min-[32rem]/settings-row:w-auto"
+          className="flex w-full items-center gap-2 opacity-64 @min-[32rem]/settings-row:w-auto"
         >
           {control}
         </div>
@@ -493,7 +495,7 @@ export function SettingsRow({
       tabIndex={rowProps.id ? -1 : rowProps.tabIndex}
       data-slot="settings-row"
       className={cn(
-        "group/settings-row @container/settings-row rounded-xl px-3 sm:px-4 aria-disabled:opacity-64 aria-disabled:[&_*]:text-muted-foreground",
+        "group/settings-row @container/settings-row rounded-card px-3 sm:px-4 aria-disabled:opacity-64 aria-disabled:[&_*]:text-muted-foreground",
         children ? "pt-3 pb-1" : "py-3",
         className,
       )}
@@ -520,12 +522,12 @@ export function SettingsRow({
             </span>
           </div>
           {description ? (
-            <p className="max-w-2xl text-balance text-xs leading-normal text-muted-foreground">
+            <p className="max-w-2xl text-balance text-xs leading-normal text-dim-foreground">
               {description}
             </p>
           ) : null}
           {renderedStatus ? (
-            <div className="pt-0.5 text-xs text-muted-foreground">{renderedStatus}</div>
+            <div className="pt-0.5 text-xs text-dim-foreground">{renderedStatus}</div>
           ) : null}
         </div>
         {renderedControl ? (
@@ -535,12 +537,34 @@ export function SettingsRow({
         ) : null}
       </div>
       {unavailable && children ? (
-        <div inert className="opacity-50">
+        <div inert className="opacity-64">
           {children}
         </div>
       ) : (
         children
       )}
+    </div>
+  );
+}
+
+/**
+ * A line of explanation inside a settings group, between or above its rows,
+ * inset to the rows' padding. `icon` leads a one-line warning or hint.
+ */
+export function SettingsNote({
+  icon,
+  children,
+}: {
+  readonly icon?: ReactNode;
+  readonly children: ReactNode;
+}) {
+  if (icon === undefined) {
+    return <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">{children}</p>;
+  }
+  return (
+    <div className="flex items-center gap-2 px-3 py-2.5 text-meta text-muted-foreground sm:px-4 [&>svg]:size-3.5 [&>svg]:shrink-0">
+      {icon}
+      <span>{children}</span>
     </div>
   );
 }
@@ -610,10 +634,7 @@ export function SettingsPageContainer({
       highlightTarget={highlightTarget}
       onTargetHandled={clearTargetHash}
     >
-      <div
-        className="topbar-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto"
-        data-settings-page-scroll
-      >
+      <div className="scrollbar-gutter-both flex-1 overflow-y-auto" data-settings-page-scroll>
         <WorkspacePageContainer width={width} className={cn("gap-8", className)}>
           <SettingsScopeSentence />
           {children}

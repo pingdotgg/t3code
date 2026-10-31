@@ -202,7 +202,7 @@ function WorkspaceImagePreview(props: {
   if (assetUrl._tag === "Failure") {
     return (
       <MediaActions source={actionsSource}>
-        <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
+        <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-error-foreground">
           Unable to load workspace image.
         </div>
       </MediaActions>
@@ -253,7 +253,7 @@ export function WorkspaceBrowserPreview(props: {
 
   if (assetUrl._tag === "Failure") {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
+      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-error-foreground">
         Unable to load file preview.
       </div>
     );
@@ -1328,7 +1328,7 @@ export default function FilePreviewPanel({
         </div>
       ) : null}
       {relativePath && !attachment && !isHostFile && !canWriteFiles && !fileAccess.isPending ? (
-        <div className="shrink-0 border-b px-3 py-1.5 text-2xs text-muted-foreground">
+        <div className="shrink-0 border-b px-3 py-1.5 text-caption text-muted-foreground">
           Read-only connection. Unsaved edits are kept until write access returns.
         </div>
       ) : null}
@@ -1338,7 +1338,7 @@ export default function FilePreviewPanel({
       !renderBrowserFile &&
       file.data?.truncated &&
       (draft || isMarkdown || isMermaid || isHtml) ? (
-        <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-2xs text-warning-foreground">
+        <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-caption text-warning-foreground">
           Preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()} byte file.
         </div>
       ) : null}
@@ -1447,8 +1447,8 @@ export default function FilePreviewPanel({
               role="alert"
               className="scrollbar-gutter-both flex min-h-0 flex-1 flex-col overflow-auto"
             >
-              <div className="my-auto flex shrink-0 flex-col gap-3 px-6 py-6 text-center text-xs leading-relaxed">
-                <p className="text-destructive">
+              <div className="my-auto flex shrink-0 flex-col gap-3 px-6 py-6 text-center text-meta leading-relaxed">
+                <p className="text-error-foreground">
                   {file.readError ? filePreviewReadErrorMessage(file.readError) : file.error}
                 </p>
                 {attemptedPath ? (
@@ -1614,12 +1614,12 @@ export function WorkspaceLargeTextPreview(props: {
       />
     );
   if (assetUrl._tag !== "Success" || loaded === null)
-    return <div className="p-6 text-xs text-muted-foreground">Loading…</div>;
+    return <div className="p-6 text-meta text-muted-foreground">Loading…</div>;
   const src = `${loaded.url}${loaded.url.includes("?") ? "&" : "?"}revision=${encodeURIComponent(loaded.revision)}`;
   return (
     <>
       <div className={FILE_SURFACE_SUBHEADER_CLASS}>
-        <span className="min-w-0 flex-1 text-xs text-muted-foreground">Full file</span>
+        <span className="min-w-0 flex-1 text-meta text-muted-foreground">Full file</span>
         <FileSurfaceAction
           label={isCopied ? "Copied" : "Copy contents"}
           onPress={() => {
@@ -1656,7 +1656,7 @@ export function WorkspaceLargeTextPreview(props: {
           <DownloadIcon className="size-3.5" />
         </FileSurfaceAction>
       </div>
-      <Suspense fallback={<div className="p-6 text-xs text-muted-foreground">Loading…</div>}>
+      <Suspense fallback={<div className="p-6 text-meta text-muted-foreground">Loading…</div>}>
         <LargeTextViewer
           key={`${src}:${revision}`}
           name={props.name}

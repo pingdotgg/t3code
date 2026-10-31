@@ -241,7 +241,7 @@ export function SourceControlWritingSettingsSection() {
                 />
                 <Button
                   size="sm"
-                  variant="outline"
+                  variant="secondary"
                   disabled={allInstructions === null}
                   onClick={() => {
                     if (allInstructions === null) return;
@@ -260,7 +260,7 @@ export function SourceControlWritingSettingsSection() {
             ) : (
               <Button
                 size="sm"
-                variant="outline"
+                variant="secondary"
                 onClick={() => {
                   setAllInstructions(null);
                   setEditingAllInstructions(true);
@@ -315,7 +315,7 @@ export function SourceControlWritingSettingsSection() {
             description="Model that reads a pull request to write its review guide. It reads the change itself over many steps, so a stronger model helps. Off uses the source control writer model."
             control={
               !hasServerTargets ? (
-                <span className="text-sm text-muted-foreground">
+                <span className="text-body text-muted-foreground">
                   Connect an environment to choose its review guide model.
                 </span>
               ) : (
@@ -501,13 +501,13 @@ export function SourceControlWritingSettingsSection() {
           description="Model for source control text and branch or bookmark names. When disabled, use the text generation model configured for this environment."
           control={
             !hasServerTargets ? (
-              <span className="text-sm text-muted-foreground">
+              <span className="text-body text-muted-foreground">
                 Connect an environment to choose its source control writer model.
               </span>
             ) : (
               <div className="flex flex-wrap items-center justify-end gap-2">
                 {usesDedicatedModel && !canEnableDedicatedModel ? (
-                  <span className="text-sm text-muted-foreground">
+                  <span className="text-body text-muted-foreground">
                     No text generation providers available.
                   </span>
                 ) : null}

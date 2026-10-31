@@ -22,8 +22,8 @@ export function CommandBlock({
   return (
     <div
       className={cn(
-        "flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/50 font-mono",
-        prominent ? "px-4 py-3.5 text-base" : "px-3 py-2.5 text-sm",
+        "flex items-center justify-between gap-3 rounded-control surface-well font-mono",
+        prominent ? "px-4 py-3.5 text-prompt" : "px-3 py-2.5 text-body",
         className,
       )}
     >

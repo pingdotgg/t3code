@@ -64,29 +64,32 @@ export function WorkflowOpeningBlock(props: {
       <header className="flex min-w-0 items-start gap-2">
         <WorkflowIcon aria-hidden className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <p className="text-2xs font-medium text-muted-foreground">Workflow started</p>
-          <h3 className="truncate text-sm font-medium text-foreground" data-thread-find-text="true">
+          <p className="text-caption text-muted-foreground">Workflow started</p>
+          <h3 className="truncate text-label text-foreground" data-thread-find-text="true">
             {headline.title}
           </h3>
           {headline.description ? (
-            <p className="text-xs text-muted-foreground" data-thread-find-text="true">
+            <p className="text-meta text-muted-foreground" data-thread-find-text="true">
               {headline.description}
             </p>
           ) : null}
         </div>
         {headline.agents ? (
-          <span aria-live="polite" className="shrink-0 text-2xs tabular-nums text-muted-foreground">
+          <span
+            aria-live="polite"
+            className="shrink-0 text-caption tabular-nums text-muted-foreground"
+          >
             {headline.agents}
           </span>
         ) : null}
       </header>
       {phases.map((phase) => (
         <section key={phase.index} aria-label={`${phase.title} phase`}>
-          <h4 className="flex items-baseline gap-2 px-2 pb-0.5 text-2xs font-medium text-muted-foreground">
+          <h4 className="flex items-baseline gap-2 px-2 pb-0.5 text-caption text-muted-foreground">
             <span className="min-w-0 truncate" data-thread-find-text="true">
               {phase.title}
             </span>
-            <span className="shrink-0 font-normal tabular-nums">
+            <span className="shrink-0 tabular-nums">
               {phase.settledCount}/{phase.members.length}
             </span>
           </h4>
@@ -131,15 +134,13 @@ function WorkflowMemberRow(props: {
             threadId === null ? (
               <div aria-description={member.status} className={className} />
             ) : (
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="sm-multiline"
                 aria-label={`Open ${member.title}`}
                 aria-description={member.status}
                 onClick={() => props.onOpenThread(threadId)}
-                className={cn(
-                  className,
-                  "cursor-pointer transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
-                )}
+                className="group/subagent w-full min-w-0 justify-start"
               />
             )
           }
@@ -150,15 +151,13 @@ function WorkflowMemberRow(props: {
             driver={props.driver}
             status={member.status}
           />
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-xs font-medium text-foreground">
-              {member.title}
-            </span>
+          <span className="min-w-0 flex-1 text-left">
+            <span className="block truncate text-meta text-foreground">{member.title}</span>
             {detail ? (
               <span
                 className={cn(
-                  "block truncate text-2xs leading-relaxed",
-                  failed ? "text-destructive" : "text-muted-foreground",
+                  "block truncate text-caption",
+                  failed ? "text-destructive-foreground" : "text-muted-foreground",
                 )}
               >
                 {detail}
@@ -166,7 +165,7 @@ function WorkflowMemberRow(props: {
             ) : null}
           </span>
           {member.startedAt ? (
-            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+            <span className="shrink-0 text-meta text-muted-foreground tabular-nums">
               <AgentElapsed agent={member} />
             </span>
           ) : null}

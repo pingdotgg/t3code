@@ -360,7 +360,7 @@ export function AddEnvironmentDialog({
         aria-pressed={selected}
         className={cn(
           "group flex min-h-24 items-start gap-3 rounded-lg border p-4 text-left",
-          selected ? "border-primary/50 bg-primary/5" : "border-border/60 hover:bg-muted/40",
+          selected ? "border-ring surface-selected" : "border-border hover:surface-ghost-hover",
         )}
         disabled={isAddingSavedBackend}
         onClick={() => {
@@ -372,15 +372,15 @@ export function AddEnvironmentDialog({
             className={cn(
               "mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border",
               selected
-                ? "border-primary/30 bg-primary/10 text-primary"
-                : "border-border/70 bg-background text-muted-foreground group-hover:text-foreground",
+                ? "border-ring surface-selected text-strong-foreground"
+                : "border-transparent surface-well text-muted-foreground group-hover:text-strong-foreground",
             )}
           >
             {input.icon}
           </span>
         ) : null}
         <span className="min-w-0">
-          <span className="block text-sm font-medium text-foreground">{input.title}</span>
+          <span className="block text-sm font-medium text-strong-foreground">{input.title}</span>
           <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
             {input.description}
           </span>
@@ -393,7 +393,7 @@ export function AddEnvironmentDialog({
     <div className="space-y-3">
       <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem]">
         <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-foreground">Host</span>
+          <span className="mb-1.5 block text-xs font-medium text-strong-foreground">Host</span>
           <Input
             value={savedBackendHost}
             onChange={(event) => handleSavedBackendHostChange(event.target.value)}
@@ -403,7 +403,9 @@ export function AddEnvironmentDialog({
           />
         </label>
         <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-foreground">Pairing code</span>
+          <span className="mb-1.5 block text-xs font-medium text-strong-foreground">
+            Pairing code
+          </span>
           <Input
             value={savedBackendPairingCode}
             onChange={(event) => setSavedBackendPairingCode(event.target.value)}
@@ -461,7 +463,7 @@ export function AddEnvironmentDialog({
           </p>
           <Button
             size="xs"
-            variant="outline"
+            variant="secondary"
             disabled={isAddingSavedBackend}
             onClick={() => void addRelayRoute()}
           >
@@ -472,7 +474,7 @@ export function AddEnvironmentDialog({
       {renderRemoteFields()}
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
       <Button
-        variant="outline"
+        variant="secondary"
         className="w-full"
         disabled={isAddingSavedBackend}
         onClick={() => void handleAddSavedBackend()}
@@ -488,7 +490,7 @@ export function AddEnvironmentDialog({
         <div className="block">
           <label
             htmlFor="saved-backend-ssh-host"
-            className="mb-1.5 block text-xs font-medium text-foreground"
+            className="mb-1.5 block text-xs font-medium text-strong-foreground"
           >
             SSH host or alias
           </label>
@@ -564,7 +566,9 @@ export function AddEnvironmentDialog({
         </div>
         <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_7rem]">
           <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-foreground">Username</span>
+            <span className="mb-1.5 block text-xs font-medium text-strong-foreground">
+              Username
+            </span>
             <Input
               value={savedBackendSshUsername}
               onChange={(event) => setSavedBackendSshUsername(event.target.value)}
@@ -575,7 +579,7 @@ export function AddEnvironmentDialog({
             />
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-foreground">Port</span>
+            <span className="mb-1.5 block text-xs font-medium text-strong-foreground">Port</span>
             <Input
               value={savedBackendSshPort}
               onChange={(event) => setSavedBackendSshPort(event.target.value)}
@@ -593,7 +597,7 @@ export function AddEnvironmentDialog({
           </Alert>
         ) : null}
         <Button
-          variant="outline"
+          variant="secondary"
           className="w-full"
           disabled={isAddingSavedBackend}
           onClick={() => void handleAddSavedBackend()}
@@ -612,7 +616,7 @@ export function AddEnvironmentDialog({
           render={
             <DialogTrigger
               render={
-                <Button size="xs" variant="ghost-muted" aria-label="Add environment">
+                <Button size="xs" variant="secondary" aria-label="Add environment">
                   <PlusIcon className="size-3" />
                   <span>Add environment</span>
                 </Button>
