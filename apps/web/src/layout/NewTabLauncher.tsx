@@ -422,6 +422,7 @@ function LauncherTabNotch({ tabId }: { tabId: string | null }) {
           <div
             className={PANE_TAB_CLASS}
             data-layout-launcher-tab=""
+            data-layout-pane-tab={tabId ?? undefined}
             onPointerDown={tabId === null ? undefined : (event) => beginLayoutTabDrag(event, tabId)}
             onContextMenu={(event) => {
               if (tabId === null) return;

@@ -851,6 +851,7 @@ function RightPanelTab(
       style={{ transform: CSS.Translate.toString(transform), transition }}
       data-active-tab={active}
       data-tab-key={surface.id}
+      data-layout-pane-tab={layoutTabId ?? undefined}
       onPointerDown={
         layoutTabId !== null ? (event) => beginLayoutTabDrag(event, layoutTabId) : undefined
       }
