@@ -251,6 +251,11 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   }
   const previousLan = (yield* CliService.readServiceEnv(baseDir)).entries.T3CODE_LAN;
   yield* CliService.writeServiceEnv(baseDir, { T3CODE_LAN: String(routes.lan) });
+  // When the service step fails, an installed service still runs with the old
+  // value, so the file goes back to match it.
+  const restoreServiceEnv = before.service.installed
+    ? CliService.writeServiceEnv(baseDir, { T3CODE_LAN: previousLan })
+    : Effect.void;
   if (before.host !== undefined) {
     yield* Console.warn(
       `service.env sets T3CODE_HOST=${before.host}, which decides where T3 Code listens. Remove it to use the local network choice.`,
@@ -260,7 +265,8 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   const printServeCommand = Effect.fn(function* (reason: string) {
     const { command } = yield* resolveHostCliCommand("serve", [
       ...Option.match(flags.baseDir, { onNone: () => [], onSome: (dir) => ["--base-dir", dir] }),
-      ...(routes.lan ? ["--lan"] : []),
+      // Explicit either way, so a T3CODE_LAN in the shell cannot override the choice.
+      routes.lan ? "--lan" : "--no-lan",
     ]);
     yield* Console.log(`${reason} Run this and keep the terminal open:\n  ${command}\n`);
   });
@@ -280,18 +286,16 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
             BootServicePrerequisiteError: (error) => Effect.succeed({ failed: error.message }),
             BootServiceUnsupportedError: (error) => Effect.succeed({ failed: error.message }),
           }),
+          Effect.tapError(() => restoreServiceEnv),
         );
     if ("failed" in result) {
-      // An installed service may still run with the old value, so keep the file matching it.
-      if (before.service.installed) {
-        yield* CliService.writeServiceEnv(baseDir, { T3CODE_LAN: previousLan });
-      }
+      yield* restoreServiceEnv;
       yield* printServeCommand(`Background setup did not finish: ${result.failed}`);
     } else if (result.changed) {
       yield* Console.log(CliService.formatServiceChange(result));
       started = true;
     } else if (restart) {
-      const outcome = yield* service.restart;
+      const outcome = yield* service.restart.pipe(Effect.tapError(() => restoreServiceEnv));
       yield* Console.log(
         outcome === "queued"
           ? "Restart queued. This session runs inside the service and disconnects when it goes down."

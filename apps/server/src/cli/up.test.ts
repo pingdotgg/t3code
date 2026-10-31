@@ -69,6 +69,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
     readonly installed: boolean;
     readonly status?: Partial<BootService.BootServiceStatus>;
     readonly installFails?: boolean;
+    readonly restartFails?: boolean;
     readonly env: string;
     readonly args: ReadonlyArray<string>;
     readonly installs: number;
@@ -133,6 +134,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       envAfter: "",
     },
     {
+      label: "a failed restart keeps service.env matching the running service",
+      installed: true,
+      restartFails: true,
+      env: "T3CODE_LAN=false\n",
+      args: ["--lan"],
+      installs: 0,
+      restarts: 1,
+      envAfter: "T3CODE_LAN=false\n",
+    },
+    {
       label: "the old default is kept",
       installed: true,
       env: "",
@@ -160,10 +171,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
           BootService.BootService.of({
             status: Effect.succeed(status),
             withStopped: (operation) => operation,
-            restart: Effect.sync(() => {
-              restarts++;
-              return "restarted" as const;
-            }),
+            restart: Effect.sync(() => restarts++).pipe(
+              Effect.andThen(
+                input.restartFails === true
+                  ? Effect.fail(new BootService.BootServiceCommandError({ step: "restart" }))
+                  : Effect.succeed("restarted" as const),
+              ),
+            ),
             install: () =>
               input.installFails === true
                 ? Effect.fail(
@@ -183,7 +197,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
         ),
       );
 
-      yield* Command.runWith(upCommand, { version: packageJson.version })([
+      const exit = yield* Command.runWith(upCommand, { version: packageJson.version })([
         "--base-dir",
         baseDir,
         ...input.args,
@@ -195,7 +209,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
             Layer.fresh(TestConsole.layer),
           ),
         ),
+        Effect.exit,
       );
+      expect(exit._tag).toBe(input.restartFails === true ? "Failure" : "Success");
       expect({ installs, restarts }).toEqual({
         installs: input.installs,
         restarts: input.restarts,
