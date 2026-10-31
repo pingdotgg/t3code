@@ -1,14 +1,6 @@
 #!/usr/bin/env node
-/**
- * Rewrites the `benchmarks` section of the model manifest from Slopalytics.
- *
- *   pnpm benchmarks:refresh && vp fmt apps/server/src/provider/model-manifest.json
- *
- * Slopalytics publishes no JSON endpoint, so this reads the variant literals
- * out of its JS bundle. Each variant is a model family (a T3 slug with dots as
- * dashes) at one reasoning effort, scored on the Artificial Analysis coding
- * index. Review the diff before committing: a bundle change can break parsing.
- */
+// Slopalytics has no JSON endpoint; bundle changes can break parsing.
+// Review the refreshed manifest diff before committing.
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
@@ -28,23 +20,24 @@ class BenchmarkRefreshError extends Schema.TaggedError<BenchmarkRefreshError>()(
   { message: Schema.String },
 ) {}
 
-const fetchText = (url: string) =>
+const fetchText = Effect.fn("ModelBenchmarksRefresh.fetchText")((url: string) =>
   HttpClient.get(url).pipe(
     Effect.flatMap(HttpClientResponse.filterStatusOk),
     Effect.flatMap((response) => response.text),
-  );
+  ),
+);
 
 const readField = (body: string, key: string) =>
   new RegExp(`(?:^|,)${key}:(\`[^\`]*\`|-?[\\d.]+(?:e[+-]?\\d+)?)`).exec(body)?.[1];
 
-/** Every priced variant in the bundle, one per family and effort. */
-function parseBenchmarkVariants(bundle: string) {
+export function parseBenchmarkVariants(bundle: string) {
   const variants = new Map<string, { intelligence: number; costPerTask: number }>();
   for (const [, model, body = ""] of bundle.matchAll(/\{id:`[^`]+`,family:`([^`]+)`,(.*?)\}/g)) {
     const effort = readField(body, "effort")?.replaceAll("`", "");
     const intelligence = Number(readField(body, "intelligence"));
     const costPerTask = Number(readField(body, "cost"));
     if (!model || !ID_PATTERN.test(model) || !effort || !ID_PATTERN.test(effort)) continue;
+    if (!Number.isFinite(intelligence) || !Number.isFinite(costPerTask)) continue;
     if (!(intelligence > 0) || !(costPerTask > 0)) continue;
     variants.set(`${model}\u0000${effort}`, {
       intelligence: Number(intelligence.toFixed(2)),

@@ -1,8 +1,8 @@
 import { useNavigation } from "@react-navigation/native";
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 
 import { useProjects } from "../../state/entities";
-import { useWorkspaceEnvironments } from "../../state/workspace";
+import { useConnectionsReady, useWorkspaceEnvironments } from "../../state/workspace";
 import {
   pullRequestFallbackEnvironment,
   type PullRequestEnvironmentTarget,
@@ -11,14 +11,10 @@ import {
 export function usePullRequestEnvironmentFallback(params: PullRequestEnvironmentTarget) {
   const navigation = useNavigation();
   const projects = useProjects();
-  const connected = useWorkspaceEnvironments()
-    .filter((environment) => environment.connectionState === "connected")
-    .map((environment) => String(environment.environmentId))
-    .join("\n");
-  const fallback = useMemo(
-    () => pullRequestFallbackEnvironment(params, projects, new Set(connected.split("\n"))),
-    [params, projects, connected],
-  );
+  const isReady = useConnectionsReady();
+  const environments = useWorkspaceEnvironments();
+  const fallback = isReady ? pullRequestFallbackEnvironment(params, projects, environments) : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- rewrites the route params through the navigator to the fallback environment once connections are ready
   useEffect(() => {
     if (fallback) navigation.setParams(fallback);
   }, [fallback, navigation]);
