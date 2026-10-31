@@ -488,7 +488,7 @@ function toReviewDecisionWithReviews(
   if (summarized === "approved" || summarized === "changes-requested") return summarized;
   const states = new Set((reviews ?? []).map((review) => review.state?.trim().toUpperCase() ?? ""));
   if (states.has("CHANGES_REQUESTED")) return "changes-requested";
-  if (states.has("APPROVED")) return "approved";
+  if (summarized === null && states.has("APPROVED")) return "approved";
   return summarized;
 }
 
