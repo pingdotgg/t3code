@@ -168,7 +168,7 @@ export const make = Effect.gen(function* () {
       Stream.changes,
     ),
     // Starting makes the managed proxy answer; stopping must drop its accounts.
-    managedProxy.statusChanges,
+    managedProxy.statusChanges.pipe(Stream.drop(1)),
   ).pipe(
     Stream.runForEach(() => refresh),
     Effect.forkScoped,
