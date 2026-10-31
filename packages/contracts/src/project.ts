@@ -345,16 +345,16 @@ export const ProjectListEntriesResult = Schema.Struct({
 });
 export type ProjectListEntriesResult = typeof ProjectListEntriesResult.Type;
 
-// Untracked files git ignores. Wholly ignored folders such as `node_modules`
-// are left out, so the list stays small enough to pick from.
 export const ProjectListIgnoredFilesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  includeDirectories: Schema.optional(Schema.Boolean),
   /** Case-insensitive path substring, applied before the listing cap. */
   query: Schema.optionalKey(TrimmedString.check(Schema.isMaxLength(256))),
 });
 export type ProjectListIgnoredFilesInput = typeof ProjectListIgnoredFilesInput.Type;
 
 export const ProjectIgnoredFile = Schema.Struct({
+  // Git's trailing / marks a collapsed folder, reported with byteLength 0.
   path: TrimmedNonEmptyString,
   byteLength: NonNegativeInt,
 });
