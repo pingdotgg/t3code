@@ -3,7 +3,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
@@ -81,7 +80,7 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
           undefined,
           mode === "node" ? { nodeScriptPath: fixture } : { archiveVersion: "1.2.3" },
         ).pipe(
-          Effect.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, localSsh)),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, localSsh),
           Effect.result,
         );
         assert.isTrue(Result.isFailure(result));
