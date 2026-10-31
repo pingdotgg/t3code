@@ -29,6 +29,7 @@ line to add. Set `T3CODE_CHANNEL=nightly` to install the nightly train, or
 | ------------------------------------------------ | ----------------------------------------------------------------------- |
 | Start the server and open the web app            | `t3`                                                                    |
 | Start the server without a browser               | `t3 serve`                                                              |
+| Use it from your other devices                   | `t3 up` ([details](./remote-access.md))                                 |
 | Keep it running in the background (macOS, Linux) | `t3 service install` ([details](./background-service.md))               |
 | Move to the newest release                       | `t3 update`                                                             |
 | Reclaim database space                           | `t3 doctor` ([details](./background-service.md#reclaim-database-space)) |
