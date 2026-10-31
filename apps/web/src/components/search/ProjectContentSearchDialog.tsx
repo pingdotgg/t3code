@@ -1,6 +1,7 @@
 import { Spinner } from "~/components/ui/spinner";
 import { AuthFilesystemReadScope, type ProjectContentMatch } from "@t3tools/contracts";
 
+import { CaseSensitiveIcon, RegexIcon, WholeWordIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { useActiveProjectTarget, type ActiveProjectTarget } from "~/hooks/useActiveProjectTarget";
@@ -27,13 +28,6 @@ const VISIBLE_MATCH_WINDOW = 100;
 interface MatchGroup {
   readonly path: string;
   readonly matches: ReadonlyArray<ProjectContentMatch & { readonly resultIndex: number }>;
-}
-
-function splitPath(path: string): { readonly name: string; readonly directory: string } {
-  const separator = path.lastIndexOf("/");
-  return separator === -1
-    ? { name: path, directory: "" }
-    : { name: path.slice(separator + 1), directory: path.slice(0, separator) };
 }
 
 function groupMatches(matches: ReadonlyArray<ProjectContentMatch>): MatchGroup[] {
@@ -71,7 +65,7 @@ function SearchOptionButton(props: {
           />
         }
       >
-        <span className="font-mono">{props.children}</span>
+        {props.children}
       </TooltipTrigger>
       <TooltipPopup side="top">{props.label}</TooltipPopup>
     </Tooltip>
@@ -158,12 +152,16 @@ function OpenContentSearchDialog(props: {
   };
   const fileCount = new Set(matches.map((match) => match.path)).size;
   const showSearchStatus =
-    search.canReadFiles &&
-    (search.hasQuery || search.isPending || search.error !== null || search.invalidRegex);
+    search.canReadFiles && (search.isPending || search.error !== null || search.invalidRegex);
+  const resultCount =
+    search.canReadFiles && search.hasQuery && !showSearchStatus
+      ? `${matches.length.toLocaleString()}${search.truncated ? "+" : ""} ${matches.length === 1 ? "result" : "results"} in ${fileCount.toLocaleString()} ${fileCount === 1 ? "file" : "files"}`
+      : null;
 
   return (
     <CommandPaletteContent
       aria-label={`Search file contents in ${target.projectName}`}
+      // Escape returns to the command palette, so the hint says Back rather than the pen's Close.
       escapeLabel="Back"
       footerActionLabel="Open file"
       inputAccessory={
@@ -174,7 +172,7 @@ function OpenContentSearchDialog(props: {
             label="Match case"
             onClick={() => setCaseSensitive((current) => !current)}
           >
-            Aa
+            <CaseSensitiveIcon aria-hidden="true" />
           </SearchOptionButton>
           <SearchOptionButton
             active={wholeWord}
@@ -182,7 +180,7 @@ function OpenContentSearchDialog(props: {
             label="Match whole word"
             onClick={() => setWholeWord((current) => !current)}
           >
-            <span className="underline decoration-2 underline-offset-2">ab</span>
+            <WholeWordIcon aria-hidden="true" />
           </SearchOptionButton>
           <SearchOptionButton
             active={useRegex}
@@ -190,7 +188,7 @@ function OpenContentSearchDialog(props: {
             label="Use regular expression"
             onClick={() => setUseRegex((current) => !current)}
           >
-            .*
+            <RegexIcon aria-hidden="true" />
           </SearchOptionButton>
         </div>
       }
@@ -219,6 +217,13 @@ function OpenContentSearchDialog(props: {
           }
         },
       }}
+      footerTrailing={
+        resultCount ? (
+          <span className="text-meta text-dim-foreground tabular-nums" aria-live="polite">
+            {resultCount}
+          </span>
+        ) : null
+      }
       mode="none"
       onValueChange={setQuery}
       panelSize="fill"
@@ -233,10 +238,8 @@ function OpenContentSearchDialog(props: {
             </span>
           ) : search.error ? (
             <span className="text-destructive">{search.error}</span>
-          ) : search.invalidRegex ? (
-            <span className="text-destructive">Invalid regular expression</span>
           ) : (
-            `${matches.length.toLocaleString()}${search.truncated ? "+" : ""} results in ${fileCount.toLocaleString()} files`
+            <span className="text-destructive">Invalid regular expression</span>
           )}
         </div>
       ) : null}
@@ -254,58 +257,50 @@ function OpenContentSearchDialog(props: {
       ) : (
         <ScrollArea className="min-h-0 flex-1" scrollFade>
           <div className="py-2">
-            {groups.map((group) => {
-              const path = splitPath(group.path);
-              return (
-                <section className="pb-2" key={group.path}>
-                  <div className="sticky top-0 z-10 flex h-8 items-center gap-2 px-3 text-xs">
-                    <PierreEntryIcon
-                      pathValue={group.path}
-                      kind="file"
-                      theme={resolvedTheme}
-                      className="size-3.5"
-                    />
-                    <span className="font-normal text-muted-foreground">{path.name}</span>
-                    {path.directory ? (
-                      <span className="min-w-0 truncate text-muted-foreground">
-                        {path.directory}
-                      </span>
-                    ) : null}
-                    <span className="ml-auto px-1.5 py-0.5 tabular-nums text-3xs text-dim-foreground">
-                      {group.matches.length}
+            {groups.map((group) => (
+              <section className="pb-2" key={group.path}>
+                <div className="sticky top-0 z-10 flex h-8 items-center gap-2 px-3 text-meta">
+                  <PierreEntryIcon
+                    pathValue={group.path}
+                    kind="file"
+                    theme={resolvedTheme}
+                    className="size-3.5"
+                  />
+                  <span className="min-w-0 truncate text-muted-foreground">{group.path}</span>
+                  <span className="ml-auto px-1.5 py-0.5 tabular-nums text-micro text-dim-foreground">
+                    {group.matches.length}
+                  </span>
+                </div>
+                {group.matches.map((match) => (
+                  <button
+                    type="button"
+                    key={`${match.path}:${match.lineNumber}:${match.resultIndex}`}
+                    ref={
+                      match.resultIndex === selectedIndex ? scrollSelectedRowIntoView : undefined
+                    }
+                    className={cn(
+                      "flex h-7 w-full min-w-0 items-center gap-3 px-3 text-left font-mono text-meta rounded-control hover:bg-(--search-hit-fill) disabled:pointer-events-none",
+                      match.resultIndex === selectedIndex &&
+                        "bg-(--search-hit-fill) text-strong-foreground",
+                    )}
+                    disabled={!canOpenMatches}
+                    onMouseEnter={() => setSelectedIndex(match.resultIndex)}
+                    onClick={() => openMatch(match)}
+                  >
+                    <span className="w-10 shrink-0 text-right tabular-nums text-(--search-line-number)">
+                      {match.lineNumber}
                     </span>
-                  </div>
-                  {group.matches.map((match) => (
-                    <button
-                      type="button"
-                      key={`${match.path}:${match.lineNumber}:${match.resultIndex}`}
-                      ref={
-                        match.resultIndex === selectedIndex ? scrollSelectedRowIntoView : undefined
-                      }
-                      className={cn(
-                        "flex h-7 w-full min-w-0 items-center gap-3 px-3 text-left font-mono text-xs rounded-control hover:bg-(--search-hit-fill) disabled:pointer-events-none",
-                        match.resultIndex === selectedIndex &&
-                          "bg-(--search-hit-fill) text-strong-foreground",
-                      )}
-                      disabled={!canOpenMatches}
-                      onMouseEnter={() => setSelectedIndex(match.resultIndex)}
-                      onClick={() => openMatch(match)}
-                    >
-                      <span className="w-10 shrink-0 text-right tabular-nums text-(--search-line-number)">
-                        {match.lineNumber}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate whitespace-pre">
-                        <HighlightedSearchLine
-                          match={match}
-                          path={group.path}
-                          theme={renderedAppearance}
-                        />
-                      </span>
-                    </button>
-                  ))}
-                </section>
-              );
-            })}
+                    <span className="min-w-0 flex-1 truncate whitespace-pre">
+                      <HighlightedSearchLine
+                        match={match}
+                        path={group.path}
+                        theme={renderedAppearance}
+                      />
+                    </span>
+                  </button>
+                ))}
+              </section>
+            ))}
             {matches.length > visibleCount ? (
               <div ref={observeLoadMoreSentinel} className="h-8" aria-hidden="true" />
             ) : null}
