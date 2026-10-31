@@ -687,12 +687,11 @@ function pathEntriesForPlatform(pathValue: string, platform: NodeJS.Platform): s
 }
 
 // Relative POSIX PATH entries resolve against the working directory, so caches keyed by them include it.
-function relativePathEntriesCwd(
-  pathEntries: ReadonlyArray<string>,
-  platform: NodeJS.Platform,
-  isAbsolute: (pathEntry: string) => boolean,
-): string | undefined {
-  return platform !== "win32" && pathEntries.some((entry) => !isAbsolute(entry))
+function pathSearchCwd(pathValue: string, platform: NodeJS.Platform): string | undefined {
+  if (platform === "win32") return undefined;
+  return pathEntriesForPlatform(pathValue, platform).some(
+    (entry) => !NodePath.posix.isAbsolute(entry),
+  )
     ? process.cwd()
     : undefined;
 }
@@ -707,7 +706,7 @@ const findOnPath = Effect.fnUntraced(function* (
 ): Effect.fn.Return<ReadonlyArray<string>, never, FileSystem.FileSystem | Path.Path> {
   const path = yield* Path.Path;
   const pathEntries = pathEntriesForPlatform(pathValue, platform);
-  const cwd = relativePathEntriesCwd(pathEntries, platform, path.isAbsolute);
+  const cwd = pathSearchCwd(pathValue, platform);
 
   const listings = yield* PathDirectoryListings;
   const matches: string[] = [];
@@ -760,11 +759,7 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     return null;
   }
 
-  const cwd = relativePathEntriesCwd(
-    pathEntriesForPlatform(pathValue, platform),
-    platform,
-    path.isAbsolute,
-  );
+  const cwd = pathSearchCwd(pathValue, platform);
   const cacheKey = [
     platform,
     pathValue,
@@ -926,12 +921,15 @@ const resolveMacosGit = Effect.fnUntraced(function* (
 ) {
   const locateXcodeGit = yield* XcodeGitLocation;
   const cache = yield* CommandResolutionCache;
+  const pathValue = resolvePathEnvironmentVariable(env);
+  const cwd = pathSearchCwd(pathValue, "darwin");
   const cacheKey = [
     "xcode-git",
     String(spawnResolverCacheId(resolveExecutable)),
     String(spawnResolverCacheId(locateXcodeGit)),
-    resolvePathEnvironmentVariable(env),
+    pathValue,
     env.DEVELOPER_DIR ?? "",
+    ...(cwd === undefined ? [] : [cwd]),
   ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
   const nowNanos = yield* Clock.currentTimeNanos;
   const cached = cache.get(cacheKey);
