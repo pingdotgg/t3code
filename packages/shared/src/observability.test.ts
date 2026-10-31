@@ -190,47 +190,6 @@ describe("observability", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("redacts WebSocket credentials from recorded and exported URLs", () =>
-    Effect.gen(function* () {
-      const delegates: Array<Tracer.NativeSpan> = [];
-      const records: Array<EffectTraceRecord> = [];
-      const tracer = yield* makeLocalFileTracer({
-        filePath: "unused",
-        maxBytes: 1024,
-        maxFiles: 1,
-        batchWindowMs: 10_000,
-        sink: {
-          filePath: "unused",
-          push: (record) => {
-            if (record.type === "effect-span") records.push(record);
-          },
-          flush: Effect.void,
-          close: () => Effect.void,
-        },
-        delegate: Tracer.make({
-          span: (options) => {
-            const span = new Tracer.NativeSpan(options);
-            delegates.push(span);
-            return span;
-          },
-        }),
-      });
-      yield* Effect.annotateCurrentSpan({
-        "url.full": "http://127.0.0.1:3773/ws?wsTicket=ticket-secret&clientSurface=web",
-        "url.query": "dpop=proof-secret&wsTicket=ticket-secret",
-        "url.path": "/ws",
-      }).pipe(Effect.withSpan("GET"), Effect.provideService(Tracer.Tracer, tracer));
-
-      const expected = {
-        "url.full": "http://127.0.0.1:3773/ws?wsTicket=<redacted>&clientSurface=web",
-        "url.query": "dpop=<redacted>&wsTicket=<redacted>",
-        "url.path": "/ws",
-      };
-      assert.deepInclude(records[0]?.attributes, expected);
-      assert.deepInclude(Object.fromEntries(delegates[0]!.attributes), expected);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
   it("normalizes circular arrays, maps, and sets without recursing forever", () => {
     const array: Array<unknown> = ["alpha"];
     array.push(array);
@@ -404,6 +363,69 @@ describe("observability", () => {
             ["retained"],
           );
           assert.isAtMost(Number(stat.size), maxBytes);
+        }),
+      ),
+    );
+
+    it.effect("keeps WebSocket credentials out of trace files and exported spans", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
+          const tracePath = path.join(tempDir, "shared.trace.ndjson");
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes: 1024 * 1024,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+          });
+          const delegates: Array<Tracer.NativeSpan> = [];
+          const tracer = yield* makeLocalFileTracer({
+            filePath: tracePath,
+            maxBytes: 1024 * 1024,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+            sink,
+            delegate: Tracer.make({
+              span: (options) => {
+                const span = new Tracer.NativeSpan(options);
+                delegates.push(span);
+                return span;
+              },
+            }),
+          });
+          const url = "/ws?wsTicket=ticket-secret&dpop=proof-secret&clientSurface=web";
+
+          yield* Effect.annotateCurrentSpan({
+            "url.full": `http://127.0.0.1:3773${url}`,
+            "url.query": url.slice(4),
+          }).pipe(
+            Effect.withSpan("GET", { kind: "server" }),
+            Effect.provideService(Tracer.Tracer, tracer),
+          );
+          yield* Effect.die(new Error(`ResponseError (503 GET ${url})`)).pipe(
+            Effect.withSpan("GET", { kind: "server" }),
+            Effect.provideService(Tracer.Tracer, tracer),
+            Effect.exit,
+          );
+          yield* sink.close();
+
+          const written = yield* fileSystem.readFileString(tracePath);
+          const exported = delegates.map((span) =>
+            JSON.stringify({
+              attributes: Object.fromEntries(span.attributes),
+              exit:
+                span.status._tag === "Ended" && Exit.isFailure(span.status.exit)
+                  ? Cause.pretty(span.status.exit.cause)
+                  : "",
+            }),
+          );
+          for (const text of [written, ...exported]) {
+            assert.notInclude(text, "ticket-secret");
+            assert.notInclude(text, "proof-secret");
+          }
+          assert.include(written, "wsTicket=<redacted>&dpop=<redacted>&clientSurface=web");
         }),
       ),
     );

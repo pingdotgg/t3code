@@ -403,6 +403,12 @@ function spanToTraceRecord(span: SerializableSpan): EffectTraceRecord {
   };
 }
 
+// WebSocket tickets and their DPoP proofs ride in URL queries and stay valid after the request.
+const URL_CREDENTIAL_PARAMS = /(^|[?&"\s])(wsTicket|dpop)=[^&#"\\\s]*/g;
+
+const redactUrlCredentials = (text: string) =>
+  text.replace(URL_CREDENTIAL_PARAMS, "$1$2=<redacted>");
+
 export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: TraceSinkOptions) {
   const sink = yield* makeAsyncRotatingFileSink({
     filePath: options.filePath,
@@ -520,7 +526,7 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     filePath: options.filePath,
     push(record) {
       try {
-        const text = `${JSON.stringify(record)}\n`;
+        const text = `${redactUrlCredentials(JSON.stringify(record))}\n`;
         const bytes = Buffer.byteLength(text);
         if (bytes > options.maxBytes) return;
         if (bufferBytes + bytes > maxBufferBytes) {
@@ -541,14 +547,14 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
   } satisfies TraceSink;
 });
 
-// WebSocket tickets and their DPoP proofs ride in the query and stay valid after the request.
-const URL_CREDENTIAL_PARAMS = /(^|[?&])(wsTicket|dpop)=[^&#]*/g;
-
-function redactUrlCredentials(key: string, value: unknown): unknown {
-  if ((key !== "url.full" && key !== "url.query") || typeof value !== "string") {
-    return value;
+// Effect's HTTP server errors put the request URL in their message.
+function redactExitCredentials(exit: Exit.Exit<unknown, unknown>): Exit.Exit<unknown, unknown> {
+  if (ExitRuntime.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)) {
+    return exit;
   }
-  return value.replace(URL_CREDENTIAL_PARAMS, "$1$2=<redacted>");
+  const pretty = Cause.pretty(exit.cause);
+  const redacted = redactUrlCredentials(pretty);
+  return redacted === pretty ? exit : ExitRuntime.die(new Error(redacted));
 }
 
 class LocalFileSpan implements Tracer.Span {
@@ -600,7 +606,10 @@ class LocalFileSpan implements Tracer.Span {
       endTime,
       exit: traceExit,
     };
-    this.delegate.end(endTime, traceExit);
+    this.delegate.end(
+      endTime,
+      this.kind === "server" ? redactExitCredentials(traceExit) : traceExit,
+    );
 
     if (this.sampled) {
       this.push(spanToTraceRecord(this));
@@ -608,7 +617,10 @@ class LocalFileSpan implements Tracer.Span {
   }
 
   attribute(key: string, value: unknown): void {
-    const recorded = redactUrlCredentials(key, value);
+    const recorded =
+      (key === "url.full" || key === "url.query") && typeof value === "string"
+        ? redactUrlCredentials(value)
+        : value;
     this.attributes.set(key, recorded);
     this.delegate.attribute(key, recorded);
   }
