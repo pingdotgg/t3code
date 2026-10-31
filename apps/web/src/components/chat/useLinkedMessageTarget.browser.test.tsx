@@ -74,10 +74,18 @@ it("continues through cursor advances that leave rendered entries unchanged, the
     error: null,
     onLoadEarlier,
   };
-  await act(() => screen.rerender(<Harness onHandled={fixture.onHandled} viewport={viewport} controls={controls} />));
   await act(() =>
     screen.rerender(
-      <Harness onHandled={fixture.onHandled} viewport={viewport} controls={{ ...controls, historyCursor: "page-2" }} />,
+      <Harness onHandled={fixture.onHandled} viewport={viewport} controls={controls} />,
+    ),
+  );
+  await act(() =>
+    screen.rerender(
+      <Harness
+        onHandled={fixture.onHandled}
+        viewport={viewport}
+        controls={{ ...controls, historyCursor: "page-2" }}
+      />,
     ),
   );
   expect(onLoadEarlier.mock.calls).toEqual([["older-message"], ["older-message"]]);
@@ -110,7 +118,11 @@ it("keeps navigating while scroll keys edit text and lets a viewport scroll key 
     error: null,
     onLoadEarlier: vi.fn(),
   };
-  await act(() => screen.rerender(<Harness onHandled={fixture.onHandled} viewport={viewport} controls={controls} />));
+  await act(() =>
+    screen.rerender(
+      <Harness onHandled={fixture.onHandled} viewport={viewport} controls={controls} />,
+    ),
+  );
   for (const tag of ["input", "textarea", "div"]) {
     const editor = document.createElement(tag);
     if (tag === "div") editor.setAttribute("contenteditable", "true");
@@ -144,17 +156,35 @@ it("waits for live synchronization before failing a cached missing target", asyn
     onLoadEarlier: vi.fn(),
   };
   await act(() =>
-    screen.rerender(<Harness onHandled={fixture.onHandled} viewport={viewport} controls={controls} synced={false} />),
+    screen.rerender(
+      <Harness
+        onHandled={fixture.onHandled}
+        viewport={viewport}
+        controls={controls}
+        synced={false}
+      />,
+    ),
   );
   expect(container.textContent).toBe("pending");
   expect(warn).not.toHaveBeenCalled();
   expect(fixture.onHandled).not.toHaveBeenCalled();
-  await act(() => screen.rerender(<Harness onHandled={fixture.onHandled} viewport={viewport} controls={controls} synced />));
+  await act(() =>
+    screen.rerender(
+      <Harness onHandled={fixture.onHandled} viewport={viewport} controls={controls} synced />,
+    ),
+  );
   expect(container.textContent).toBe("finished");
   expect(warn).toHaveBeenCalledTimes(1);
   expect(fixture.onHandled.mock.calls).toEqual([[request.key]]);
   await act(() =>
-    screen.rerender(<Harness onHandled={fixture.onHandled} viewport={viewport} controls={{ ...controls }} synced />),
+    screen.rerender(
+      <Harness
+        onHandled={fixture.onHandled}
+        viewport={viewport}
+        controls={{ ...controls }}
+        synced
+      />,
+    ),
   );
   expect(fixture.onHandled).toHaveBeenCalledTimes(1);
 });
@@ -256,13 +286,25 @@ it("finishes a measured target once after live sync and reports its handled acti
   };
   await act(() =>
     screen.rerender(
-      <Harness onHandled={fixture.onHandled} viewport={viewport} controls={controls} synced={false} overrides={overrides} />,
+      <Harness
+        onHandled={fixture.onHandled}
+        viewport={viewport}
+        controls={controls}
+        synced={false}
+        overrides={overrides}
+      />,
     ),
   );
   expect(list.scrollToIndex).not.toHaveBeenCalled();
   await act(() =>
     screen.rerender(
-      <Harness onHandled={fixture.onHandled} viewport={viewport} controls={controls} synced overrides={overrides} />,
+      <Harness
+        onHandled={fixture.onHandled}
+        viewport={viewport}
+        controls={controls}
+        synced
+        overrides={overrides}
+      />,
     ),
   );
   expect(list.scrollToIndex).toHaveBeenCalledTimes(1);
@@ -280,7 +322,7 @@ it("bounds automatic history paging when an unknown message keeps advancing the 
     await act(() =>
       screen.rerender(
         <Harness
-        onHandled={fixture.onHandled}
+          onHandled={fixture.onHandled}
           viewport={fixture.viewport}
           controls={{
             historyCursor: `page-${page}`,
