@@ -242,6 +242,13 @@ export function SavedBackendListRow({
       : ""
   }`;
 
+  const pairAgainAction =
+    pairAgainHost === null ? null : (
+      <Button size="xs" variant="outline" onClick={() => onPairAgain(environment, pairAgainHost)}>
+        Pair again
+      </Button>
+    );
+
   return (
     <EnvironmentRow
       kind={machineKind}
@@ -323,6 +330,7 @@ export function SavedBackendListRow({
               onToggle={() => setDiagnosisOpen((open) => !open)}
             />
           ) : null}
+          {pairAgainAction ? <div className="mt-1 sm:hidden">{pairAgainAction}</div> : null}
           {serverUpdateState.status !== "idle" ? (
             <div className="mt-1 max-w-md">
               <ServerUpdateProgress state={serverUpdateState} />
@@ -384,11 +392,7 @@ export function SavedBackendListRow({
           appearance="icon"
         />
       ) : null}
-      {pairAgainHost !== null ? (
-        <Button size="xs" variant="outline" onClick={() => onPairAgain(environment, pairAgainHost)}>
-          Pair again
-        </Button>
-      ) : null}
+      {pairAgainAction ? <div className="hidden sm:block">{pairAgainAction}</div> : null}
       <Tooltip>
         <TooltipTrigger
           render={
