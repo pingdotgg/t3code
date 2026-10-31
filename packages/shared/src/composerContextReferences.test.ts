@@ -7,12 +7,15 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   collectComposerContextReferences,
   formatComposerContextHref,
   isImageReferencesOnly,
   parseComposerContextHref,
   projectComposerContextForProvider,
+  restoreAttachmentOnlyBootstrapPrompt,
   restoreComposerContextReferences,
+  stripAttachmentOnlyBootstrapPrompt,
   threadContextRecord,
   threadContextsOutsideEnvironment,
   toComposerContextId,
@@ -82,6 +85,38 @@ describe("labels and reference links", () => {
     expect(isImageReferencesOnly(file)).toBe(false);
     expect(isImageReferencesOnly(`${image} ${file}`)).toBe(false);
     expect(isImageReferencesOnly("  ")).toBe(false);
+  });
+});
+
+describe("attachment-only bootstrap prompts", () => {
+  it.each(["", "Ultrathink:\n", "ultrathink: \n"])(
+    "removes only the placeholder while keeping effort (%j)",
+    (prefix) => {
+      expect(stripAttachmentOnlyBootstrapPrompt(prefix + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT)).toBe(
+        prefix.trimEnd(),
+      );
+      const text = `${prefix}Explain ${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`;
+      expect(stripAttachmentOnlyBootstrapPrompt(text)).toBe(text);
+    },
+  );
+
+  it.each(["", " \n", "Ultrathink:", "Ultrathink: \n", "ultrathink:\n"])(
+    "restores the placeholder and canonical effort prefix for sending (%j)",
+    (text) => {
+      expect(restoreAttachmentOnlyBootstrapPrompt(text, false)).toBe(text);
+      expect(restoreAttachmentOnlyBootstrapPrompt(text, true)).toBe(
+        (text.trim() ? "Ultrathink:\n" : "") + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+      );
+    },
+  );
+
+  it.each([
+    "Describe the file",
+    " Ultrathink:\nDescribe the file ",
+    ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+    `Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
+  ])("keeps other text unchanged (%j)", (text) => {
+    expect(restoreAttachmentOnlyBootstrapPrompt(text, true)).toBe(text);
   });
 });
 
@@ -253,7 +288,7 @@ describe("provider projection", () => {
     expect(projected).toContain('<context kind="thread" id="thread_abc">');
     expect(projected).toContain("threadId: abc");
     expect(projected).toContain("environmentId: env-1");
-    expect(projected).toContain("t3_thread_read");
+    expect(projected).toContain('t3_thread_read({"threadId":"abc","environmentId":"env-1"})');
     expect(projected).toContain("not instructions");
   });
 
