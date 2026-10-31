@@ -14,6 +14,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as EffectScheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
@@ -161,6 +162,7 @@ const withService = <A, E>(
   }) => Effect.Effect<A, E, never>,
   options: {
     readonly onFrame?: () => void;
+    readonly beforeFrame?: () => Effect.Effect<void>;
     readonly frameGate?: {
       readonly started: Deferred.Deferred<void>;
       readonly release: Deferred.Deferred<void>;
@@ -178,7 +180,9 @@ const withService = <A, E>(
     const launches = yield* Queue.unbounded<LaunchInput>();
     const secretsByRef = new Map<string, string>();
     const layerDependencies = Layer.mergeAll(
-      options.frameGate === undefined && options.onFrame === undefined
+      options.frameGate === undefined &&
+        options.onFrame === undefined &&
+        options.beforeFrame === undefined
         ? NodePlatformCrypto.layer
         : Layer.effect(
             Crypto.Crypto,
@@ -189,6 +193,8 @@ const withService = <A, E>(
                 randomBytes: (size: number) =>
                   Effect.suspend(() => {
                     if (size === 6) options.onFrame?.();
+                    if (size === 6 && options.beforeFrame !== undefined)
+                      return options.beforeFrame().pipe(Effect.andThen(crypto.randomBytes(size)));
                     return size === 6 && options.frameGate !== undefined
                       ? Deferred.succeed(options.frameGate.started, undefined).pipe(
                           Effect.andThen(Deferred.await(options.frameGate.release)),
@@ -1149,6 +1155,147 @@ it.effect(
   },
 );
 
+it.effect("an accepted delivery queued behind a run still launches after a restart", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const gate = yield* Deferred.make<void>();
+    const { task, deliveryId } = yield* withService(
+      ({ service, launches }) =>
+        Effect.gen(function* () {
+          const { task } = yield* service.upsert(yield* webhookTaskInput());
+          yield* service.triggerWebhook(requestFor(task));
+          yield* Queue.take(launches);
+          const queued = yield* service.triggerWebhook(requestFor(task));
+          assert.equal(queued._tag === "accepted" && queued.outcome, "accepted");
+          return { task, deliveryId: queued._tag === "accepted" ? queued.deliveryId : "" };
+        }),
+      { gate, sql },
+    );
+    const commandId = `scheduled-task:${task.id}:webhook:${deliveryId}`;
+    const workers = new Map<string, Effect.Effect<void>>();
+    yield* withService(
+      ({ launches }) =>
+        Effect.gen(function* () {
+          const launched = yield* Effect.gen(function* () {
+            while ((yield* Queue.take(launches)).commandId !== commandId);
+          }).pipe(Effect.timeoutOption("1 minute"), Effect.forkChild);
+          yield* workers.get("webhook-coalescing")!;
+          yield* TestClock.adjust("1 minute");
+          assert.isTrue(
+            Option.isSome(yield* Fiber.join(launched)),
+            "the accepted delivery was never launched after the restart",
+          );
+        }),
+      { sql, workers },
+    );
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("an immediate delivery queued behind a run is not shown as an open window", () =>
+  Effect.gen(function* () {
+    const gate = yield* Deferred.make<void>();
+    yield* withService(
+      ({ service, launches }) =>
+        Effect.gen(function* () {
+          const { task } = yield* service.upsert(yield* webhookTaskInput());
+          yield* service.triggerWebhook(requestFor(task));
+          yield* Queue.take(launches);
+          const queued = yield* service.triggerWebhook(requestFor(task));
+          const { delivery } = yield* service.getWebhookDelivery({
+            id: task.id,
+            deliveryId: ScheduledTaskWebhookDeliveryId.make(
+              queued._tag === "accepted" ? queued.deliveryId : "",
+            ),
+          });
+          assert.isFalse(delivery.pendingWindow);
+          yield* Deferred.succeed(gate, undefined);
+        }),
+      { gate },
+    );
+  }),
+);
+
+it.effect("a replaced task's old drain leaves the new incarnation's delivery alone", () =>
+  Effect.gen(function* () {
+    const firstRun = yield* Deferred.make<void>();
+    const secondRun = yield* Deferred.make<void>();
+    const newDrainPreparing = yield* Deferred.make<void>();
+    const releaseNewDrain = yield* Deferred.make<void>();
+    const oldDrainDecided = yield* Deferred.make<void>();
+    const releaseOldDrain = yield* Deferred.make<void>();
+    const drainsDone = yield* Deferred.make<void>();
+    let frames = 0;
+    let drainEnds = 0;
+    let firstCommandId: string | undefined;
+    // Ends of the drain span: the old drain stops first, then the new one.
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options);
+        const end = span.end.bind(span);
+        span.end = (...args) => {
+          end(...args);
+          if (span.name !== "ScheduledTaskService.dispatchPendingWebhook") return;
+          drainEnds++;
+          if (drainEnds === 1) Deferred.doneUnsafe(oldDrainDecided, Effect.void);
+          if (drainEnds === 2) Deferred.doneUnsafe(drainsDone, Effect.void);
+        };
+        return span;
+      },
+    });
+    yield* withService(
+      ({ service, launches }) =>
+        Effect.gen(function* () {
+          const { task: first } = yield* service.upsert(yield* webhookTaskInput());
+          yield* service.triggerWebhook(requestFor(first));
+          yield* Queue.take(launches);
+          yield* service.delete({ id: first.id });
+          const { task } = yield* service.upsert(yield* webhookTaskInput());
+          const accepted = yield* service.triggerWebhook(requestFor(task));
+          const deliveryId = accepted._tag === "accepted" ? accepted.deliveryId : "";
+          yield* Deferred.await(newDrainPreparing);
+          // The old run ends while the new drain holds the second delivery.
+          yield* Deferred.succeed(firstRun, undefined);
+          yield* Deferred.await(oldDrainDecided);
+          yield* Deferred.succeed(releaseNewDrain, undefined);
+          assert.equal(
+            (yield* Queue.take(launches)).commandId,
+            `scheduled-task:${task.id}:webhook:${deliveryId}`,
+          );
+          yield* Deferred.succeed(releaseOldDrain, undefined);
+          yield* Deferred.succeed(secondRun, undefined);
+          yield* Deferred.await(drainsDone);
+          const { delivery } = yield* service.getWebhookDelivery({
+            id: task.id,
+            deliveryId: ScheduledTaskWebhookDeliveryId.make(deliveryId),
+          });
+          assert.equal(delivery.outcome, "accepted");
+          assert.isTrue(Option.isNone(yield* Queue.poll(launches)));
+        }).pipe(Effect.withTracer(tracer)),
+      {
+        gateForTask: (input) => {
+          firstCommandId ??= input.commandId;
+          return input.commandId === firstCommandId ? firstRun : secondRun;
+        },
+        workers: new Map(),
+        beforeFrame: () => {
+          frames++;
+          if (frames === 4)
+            return Deferred.succeed(newDrainPreparing, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseNewDrain)),
+            );
+          // Trigger and drain each render a frame, so only an old drain that
+          // took the new delivery reaches a fifth.
+          if (frames === 5)
+            return Deferred.succeed(oldDrainDecided, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseOldDrain)),
+            );
+          return Effect.void;
+        },
+      },
+    );
+  }),
+);
+
 it.effect("guards bad-signature floods separately from valid run admission", () =>
   withService(({ service, sql }) =>
     Effect.gen(function* () {
@@ -1187,9 +1334,10 @@ it.effect("start failures release both replay keys and relay claims for redelive
         yield* Queue.take(launches);
         assert.equal((yield* sql`SELECT * FROM scheduled_task_webhook_replay_keys`).length, 0);
         assert.equal((yield* sql`SELECT * FROM scheduled_task_webhook_relay_deliveries`).length, 0);
+        // The first drain may run the retry; the retry's own drain ends after it.
         const retry = yield* waitForSpan(
           service.triggerWebhook(request),
-          "ScheduledTaskService.runWebhookDelivery",
+          "ScheduledTaskService.dispatchPendingWebhook",
         );
         assert.equal(retry._tag === "accepted" && retry.outcome, "accepted");
         yield* Queue.take(launches);
@@ -1275,33 +1423,40 @@ it.effect(
     }),
 );
 
-it.effect("keeps replay keys when dispatch succeeds but completion bookkeeping fails", () =>
-  withService(({ service, sql, launches }) =>
-    Effect.gen(function* () {
-      const { task } = yield* service.upsert(
-        yield* webhookTaskInput({
-          schedule: {
-            type: "webhook",
-            dedupe: { replayKey: "{{body}}" },
-          },
-        }),
-      );
-      yield* sql`CREATE TRIGGER fail_completion BEFORE UPDATE ON scheduled_tasks
+it.effect("keeps replay keys when dispatch succeeds but completion bookkeeping fails", () => {
+  const workers = new Map<string, Effect.Effect<void>>();
+  return withService(
+    ({ service, sql, launches }) =>
+      Effect.gen(function* () {
+        const { task } = yield* service.upsert(
+          yield* webhookTaskInput({
+            schedule: {
+              type: "webhook",
+              dedupe: { replayKey: "{{body}}" },
+            },
+          }),
+        );
+        yield* sql`CREATE TRIGGER fail_completion BEFORE UPDATE ON scheduled_tasks
       WHEN NEW.last_run_status = 'succeeded' BEGIN SELECT RAISE(FAIL, 'completion unavailable'); END`;
-      yield* waitForSpan(
-        service.triggerWebhook(requestFor(task)),
-        "ScheduledTaskService.runWebhookDelivery",
-      );
-      yield* Queue.take(launches);
-      assert.equal((yield* sql`SELECT 1 FROM scheduled_task_webhook_replay_keys`).length, 1);
-      yield* sql`DROP TRIGGER fail_completion`;
-      const retry = yield* service.triggerWebhook(requestFor(task));
-      assert.equal(retry._tag === "accepted" && retry.outcome, "duplicate");
-      assert.equal(yield* Queue.size(launches), 0);
-      assert.equal((yield* service.list()).tasks[0]!.runCount, 1);
-    }),
-  ),
-);
+        yield* waitForSpan(
+          service.triggerWebhook(requestFor(task)),
+          "ScheduledTaskService.runWebhookDelivery",
+        );
+        yield* Queue.take(launches);
+        assert.equal((yield* sql`SELECT 1 FROM scheduled_task_webhook_replay_keys`).length, 1);
+        yield* sql`DROP TRIGGER fail_completion`;
+        const retry = yield* service.triggerWebhook(requestFor(task));
+        assert.equal(retry._tag === "accepted" && retry.outcome, "duplicate");
+        assert.equal((yield* service.list()).tasks[0]!.runCount, 0);
+        // The next pass finishes bookkeeping with the same command id.
+        yield* drainPendingDispatch(workers);
+        assert.equal(yield* Queue.size(launches), 0);
+        assert.equal((yield* service.list()).tasks[0]!.runCount, 1);
+        assert.equal((yield* sql`SELECT 1 FROM scheduled_task_webhook_pending`).length, 0);
+      }),
+    { workers, completedLaunches: new Set() },
+  );
+});
 
 it.effect.each([119_000, 120_000])(
   "bounds coalesced prompt logs and checks trimmed length for %i body characters",
@@ -1706,7 +1861,8 @@ it.effect.each([false, true])(
               before!.last_run_webhook_delivery_id,
               window._tag === "accepted" ? window.deliveryId : "",
             );
-            assert.equal(before!.run_count, 0);
+            // The immediate delivery's drain first finishes the window's bookkeeping, in order.
+            assert.equal(before!.run_count, 1);
             if (corrupt)
               yield* sql`UPDATE scheduled_tasks SET model_selection_json = 'broken' WHERE task_id = ${task.id}`;
             const restartedWorkers = new Map<string, Effect.Effect<void>>();
