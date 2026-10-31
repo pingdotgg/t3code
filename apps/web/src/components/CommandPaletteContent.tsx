@@ -70,6 +70,7 @@ export function CommandPaletteContent({
         <div className="relative">
           <CommandInput
             autoFocus={false}
+            endAddon={inputAccessory ? undefined : <Kbd>esc</Kbd>}
             {...inputProps}
             ref={(input) => {
               if (!input) return;

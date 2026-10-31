@@ -4,6 +4,7 @@ import {
   getTraitSelectChange,
   replaceDescriptorCurrentValue,
   selectableProviderOptionChoices,
+  isReasoningControl,
   isReasoningSelect,
 } from "@t3tools/client-runtime/model-traits";
 import {
@@ -23,13 +24,14 @@ import {
   normalizeModelSlug,
 } from "@t3tools/shared/model";
 import { memo } from "react";
-import { GaugeIcon } from "lucide-react";
+import { BrainIcon, ChevronDownIcon } from "lucide-react";
 import {
   Menu,
   MenuGroup,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
+  MenuRadioItemIndicator,
   MenuSeparator as MenuDivider,
   MenuTrigger,
 } from "../ui/menu";
@@ -292,6 +294,7 @@ export interface TraitsMenuContentProps {
   allowPromptInjectedEffort?: boolean;
   planModeEnabled: boolean;
   triggerClassName?: string;
+  triggerVariant?: "toolbar" | "settings";
 }
 
 export type TraitsSelectionInput = TraitsMenuContentProps & TraitsPersistence;
@@ -372,17 +375,27 @@ export function useTraitsSelection({
 export const ULTRATHINK_IN_BODY_NOTE =
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.';
 
-const TraitsMenuContent = memo(function TraitsMenuContentImpl(props: TraitsSelectionInput) {
+const TraitsMenuContent = memo(function TraitsMenuContentImpl(
+  props: TraitsSelectionInput & { reasoningOnly?: boolean },
+) {
   const traits = useTraitsSelection(props);
   const {
     descriptors,
-    selectDescriptors,
-    booleanDescriptors,
+    selectDescriptors: allSelectDescriptors,
+    booleanDescriptors: allBooleanDescriptors,
     primarySelectDescriptor,
     ultrathinkInBodyText,
     hasAnyControls,
     modelIsUnavailable,
   } = traits;
+
+  const inReasoningMenu = (descriptor: ProviderOptionDescriptor) =>
+    !props.reasoningOnly ||
+    isReasoningControl(descriptor) ||
+    descriptor.id === "serviceTier" ||
+    descriptor.id === "fastMode";
+  const selectDescriptors = allSelectDescriptors.filter(inReasoningMenu);
+  const booleanDescriptors = allBooleanDescriptors.filter(inReasoningMenu);
 
   if (!hasAnyControls) {
     return null;
@@ -391,17 +404,17 @@ const TraitsMenuContent = memo(function TraitsMenuContentImpl(props: TraitsSelec
   if (modelIsUnavailable) {
     return (
       <>
-        {descriptors.map((descriptor, index) => {
+        {descriptors.filter(inReasoningMenu).map((descriptor, index) => {
           const value = traits.currentLabel(descriptor);
           if (!value) return null;
           return (
             <div key={descriptor.id}>
               {index > 0 ? <MenuDivider /> : null}
               <MenuGroup>
-                <div className="px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs">
+                <div className="px-2 pt-1.5 pb-1 text-muted-foreground text-meta">
                   {descriptor.label}
                 </div>
-                <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">{value}</div>
+                <div className="px-2 pb-1.5 text-muted-foreground/80 text-meta">{value}</div>
               </MenuGroup>
             </div>
           );
@@ -416,11 +429,11 @@ const TraitsMenuContent = memo(function TraitsMenuContentImpl(props: TraitsSelec
         <div key={descriptor.id}>
           {index > 0 ? <MenuDivider /> : null}
           <MenuGroup>
-            <div className="px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs">
+            <div className="px-2 pt-1.5 pb-1 text-muted-foreground text-meta">
               {descriptor.label}
             </div>
             {ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id ? (
-              <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">
+              <div className="px-2 pb-1.5 text-muted-foreground/80 text-meta">
                 {ULTRATHINK_IN_BODY_NOTE}
               </div>
             ) : null}
@@ -437,12 +450,15 @@ const TraitsMenuContent = memo(function TraitsMenuContentImpl(props: TraitsSelec
                   disabled={ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id}
                 >
                   <span className="flex w-full min-w-0 flex-col">
-                    <span className="flex min-w-0 items-center gap-1">
-                      <span className="min-w-0 truncate">{option.label}</span>
-                      {option.isDefault ? <DefaultBadge /> : null}
+                    <span className="flex w-full min-w-0 items-center justify-between gap-3">
+                      <span className="flex min-w-0 items-center gap-1">
+                        <span className="min-w-0 truncate">{option.label}</span>
+                        {option.isDefault ? <DefaultBadge /> : null}
+                      </span>
+                      <MenuRadioItemIndicator />
                     </span>
                     {option.description ? (
-                      <span className="max-w-56 text-pretty text-muted-foreground/80 text-xs">
+                      <span className="max-w-56 text-pretty text-muted-foreground/80 text-meta">
                         {option.description}
                       </span>
                     ) : null}
@@ -457,9 +473,7 @@ const TraitsMenuContent = memo(function TraitsMenuContentImpl(props: TraitsSelec
         <div key={descriptor.id}>
           {index > 0 || selectDescriptors.length > 0 ? <MenuDivider /> : null}
           <MenuGroup>
-            <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
-              {descriptor.label}
-            </div>
+            <div className="px-2 py-1.5 text-muted-foreground text-meta">{descriptor.label}</div>
             <MenuRadioGroup
               value={descriptor.currentValue === true ? "on" : "off"}
               onValueChange={(value) => traits.changeBoolean(descriptor.id, value === "on")}
@@ -468,6 +482,7 @@ const TraitsMenuContent = memo(function TraitsMenuContentImpl(props: TraitsSelec
                 <MenuRadioItem key={value} value={value} hideIndicator closeOnClick>
                   <span className="flex w-full min-w-0 items-center justify-between gap-3">
                     <span>{value === "on" ? "On" : "Off"}</span>
+                    <MenuRadioItemIndicator />
                   </span>
                 </MenuRadioItem>
               ))}
@@ -506,6 +521,7 @@ export const TraitsPicker = memo(function TraitsPicker({
     reportedModelSelection: props.reportedModelSelection,
   });
   const isCodexStyle = props.provider === "codex";
+  const triggerVariant = props.triggerVariant;
 
   return (
     <Menu
@@ -523,6 +539,7 @@ export const TraitsPicker = memo(function TraitsPicker({
                   disabled={disabled}
                   aria-label={triggerLabel}
                   size={size}
+                  variant={triggerVariant ?? "toolbar"}
                   className={cn(
                     isCodexStyle
                       ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap sm:max-w-48"
@@ -541,17 +558,36 @@ export const TraitsPicker = memo(function TraitsPicker({
                 size === "xs" ? "gap-1" : "gap-1.5",
               )}
             >
-              <ComposerControlIcon icon={GaugeIcon} size={size} />
+              <span data-composer-control-compact-icon className="pointer-events-none">
+                <ComposerControlIcon
+                  icon={BrainIcon}
+                  size={size}
+                  className={triggerVariant === "settings" ? "size-3.5" : "size-3"}
+                />
+              </span>
               <span data-composer-control-label className="min-w-0 truncate">
                 {triggerLabel}
               </span>
             </span>
           ) : (
             <>
-              <ComposerControlIcon icon={GaugeIcon} size={size} />
+              <span data-composer-control-compact-icon className="pointer-events-none">
+                <ComposerControlIcon
+                  icon={BrainIcon}
+                  size={size}
+                  className={triggerVariant === "settings" ? "size-3.5" : "size-3"}
+                />
+              </span>
               <span data-composer-control-label>{triggerLabel}</span>
             </>
           )}
+          {triggerVariant === "settings" ? (
+            <ChevronDownIcon
+              aria-hidden="true"
+              className="size-3.5 shrink-0 text-muted-foreground"
+              data-composer-control-chevron
+            />
+          ) : null}
         </TooltipTrigger>
         <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
       </Tooltip>

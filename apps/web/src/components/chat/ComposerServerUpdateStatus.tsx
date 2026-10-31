@@ -8,7 +8,7 @@ export function ComposerServerUpdateIcon({
   readonly status: ServerUpdateState["status"];
 }) {
   if (status === "failed") {
-    return <CircleAlertIcon aria-hidden className="text-error" />;
+    return <CircleAlertIcon aria-hidden className="text-error-foreground" />;
   }
   return <DownloadIcon aria-hidden />;
 }

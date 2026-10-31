@@ -242,17 +242,24 @@ describe("MessagesTimeline work rows", () => {
     // frames, which the fake clock below would freeze.
     await expect.element(heading).toHaveStyle({ pointerEvents: "auto" });
     const viewport = props.listRef.current!.getScrollableNode()!;
-    // Legend keeps rows transparent and unclickable until its initial scroll settles.
+    // Bootstrap can reach the estimated bottom before its rows are measured and
+    // interactive. Let it finish before recording the position we want to keep.
     await vi.waitFor(() => {
+      const button = heading.element();
+      const rect = button.getBoundingClientRect();
+      expect(
+        button.contains(
+          document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2),
+        ),
+      ).toBe(true);
+      expect(button.checkVisibility({ opacityProperty: true })).toBe(true);
+      expect(props.listRef.current!.getState().sizes.has("entry-final")).toBe(true);
       expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
-      expect(heading.element().checkVisibility({ opacityProperty: true })).toBe(true);
     });
     expect(viewport.scrollTop).toBeGreaterThan(0);
     const top = heading.element().getBoundingClientRect().top;
     const height = viewport.scrollHeight;
-    using _timers = fakeTimers();
     await heading.click();
-    await act(() => vi.advanceTimersByTime(1000));
     await vi.waitFor(() => {
       expect(viewport.scrollHeight).toBeGreaterThan(height + 500);
       expect(heading.element().getBoundingClientRect().top).toBeCloseTo(top, 0);

@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import {
   type LinkedPrompt,
   parseNewThreadLink,
@@ -155,19 +156,30 @@ function HostedPromptLinkLanding({
         </Alert>
       ) : null}
       {prompt !== null ? (
-        <pre className="mt-5 max-h-72 overflow-auto rounded-lg border border-border bg-background p-3 text-sm whitespace-pre-wrap">
+        <pre className="mt-5 max-h-72 overflow-auto rounded-lg border border-border bg-background p-3 text-body whitespace-pre-wrap">
           {prompt.text}
         </pre>
       ) : null}
       {details.length > 0 ? (
-        <p className="mt-3 text-xs text-muted-foreground">{details.join(" · ")}</p>
+        <div className="mt-3 text-meta text-muted-foreground">
+          <Tooltip disabled={details.length < 2}>
+            <TooltipTrigger render={<span tabIndex={0} />}>{details[0]}</TooltipTrigger>
+            <TooltipPopup>
+              {details.slice(1).map((detail) => (
+                <span className="block" key={detail}>
+                  {detail}
+                </span>
+              ))}
+            </TooltipPopup>
+          </Tooltip>
+        </div>
       ) : null}
       <div className="mt-6 flex flex-wrap gap-2">
         <Button render={<a href={deepLink} />} onClick={() => onChoose("app", remember)}>
           {onPhone ? "Open in app" : "Open in desktop app"}
         </Button>
         {canContinue ? (
-          <Button variant="outline" onClick={() => onChoose("browser", remember)}>
+          <Button variant="secondary" onClick={() => onChoose("browser", remember)}>
             Continue here
           </Button>
         ) : null}
@@ -175,7 +187,7 @@ function HostedPromptLinkLanding({
           Get T3 Code
         </Button>
       </div>
-      <label className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
+      <label className="mt-4 flex items-center gap-2 text-body text-muted-foreground">
         <Checkbox checked={remember} onCheckedChange={(checked) => setRemember(checked === true)} />
         Remember my choice
       </label>
