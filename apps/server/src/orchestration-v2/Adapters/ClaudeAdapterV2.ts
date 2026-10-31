@@ -238,15 +238,20 @@ function claudePromptCacheTtlMs(
 // getContextUsage reports a 150,000 window as a 117,000 threshold, for every catalog model.
 const CLAUDE_AUTO_COMPACT_RESERVE_TOKENS = 33_000;
 
-function claudeAutoCompactThreshold(
+// Like Claude's /context, measure usage against the window when it is below the model's.
+function claudeContextLimits(
   autoCompactWindow: number | undefined,
-  maxTokens: number | null,
+  modelSelection: ModelSelection,
 ) {
+  const contextWindow = claudeContextWindow(modelSelection);
   return autoCompactWindow !== undefined &&
     autoCompactWindow > 0 &&
-    (maxTokens === null || autoCompactWindow < maxTokens)
-    ? { autoCompactThreshold: autoCompactWindow - CLAUDE_AUTO_COMPACT_RESERVE_TOKENS }
-    : {};
+    (contextWindow === null || autoCompactWindow < contextWindow)
+    ? {
+        maxTokens: autoCompactWindow,
+        autoCompactThreshold: autoCompactWindow - CLAUDE_AUTO_COMPACT_RESERVE_TOKENS,
+      }
+    : { maxTokens: contextWindow };
 }
 
 function claudeMessageInputTokens(usage: {
@@ -277,7 +282,6 @@ export function claudeProviderTurnTokenUsage(
   const inputTokens = claudeMessageInputTokens(usage);
   const outputTokens = usage.output_tokens;
   const promptCacheTtlMs = claudePromptCacheTtlMs(usage.cache_creation);
-  const maxTokens = claudeContextWindow(modelSelection);
   // The cache lifetime starts with the request, not when its response ends.
   const promptCacheExpiresAt =
     promptCacheTtlMs === undefined || requestedAt === undefined
@@ -285,13 +289,12 @@ export function claudeProviderTurnTokenUsage(
       : DateTime.formatIso(DateTime.add(requestedAt, { milliseconds: promptCacheTtlMs }));
   return {
     usedTokens: inputTokens + outputTokens,
-    maxTokens,
+    ...claudeContextLimits(autoCompactWindow, modelSelection),
     inputTokens,
     cachedInputTokens: usage.cache_read_input_tokens ?? 0,
     outputTokens,
     reasoningOutputTokens: 0,
     ...(promptCacheTtlMs === undefined ? {} : { promptCacheTtlMs }),
-    ...claudeAutoCompactThreshold(autoCompactWindow, maxTokens),
     ...(promptCacheExpiresAt === undefined ? {} : { promptCacheExpiresAt }),
     updatedAt,
   };
@@ -8642,7 +8645,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ? Math.round(postTokens)
                 : undefined;
             if (afterTokenCount !== undefined) {
-              const maxTokens = claudeContextWindow(context.input.modelSelection);
               yield* emitProviderEvent({
                 type: "provider_turn.updated",
                 driver: CLAUDE_PROVIDER,
@@ -8663,8 +8665,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   completedAt: null,
                   tokenUsage: {
                     usedTokens: afterTokenCount,
-                    maxTokens,
-                    ...claudeAutoCompactThreshold(context.autoCompactWindow, maxTokens),
+                    ...claudeContextLimits(context.autoCompactWindow, context.input.modelSelection),
                     updatedAt: DateTime.formatIso(now),
                   },
                 },
@@ -10477,11 +10478,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                     Effect.provideService(Path.Path, path),
                   );
-            const querySession = yield* openQuery(turnInput, nativeThreadId);
             const autoCompactWindow = yield* resolveAutoCompactWindow(
               turnInput.runtimePolicy.cwd,
               turnInput.modelSelection,
             );
+            const querySession = yield* openQuery(turnInput, nativeThreadId);
             const context: ActiveClaudeTurnContext = {
               input: turnInput,
               autoCompactWindow,

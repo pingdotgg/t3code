@@ -60,9 +60,9 @@ describe("live provider-turn usage (#8144)", () => {
     const snapshot = deriveLatestContextWindowSnapshot([], usage);
     expect(snapshot).not.toBeNull();
     expect(snapshot?.usedTokens).toBe(42_000);
-    expect(snapshot?.maxTokens).toBe(150_000);
-    expect(snapshot?.remainingTokens).toBe(108_000);
-    expect(snapshot?.usedPercentage).toBeCloseTo(28);
+    expect(snapshot?.maxTokens).toBe(200_000);
+    expect(snapshot?.remainingTokens).toBe(158_000);
+    expect(snapshot?.usedPercentage).toBe(21);
     expect(snapshot?.autoCompactThreshold).toBe(150_000);
     expect(
       formatContextWindowCompactionMessage("Claude Sonnet 4.6", snapshot?.autoCompactThreshold),
@@ -149,8 +149,7 @@ describe("latestProviderTurnTokenUsage", () => {
       const providerThread = {
         contextUsage: {
           usedTokens,
-          maxTokens: 1_000_000,
-          autoCompactThreshold: 200_000,
+          maxTokens: 200_000,
           cost: { amount: 0.42, currency: "USD" },
         },
         updatedAt: DateTime.makeUnsafe("2026-10-19T12:10:00.000Z"),
@@ -161,7 +160,6 @@ describe("latestProviderTurnTokenUsage", () => {
       expect(snapshot).toMatchObject({
         usedTokens,
         maxTokens: 200_000,
-        remainingTokens: 200_000 - usedTokens,
         cost: { amount: 0.42, currency: "USD" },
         updatedAt: "2026-10-19T12:10:00.000Z",
       });

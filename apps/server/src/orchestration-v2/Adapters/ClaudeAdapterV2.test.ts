@@ -6517,14 +6517,35 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     autoCompactWindow: string;
     model: string;
     threshold: number | undefined;
+    maxTokens: number;
     userSettings?: string;
     projectSettings?: string;
   }>([
-    { autoCompactWindow: "", model: "claude-sonnet-4-6", threshold: undefined },
-    { autoCompactWindow: "150000", model: "claude-sonnet-4-6", threshold: 117_000 },
-    { autoCompactWindow: "200000", model: "claude-sonnet-4-6", threshold: undefined },
-    { autoCompactWindow: "650000", model: "claude-sonnet-4-6", threshold: undefined },
-    { autoCompactWindow: "650000", model: "uncatalogued-model", threshold: 617_000 },
+    { autoCompactWindow: "", model: "claude-sonnet-4-6", threshold: undefined, maxTokens: 200_000 },
+    {
+      autoCompactWindow: "150000",
+      model: "claude-sonnet-4-6",
+      threshold: 117_000,
+      maxTokens: 150_000,
+    },
+    {
+      autoCompactWindow: "200000",
+      model: "claude-sonnet-4-6",
+      threshold: undefined,
+      maxTokens: 200_000,
+    },
+    {
+      autoCompactWindow: "650000",
+      model: "claude-sonnet-4-6",
+      threshold: undefined,
+      maxTokens: 200_000,
+    },
+    {
+      autoCompactWindow: "650000",
+      model: "uncatalogued-model",
+      threshold: 617_000,
+      maxTokens: 650_000,
+    },
     // /autocompact writes the per-model value, which beats the file's top-level one.
     {
       autoCompactWindow: "",
@@ -6532,6 +6553,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       userSettings:
         '{"autoCompactWindow":300000,"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":400000},"claude-sonnet-5-5":{"autoCompactWindow":"big"}}}',
       threshold: 367_000,
+      maxTokens: 400_000,
     },
     {
       autoCompactWindow: "",
@@ -6539,6 +6561,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       userSettings: '{"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":400000}}}',
       projectSettings: '{"autoCompactWindow":300000}',
       threshold: 267_000,
+      maxTokens: 300_000,
     },
     {
       autoCompactWindow: "",
@@ -6546,22 +6569,25 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       userSettings: '{"autoCompactWindow":300000}',
       projectSettings: '{"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":"auto"}}}',
       threshold: undefined,
+      maxTokens: 1_000_000,
     },
     {
       autoCompactWindow: "250000",
       model: "claude-opus-5-5",
       userSettings: '{"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":400000}}}',
       threshold: 217_000,
+      maxTokens: 250_000,
     },
     {
       autoCompactWindow: "",
       model: "claude-opus-5-5",
       userSettings: '{"autoCompactWindow":150000.5}',
       threshold: undefined,
+      maxTokens: 1_000_000,
     },
   ])(
     "ignores stale snapshots after compaction and reports threshold $threshold for $model",
-    ({ autoCompactWindow, model, threshold, userSettings = "{}", projectSettings }) =>
+    ({ autoCompactWindow, model, threshold, maxTokens, userSettings = "{}", projectSettings }) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -6619,10 +6645,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.deepEqual(
           harness.events.flatMap((event) =>
             event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
-              ? [event.providerTurn.tokenUsage.autoCompactThreshold]
+              ? [
+                  [
+                    event.providerTurn.tokenUsage.maxTokens,
+                    event.providerTurn.tokenUsage.autoCompactThreshold,
+                  ],
+                ]
               : [],
           ),
-          [threshold, threshold, threshold],
+          Array.from({ length: 3 }, () => [maxTokens, threshold]),
         );
       }).pipe(
         Effect.provide(
