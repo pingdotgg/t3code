@@ -3,7 +3,9 @@ import * as NodeReadline from "node:readline";
 
 import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import { beforeEach, vi } from "vite-plus/test";
 
 const { getSystemLocaleMock, getUserDefaultMock, relaunchMock, spawnMock, unrefMock } = vi.hoisted(
@@ -13,7 +15,7 @@ const { getSystemLocaleMock, getUserDefaultMock, relaunchMock, spawnMock, unrefM
       getSystemLocaleMock: vi.fn(() => "en-GB"),
       getUserDefaultMock: vi.fn((_key: string) => false),
       relaunchMock: vi.fn(),
-      spawnMock: vi.fn(() => ({ unref: unrefMock })),
+      spawnMock: vi.fn<() => NodeEvents.EventEmitter & { unref: () => void }>(),
       unrefMock,
     };
   },
@@ -38,7 +40,11 @@ describe("ElectronApp", () => {
     getSystemLocaleMock.mockReset();
     getUserDefaultMock.mockReset();
     relaunchMock.mockReset();
-    spawnMock.mockClear();
+    spawnMock.mockReset().mockImplementation(() => {
+      const child = Object.assign(new NodeEvents.EventEmitter(), { unref: unrefMock });
+      queueMicrotask(() => child.emit("spawn"));
+      return child;
+    });
     unrefMock.mockReset();
   });
 
@@ -75,6 +81,41 @@ describe("ElectronApp", () => {
       assert.deepStrictEqual(args.slice(3), [String(process.pid), "/opt/t3code/t3code", "--x"]);
       assert.deepStrictEqual(options, { detached: true, stdio: "ignore" });
       assert.strictEqual(unrefMock.mock.calls.length, 1);
+    }).pipe(Effect.provide(ElectronApp.layer)),
+  );
+
+  it.effect("waits for the shell to spawn and preserves asynchronous startup errors", () =>
+    Effect.gen(function* () {
+      const electronApp = yield* ElectronApp.ElectronApp;
+      for (const event of ["spawn", "error"] as const) {
+        const child = Object.assign(new NodeEvents.EventEmitter(), { unref: vi.fn() });
+        const started = Promise.withResolvers<void>();
+        const cause = new Error("shell spawn failed");
+        spawnMock.mockImplementationOnce(() => {
+          started.resolve();
+          return child;
+        });
+        const relaunch = yield* electronApp
+          .relaunch({ execPath: "/opt/t3code/t3code" })
+          .pipe(
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(HostProcess.Environment, {}),
+            Effect.exit,
+            Effect.forkChild({ startImmediately: true }),
+          );
+        yield* Effect.promise(() => started.promise);
+        assert.isUndefined(relaunch.pollUnsafe());
+        child.emit(event, cause);
+        const exit = yield* Fiber.join(relaunch);
+        if (event === "spawn") {
+          assert.strictEqual(exit._tag, "Success");
+          assert.strictEqual(child.unref.mock.calls.length, 1);
+        } else {
+          assert.strictEqual(exit._tag, "Failure");
+          if (exit._tag === "Failure") assert.strictEqual(Cause.squash(exit.cause), cause);
+          assert.strictEqual(child.unref.mock.calls.length, 0);
+        }
+      }
     }).pipe(Effect.provide(ElectronApp.layer)),
   );
 

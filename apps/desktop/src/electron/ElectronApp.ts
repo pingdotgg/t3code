@@ -224,11 +224,16 @@ export const make = ElectronApp.of({
       appImage && execPath === currentExecPath && isAppImageExecutable ? appImage : execPath,
       options.args ?? process.argv.slice(1),
     );
-    yield* Effect.sync(() => {
-      NodeChildProcess.spawn(launch.command, launch.args, {
+    yield* Effect.callback<void>((resume) => {
+      const child = NodeChildProcess.spawn(launch.command, launch.args, {
         detached: true,
         stdio: "ignore",
-      }).unref();
+      });
+      child.once("spawn", () => {
+        child.unref();
+        resume(Effect.void);
+      });
+      child.once("error", (cause) => resume(Effect.die(cause)));
     });
   }),
   setPath: Effect.fn("ElectronApp.setPath")(function (name, path) {
