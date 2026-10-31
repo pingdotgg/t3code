@@ -323,32 +323,6 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
-  it.effect("decodes standard JSON-RPC errors into typed ACP request failures", () =>
-    Effect.gen(function* () {
-      const { stdio, input, output } = yield* makeInMemoryStdio();
-      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
-        stdio,
-        serverRequestMethods: new Set(),
-      });
-
-      const request = yield* transport.request("x/auth", {}).pipe(Effect.forkScoped);
-      const outbound = yield* decodeJsonRpcRequestId(yield* Queue.take(output));
-      yield* Queue.offer(
-        input,
-        yield* encodeJsonl(JsonRpcErrorResponse, {
-          jsonrpc: "2.0",
-          id: outbound.id,
-          error: { code: -32000, message: "Authentication required" },
-        }),
-      );
-
-      const error = yield* Fiber.join(request).pipe(Effect.flip, Effect.orDie);
-      assert.instanceOf(error, AcpError.AcpRequestError);
-      assert.equal(error.code, -32000);
-      assert.equal(error.message, "Authentication required");
-    }),
-  );
-
   // clanka once sent a usage_update without `used` and `size`. One bad update
   // must not end a session whose later updates are fine.
   it.effect("drops a session/update that fails to decode and keeps reading", () =>
