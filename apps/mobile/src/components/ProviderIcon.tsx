@@ -14,7 +14,7 @@ import { useId, useState } from "react";
 import { resolveOfficialAcpRegistryIconUrl } from "@t3tools/contracts";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { AppText as Text } from "./ui/AppText";
-import { getProviderClient } from "../lib/providerClients";
+import { getProviderClient } from "@t3tools/client-runtime/provider-clients";
 
 /** What a configured instance chose to look like; a `ServerProvider` satisfies it. */
 export interface ProviderGlyphAppearance {
@@ -219,8 +219,7 @@ export function ProviderInstanceIcon(props: {
         />
       </View>
       {props.showBadge ? (
-        // A wide right-aligned box lets the badge fit its initials. Alone, an
-        // absolute badge is capped at the icon's width, which clips "WO".
+        // An absolute badge alone is capped at icon width and clips initials.
         <View
           pointerEvents="none"
           style={{ position: "absolute", right: -3, bottom: -3, width: 32, alignItems: "flex-end" }}

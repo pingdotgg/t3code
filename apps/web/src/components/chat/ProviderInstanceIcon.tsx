@@ -93,7 +93,6 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   className?: string;
   iconClassName?: string;
   badgeClassName?: string;
-  statusDotClassName?: string;
   indicatorBackground?: string;
 }) {
   const glyphDriver = resolveProviderInstanceGlyphDriver(props);
@@ -164,16 +163,6 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
           {badgeLabel}
         </span>
       )}
-      {props.statusDotClassName ? (
-        <span
-          className={cn(
-            "pointer-events-none absolute -left-0.5 -top-0.5 z-10 size-2 rounded-full",
-            props.statusDotClassName,
-          )}
-          style={{ boxShadow: `0 0 0 2px ${indicatorBackground}` }}
-          aria-hidden
-        />
-      ) : null}
       {props.showBadge ? (
         <span
           className={cn(
