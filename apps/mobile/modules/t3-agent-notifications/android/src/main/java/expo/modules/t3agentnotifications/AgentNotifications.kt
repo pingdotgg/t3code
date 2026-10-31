@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.Lifecycle
@@ -47,6 +48,9 @@ object AgentNotifications {
   private const val ALERT_CHANNEL = "agent-alerts"
   private const val ACTIVITY_TAG = "t3-agent-activity"
   private const val ALERT_TAG = "t3-agent-alert"
+  private const val ALERT_GROUP = "t3-agent-alerts"
+  private const val ALERT_SUMMARY_TAG = "$ALERT_TAG-summary"
+  private const val ALERT_PATH = "t3_alert_path"
   private const val ACTIVITY_ID = 73001
   private const val MAX_MESSAGE_AGE_MS = 10 * 60 * 1000L
   private const val RUNNING_LIFETIME_MS = 2 * 60 * 60 * 1000L
@@ -85,16 +89,29 @@ object AgentNotifications {
     context.getSharedPreferences(STORE, Context.MODE_PRIVATE).edit().clear().apply()
     val manager = manager(context)
     manager.activeNotifications.filter {
+      // Also matches the per-thread summaries older builds posted as "$ALERT_SUMMARY_TAG:<group>".
       it.tag == ACTIVITY_TAG || it.tag == ALERT_TAG ||
-        it.tag?.startsWith("$ALERT_TAG-summary:") == true
+        it.tag?.startsWith(ALERT_SUMMARY_TAG) == true
     }
       .forEach { manager.cancel(it.tag, it.id) }
   }
 
   @Volatile private var threadOnScreen: String? = null
 
-  fun setThreadOnScreen(path: String?) {
+  /** Opening a thread also clears the alert it already posted. */
+  @Synchronized
+  fun setThreadOnScreen(path: String?, context: Context? = null) {
     threadOnScreen = path
+    if (path == null || context == null) return
+    val manager = manager(context)
+    val stale = manager.activeNotifications.filter {
+      it.tag == ALERT_TAG && it.notification.extras.getString(ALERT_PATH) == path
+    }
+    if (stale.isEmpty()) return
+    stale.forEach { manager.cancel(it.tag, it.id) }
+    val scheme = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
+      .getString("scheme", "t3code") ?: "t3code"
+    updateAlertSummary(context, scheme)
   }
 
   @Synchronized
@@ -169,36 +186,49 @@ object AgentNotifications {
     val title = data["alert_title"].orEmpty().take(120)
     // Grouped alerts list up to five 120-character thread titles.
     val body = data["alert_body"].orEmpty().take(608)
-    val id = alertId.hashCode()
-    val group = data["alert_group"]?.takeIf { it.isNotBlank() } ?: ALERT_TAG
+    // One card per thread: a thread's newer alert replaces its last one
+    // (and still buzzes) instead of stacking under it.
+    val id = (data["alert_group"]?.takeIf { it.isNotBlank() } ?: alertId).hashCode()
     val notification = base(context, ALERT_CHANNEL)
       .setContentTitle(title).setContentText(body)
       .setStyle(NotificationCompat.BigTextStyle().bigText(body))
       .setAutoCancel(true)
-      .setGroup(group)
+      .setGroup(ALERT_GROUP)
+      .addExtras(Bundle().apply { putString(ALERT_PATH, data["alert_path"]) })
       .setContentIntent(contentIntent(context, scheme, data["alert_path"], id))
       .build()
     manager(context).notify(ALERT_TAG, id, notification)
-    val children = manager(context).activeNotifications.filter {
-      it.tag == ALERT_TAG && it.notification.group == group
+    updateAlertSummary(context, scheme)
+  }
+
+  /** Folds every thread's latest alert into one shade entry; drops it below two threads. */
+  private fun updateAlertSummary(context: Context, scheme: String) {
+    val manager = manager(context)
+    val children = manager.activeNotifications.filter { it.tag == ALERT_TAG }
+      .sortedByDescending { it.postTime }
+    if (children.size < 2) {
+      manager.cancel(ALERT_SUMMARY_TAG, 0)
+      return
     }
-    if (children.size > 1) {
-      val style = NotificationCompat.InboxStyle()
-      children.forEach {
-        style.addLine(it.notification.extras.getCharSequence(android.app.Notification.EXTRA_TEXT))
-      }
-      val summary = base(context, ALERT_CHANNEL)
-        .setContentTitle(title)
-        .setContentText(body)
-        .setStyle(style)
-        .setGroup(group)
-        .setGroupSummary(true)
-        .setSilent(true)
-        .setAutoCancel(true)
-        .setContentIntent(contentIntent(context, scheme, data["alert_path"], 0))
-        .build()
-      manager(context).notify("$ALERT_TAG-summary:$group", 0, summary)
+    val style = NotificationCompat.InboxStyle()
+    children.forEach {
+      val extras = it.notification.extras
+      style.addLine(
+        "${extras.getCharSequence(Notification.EXTRA_TITLE)} · " +
+          "${extras.getCharSequence(Notification.EXTRA_TEXT)}"
+      )
     }
+    val summary = base(context, ALERT_CHANNEL)
+      .setContentTitle("${children.size} threads updated")
+      .setContentText(children.first().notification.extras.getCharSequence(Notification.EXTRA_TITLE))
+      .setStyle(style)
+      .setGroup(ALERT_GROUP)
+      .setGroupSummary(true)
+      .setSilent(true)
+      .setAutoCancel(true)
+      .setContentIntent(contentIntent(context, scheme, "/", 0))
+      .build()
+    manager.notify(ALERT_SUMMARY_TAG, 0, summary)
   }
 
   /**
