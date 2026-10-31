@@ -195,6 +195,35 @@ instance can have its own environment variables, such as API keys or a custom
 base URL. Mark secret values as sensitive; after saving, T3 Code does not display
 their original values.
 
+### Route providers through a proxy
+
+A [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) server can serve Claude, Codex,
+and OpenCode from accounts it holds, and spread requests across several accounts. Open
+**Settings → Providers → Proxy** on the environment that runs the agents and choose where the
+proxy runs:
+
+- **This environment.** T3 Code downloads a pinned CLIProxyAPI release from GitHub, runs it on
+  this machine for local connections only, and restarts it if it stops. Add accounts under
+  **Accounts** with **Add Claude** or **Add Codex**: open the sign-in page and sign in. The
+  browser then lands on a `localhost` address that does not load; copy that address and paste it
+  into T3 Code. Accounts can be disabled, enabled again, or removed there.
+- **External URL.** Enter the URL of a CLIProxyAPI server you run, and one of its API keys if it
+  requires one. Add its management key to manage its accounts in the same place and see them under
+  **Usage → Limits**.
+
+Then turn on **Use proxy** for each Claude, Codex, or OpenCode provider that should use it. The
+proxy keeps each thread on one account while that account is available.
+
+A provider with **Use proxy** on never falls back to its own login. If the proxy is turned off,
+the provider shows as unavailable until you choose a proxy again or turn the switch off. Codex
+threads started through the proxy need it to continue. T3-managed ChatGPT sign-in and external
+OpenCode servers cannot use a proxy. While OpenCode uses the proxy, it offers only Anthropic and
+OpenAI models and runs without its plugins, because other providers and plugin logins such as
+ChatGPT would send requests around the proxy. This needs OpenCode 1.14.49 or newer, and any
+`OPENCODE_CONFIG_CONTENT` must be plain JSON. An OpenCode organization or managed config that
+points Anthropic or OpenAI elsewhere makes the provider unavailable. OpenCode 2 cannot use the
+proxy yet.
+
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),
 [Antigravity](./providers-antigravity.md), [Pi](./providers-pi.md),

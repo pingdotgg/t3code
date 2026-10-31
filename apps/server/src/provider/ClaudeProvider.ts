@@ -41,6 +41,10 @@ import { discoverClaudeSkills, readClaudeSettingsBaseUrl } from "./Drivers/Claud
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import {
+  PROXY_AUTH_METADATA,
+  PROXY_LIMITS_MESSAGE,
+} from "@t3tools/provider-core/server/providerProxy";
+import {
   type ClaudeScopedLimitNames,
   claudeUsageResponseToLimits,
   recordClaudeUsageResponse,
@@ -459,6 +463,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   /** Shared with the adapter so turn events reuse the scoped-bucket names this probe saw. */
   scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>,
   resolveResetCredits?: (version: string) => Effect.Effect<ServerProviderResetCredits | undefined>,
+  routedThroughProxy = false,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -628,26 +633,32 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  // A proxy's ANTHROPIC_AUTH_TOKEN reads as an API key; the endpoint is what the token is for.
-  const authMetadata =
-    apiProviderAuthMetadata(capabilities.apiProvider) ??
-    (customApiEndpoint ? { type: "customEndpoint", label: "Custom API endpoint" } : undefined) ??
-    claudeAuthMetadata({
-      subscriptionType: capabilities.subscriptionType,
-      authMethod: capabilities.tokenSource,
-    });
+  const authMetadata = routedThroughProxy
+    ? PROXY_AUTH_METADATA
+    : (apiProviderAuthMetadata(capabilities.apiProvider) ??
+      (customApiEndpoint ? { type: "customEndpoint", label: "Custom API endpoint" } : undefined) ??
+      claudeAuthMetadata({
+        subscriptionType: capabilities.subscriptionType,
+        authMethod: capabilities.tokenSource,
+      }));
   const usageCheckedAt = capabilities.usageCheckedAt ?? checkedAt;
-  const usageLimits = !capabilities.usage
-    ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
-    : scopedLimitNames
-      ? yield* recordClaudeUsageResponse(scopedLimitNames, {
-          response: capabilities.usage,
-          checkedAt: usageCheckedAt,
-        })
-      : claudeUsageResponseToLimits({
-          response: capabilities.usage,
-          checkedAt: usageCheckedAt,
-        }).limits;
+  const usageLimits = routedThroughProxy
+    ? makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "unsupported",
+        message: PROXY_LIMITS_MESSAGE,
+      })
+    : !capabilities.usage
+      ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
+      : scopedLimitNames
+        ? yield* recordClaudeUsageResponse(scopedLimitNames, {
+            response: capabilities.usage,
+            checkedAt: usageCheckedAt,
+          })
+        : claudeUsageResponseToLimits({
+            response: capabilities.usage,
+            checkedAt: usageCheckedAt,
+          }).limits;
   const resetCredits =
     resolveResetCredits &&
     capabilities.subscriptionType &&

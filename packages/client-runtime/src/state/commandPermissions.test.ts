@@ -12,6 +12,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
+  AuthProvidersManageScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   ThreadId,
@@ -122,20 +123,23 @@ describe("command permissions", () => {
     ),
   );
 
-  it.effect("requires the destination settings grant to check OTLP endpoints", () =>
+  it.effect.each([
+    [WS_METHODS.serverCheckOtlpEndpoint, AuthSettingsWriteScope],
+    // Proxy accounts serve every proxied provider, so operate permission alone is not enough.
+    [WS_METHODS.providerProxyStartLogin, AuthProvidersManageScope],
+    [WS_METHODS.providerProxyCompleteLogin, AuthProvidersManageScope],
+    [WS_METHODS.providerProxySetAccountDisabled, AuthProvidersManageScope],
+    [WS_METHODS.providerProxyRemoveAccount, AuthProvidersManageScope],
+  ] as const)("requires the destination's own grant for %s", ([method, scope]) =>
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* setup;
-        const check = createCommandPermissions(runtime, WS_METHODS.serverCheckOtlpEndpoint);
+        const check = createCommandPermissions(runtime, method);
         registry.set(sessions(env), AsyncResult.success(grant(true)));
         expect(registry.get(check.permissionAtom(env))).toBe(false);
         registry.set(
           sessions(env),
-          AsyncResult.success({
-            ...grant(false),
-            scopes: [AuthSettingsWriteScope],
-            permissions: [AuthSettingsWriteScope],
-          }),
+          AsyncResult.success({ ...grant(false), scopes: [scope], permissions: [scope] }),
         );
         expect(registry.get(check.permissionAtom(env))).toBe(true);
         yield* check.authorize(registry, env);

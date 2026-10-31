@@ -78,9 +78,18 @@ export const ProviderInstanceConfig = Schema.Struct({
   accentColor: Schema.optional(TrimmedNonEmptyString),
   environment: Schema.optionalKey(ProviderInstanceEnvironment),
   enabled: Schema.optionalKey(Schema.Boolean),
+  /** Sends model traffic through `ServerSettings.providerProxy`; see PROXY_ROUTED_DRIVERS. */
+  useProxy: Schema.optionalKey(Schema.Boolean),
   config: Schema.optionalKey(Schema.Unknown),
 });
 export type ProviderInstanceConfig = typeof ProviderInstanceConfig.Type;
+
+/** Drivers whose harness can send model traffic to a CLIProxyAPI endpoint. */
+export const PROXY_ROUTED_DRIVERS: ReadonlySet<string> = new Set([
+  "claudeAgent",
+  "codex",
+  "opencode",
+]);
 
 export const ProviderInstanceMutation = Schema.Union([
   Schema.Struct({

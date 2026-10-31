@@ -77,6 +77,49 @@ describe("deriveProviderInstanceConfigMap", () => {
     expect(merged[instanceId]).toBeUndefined();
   });
 
+  it("attaches the environment's proxy only to instances that use it", () => {
+    const claudeId = ProviderInstanceId.make("claude_direct");
+    const settings = settingsWith({
+      providerProxy: { url: " http://proxy:8317/v1/ ", apiKey: "sk-proxy", managementKey: "" },
+      providerInstances: {
+        [instanceId]: { driver: ProviderDriverKind.make("codex"), useProxy: true },
+        [claudeId]: { driver: ProviderDriverKind.make("claudeAgent") },
+      },
+    });
+
+    const merged = deriveProviderInstanceConfigMap(settings);
+
+    expect(merged[instanceId]?.proxy).toEqual({ url: "http://proxy:8317", apiKey: "sk-proxy" });
+    expect(merged[claudeId]).toBe(settings.providerInstances[claudeId]);
+    expect(
+      deriveProviderInstanceConfigMap({
+        ...settings,
+        providerProxy: { ...settings.providerProxy, url: "" },
+      })[instanceId]?.proxy,
+    ).toBeUndefined();
+
+    // The host decides which proxy applies; a managed one carries its own loopback route and key.
+    const managed = {
+      url: "http://127.0.0.1:41234",
+      apiKey: "sk-managed",
+      managementKey: "mgmt-managed",
+    };
+    const withHost = (host: "off" | "managed" | "external") => ({
+      ...settings,
+      providerProxy: { ...settings.providerProxy, host },
+    });
+    expect(
+      deriveProviderInstanceConfigMap(withHost("managed"), managed)[instanceId]?.proxy,
+    ).toEqual({ url: "http://127.0.0.1:41234", apiKey: "sk-managed" });
+    expect(deriveProviderInstanceConfigMap(withHost("managed"))[instanceId]?.proxy).toBeUndefined();
+    expect(
+      deriveProviderInstanceConfigMap(withHost("off"), managed)[instanceId]?.proxy,
+    ).toBeUndefined();
+    expect(
+      deriveProviderInstanceConfigMap(withHost("external"), managed)[instanceId]?.proxy,
+    ).toEqual({ url: "http://proxy:8317", apiKey: "sk-proxy" });
+  });
+
   it("ignores a project override that disables an instance, leaving the machine's config in charge", () => {
     const settings = settingsWith({
       providerInstances: {

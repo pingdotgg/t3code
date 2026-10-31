@@ -103,6 +103,9 @@ import * as ProviderAdapterRegistry from "./orchestration-v2/ProviderAdapterRegi
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ProviderUsageLimitsIngestion from "./provider/ProviderUsageLimitsIngestion.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
+import * as CliProxyApiBinary from "./providerProxy/CliProxyApiBinary.ts";
+import * as ManagedProviderProxy from "./providerProxy/ManagedProviderProxy.ts";
+import * as ProxyAccounts from "./providerProxy/ProxyAccounts.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
@@ -487,6 +490,13 @@ const layerAuth = EnvironmentAuth.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
 );
 
+const layerProviderProxy = ProxyAccounts.layer.pipe(
+  Layer.provideMerge(ManagedProviderProxy.layer),
+  Layer.provide(CliProxyApiBinary.layer),
+  Layer.provide(ServerSecretStore.layer),
+  Layer.provide(NetService.layer),
+);
+
 const layerCloudManagedEndpointRuntime = Layer.mergeAll(
   layerRelayClient,
   CloudManagedEndpointRuntime.layer.pipe(
@@ -641,6 +651,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ),
   Layer.provideMerge(ProviderRegistry.layer),
   Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
+  Layer.provideMerge(layerProviderProxy),
   // Provider hydration builds the Claude runner, which reports agents to the same scanner the
   // terminal and preview layers share.
   Layer.provideMerge(layerPortScanner),

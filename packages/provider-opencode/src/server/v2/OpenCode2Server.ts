@@ -115,6 +115,7 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
   readonly serverPassword: string;
   readonly directory: string;
   readonly environment: NodeJS.ProcessEnv;
+  readonly proxied: boolean;
 }) {
   const opencode = yield* OpenCode2Client.OpenCode2Client;
   const connectTo = Effect.fn("OpenCode2Server.connectTo")(function* (
@@ -154,8 +155,18 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
     environment: serverEnvironment(input.environment, password),
     verify: (url) => connectTo(url, password, false).pipe(Effect.flatMap(remember)),
   });
+  // OpenCode 2 reads provider endpoints from `providers.*.settings`, which the proxy override
+  // does not write yet; running would send turns around the proxy.
   return OpenCode2Server.of({
     withConnection: Effect.fn("OpenCode2Server.withConnection")(function (use) {
+      if (input.proxied) {
+        return Effect.fail(
+          new OpenCodeRuntime.OpenCodeRuntimeError({
+            operation: "server.start",
+            detail: "OpenCode 2 cannot use the proxy yet. Turn off Use proxy for this provider.",
+          }),
+        );
+      }
       return owner.withServer((server) =>
         latest?.url === server.url
           ? use(latest)

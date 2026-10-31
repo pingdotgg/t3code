@@ -47,6 +47,10 @@ import {
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import {
+  PROXY_AUTH_METADATA,
+  PROXY_LIMITS_MESSAGE,
+} from "@t3tools/provider-core/server/providerProxy";
+import {
   codexRateLimitsFailureMessage,
   codexRateLimitsToLimits,
   type CodexRateLimitSnapshot,
@@ -749,6 +753,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   > = probeCodexAppServerProvider,
   environment?: NodeJS.ProcessEnv,
   managedAuth?: ServerProvider["auth"],
+  routedThroughProxy = false,
 ): Effect.fn.Return<
   ServerProviderDraft,
   ServerSettingsError,
@@ -781,7 +786,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
     cwd: process.cwd(),
     environment: resolvedEnvironment,
-    ...(managedAuth ? { skipNativeUsage: true } : {}),
+    ...(managedAuth || routedThroughProxy ? { skipNativeUsage: true } : {}),
   }).pipe(
     // Process teardown can outlast the work budget without discarding a completed snapshot.
     Effect.timeoutOption(Duration.millis(CODEX_AUTH_PROBE_TIMEOUT_MS)),
@@ -841,9 +846,20 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const snapshot = probeResult.success.value;
   const accountStatus = managedAuth
     ? { status: "ready" as const, auth: managedAuth, message: undefined }
-    : accountProbeStatus(snapshot);
-  const usageLimits =
-    snapshot.account.account?.type === "apiKey"
+    : routedThroughProxy
+      ? {
+          status: "ready" as const,
+          auth: { status: "authenticated" as const, ...PROXY_AUTH_METADATA },
+          message: undefined,
+        }
+      : accountProbeStatus(snapshot);
+  const usageLimits = routedThroughProxy
+    ? makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "unsupported",
+        message: PROXY_LIMITS_MESSAGE,
+      })
+    : snapshot.account.account?.type === "apiKey"
       ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
       : snapshot.rateLimits === undefined || "failure" in snapshot.rateLimits
         ? makeUnavailableUsageLimits({

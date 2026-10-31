@@ -5,6 +5,10 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import {
+  providerProxyToken,
+  type ProviderProxyRoute,
+} from "@t3tools/provider-core/server/providerProxy";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
@@ -41,6 +45,37 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
     CLAUDE_CONFIG_DIR: resolvedHomePath,
   };
 });
+
+// Ambient Bedrock, Vertex, or API-key settings would send requests around the proxy.
+const CLAUDE_ROUTE_OVERRIDE_VARIABLES = [
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_VERTEX",
+  "CLAUDE_CODE_USE_FOUNDRY",
+] as const;
+
+export const claudeProxySettingsEnvironment = (proxy: ProviderProxyRoute) => ({
+  ANTHROPIC_BASE_URL: proxy.url,
+  ANTHROPIC_AUTH_TOKEN: providerProxyToken(proxy),
+  ANTHROPIC_API_KEY: "",
+  ...Object.fromEntries(CLAUDE_ROUTE_OVERRIDE_VARIABLES.map((name) => [name, ""])),
+});
+
+export const applyClaudeProxyEnvironment = (
+  environment: NodeJS.ProcessEnv,
+  proxy: ProviderProxyRoute | undefined,
+): NodeJS.ProcessEnv => {
+  if (proxy === undefined) return environment;
+  const next: NodeJS.ProcessEnv = {
+    ...environment,
+    ANTHROPIC_BASE_URL: proxy.url,
+    ANTHROPIC_AUTH_TOKEN: providerProxyToken(proxy),
+    // Empty, not removed: Claude Code otherwise falls back to a saved API key.
+    ANTHROPIC_API_KEY: "",
+  };
+  for (const name of CLAUDE_ROUTE_OVERRIDE_VARIABLES) delete next[name];
+  return next;
+};
 
 /** managed-mcp.json excludes other MCP config and forbids --strict-mcp-config; omit the flag when present. */
 export const hasClaudeManagedMcpConfig = Effect.fn("hasClaudeManagedMcpConfig")(function* () {

@@ -68,6 +68,19 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("keeps proxy accounts, which read and spend pooled subscriptions, behind provider management", () => {
+    for (const method of [
+      WS_METHODS.providerProxyGetState,
+      WS_METHODS.providerProxyStartLogin,
+      WS_METHODS.providerProxyGetLoginStatus,
+      WS_METHODS.providerProxyCompleteLogin,
+      WS_METHODS.providerProxySetAccountDisabled,
+      WS_METHODS.providerProxyRemoveAccount,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthProvidersManageScope);
+    }
+  });
+
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(

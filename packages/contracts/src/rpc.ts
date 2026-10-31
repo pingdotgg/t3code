@@ -350,6 +350,17 @@ import {
   ProviderConsumeResetCreditInput,
   ProviderConsumeResetCreditResult,
 } from "./providerUsageLimits.ts";
+import {
+  ProviderProxyCompleteLoginInput,
+  ProviderProxyError,
+  ProviderProxyLogin,
+  ProviderProxyLoginStatus,
+  ProviderProxyLoginStatusInput,
+  ProviderProxyRemoveAccountInput,
+  ProviderProxySetAccountDisabledInput,
+  ProviderProxyStartLoginInput,
+  ProviderProxyState,
+} from "./providerProxy.ts";
 import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
 import {
   StorageCleanupReport,
@@ -435,6 +446,12 @@ export const WS_METHODS = {
   providerUploadFeedback: "provider.uploadFeedback",
   providerAuthStart: "provider.auth.start",
   providerConsumeResetCredit: "provider.consumeResetCredit",
+  providerProxyGetState: "provider.proxy.getState",
+  providerProxyStartLogin: "provider.proxy.startLogin",
+  providerProxyGetLoginStatus: "provider.proxy.getLoginStatus",
+  providerProxyCompleteLogin: "provider.proxy.completeLogin",
+  providerProxySetAccountDisabled: "provider.proxy.setAccountDisabled",
+  providerProxyRemoveAccount: "provider.proxy.removeAccount",
   providerAuthComplete: "provider.auth.complete",
   chatGptReconnectProfile: "provider.chatgpt.reconnect-profile",
   chatGptImportProfile: "provider.chatgpt.import-profile",
@@ -670,6 +687,41 @@ const WsProviderConsumeResetCreditRpc = Rpc.make(WS_METHODS.providerConsumeReset
   payload: ProviderConsumeResetCreditInput,
   success: ProviderConsumeResetCreditResult,
   error: Schema.Union([ProviderSetupError, UsageLimitSourceError, EnvironmentAuthorizationError]),
+});
+
+const ProviderProxyRpcError = Schema.Union([ProviderProxyError, EnvironmentAuthorizationError]);
+
+const WsProviderProxyGetStateRpc = Rpc.make(WS_METHODS.providerProxyGetState, {
+  payload: Schema.Struct({}),
+  success: ProviderProxyState,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsProviderProxyStartLoginRpc = Rpc.make(WS_METHODS.providerProxyStartLogin, {
+  payload: ProviderProxyStartLoginInput,
+  success: ProviderProxyLogin,
+  error: ProviderProxyRpcError,
+});
+
+const WsProviderProxyGetLoginStatusRpc = Rpc.make(WS_METHODS.providerProxyGetLoginStatus, {
+  payload: ProviderProxyLoginStatusInput,
+  success: ProviderProxyLoginStatus,
+  error: ProviderProxyRpcError,
+});
+
+const WsProviderProxyCompleteLoginRpc = Rpc.make(WS_METHODS.providerProxyCompleteLogin, {
+  payload: ProviderProxyCompleteLoginInput,
+  error: ProviderProxyRpcError,
+});
+
+const WsProviderProxySetAccountDisabledRpc = Rpc.make(WS_METHODS.providerProxySetAccountDisabled, {
+  payload: ProviderProxySetAccountDisabledInput,
+  error: ProviderProxyRpcError,
+});
+
+const WsProviderProxyRemoveAccountRpc = Rpc.make(WS_METHODS.providerProxyRemoveAccount, {
+  payload: ProviderProxyRemoveAccountInput,
+  error: ProviderProxyRpcError,
 });
 
 const WsProviderAuthStartRpc = Rpc.make(WS_METHODS.providerAuthStart, {
@@ -1976,6 +2028,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
   WsProviderConsumeResetCreditRpc,
+  WsProviderProxyGetStateRpc,
+  WsProviderProxyStartLoginRpc,
+  WsProviderProxyGetLoginStatusRpc,
+  WsProviderProxyCompleteLoginRpc,
+  WsProviderProxySetAccountDisabledRpc,
+  WsProviderProxyRemoveAccountRpc,
   WsProviderAuthStartRpc,
   WsProviderAuthCompleteRpc,
   WsChatGptReconnectProfileRpc,

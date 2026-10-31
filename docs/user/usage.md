@@ -153,8 +153,10 @@ environment that will connect to the hub and enter its URL and management key.
 The accounts appear under **Usage → Limits**. Codex accounts show banked reset credits; select an
 account and choose **Use reset** to redeem one. No hub plugin is required.
 
-This connection supplies usage information; configure
-the provider separately to send agent requests through the hub. Remove the hub from the same
+This connection supplies usage information only. To send agent requests through the hub, set it
+as the environment's [proxy](./install.md#route-providers-through-a-proxy); with its management
+key there, or with the proxy running on this environment, its accounts appear here without a
+separate hub. Remove the hub from the same
 settings section when you no longer need it.
 
 ## Subscription usage widget

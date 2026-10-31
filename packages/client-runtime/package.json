@@ -231,6 +231,10 @@
       "types": "./src/state/peerLinks.ts",
       "default": "./src/state/peerLinks.ts"
     },
+    "./state/providerProxy": {
+      "types": "./src/state/providerProxy.ts",
+      "default": "./src/state/providerProxy.ts"
+    },
     "./state/peerPairingCode": {
       "types": "./src/state/peerPairingCode.ts",
       "default": "./src/state/peerPairingCode.ts"
