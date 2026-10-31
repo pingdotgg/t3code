@@ -314,6 +314,14 @@ const serviceProtectCommand = Command.make("protect", {
             );
           }
 
+          yield* Console.log(
+            [
+              "Keeps T3 Code running when agents fill this machine's memory:",
+              "  - reserves memory for the T3 Code server, so the kernel takes memory from agents first",
+              "  - makes the out-of-memory killer pick agents before the server",
+              "It adds systemd drop-in files and changes nothing else. Undo with `t3 service protect --undo`.",
+            ].join("\n"),
+          );
           const names = remote.map((unit) => unit.replace(/\.service$/, "")).join(" and ");
           const protectRemote =
             remote.length > 0 &&
@@ -328,7 +336,7 @@ const serviceProtectCommand = Command.make("protect", {
           });
           yield* Console.log(
             [
-              "As root, through sudo:",
+              "Drop-ins it writes, as root through sudo:",
               ...formatDropIns(plan.system),
               "As you:",
               ...formatDropIns([plan.managerDefaults, ...plan.user]),
@@ -368,6 +376,14 @@ export const offerServiceDuringOnboarding = Effect.gen(function* () {
   ) {
     yield* Console.log(
       `A newer t3@${status.installedVersion} background service is installed. Leaving it unchanged.`,
+    );
+    return "skipped" as const;
+  }
+  // Both streams must be terminals: with stdout redirected the prompt is
+  // invisible and the command would hang waiting on it.
+  if (!(process.stdin.isTTY && process.stdout.isTTY)) {
+    yield* Console.log(
+      "Not a terminal, so background setup was skipped. Run `t3 service install` to set it up.",
     );
     return "skipped" as const;
   }
