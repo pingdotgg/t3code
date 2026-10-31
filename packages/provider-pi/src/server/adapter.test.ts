@@ -3389,7 +3389,7 @@ describe("PiAdapterV2", () => {
           );
           assert.deepEqual(
             [...attempts.values()].map((row) => row.status),
-            ["idle", "running"],
+            ["completed", "running"],
           );
           assert.equal([...attempts.values()][1]?.model, "test/model");
           assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
