@@ -105,8 +105,13 @@ function resolveSpawnExecutableWithNode(
     return candidates.find(isExecutable);
   }
 
-  for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
-    const normalizedPathEntry = normalizePathEntry(pathEntry, platform);
+  const pathValue = readEnvPath(env) ?? "";
+  for (const pathEntry of pathValue.split(pathDelimiterForPlatform(platform))) {
+    // A raw empty component of a nonempty POSIX PATH is the current directory.
+    const normalizedPathEntry =
+      pathEntry === "" && pathValue !== "" && platform !== "win32"
+        ? "."
+        : normalizePathEntry(pathEntry, platform);
     if (normalizedPathEntry.length === 0) continue;
     for (const candidate of candidates) {
       const candidatePath = path.join(normalizedPathEntry, candidate);
@@ -676,7 +681,11 @@ const findOnPath = Effect.fnUntraced(function* (
   const pathEntries: string[] = [];
   const seenPathEntries = new Set<string>();
   for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
-    const pathEntry = normalizePathEntry(entry, platform);
+    // A raw empty component of a nonempty POSIX PATH is the current directory.
+    const pathEntry =
+      entry === "" && pathValue !== "" && platform !== "win32"
+        ? "."
+        : normalizePathEntry(entry, platform);
     if (pathEntry.length === 0 || seenPathEntries.has(pathEntry)) continue;
 
     seenPathEntries.add(pathEntry);
