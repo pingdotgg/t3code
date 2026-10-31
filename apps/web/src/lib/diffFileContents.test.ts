@@ -90,6 +90,15 @@ describe("createGitDiffFileContentsLoader", () => {
     await expect(loadOutcome(loader, partialFileDiff())).resolves.toBe("rejected");
   });
 
+  it("rejects contents whose hunk lines changed without moving", async () => {
+    const loader = loaderReturning(
+      toContents(originalLines),
+      toContents(changedLines.map((line, index) => (index === 30 ? "edited since" : line))),
+    );
+
+    await expect(loadOutcome(loader, partialFileDiff())).resolves.toBe("rejected");
+  });
+
   it("loads a whitespace-ignored patch whose context shows one side's whitespace", async () => {
     const patch = [
       "diff --git a/src/file01.ts b/src/file01.ts",
