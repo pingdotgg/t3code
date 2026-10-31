@@ -197,9 +197,11 @@ export function toggleThreadTerminalPane(threadRef: ScopedThreadRef, open: () =>
   }
   if (chat && !placed) {
     gatherAt([tab], chat, surfaceDestination(chat, true));
+    useLayoutStore.getState().showHint({ kind: "terminal", threadRef });
     return;
   }
   useLayoutStore.getState().focusTab(tab.tab.id);
+  useLayoutStore.getState().showHint({ kind: "terminal", threadRef });
 }
 
 /**

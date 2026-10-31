@@ -617,6 +617,7 @@ function start(): () => void {
       for (const key of keys) {
         const open = state.terminalUiStateByThreadKey[key]?.terminalOpen ?? false;
         const was = previous.terminalUiStateByThreadKey[key]?.terminalOpen ?? false;
+        if (open && !was) useLayoutStore.getState().showHint({ kind: "terminal", threadRef });
         if (open === was) continue;
         const threadRef = parseScopedThreadKey(key);
         if (threadRef) syncThreadTerminal(threadRef, open);
