@@ -3,12 +3,15 @@ import { afterEach, beforeEach, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopCliCommand from "./DesktopCliCommand.ts";
 import * as DesktopCliShim from "./DesktopCliShim.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
@@ -29,7 +32,14 @@ const environmentFor = (
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
 const commandIn = (
-  input: { home: string; baseDir?: string; platform?: NodeJS.Platform; isPackaged?: boolean },
+  input: {
+    home: string;
+    baseDir?: string;
+    platform?: NodeJS.Platform;
+    isPackaged?: boolean;
+    settings?: DesktopAppSettings.DesktopSettings;
+    wsl?: DesktopWslEnvironment.DesktopWslEnvironmentTestStub;
+  },
   spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"],
 ) =>
   Effect.gen(function* () {
@@ -41,6 +51,12 @@ const commandIn = (
       Effect.provideService(
         DesktopEnvironment.DesktopEnvironment,
         environmentFor(path, { ...input, baseDir }),
+      ),
+      Effect.provide(
+        Layer.mergeAll(
+          DesktopAppSettings.layerTest(input.settings),
+          DesktopWslEnvironment.layerTest(input.wsl),
+        ),
       ),
     );
     return yield* spawner
@@ -294,6 +310,62 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       expect((yield* command.state).installedPath).toBeNull();
       yield* command.uninstall;
       expect(registry.path).toBe(userPath);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("installs and removes t3 in the WSL distro when the app runs WSL only", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const { registry, spawner } = fakePowerShell("C:\\Tools");
+      const calls: Array<readonly [string | null, string]> = [];
+      let installedPath: string | null = null;
+      const command = yield* commandIn(
+        {
+          home,
+          platform: "win32",
+          settings: {
+            ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+            wslBackendEnabled: true,
+            wslOnly: true,
+            wslDistro: "Ubuntu",
+          },
+          wsl: {
+            isAvailable: true,
+            cliCommand: (distro, action) => {
+              calls.push([distro, action]);
+              if (action !== "state") {
+                installedPath = action === "install" ? "/home/me/.local/bin/t3" : null;
+              }
+              return Option.some({
+                distroName: "Ubuntu",
+                installedPath,
+                onPath: installedPath !== null,
+                shadowedBy: null,
+                failure: null,
+              });
+            },
+          },
+        },
+        spawner,
+      );
+
+      expect(yield* command.install).toEqual({
+        supported: true,
+        installedPath: "/home/me/.local/bin/t3",
+        onPath: true,
+        launcherPath: null,
+        wsl: { distro: "Ubuntu", windowsInstalled: false },
+      });
+      expect((yield* command.uninstall).installedPath).toBeNull();
+      expect(calls).toEqual([
+        ["Ubuntu", "install"],
+        ["Ubuntu", "uninstall"],
+      ]);
+      // Nothing on the Windows side: no launcher written, PATH untouched.
+      expect(registry.writes).toBe(0);
+      expect(yield* fs.exists(path.join(home, ".t3", "bin", "t3.cmd"))).toBe(false);
     }).pipe(Effect.scoped),
   );
 });

@@ -12,6 +12,10 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { describePrimaryBackend } from "../backend/DesktopBackendConfiguration.ts";
+import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
+import type { WslCliCommandReport } from "../wsl/wslCliCommand.ts";
 import * as DesktopCliShim from "./DesktopCliShim.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
@@ -71,6 +75,8 @@ export const make = Effect.gen(function* () {
   const launcher = DesktopCliShim.launcherPath(environment);
   const binDirectory = path.dirname(launcher);
   const ownedPathMarker = path.join(environment.stateDir, "cli-command-path-entry");
+  const settings = yield* DesktopAppSettings.DesktopAppSettings;
+  const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
 
   const fail = (message: string) => new DesktopCliCommandError({ message });
   const exists = (target: string) => fs.exists(target).pipe(Effect.orElseSucceed(() => false));
@@ -173,9 +179,76 @@ export const make = Effect.gen(function* () {
     return Option.none<string>();
   });
 
+  // In WSL-only mode the app's server runs in the distro, so `t3` belongs
+  // there: on Windows it would run a server and home the app does not use.
+  const wslDistro = describePrimaryBackend.pipe(
+    Effect.provideService(DesktopAppSettings.DesktopAppSettings, settings),
+    Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
+    Effect.map(({ useWsl, distro }) => (useWsl ? Option.some(distro) : Option.none())),
+  );
+  const wslName = (distro: string | null) => (distro ? `WSL (${distro})` : "WSL");
+
+  // A Windows install from before WSL-only mode is left alone; the state names
+  // it so the person knows a Windows `t3` still runs the Windows server.
+  const wslState = Effect.fn("DesktopCliCommand.wslState")(function* (
+    distro: string | null,
+    report: Option.Option<WslCliCommandReport>,
+  ) {
+    const found = Option.getOrNull(report);
+    return {
+      supported: true,
+      installedPath: found?.installedPath ?? null,
+      onPath: found?.onPath ?? false,
+      launcherPath: null,
+      ...(found?.shadowedBy ? { shadowedBy: found.shadowedBy } : {}),
+      wsl: {
+        distro: found?.distroName ?? distro,
+        windowsInstalled: yield* exists(ownedPathMarker),
+      },
+    };
+  });
+
+  const runInWsl = Effect.fn("DesktopCliCommand.runInWsl")(function* (
+    distro: string | null,
+    action: "install" | "uninstall",
+  ) {
+    const report = yield* wslEnvironment.cliCommand(distro, action);
+    if (Option.isNone(report)) {
+      return yield* fail(
+        `Could not reach ${wslName(distro)}. Check that it starts, then try again.`,
+      );
+    }
+    const where = wslName(report.value.distroName ?? distro);
+    switch (report.value.failure) {
+      case "runtime-missing":
+        return yield* fail(
+          `T3 Code has not set up its server in ${where} yet. Wait until T3 Code connects, then try again.`,
+        );
+      case "shadowed":
+        return yield* fail(
+          `Another t3 at ${report.value.shadowedBy ?? "an earlier PATH folder"} runs first in a new ${where} terminal. Remove it, then try again.`,
+        );
+      case "no-folder":
+        return yield* fail(
+          `Could not install t3 in ${where}: ~/.local/bin and ~/bin already have a t3 or are not writable.`,
+        );
+      case "write":
+        return yield* fail(
+          action === "install"
+            ? `Could not write the t3 command in ${where}.`
+            : `Could not remove the t3 command from ${where}.`,
+        );
+    }
+    return yield* wslState(distro, report);
+  });
+
   const state: DesktopCliCommand["Service"]["state"] = Effect.gen(function* () {
     if (!environment.isPackaged) {
       return { supported: false, installedPath: null, onPath: false, launcherPath: null } as const;
+    }
+    const distro = yield* wslDistro;
+    if (Option.isSome(distro)) {
+      return yield* wslState(distro.value, yield* wslEnvironment.cliCommand(distro.value, "state"));
     }
     const launcherPath = (yield* exists(launcher)) ? launcher : null;
     const installed = yield* installedAt;
@@ -214,6 +287,8 @@ export const make = Effect.gen(function* () {
 
   const install: DesktopCliCommand["Service"]["install"] = Effect.gen(function* () {
     if (!environment.isPackaged) return yield* fail("The t3 command needs an installed app.");
+    const distro = yield* wslDistro;
+    if (Option.isSome(distro)) return yield* runInWsl(distro.value, "install");
     yield* ensureLauncher;
     if (windows) {
       const entries = pathEntries(yield* readUserPath, ";");
@@ -265,6 +340,8 @@ export const make = Effect.gen(function* () {
   }).pipe(Effect.withSpan("desktop.cliCommand.install"));
 
   const uninstall: DesktopCliCommand["Service"]["uninstall"] = Effect.gen(function* () {
+    const distro = yield* wslDistro;
+    if (Option.isSome(distro)) return yield* runInWsl(distro.value, "uninstall");
     if (windows) {
       if (yield* exists(ownedPathMarker)) {
         const entries = pathEntries(yield* readUserPath, ";");
