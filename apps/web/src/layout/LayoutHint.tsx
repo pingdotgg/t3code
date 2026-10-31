@@ -72,9 +72,11 @@ function useHintPlacement() {
     // A pane that just landed can mount its composer a frame later.
     const frame = window.requestAnimationFrame(place);
     host.addEventListener("scroll", place, { capture: true, passive: true });
+    window.addEventListener("resize", place);
     return () => {
       window.cancelAnimationFrame(frame);
       host.removeEventListener("scroll", place, { capture: true });
+      window.removeEventListener("resize", place);
     };
   }, [hint]);
   return [setHint, style] as const;
