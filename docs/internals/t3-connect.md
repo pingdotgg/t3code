@@ -13,22 +13,25 @@ of its traces and leaves token and signature verification to the environment
 
 By default the forwarder stores nothing. An environment can opt in to having
 the relay hold requests while it is offline
-(`hold_webhooks_while_offline` on its link). Only then does the relay store the
-raw request, including the hook token in the path, in a Durable Object for
-that environment, with SQLite storage. The object pushes held requests back
-through the tunnel from its alarm, oldest first, and backs off while the
-environment stays away. When the tunnel reconnects, the environment asks the
-relay to deliver right away. Requests are deleted once the environment
-answers, after 24 hours, or when no user has the environment linked. The relay
-still never checks the token; delivery goes through the same environment route.
+(`hold_webhooks_while_offline` on its links). Only then does the relay store the
+raw request, including the hook token in the path, in a Durable Object with
+SQLite storage. There is one object per managed link, keyed by its endpoint
+key: each account that links the environment gets its own held requests,
+order, and caps. The object pushes held requests back through the tunnel from
+its alarm, oldest first, and backs off while the environment stays away. When
+the tunnel reconnects, the environment asks the relay to deliver right away to
+each of its links. Requests are deleted once the environment answers, after 24
+hours, when their link is unlinked, or when the environment turns holding off,
+which clears every link it proved. The relay still never checks the token;
+delivery goes through the same environment route.
 Every forward carries `x-t3-relay-delivery-id`, so a request that reached the
 environment before a timeout and is delivered again later runs once
 ([inbox object](../../infra/relay/src/hooks/HookInboxObject.ts)).
 
 A Durable Object, not Postgres or Queues, because held requests are write-once,
-read-once bodies of up to 1 MiB that need per-environment order, caps, and
-retry timing. Queues cap messages at 128 KB and cannot hold one environment's
-requests back while it is away.
+read-once bodies of up to 1 MiB that need per-link order, caps, and retry
+timing. Queues cap messages at 128 KB and cannot hold one link's requests back
+while its environment is away.
 
 Clerk, deployment, and native authentication setup live in the
 [Connect setup runbook](../operations/connect-setup.md).
