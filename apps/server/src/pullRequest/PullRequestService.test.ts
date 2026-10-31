@@ -653,10 +653,17 @@ it.effect.each([
   [
     "carries a list on past an empty slice whose host consumed rows",
     3,
+    "2026-07-02T00:00:00Z|1|7",
     { "github.com pingdotgg/t3code": "2026-07-02T00:00:00Z|4|7" },
   ],
-  ["ends a list on an empty slice whose host consumed nothing", 0, {}],
-] as const)("%s", ([, cursorAdvance, nextCursors]) =>
+  [
+    "carries a list on from its read time when the first slice kept nothing",
+    3,
+    undefined,
+    { "github.com pingdotgg/t3code": "2026-07-03T00:00:00.000Z|3|" },
+  ],
+  ["ends a list on an empty slice whose host consumed nothing", 0, "2026-07-02T00:00:00Z|1|7", {}],
+] as const)("%s", ([, cursorAdvance, cursor, nextCursors]) =>
   Effect.gen(function* () {
     const service = yield* makeService({
       projects: [
@@ -669,10 +676,11 @@ it.effect.each([
         }),
       ],
     });
+    yield* TestClock.setTime(Date.parse("2026-07-03T00:00:00Z"));
 
     const result = yield* service.list({
       state: "open",
-      cursors: { "github.com pingdotgg/t3code": "2026-07-02T00:00:00Z|1|7" },
+      ...(cursor === undefined ? {} : { cursors: { "github.com pingdotgg/t3code": cursor } }),
     });
 
     assert.deepStrictEqual<Record<string, string>>(result.nextCursors, nextCursors);
