@@ -25,11 +25,11 @@ export function PreviewRecentUrlCard({ threadRef, entry, onOpen, onRemove }: Pro
       <button
         type="button"
         onClick={onOpen}
-        className="flex w-full items-center gap-3 px-3 py-3 pr-10 text-left hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        className="flex w-full items-center gap-3 px-3 py-3 pr-10 text-left rounded-row hover:surface-ghost-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         <PreviewFaviconIcon threadRef={threadRef} url={entry.url} />
         <div className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-sm font-medium text-foreground">
+          <span className="truncate text-sm font-medium text-strong-foreground">
             {entry.title ?? label}
           </span>
           <span className="truncate text-xs text-muted-foreground">
@@ -42,7 +42,7 @@ export function PreviewRecentUrlCard({ threadRef, entry, onOpen, onRemove }: Pro
         type="button"
         aria-label={`Remove ${label} from history`}
         onClick={onRemove}
-        className="absolute right-3 rounded p-1 text-muted-foreground opacity-0 hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover:opacity-100"
+        className="absolute right-3 rounded-kbd p-1 text-muted-foreground opacity-0 hover:surface-ghost-hover hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover:opacity-100"
       >
         <X className="size-3.5" />
       </button>

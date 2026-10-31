@@ -127,7 +127,7 @@ export function ChatMarkdownImageFallback(props: {
       data-markdown-copy={props.copyMarkdown}
       className={cn(
         CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME,
-        "rounded-md border border-border/40 bg-muted/40 px-2 py-1 text-xs text-muted-foreground",
+        "rounded-row border border-border surface-card px-2 py-1 text-xs text-muted-foreground",
       )}
     >
       <ChatMarkdownMediaUnavailableLabel alt={props.alt} kind={props.kind} detail={props.detail} />

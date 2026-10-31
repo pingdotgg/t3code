@@ -62,7 +62,7 @@ function ThemeExtensionIcon({ extension }: { extension: OpenVsxThemeExtension })
   const [failed, setFailed] = useState(false);
 
   return (
-    <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted text-muted-foreground">
+    <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-control bg-muted text-dim-foreground">
       {extension.iconUrl && !failed ? (
         <img
           alt=""
@@ -293,7 +293,7 @@ export function ThemeSearchSection({
   return (
     <section className="space-y-3" aria-labelledby="theme-search-heading">
       <div>
-        <h3 className="text-sm font-medium" id="theme-search-heading">
+        <h3 className="text-sm font-medium text-strong-foreground" id="theme-search-heading">
           Search community themes
         </h3>
         <p className="mt-0.5 text-muted-foreground text-xs">
@@ -323,7 +323,7 @@ export function ThemeSearchSection({
       {!isSearching || results !== null ? (
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <p className="text-muted-foreground text-xs">Popular</p>
+            <p className="text-dim-foreground text-xs">Popular</p>
             {SUGGESTED_SEARCHES.map((suggestion) => (
               <Button
                 key={suggestion}
@@ -344,7 +344,7 @@ export function ThemeSearchSection({
           </div>
           {results && results.length > 0 ? (
             <div className="flex shrink-0 items-center justify-end gap-2">
-              <p className="text-muted-foreground text-xs">Sort</p>
+              <p className="text-dim-foreground text-xs">Sort</p>
               <Select
                 disabled={installingId !== null}
                 value={sortBy}
@@ -390,8 +390,10 @@ export function ThemeSearchSection({
 
       {results ? (
         results.length === 0 ? (
-          <div className="flex min-h-40 flex-col items-center justify-center rounded-2xl border border-dashed text-center">
-            <p className="text-sm font-medium">No supported open-source themes found</p>
+          <div className="flex min-h-40 flex-col items-center justify-center rounded-card border border-dashed text-center">
+            <p className="text-sm font-medium text-strong-foreground">
+              No supported open-source themes found
+            </p>
             <p className="mt-1 text-muted-foreground text-xs">Try a broader search.</p>
           </div>
         ) : (
@@ -405,13 +407,15 @@ export function ThemeSearchSection({
               const progressAction = isInstalled ? "Updating" : "Installing";
               return (
                 <article
-                  className="group flex min-w-0 flex-col gap-3 rounded-xl border border-border/70 bg-card/60 p-3 transition-colors hover:bg-accent/20"
+                  className="group flex min-w-0 flex-col gap-3 rounded-card border border-border/70 surface-card-settings p-3 transition-colors hover:surface-ghost-hover"
                   key={extension.id}
                 >
                   <div className="flex min-w-0 gap-3">
                     <ThemeExtensionIcon key={extension.iconUrl} extension={extension} />
                     <div className="min-w-0 flex-1">
-                      <h4 className="truncate text-sm font-medium">{extension.name}</h4>
+                      <h4 className="truncate text-sm font-medium text-strong-foreground">
+                        {extension.name}
+                      </h4>
                       <p className="truncate text-muted-foreground text-xs">
                         {extension.publisher} · {DOWNLOAD_FORMAT.format(extension.downloadCount)}{" "}
                         downloads
@@ -438,7 +442,7 @@ export function ThemeSearchSection({
                       aria-label={`${isInstalling ? progressAction : action} ${extension.name}`}
                       disabled={installingId !== null}
                       size="xs"
-                      variant="outline"
+                      variant="secondary"
                       onClick={() => void handleInstall(extension, false)}
                     >
                       {isInstalling ? (
@@ -473,7 +477,7 @@ export function ThemeSearchSection({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="secondary" />}>Cancel</AlertDialogClose>
             <Button
               onClick={() => {
                 const extension = pendingUpdate;

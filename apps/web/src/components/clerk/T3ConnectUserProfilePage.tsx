@@ -55,7 +55,7 @@ function T3ConnectEnvironmentRow(props: {
       <Collapsible open={props.confirmationOpen} onOpenChange={props.onConfirmationChange}>
         <div className="flex items-start gap-4">
           <div className="min-w-0 flex-1">
-            <h3 className="truncate text-sm leading-4.5 font-medium text-foreground">
+            <h3 className="truncate text-sm leading-4.5 font-medium text-strong-foreground">
               {environment.label}
             </h3>
             <p className="mt-1 text-xs leading-4.5 text-muted-foreground">
@@ -74,11 +74,11 @@ function T3ConnectEnvironmentRow(props: {
         <CollapsiblePanel>
           <div className="pt-3">
             <div
-              className="rounded-lg border border-input bg-muted/32 px-5 py-4 shadow-xs/5"
+              className="rounded-card surface-panel px-5 py-4"
               role="group"
               aria-label={`Confirm deregistration of ${environment.label}`}
             >
-              <h4 className="text-sm leading-4.5 font-semibold text-foreground">
+              <h4 className="text-sm leading-4.5 font-semibold text-strong-foreground">
                 Deregister server
               </h4>
               <p className="mt-1 text-xs leading-4.5 text-muted-foreground">
@@ -122,18 +122,15 @@ function T3ConnectTunnelUsage() {
     <div className="border-t py-4">
       <TunnelUsageMeter used={usage.used} limit={usage.limit} />
       {usage.upgrade ? (
-        <p className="mt-2 text-xs leading-4.5 text-muted-foreground">
+        <p className="mt-2 text-meta leading-4.5 text-muted-foreground">
           {usage.upgrade === "link" && t3Chat.linkUrl ? (
             <>
               Confirm on{" "}
-              <a
-                className="underline"
-                href={t3Chat.linkUrl}
-                target="_blank"
-                rel="noopener noreferrer"
+              <InlineButton
+                render={<a href={t3Chat.linkUrl} target="_blank" rel="noopener noreferrer" />}
               >
                 t3.chat
-              </a>
+              </InlineButton>
               , then select Refresh.
             </>
           ) : (
@@ -144,14 +141,13 @@ function T3ConnectTunnelUsage() {
                   {t3Chat.pending === "link" ? "Opening…" : "Link T3 Chat"}
                 </InlineButton>
               ) : (
-                <a
-                  className="underline"
-                  href={T3CHAT_SUBSCRIPTION_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <InlineButton
+                  render={
+                    <a href={T3CHAT_SUBSCRIPTION_URL} target="_blank" rel="noopener noreferrer" />
+                  }
                 >
                   Upgrade on T3 Chat
-                </a>
+                </InlineButton>
               )}
             </>
           )}
@@ -272,7 +268,7 @@ export function T3ConnectUserProfilePage() {
         ) : null}
 
         {isInitialLoad ? (
-          <p className="border-t py-4 text-xs text-muted-foreground" role="status">
+          <p className="border-t py-4 text-meta text-muted-foreground" role="status">
             Loading environments…
           </p>
         ) : environments.length > 0 ? (

@@ -286,9 +286,7 @@ export function AnnotatableCodeView({
       renderAnnotation={(...[annotation]) => {
         const hasDraft = annotation.metadata.entries.some((entry) => entry.kind === "draft");
         return (
-          <div
-            className={hasDraft ? "py-1" : "divide-y divide-border/30 border-y border-border/30"}
-          >
+          <div className={hasDraft ? "py-1" : "divide-y divide-border border-y border-border"}>
             {annotation.metadata.entries.map((entry) => (
               <DiffCommentAnnotation
                 key={entry.id}

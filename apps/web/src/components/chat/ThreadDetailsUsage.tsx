@@ -59,12 +59,8 @@ export function ThreadDetailsUsage({
   const notice = limitsNotice(limits);
 
   return (
-    <ThreadDetailsSection
-      headingId="thread-details-usage-heading"
-      title="Usage limits"
-      showHeading={false}
-    >
-      <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
+    <ThreadDetailsSection title="Usage limits">
+      <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-meta">
         {notice ? (
           <UsageRow
             label="Limits"
@@ -95,12 +91,8 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
       : null;
   const usedTokens = formatContextWindowTokens(usage.usedTokens);
   return (
-    <ThreadDetailsSection
-      headingId="thread-details-context-heading"
-      title="Context window"
-      showHeading={false}
-    >
-      <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
+    <ThreadDetailsSection title="Context window" variant="usage">
+      <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-meta">
         <UsageRow
           label="Context"
           fill={used}
@@ -202,7 +194,9 @@ function UsageRow({
           <div
             tabIndex={0}
             aria-label={`${label}: ${ariaValue}`}
-            className="col-span-3 grid h-6 cursor-default grid-cols-subgrid items-center rounded-lg px-2.5 outline-none hover:bg-black/[0.035] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-black/[0.035] dark:hover:bg-white/[0.08] dark:data-popup-open:bg-white/[0.08]"
+            className={cn(
+              "col-span-3 grid h-6 cursor-default grid-cols-subgrid items-center rounded-lg px-2.5 outline-none hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:surface-ghost-hover",
+            )}
           />
         }
       >
@@ -236,7 +230,7 @@ function UsageRow({
         <span
           className={cn(
             // Text-only rows span the bar column so they never widen the shared value column.
-            "text-end font-medium tabular-nums",
+            "text-end tabular-nums",
             fill === null && "col-span-2",
             tone === "error"
               ? "text-error-foreground"

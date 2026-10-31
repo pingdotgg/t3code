@@ -123,6 +123,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
       }}
     >
       <ComposerBanner.Surface
+        surface="popover"
         ref={listRef}
         className="flex min-h-0 w-full flex-col overflow-hidden pb-(--chat-composer-attachment-overlap) **:data-[slot=command-item]:rounded-lg **:data-[slot=scroll-area-scrollbar]:data-[orientation=vertical]:my-4"
         data-composer-command-drawer="true"
@@ -131,6 +132,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
           <CommandList
             id={props.listId}
             aria-label={props.triggerKind ? LISTBOX_LABEL_BY_TRIGGER[props.triggerKind] : undefined}
+            inset="compact"
             className="max-h-72 min-h-0 scroll-pb-6"
           >
             <CommandGroup>
@@ -191,6 +193,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
     <CommandItem
       render={<div id={props.optionId} />}
       aria-selected={props.isActive}
+      spacing="composer"
       value={props.item.id}
       data-composer-item-id={props.item.id}
       active={props.isActive}
@@ -209,10 +212,14 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           pathValue={props.item.path}
           kind={props.item.pathKind}
           theme={props.resolvedTheme}
+          className="size-[15px]"
         />
       ) : null}
       {props.item.type === "thread" ? (
-        <MessagesSquareIcon aria-hidden="true" className="size-4 shrink-0 text-secondary-label" />
+        <MessagesSquareIcon
+          aria-hidden="true"
+          className="size-[15px] shrink-0 text-secondary-label"
+        />
       ) : null}
       {props.item.type === "environment" ? (
         <EnvironmentMachineIcon
@@ -225,11 +232,19 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         <pullRequestPresentation.Icon
           role="img"
           aria-label={pullRequestPresentation.label}
-          className={cn("size-4 shrink-0", pullRequestPresentation.toneClassName)}
+          className={cn("size-[15px] shrink-0", pullRequestPresentation.toneClassName)}
         />
       ) : null}
-      <span className="flex min-w-0 flex-1 items-center gap-2">
-        <span className="min-w-0 max-w-[45%] shrink-0 truncate font-sans text-xs font-medium">
+      <span className="flex min-w-0 flex-1 items-center gap-2.5">
+        <span
+          className={cn(
+            "min-w-0 max-w-[45%] shrink-0 truncate text-xs font-medium",
+            props.item.type === "pull-request" ||
+              (props.triggerKind === "slash-command" && !isSlashSkill)
+              ? "font-mono"
+              : "font-sans",
+          )}
+        >
           {isSlashSkill ? (
             <>
               <span className="text-secondary-label">/skill:</span>
@@ -239,7 +254,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
             props.item.label
           )}
         </span>
-        <span className="min-w-0 flex-1 truncate text-left text-secondary-label text-xs">
+        <span className="min-w-0 flex-1 truncate text-left text-dim-foreground text-xs">
           {props.item.description}
         </span>
         {skillSourceKind ? (

@@ -3,16 +3,22 @@ import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDr
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
-import { FolderPlusIcon } from "lucide-react";
+import {
+  FolderPlusIcon,
+  FoldersIcon,
+  MessageSquareDashedIcon,
+  PinIcon,
+  PinOffIcon,
+} from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { useRef, useState } from "react";
+import { type ReactNode, useRef } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
 import { shortcutLabelForCommand } from "~/keybindings";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
-import { useOrderWhileOpen } from "~/hooks/useOrderWhileOpen";
 import { useProjectPin } from "~/hooks/useProjectGroupUpdate";
+import { useNowMinute } from "~/hooks/useNowMinute";
 import { useScratchProject } from "~/hooks/useScratchProject";
 import { isTriagePrompt } from "~/hooks/useStartTriage";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -35,33 +41,16 @@ import {
 } from "~/state/environments";
 import { ProjectEnvironmentBadge } from "../ProjectEnvironmentBadge";
 import { ProjectFavicon } from "../ProjectFavicon";
-import { isProjectPinShortcut, ProjectPinButton } from "../ProjectPinButton";
 import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
-import {
-  Combobox,
-  ComboboxEmpty,
-  ComboboxItem,
-  ComboboxList,
-  ComboboxPopup,
-  ComboboxSearchInput,
-  ComboboxTrigger,
-  useComboboxFilter,
-} from "../ui/combobox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { InlineButton } from "../ui/button";
+import { Button } from "../ui/button";
+import { Kbd } from "../ui/kbd";
+import { MiddleTruncate } from "../ui/middle-truncate";
 import { DraftProjectName } from "./DraftProjectName";
-import { DraftHeroProjectHeading } from "./DraftHeroProjectHeading";
 import { TriageDraftHero } from "./TriageDraftHero";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveProjectDefaultProviderModelSelection } from "../../providerInstances";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
-
-const ADD_PROJECT_VALUE = "add-project";
-
-interface PickerItem {
-  readonly value: string;
-  readonly label: string;
-}
 
 interface DraftHeroHeadlineProps {
   readonly draftId: DraftId | null;
@@ -92,14 +81,11 @@ export function DraftHeroHeadline({
   const applyStickyState = useComposerDraftStore((store) => store.applyStickyState);
   const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const openAddProject = () => openCommandPalette({ open: "add-project" });
+  const openAllProjects = () => openCommandPalette({ open: "new-thread-in" });
   const { scratchEnvironmentId, scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
   const openProjectDraft = useNewThreadHandler();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerQuery, setPickerQuery] = useState("");
-  const pickerFilter = useComboboxFilter();
-  const highlightedPickerValueRef = useRef<string | null>(null);
-  const { canPinProjectGroup, toggleProjectGroupPin } = useProjectPin();
+  const nowMinute = useNowMinute();
 
   const environmentLabelById = new Map(
     environments.map((environment) => [environment.environmentId, environment.label] as const),
@@ -128,9 +114,6 @@ export function DraftHeroHeadline({
     groups: pickableProjectGroups(projectGroups),
     preferredProjectRef: activeProjectRef,
   });
-  const projectEntryByKey = new Map(
-    projectPickerEntries.map((entry) => [entry.group.projectKey, entry] as const),
-  );
   const activeProjectGroup =
     activeProjectRef === null
       ? null
@@ -143,7 +126,8 @@ export function DraftHeroHeadline({
   const activeProjectDisplayName = activeProjectGroup?.displayName ?? activeProjectTitle;
   const hasResolvedProject = activeProjectTitle !== null;
   const canChooseProject = projectPickerEntries.length > 0;
-  const shouldShowProjectMenu = canChooseProject;
+  // The project that hosts threads without a project appears once, as the
+  // "No project" item, not as a project row.
   const menuEntries = projectPickerEntries.filter(
     ({ targetProject }) =>
       !isScratchProject(targetProject, scratchWorkspaceRootFor(targetProject.environmentId)),
@@ -161,26 +145,6 @@ export function DraftHeroHeadline({
   const isScratchDraft =
     activeProject !== null &&
     isScratchProject(activeProject, scratchWorkspaceRootFor(activeProject.environmentId));
-
-  // Pinning from a row keeps rows in place while the picker is open.
-  const pickerItems: readonly PickerItem[] = useOrderWhileOpen(
-    [
-      ...menuEntries.map(({ group }) => ({ value: group.projectKey, label: group.displayName })),
-      { value: ADD_PROJECT_VALUE, label: "Add project" },
-    ],
-    (item) => item.value,
-    pickerOpen,
-  );
-  const pickerSearch = pickerQuery.trim();
-  const filteredPickerItems =
-    pickerSearch.length === 0
-      ? pickerItems
-      : pickerItems.filter(
-          (item) =>
-            item.value !== ADD_PROJECT_VALUE &&
-            pickerFilter.contains(item, pickerSearch, (candidate) => candidate.label),
-        );
-  const selectedPickerItem = pickerItems.find((item) => item.value === activeProjectKey) ?? null;
 
   // The picker can change the draft's target while the no-project home is
   // still being opened; a stale continuation must not retarget it again. Picking
@@ -233,7 +197,7 @@ export function DraftHeroHeadline({
         providers: providersByEnvironment.get(project.environmentId) ?? [],
         ...(environmentSettings ? { settings: environmentSettings } : {}),
         projectId: project.id,
-        now: Date.now(),
+        now: Date.parse(`${nowMinute}:00Z`),
       });
       const defaultModelSelection = fallbackResolution.fallback
         ? fallbackResolution.selection
@@ -261,144 +225,75 @@ export function DraftHeroHeadline({
     return true;
   };
 
-  const projectSelector = shouldShowProjectMenu ? (
-    <Combobox
-      items={pickerItems}
-      filteredItems={filteredPickerItems}
-      autoHighlight
-      itemToStringLabel={(item) => item.label}
-      isItemEqualToValue={(a, b) => a.value === b.value}
-      open={pickerOpen}
-      onItemHighlighted={(item) => {
-        highlightedPickerValueRef.current = item?.value ?? null;
-      }}
-      onOpenChange={(open) => {
-        setPickerOpen(open);
-        setPickerQuery("");
-      }}
-      value={selectedPickerItem}
-      onValueChange={(item) => {
-        if (!item) return;
-        setPickerOpen(false);
-        if (item.value === ADD_PROJECT_VALUE) {
-          openAddProject();
-          return;
-        }
-        const entry = projectEntryByKey.get(item.value);
-        if (!entry || item.value === activeProjectKey) {
-          return;
-        }
-        selectProject(entry.targetProject, entry.group.projectKey);
-      }}
-    >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <ComboboxTrigger
-              render={<InlineButton tone="picker" />}
-              data-draft-project-trigger=""
-              className="pointer-events-auto min-w-0 max-w-full align-baseline"
-            />
-          }
-        >
-          <DraftProjectName
-            value={isScratchDraft ? "No project" : (activeProjectDisplayName ?? "Choose a project")}
-            singleLine
-          />
-        </TooltipTrigger>
-        {activeProjectDisplayName && !isScratchDraft ? (
-          <TooltipPopup side="top">{activeProjectDisplayName}</TooltipPopup>
-        ) : null}
-      </Tooltip>
-      <ComboboxPopup align="center" className="w-72 overflow-hidden">
-        <ComboboxSearchInput
-          aria-label="Search projects"
-          placeholder="Search projects..."
-          value={pickerQuery}
-          onChange={(event) => setPickerQuery(event.target.value)}
-          onKeyDown={(event) => {
-            const highlighted = highlightedPickerValueRef.current;
-            const group = highlighted ? projectEntryByKey.get(highlighted)?.group : undefined;
-            if (!group || !canPinProjectGroup(group) || !isProjectPinShortcut(event, keybindings)) {
-              return;
-            }
-            event.preventDefault();
-            event.stopPropagation();
-            toggleProjectGroupPin(group);
-          }}
-        />
-        <ComboboxEmpty>No matching projects.</ComboboxEmpty>
-        <ComboboxList>
-          {(item: PickerItem) => {
-            const entry = projectEntryByKey.get(item.value);
-            return (
-              <ComboboxItem key={item.value} hideIndicator value={item}>
-                {item.value === ADD_PROJECT_VALUE ? (
-                  <FolderPlusIcon className="size-4 shrink-0" />
-                ) : entry ? (
-                  <ProjectFavicon project={entry.group} className="size-4 shrink-0" />
-                ) : null}
-                <Tooltip>
-                  <TooltipTrigger render={<span className="min-w-0 flex-1 text-sm" />}>
-                    <DraftProjectName value={item.label} />
-                  </TooltipTrigger>
-                  <TooltipPopup side="top">{item.label}</TooltipPopup>
-                </Tooltip>
-                {entry && showProjectEnvironments ? (
-                  <ProjectEnvironmentBadge
-                    group={entry.group}
-                    primaryEnvironmentId={primaryEnvironmentId}
-                    machineByEnvironmentId={environmentMachineById}
-                  />
-                ) : null}
-                {entry && canPinProjectGroup(entry.group) ? (
-                  <ProjectPinButton
-                    name={entry.group.displayName}
-                    pinned={entry.group.pinned}
-                    shortcutLabel={shortcutLabelForCommand(keybindings, "thread.pin")}
-                    onToggle={() => toggleProjectGroupPin(entry.group)}
-                  />
-                ) : null}
-              </ComboboxItem>
-            );
-          }}
-        </ComboboxList>
-      </ComboboxPopup>
-    </Combobox>
-  ) : (
-    <button
-      type="button"
-      onClick={openAddProject}
-      className="pointer-events-auto inline min-w-0 max-w-full cursor-pointer border-muted-foreground/35 border-b border-dotted text-muted-foreground/60 transition-colors hover:border-muted-foreground/60 hover:text-muted-foreground/80 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-    >
-      <DraftProjectName value={activeProjectTitle ?? "Add a project"} singleLine />
-    </button>
+  // The pen's draft hero (fsQuY): pinned projects, the most recent others,
+  // a way to every project, then the no-project and add-project rows.
+  const { canPinProjectGroup, toggleProjectGroupPin } = useProjectPin();
+  const pinnedEntries = menuEntries.filter(({ group }) => group.pinned);
+  const unpinnedEntries = menuEntries.filter(({ group }) => !group.pinned);
+  // The active project always shows, so the selection never hides behind "All projects".
+  const recentEntries = unpinnedEntries.filter(
+    ({ group }, index) => index < RECENT_PROJECT_LIMIT || group.projectKey === activeProjectKey,
   );
-
+  const hiddenProjectCount = menuEntries.length - pinnedEntries.length - recentEntries.length;
+  const chooseEntry = (entry: (typeof menuEntries)[number]) => {
+    if (entry.group.projectKey === activeProjectKey && !isScratchDraft) return;
+    selectProject(entry.targetProject, entry.group.projectKey);
+  };
   const noProjectShortcut = shortcutLabelForCommand(keybindings, "chat.newWithoutProject");
-  const orStartWithoutProject =
-    scratchWorkspaceRoot !== null && !isScratchDraft && (hasResolvedProject || canChooseProject) ? (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <InlineButton
-              tone="muted"
-              className="pointer-events-auto"
-              onClick={() =>
-                void startScratch().then((started) => {
-                  if (started) {
-                    document.querySelector<HTMLElement>("[data-draft-project-trigger]")?.focus();
-                  }
-                })
-              }
+
+  const renderProjectRow = (entry: (typeof menuEntries)[number]) => {
+    const { group, targetProject } = entry;
+    const pinned = group.pinned;
+    return (
+      <DraftProjectRow
+        key={group.projectKey}
+        selected={!isScratchDraft && group.projectKey === activeProjectKey}
+        icon={<ProjectFavicon project={group} className="size-4 shrink-0" />}
+        label={group.displayName}
+        badge={
+          showProjectEnvironments ? (
+            <ProjectEnvironmentBadge
+              group={group}
+              primaryEnvironmentId={primaryEnvironmentId}
+              machineByEnvironmentId={environmentMachineById}
             />
-          }
-        >
-          or start without a project
-        </TooltipTrigger>
-        {noProjectShortcut ? <TooltipPopup side="bottom">{noProjectShortcut}</TooltipPopup> : null}
-      </Tooltip>
-    ) : null;
+          ) : null
+        }
+        detail={formatProjectRootForDisplay(targetProject.workspaceRoot)}
+        detailIsPath
+        onSelect={() => chooseEntry(entry)}
+        action={
+          canPinProjectGroup(group) ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost-muted"
+                    size="icon-micro"
+                    aria-label={pinned ? `Unpin ${group.displayName}` : `Pin ${group.displayName}`}
+                    aria-pressed={pinned}
+                    onClick={() => toggleProjectGroupPin(group)}
+                  />
+                }
+              >
+                {pinned ? <PinOffIcon /> : <PinIcon />}
+              </TooltipTrigger>
+              <TooltipPopup side="top">{pinned ? "Unpin" : "Pin"}</TooltipPopup>
+            </Tooltip>
+          ) : null
+        }
+      />
+    );
+  };
+
+  // The hero used to be a sentence; screen readers still get one.
+  const headingLabel = isScratchDraft
+    ? "What should we work on?"
+    : hasResolvedProject
+      ? `What should we build in ${activeProjectDisplayName}?`
+      : canChooseProject
+        ? "Choose a project to start"
+        : "Add a project to start";
 
   if (isScratchDraft && isTriageDraftPrompt) {
     const environment = environments.find(
@@ -413,27 +308,119 @@ export function DraftHeroHeadline({
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col items-center">
-      {hasResolvedProject && !isScratchDraft ? (
-        <DraftHeroProjectHeading projectName={activeProjectDisplayName ?? "Choose a project"}>
-          {projectSelector}
-        </DraftHeroProjectHeading>
-      ) : (
-        <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
-          {isScratchDraft ? (
-            <>What should we work on?</>
-          ) : canChooseProject ? (
-            <>{projectSelector} to start</>
+    <div className="mx-auto flex max-h-full min-h-0 w-full max-w-110 flex-col">
+      <h1 className="sr-only">{headingLabel}</h1>
+      <div
+        role="list"
+        aria-label="Projects"
+        className="flex min-h-0 flex-col gap-0.5 overflow-y-auto"
+      >
+        {pinnedEntries.length > 0 ? (
+          <>
+            <DraftProjectGroupLabel>Pinned</DraftProjectGroupLabel>
+            {pinnedEntries.map(renderProjectRow)}
+          </>
+        ) : null}
+        {recentEntries.length > 0 ? (
+          <>
+            <DraftProjectGroupLabel>Recent</DraftProjectGroupLabel>
+            {recentEntries.map(renderProjectRow)}
+          </>
+        ) : null}
+        {hiddenProjectCount > 0 ? (
+          <DraftProjectRow
+            icon={<FoldersIcon className="size-4 shrink-0 text-muted-foreground" />}
+            label="All projects…"
+            detail={String(menuEntries.length)}
+            onSelect={openAllProjects}
+          />
+        ) : null}
+        {menuEntries.length > 0 ? <div aria-hidden className="mx-2.5 my-1 h-px bg-border" /> : null}
+        {scratchWorkspaceRoot === null ? null : (
+          <DraftProjectRow
+            selected={isScratchDraft}
+            icon={<MessageSquareDashedIcon className="size-4 shrink-0 text-muted-foreground" />}
+            label="No project"
+            detail="Its own folder, no git"
+            shortcut={noProjectShortcut}
+            onSelect={() => void startScratch()}
+          />
+        )}
+        <DraftProjectRow
+          icon={<FolderPlusIcon className="size-4 shrink-0 text-muted-foreground" />}
+          label="Add project…"
+          detail="Open a folder or clone a repository"
+          onSelect={openAddProject}
+        />
+      </div>
+    </div>
+  );
+}
+
+// Recent rows shown before the rest fold into "All projects…".
+const RECENT_PROJECT_LIMIT = 3;
+
+/** Home-relative like a shell prompt: /Users/me/src/app reads as ~/src/app. */
+function formatProjectRootForDisplay(workspaceRoot: string): string {
+  return workspaceRoot.replace(/^(?:\/Users\/[^/]+|\/home\/[^/]+|[A-Za-z]:\\Users\\[^\\]+)/, "~");
+}
+
+export function DraftProjectGroupLabel({ children }: { readonly children: string }) {
+  return (
+    <div
+      role="presentation"
+      className="px-2.5 pt-2 pb-1 text-caption font-medium text-dim-foreground"
+    >
+      {children}
+    </div>
+  );
+}
+
+export function DraftProjectRow(props: {
+  readonly icon: ReactNode;
+  readonly label: string;
+  readonly badge?: ReactNode;
+  readonly detail: string;
+  readonly detailIsPath?: boolean;
+  readonly shortcut?: string | null;
+  readonly selected?: boolean;
+  readonly action?: ReactNode;
+  readonly onSelect: () => void;
+}) {
+  return (
+    <div
+      role="listitem"
+      data-selected={props.selected ? "" : undefined}
+      className="group/row relative flex h-8.5 shrink-0 items-center rounded-item hover:surface-ghost-hover has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-ring data-selected:surface-selected-soft"
+    >
+      <button
+        type="button"
+        aria-current={props.selected ? "true" : undefined}
+        onClick={props.onSelect}
+        className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded-item px-2.5 text-left outline-none"
+      >
+        {props.icon}
+        <span className="min-w-0 shrink truncate font-medium text-label text-foreground group-data-selected/row:text-strong-foreground">
+          <DraftProjectName value={props.label} singleLine />
+        </span>
+        {props.badge}
+        {/* Paths keep their folder name; the rest of the row's width goes to it. */}
+        <span className="flex min-w-0 flex-1 justify-end text-dim-foreground text-meta">
+          {props.detailIsPath ? (
+            <MiddleTruncate value={props.detail} />
           ) : (
-            <>Add a project to start</>
+            <span className="min-w-0 truncate">{props.detail}</span>
           )}
-        </h1>
-      )}
-      {scratchWorkspaceRoot === null ? null : (
-        <p className="mt-2 flex h-6 w-full items-center justify-center text-sm">
-          {isScratchDraft ? projectSelector : orStartWithoutProject}
-        </p>
-      )}
+        </span>
+        {props.shortcut ? <Kbd>{props.shortcut}</Kbd> : null}
+      </button>
+      {props.action ? (
+        // Hidden, it takes no width, so the detail ends on the same line as
+        // rows without an action.
+        <div className="flex w-0 shrink-0 justify-end overflow-hidden opacity-0 group-focus-within/row:-ml-1 group-focus-within/row:w-7 group-focus-within/row:pe-2 group-focus-within/row:opacity-100 group-hover/row:-ml-1 group-hover/row:w-7 group-hover/row:pe-2 group-hover/row:opacity-100">
+          {props.action}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -202,7 +202,7 @@ function SegmentPopover({
             <span className="tabular-nums">{resetCreditsSummary(credits, now, true)}</span>
             <Button
               size="xs"
-              variant="outline"
+              variant="secondary"
               disabled={redeem.busy || !redeem.canManageProviders}
               className="ms-auto"
               onClick={onRedeem}
@@ -669,7 +669,7 @@ export function UsageLimitsPooled({
                   View usage in ChatGPT with your connected account.
                 </p>
               ) : link.message ? (
-                <p className="max-w-xl text-xs text-muted-foreground">{link.message}</p>
+                <p className="max-w-xl text-meta text-muted-foreground">{link.message}</p>
               ) : null}
             </div>
           </div>

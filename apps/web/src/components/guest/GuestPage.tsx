@@ -57,6 +57,7 @@ import { useTimelineFollow } from "../chat/useTimelineFollow";
 import { GuestHtmlRender } from "./GuestHtmlRender";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Textarea } from "../ui/textarea";
 import {
   applyGuestStreamEvent,
   formatGuestExpiry,
@@ -343,8 +344,8 @@ function GuestSession({ shareId }: { readonly shareId: string }) {
 function Notice({ title, detail }: { readonly title: string; readonly detail?: string }) {
   return (
     <div className="m-auto flex max-w-sm flex-col gap-1 p-6 text-center">
-      <p className="text-sm font-medium">{title}</p>
-      {detail ? <p className="text-xs text-muted-foreground">{detail}</p> : null}
+      <p className="text-label">{title}</p>
+      {detail ? <p className="text-meta text-muted-foreground">{detail}</p> : null}
     </div>
   );
 }
@@ -371,8 +372,8 @@ function NameForm({
   };
   return (
     <form className="m-auto flex w-full max-w-xs flex-col gap-3 p-6" onSubmit={submit}>
-      <h1 className="text-base font-medium">Join a shared thread</h1>
-      <label className="flex flex-col gap-1.5 text-sm" htmlFor="guest-name">
+      <h1 className="text-title">Join a shared thread</h1>
+      <label className="flex flex-col gap-1.5 text-body" htmlFor="guest-name">
         Your name
         <Input
           id="guest-name"
@@ -384,14 +385,14 @@ function NameForm({
         />
       </label>
       {error !== null ? (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-body text-destructive">
           {error}
         </p>
       ) : null}
       <Button type="submit" disabled={submitting || name.trim() === ""}>
         Join
       </Button>
-      <p className="text-xs text-muted-foreground">
+      <p className="text-meta text-muted-foreground">
         The owner sees your name and approves each message before the agent gets it.
       </p>
     </form>
@@ -500,7 +501,7 @@ function GuestThread({
   return (
     <>
       <header className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2.5">
-        <h1 className="min-w-0 flex-1 truncate text-sm font-medium">{title}</h1>
+        <h1 className="min-w-0 flex-1 truncate text-label">{title}</h1>
         <ExpiryLabel expiresAt={expiresAt} />
       </header>
       <div className="relative min-h-0 flex-1">
@@ -569,14 +570,14 @@ function GuestThread({
 function ExpiryLabel({ expiresAt }: { readonly expiresAt: string }) {
   const nowMinute = useNowMinute();
   return (
-    <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+    <span className="shrink-0 text-meta text-muted-foreground tabular-nums">
       {formatGuestExpiry(expiresAt, Date.parse(`${nowMinute}Z`))}
     </span>
   );
 }
 
 const BUBBLE =
-  "flex min-w-0 max-w-[80%] flex-col gap-2 rounded-2xl p-3 text-sm whitespace-pre-wrap [overflow-wrap:anywhere]";
+  "flex min-w-0 max-w-[80%] flex-col gap-2 rounded-pane p-3 text-body whitespace-pre-wrap [overflow-wrap:anywhere]";
 
 const openInNewTab = (url: string) => window.open(url, "_blank", "noopener,noreferrer");
 /** Guests have no image viewer; the browser shows the picture in its own tab. */
@@ -614,7 +615,7 @@ function UnplacedGuestMessage({
         />
         {message.text ? <span>{message.text}</span> : null}
       </div>
-      <p className="me-1 text-2xs text-muted-foreground">{STATUS_LABEL[message.status]}</p>
+      <p className="me-1 text-caption text-muted-foreground">{STATUS_LABEL[message.status]}</p>
     </div>
   );
 }
@@ -729,7 +730,7 @@ function GuestComposer({
   };
   return (
     <form
-      className="flex flex-col gap-2 rounded-3xl border border-border bg-card px-4 pt-3 pb-2.5 shadow-composer dark:shadow-composer-dark"
+      className="surface-composer flex flex-col gap-2 rounded-pane px-4 pt-3 pb-2.5 text-prompt"
       onSubmit={(event) => {
         event.preventDefault();
         void send();
@@ -755,10 +756,10 @@ function GuestComposer({
                   <StagedImage file={staged.file} />
                 </span>
               ) : (
-                <span className="flex min-w-0 items-center gap-2 ps-2 text-sm">
+                <span className="flex min-w-0 items-center gap-2 ps-2 text-body">
                   <PierreEntryIcon pathValue={staged.file.name} kind="file" theme={resolvedTheme} />
                   <span className="max-w-40 truncate">{staged.file.name}</span>
-                  <span className="shrink-0 text-xs text-muted-foreground">
+                  <span className="shrink-0 text-meta text-muted-foreground">
                     {formatAttachmentSize(staged.file.size)}
                   </span>
                 </span>
@@ -778,7 +779,8 @@ function GuestComposer({
           ))}
         </ul>
       ) : null}
-      <textarea
+      <Textarea
+        unstyled
         aria-label="Message"
         placeholder="Message"
         rows={2}
@@ -787,7 +789,6 @@ function GuestComposer({
         onChange={(event) => setText(event.target.value)}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
-        className="max-h-60 min-h-12 w-full resize-none bg-transparent text-sm outline-none field-sizing-content placeholder:text-placeholder"
       />
       <div className="flex items-center gap-3">
         <input
@@ -807,22 +808,23 @@ function GuestComposer({
         </ComposerControl>
         <GuestModelLabel model={model} />
         {error !== null ? (
-          <p role="alert" className="min-w-0 flex-1 text-xs text-destructive">
+          <p role="alert" className="min-w-0 flex-1 text-meta text-destructive">
             {error}
           </p>
         ) : (
-          <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+          <p className="min-w-0 flex-1 truncate text-meta text-muted-foreground">
             The owner approves each message
           </p>
         )}
-        <button
+        <Button
+          variant="pill"
+          size="icon"
           type="submit"
           aria-label="Send"
           disabled={sending || (text.trim() === "" && files.length === 0)}
-          className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full bg-message-action text-message-action-foreground shadow-xs hover:bg-message-action-hover focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-64"
         >
           <ArrowUpIcon aria-hidden className="size-4" />
-        </button>
+        </Button>
       </div>
     </form>
   );

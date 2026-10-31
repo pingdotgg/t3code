@@ -91,8 +91,8 @@ export function UsageModelDialog({
             <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4">
               {stats.map((stat) => (
                 <div key={stat.label} className="flex min-w-0 flex-col gap-0.5">
-                  <span className="text-xs text-muted-foreground">{stat.label}</span>
-                  <span className="text-2xl font-semibold text-foreground">{stat.value}</span>
+                  <span className="text-caption text-muted-foreground">{stat.label}</span>
+                  <span className="text-title text-foreground">{stat.value}</span>
                 </div>
               ))}
             </div>
@@ -137,7 +137,7 @@ export function UsageModelDialog({
         </DialogPanel>
         {model.unpricedTokens > 0 ? (
           <DialogFooter variant="bare" className="items-center sm:justify-between">
-            <span className="text-xs text-muted-foreground">
+            <span className="text-caption text-muted-foreground">
               {formatTokens(model.unpricedTokens)} tokens have no known price
             </span>
             <Button onClick={onSetPrice}>Set price</Button>
@@ -150,7 +150,7 @@ export function UsageModelDialog({
 
 export function SpeedPremium({ premiumUsd }: { readonly premiumUsd: number }) {
   return (
-    <span className="text-xs text-muted-foreground">
+    <span className="text-caption text-muted-foreground">
       Premium <span className="text-foreground tabular-nums">{formatUsd(premiumUsd)}</span>
     </span>
   );

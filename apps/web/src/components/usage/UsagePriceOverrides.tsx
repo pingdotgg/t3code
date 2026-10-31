@@ -288,7 +288,7 @@ export function UsagePriceOverrides({
               </Label>
               <Menu>
                 <MenuTrigger
-                  render={<Button variant="outline" size="sm" className="min-w-0" />}
+                  render={<Button variant="secondary" size="sm" className="min-w-0" />}
                   aria-labelledby="usage-prices-apply-label usage-prices-selection"
                   disabled={pending || hasChanges}
                 >

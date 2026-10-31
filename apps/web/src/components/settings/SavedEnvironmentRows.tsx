@@ -274,11 +274,10 @@ export function SavedBackendListRow({
           <span aria-hidden className="shrink-0">
             ·
           </span>
-          <button
-            type="button"
+          <InlineButton
+            tone="muted"
             aria-expanded={routesOpen}
             onClick={() => setRoutesOpen((open) => !open)}
-            className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
           >
             {routeCount === 1 ? "Routes" : `${routeCount} routes`}
             <ChevronRightIcon
@@ -288,16 +287,15 @@ export function SavedBackendListRow({
                 routesOpen && "rotate-90",
               )}
             />
-          </button>
+          </InlineButton>
           <span aria-hidden className="shrink-0">
             ·
           </span>
-          <button
-            type="button"
+          <InlineButton
+            tone="muted"
             aria-expanded={permissionsOpen}
             aria-controls={`remote-permissions-${environmentId}`}
             onClick={() => setPermissionsOpen((open) => !open)}
-            className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
           >
             Permissions
             <ChevronRightIcon
@@ -307,7 +305,7 @@ export function SavedBackendListRow({
                 permissionsOpen && "rotate-90",
               )}
             />
-          </button>
+          </InlineButton>
         </span>
       }
       below={
@@ -553,7 +551,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
   // a fresh sign-in offers both linking and publishing.
   const signedOut = isSignedIn === false;
   const signInButton = (
-    <Button size="sm" variant="outline" onClick={openAuthPrompt}>
+    <Button size="sm" variant="secondary" onClick={openAuthPrompt}>
       Sign in
     </Button>
   );
@@ -570,18 +568,22 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
     reachability?.status === "reachable" ? (
       formatConnectReachable(reachability)
     ) : reachability?.status === "unreachable" ? (
-      <span className="block text-destructive">
+      <span className="block text-destructive-foreground">
         {[reachability.reason, reachability.hint, `Fix: ${reachability.fix}`]
           .filter(Boolean)
           .join(" ")}{" "}
-        <a
-          href={connectReachabilityHelpUrl(reachability.cause)}
-          target="_blank"
-          rel="noreferrer"
-          className="underline underline-offset-2"
+        <InlineButton
+          tone="destructive"
+          render={
+            <a
+              href={connectReachabilityHelpUrl(reachability.cause)}
+              target="_blank"
+              rel="noreferrer"
+            />
+          }
         >
           More info
-        </a>
+        </InlineButton>
       </span>
     ) : null;
 

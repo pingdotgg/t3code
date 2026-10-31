@@ -128,6 +128,7 @@ export function PullRequestSearchInput({
           }
         }}
         placeholder="Search pull requests, or label:bug"
+        placeholderTone="dim"
         aria-label="Search pull requests"
       />
     </InputGroup>
@@ -229,7 +230,7 @@ function PullRequestFilterRadioSubmenu<Value extends string>({
       <MenuSubTrigger>
         <PullRequestFilterOptionIcon option={current} />
         <span className="flex-1">{label}</span>
-        <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">
+        <span className="min-w-0 max-w-32 truncate text-xs font-normal text-muted-foreground">
           {current.label}
         </span>
       </MenuSubTrigger>
@@ -314,7 +315,7 @@ function PullRequestAuthorChoices({
               <PullRequestActorAvatar actor={option.actor} />
               <span className="min-w-0 flex-1 truncate">{option.actor.login}</span>
               {option.mergedCount > 0 ? (
-                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                <span className="shrink-0 text-meta text-muted-foreground tabular-nums">
                   {option.mergedCount} merges loaded
                 </span>
               ) : null}
@@ -347,7 +348,7 @@ function PullRequestAuthorFilter({
       <MenuSubTrigger>
         <UserRoundIcon aria-hidden className="size-3.5" />
         <span className="flex-1">Author</span>
-        <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">
+        <span className="min-w-0 max-w-32 truncate text-xs font-normal text-muted-foreground">
           {value ?? "Anyone"}
         </span>
       </MenuSubTrigger>
@@ -422,7 +423,7 @@ function PullRequestLabelChoices({
               />
               <span className="min-w-0 flex-1 truncate">{option.name}</span>
               {option.count > 0 ? (
-                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                <span className="shrink-0 text-meta text-muted-foreground tabular-nums">
                   {option.count}
                 </span>
               ) : null}
@@ -450,7 +451,7 @@ function PullRequestLabelFilter({
       <MenuSubTrigger>
         <TagIcon aria-hidden className="size-3.5" />
         <span className="flex-1">Labels</span>
-        <span className="text-xs text-muted-foreground">
+        <span className="text-xs font-normal text-muted-foreground">
           {value.length === 0 ? "Any" : `${value.length} selected`}
         </span>
       </MenuSubTrigger>
@@ -562,11 +563,11 @@ export function PullRequestFiltersMenu({
   ];
   return (
     <Menu onOpenChange={onOpenChange}>
-      <MenuTrigger render={<Button variant="outline" />}>
+      <MenuTrigger render={<Button variant="ghost-muted" />}>
         <ListFilterIcon className="size-4" />
         <span>Filters</span>
         {filterCount > 0 ? (
-          <span className="rounded-full bg-muted px-1.5 text-xs text-muted-foreground tabular-nums">
+          <span className="rounded-full surface-selected-soft px-1.5 text-xs text-muted-foreground tabular-nums">
             {filterCount}
           </span>
         ) : null}

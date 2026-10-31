@@ -38,14 +38,14 @@ function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord 
     <ClerkUserProfileRow icon={<SmartphoneIcon className="size-4" />}>
       <div className="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
         <div className="min-w-0">
-          <h3 className="truncate text-sm leading-4.5 font-medium text-foreground">
+          <h3 className="truncate text-sm leading-4.5 font-medium text-strong-foreground">
             {device.label}
           </h3>
           <p className="text-xs leading-4.5 text-muted-foreground">
             {mobileClientPlatformLabel(device)}
           </p>
         </div>
-        <p className="shrink-0 text-2xs leading-4 text-muted-foreground/75">
+        <p className="shrink-0 text-2xs leading-4 text-dim-foreground">
           {mobileClientUpdatedAtLabel(device.updatedAt)}
         </p>
       </div>
@@ -56,7 +56,7 @@ function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord 
         />
         <MobileClientStatusBadge enabled={device.liveActivities.enabled} label="Live Activities" />
       </div>
-      <p className="mt-1.5 text-xs leading-4.5 text-muted-foreground/80">
+      <p className="mt-1.5 text-xs leading-4.5 text-dim-foreground">
         {mobileClientNotificationDetail(device)}
       </p>
     </ClerkUserProfileRow>
@@ -132,7 +132,7 @@ export function MobileClientsUserProfilePage() {
               </p>
               <p className="mt-0.5 text-xs text-muted-foreground">{devicesState.error}</p>
             </div>
-            <Button size="xs" variant="outline" onClick={devicesState.refresh}>
+            <Button size="xs" variant="secondary" onClick={devicesState.refresh}>
               Try again
             </Button>
           </div>

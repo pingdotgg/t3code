@@ -160,8 +160,8 @@ function ExtendedOfficeViewer(props: {
         role="alert"
         className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center"
       >
-        <p className="text-sm font-medium">No preview for this file</p>
-        <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
+        <p className="text-label">No preview for this file</p>
+        <p className="max-w-sm text-meta leading-relaxed text-muted-foreground">
           {error} Save it or open it in another app.
         </p>
       </div>
@@ -183,7 +183,7 @@ function ExtendedOfficeViewer(props: {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {count > 0 ? (
-        <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3 text-xs">
+        <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3 text-meta">
           <FileSurfaceAction
             label={`Previous ${navigation}`}
             disabled={page === 0}
@@ -247,7 +247,7 @@ function ExtendedOfficeViewer(props: {
       ) : null}
       {props.kind === "ods" && sheet ? (
         <div
-          className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-1 border-b border-border/60 px-3 py-2 text-xs text-muted-foreground tabular-nums"
+          className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-1 border-b border-border/60 px-3 py-2 text-meta text-muted-foreground tabular-nums"
           role="status"
         >
           Sheet {page + 1} of {count} · {sheet.rowCount.toLocaleString()} rows ·{" "}
@@ -283,7 +283,7 @@ function ExtendedOfficeViewer(props: {
               : ""}
           </FileSurfaceNotice>
           {sheet.rowCount === 0 ? (
-            <p className="p-6 text-xs text-muted-foreground">This sheet is empty.</p>
+            <p className="p-6 text-meta text-muted-foreground">This sheet is empty.</p>
           ) : (
             <VirtualTablePreview
               key={page}

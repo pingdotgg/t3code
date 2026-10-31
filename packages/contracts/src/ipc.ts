@@ -1092,6 +1092,12 @@ export interface DesktopBridge {
   pickProjectFavicon: (initialPath?: string) => Promise<string | null>;
   pickThemeFiles: () => Promise<readonly PickedThemeFile[] | null>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
+  /**
+   * Whether the renderer shows the light, black chrome appearance, so the
+   * native window background and caption buttons match the black chrome.
+   * Optional while older desktop shells can host a newer web client.
+   */
+  setBlackChrome?: (enabled: boolean) => Promise<void>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },
@@ -1109,6 +1115,11 @@ export interface DesktopBridge {
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getWindowZoomFactor: () => number;
+  /**
+   * Shows or hides the macOS traffic lights; a no-op on other platforms.
+   * Optional: older desktop builds lack it.
+   */
+  setWindowButtonsVisible?: (visible: boolean) => Promise<void>;
   getUpdateState: () => Promise<DesktopUpdateState>;
   /** `minimumVersion` is a track switch's checked release; nothing older is offered after. */
   setUpdateChannel: (

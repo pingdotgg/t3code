@@ -71,19 +71,21 @@ export function FoldedSettingsSection({
             <ChevronRightIcon
               aria-hidden
               className={cn(
-                "size-4 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none",
+                "size-4 shrink-0 text-dim-foreground transition-transform duration-150 motion-reduce:transition-none",
                 open && "rotate-90",
               )}
             />
-            <span className="shrink-0 text-sm font-medium">{title}</span>
+            <span className="shrink-0 text-label text-foreground">{title}</span>
             {summary ? (
-              <span className="min-w-0 truncate text-xs text-muted-foreground">{summary}</span>
+              <span className="min-w-0 truncate text-body text-muted-foreground [--type-body:var(--type-meta)]">
+                {summary}
+              </span>
             ) : null}
           </CollapsibleTrigger>
           {control ? <div className="flex shrink-0 items-center">{control}</div> : null}
         </div>
         <CollapsiblePanel>
-          <div className="border-t border-border/50 [&>*+*]:border-t [&>*+*]:border-border/50">
+          <div className="border-t border-divider [&>*+*]:border-t [&>*+*]:border-divider">
             {children}
           </div>
         </CollapsiblePanel>

@@ -292,7 +292,7 @@ export function ResetCreditDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+          <AlertDialogClose render={<Button variant="secondary" />}>Cancel</AlertDialogClose>
           <Button disabled={disabled} onClick={onConfirm}>
             Use credit
           </Button>
@@ -340,7 +340,7 @@ export function ResetCredits({
       {credits.availableCount > 0 ? (
         <Button
           size="xs"
-          variant="outline"
+          variant="secondary"
           disabled={busy || !canManageProviders}
           onClick={() => {
             if (readEnvironmentScope(environmentId, AuthProvidersManageScope)) setConfirming(true);

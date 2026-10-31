@@ -99,6 +99,8 @@
       // named subcomponents even before they have callers; the file audit still
       // reports an entire component module when nothing imports it.
       "ignoreIssues": { "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"] },
+      // index.css self-hosts JetBrains Mono's latin subsets through url() paths, which knip does not trace.
+      "ignoreDependencies": ["@fontsource-variable/jetbrains-mono"],
     },
     "apps/marketing": {
       // `astro check` runs from the typecheck task in vite.config.ts, which knip does not read.

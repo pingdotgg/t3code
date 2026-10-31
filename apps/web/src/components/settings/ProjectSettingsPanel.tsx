@@ -337,7 +337,7 @@ function ProjectDetail({
   const checkoutRemoveButton = (member: SidebarProjectGroupMember) => (
     <Button
       size="sm"
-      variant="outline"
+      variant="secondary"
       disabled={!editableIds.has(member.environmentId)}
       onClick={() => void removeMembers([member])}
       aria-label={`Remove checkout ${member.workspaceRoot}`}
@@ -395,7 +395,7 @@ function ProjectDetail({
                     <Tooltip>
                       <TooltipTrigger
                         render={
-                          <span className="min-w-0 truncate text-xs text-muted-foreground/80" />
+                          <span className="min-w-0 truncate text-meta text-muted-foreground/80" />
                         }
                       >
                         {member.workspaceRoot}
@@ -424,7 +424,7 @@ function ProjectDetail({
         </Alert>
         <SettingsSection id="project-overview" title="Project" hideTitle>
           {!canEditGroup ? (
-            <p className="px-3 py-2 text-sm text-muted-foreground sm:px-4">
+            <p className="px-3 py-2 text-body text-muted-foreground sm:px-4">
               {group.memberProjects.length > 1
                 ? "Shared settings require permission to change every checkout in this group."
                 : "This connection cannot change this project."}
@@ -495,7 +495,7 @@ function ProjectDetail({
                 <ProjectFavicon project={representative} className="size-6" />
                 <Button
                   size="sm"
-                  variant="outline"
+                  variant="secondary"
                   type="button"
                   aria-label="Choose a project icon"
                   disabled={isSavingFavicon || !canEditGroup}
@@ -505,7 +505,7 @@ function ProjectDetail({
                 </Button>
                 <Button
                   size="sm"
-                  variant="outline"
+                  variant="secondary"
                   type="button"
                   aria-label="Choose a project icon file"
                   disabled={isSavingFavicon || !canEditGroup}
@@ -545,7 +545,7 @@ function ProjectDetail({
                 control={
                   <Button
                     size="sm"
-                    variant="outline"
+                    variant="secondary"
                     disabled={isOrganizing}
                     onClick={() =>
                       void organize(

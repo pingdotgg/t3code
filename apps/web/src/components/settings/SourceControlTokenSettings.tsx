@@ -70,12 +70,14 @@ export function SourceControlTokenSettings({
     >
       {/* Locked while saving: a successful save clears the draft, which would drop edits made mid-request. */}
       <fieldset disabled={saving} className="contents">
-        <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
+        <p className="max-w-2xl text-meta leading-relaxed text-muted-foreground">
           A token saved here is used before{" "}
-          <code className="rounded bg-muted px-1 py-px text-2xs">{credentials.tokenEnvVar}</code>{" "}
+          <code className="rounded bg-muted px-1 py-px text-caption">
+            {credentials.tokenEnvVar}
+          </code>{" "}
           and the{" "}
-          <code className="rounded bg-muted px-1 py-px text-2xs">{credentials.cliName}</code> login,
-          so {definition.label} works without the {credentials.cliLabel}. Give it{" "}
+          <code className="rounded bg-muted px-1 py-px text-caption">{credentials.cliName}</code>{" "}
+          login, so {definition.label} works without the {credentials.cliLabel}. Give it{" "}
           {credentials.tokenAccess}.{" "}
           {normalizedHost || defaultHost ? (
             <InlineButton
@@ -116,7 +118,7 @@ export function SourceControlTokenSettings({
           </div>
         </div>
         <div className="flex items-center justify-between gap-3">
-          <p className="text-xs text-muted-foreground">
+          <p className="text-meta text-muted-foreground">
             {savedHosts.length === 0
               ? `No token saved; the server uses ${credentials.tokenEnvVar} or the ${credentials.cliName} login.`
               : `Saved for ${savedHosts.join(", ")}.`}
@@ -125,7 +127,7 @@ export function SourceControlTokenSettings({
             {isSaved ? (
               <Button
                 size="xs"
-                variant="outline"
+                variant="secondary"
                 disabled={saving}
                 onClick={() => void save(normalizedHost, "")}
               >

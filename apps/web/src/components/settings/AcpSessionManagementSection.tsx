@@ -336,7 +336,7 @@ export function AcpSessionManagementSection(props: {
               <Button
                 type="button"
                 size="sm"
-                variant="outline"
+                variant="secondary"
                 disabled={props.readOnly || loggingOut}
                 onClick={() => void logoutProvider()}
               >
@@ -373,7 +373,7 @@ export function AcpSessionManagementSection(props: {
                 <Button
                   type="button"
                   size="sm"
-                  variant="outline"
+                  variant="secondary"
                   disabled={!canRead || loading || projectId === null}
                   onClick={() => void loadSessions()}
                 >
@@ -387,7 +387,7 @@ export function AcpSessionManagementSection(props: {
         {canList && (sessions.length > 0 || nextCursor !== null) ? (
           <>
             {sessions.length > 0 ? (
-              <div className="divide-y divide-border/60 border-y border-border/60">
+              <div className="divide-y divide-border border-y border-border">
                 {sessions.map((session) => (
                   <div
                     key={session.sessionId}
@@ -458,10 +458,10 @@ export function AcpSessionManagementSection(props: {
       </SettingsRow>
 
       {canConfigureProviders ? (
-        <div className="grid gap-3 border-t border-border/60 px-3 py-3 sm:px-4">
+        <div className="grid gap-3 border-t border-border px-3 py-3 sm:px-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <p className="text-xs font-medium text-foreground">Agent providers</p>
+              <p className="text-xs font-medium text-strong-foreground">Agent providers</p>
               <p className="text-xs text-muted-foreground">
                 Configure non-secret routing. Headers are write-only.
               </p>
@@ -469,7 +469,7 @@ export function AcpSessionManagementSection(props: {
             <Button
               type="button"
               size="xs"
-              variant="outline"
+              variant="secondary"
               disabled={
                 !canRead || loadingProviders || savingProviderId !== null || projectId === null
               }
@@ -506,7 +506,7 @@ export function AcpSessionManagementSection(props: {
           ) : null}
 
           {providers.length > 0 ? (
-            <div className="divide-y divide-border/60 border-y border-border/60">
+            <div className="divide-y divide-border border-y border-border">
               {providers.map((provider) => {
                 const draft = providerDrafts[provider.providerId] ?? {
                   apiType: provider.current?.apiType ?? provider.supported[0] ?? "",
@@ -522,7 +522,7 @@ export function AcpSessionManagementSection(props: {
                   <div key={provider.providerId} className="grid gap-2 py-3">
                     <div className="flex items-center justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="truncate text-xs font-medium text-foreground">
+                        <p className="truncate text-xs font-medium text-strong-foreground">
                           {provider.providerId}
                         </p>
                         <p className="text-3xs text-muted-foreground">
@@ -534,7 +534,7 @@ export function AcpSessionManagementSection(props: {
                         <Button
                           type="button"
                           size="xs"
-                          variant="outline"
+                          variant="secondary"
                           disabled={
                             props.readOnly ||
                             savingProviderId !== null ||

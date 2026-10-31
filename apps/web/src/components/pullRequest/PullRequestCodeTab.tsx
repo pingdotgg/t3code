@@ -655,7 +655,7 @@ function PullRequestCodeTab({
     ) : null;
   const unstructured =
     rawSlices.length === 0 ? null : (
-      <div className="space-y-4 border-t border-border/60 px-4 py-5">
+      <div className="space-y-4 border-t border-border px-4 py-5">
         {rawSlices.map((slice) => (
           <div key={`${slice.reason}:${slice.text.slice(0, 64)}`} className="space-y-2">
             <p className="text-xs text-muted-foreground">{slice.reason}</p>
@@ -823,7 +823,7 @@ function PullRequestCodeTab({
         {diffQuery.error !== null ? (
           <>
             <span>The rest of this diff could not be loaded.</span>
-            <Button size="xs" variant="outline" onClick={() => diffQuery.refresh()}>
+            <Button size="xs" variant="secondary" onClick={() => diffQuery.refresh()}>
               Retry
             </Button>
           </>
@@ -1035,7 +1035,7 @@ function PullRequestCodeTab({
     setSelectedLines(null);
   };
   const toolbar = (
-    <div className="@container flex h-10 min-h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-background px-4 text-xs text-muted-foreground">
+    <div className="@container flex h-10 min-h-10 shrink-0 items-center justify-between gap-2 border-b border-border bg-background px-4 text-xs text-muted-foreground">
       <div className="flex min-w-0 flex-1 items-center gap-3">
         {orderedCommits.length > 0 ? (
           <DropdownMenu>
@@ -1415,7 +1415,7 @@ function PullRequestCodeTab({
     <div className="flex h-full min-h-0 flex-col">
       {toolbar}
       {orphanFiles.size > 0 ? (
-        <div className="shrink-0 border-b border-border/60">
+        <div className="shrink-0 border-b border-border">
           <Collapsible open={orphansOpen} onOpenChange={setOrphansOpen}>
             <h2>
               <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2 text-left text-xs text-muted-foreground">
@@ -1530,11 +1530,11 @@ function PullRequestCodeTab({
               onSelectFile={revealFile}
               footer={
                 nextCursor === null ? null : (
-                  <div className="shrink-0 border-t border-border/60 p-2">
+                  <div className="shrink-0 border-t border-border p-2">
                     <Button
                       type="button"
                       size="xs"
-                      variant="outline"
+                      variant="secondary"
                       className="w-full"
                       disabled={diffQuery.isPending}
                       onClick={diffQuery.error !== null ? () => diffQuery.refresh() : loadNextSlice}

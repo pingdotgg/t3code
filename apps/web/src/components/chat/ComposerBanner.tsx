@@ -9,35 +9,17 @@ import { ScrollArea } from "../ui/scroll-area";
 
 export type ComposerBannerVariant = "default" | "error" | "info" | "success" | "warning";
 
-const surfaceColors = cn(
-  "[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--card))]",
-  "dark:[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--surface-raised))]",
-  "[html[data-theme-id]_&]:[--chat-composer-attached-surface:var(--app-theme-surface-raised)]",
-);
-
-const neutralOutline = cn(
-  "[--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--contrast-foreground)_8%,transparent))]",
-  "dark:[--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--color-white)_5%,transparent))]",
-  "[html[data-theme-id]_&]:[--chat-composer-attached-outline:var(--chat-composer-outline,var(--app-theme-toolbar-border))]",
-  "dark:[html[data-theme-id]:not([data-theme-id=t3-chat])_&]:[--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--app-theme-input)_30%,var(--background)))]",
-  "dark:[html[data-theme-id=t3-chat]_&]:[--chat-composer-attached-outline:#241e28]",
-);
-
 const variantColors: Record<ComposerBannerVariant, string> = {
-  default: neutralOutline,
-  error:
-    "[--chat-composer-attached-outline:color-mix(in_srgb,var(--error)_32%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--error)_8%,transparent)]",
-  info: neutralOutline,
-  success: neutralOutline,
-  warning:
-    "[--chat-composer-attached-outline:color-mix(in_srgb,var(--warning)_28%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--warning)_8%,transparent)]",
+  default: "[--surface-tint:var(--muted-foreground)]",
+  error: "[--surface-tint:var(--error-foreground)]",
+  info: "[--surface-tint:var(--update-foreground)]",
+  success: "[--surface-tint:var(--success-foreground)]",
+  warning: "[--surface-tint:var(--warning-foreground)]",
 };
 
-/**
- * An attached surface tucks its bottom under the card below it. A detached one is a whole card
- * of its own, for a notice that sits apart from the composer.
- */
+/** Opaque banner paint, attached under the next card or detached as a whole card. */
 function Surface({
+  surface = "tint",
   variant = "default",
   detached = false,
   className,
@@ -45,25 +27,30 @@ function Surface({
 }: ComponentProps<"div"> & {
   variant?: ComposerBannerVariant;
   detached?: boolean;
+  surface?: "tint" | "popover" | "panel" | "card";
 }) {
   return (
     <div
       data-composer-banner-surface={detached ? "detached" : "attached"}
       data-variant={variant}
       className={cn(
-        surfaceColors,
-        "relative isolate border-0 bg-transparent shadow-none [--chat-composer-attached-tint:transparent]",
+        "relative isolate border-0 shadow-none",
         variantColors[variant],
         detached
-          ? "[--chat-composer-attachment-overlap:0px] before:rounded-2xl"
-          : // Bleed the mask 1px past the seam to cover Chromium's fractional-pixel backdrop loss.
-            "[--chat-composer-attachment-overlap:calc(1rem+1px)] before:rounded-t-2xl before:mask-t-from-transparent before:mask-t-from-4 before:mask-t-to-black before:mask-t-to-4",
-        "before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:border before:border-(--chat-composer-attached-outline)",
-        "before:bg-(--chat-composer-attached-surface)/(--glass-opacity) before:bg-linear-to-b before:from-(--chat-composer-attached-tint) before:to-(--chat-composer-attached-tint) before:backdrop-blur-(--glass-blur) before:backdrop-saturate-(--glass-saturation)",
-        "before:shadow-composer dark:before:shadow-composer-dark",
-        !detached &&
-          "dark:supports-[(backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px))]:before:bg-composer-seam-above",
-        "not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:before:bg-(--chat-composer-attached-surface)",
+          ? surface !== "tint"
+            ? "[--chat-composer-attachment-overlap:0px] rounded-card before:rounded-card"
+            : "[--chat-composer-attachment-overlap:0px] rounded-2xl before:rounded-2xl"
+          : surface !== "tint"
+            ? "[--chat-composer-attachment-overlap:calc(1rem+1px)] rounded-t-card before:rounded-t-card"
+            : "[--chat-composer-attachment-overlap:calc(1rem+1px)] rounded-t-2xl before:rounded-t-2xl",
+        "before:pointer-events-none before:absolute! before:inset-0 before:-z-1",
+        surface === "popover"
+          ? "bg-transparent before:surface-popover"
+          : surface === "panel"
+            ? "before:surface-panel"
+            : surface === "card"
+              ? "before:surface-card"
+              : "before:surface-tray",
         className,
       )}
       {...props}
@@ -116,10 +103,12 @@ function Root({
   density = "default",
   variant = "default",
   width = "fill",
+  surface = "tint",
   ...props
 }: ComponentProps<typeof Surface> & {
   density?: "default" | "comfortable" | "spacious";
   width?: "fill" | "content";
+  surface?: "tint" | "popover" | "panel" | "card";
 }) {
   return (
     <Surface
@@ -138,6 +127,7 @@ function Root({
         className,
       )}
       data-slot="composer-banner"
+      surface={surface}
       data-composer-banner-width={width}
       variant={variant}
       {...props}
@@ -179,8 +169,8 @@ function Icon({ className, ...props }: ComponentProps<"span">) {
       aria-hidden
       data-slot="composer-banner-icon"
       className={cn(
-        "col-start-1 row-start-1 flex w-(--composer-banner-icon-column) min-w-0 flex-none items-center justify-center text-muted-foreground [&>svg]:size-3",
-        "group-data-[composer-banner-layout=approval]/banner-row:pt-0.5 group-data-[composer-banner-layout=approval]/banner-row:text-warning group-data-[composer-banner-layout=approval]/banner-row:[&>svg]:size-4",
+        "col-start-1 row-start-1 flex w-(--composer-banner-icon-column) min-w-0 flex-none items-center justify-center text-(--surface-tint) [&>svg]:size-3",
+        "group-data-[composer-banner-layout=approval]/banner-row:pt-0.5 group-data-[composer-banner-layout=approval]/banner-row:text-warning-foreground group-data-[composer-banner-layout=approval]/banner-row:[&>svg]:size-[13px]",
         className,
       )}
       {...props}
@@ -287,7 +277,7 @@ function ToggleIcon({ expanded }: { expanded: boolean }) {
       tabIndex={-1}
       className="pointer-events-none"
     >
-      <ChevronDownIcon className={cn("size-3.5", !expanded && "rotate-180")} />
+      <ChevronDownIcon className={cn("size-3 text-dim-foreground", !expanded && "rotate-180")} />
     </Button>
   );
 }

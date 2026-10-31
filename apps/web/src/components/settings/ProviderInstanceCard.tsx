@@ -427,7 +427,7 @@ export function ProviderEnvironmentSection(props: {
       title="Variables"
       description="API keys, base URLs, and other per-instance CLI settings."
       control={
-        <Button type="button" size="sm" variant="outline" onClick={addVariable}>
+        <Button type="button" size="sm" variant="secondary" onClick={addVariable}>
           <PlusIcon className="size-3" />
           Add variable
         </Button>
@@ -439,10 +439,10 @@ export function ProviderEnvironmentSection(props: {
             if (props.managed?.names.has(variable.name)) {
               return (
                 <div key={variable.id} className="flex min-w-0 flex-wrap items-center gap-1.5">
-                  <code className="min-w-0 truncate text-xs sm:w-44 sm:shrink-0">
+                  <code className="min-w-0 truncate text-meta sm:w-44 sm:shrink-0">
                     {variable.name}
                   </code>
-                  <span className="text-xs text-muted-foreground">{props.managed.reason}</span>
+                  <span className="text-meta text-muted-foreground">{props.managed.reason}</span>
                 </div>
               );
             }
@@ -912,7 +912,7 @@ export function ProviderInstanceCard({
       }
       showBadge={Boolean(accentColor)}
       className="size-5"
-      iconClassName="size-4 text-foreground/80"
+      iconClassName="size-4 text-muted-foreground"
       badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
     />
   );
@@ -922,7 +922,7 @@ export function ProviderInstanceCard({
   ) : null;
 
   const versionCodeNode = versionLabel ? (
-    <code className="text-xs text-muted-foreground">{versionLabel}</code>
+    <code className="font-sans text-xs text-dim-foreground">{versionLabel}</code>
   ) : null;
 
   const statusDotNode =
@@ -978,7 +978,7 @@ export function ProviderInstanceCard({
                     <VersionAdvisoryIcon
                       className={cn(
                         mode === "list" && "size-3.5",
-                        hasCompatibilityWarning && "text-warning",
+                        hasCompatibilityWarning && "text-warning-foreground",
                       )}
                     />
                   )}
@@ -994,13 +994,15 @@ export function ProviderInstanceCard({
       <PopoverPopup side="bottom" align="end" width="md" aria-label={versionAdvisory.title}>
         <div className="grid min-w-0 gap-3">
           <div className="grid gap-0.5">
-            <p className="text-sm font-semibold leading-tight text-foreground">
+            <p className="text-sm font-semibold leading-tight text-strong-foreground">
               {versionAdvisory.title}
             </p>
             <p
               className={cn(
                 "text-xs leading-snug [overflow-wrap:anywhere]",
-                versionAdvisory.emphasis === "strong" ? "text-warning" : "text-muted-foreground",
+                versionAdvisory.emphasis === "strong"
+                  ? "text-warning-foreground"
+                  : "text-muted-foreground",
               )}
             >
               {versionAdvisory.detail}
@@ -1010,7 +1012,7 @@ export function ProviderInstanceCard({
             <Button
               type="button"
               size="xs"
-              variant="outline"
+              variant="secondary"
               className="w-full"
               disabled={isUpdating}
               onClick={onRunVersionAction}
@@ -1035,14 +1037,14 @@ export function ProviderInstanceCard({
             </p>
           ) : null}
           {onRunVersionAction && updateCommand ? (
-            <div className="flex items-center gap-2 text-3xs font-medium uppercase tracking-wider text-muted-foreground">
+            <div className="flex items-center gap-2 text-3xs font-medium text-muted-foreground">
               <span aria-hidden className="h-px flex-1 bg-border" />
               or, update manually using
               <span aria-hidden className="h-px flex-1 bg-border" />
             </div>
           ) : null}
           {updateCommand ? (
-            <div className="flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-muted/40 py-0.5 pr-0.5 pl-2">
+            <div className="flex min-w-0 items-center gap-1 rounded-control surface-well py-0.5 pr-0.5 pl-2">
               <code className="min-w-0 flex-1 truncate font-mono text-2xs text-foreground">
                 {updateCommand}
               </code>
@@ -1076,7 +1078,7 @@ export function ProviderInstanceCard({
         data-slot="settings-row"
         className={cn(
           "group flex min-h-18 items-center gap-3 px-3 py-3 transition-colors sm:px-4",
-          selected ? "bg-foreground/[0.06]" : "hover:bg-muted/25",
+          selected ? "surface-selected" : "hover:surface-ghost-hover",
         )}
       >
         <div
@@ -1097,13 +1099,13 @@ export function ProviderInstanceCard({
             <span className="flex min-w-0 items-center gap-2">
               <span className="truncate text-sm font-medium text-foreground">{displayName}</span>
               {versionLabel ? (
-                <code className="max-w-24 shrink-0 truncate text-xs text-muted-foreground">
+                <code className="max-w-24 shrink-0 truncate font-sans text-xs text-dim-foreground">
                   {versionLabel}
                 </code>
               ) : null}
               {versionAdvisoryNode}
             </span>
-            <span className="mt-0.5 flex items-start gap-1.5 text-xs leading-normal text-muted-foreground/80">
+            <span className="mt-0.5 flex items-start gap-1.5 text-xs leading-normal text-dim-foreground">
               {statusDotNode && !updateProgress ? (
                 <span className="flex h-[1.45em] shrink-0 items-center">{statusDotNode}</span>
               ) : null}
@@ -1199,9 +1201,9 @@ export function ProviderInstanceCard({
         </div>
       </ProviderStatusDiagnostic>
       {urlAuthAction && onAcceptUrlAuth ? (
-        <div className="grid max-w-xl gap-1.5 pt-1 text-xs">
+        <div className="grid max-w-xl gap-1.5 pt-1 text-meta">
           <p>{urlAuthAction.message}</p>
-          <code className="break-all text-2xs">{urlAuthAction.url}</code>
+          <code className="break-all text-caption">{urlAuthAction.url}</code>
           <Button
             render={
               <a
@@ -1212,7 +1214,7 @@ export function ProviderInstanceCard({
               />
             }
             size="xs"
-            variant="outline"
+            variant="secondary"
             className="w-fit"
             disabled={readOnly}
           >
@@ -1375,7 +1377,7 @@ export function ProviderInstanceCard({
       {driverOption !== undefined ? (
         <SettingsSection title="Models">
           <div className="px-3 py-3 sm:px-4">
-            <p className="mb-3 text-xs text-muted-foreground">
+            <p className="mb-3 text-meta text-muted-foreground">
               Model preferences and custom models are saved on the selected environment and shared
               across connected devices.
             </p>

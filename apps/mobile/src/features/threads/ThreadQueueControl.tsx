@@ -323,9 +323,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                       </Text>
                     </View>
                     {controls.isEditing ? (
-                      <Text className="shrink-0 text-2xs uppercase tracking-wide text-primary">
-                        Editing
-                      </Text>
+                      <Text className="shrink-0 text-2xs text-primary">Editing</Text>
                     ) : null}
                   </Pressable>
                 </Menu>

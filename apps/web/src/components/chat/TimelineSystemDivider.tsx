@@ -22,7 +22,7 @@ export function TimelineSystemDivider(props: {
       {props.detail ? (
         <span
           className={cn(
-            "inline-flex min-w-0 items-center opacity-70",
+            "inline-flex min-w-0 items-center text-dim-foreground",
             typeof props.detail === "string" &&
               (props.wrapDetail ? "max-w-80 whitespace-pre-wrap" : "max-w-80 truncate"),
           )}
@@ -38,10 +38,10 @@ export function TimelineSystemDivider(props: {
     <div
       className={cn(
         "flex min-w-0 items-center gap-2 py-2 text-2xs text-muted-foreground",
-        props.tone === "danger" && "text-destructive",
+        props.tone === "danger" && "text-error-foreground",
       )}
     >
-      <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
+      <span aria-hidden="true" className="h-px flex-1 bg-border" />
       {props.onAction ? (
         <Tooltip>
           <TooltipTrigger
@@ -50,7 +50,7 @@ export function TimelineSystemDivider(props: {
                 type="button"
                 aria-label={props.actionLabel}
                 onClick={props.onAction}
-                className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded-full border border-border/70 bg-background px-2.5 py-1 transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+                className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded-full border border-transparent surface-timeline-divider px-2.5 py-1 transition-colors hover:surface-ghost-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
               />
             }
           >
@@ -59,11 +59,11 @@ export function TimelineSystemDivider(props: {
           <TooltipPopup side="top">{props.actionLabel}</TooltipPopup>
         </Tooltip>
       ) : (
-        <span className="flex min-w-0 flex-wrap items-center justify-center gap-1.5 rounded-full px-2 py-1">
+        <span className="flex min-w-0 flex-wrap items-center justify-center gap-1.5 rounded-full surface-timeline-divider px-2 py-1">
           {content}
         </span>
       )}
-      <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
+      <span aria-hidden="true" className="h-px flex-1 bg-border" />
     </div>
   );
 }

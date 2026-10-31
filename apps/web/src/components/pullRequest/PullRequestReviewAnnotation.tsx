@@ -30,8 +30,7 @@ import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import type { PendingReviewComment } from "./pullRequestReviewStore";
 
-const CARD_CLASS =
-  "mx-3 my-2 rounded-xl border border-border/70 bg-background p-3 text-sm shadow-sm";
+const CARD_CLASS = "mx-3 my-2 rounded-card border border-border surface-card p-3 text-sm";
 
 function submitKeys(input: {
   readonly value: string;

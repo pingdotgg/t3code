@@ -11,7 +11,7 @@ import {
   ArchiveIcon,
   FlaskConicalIcon,
   BotIcon,
-  createLucideIcon,
+  CameraIcon,
   CalendarClockIcon,
   FileDiffIcon,
   FolderTreeIcon,
@@ -60,18 +60,6 @@ import { validateSettingsScopeSearch } from "./settingsScope";
 import { useSettingsSectionNavigation } from "./useSettingsSectionNavigation";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
 
-const SnapShotIcon = createLucideIcon("snap-shot", [
-  [
-    "path",
-    {
-      d: "M8 3H6a3 3 0 0 0-3 3v2M16 3h2a3 3 0 0 1 3 3v2M21 16v2a3 3 0 0 1-3 3h-2M8 21H6a3 3 0 0 1-3-3v-2",
-      key: "capture-frame",
-    },
-  ],
-  ["rect", { width: "10", height: "8", x: "7", y: "8", rx: "2", key: "window" }],
-  ["circle", { cx: "12", cy: "12", r: "1.5", key: "lens" }],
-]);
-
 const T3ConnectSidebarSignIn = lazy(() =>
   import("../clerk/T3ConnectSidebarSignIn").then((module) => ({
     default: module.T3ConnectSidebarSignIn,
@@ -93,7 +81,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/diffs": FileDiffIcon,
   "/settings/projects": PanelsTopLeftIcon,
   "/settings/keybindings": KeyboardIcon,
-  "/settings/snap-shot": SnapShotIcon,
+  "/settings/snap-shot": CameraIcon,
   "/settings/providers": BotIcon,
   "/settings/threads": MessagesSquareIcon,
   "/settings/browser": GlobeIcon,
@@ -123,7 +111,7 @@ function scrollResultIntoView(row: HTMLElement | null) {
 
 function SettingsSectionIcon({ to }: { to: SettingsPath }) {
   const Icon = SETTINGS_SECTION_ICONS[to];
-  return <Icon className="size-4 shrink-0 text-(--sidebar-icon-color)" />;
+  return <Icon className="size-3.5 h-5 shrink-0 text-dim-foreground" />;
 }
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
@@ -195,11 +183,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     if (compactSearchOpen) searchInputRef.current?.focus();
   }, [compactSearchOpen]);
 
+  // Each section is its own history entry, so the chrome's back and forward walk them.
   const handleSectionClick = (to: SettingsPath) => {
     void navigate({
       to,
       hash: "",
-      replace: true,
       hashScrollIntoView: false,
     });
   };
@@ -255,6 +243,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     <nav
       {...navArea}
       role="navigation"
+      aria-label="Settings sections"
+      data-chrome-scope=""
       className={cn(
         "flex w-60 shrink-0 flex-col border-e bg-sidebar text-sidebar-foreground max-md:w-14",
         compactSearchOpen &&
@@ -266,11 +256,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
           <div className="flex flex-col gap-2">
             <div
               className={cn(
-                "flex h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+                "relative isolate flex h-8 items-center gap-2 rounded-control px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground before:absolute before:inset-0 before:-z-10 before:rounded-[inherit] before:surface-well",
                 !compactSearchOpen && "max-md:hidden",
               )}
             >
-              <SearchIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
+              <SearchIcon className="size-4 shrink-0 text-sidebar-muted-foreground" />
               <SidebarInput
                 ref={searchInputRef}
                 nativeInput
@@ -352,7 +342,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                         <span className="block truncate text-sm font-medium text-sidebar-foreground">
                           {item.title}
                         </span>
-                        <span className="block truncate text-2xs text-sidebar-muted-foreground/75">
+                        <span className="block truncate text-2xs text-dim-foreground">
                           {SETTINGS_SECTION_LABELS[item.to]}
                         </span>
                       </span>
@@ -369,7 +359,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                         aria-label="Search settings"
                         onClick={() => setCompactSearchOpen(true)}
                       >
-                        <SearchIcon />
+                        <SearchIcon className="size-3.5" />
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   </SidebarMenu>
@@ -392,7 +382,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                         <h3
                           aria-hidden="true"
                           className={cn(
-                            "px-2 text-xs font-medium text-sidebar-muted-foreground/80",
+                            "px-2 text-meta text-sidebar-muted-foreground",
                             !compactSearchOpen && "max-md:hidden",
                           )}
                         >

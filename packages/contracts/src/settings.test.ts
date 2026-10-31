@@ -291,6 +291,32 @@ describe("ClientSettings notifications", () => {
   });
 });
 
+describe("ClientSettings surface style", () => {
+  it("keeps the gradient rim for existing settings without a saved style", () => {
+    expect(decodeClientSettings({}).surfaceStyle).toBe("gradient-rim");
+  });
+
+  it.each(["gradient-rim", "flat", "aqua-blue", "gradient-rim-everywhere"])(
+    "round-trips the %s style",
+    (surfaceStyle) => {
+      const settings = decodeClientSettings({ surfaceStyle });
+      expect(encodeClientSettings(settings).surfaceStyle).toBe(surfaceStyle);
+      expect(decodeClientSettingsPatch({ surfaceStyle }).surfaceStyle).toBe(surfaceStyle);
+    },
+  );
+
+  it("falls back to the gradient rim for a saved style that no longer exists", () => {
+    expect(decodeClientSettings({ surfaceStyle: "brutal" }).surfaceStyle).toBe("gradient-rim");
+    expect(decodeClientSettings({ surfaceStyle: "brushed-metal" }).surfaceStyle).toBe(
+      "gradient-rim",
+    );
+  });
+
+  it("rejects unsupported styles in a patch", () => {
+    expect(() => decodeClientSettingsPatch({ surfaceStyle: "brutal" })).toThrow();
+  });
+});
+
 describe("ClientSettings quit confirmation", () => {
   it.each([
     [true, "hold"],
