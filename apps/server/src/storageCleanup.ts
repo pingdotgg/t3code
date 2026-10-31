@@ -541,6 +541,7 @@ const make = Effect.gen(function* () {
           : "--untracked-files=all",
       ],
       maxOutputBytes: 64 * 1024,
+      appendTruncationMarker: true,
     });
     if (status.stdoutTruncated) return "local changes exceed the inspection limit";
     const records = status.stdout.split("\0").filter(Boolean);
@@ -556,6 +557,7 @@ const make = Effect.gen(function* () {
       cwd,
       args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
       maxOutputBytes: 64 * 1024,
+      appendTruncationMarker: true,
     });
     if (ignored.stdoutTruncated) return "ignored files exceed the inspection limit";
     const file = ignored.stdout
