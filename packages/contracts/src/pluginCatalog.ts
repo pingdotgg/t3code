@@ -1,20 +1,4 @@
-/**
- * PluginCatalog - Wire schemas for managing the trusted local plugins an
- * environment runs.
- *
- * A plugin is installed by adding a directory on the server's machine. The
- * server reads its manifest and computes a digest of the directory's exact
- * bytes; nothing in the directory runs until someone consents to that digest
- * and enables the installation. Any later byte change moves the installation
- * back to needing consent and stops it. Disable and remove are always allowed.
- *
- * Installations are environment-local: the same plugin on two environments is
- * two records. `installationId` is the identity; `generation` counts how many
- * times the server has registered the installation to run, so a consumer can
- * tell a replacement from the registration it was talking to.
- *
- * @module PluginCatalog
- */
+// Installations are environment-local; consent pins bytes and generation distinguishes replacement registrations.
 import * as Schema from "effect/Schema";
 
 import {
