@@ -35,7 +35,7 @@ export function ThreadDetailsItemsRow() {
               <Button
                 variant="secondary"
                 size="sm"
-                className="w-full sm:w-40"
+                className="w-full @min-[26rem]/settings-row:w-40"
                 aria-label={`Thread details: ${enabled} of ${THREAD_DETAILS_ITEMS.length} on`}
               />
             }
