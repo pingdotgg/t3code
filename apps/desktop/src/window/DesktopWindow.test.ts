@@ -234,6 +234,7 @@ function layerTest(input: {
   readonly setPreviewMainWindow?: (window: Electron.BrowserWindow) => Effect.Effect<void>;
   readonly destroyAll?: Effect.Effect<void>;
   readonly onWindowCreate?: Effect.Effect<void>;
+  readonly onMainClear?: Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly copiedTexts?: string[];
   readonly onPopupTemplate?: (input: ElectronMenu.ElectronMenuTemplateInput) => Effect.Effect<void>;
@@ -292,7 +293,10 @@ function layerTest(input: {
         ? Ref.get(input.mainWindow)
         : Effect.succeedSome(input.focusedWindow),
     setMain: (window) => Ref.set(input.mainWindow, Option.some(window)),
-    clearMain: () => Ref.set(input.mainWindow, Option.none()),
+    clearMain: () =>
+      Ref.set(input.mainWindow, Option.none()).pipe(
+        Effect.andThen(input.onMainClear ?? Effect.void),
+      ),
     prepareReveal: () => Effect.succeed(false),
     reveal: (window) => Effect.sync(() => input.onReveal?.(window)),
     sendAll: () => Effect.void,
@@ -530,6 +534,7 @@ describe("DesktopWindow", () => {
         const createCount = yield* Ref.make(0);
         const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
         const createdWindows = yield* Queue.unbounded<void>();
+        const mainCleared = yield* Deferred.make<void>();
         const menuTemplate = yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
         const layer = layerTest({
           window: fakeWindow.window,
@@ -537,6 +542,7 @@ describe("DesktopWindow", () => {
           mainWindow,
           createdWindowOptions: [],
           onWindowCreate: Queue.offer(createdWindows, undefined).pipe(Effect.asVoid),
+          onMainClear: Deferred.succeed(mainCleared, undefined).pipe(Effect.asVoid),
           desktopSettings: {
             ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
             localEnvironmentEnabled: false,
@@ -554,7 +560,11 @@ describe("DesktopWindow", () => {
           assert.equal(yield* Ref.get(createCount), 3);
 
           yield* Queue.takeN(createdWindows, 3);
-          yield* Ref.set(mainWindow, Option.none());
+          const closed = fakeWindow.windowListeners.get("closed");
+          assert.isDefined(closed);
+          closed();
+          yield* Deferred.await(mainCleared);
+          assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
           const menu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
           yield* menu.configure;
           const fileMenu = (yield* Deferred.await(menuTemplate)).find(
