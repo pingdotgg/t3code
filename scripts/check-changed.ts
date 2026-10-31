@@ -7,7 +7,7 @@
 // A dependency change also gets the unused-patch install check below. CI still
 // runs the full test suites and the jobs listed in the summary.
 //
-//   vp run check:changed                  compare against the merge base with origin/main
+//   vp run check:changed                  compare against the closest merge base with any remote main
 //   vp run check:changed <ref>            compare against the merge base with <ref>
 //   vp run check:changed --concurrency 1  run the steps one at a time
 //
@@ -142,6 +142,35 @@ export const git = Effect.fn("checkChanged.git")(function* (
 export const gitLines = (cwd: string, args: ReadonlyArray<string>) =>
   git(cwd, args).pipe(Effect.map((stdout) => stdout.toString().split("\n").filter(Boolean)));
 
+export const comparisonBase = Effect.fn("checkChanged.comparisonBase")(function* (
+  root: string,
+  explicitRef: Option.Option<string>,
+) {
+  const candidates = Option.isSome(explicitRef)
+    ? [{ ref: explicitRef.value, rev: explicitRef.value }]
+    : (yield* gitLines(root, ["remote"])).map((name) => ({
+        ref: name + "/main",
+        rev: "refs/remotes/" + name + "/main",
+      }));
+  let closest: { ref: string; base: string; ahead: number } | undefined;
+  for (const { ref, rev } of candidates) {
+    const base = yield* git(root, ["merge-base", "HEAD", rev]).pipe(
+      Effect.map((stdout) => stdout.toString().trim()),
+      Effect.orElseSucceed(() => undefined),
+    );
+    if (!base) continue;
+    const ahead = Number((yield* git(root, ["rev-list", "--count", base + "..HEAD"])).toString());
+    if (!closest || ahead < closest.ahead) closest = { ref, base, ahead };
+  }
+  if (!closest) {
+    const tried = candidates.map(({ ref }) => ref).join(", ") || "a remote main";
+    return yield* Effect.fail(
+      "check:changed: no merge base with " + tried + ". Run git fetch or pass a ref.",
+    );
+  }
+  return closest;
+});
+
 const CODE = /\.[cm]?[jt]sx?$/;
 const TEST = /\.test\.[cm]?[jt]sx?$/;
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -162,7 +191,7 @@ const override = Effect.fn("checkChanged.override")(function* (
 });
 
 const checkChanged = Effect.fn("checkChanged")(function* (input: {
-  readonly ref: string;
+  readonly ref: Option.Option<string>;
   readonly concurrency: Option.Option<number>;
   readonly timeout: Option.Option<number>;
 }) {
@@ -190,23 +219,17 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
 
   const lines = (...args: Array<string>) => gitLines(root, args);
 
-  const base = yield* git(root, ["merge-base", "HEAD", input.ref]).pipe(
-    Effect.map((stdout) => stdout.toString().trim()),
-    Effect.mapError(
-      () =>
-        `check:changed: no merge base with ${input.ref}. Run \`git fetch origin\` or pass a ref.`,
-    ),
-  );
+  const { ref, base } = yield* comparisonBase(root, input.ref);
   // --no-renames lists a rename as its old and new path, as CI does.
   const changedFiles = lines("diff", "--name-only", "--no-renames", base, "--");
   const untrackedFiles = lines("ls-files", "--others", "--exclude-standard");
   const files = [...new Set([...(yield* changedFiles), ...(yield* untrackedFiles)])].sort();
 
   if (files.length === 0) {
-    yield* Console.log(`check:changed: no changes since ${base.slice(0, 12)}.`);
+    yield* Console.log(`check:changed: no changes since ${base.slice(0, 12)} (${ref}).`);
     return true;
   }
-  yield* Console.log(`check:changed: ${files.length} files since ${base.slice(0, 12)}`);
+  yield* Console.log(`check:changed: ${files.length} files since ${base.slice(0, 12)} (${ref})`);
 
   // Ignored generated sources, declarations, env files, and install state affect check results.
   // Include them in the key, but skip large ignored folders that no check reads.
@@ -521,7 +544,7 @@ export const checkChangedCommand = Command.make(
   {
     ref: Argument.String("ref").pipe(
       Argument.withDescription("Compare against the merge base with this ref."),
-      Argument.withDefault("origin/main"),
+      Argument.optional,
     ),
     concurrency: Flag.Int("concurrency").pipe(
       Flag.withDescription(
