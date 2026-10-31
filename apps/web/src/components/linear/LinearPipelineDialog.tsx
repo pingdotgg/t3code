@@ -1,11 +1,12 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { nextPipelineStartAttempt } from "@t3tools/client-runtime/pipeline-start";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type {
-  EnvironmentId,
-  LinearIssueDetail,
-  PipelineDefinition,
-  ProjectId,
+import {
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  type EnvironmentId,
+  type LinearIssueDetail,
+  type PipelineDefinition,
+  type ProjectId,
 } from "@t3tools/contracts";
 import {
   resolveLinearMapping,
@@ -237,12 +238,12 @@ function PipelineDialogBody({
 
   const text = pipelineInputText({ detail, includes, edited });
   const summary = pipelineInputSummary({ detail, text });
-  const canStart = !pending && pipeline !== null && project !== null && text.trim().length > 0;
+  const overLimit = text.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
+  const canStart =
+    !pending && pipeline !== null && project !== null && text.trim().length > 0 && !overLimit;
 
   const updateIncludes = (key: keyof LinearIssueIncludes, checked: boolean) => {
     setIncludes((current) => ({ ...current, [key]: checked }));
-    // Toggling an include regenerates the text; a hand edit would otherwise hide the change.
-    setEdited(null);
   };
 
   const start = async () => {
@@ -364,23 +365,30 @@ function PipelineDialogBody({
                   · the pipeline&apos;s first step receives this as text
                 </span>
               </h3>
-              <div
-                role="tablist"
-                aria-label="Input view"
-                className="flex rounded-md bg-muted p-0.5 text-xs"
-              >
-                {(["preview", "edit"] as const).map((value) => (
-                  <button
-                    key={value}
-                    type="button"
-                    role="tab"
-                    aria-selected={tab === value}
-                    onClick={() => setTab(value)}
-                    className={`rounded px-2 py-0.5 capitalize ${tab === value ? "bg-background text-foreground shadow-xs" : "text-muted-foreground"}`}
-                  >
-                    {value}
-                  </button>
-                ))}
+              <div className="flex items-center gap-2">
+                {edited !== null ? (
+                  <Button type="button" variant="ghost" size="xs" onClick={() => setEdited(null)}>
+                    Reset edits
+                  </Button>
+                ) : null}
+                <div
+                  role="tablist"
+                  aria-label="Input view"
+                  className="flex rounded-md bg-muted p-0.5 text-xs"
+                >
+                  {(["preview", "edit"] as const).map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="tab"
+                      aria-selected={tab === value}
+                      onClick={() => setTab(value)}
+                      className={`rounded px-2 py-0.5 capitalize ${tab === value ? "bg-background text-foreground shadow-xs" : "text-muted-foreground"}`}
+                    >
+                      {value}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
             <div className="overflow-hidden rounded-lg border border-border/70">
@@ -401,14 +409,20 @@ function PipelineDialogBody({
                   <label key={row.key} className="flex cursor-pointer items-center gap-1.5">
                     <Checkbox
                       checked={includes[row.key]}
-                      disabled={row.count === 0}
+                      disabled={row.count === 0 || edited !== null}
                       onCheckedChange={(checked) => updateIncludes(row.key, checked === true)}
                     />
                     {row.label}
                     <span className="text-muted-foreground">{row.count}</span>
                   </label>
                 ))}
-                <span className="ms-auto text-muted-foreground">{summary.tokens}</span>
+                <span
+                  className={`ms-auto ${overLimit ? "text-destructive-foreground" : "text-muted-foreground"}`}
+                >
+                  {overLimit
+                    ? `${summary.tokens} · over the ${PROVIDER_SEND_TURN_MAX_INPUT_CHARS.toLocaleString()} character limit`
+                    : summary.tokens}
+                </span>
               </div>
             </div>
           </section>
