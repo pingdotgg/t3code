@@ -6,9 +6,13 @@ import {
   UsageLimitSourceId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ManagedProviderProxy from "../providerProxy/ManagedProviderProxy.ts";
@@ -155,3 +159,60 @@ it("reports the routing proxy's accounts unless a hub already points at it or ow
     ),
   ).toEqual({});
 });
+
+it.effect("refreshes once at startup and again when managed proxy status changes", () =>
+  Effect.gen(function* () {
+    const refreshes = yield* Ref.make(0);
+    const initialStatusRead = yield* Deferred.make<void>();
+    const changedStatusRead = yield* Deferred.make<void>();
+    const statuses = yield* Queue.unbounded<{ readonly status: "running" }>();
+    const managed = Layer.succeed(ManagedProviderProxy.ManagedProviderProxy, {
+      status: Effect.succeed({ status: "stopped" }),
+      statusChanges: Stream.concat(
+        Stream.make({ status: "stopped" } as const),
+        Stream.concat(
+          Stream.fromEffect(Deferred.succeed(initialStatusRead, undefined)).pipe(Stream.drain),
+          Stream.fromQueue(statuses),
+        ),
+      ),
+      endpoint: Effect.succeed(undefined),
+      endpointChanges: Stream.empty,
+    });
+    const http = HttpClient.make((request) =>
+      Ref.updateAndGet(refreshes, (count) => count + 1).pipe(
+        Effect.tap((count) =>
+          count === 3 ? Deferred.succeed(changedStatusRead, undefined) : Effect.void,
+        ),
+        Effect.map(() => HttpClientResponse.fromWeb(request, new Response("{}", { status: 401 }))),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const sources = yield* UsageLimitSources.make;
+      yield* Deferred.await(initialStatusRead);
+      yield* sources.refresh;
+      expect(yield* Ref.get(refreshes)).toBe(2);
+      yield* Queue.offer(statuses, { status: "running" });
+      yield* Deferred.await(changedStatusRead);
+      yield* sources.refresh;
+      expect(yield* Ref.get(refreshes)).toBe(4);
+    }).pipe(Effect.provide([managed, Layer.succeed(HttpClient.HttpClient, http)]));
+  }).pipe(
+    Effect.provide([
+      ServerSettings.layerTest({
+        usageLimitSources: {
+          [UsageLimitSourceId.make("hub")]: {
+            kind: "cliproxy",
+            url: "http://hub.test",
+            managementKey: "mgmt",
+            enabled: true,
+          },
+        },
+      }),
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunScopeWork: () => Effect.succeed(false),
+      }),
+      NodeCrypto.layer,
+    ]),
+    Effect.scoped,
+  ),
+);
