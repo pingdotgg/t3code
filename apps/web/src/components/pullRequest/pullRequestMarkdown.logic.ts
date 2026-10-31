@@ -9,11 +9,13 @@ import {
 import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
+  chatMarkdownImageSources,
 } from "@t3tools/shared/markdownPipeline";
 import type { Nodes } from "hast";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import { unified, type PluggableList } from "unified";
+import { splitPullRequestBody } from "@t3tools/client-runtime/pull-request-markdown";
 
 export {
   splitPullRequestBody,
@@ -150,4 +152,26 @@ function commentPreviewText(node: Nodes): string {
 export function pullRequestCommentPreview(body: string): string {
   const tree = commentPreviewProcessor.runSync(commentPreviewProcessor.parse(body), body);
   return commentPreviewText(tree).replace(/\s+/gu, " ").trim();
+}
+
+export function pullRequestAttachments(body: string) {
+  const attachments: Array<{ url: string; media: "image" | "video"; caption: string }> = [];
+  const seen = new Set<string>();
+  const add = (url: string, media: "image" | "video", caption: string) => {
+    if (seen.has(url) || !/^https?:\/\//iu.test(url)) return;
+    seen.add(url);
+    attachments.push({
+      url,
+      media,
+      caption: caption || `${media === "image" ? "Image" : "Video"} ${attachments.length + 1}`,
+    });
+  };
+  for (const segment of splitPullRequestBody(body)) {
+    if (segment.kind === "attachment") {
+      if (segment.media !== "unknown") add(segment.url, segment.media, "");
+      continue;
+    }
+    for (const url of chatMarkdownImageSources(segment.text)) add(url, "image", "");
+  }
+  return attachments;
 }
