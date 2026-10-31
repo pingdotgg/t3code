@@ -248,7 +248,11 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   const questionTextAlign = promptDirection === "rtl" ? "text-right" : "text-left";
   const writeOptionKey =
     activeQuestion.options.length < 9 ? activeQuestion.options.length + 1 : null;
-  const hint = activeQuestion.multiSelect ? "Select one or more options." : "Select one option.";
+  const hint = customAnswerActive
+    ? "Your answer is ready to submit."
+    : activeQuestion.multiSelect
+      ? "Select one or more options."
+      : "Select one option.";
   const primaryLabel = primaryAction?.isResponding
     ? "Submitting…"
     : primaryAction && !primaryAction.isLastQuestion
