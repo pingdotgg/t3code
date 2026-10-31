@@ -262,15 +262,16 @@ function RemoteSubagentRow(props: {
               size="sm"
               variant="ghost"
               part="row"
-              disabled={environment === null}
-              onClick={() =>
+              aria-disabled={environment === null || undefined}
+              onClick={() => {
+                if (environment === null) return;
                 void navigate({
                   to: "/$environmentId/$threadId",
                   params: buildThreadRouteParams(
                     scopeThreadRef(remoteChild.environmentId, remoteChild.threadId),
                   ),
-                })
-              }
+                });
+              }}
             />
           }
         >
@@ -333,13 +334,14 @@ function DelegatedFromRow(props: {
               size="sm"
               variant="ghost"
               part="row"
-              disabled={environment === null}
-              onClick={() =>
+              aria-disabled={environment === null || undefined}
+              onClick={() => {
+                if (environment === null) return;
                 void navigate({
                   to: "/$environmentId/$threadId",
                   params: buildThreadRouteParams(parentRef),
-                })
-              }
+                });
+              }}
             />
           }
         >

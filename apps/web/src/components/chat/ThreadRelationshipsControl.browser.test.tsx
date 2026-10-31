@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import { EnvironmentId, NodeId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -244,4 +245,101 @@ it("shows a side chat's full title in its tooltip", async () => {
   await vi.waitFor(() =>
     expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(longTitle),
   );
+});
+
+it("shows a remote subagent's full title in its tooltip even when its environment is unavailable", async () => {
+  setup();
+  const longTitle = "Investigate a remote subagent issue across linked environments";
+  const remoteEnvId = EnvironmentId.make("remote-env");
+  const remoteThreadId = ThreadId.make("remote-thread");
+  const now = DateTime.makeUnsafe("2026-10-31T20:00:00.000Z");
+  state.projection = {
+    ...(state.projection as Record<string, unknown>),
+    subagents: [
+      {
+        id: NodeId.make("remote-agent"),
+        threadId,
+        runId: null,
+        parentNodeId: NodeId.make("parent"),
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: "codex",
+        providerInstanceId: "provider",
+        providerThreadId: null,
+        childThreadId: null,
+        nativeTaskRef: null,
+        prompt: "Run remote task",
+        title: longTitle,
+        model: null,
+        status: "completed",
+        result: null,
+        startedAt: null,
+        completedAt: null,
+        updatedAt: now,
+        remoteChild: {
+          environmentId: remoteEnvId,
+          threadId: remoteThreadId,
+          label: "Remote VM",
+        },
+      },
+    ],
+  };
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={threadId}
+      showLineage
+      showSideChats={false}
+    />,
+    { router: "/environment/fork" },
+  );
+
+  const row = screen.getByRole("button", { name: new RegExp(longTitle) });
+  await userEvent.hover(row);
+  await vi.waitFor(() =>
+    expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(longTitle),
+  );
+  expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(
+    "Runs on Remote VM. Connect to it to open the thread there.",
+  );
+
+  await row.click({ force: true });
+  expect(screen.router?.state.location.pathname).toBe("/environment/fork");
+});
+
+it("shows a delegated-from thread's full title in its tooltip even when its environment is unavailable", async () => {
+  setup();
+  const longTitle = "Parent task delegated from another machine that has a long description";
+  state.projection = {
+    ...(state.projection as Record<string, unknown>),
+    thread: {
+      ...(state.projection as { thread: Record<string, unknown> }).thread,
+      delegatedFrom: {
+        environmentId: EnvironmentId.make("parent-env"),
+        threadId: ThreadId.make("parent-thread"),
+        title: longTitle,
+      },
+    },
+  };
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={threadId}
+      showLineage
+      showSideChats={false}
+    />,
+    { router: "/environment/fork" },
+  );
+
+  const row = screen.getByRole("button", { name: new RegExp(longTitle) });
+  await userEvent.hover(row);
+  await vi.waitFor(() =>
+    expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(longTitle),
+  );
+  expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(
+    "Delegated from a linked environment. Connect to it to open the parent thread.",
+  );
+
+  await row.click({ force: true });
+  expect(screen.router?.state.location.pathname).toBe("/environment/fork");
 });
