@@ -6,7 +6,6 @@ import type {
 import { evaluateWhenNode, resolveEventKeys } from "@t3tools/shared/keybindingMatching";
 import { useAtomValue } from "@effect/atom-react";
 import {
-  ArrowLeftRightIcon,
   Columns2Icon,
   LayersIcon,
   LayoutGridIcon,
@@ -17,7 +16,7 @@ import {
   XIcon,
   type LucideIcon,
 } from "lucide-react";
-import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect } from "react";
 import { createPortal } from "react-dom";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
@@ -352,124 +351,44 @@ export function LayoutKeyboard() {
   );
 }
 
-/**
- * Centered over the focused pane, measured once when the menu opens, and
- * kept inside the window: a bottom pane or one half off screen still shows
- * the whole menu.
- */
-function useFocusedPanePlacement(menuRef: RefObject<HTMLDivElement | null>): {
-  left: number;
-  top: number;
-} {
-  const [placement, setPlacement] = useState(() => ({ left: -9999, top: -9999 }));
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure the focused pane and menu before placing the shortcut overlay.
-  useLayoutEffect(() => {
-    const menu = menuRef.current;
-    if (!menu) return;
-    const pane = document.querySelector<HTMLElement>(
-      "[data-layout-pane-focused='true'][data-layout-pane-id]",
-    );
-    const rect = pane?.getBoundingClientRect();
-    const centerX = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
-    const centerY = rect ? rect.top + rect.height / 2 : window.innerHeight / 2;
-    const { width, height } = menu.getBoundingClientRect();
-    const margin = 8;
-    const clamp = (value: number, size: number, room: number) =>
-      Math.max(margin, Math.min(value - size / 2, room - size - margin));
-    setPlacement({
-      left: clamp(centerX, width, window.innerWidth),
-      top: clamp(centerY, height, window.innerHeight),
-    });
-  }, [menuRef]);
-  return placement;
-}
-
+/** Pen F1nBI: one window-centered, three-column map while the modifier is held. */
 function LayoutHoldMenu() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-  const placement = useFocusedPanePlacement(menuRef);
   const mac = isMacPlatform(navigator.platform);
   const holdLabel = mac ? "⌥⌘" : "Ctrl+Alt";
-  const sheet = shortcutsFor(keybindings, "layout.shortcutSheet")[0];
-  const groups = MENU_GROUPS.map((group) => ({
+  const groups = SHEET_LAYOUT_GROUPS.slice(0, 3).map((group, index) => ({
     label: group.label,
-    rows: group.rows.map((row) => {
-      // "also ⌘J": the command's own key when it is not the held chord.
-      const commands = [...new Set(row.keys.map((entry) => entry.command))];
-      const own =
-        commands.length === 1
-          ? shortcutsFor(keybindings, commands[0]!).findLast((shortcut) => !isLayoutChord(shortcut))
-          : undefined;
-      return {
-        ...row,
-        chip: row.keys.map((entry) => keyGlyph(entry.key)).join(" "),
-        also: own ? formatShortcutLabel(own, navigator.platform) : null,
-      };
+    rows: [
+      ...group.rows,
+      ...(index === 0 ? [{ label: "New tab", commands: ["tab.new" as const] }] : []),
+    ].flatMap((row) => {
+      const shortcuts = row.commands.flatMap((command) =>
+        shortcutsFor(keybindings, command).slice(0, 1),
+      );
+      return shortcuts.length > 0 ? [{ label: row.label, chords: chordsFor(shortcuts) }] : [];
     }),
   }));
-  const move = shortcutsFor(keybindings, "layout.moveRight")[0];
 
   return createPortal(
-    <div
-      role="dialog"
-      aria-label="Layout keys"
-      data-layout-hold-menu=""
-      ref={menuRef}
-      className="pointer-events-none fixed z-110 flex max-h-[calc(100vh-1rem)] w-95 max-w-[calc(100vw-1rem)] flex-col gap-0.5 overflow-hidden rounded-pane p-2 surface-popover kbd-in-popover"
-      style={placement}
-    >
-      <div className="flex items-center gap-2 px-2 pt-1.5 pb-2">
-        <span className="min-w-0 flex-1 text-label text-strong-foreground">Layout</span>
-        <span className="text-meta text-dim-foreground">holding {holdLabel}</span>
-      </div>
-      {groups.map((group) => (
-        <div key={group.label} className="flex flex-col gap-0.5">
-          <div className="px-2 pt-2 pb-1 text-micro text-dim-foreground">{group.label}</div>
-          {group.rows.map((row) => (
-            <HoldMenuRow
-              key={row.label}
-              icon={row.icon}
-              keys={row.chip}
-              label={row.label}
-              also={row.also}
-            />
-          ))}
-          {group.label === "Arrange" && move ? (
-            <HoldMenuRow
-              icon={ArrowLeftRightIcon}
-              keys={`${mac ? "⌃" : "Shift"} + arrows`}
-              label="Move the tab"
-              also={null}
-            />
-          ) : null}
+    <div className="pointer-events-none fixed inset-0 z-110 flex items-center justify-center bg-black/50 p-2">
+      <div
+        role="dialog"
+        aria-label="Layout keys"
+        data-layout-hold-menu=""
+        className="flex max-h-[calc(100dvh-1rem)] w-170 max-w-full flex-col gap-4 overflow-y-auto rounded-pane p-5 surface-popover kbd-in-popover"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span className="text-label text-strong-foreground">
+            Layout shortcuts · Mod is {holdLabel}, same map as niri
+          </span>
+          <span className="flex shrink-0 items-center gap-1.5 text-caption text-dim-foreground">
+            Release <Kbd>{holdLabel}</Kbd> to close
+          </span>
         </div>
-      ))}
-      <div className="px-2 pt-2 pb-1 text-micro text-dim-foreground">
-        Let go of {holdLabel} to close
-        {sheet ? ` · ${formatShortcutLabel(sheet, navigator.platform)} for every shortcut` : ""}
+        <ShortcutGrid groups={groups} compact />
       </div>
     </div>,
     document.body,
-  );
-}
-
-function HoldMenuRow(props: {
-  icon: LucideIcon;
-  keys: string;
-  label: string;
-  also: string | null;
-}) {
-  return (
-    <div className="flex h-7.5 items-center gap-2.5 rounded-control px-2">
-      <span className="flex h-5 min-w-16 shrink-0 items-center justify-center rounded-badge px-1.5 whitespace-nowrap surface-kbd text-micro text-foreground">
-        {props.keys}
-      </span>
-      <props.icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 flex-1 truncate text-label text-foreground">{props.label}</span>
-      {props.also ? (
-        <span className="shrink-0 text-meta text-dim-foreground">also {props.also}</span>
-      ) : null}
-    </div>
   );
 }
 
@@ -613,22 +532,26 @@ function LayoutShortcutSheet() {
 
 function ShortcutGrid({
   groups,
+  compact = false,
 }: {
   groups: ReadonlyArray<{
     label: string;
     rows: ReadonlyArray<{ label: string; chords: ReturnType<typeof chordsFor> }>;
   }>;
+  compact?: boolean;
 }) {
   return (
     <div
       className={cn(
         "grid grid-cols-1 gap-6 sm:grid-cols-2",
-        groups.length > 3 ? "md:grid-cols-4" : "md:grid-cols-3",
+        compact ? "sm:grid-cols-3" : groups.length > 3 ? "md:grid-cols-4" : "md:grid-cols-3",
       )}
     >
       {groups.map((group) => (
         <div key={group.label} className="flex min-w-0 flex-col gap-2">
-          <div className="text-meta text-dim-foreground">{group.label}</div>
+          <div className={cn(compact ? "text-caption" : "text-meta", "text-dim-foreground")}>
+            {group.label}
+          </div>
           {group.rows.map((row) => (
             <div key={row.label} className="flex flex-col items-start gap-1">
               <span className="text-meta text-foreground">{row.label}</span>
