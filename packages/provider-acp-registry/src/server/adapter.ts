@@ -14,6 +14,12 @@ import {
   extractCopilotSubagentUpdate,
   makeCopilotSubagentRouting,
 } from "./copilotAcp.ts";
+import {
+  discoverCopilotSkills,
+  hasCopilotSkillMention,
+  isCopilotAcpSettings,
+  rewriteCopilotSkillMentions,
+} from "./copilotSkills.ts";
 import { defaultInstanceIdForDriver, ProviderDriverKind } from "@t3tools/contracts";
 import { readCustomModelEntries } from "@t3tools/shared/model";
 import { AcpRegistrySettings } from "../settings.ts";
@@ -179,6 +185,8 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   options: AcpRegistryAdapterV2Options,
 ) {
   const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const runtimeCoordinator = Option.getOrUndefined(
     yield* Effect.serviceOption(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator),
   );
@@ -186,11 +194,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   const startupKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : registryAgentId;
   const isDevin = registryAgentId === "devin";
-  // Local installs launch the `copilot` binary directly with no registry id.
-  const isCopilot =
-    registryAgentId === "github-copilot-cli" ||
-    (options.settings.source === "local" &&
-      /^copilot(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? ""));
+  const isCopilot = isCopilotAcpSettings(options.settings);
   const isClaude =
     registryAgentId === "claude-acp" ||
     (options.settings.source === "local" &&
@@ -255,16 +259,37 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           registerExtensions: copilotRouting.registerExtensions,
           normalizeSessionUpdate: copilotRouting.normalizeSessionUpdate,
           extractSubagentUpdate: extractCopilotSubagentUpdate,
+          rewriteUserText: (text, turnInput) => {
+            if (!hasCopilotSkillMention(text)) return Effect.succeed(text);
+            return discoverCopilotSkills(turnInput.runtimePolicy.cwd, options.environment).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.map((skills) =>
+                rewriteCopilotSkillMentions(text, new Set(skills.map((skill) => skill.name))),
+              ),
+            );
+          },
         }),
     makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(runtimeOptions, catalog),
     ...(runtimeCoordinator === undefined
       ? {}
       : {
-          onAvailableCommandsUpdate: (commands) =>
-            runtimeCoordinator.publishAvailableCommands(
-              options.instanceId,
-              normalizeAcpRegistryCommands(commands),
-            ),
+          onAvailableCommandsUpdate: (commands, context) =>
+            isCopilot
+              ? discoverCopilotSkills(context?.cwd, options.environment).pipe(
+                  Effect.provideService(FileSystem.FileSystem, fileSystem),
+                  Effect.provideService(Path.Path, path),
+                  Effect.flatMap((knownSkills) =>
+                    runtimeCoordinator.publishAvailableCommands(
+                      options.instanceId,
+                      normalizeAcpRegistryCommands(commands, knownSkills),
+                    ),
+                  ),
+                )
+              : runtimeCoordinator.publishAvailableCommands(
+                  options.instanceId,
+                  normalizeAcpRegistryCommands(commands),
+                ),
           onSessionConfigurationUpdate: (configOptions, modeState, modelState) =>
             runtimeCoordinator.publishLiveConfiguration(
               options.instanceId,

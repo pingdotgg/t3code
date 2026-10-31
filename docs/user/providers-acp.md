@@ -90,6 +90,8 @@ is running update the picker without waiting for another provider probe.
 
 Slash commands the agent provides appear under **Provider** in the `/` menu while a session is
 running. Commands the agent names with a `$` prefix appear in T3 Code's `$` skill menu instead.
+GitHub Copilot advertises skills as ordinary commands. T3 Code matches those names to the skill
+folders Copilot reads and lists them in the `$` menu. Choosing one sends `/skill-name`.
 
 ## Native sessions
 

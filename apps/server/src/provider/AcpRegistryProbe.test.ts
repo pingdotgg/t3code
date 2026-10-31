@@ -318,6 +318,41 @@ describe("ACP Registry probe", () => {
     });
   });
 
+  it("routes advertised commands that match discovered skills into the skill menu", () => {
+    expect(
+      normalizeAcpRegistryCommands(
+        [
+          { name: "compact", description: "Compact the conversation" },
+          { name: "principle-fix-root-causes", description: "Apply when debugging" },
+        ],
+        [
+          {
+            name: "principle-fix-root-causes",
+            description: "from disk",
+            path: "/home/dev/.agents/skills/principle-fix-root-causes/SKILL.md",
+            scope: "user",
+          },
+          {
+            name: "only-on-disk",
+            path: "/home/dev/.agents/skills/only-on-disk/SKILL.md",
+            scope: "user",
+          },
+        ],
+      ),
+    ).toEqual({
+      slashCommands: [{ name: "compact", description: "Compact the conversation" }],
+      skills: [
+        {
+          name: "principle-fix-root-causes",
+          description: "Apply when debugging",
+          path: "/home/dev/.agents/skills/principle-fix-root-causes/SKILL.md",
+          scope: "user",
+          enabled: true,
+        },
+      ],
+    });
+  });
+
   it.effect("lists native sessions and logs out through generic ACP lifecycle methods", () => {
     const catalog = AcpRegistrySupport.AcpRegistryCatalog.of({
       search: () => Effect.die("unused search"),
