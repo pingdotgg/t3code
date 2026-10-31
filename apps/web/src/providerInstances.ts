@@ -133,7 +133,11 @@ function applyProviderInstanceBranding(
       ? (explicitInstance.config as Readonly<Record<string, unknown>>)
       : null;
   if (config?.source === "local") {
-    return { ...entry, acpRegistryAgentId: undefined, acpRegistryIconUrl: undefined };
+    // Drop stale Registry branding; keep only the inline icon from the instance's icon file.
+    const iconFileUrl = entry.snapshot.iconUrl?.startsWith("data:")
+      ? entry.snapshot.iconUrl
+      : undefined;
+    return { ...entry, acpRegistryAgentId: undefined, acpRegistryIconUrl: iconFileUrl };
   }
   const agentId = config?.agentId;
   const iconUrl = config?.registryIconUrl;

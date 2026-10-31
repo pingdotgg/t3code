@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useId, useState } from "react";
 import {
+  resolveAcpRegistryIconUrl,
   resolveOfficialAcpRegistryIconUrl,
   officialAcpRegistryIconUrlForAgentId,
 } from "@t3tools/contracts";
@@ -14,7 +15,11 @@ const ACP_REGISTRY_ICON_CACHE = "t3-acp-registry-icons-v1";
 const MAX_ICON_BYTES = 512 * 1_024;
 const inFlightIcons = new Map<string, Promise<Blob>>();
 
-export { officialAcpRegistryIconUrlForAgentId, resolveOfficialAcpRegistryIconUrl };
+export {
+  officialAcpRegistryIconUrlForAgentId,
+  resolveAcpRegistryIconUrl,
+  resolveOfficialAcpRegistryIconUrl,
+};
 
 async function checkedIconBlob(response: Response): Promise<Blob> {
   if (!response.ok || response.redirected) throw new Error("ACP registry icon request failed.");
@@ -106,13 +111,19 @@ export function AcpRegistryAgentIcon({
   readonly fallbackClassName?: string;
 }) {
   const colorFilterId = useId();
-  const iconUrl = resolveOfficialAcpRegistryIconUrl(icon);
-  // Render only after the load pipeline resolves, so the fallback icon does
-  // not flash a broken image.
-  const source = AsyncResult.getOrElse(
-    useAtomValue(iconUrl === null ? NO_ICON_SOURCE_ATOM : acpRegistryIconSourceAtom(iconUrl)),
+  const iconUrl = resolveAcpRegistryIconUrl(icon);
+  // An inline icon from a local file renders as-is; Registry icons go through the
+  // load pipeline, and render only after it resolves so the fallback icon does not
+  // flash a broken image.
+  const inlineSource = iconUrl?.startsWith("data:") ? iconUrl : null;
+  const registryIconUrl = inlineSource === null ? iconUrl : null;
+  const loadedSource = AsyncResult.getOrElse(
+    useAtomValue(
+      registryIconUrl === null ? NO_ICON_SOURCE_ATOM : acpRegistryIconSourceAtom(registryIconUrl),
+    ),
     () => null,
   );
+  const source = inlineSource ?? loadedSource;
   const [image, setImage] = useState<{
     readonly source: string;
     readonly status: "loaded" | "failed";

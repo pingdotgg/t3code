@@ -39,6 +39,11 @@ credentials and skills remain managed by the installed agent or its wrapper. Mod
 options come from ACP, including model IDs that contain JSON. T3 Code launches the executable directly
 without expanding shell expressions.
 
+Local commands show a generic ACP icon. To use the agent's own logo, set **Icon file** in the
+provider's settings to the absolute path of an SVG or PNG (up to 8 KB) on the same environment.
+T3 Code tints it to match the theme, like Registry icons, and reads the file when the provider
+starts, so save the provider settings again after replacing the file.
+
 ## Where agents run
 
 Registry agents always run on the machine that hosts your T3 Code server. That stays true when you
