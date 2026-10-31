@@ -44,6 +44,13 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import { resolveUsageLimitsAfterProbe } from "@t3tools/provider-core/server/usageLimits";
+import { type ClaudeOAuthUsage, ClaudeOAuthUsageError } from "./claudeResetCredits.ts";
+import {
+  claudeOAuthUsageToResponse,
+  claudeRateLimitEventToUpdate,
+  makeClaudeScopedLimitNames,
+} from "./claudeUsageLimits.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ModelManifest from "./ModelManifest.ts";
@@ -2675,6 +2682,143 @@ it.layer(
         );
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.auth.status, "authenticated");
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("reads usage and resets directly for subscription logins", () =>
+      Effect.gen(function* () {
+        const names = yield* makeClaudeScopedLimitNames;
+        const sdkUsage = {
+          rate_limits_available: true,
+          rate_limits: { five_hour: { utilization: 10, resets_at: null } },
+        };
+        const check = (
+          overrides: Partial<TestClaudeCapabilities & { usageCheckedAt: string }>,
+          oauthUsage?: Effect.Effect<ClaudeOAuthUsage | undefined, ClaudeOAuthUsageError>,
+          usage: ClaudeOAuthUsage["usage"] = sdkUsage,
+        ) =>
+          checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            () =>
+              Effect.succeed({
+                email: undefined,
+                subscriptionType: undefined,
+                tokenSource: undefined,
+                apiKeySource: undefined,
+                apiProvider: undefined,
+                slashCommands: [],
+                usage,
+                ...overrides,
+              }),
+            undefined,
+            undefined,
+            undefined,
+            names,
+            oauthUsage ? () => oauthUsage : undefined,
+          );
+        const oauthUsage = {
+          usage: {
+            rate_limits_available: true,
+            rate_limits: { five_hour: { utilization: 42, resets_at: null } },
+          },
+          resetCredits: { availableCount: 2 },
+        };
+        // The CLI answers `get_usage` without windows when nonessential traffic is disabled.
+        const subscription = yield* check({ subscriptionType: "max" }, Effect.succeed(oauthUsage), {
+          rate_limits_available: false,
+          rate_limits: null,
+        });
+        const keychainLogin = yield* check({ subscriptionType: "max" });
+        const sdkFallback = yield* check(
+          { subscriptionType: "max" },
+          Effect.fail(new ClaudeOAuthUsageError({ cause: new Error("request failed") })),
+        );
+        const unavailableKeychainLogin = yield* check({ subscriptionType: "max" }, undefined, {
+          rate_limits_available: false,
+          rate_limits: null,
+        });
+        const bedrock = yield* check({ apiProvider: "bedrock" }, Effect.succeed(oauthUsage));
+        assert.deepStrictEqual(
+          subscription.usageLimits?.windows.map((window) => window.usedPercent),
+          [42],
+        );
+        assert.deepStrictEqual(subscription.usageLimits?.resetCredits, { availableCount: 2 });
+        assert.deepStrictEqual(
+          keychainLogin.usageLimits?.windows.map((window) => window.usedPercent),
+          [10],
+        );
+        assert.strictEqual(keychainLogin.usageLimits?.resetCredits, undefined);
+        assert.deepStrictEqual(
+          sdkFallback.usageLimits?.windows.map((window) => window.usedPercent),
+          [10],
+        );
+        assert.strictEqual(
+          unavailableKeychainLogin.usageLimits?.unavailable?.reason,
+          "unsupported",
+        );
+        assert.deepStrictEqual(
+          bedrock.usageLimits?.windows.map((window) => window.usedPercent),
+          [10],
+        );
+        assert.strictEqual(bedrock.usageLimits?.resetCredits, undefined);
+
+        const sdkCheckedAt = DateTime.formatIso(yield* DateTime.now);
+        const freshOAuth = yield* check(
+          { subscriptionType: "max", usageCheckedAt: sdkCheckedAt },
+          TestClock.adjust("1 second").pipe(Effect.as(oauthUsage)),
+        );
+        const cachedSdk = yield* check(
+          { subscriptionType: "max", usageCheckedAt: sdkCheckedAt },
+          Effect.fail(new ClaudeOAuthUsageError({ cause: new Error("request failed") })),
+        );
+        assert.deepStrictEqual(
+          resolveUsageLimitsAfterProbe({
+            published: freshOAuth.usageLimits,
+            probed: cachedSdk.usageLimits,
+          })?.windows.map((window) => window.usedPercent),
+          [42],
+        );
+
+        const scopedUsage = (models: Array<string>) =>
+          claudeOAuthUsageToResponse({
+            limits: models.map((display_name) => ({
+              kind: "weekly_scoped",
+              percent: 7,
+              scope: { model: { display_name } },
+            })),
+          });
+        const direct = { usage: scopedUsage(["Other", "Fable"]), resetCredits: undefined };
+        const scoped = yield* check(
+          { subscriptionType: "max" },
+          Effect.succeed(direct),
+          scopedUsage(["Fable"]),
+        );
+        assert.deepStrictEqual(
+          scoped.usageLimits?.windows.map((window) => window.id),
+          ["seven_day_fable", "seven_day_other"],
+        );
+        const event = {
+          status: "allowed",
+          rateLimitType: "seven_day_overage_included" as never,
+          utilization: 0.5,
+        } as const;
+        assert.strictEqual(
+          claudeRateLimitEventToUpdate(event, yield* Ref.get(names))?.windows[0]?.id,
+          "seven_day_fable",
+        );
+        yield* check({ subscriptionType: "max" }, Effect.succeed(direct), {
+          rate_limits_available: false,
+          rate_limits: null,
+        });
+        assert.strictEqual(claudeRateLimitEventToUpdate(event, yield* Ref.get(names)), undefined);
       }).pipe(
         Effect.provide(
           layerMockSpawner((args) => {

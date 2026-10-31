@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { claudeRateLimitEventToUpdate, claudeUsageResponseToLimits } from "./claudeUsageLimits.ts";
+import {
+  claudeOAuthUsageToResponse,
+  claudeRateLimitEventToUpdate,
+  claudeUsageResponseToLimits,
+} from "./claudeUsageLimits.ts";
 
 const checkedAt = "2026-07-18T10:00:00.000Z";
 const noNames = { overageIncluded: undefined } as const;
@@ -162,6 +166,16 @@ describe("claudeUsageResponseToLimits", () => {
         usedPercent: 12,
         windowDurationMins: 300,
       },
+      monthlyWindow,
+    ]);
+  });
+
+  it("keeps the monthly budget when the OAuth usage body is read directly", () => {
+    const toWindows = (body: Parameters<typeof claudeOAuthUsageToResponse>[0]) =>
+      claudeUsageResponseToLimits({ checkedAt, response: claudeOAuthUsageToResponse(body) }).limits
+        .windows;
+    expect(toWindows(enterpriseResponse.rate_limits)).toEqual([monthlyWindow]);
+    expect(toWindows({ ...enterpriseResponse.rate_limits, spend: undefined })).toEqual([
       monthlyWindow,
     ]);
   });

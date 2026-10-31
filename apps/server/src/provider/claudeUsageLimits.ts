@@ -125,6 +125,60 @@ function readModelScoped(rateLimits: object): ReadonlyArray<ModelScopedWindow> {
   );
 }
 
+const OAuthWindow = Schema.Struct({
+  utilization: Schema.NullOr(Schema.Number),
+  resets_at: Schema.NullOr(Schema.String),
+});
+const OAuthScopedLimit = Schema.Struct({
+  kind: Schema.Literal("weekly_scoped"),
+  percent: Schema.Number,
+  resets_at: Schema.optional(Schema.NullOr(Schema.Union([Schema.String, Schema.Number]))),
+  scope: Schema.Struct({ model: Schema.Struct({ display_name: Schema.String }) }),
+});
+const decodeOAuthScopedLimit = Schema.decodeUnknownOption(OAuthScopedLimit);
+const decodeOAuthExtraUsage = Schema.decodeUnknownOption(
+  Schema.Struct({
+    is_enabled: Schema.Boolean,
+    monthly_limit: Schema.NullOr(Schema.Number),
+    used_credits: Schema.NullOr(Schema.Number),
+    utilization: Schema.NullOr(Schema.Number),
+  }),
+);
+
+/** The body of `GET /api/oauth/usage`, the endpoint the CLI's `get_usage` reads. */
+export const ClaudeOAuthUsage = Schema.Struct({
+  five_hour: Schema.optional(Schema.NullOr(OAuthWindow)),
+  seven_day: Schema.optional(Schema.NullOr(OAuthWindow)),
+  limits: Schema.optional(Schema.Array(Schema.Unknown)),
+  spend: Schema.optional(Schema.Unknown),
+  extra_usage: Schema.optional(Schema.Unknown),
+});
+
+export function claudeOAuthUsageToResponse(
+  usage: typeof ClaudeOAuthUsage.Type,
+): Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits"> {
+  const model_scoped = (usage.limits ?? []).flatMap((raw) =>
+    Option.toArray(decodeOAuthScopedLimit(raw)).map((limit) => ({
+      display_name: limit.scope.model.display_name,
+      utilization: limit.percent,
+      resets_at:
+        typeof limit.resets_at === "number"
+          ? (isoFromEpochSeconds(limit.resets_at) ?? null)
+          : (limit.resets_at ?? null),
+    })),
+  );
+  return {
+    rate_limits_available: true,
+    rate_limits: {
+      five_hour: usage.five_hour ?? null,
+      seven_day: usage.seven_day ?? null,
+      model_scoped,
+      extra_usage: Option.getOrNull(decodeOAuthExtraUsage(usage.extra_usage)),
+      ...(usage.spend === undefined ? {} : { spend: usage.spend }),
+    },
+  };
+}
+
 function isoFromEpochSeconds(value: number | undefined): string | undefined {
   if (value === undefined || !Number.isFinite(value) || value <= 0) return undefined;
   const dt = DateTime.make(value * 1000);
