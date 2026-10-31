@@ -1176,11 +1176,18 @@ export class GhosttyTerminalSurface {
       this.pasteShortcutGesture = gesture;
       const clipboard = navigator.clipboard;
       if (typeof clipboard?.readText === "function") {
-        // Read only when no native paste follows this keydown: Firefox and Safari
-        // answer reads with a focus-stealing Paste prompt. The token drops a late
-        // read; the gesture drops a native duplicate when the read wins.
+        // Firefox and Safari lack clipboard-read permission and prompt even when
+        // native paste arrives later. Only permission-aware browsers use the fallback.
         const token = ++this.pasteShortcutToken;
-        window.setTimeout(() => {
+        window.setTimeout(async () => {
+          try {
+            const permission = await navigator.permissions.query({
+              name: "clipboard-read" as PermissionName,
+            });
+            if (permission.state === "denied") return;
+          } catch {
+            return;
+          }
           if (this.disposed || this.pasteShortcutToken !== token) return;
           void clipboard.readText().then(
             (text) => {
