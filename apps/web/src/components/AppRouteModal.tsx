@@ -8,7 +8,15 @@ import { Dialog, DialogClose, DialogPopup } from "./ui/dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 /** Settings and Usage own their shortcuts inside `[data-app-modal]` and return to the opener. */
-export function AppRouteModal({ label, children }: { label: string; children: ReactNode }) {
+export function AppRouteModal({
+  label,
+  children,
+  variant = "app",
+}: {
+  label: string;
+  children: ReactNode;
+  variant?: "app" | "app-panel";
+}) {
   const closeAppModal = useCloseAppModal();
   const themeEditorOpen = useThemeEditorStore((store) => store.session !== null);
   const [open, setOpen] = useState(true);
@@ -38,7 +46,7 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
       }}
     >
       <DialogPopup
-        variant="app"
+        variant={variant}
         showCloseButton={false}
         bottomStickOnMobile={false}
         ref={popupRef}
