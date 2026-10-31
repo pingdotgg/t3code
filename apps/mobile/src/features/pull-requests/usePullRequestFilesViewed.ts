@@ -2,7 +2,6 @@ import { usePullRequestConnected } from "./usePullRequestConnected";
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PullRequestDetail } from "@t3tools/contracts";
-import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { use, useState } from "react";
 import { composerPullRequests } from "../../state/pull-requests";
@@ -50,8 +49,9 @@ export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullReq
       input: { ...target.input, files: [{ path, viewed }] },
     });
     // The read that is current once the write lands still predates it; a newer one carries it.
-    const readAtWrite = Option.getOrNull(
-      AsyncResult.value(registry.get(composerPullRequests.filesViewed(target))),
+    const readAtWrite = AsyncResult.getOrElse(
+      registry.get(composerPullRequests.filesViewed(target)),
+      () => null,
     );
     setState((current) => {
       if (current.key !== scopeKey || current.presses[path]?.version !== version) return current;
