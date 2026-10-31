@@ -2505,6 +2505,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       resolvePrimaryRemoteName: () => Effect.succeed("origin"),
       resolveDefaultBranchName: (cwd, remoteName) =>
         Effect.succeed(cwd === workspaceRoot && remoteName === "origin" ? "master" : null),
+      resolveCommit: () => Effect.succeed({ commitSha: "abc123" }),
     };
     const schedule = { type: "interval", everyMs: 3_600_000 } as const;
 
@@ -2571,6 +2572,27 @@ describe("OrchestratorMcpService provider resolution", () => {
         remote: "origin",
         remoteDefault: null,
         refs: ["refs/remotes/origin/master"],
+        baseRef: "origin/master",
+      },
+      {
+        name: "no recorded HEAD, local main and master only on the remote",
+        remote: "origin",
+        remoteDefault: null,
+        refs: ["refs/heads/main", "refs/remotes/origin/master"],
+        baseRef: "origin/master",
+      },
+      {
+        name: "no recorded HEAD, nothing conventional on the remote, local main",
+        remote: "origin",
+        remoteDefault: null,
+        refs: ["refs/heads/main", "refs/remotes/origin/develop"],
+        baseRef: "main",
+      },
+      {
+        name: "a recorded HEAD whose branch is gone",
+        remote: "origin",
+        remoteDefault: "main",
+        refs: ["refs/heads/main", "refs/remotes/origin/master"],
         baseRef: "origin/master",
       },
       {

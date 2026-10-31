@@ -1797,20 +1797,23 @@ const make = Effect.gen(function* () {
     const remoteName = yield* gitDriver
       .resolvePrimaryRemoteName(cwd)
       .pipe(Effect.orElseSucceed(() => null));
-    // Launch resolves a bare name through a local branch's upstream, or else assumes `origin`.
-    const onRemote = (branch: string) => `${remoteName}/${branch}`;
-    const remoteDefault =
-      remoteName === null
-        ? null
-        : yield* gitDriver
-            .resolveDefaultBranchName(cwd, remoteName)
-            .pipe(Effect.orElseSucceed(() => null));
-    if (remoteDefault !== null) return onRemote(remoteDefault);
-    // Local-only repositories and remotes without a recorded HEAD report no default.
-    for (const branch of ["main", "master"]) {
-      if (remoteName !== null && (yield* refExists(cwd, `refs/remotes/${remoteName}/${branch}`))) {
-        return onRemote(branch);
+    const conventional = ["main", "master"];
+    if (remoteName !== null) {
+      const remoteDefault = yield* gitDriver
+        .resolveDefaultBranchName(cwd, remoteName)
+        .pipe(Effect.orElseSucceed(() => null));
+      // Fetch does not update a recorded HEAD, so it can outlive the branch it names.
+      for (const branch of remoteDefault === null
+        ? conventional
+        : [remoteDefault, ...conventional]) {
+        // Launch resolves a bare name through a local branch's upstream, or else assumes `origin`.
+        if (yield* refExists(cwd, `refs/remotes/${remoteName}/${branch}`)) {
+          return `${remoteName}/${branch}`;
+        }
       }
+    }
+    // Local-only repositories, or a remote with neither a usable HEAD nor a conventional branch.
+    for (const branch of conventional) {
       if (yield* refExists(cwd, `refs/heads/${branch}`)) return branch;
     }
     return "main";
