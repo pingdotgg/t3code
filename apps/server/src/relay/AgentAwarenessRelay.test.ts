@@ -11,6 +11,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -92,6 +93,31 @@ function shell(overrides: Partial<OrchestrationV2ThreadShell> = {}): Orchestrati
   };
 }
 
+const CHILD_THREAD_ID = ThreadId.make("relay-child-thread");
+
+function waitingChild(
+  overrides: Partial<OrchestrationV2ThreadShell> = {},
+): OrchestrationV2ThreadShell {
+  return shell({
+    id: CHILD_THREAD_ID,
+    title: "Child",
+    lineage: {
+      rootThreadId: THREAD_ID,
+      parentThreadId: THREAD_ID,
+      relationshipToParent: "subagent",
+    },
+    createdBy: "agent",
+    creationSource: "mcp",
+    activityRunStatus: "running",
+    pendingRuntimeRequest: {
+      id: RuntimeRequestId.make("child-request"),
+      kind: "command",
+      createdAt: DateTime.makeUnsafe(NOW),
+    },
+    ...overrides,
+  });
+}
+
 const PublishPayload = Schema.Struct({ state: Schema.NullOr(RelayAgentActivityState) });
 const decodePublishPayload = Schema.decodeUnknownSync(Schema.fromJsonString(PublishPayload));
 const unused = () => Effect.die("Unexpected test dependency call");
@@ -135,6 +161,16 @@ describe("startup agent activity", () => {
     });
     assert.deepStrictEqual(ids, [THREAD_ID, newCompleted, newFailed]);
   });
+
+  it("publishes a subagent waiting on the user so its parent is republished", () => {
+    const ids = AgentAwarenessRelay.resolveAgentAwarenessRelayActiveThreadIds({
+      environmentId: EnvironmentId.make("relay-env"),
+      startedAt: DateTime.toEpochMillis(DateTime.makeUnsafe(NOW)),
+      projects: [{ id: PROJECT_ID, title: "Project" }],
+      threads: [shell({ status: "idle" }), waitingChild()],
+    });
+    assert.deepStrictEqual(ids, [CHILD_THREAD_ID]);
+  });
 });
 
 const makeTestRelay = Effect.fnUntraced(function* (
@@ -142,6 +178,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly respond?: (attempt: number) => Response;
     readonly failSecretRead?: (name: string) => boolean;
     readonly linked?: boolean;
+    readonly startupThreads?: ReadonlyArray<OrchestrationV2ThreadShell>;
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
   } = {},
@@ -184,14 +221,24 @@ const makeTestRelay = Effect.fnUntraced(function* (
       Effect.sync(() => shellReads.push(threadId)).pipe(
         Effect.andThen(options.readShell?.(threadId) ?? Ref.get(currentShell)),
       ),
-    getShellSnapshot: () =>
+    getShellSnapshot: (input) =>
       Effect.sync(() => {
         catchUp.shellSnapshotReads += 1;
-        return { schemaVersion: 2, snapshotSequence: 1, threads: [], archivedThreads: [] };
+        return {
+          schemaVersion: 2,
+          snapshotSequence: 1,
+          threads: (options.startupThreads ?? []).filter((thread) =>
+            input?.threadIds?.includes(thread.id),
+          ),
+          archivedThreads: [],
+        };
       }),
     listActiveSubagentThreadIds: unused,
     countThreads: unused,
-    listActiveShellIndex: () => Effect.succeed([]),
+    listActiveShellIndex: () =>
+      Effect.succeed(
+        (options.startupThreads ?? []).map((thread) => ({ ...thread, mayBeLive: true })),
+      ),
     listOlderSettledThreads: unused,
     readShellSnapshot: unused,
     ensureLegacyTranscript: unused,
@@ -293,6 +340,412 @@ const makeTestRelay = Effect.fnUntraced(function* (
 });
 
 describe("AgentAwarenessRelay", () => {
+  it.effect("publishes an approval already waiting at startup", () =>
+    Effect.gen(function* () {
+      const parent = shell({ status: "idle" });
+      const child = waitingChild();
+      const { relay, publications } = yield* makeTestRelay({
+        startupThreads: [parent, child],
+        readShell: (id) => Effect.succeed(id === child.id ? child : parent),
+      });
+      yield* relay.start();
+      yield* TestClock.adjust("1 second");
+      yield* relay.drain;
+      assert.equal(publications.length, 1);
+      assert.equal(publications[0]?.state?.threadId, THREAD_ID);
+      assert.equal(publications[0]?.state?.phase, "waiting_for_approval");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("leaves coordinator-handled child questions out of phone activity", () =>
+    Effect.gen(function* () {
+      const child = waitingChild({
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("child-question"),
+          kind: "user_input",
+          createdAt: DateTime.makeUnsafe(NOW),
+        },
+      });
+      const { relay, publications } = yield* makeTestRelay({
+        readShell: (id) => Effect.succeed(id === child.id ? child : shell()),
+      });
+      yield* relay.publishThread(THREAD_ID);
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      assert.equal(publications.length, 1);
+      assert.equal(publications[0]?.state?.phase, "running");
+    }),
+  );
+
+  it.effect("publishes the parent as needing approval while its subagent waits", () =>
+    Effect.gen(function* () {
+      const shells = yield* Ref.make(
+        new Map<ThreadId, OrchestrationV2ThreadShell>([
+          [THREAD_ID, shell({ status: "completed" })],
+          [CHILD_THREAD_ID, waitingChild({ pendingRuntimeRequest: null })],
+        ]),
+      );
+      const setShell = (next: OrchestrationV2ThreadShell) =>
+        Ref.update(shells, (current) => new Map(current).set(next.id, next));
+      const { relay, publications } = yield* makeTestRelay({
+        readShell: (threadId) =>
+          Ref.get(shells).pipe(Effect.map((current) => current.get(threadId) ?? null)),
+      });
+      yield* setShell(shell({ status: "running" }));
+      yield* relay.publishThread(THREAD_ID);
+      yield* setShell(shell({ status: "completed" }));
+      yield* setShell(waitingChild());
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      assert.equal(publications.length, 2);
+      assert.isTrue(publications[1]?.url.includes(`/threads/${THREAD_ID}/`) ?? false);
+      assert.equal(publications[1]?.state?.phase, "waiting_for_approval");
+      assert.equal(publications[1]?.state?.threadId, THREAD_ID);
+
+      yield* setShell(waitingChild({ pendingRuntimeRequest: null }));
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      assert.equal(publications.length, 2);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.length, 3);
+      assert.equal(publications[2]?.state?.phase, "completed");
+
+      // Phones key alerts by phase and time, so a second wait needs a new time.
+      yield* setShell(
+        waitingChild({
+          updatedAt: DateTime.makeUnsafe("2026-09-04T12:05:00.000Z"),
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("child-request-2"),
+            kind: "command",
+            createdAt: DateTime.makeUnsafe("2026-09-04T12:05:00.000Z"),
+          },
+        }),
+      );
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      assert.equal(publications.length, 4);
+      assert.equal(publications[3]?.state?.phase, "waiting_for_approval");
+      assert.equal(publications[3]?.state?.updatedAt, "2026-09-04T12:05:00.000Z");
+      assert.notEqual(publications[3]?.state?.updatedAt, publications[1]?.state?.updatedAt);
+
+      // With two pending requests, answering one shows the next, possibly an
+      // older one, with no clear between.
+      yield* setShell(
+        waitingChild({
+          updatedAt: DateTime.makeUnsafe("2026-09-04T12:06:00.000Z"),
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("child-request-3"),
+            kind: "command",
+            createdAt: DateTime.makeUnsafe("2026-09-04T12:04:00.000Z"),
+          },
+        }),
+      );
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      assert.equal(publications.length, 5);
+      assert.equal(publications[4]?.state?.phase, "waiting_for_approval");
+      assert.equal(publications[4]?.state?.updatedAt, "2026-09-04T12:06:00.000Z");
+    }),
+  );
+
+  it.effect.each([
+    { parentUpdatedAt: NOW, alertTime: "2026-09-04T12:05:00.000Z" },
+    { parentUpdatedAt: "2026-09-04T12:10:00.000Z", alertTime: "2026-09-04T12:10:00.001Z" },
+  ])(
+    "announces overlapping child approvals with parent updated at $parentUpdatedAt",
+    ({ parentUpdatedAt, alertTime }) =>
+      Effect.gen(function* () {
+        const secondChildId = ThreadId.make("relay-second-child-thread");
+        const shells = yield* Ref.make(
+          new Map<ThreadId, OrchestrationV2ThreadShell>([
+            [THREAD_ID, shell({ updatedAt: DateTime.makeUnsafe(parentUpdatedAt) })],
+            [CHILD_THREAD_ID, waitingChild()],
+            [secondChildId, waitingChild({ id: secondChildId, pendingRuntimeRequest: null })],
+          ]),
+        );
+        const { relay, publications } = yield* makeTestRelay({
+          readShell: (threadId) =>
+            Ref.get(shells).pipe(Effect.map((current) => current.get(threadId) ?? null)),
+          respond: (attempt) =>
+            attempt === 2
+              ? new Response("unavailable", { status: 503 })
+              : Response.json({ ok: true, deliveries: [] }),
+        });
+        yield* relay.publishThread(CHILD_THREAD_ID);
+        assert.equal(publications[0]?.state?.phase, "waiting_for_approval");
+
+        yield* Ref.update(shells, (current) =>
+          new Map(current).set(
+            secondChildId,
+            waitingChild({
+              id: secondChildId,
+              updatedAt: DateTime.makeUnsafe("2026-09-04T12:05:00.000Z"),
+              pendingRuntimeRequest: {
+                id: RuntimeRequestId.make("second-child-request"),
+                kind: "command",
+                createdAt: DateTime.makeUnsafe("2026-09-04T12:05:00.000Z"),
+              },
+            }),
+          ),
+        );
+        yield* relay.publishThread(secondChildId);
+        assert.equal(publications.length, 2);
+        assert.equal(publications[1]?.state?.updatedAt, alertTime);
+        assert.notEqual(publications[1]?.state?.updatedAt, publications[0]?.state?.updatedAt);
+
+        yield* TestClock.adjust("1 second");
+        yield* relay.drain;
+        assert.equal(publications.length, 3);
+        assert.deepStrictEqual(publications[2]?.state, publications[1]?.state);
+        yield* relay.publishThread(secondChildId);
+        assert.equal(publications.length, 3);
+      }),
+  );
+
+  it.effect("gives a child's next wait a new alert time after the parent republishes", () =>
+    Effect.gen(function* () {
+      const shells = yield* Ref.make(
+        new Map<ThreadId, OrchestrationV2ThreadShell>([
+          [THREAD_ID, shell({ updatedAt: DateTime.makeUnsafe("2026-09-04T12:10:00.000Z") })],
+          [CHILD_THREAD_ID, waitingChild({ pendingRuntimeRequest: null })],
+        ]),
+      );
+      const setChild = (next: OrchestrationV2ThreadShell) =>
+        Ref.update(shells, (current) => new Map(current).set(CHILD_THREAD_ID, next));
+      const { relay, publications } = yield* makeTestRelay({
+        readShell: (threadId) =>
+          Ref.get(shells).pipe(Effect.map((current) => current.get(threadId) ?? null)),
+      });
+      yield* relay.publishThread(THREAD_ID);
+      yield* setChild(waitingChild());
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      yield* setChild(waitingChild({ pendingRuntimeRequest: null }));
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      yield* setChild(
+        waitingChild({
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("child-request-2"),
+            kind: "command",
+            createdAt: DateTime.makeUnsafe(NOW),
+          },
+        }),
+      );
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      assert.deepStrictEqual(
+        publications.map(({ state }) => state?.phase),
+        ["running", "waiting_for_approval", "running", "waiting_for_approval"],
+      );
+      assert.notEqual(publications[3]?.state?.updatedAt, publications[1]?.state?.updatedAt);
+    }),
+  );
+
+  it.effect("announces equal-timestamp child requests in request-change order", () =>
+    Effect.gen(function* () {
+      const secondChildId = ThreadId.make("relay-second-child-thread");
+      const shells = yield* Ref.make(
+        new Map<ThreadId, OrchestrationV2ThreadShell>([
+          [THREAD_ID, shell()],
+          [CHILD_THREAD_ID, waitingChild()],
+          [secondChildId, waitingChild({ id: secondChildId, pendingRuntimeRequest: null })],
+        ]),
+      );
+      const setRequest = (childId: ThreadId, requestId: string, updatedAt = NOW) =>
+        Ref.update(shells, (current) =>
+          new Map(current).set(
+            childId,
+            waitingChild({
+              id: childId,
+              updatedAt: DateTime.makeUnsafe(updatedAt),
+              pendingRuntimeRequest: {
+                id: RuntimeRequestId.make(requestId),
+                kind: "command",
+                createdAt: DateTime.makeUnsafe(updatedAt),
+              },
+            }),
+          ),
+        );
+      const { relay, publications } = yield* makeTestRelay({
+        readShell: (threadId) =>
+          Ref.get(shells).pipe(Effect.map((current) => current.get(threadId) ?? null)),
+      });
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      yield* setRequest(secondChildId, "second-child-request");
+      yield* relay.publishThread(secondChildId);
+      assert.equal(publications.length, 2);
+
+      yield* setRequest(CHILD_THREAD_ID, "first-child-replacement");
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      assert.equal(publications.length, 3);
+
+      yield* setRequest(secondChildId, "second-child-replacement");
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 4);
+      assert.equal(new Set(publications.map(({ state }) => state?.updatedAt)).size, 4);
+
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      yield* setRequest(CHILD_THREAD_ID, "older-request", "2026-09-04T11:59:00.000Z");
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      assert.equal(publications.length, 4);
+    }),
+  );
+
+  it.effect(
+    "does not republish a parent waiting on its own request when a child's comes and goes",
+    () =>
+      Effect.gen(function* () {
+        const parentWaiting = shell({
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("parent-request"),
+            kind: "command",
+            createdAt: DateTime.makeUnsafe(NOW),
+          },
+        });
+        const shells = yield* Ref.make(
+          new Map<ThreadId, OrchestrationV2ThreadShell>([
+            [THREAD_ID, parentWaiting],
+            [CHILD_THREAD_ID, waitingChild({ pendingRuntimeRequest: null })],
+          ]),
+        );
+        const { relay, publications } = yield* makeTestRelay({
+          readShell: (threadId) =>
+            Ref.get(shells).pipe(Effect.map((current) => current.get(threadId) ?? null)),
+        });
+        yield* relay.publishThread(THREAD_ID);
+        assert.equal(publications[0]?.state?.phase, "waiting_for_approval");
+
+        yield* Ref.update(shells, (current) =>
+          new Map(current).set(CHILD_THREAD_ID, waitingChild()),
+        );
+        yield* relay.publishThread(CHILD_THREAD_ID);
+        yield* Ref.update(shells, (current) =>
+          new Map(current).set(CHILD_THREAD_ID, waitingChild({ pendingRuntimeRequest: null })),
+        );
+        yield* relay.publishThread(CHILD_THREAD_ID);
+        assert.equal(publications.length, 1);
+      }),
+  );
+
+  it.effect(
+    "retries a parent publish for a new subagent request after earlier retries ran out",
+    () =>
+      Effect.gen(function* () {
+        const shells = yield* Ref.make(
+          new Map<ThreadId, OrchestrationV2ThreadShell>([
+            [THREAD_ID, shell()],
+            [CHILD_THREAD_ID, waitingChild({ pendingRuntimeRequest: null })],
+          ]),
+        );
+        const { relay, publications } = yield* makeTestRelay({
+          readShell: (threadId) =>
+            Ref.get(shells).pipe(Effect.map((current) => current.get(threadId) ?? null)),
+          respond: (attempt) =>
+            attempt <= 7
+              ? new Response("unavailable", { status: 503 })
+              : Response.json({ ok: true, deliveries: [] }),
+        });
+        yield* relay.publishThread(THREAD_ID);
+        for (const delay of [
+          "1 second",
+          "2 seconds",
+          "4 seconds",
+          "8 seconds",
+          "16 seconds",
+        ] as const) {
+          yield* TestClock.adjust(delay);
+          yield* relay.drain;
+        }
+        assert.equal(publications.length, 6);
+
+        yield* Ref.update(shells, (current) =>
+          new Map(current).set(CHILD_THREAD_ID, waitingChild()),
+        );
+        yield* relay.publishThread(CHILD_THREAD_ID);
+        assert.equal(publications.length, 7);
+        yield* TestClock.adjust("1 second");
+        yield* relay.drain;
+        assert.equal(publications.length, 8);
+        assert.equal(publications[7]?.state?.phase, "waiting_for_approval");
+      }),
+  );
+
+  it.effect("keeps a subagent request that started while publishing was off", () =>
+    Effect.gen(function* () {
+      const shells = yield* Ref.make(
+        new Map<ThreadId, OrchestrationV2ThreadShell>([
+          [THREAD_ID, shell()],
+          [CHILD_THREAD_ID, waitingChild({ pendingRuntimeRequest: null })],
+        ]),
+      );
+      const { relay, secrets, publications } = yield* makeTestRelay({
+        readShell: (threadId) =>
+          Ref.get(shells).pipe(Effect.map((current) => current.get(threadId) ?? null)),
+      });
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications[0]?.state?.phase, "running");
+
+      yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("false"));
+      yield* Ref.update(shells, (current) => new Map(current).set(CHILD_THREAD_ID, waitingChild()));
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true"));
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 2);
+      assert.equal(publications[1]?.state?.phase, "waiting_for_approval");
+    }),
+  );
+
+  it.effect(
+    "keeps a subagent request that started while publishing was off after an empty startup",
+    () =>
+      Effect.gen(function* () {
+        const shells = yield* Ref.make(
+          new Map<ThreadId, OrchestrationV2ThreadShell>([
+            [THREAD_ID, shell()],
+            [CHILD_THREAD_ID, waitingChild({ pendingRuntimeRequest: null })],
+          ]),
+        );
+        const { relay, secrets, publications, catchUp } = yield* makeTestRelay({
+          readShell: (threadId) =>
+            Ref.get(shells).pipe(Effect.map((current) => current.get(threadId) ?? null)),
+        });
+        yield* relay.start();
+        yield* TestClock.adjust("1 second");
+        assert.equal(catchUp.shellSnapshotReads, 1);
+        assert.equal(publications.length, 0);
+
+        yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("false"));
+        yield* Ref.update(shells, (current) =>
+          new Map(current).set(CHILD_THREAD_ID, waitingChild()),
+        );
+        yield* relay.publishThread(CHILD_THREAD_ID);
+        yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true"));
+        yield* relay.publishThread(THREAD_ID);
+        assert.equal(publications[0]?.state?.phase, "waiting_for_approval");
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("drops a subagent request that cleared while publishing was off", () =>
+    Effect.gen(function* () {
+      const shells = yield* Ref.make(
+        new Map<ThreadId, OrchestrationV2ThreadShell>([
+          [THREAD_ID, shell()],
+          [CHILD_THREAD_ID, waitingChild()],
+        ]),
+      );
+      const { relay, secrets, publications } = yield* makeTestRelay({
+        readShell: (threadId) =>
+          Ref.get(shells).pipe(Effect.map((current) => current.get(threadId) ?? null)),
+      });
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      assert.equal(publications[0]?.state?.phase, "waiting_for_approval");
+
+      yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("false"));
+      yield* Ref.update(shells, (current) =>
+        new Map(current).set(CHILD_THREAD_ID, waitingChild({ pendingRuntimeRequest: null })),
+      );
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true"));
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 2);
+      assert.equal(publications[1]?.state?.phase, "running");
+    }),
+  );
+
   it.effect("coalesces queued updates and reruns a thread dirtied during publishing", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
