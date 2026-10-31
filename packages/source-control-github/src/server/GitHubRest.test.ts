@@ -136,6 +136,23 @@ describe("GitHubRest", () => {
           headers: request.headers,
           body,
         });
+        if (request.url?.endsWith("/renamed-user")) {
+          response.writeHead(301, { location: "user?per_page=1" });
+          response.end();
+          return;
+        }
+        if (request.url === "/cross-host" || request.url === "/loop") {
+          response.writeHead(301, {
+            location: request.url === "/loop" ? "/loop" : "https://redirect.acme.test:8443/user",
+          });
+          response.end();
+          return;
+        }
+        if (request.url === "/post-303" || request.url === "/post-307") {
+          response.writeHead(request.url === "/post-303" ? 303 : 307, { location: "/user" });
+          response.end();
+          return;
+        }
         response.statusCode = request.url === "/user/starred/acme/web" ? 204 : 200;
         response.setHeader("content-type", "application/json");
         response.end(
@@ -249,6 +266,39 @@ describe("GitHubRest", () => {
             owner: "acme",
             name: "web",
             number: 7,
+          });
+        }
+        const renamed = yield* rest.rest({
+          host: "github.com",
+          operation: "renamedUser",
+          path: "renamed-user",
+        });
+        expect(JSON.parse(renamed.body)).toEqual({ login: "proxy-user" });
+        expect(requests.at(-1)).toMatchObject({
+          path: "/user?per_page=1",
+          headers: { host: "api.github.com", authorization: "Bearer placeholder" },
+        });
+        yield* rest.rest({ host: "github.com", operation: "redirect", path: "cross-host" });
+        expect(requests.at(-1)?.headers.host).toBe("redirect.acme.test:8443");
+        expect(requests.at(-1)?.headers.authorization).toBeUndefined();
+        const loopError = yield* Effect.flip(
+          rest.rest({ host: "github.com", operation: "redirectLoop", path: "loop" }),
+        );
+        expect(loopError._tag).toBe("GitHubApiResponseError");
+        expect(requests.filter((request) => request.path === "/loop")).toHaveLength(11);
+        const http = yield* HttpClient.HttpClient;
+        for (const status of [303, 307]) {
+          const response = yield* http.execute(
+            HttpClientRequest.post(`https://api.github.com/post-${status}`).pipe(
+              HttpClientRequest.bodyJsonUnsafe({ query: "query { viewer { login } }" }),
+              HttpClientRequest.bearerToken("placeholder"),
+            ),
+          );
+          yield* response.text;
+          expect(requests.at(-1)).toMatchObject({
+            method: status === 303 ? "GET" : "POST",
+            path: "/user",
+            body: status === 303 ? "" : JSON.stringify({ query: "query { viewer { login } }" }),
           });
         }
         const instance = yield* driver.make.pipe(
