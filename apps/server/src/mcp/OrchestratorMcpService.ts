@@ -64,6 +64,7 @@ import {
   isOrchestrationV2WorkActive,
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
+import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import {
@@ -1299,6 +1300,25 @@ const make = Effect.gen(function* () {
   }): Effect.fn.Return<ResolvedTarget, OrchestratorMcpFailure> {
     const requestedInstanceId = input.target?.providerInstanceId;
     const requestedDriver = input.target?.driverKind;
+    const parentSelection = input.parent.thread.modelSelection;
+    const inheritedSelection =
+      requestedInstanceId === undefined &&
+      requestedDriver === undefined &&
+      input.target?.model === undefined
+        ? yield* Effect.gen(function* () {
+            const settings = yield* serverSettings.getSettings;
+            return (
+              resolveNewThreadModelSelection({
+                defaultSelection: parentSelection,
+                fallbackSelection: settings.fallbackModelSelection,
+                providers: input.providers,
+                now: DateTime.toEpochMillis(yield* DateTime.now),
+                settings,
+                projectId: input.parent.thread.projectId,
+              }).selection ?? parentSelection
+            );
+          }).pipe(Effect.orElseSucceed(() => parentSelection))
+        : parentSelection;
     const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
     let instanceId = requestedInstanceId;
 
@@ -1345,7 +1365,7 @@ const make = Effect.gen(function* () {
         );
       }
     }
-    instanceId ??= input.parent.thread.modelSelection.instanceId;
+    instanceId ??= inheritedSelection.instanceId;
 
     const provider = input.providers.find((candidate) => candidate.instanceId === instanceId);
     if (provider === undefined) {
@@ -1371,7 +1391,6 @@ const make = Effect.gen(function* () {
       );
     }
 
-    const inheritedSelection = input.parent.thread.modelSelection;
     const requestedModel = input.target?.model;
     const model =
       requestedModel ??
