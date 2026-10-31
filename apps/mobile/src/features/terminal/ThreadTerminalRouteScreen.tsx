@@ -24,7 +24,6 @@ import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import {
   KeyboardController,
-  KeyboardEvents,
   KeyboardStickyView,
   useKeyboardState,
 } from "react-native-keyboard-controller";
@@ -89,6 +88,7 @@ import {
 } from "./terminalInput";
 import { createTerminalPasteSession } from "./terminalPaste";
 import { cacheTerminalGridSize, getCachedTerminalGridSize } from "./terminalUiState";
+import { getKeyboardShowEpoch, subscribeKeyboardShowing } from "./terminalKeyboardShowing";
 
 function TerminalHeader(props: {
   readonly subtitle: string;
@@ -352,26 +352,6 @@ function readLiveTerminalSessions(
     }));
 }
 
-// `useKeyboardState` only flips on willShow and didHide; the accessory must
-// leave as soon as the keyboard starts hiding, so it follows the will-events.
-let keyboardShowing = KeyboardController.isVisible();
-function subscribeKeyboardShowing(onChange: () => void) {
-  keyboardShowing = KeyboardController.isVisible();
-  const willShow = KeyboardEvents.addListener("keyboardWillShow", () => {
-    keyboardShowing = true;
-    onChange();
-  });
-  const willHide = KeyboardEvents.addListener("keyboardWillHide", () => {
-    keyboardShowing = false;
-    onChange();
-  });
-  return () => {
-    willShow.remove();
-    willHide.remove();
-  };
-}
-const getKeyboardShowing = () => keyboardShowing;
-
 function ThreadTerminal(props: {
   readonly params: ThreadTerminalRouteScreenProps["route"]["params"];
   readonly routeEnvironmentId: EnvironmentId | null;
@@ -585,28 +565,25 @@ function ThreadTerminal(props: {
       { kind: "send", key: "dash", label: "-", data: "-" },
     ];
   }, [hostPlatform]);
-  const keyboardState = useKeyboardState((state) => ({
-    height: state.height,
-    isVisible: state.isVisible,
-  }));
-  const keyboardShowing = useSyncExternalStore(subscribeKeyboardShowing, getKeyboardShowing);
+  const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
+  const keyboardHeight = useKeyboardState((state) => state.height);
+  const keyboardShowEpoch = useSyncExternalStore(subscribeKeyboardShowing, getKeyboardShowEpoch);
   // The accessory follows the keyboard, except that the dismiss and show
   // buttons flip it ahead of the keyboard animation.
-  const [accessory, setAccessory] = useState({ keyboardShowing, dismissed: false });
-  if (accessory.keyboardShowing !== keyboardShowing) {
-    setAccessory({ keyboardShowing, dismissed: !keyboardShowing });
+  const [accessory, setAccessory] = useState({ keyboardShowEpoch, dismissed: false });
+  if (accessory.keyboardShowEpoch !== keyboardShowEpoch) {
+    setAccessory({ keyboardShowEpoch, dismissed: keyboardShowEpoch === 0 });
   }
   const isAccessoryDismissed = accessory.dismissed;
-  const isAccessoryVisible = canOperateTerminal && keyboardState.isVisible && !isAccessoryDismissed;
+  const isAccessoryVisible = canOperateTerminal && isKeyboardVisible && !isAccessoryDismissed;
   // Android's terminal owns an EditText; turning off autoFocus also clears its native focus.
   const terminalAutoFocus =
     Platform.OS === "android"
       ? !isAccessoryDismissed &&
-        (!SHOWCASE_ENABLED || keyboardFocusRequest > 0 || keyboardState.isVisible)
+        (!SHOWCASE_ENABLED || keyboardFocusRequest > 0 || isKeyboardVisible)
       : !SHOWCASE_ENABLED;
   const terminalBottomInset =
-    (keyboardState.isVisible ? keyboardState.height : 0) +
-    (isAccessoryVisible ? TERMINAL_ACCESSORY_HEIGHT : 0);
+    (isKeyboardVisible ? keyboardHeight : 0) + (isAccessoryVisible ? TERMINAL_ACCESSORY_HEIGHT : 0);
 
   const terminalMenuSessions: ReadonlyArray<TerminalMenuSession> = buildTerminalMenuSessions({
     knownSessions: knownSessions ?? [],
@@ -860,8 +837,7 @@ function ThreadTerminal(props: {
             // Measured top reservation is zero when UIKit already inset the body or moved the bar.
             paddingTop:
               Platform.OS === "ios" ? (nativeColumnMetrics?.safeArea.top ?? insets.top) : 0,
-            paddingBottom:
-              Platform.OS === "android" && !keyboardState.isVisible ? insets.bottom : 0,
+            paddingBottom: Platform.OS === "android" && !isKeyboardVisible ? insets.bottom : 0,
           }}
         >
           {!isEnvironmentReady ? (
@@ -956,7 +932,7 @@ function ThreadTerminal(props: {
                 />
               </View>
 
-              {Platform.OS === "android" && !keyboardState.isVisible ? (
+              {Platform.OS === "android" && !isKeyboardVisible ? (
                 <View className="min-h-14 flex-row items-center gap-2 bg-card-alt px-2">
                   {hasNativeTerminalSurface() ? (
                     <Button label="Attach output" tone="text" onPress={requestCapture} />
@@ -1031,7 +1007,7 @@ function ThreadTerminal(props: {
                     </ComposerToolbarRow>
                   </View>
                 </KeyboardStickyView>
-              ) : canOperateTerminal && !keyboardState.isVisible && Platform.OS !== "android" ? (
+              ) : canOperateTerminal && !isKeyboardVisible && Platform.OS !== "android" ? (
                 <Pressable
                   accessibilityLabel="Show keyboard"
                   accessibilityRole="button"
