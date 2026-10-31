@@ -3087,13 +3087,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* writeTextFile(cwd, "README.md", "# test\ncommitted\n");
         yield* git(cwd, ["commit", "-am", "commit edit"]);
         yield* writeTextFile(cwd, "nested/untracked.txt", "one\ntwo\n");
+        yield* writeTextFile(cwd, "new [1].txt", "literal\n");
 
         const status = yield* driver.statusDetailsLocal(pathService.join(cwd, "nested"), {
           includeBranchChanges: true,
         });
         assert.deepStrictEqual(status.branchChanges, {
           baseRef: "main",
-          insertions: 3,
+          insertions: 4,
           deletions: 0,
         });
         assert.isUndefined((yield* driver.statusDetailsLocal(cwd)).branchChanges);
@@ -3150,25 +3151,64 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         Effect.gen(function* () {
           const cwd = yield* makeTmpDir();
           yield* initRepoWithCommit(cwd);
-          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const untrackedScanRoots: string[][] = [];
+          const spawner = ChildProcessSpawner.make((command) => {
+            if (
+              ChildProcess.isStandardCommand(command) &&
+              command.args.includes("ls-files") &&
+              command.args.includes("--others")
+            ) {
+              untrackedScanRoots.push(command.args.slice(command.args.indexOf("--") + 1));
+            }
+            return delegate.spawn(command);
+          });
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
           yield* git(cwd, ["branch", "-M", "main"]);
           yield* git(cwd, ["checkout", "-b", "feature/many-untracked"]);
+          yield* writeTextFile(cwd, ".git/info/exclude", "ignored.txt\n");
+          yield* writeTextFile(cwd, "bulk[1]/ignored.txt", "ignored\n");
           yield* Effect.forEach(
-            Array.from({ length: 1_001 }, (_, index) => `bulk/${index}.txt`),
+            Array.from({ length: 1_001 }, (_, index) => `bulk[1]/${index}.txt`),
             (file) => writeTextFile(cwd, file, "one\ntwo\n"),
             { concurrency: 32, discard: true },
           );
 
-          const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
-          assert.deepStrictEqual(status.branchChanges, {
+          for (const mode of ["normal", "all", "no"]) {
+            yield* git(cwd, ["config", "status.showUntrackedFiles", mode]);
+            untrackedScanRoots.length = 0;
+            const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+            assert.deepStrictEqual(status.branchChanges, {
+              baseRef: "main",
+              insertions: 2_002,
+              deletions: 0,
+            });
+            assert.lengthOf(untrackedScanRoots, 1);
+            assert.equal(untrackedScanRoots[0]!.length === 0, mode !== "normal");
+            if (mode === "normal") {
+              assert.deepStrictEqual(
+                status.workingTree.files.map((file) => file.path),
+                ["bulk[1]/"],
+              );
+            }
+          }
+
+          yield* git(cwd, ["config", "status.showUntrackedFiles", "normal"]);
+          yield* Effect.forEach(
+            Array.from({ length: 50 }, (_, index) => `${"a".repeat(180)}-${index}.txt`),
+            (file) => writeTextFile(cwd, file, "long name\n"),
+            { concurrency: 32, discard: true },
+          );
+          untrackedScanRoots.length = 0;
+          const longNames = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+          assert.deepStrictEqual(longNames.branchChanges, {
             baseRef: "main",
-            insertions: 2_002,
+            insertions: 2_052,
             deletions: 0,
           });
-          assert.deepStrictEqual(
-            status.workingTree.files.map((file) => file.path),
-            ["bulk/"],
-          );
+          assert.deepStrictEqual(untrackedScanRoots, [[]]);
         }),
     );
 
