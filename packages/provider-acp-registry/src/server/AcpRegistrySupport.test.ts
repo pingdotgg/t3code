@@ -452,8 +452,16 @@ describe("AcpRegistrySupport", () => {
       });
       expect(second.spawn.command).toBe(toolchain.executablePath);
       const npmCommands = yield* fileSystem.readFileString(toolchain.logPath);
-      expect(npmCommands.match(/^install --global /gmu)).toHaveLength(1);
-      expect(npmCommands).toContain("install --global @example/acp@V1.2.3");
+      const installCommands = npmCommands.split("\n").filter((line) => line.startsWith("install "));
+      expect(installCommands).toHaveLength(1);
+      // npm 12 blocks dependency install scripts unless allowed, leaving native modules unbuilt.
+      expect(installCommands[0]?.split(" ")).toEqual(
+        expect.arrayContaining([
+          "--global",
+          "@example/acp@V1.2.3",
+          "--dangerously-allow-all-scripts",
+        ]),
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
