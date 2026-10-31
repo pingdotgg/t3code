@@ -63,25 +63,29 @@ describe("projectThreadAwarenessV2", () => {
     ).toBeNull();
   });
 
-  it.each(["running", "completed", "failed"] as const)(
-    "does not publish %s subagent activity",
-    (status) => {
-      expect(
-        projectThreadAwarenessV2({
-          environmentId: "env-1" as EnvironmentId,
-          project,
-          thread: v2Thread({
-            status,
-            lineage: {
-              rootThreadId: "parent" as ThreadId,
-              parentThreadId: "parent" as ThreadId,
-              relationshipToParent: "subagent",
-            },
-          }),
+  it.each([
+    ["running", "subagent"],
+    ["completed", "subagent"],
+    ["failed", "subagent"],
+    ["running", "side chat"],
+  ] as const)("does not publish %s %s activity", (status, kind) => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({
+          status,
+          lineage: {
+            rootThreadId: "parent" as ThreadId,
+            parentThreadId: "parent" as ThreadId,
+            ...(kind === "subagent"
+              ? { relationshipToParent: "subagent" }
+              : { relationshipToParent: "fork", sideChat: true }),
+          },
         }),
-      ).toBeNull();
-    },
-  );
+      }),
+    ).toBeNull();
+  });
 
   it("keeps an older activity run visible over a newer cancelled run", () => {
     expect(
