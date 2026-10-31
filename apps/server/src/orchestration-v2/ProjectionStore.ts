@@ -3568,10 +3568,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ]);
         const messageOrdinals = new Map<string, number>();
         if (fields !== undefined && fields.includes("messages") && messages.length > 1) {
+          // Broad role reads keep the original query to avoid per-ID lookup overhead.
+          const loadedMessageIds =
+            filter?.messageIds === undefined &&
+            filter?.messageRunIds === undefined &&
+            (filter?.messageRoles === undefined ||
+              (filter.messageRoles.includes("user") && filter.messageRoles.includes("assistant")))
+              ? undefined
+              : messages.map((message) => message.id);
           const rows = yield* sql<{ message_id: string; ordinal: number }>`
             SELECT json_extract(payload_json, '$.messageId') AS message_id, MIN(ordinal) AS ordinal
             FROM orchestration_v2_projection_turn_items
             WHERE thread_id = ${threadId} AND type IN ('user_message', 'assistant_message')
+              ${loadedMessageIds === undefined ? sql`` : sql`AND json_extract(payload_json, '$.messageId') IN (SELECT value FROM json_each(${encodeIdList(loadedMessageIds)}))`}
             GROUP BY json_extract(payload_json, '$.messageId')
           `;
           for (const row of rows) messageOrdinals.set(row.message_id, row.ordinal);
