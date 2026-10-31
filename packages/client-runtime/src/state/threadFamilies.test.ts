@@ -75,6 +75,49 @@ const TARGET = new PrimaryConnectionTarget({
 });
 
 describe("createThreadFamilyAtoms", () => {
+  it("merges mounted rows behind shell rows until released", () => {
+    const runtime = Atom.runtime(
+      Layer.succeed(
+        EnvironmentRegistry.EnvironmentRegistry,
+        {} as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"],
+      ),
+    );
+    const shellState = Atom.make<AsyncResult.AsyncResult<EnvironmentShellState>>(
+      AsyncResult.success<EnvironmentShellState>({
+        ...EMPTY_SHELL_STATE,
+        status: "live",
+        generation: 1,
+        snapshot: Option.some({
+          schemaVersion: 1,
+          snapshotSequence: 9,
+          projects: [],
+          threads: [row("kept")],
+          archivedThreads: [],
+          olderSettled: { before: "2026-10-01T00:00:00.000Z", asOfSequence: 4, counts: [] },
+        } as OrchestrationV2ShellSnapshot),
+        removedAt: new Map([[ThreadId.make("removed"), 9]]),
+      }),
+    );
+    const families = createThreadFamilyAtoms(runtime, () => shellState);
+    const registry = AtomRegistry.make();
+    const merged = () => registry.get(families.snapshotAtom(TARGET.environmentId))?.threads;
+    registry.mount(families.snapshotAtom(TARGET.environmentId));
+    // A settled shelf page read at sequence 5: the shell's copy wins, a later removal drops a row.
+    const page = Atom.make<ReadonlyArray<OrchestrationV2ThreadFamily>>([
+      { snapshotSequence: 5, threads: [row("kept", "page copy"), row("old"), row("removed")] },
+      // Read before the latest authoritative snapshot (sequence 4), whose removals it cleared.
+      { snapshotSequence: 3, threads: [row("stale-search-row")] },
+    ]);
+    const release = families.mountRows(registry, TARGET.environmentId, "older-settled:page", page);
+    expect(merged()?.map(({ id, title }) => [id, title])).toEqual([
+      ["kept", "kept"],
+      ["old", "old"],
+    ]);
+    release();
+    expect(merged()?.map(({ id }) => id)).toEqual(["kept"]);
+    registry.dispose();
+  });
+
   it.effect("reads a family per shell generation and retries a failed read", () =>
     Effect.scoped(
       Effect.gen(function* () {

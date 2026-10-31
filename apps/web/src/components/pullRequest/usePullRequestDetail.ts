@@ -2,11 +2,10 @@ import { resolvePullRequestDetailChecks } from "@t3tools/client-runtime/pull-req
 import {
   AuthSourceControlWriteScope,
   type EnvironmentId,
-  type PullRequestDetail,
   type PullRequestListEntry,
   type PullRequestRef,
 } from "@t3tools/contracts";
-import { useEffect, useEffectEvent, useState } from "react";
+import { useState } from "react";
 
 import { usePullRequestChecksRefresh } from "~/hooks/usePullRequestChecksRefresh";
 import { useServerConfigs } from "~/state/entities";
@@ -21,16 +20,10 @@ import {
 import {
   readPullRequestDetailSnapshot,
   resolveDisplayedPullRequestDetail,
-  writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
-import { pullRequestChecksState } from "./pullRequestPresentation";
 
 export function pullRequestRefKey(reference: PullRequestRef) {
   return `${reference.projectId}:${reference.host ?? ""}:${reference.repository}#${reference.number}`;
-}
-
-function pullRequestDetailSummary(data: PullRequestDetail | null) {
-  return data === null ? null : { ...data, checksState: pullRequestChecksState(data.checks) };
 }
 
 /**
@@ -95,24 +88,7 @@ export function usePullRequestDetail(
   } else if (detailQuery.data !== null && detailQuery.data !== cachedDetail) {
     setCachedDetail(detailQuery.data);
   }
-  const saveDetailSnapshot = useEffectEvent((data: PullRequestDetail) => {
-    writePullRequestDetailSnapshot(
-      typeof window === "undefined" ? undefined : window.localStorage,
-      environmentId,
-      reference,
-      data,
-    );
-  });
-  useEffect(() => {
-    if (detailQuery.data !== null) saveDetailSnapshot(detailQuery.data);
-  }, [detailQuery.data]);
-  const detailSummary = pullRequestDetailSummary(liveDetail);
-  const observedSummary = useSharedPullRequestSummary(
-    environmentId,
-    reference,
-    detailSummary,
-    Math.max(detailQuery.dataUpdatedAt, checksQuery.dataUpdatedAt),
-  );
+  const observedSummary = useSharedPullRequestSummary(environmentId, reference);
   const activity = activityQuery.data;
   const resolvedCoreDetail = resolveDisplayedPullRequestDetail({
     live: liveDetail,
@@ -122,8 +98,7 @@ export function usePullRequestDetail(
   // Every hook runs above this line: a hook between the merge and the panel's plain readers of
   // `detail` would cost it its cache scope.
   const listSummary = listEntry === null ? null : pullRequestListEntryToSummary(listEntry);
-  // The list row is also published to the shared cache, but only after this commit's layout
-  // effects run, so it is compared directly rather than trusted to be there already.
+  // The row can come from the page's stored snapshot, which no answer has published yet.
   const sharedSummary = newestPullRequestSummary(
     resolvedCoreDetail,
     newestPullRequestSummary(observedSummary, listSummary),

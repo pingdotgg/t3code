@@ -1,3 +1,4 @@
+import { trimOptionalString as trimmed } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import * as Result from "effect/Result";
@@ -49,10 +50,10 @@ import {
   PullRequestSearch,
 } from "./pullRequestListings.graphql.ts";
 import type {
-  ActorAvatars,
   CheckContext,
   LabelCandidates,
   PullRequestActivity,
+  PullRequestCommitStats,
   PullRequestCheckContexts,
   PullRequestCore,
   PullRequestFilesViewed,
@@ -84,7 +85,7 @@ interface ListItemFields {
   readonly number: number;
   readonly title: string;
   readonly url: string;
-  readonly author?: (ActorFields & { readonly id?: string | null | undefined }) | null | undefined;
+  readonly author?: ActorFields | null | undefined;
   readonly headRefName: string;
   readonly baseRefName: string;
   readonly state?: string | null | undefined;
@@ -219,17 +220,6 @@ const RawPullRequestFileSchema = Schema.Struct({
   deletions: Schema.optional(Schema.NullOr(Schema.Int)),
 });
 
-export function toActorAvatars(result: ActorAvatars.Result): ReadonlyMap<string, string> {
-  const avatarsByLogin = new Map<string, string>();
-  for (const node of result.nodes) {
-    if (node === null || !("login" in node)) continue;
-    const login = trimmed(node.login);
-    const avatarUrl = trimmed(node.avatarUrl);
-    if (login !== null && avatarUrl !== null) avatarsByLogin.set(login, avatarUrl);
-  }
-  return avatarsByLogin;
-}
-
 export function toPullRequestPreview(
   result: PullRequestPreviewQuery.Result,
 ): Omit<PullRequestPreview, "projectId" | "repository"> | null {
@@ -334,7 +324,6 @@ export function buildReviewSubmission(input: {
 
 export interface GitHubPullRequestListItem {
   readonly stack?: PullRequestStackMembership;
-  readonly authorId: string | null;
   readonly number: number;
   readonly title: string;
   readonly url: string;
@@ -386,11 +375,6 @@ export interface GitHubPullRequestActivity {
   readonly author: PullRequestActor | null;
   readonly comments: ReadonlyArray<PullRequestComment>;
   readonly commits: ReadonlyArray<PullRequestCommit>;
-}
-
-function trimmed(value: string | null | undefined): string | null {
-  const text = value?.trim() ?? "";
-  return text.length > 0 ? text : null;
 }
 
 /** GitHub returns endCursor even on the last page; hasNextPage is authoritative. */
@@ -717,7 +701,6 @@ function toCommits(
 
 function toListItem(raw: ListItemFields): GitHubPullRequestListItem {
   return {
-    authorId: trimmed(raw.author?.id),
     number: raw.number,
     title: raw.title,
     url: raw.url,
@@ -774,18 +757,6 @@ function toDetail(raw: DetailFields): GitHubPullRequestDetail {
 }
 
 const decodeUnknownList = decodeJsonResult(Schema.Array(Schema.Unknown));
-const decodeDetail = decodeJsonResult(
-  Schema.Struct({
-    number: Schema.Int,
-    title: Schema.String,
-    url: Schema.String,
-    headRefName: Schema.String,
-    baseRefName: Schema.String,
-    state: Schema.optional(Schema.String),
-    createdAt: Schema.String,
-    updatedAt: Schema.String,
-  }),
-);
 const decodeWorkflowRuns = decodeJsonResult(RawWorkflowRunsSchema);
 const decodeFileEntry = Schema.decodeUnknownExit(RawPullRequestFileSchema);
 const decodeRow = Schema.decodeUnknownExit(PullRequestRow);
@@ -1007,6 +978,8 @@ export function toPullRequestWatchFingerprint(
 }
 
 export interface GitHubPullRequestCore extends GitHubPullRequestDetail {
+  readonly maintainerCanModify: boolean;
+  readonly canEditMaintainerEdits: boolean;
   readonly reviewRequestTeams: ReadonlyArray<PullRequestActor>;
   readonly viewerAccess: GitHubViewerAccess & GitHubRepositoryAccess;
   readonly comparison: GitHubBaseComparison | null;
@@ -1030,8 +1003,6 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
     ),
     ...toDetail({
       ...pr,
-      author:
-        pr.author === null ? null : { ...pr.author, id: "id" in pr.author ? pr.author.id : null },
       latestReviews: [],
       reviewRequests: nodesOf(pr.reviewRequests).flatMap(
         ({ requestedReviewer }: NonNullable<CoreRequestedReviewer>) =>
@@ -1054,6 +1025,14 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
       statusCheckRollup: toCheckContexts(nodesOf(contexts)),
     }),
     headRepositoryNameWithOwner: trimmed(pr.headRepository?.nameWithOwner),
+    maintainerCanModify: pr.maintainerCanModify,
+    canEditMaintainerEdits:
+      pr.state === "OPEN" &&
+      pr.isCrossRepository &&
+      pr.viewerDidAuthor &&
+      pr.headRepositoryOwner?.__typename === "User" &&
+      pr.headRepository !== null &&
+      pr.headRef !== null,
     viewerAccess: {
       canWrite: toCanWrite(repository.viewerPermission),
       canDeleteBranch: toCanWrite(pr.headRepository?.viewerPermission) && pr.headRef !== null,
@@ -1076,15 +1055,6 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
           },
     checksTruncated: contexts?.pageInfo.hasNextPage === true,
   };
-}
-
-export function decodePullRequestDetailJson(
-  raw: string,
-): Result.Result<GitHubPullRequestDetail, DecodeFailure> {
-  const decoded = decodeDetail(raw);
-  return Result.isSuccess(decoded)
-    ? Result.succeed(toDetail(decoded.success))
-    : Result.fail(decoded.failure);
 }
 
 export interface GitHubWorkflowRunPage {
@@ -1124,6 +1094,7 @@ export function toPullRequestHeads(result: PullRequestHeads.Result): {
 }
 
 export interface GitHubPullRequestActivityPage {
+  readonly nonMergeCommitIds: ReadonlyArray<string>;
   readonly author?: PullRequestActor | null;
   readonly commits?: ReadonlyArray<PullRequestCommit>;
   readonly remarks: ReadonlyArray<PullRequestComment>;
@@ -1137,6 +1108,9 @@ export function toPullRequestActivityPage(
   const pr = result.repository?.pullRequest;
   if (pr == null) return null;
   return {
+    nonMergeCommitIds: nodesOf(pr.commits).flatMap(({ commit }) =>
+      commit.parents.totalCount > 1 ? [] : [commit.id],
+    ),
     ...(pr.author === undefined ? {} : { author: toActor(pr.author) }),
     ...(pr.commits === undefined
       ? {}
@@ -1157,6 +1131,25 @@ export function toPullRequestActivityPage(
   };
 }
 
+export function toPullRequestCommitStats(result: PullRequestCommitStats.Result) {
+  return new Map(
+    (result.nodes ?? []).flatMap((commit) =>
+      commit?.__typename === "Commit"
+        ? [
+            [
+              commit.oid,
+              {
+                additions: Math.max(0, commit.additions),
+                deletions: Math.max(0, commit.deletions),
+              },
+            ] as const,
+          ]
+        : [],
+    ),
+  );
+}
+
+/** A check context as the rollup reports it; opaque outside this module. */
 export type GitHubCheckContext = CheckFields;
 
 function toCheckContexts(nodes: ReadonlyArray<CheckContext>): ReadonlyArray<GitHubCheckContext> {
@@ -1202,11 +1195,11 @@ export interface GitHubReviewThreadComments {
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly avatarsByLogin: ReadonlyMap<string, string>;
   readonly botLogins: ReadonlySet<string>;
-  readonly commitStats: ReadonlyMap<
-    string,
-    { readonly additions: number; readonly deletions: number }
-  >;
-  /** Empty means unread; preserve existing commits. */
+  /**
+   * Empty wherever the read never happened (an install too old for the field, a degraded page),
+   * which the caller reads as "keep the `gh pr view` list" rather than as "this pull request has
+   * no commits".
+   */
   readonly commits: ReadonlyArray<PullRequestCommit>;
   readonly viewer: { readonly canUpdate: boolean; readonly didAuthor: boolean };
 }
@@ -1226,10 +1219,6 @@ export interface GitHubReviewThreadPage {
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly avatarsByLogin: ReadonlyMap<string, string>;
   readonly botLogins: ReadonlySet<string>;
-  readonly commitStats: ReadonlyMap<
-    string,
-    { readonly additions: number; readonly deletions: number }
-  >;
   readonly commits: ReadonlyArray<PullRequestCommit>;
   readonly viewer: { readonly canUpdate: boolean; readonly didAuthor: boolean };
   readonly dismissalsByReviewId: ReadonlyMap<string, string>;
@@ -1350,18 +1339,10 @@ export function toReviewThreadPage(result: ReviewThreads.Result): GitHubReviewTh
     const actor = toActor(raw) ?? toRequestedTeam(raw);
     if (actor !== null && !reviewers.has(actor.login)) reviewers.set(actor.login, actor);
   }
-  const commitStats = new Map<string, { readonly additions: number; readonly deletions: number }>();
   const commits: PullRequestCommit[] = [];
   for (const { commit } of nodesOf(pullRequest.commits)) {
     const oid = trimmed(commit.oid);
     if (oid === null) continue;
-    // Merge stats count upstream changes against the first parent as PR work.
-    if (commit.parents.totalCount <= 1) {
-      commitStats.set(oid, {
-        additions: Math.max(0, commit.additions),
-        deletions: Math.max(0, commit.deletions),
-      });
-    }
     const committedDate = trimmed(commit.committedDate);
     if (committedDate === null) continue;
     commits.push({
@@ -1390,7 +1371,6 @@ export function toReviewThreadPage(result: ReviewThreads.Result): GitHubReviewTh
     reviewers: [...reviewers.values()],
     avatarsByLogin,
     botLogins,
-    commitStats,
     commits,
     viewer: toPullRequestViewerFields(pullRequest),
     dismissalsByReviewId: toDismissalEntries(pullRequest.reviewDismissals),

@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useAdaptiveWorkspaceLayout } from "./AdaptiveWorkspaceLayout";
 import { withNativeGlassHeaderItem } from "./native-glass-header-items";
@@ -11,29 +10,19 @@ export function useWorkspaceSidebarHeaderItem() {
       ? "Hide thread sidebar"
       : "Maximize content"
     : "Show thread sidebar";
-  return useMemo(
-    () =>
-      withNativeGlassHeaderItem({
-        axisBehavior: usesNativeWorkspaceColumns ? "horizontalOnly" : undefined,
-        accessibilityLabel: label,
-        icon: {
-          name:
-            panes.primarySidebarVisible && !layout.primarySidebarOverlaysContent
-              ? "arrow.up.left.and.arrow.down.right"
-              : "sidebar.left",
-          type: "sfSymbol" as const,
-        },
-        identifier: "thread-left-sidebar",
-        label,
-        onPress: togglePrimarySidebar,
-        type: "button" as const,
-      }),
-    [
-      label,
-      layout.primarySidebarOverlaysContent,
-      panes.primarySidebarVisible,
-      togglePrimarySidebar,
-      usesNativeWorkspaceColumns,
-    ],
-  );
+  return withNativeGlassHeaderItem({
+    axisBehavior: usesNativeWorkspaceColumns ? "horizontalOnly" : undefined,
+    accessibilityLabel: label,
+    icon: {
+      name:
+        panes.primarySidebarVisible && !layout.primarySidebarOverlaysContent
+          ? "arrow.up.left.and.arrow.down.right"
+          : "sidebar.left",
+      type: "sfSymbol" as const,
+    },
+    identifier: "thread-left-sidebar",
+    label,
+    onPress: togglePrimarySidebar,
+    type: "button" as const,
+  });
 }

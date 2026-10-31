@@ -82,6 +82,9 @@ export function makeSubagentChildThread(input: {
     settledAt: null,
     snoozedUntil: null,
     snoozedAt: null,
+    pinnedAt: null,
+    pinOrderKey: null,
+    autoSettleDisabledAt: null,
     // A guest link belongs to the thread it was made for.
     guestShare: null,
     lastVisitedAt: null,
@@ -271,7 +274,7 @@ export function delegatedTaskProgress(projection: {
 
 function writtenIds(
   emitted: ReadonlyArray<OrchestrationV2DomainEvent>,
-  type: "subagent.updated" | "node.updated" | "turn-item.updated",
+  type: "subagent.updated" | "node.updated" | "turn-item.updated" | "provider-turn.updated",
 ): ReadonlySet<string> {
   return new Set(emitted.flatMap((event) => (event.type === type ? [event.payload.id] : [])));
 }
@@ -359,7 +362,10 @@ export const endRunlessRootTurns = Effect.fn("subagentProjection.endRunlessRootT
 >(input: {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
-  readonly projection: Pick<OrchestrationV2ThreadProjection, "nodes" | "turnItems">;
+  readonly projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "nodes" | "providerTurns" | "turnItems"
+  >;
   readonly status: "completed" | "failed" | "interrupted" | "cancelled";
   readonly completedAt?: DateTime.Utc;
   readonly now: DateTime.Utc;
@@ -369,6 +375,7 @@ export const endRunlessRootTurns = Effect.fn("subagentProjection.endRunlessRootT
   const { now, status, completedAt = now } = input;
   const endedNodeIds = writtenIds(input.emitted, "node.updated");
   const endedItemIds = writtenIds(input.emitted, "turn-item.updated");
+  const endedProviderTurnIds = writtenIds(input.emitted, "provider-turn.updated");
   const scope = {
     threadId: input.threadId,
     providerInstanceId: input.providerInstanceId,
@@ -419,6 +426,23 @@ export const endRunlessRootTurns = Effect.fn("subagentProjection.endRunlessRootT
             ? { streaming: false }
             : {}),
         },
+      });
+    }
+    for (const providerTurn of input.projection.providerTurns) {
+      if (
+        providerTurn.nodeId !== node.id ||
+        providerTurn.runAttemptId !== null ||
+        !isOrchestrationV2WorkActive(providerTurn.status) ||
+        endedProviderTurnIds.has(providerTurn.id)
+      ) {
+        continue;
+      }
+      events.push({
+        ...scope,
+        id: yield* input.allocateEventId(),
+        type: "provider-turn.updated",
+        nodeId: node.id,
+        payload: { ...providerTurn, status, completedAt },
       });
     }
   }

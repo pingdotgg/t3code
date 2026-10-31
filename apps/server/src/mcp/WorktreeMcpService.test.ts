@@ -350,9 +350,7 @@ const expectTypedFailure = (exit: Exit.Exit<unknown, unknown>, expected: object)
 
 // Resolve once so calls share the in-flight guard.
 const resolveService = (harness: ReturnType<typeof makeHarness>) =>
-  Effect.gen(function* () {
-    return yield* WorktreeMcpService.WorktreeMcpService;
-  }).pipe(Effect.provide(harness.layer));
+  WorktreeMcpService.WorktreeMcpService.pipe(Effect.provide(harness.layer));
 
 const runHandoff = (
   harness: ReturnType<typeof makeHarness>,
