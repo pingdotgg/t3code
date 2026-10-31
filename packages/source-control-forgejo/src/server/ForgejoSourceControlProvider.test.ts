@@ -985,6 +985,45 @@ it.effect(
   },
 );
 
+it.effect("lists each Forgejo assignee once as a reviewer candidate", () => {
+  const paths: string[] = [];
+  return Effect.gen(function* () {
+    const provider = yield* ForgejoPullRequestProvider.make;
+    const result = yield* provider.listReviewerCandidates(requiredChecksInput);
+    assert.deepStrictEqual(
+      result.candidates.map((candidate) => [candidate.id, candidate.isRequested]),
+      [
+        ["ana", true],
+        ["noor", false],
+      ],
+    );
+    assert.strictEqual(result.truncated, false);
+    assert.strictEqual(paths.filter((path) => path.includes("/assignees")).length, 1);
+  }).pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        api: (input) => {
+          paths.push(input.path);
+          const respond = (response: unknown) =>
+            encodeJsonEffect(response).pipe(Effect.orDie, Effect.map(processOutput));
+          switch (input.path.split("?")[0]) {
+            case "repos/acme/web/pulls/7":
+              return respond({
+                ...requiredChecksPullRequest,
+                requested_reviewers: [{ login: "ana" }],
+              });
+            // Forgejo ignores paging here: every page is the full list, with no Link header.
+            case "repos/acme/web/assignees":
+              return respond([{ login: "maria" }, { login: "ana" }, { login: "noor" }]);
+            default:
+              return Effect.die(`Unexpected Forgejo request: ${input.path}`);
+          }
+        },
+      }),
+    ),
+  );
+});
+
 it.effect("discovers Forgejo accounts and retains the server port", () =>
   Effect.gen(function* () {
     const auth = ForgejoSourceControlProvider.discovery.parseAuth(
