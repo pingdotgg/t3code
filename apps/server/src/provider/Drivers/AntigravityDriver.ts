@@ -25,6 +25,7 @@ import {
   makeAntigravityTextGeneration,
 } from "../../textGeneration/AntigravityTextGeneration.ts";
 import { makeAntigravityAuth, type AntigravityAuth } from "../AntigravityAuth.ts";
+import * as AntigravityCredentials from "../AntigravityCredentials.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
 import * as AntigravityUsage from "./AntigravityUsage.ts";
 import {
@@ -123,6 +124,7 @@ export const AntigravityDriver: ProviderDriver<
       gcpLocation: settings.gcpLocation,
     };
     const authConfigIssue = antigravityAuthConfigIssue(auth);
+    const usesBrowser = antigravityAuthUsesBrowser(auth.authMethod);
     const processEnvironment = yield* mergeProviderInstanceEnvironment(environment);
     const userHome = resolveAntigravityUserHome(
       yield* HostProcess.Platform,
@@ -154,6 +156,21 @@ export const AntigravityDriver: ProviderDriver<
         Effect.provideService(FileSystem.FileSystem, fileSystem),
       );
     }
+    const credentials = yield* AntigravityCredentials.AntigravityCredentials.pipe(
+      Effect.provide(AntigravityCredentials.layer(profileDirectory)),
+    );
+    if (usesBrowser)
+      yield* credentials.recover.pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER,
+              instanceId,
+              detail: "Could not recover saved Antigravity credentials.",
+              cause,
+            }),
+        ),
+      );
     const continuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER,
       instanceId,
@@ -346,8 +363,33 @@ export const AntigravityDriver: ProviderDriver<
       instanceId,
       makeRuntime: makeDisposableRuntime,
       onAuthenticated: publishCatalog,
-      onSignedOut: Effect.suspend(() => provider.onSignedOut),
-      usesBrowser: antigravityAuthUsesBrowser(auth.authMethod),
+      onSignedOut: (usesBrowser ? credentials.discardBackup : Effect.void).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderSetupError({
+              instanceId,
+              operation: "logout",
+              detail: "Could not remove the previous Google sign-in. Try signing out again.",
+              cause,
+            }),
+        ),
+        Effect.andThen(Effect.suspend(() => provider.onSignedOut)),
+      ),
+      usesBrowser,
+      withFreshCredentials: (task) =>
+        credentials.withFreshSignIn(task).pipe(
+          Effect.catchTags({
+            AntigravityCredentialsError: (cause) =>
+              Effect.fail(
+                new ProviderSetupError({
+                  instanceId,
+                  operation: "credentials",
+                  detail: "Could not update the saved Google sign-in. Try again.",
+                  cause,
+                }),
+              ),
+          }),
+        ),
     });
 
     // The probe must not spawn. The agent is a PyInstaller one-file bundle

@@ -30,6 +30,8 @@ import {
   resolveAntigravityInstanceDirectories,
 } from "./antigravityAuthSupport.ts";
 
+import * as AntigravityCredentials from "./AntigravityCredentials.ts";
+
 const authorizationUrl =
   "https://accounts.google.com/o/oauth2/v2/auth?response_type=code" +
   "&client_id=test-client&redirect_uri=http%3A%2F%2F127.0.0.1%3A46353%2F" +
@@ -654,6 +656,107 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         expect(Result.isFailure(result)).toBe(true);
         expect(yield* fs.exists(profileDirectory)).toBe(false);
       }
+    }),
+  );
+});
+
+it.layer(NodeServices.layer)("Antigravity credential recovery", (it) => {
+  const makeProfile = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const profileDirectory = yield* fs.makeTempDirectoryScoped();
+    const directory = path.join(profileDirectory, "antigravity-acp");
+    yield* fs.makeDirectory(directory);
+    const tokenPath = path.join(directory, "acp_token.json");
+    const backupPath = `${tokenPath}.before-sign-in`;
+    yield* fs.writeFileString(backupPath, "previous-account");
+    return { fs, profileDirectory, tokenPath, backupPath };
+  });
+
+  it.effect("recovers an interrupted sign-in and retires backups when a newer token exists", () =>
+    Effect.gen(function* () {
+      const profile = yield* makeProfile;
+      const credentials = yield* AntigravityCredentials.AntigravityCredentials.pipe(
+        Effect.provide(AntigravityCredentials.layer(profile.profileDirectory)),
+      );
+      yield* credentials.recover;
+      expect(yield* profile.fs.readFileString(profile.tokenPath)).toBe("previous-account");
+      expect(yield* profile.fs.exists(profile.backupPath)).toBe(false);
+
+      yield* profile.fs.writeFileString(profile.backupPath, "previous-account");
+      yield* profile.fs.writeFileString(profile.tokenPath, "chosen-account");
+      yield* credentials.recover;
+      expect(yield* profile.fs.readFileString(profile.tokenPath)).toBe("chosen-account");
+      expect(yield* profile.fs.exists(profile.backupPath)).toBe(false);
+    }),
+  );
+
+  it.effect("keeps both accounts intact when a previous backup cannot be retired", () =>
+    Effect.gen(function* () {
+      const profile = yield* makeProfile;
+      const { fs } = profile;
+      yield* fs.writeFileString(profile.tokenPath, "chosen-account");
+      let failCleanup = true;
+      const credentials = yield* AntigravityCredentials.AntigravityCredentials.pipe(
+        Effect.provide(AntigravityCredentials.layer(profile.profileDirectory)),
+        Effect.provideService(
+          FileSystem.FileSystem,
+          FileSystem.FileSystem.of({
+            ...fs,
+            remove: (file, options) =>
+              file === profile.backupPath && failCleanup
+                ? fs.remove(profile.profileDirectory)
+                : fs.remove(file, options),
+          }),
+        ),
+      );
+      let started = false;
+      const result = yield* credentials
+        .withFreshSignIn(
+          Effect.sync(() => {
+            started = true;
+          }),
+        )
+        .pipe(Effect.result);
+      expect(Result.isFailure(result)).toBe(true);
+      expect(started).toBe(false);
+      expect(yield* fs.readFileString(profile.tokenPath)).toBe("chosen-account");
+      expect(yield* fs.readFileString(profile.backupPath)).toBe("previous-account");
+
+      failCleanup = false;
+      yield* credentials.withFreshSignIn(
+        Effect.gen(function* () {
+          expect(yield* fs.exists(profile.tokenPath)).toBe(false);
+          expect(yield* fs.readFileString(profile.backupPath)).toBe("chosen-account");
+        }),
+      );
+      expect(yield* fs.readFileString(profile.tokenPath)).toBe("chosen-account");
+      expect(yield* fs.exists(profile.backupPath)).toBe(false);
+    }),
+  );
+
+  it.effect("preserves credentials written concurrently with recovery", () =>
+    Effect.gen(function* () {
+      const profile = yield* makeProfile;
+      const { fs } = profile;
+      // An orphaned native process can save credentials just before recovery installs its token.
+      const beforeInstall = (destination: string) =>
+        destination === profile.tokenPath
+          ? fs.writeFileString(destination, "chosen-account")
+          : Effect.void;
+      const concurrentFs = FileSystem.FileSystem.of({
+        ...fs,
+        rename: (from, to) => beforeInstall(to).pipe(Effect.andThen(fs.rename(from, to))),
+        link: (from, to) => beforeInstall(to).pipe(Effect.andThen(fs.link(from, to))),
+        copyFile: (from, to) => beforeInstall(to).pipe(Effect.andThen(fs.copyFile(from, to))),
+      });
+      const credentials = yield* AntigravityCredentials.AntigravityCredentials.pipe(
+        Effect.provide(AntigravityCredentials.layer(profile.profileDirectory)),
+        Effect.provideService(FileSystem.FileSystem, concurrentFs),
+      );
+      yield* credentials.recover;
+      expect(yield* fs.readFileString(profile.tokenPath)).toBe("chosen-account");
+      expect(yield* fs.exists(profile.backupPath)).toBe(false);
     }),
   );
 });

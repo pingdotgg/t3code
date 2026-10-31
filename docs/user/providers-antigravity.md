@@ -46,8 +46,10 @@ Choose **Sign-in method** in the Antigravity provider settings:
 The environment stores the Antigravity API key outside its settings file, and
 clients only see whether one is saved. The agent uses the method and credentials selected for this instance;
 ambient `GEMINI_API_KEY` and Google credential variables do not override them.
-Changing the method stops the instance's sessions. Sign out before replacing an
-account.
+Changing the method stops the instance's sessions. To switch Google accounts,
+choose **Change account**. If you cancel before Google saves a new sign-in,
+T3 Code keeps the current account. Once a new sign-in is saved, T3 Code keeps it
+even if you cancel or model discovery fails.
 
 ## Runtime installation
 
@@ -126,7 +128,8 @@ runtimes are shared on the environment.
 
 All three keep thread history and workspace files. Sending `/logout` by itself in
 a thread signs out its instance, including stopping that instance's other sessions.
-Sign out, then sign in again to replace an account.
+To replace an account, choose **Change account**. Cancelling before Google saves
+a new sign-in keeps the current account.
 
 Before removing a managed runtime, disable its instances and cancel any active
 installation. Clear any explicit binary path pointing into that runtime. Removal
