@@ -926,7 +926,9 @@ it.effect("a task named only by environment inherits the parent's model, within 
         interactionMode: "default",
       });
 
-      // Asking for more than the link allows is still refused there.
+      // Asking for more than the link allows is refused, naming the link as
+      // the limit rather than the parent, and nothing launches there.
+      yield* Ref.set(thread.launchedWith, null);
       const broader = yield* a.call("delegate_task", {
         task: "Run the suite on the box.",
         target: { environmentId: box.environmentId },
@@ -934,6 +936,13 @@ it.effect("a task named only by environment inherits the parent's model, within 
         clientRequestId: "broader",
       });
       expect(broader.isError).toBe(true);
+      const [refusal] = broader.content;
+      const { message } = JSON.parse(refusal?.type === "text" ? refusal.text : "{}");
+      expect(message).toContain('"Box"');
+      expect(message).toContain("auto-accept-edits");
+      expect(message).toContain("full-access");
+      expect(message).not.toContain("parent mode");
+      expect(yield* Ref.get(thread.launchedWith)).toBeNull();
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
