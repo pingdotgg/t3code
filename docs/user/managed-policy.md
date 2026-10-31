@@ -242,7 +242,8 @@ that routes Claude through Amazon Bedrock or a base URL for a company gateway. `
 change the fields you set. With `"locked": false`, the fields fill in only what the user left
 empty. A `codex` entry that is locked, or any `codex` entry under `maxRuntimeMode`, also rules out
 [Connect with ChatGPT](./providers-codex.md#connect-with-chatgpt), since that runtime would skip
-your fields.
+your fields. In the same way, an `opencode` entry like that rules out a server URL, so OpenCode
+starts the binary you set.
 
 ### Updates
 
