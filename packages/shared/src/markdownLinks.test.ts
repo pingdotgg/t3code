@@ -4,6 +4,7 @@ import { extractMarkdownLinkHrefs, resolveMarkdownFileLinkTarget } from "./markd
 
 import {
   inlineCodeFilePathCandidate,
+  isLinearAppLinkHref,
   isMarkdownFileLinkLabel,
   parseMarkdownFileLink,
 } from "./markdownLinks.ts";
@@ -30,6 +31,22 @@ describe("inlineCodeFilePathCandidate", () => {
     ["./patches/", "./patches/"],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
+  });
+});
+
+describe("isLinearAppLinkHref", () => {
+  it("accepts Linear's documented desktop deep link", () => {
+    expect(isLinearAppLinkHref("linear://linear.app/acme/issue/ENG-123")).toBe(true);
+  });
+
+  it.each([
+    "linear://example.com/acme/issue/ENG-123",
+    "linear://user@linear.app/acme",
+    "linear://linear.app:8080/acme",
+    "linear:acme/issue/ENG-123",
+    "https://linear.app/acme/issue/ENG-123",
+  ])("rejects %s", (href) => {
+    expect(isLinearAppLinkHref(href)).toBe(false);
   });
 });
 

@@ -425,3 +425,19 @@ export function resolveMarkdownFileLinkTarget(
 export function isWindowsDrivePathHref(href: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(safeDecodeURIComponent(href));
 }
+
+// Linear documents this destination shape at https://linear.app/docs/get-the-app.
+export function isLinearAppLinkHref(href: string): boolean {
+  try {
+    const url = new URL(href);
+    return (
+      url.protocol === "linear:" &&
+      url.hostname === "linear.app" &&
+      url.port === "" &&
+      url.username === "" &&
+      url.password === ""
+    );
+  } catch {
+    return false;
+  }
+}

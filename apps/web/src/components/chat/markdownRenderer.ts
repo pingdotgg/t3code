@@ -10,7 +10,7 @@ import { VFile } from "vfile";
 
 import { remarkParseWithoutUnusedSyntax } from "./markdownSyntaxGates";
 
-export type MarkdownUrlTransform = (url: string, key: string, node: Element) => string;
+export type MarkdownUrlTransform = (url: string, key: string, node: Element) => string | undefined;
 
 interface MarkdownRendererOptions {
   readonly remarkPlugins: PluggableList;
