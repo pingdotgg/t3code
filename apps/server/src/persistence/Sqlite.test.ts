@@ -2,6 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -107,6 +108,13 @@ it.effect("configures the page cache and mapped reads on both file connections",
     const sql = yield* SqlClient.SqlClient;
     yield* sql`CREATE TABLE cache_probe(id INTEGER PRIMARY KEY)`;
     yield* sql`INSERT INTO cache_probe VALUES (1)`;
+    const reference = new NodeSqlite.DatabaseSync(dbPath, { readOnly: true });
+    let expectedMmap;
+    try {
+      expectedMmap = reference.prepare("PRAGMA mmap_size = 2147483648").get()?.mmap_size;
+    } finally {
+      reference.close();
+    }
     const spans: Array<Tracer.Span> = [];
     const observe: Statement.Transformer = (statement, _sql, _fiber, span) =>
       Effect.sync(() => {
@@ -119,8 +127,7 @@ it.effect("configures the page cache and mapped reads on both file connections",
       const data = yield* sql<{ readonly id: number }>`SELECT id FROM cache_probe`;
       assert.equal(cache[0]?.cache_size, -256 * 1024);
       // SQLite may clamp the request to its platform-specific compile-time limit.
-      assert.isAtLeast(mmap[0]?.mmap_size ?? 0, 0);
-      assert.isAtMost(mmap[0]?.mmap_size ?? 0, 2 * 1024 * 1024 * 1024);
+      assert.equal(mmap[0]?.mmap_size, expectedMmap);
       assert.deepEqual(data, [{ id: 1 }]);
     }).pipe(
       Effect.provideService(Statement.CurrentTransformer, observe),
