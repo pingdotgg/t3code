@@ -827,11 +827,11 @@ export default function ChatView(props: ChatViewProps) {
     serverThread !== null && isProviderNativeSubagentThread(serverThread.source);
   const supportsProviderSwitchingViaHandoff = threadSupportsProviderHandoff(serverProjection);
   const activeLatestRun = isServerThread ? serverLatestRun : (activeThread?.latestRun ?? null);
-  const composerTasks = serverProjection?.turnItems.findLast(
-    (item) => item.type === "todo_list" && item.runId === activeLatestRun?.runId,
-  );
-
   const activeActivityRun = isServerThread ? serverActivityRun : (activeThread?.latestRun ?? null);
+  const composerActivityRunId = (activeActivityRun ?? activeLatestRun)?.runId;
+  const composerTasks = serverProjection?.turnItems.findLast(
+    (item) => item.type === "todo_list" && item.runId === composerActivityRunId,
+  );
   const activeRuntime = isServerThread ? serverRuntime : (activeThread?.runtime ?? null);
   const hasHeldQueuedRuns =
     isServerThread &&
