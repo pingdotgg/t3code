@@ -9,8 +9,9 @@ remote path. Nothing downstream knows the machine is a sandbox.
 ## The driver contract
 
 [`SandboxProviderDriver`](../../apps/server/src/sandbox/SandboxProvider.ts) is the whole extension
-point: `create`, `execute`, `exposePort`, `destroy`, the optional `stop`/`resume` pair, and the
-presentation metadata in `info`.
+point: `create`, `execute`, `exposePort`, `destroy`, the optional `stop`/`resume` pair, `limits`,
+and `listEnvironments`, and the presentation metadata in `info`. Clients learn which optional
+methods exist from the `capabilities` the provisioner derives; they never branch on provider kind.
 [`providers/index.ts`](../../apps/server/src/sandbox/providers/index.ts) is the registry. Add one
 file and one array entry; settings, RPC, provisioning, and the Add environment UI read the driver's
 `info`.
@@ -37,7 +38,10 @@ one registry entry.
    URL at create time, or from
    [`daytona.ts`](../../apps/server/src/sandbox/providers/daytona.ts) when it needs a separate
    preview-URL call. Reuse `requestJson`, `jsonBody`, and `authorize` from
-   `SandboxProvider.ts` so status handling and error mapping stay consistent.
+   `SandboxProvider.ts` so status handling and error mapping stay consistent. `requestJson` turns
+   provider error bodies into a stable `code` (rate limited, concurrency full, billing required,
+   size unavailable, …) with a bounded message; add the provider's own error codes to its table
+   instead of writing messages in the driver, because clients react to `code`.
 2. **Fill in `info`.** `kind`, `label`, `detail`, `apiKeyLabel`, `apiKeyPlaceholder`, `docsUrl`,
    and `sizes`. The settings UI, the API-key field, and the machine picker are generated from it;
    nothing else needs to know the provider exists.
@@ -53,6 +57,11 @@ one registry entry.
    - `listEnvironments` only if the provider has named credential environments. Return **flags
      only** (`passGithub`, `passSecrets`, …). Never map `envContents`, `secretFiles`, or any other
      value that carries a real secret into `SandboxCredentialEnvironment`.
+   - `limits` only if the provider reports quotas. Return `null` when the account's limits can't be
+     read (a key without that scope, for example), never an error. The provisioner runs
+     `assessSandboxStart` before every create and resume, and it blocks only on what the provider
+     says it would refuse; unknown or failed limits let the start through so the provider decides.
+     A plan maximum for auto-stop (`maxTtlMinutes`) clamps the lifetime T3 records.
 6. **Add a size default and the server port.** `defaultSize` must be one of the `info.sizes` ids,
    and `serverPort` is `3773` unless the provider reserves it.
 7. **Test it without the network.** Follow `SandboxProvisioner.test.ts`: `HttpClient.make`

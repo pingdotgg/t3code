@@ -30,6 +30,8 @@ import {
   SandboxCreateInput,
   SandboxCreateResult,
   SandboxCredentialEnvironmentsInput,
+  SandboxLimitsInput,
+  SandboxLimitsResult,
   SandboxCredentialEnvironmentsResult,
   SandboxDeleteInput,
   SandboxLifecycleInput,
@@ -609,6 +611,7 @@ export const WS_METHODS = {
   sourceControlStarred: "sourceControl.starred",
   sandboxesProviders: "sandboxes.providers",
   sandboxesEnvironments: "sandboxes.environments",
+  sandboxesLimits: "sandboxes.limits",
   sandboxesCreate: "sandboxes.create",
   sandboxesDelete: "sandboxes.delete",
   sandboxesList: "sandboxes.list",
@@ -1281,6 +1284,12 @@ const WsSandboxesProvidersRpc = Rpc.make(WS_METHODS.sandboxesProviders, {
 const WsSandboxesEnvironmentsRpc = Rpc.make(WS_METHODS.sandboxesEnvironments, {
   payload: SandboxCredentialEnvironmentsInput,
   success: SandboxCredentialEnvironmentsResult,
+  error: Schema.Union([SandboxProviderError, EnvironmentAuthorizationError]),
+});
+
+const WsSandboxesLimitsRpc = Rpc.make(WS_METHODS.sandboxesLimits, {
+  payload: SandboxLimitsInput,
+  success: SandboxLimitsResult,
   error: Schema.Union([SandboxProviderError, EnvironmentAuthorizationError]),
 });
 
@@ -2144,6 +2153,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlStarredRpc,
   WsSandboxesProvidersRpc,
   WsSandboxesEnvironmentsRpc,
+  WsSandboxesLimitsRpc,
   WsSandboxesCreateRpc,
   WsSandboxesDeleteRpc,
   WsSandboxesListRpc,

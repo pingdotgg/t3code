@@ -2686,6 +2686,7 @@ export const layerWsRpc = (
         [WS_METHODS.sourceControlStarred]: (input) => sourceControlSignIn.starred(input),
         [WS_METHODS.sandboxesProviders]: () => sandboxes.providers,
         [WS_METHODS.sandboxesEnvironments]: (input) => sandboxes.environments(input),
+        [WS_METHODS.sandboxesLimits]: (input) => sandboxes.limits(input),
         [WS_METHODS.sandboxesCreate]: (input) => sandboxes.create(input),
         [WS_METHODS.sandboxesDelete]: (input) => sandboxes.delete(input),
         [WS_METHODS.sandboxesList]: () => sandboxes.list,

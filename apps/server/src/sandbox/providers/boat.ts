@@ -1,4 +1,4 @@
-import { type SandboxProviderInfo, SandboxProviderError } from "@t3tools/contracts";
+import { type SandboxProviderLimits, SandboxProviderError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { HttpClientRequest } from "effect/http";
 import * as Schema from "effect/Schema";
@@ -13,6 +13,10 @@ import {
 } from "../SandboxProvider.ts";
 
 const BOAT_API_BASE = "https://boat.dev/api/v1";
+const BOAT_BILLING_URL = "https://boat.dev/dashboard?tab=billing";
+// Trial accounts must auto-stop within two hours (`400 trial_auto_stop_required`).
+const TRIAL_MAX_TTL_MINUTES = 120;
+const MAX_TTL_MINUTES = 43200;
 
 const BoatSandbox = Schema.Struct({
   sandbox: Schema.Struct({
@@ -45,6 +49,112 @@ const BoatLifecycle = Schema.Struct({
   }),
 });
 
+const BoatStartWindow = Schema.NullOr(
+  Schema.Struct({ limit: Schema.Number, used: Schema.Number, remaining: Schema.Number }),
+);
+
+// `/limits` returns dozens of plan, wallet, and upgrade fields; only these feed the preflight.
+const BoatLimits = Schema.Struct({
+  canStart: Schema.Boolean,
+  startBlockedReason: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  blockedReason: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  checkoutRequired: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
+  accessTier: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  sandboxPlanKey: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  sandboxPlanDollars: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  activeSandboxes: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  maxActiveSandboxes: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  nextStartDollars: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  starts: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        minute: Schema.optionalKey(BoatStartWindow),
+        hour: Schema.optionalKey(BoatStartWindow),
+        day: Schema.optionalKey(BoatStartWindow),
+      }),
+    ),
+  ),
+  startWindowFull: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        window: Schema.optionalKey(Schema.NullOr(Schema.String)),
+        freesAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      }),
+    ),
+  ),
+  machineTypes: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Array(
+        Schema.Struct({
+          type: Schema.String,
+          available: Schema.Boolean,
+          reason: Schema.optionalKey(Schema.NullOr(Schema.String)),
+        }),
+      ),
+    ),
+  ),
+});
+
+const boundedText = (value: string | null | undefined) => {
+  const trimmed = value?.trim() ?? "";
+  return trimmed === "" ? undefined : trimmed.slice(0, 300);
+};
+
+const toLimits = (raw: typeof BoatLimits.Type): SandboxProviderLimits => {
+  const isTrial = raw.accessTier === "trial" || raw.sandboxPlanKey === "trial";
+  const blockedReason = boundedText(raw.startBlockedReason) ?? boundedText(raw.blockedReason);
+  const starts = (["minute", "hour", "day"] as const).flatMap((window) => {
+    const entry = raw.starts?.[window];
+    if (entry === undefined || entry === null) return [];
+    const freesAt = raw.startWindowFull?.window === window ? raw.startWindowFull.freesAt : null;
+    return [
+      {
+        window,
+        limit: entry.limit,
+        used: entry.used,
+        remaining: entry.remaining,
+        ...(freesAt ? { resetsAt: freesAt } : {}),
+      },
+    ];
+  });
+  const plan = isTrial
+    ? "Trial"
+    : typeof raw.sandboxPlanDollars === "number" && raw.sandboxPlanDollars > 0
+      ? `$${raw.sandboxPlanDollars} plan`
+      : boundedText(raw.accessTier);
+  return {
+    canStart: raw.canStart,
+    ...(blockedReason === undefined ? {} : { blockedReason }),
+    ...(starts.length === 0 ? {} : { starts }),
+    ...(typeof raw.activeSandboxes === "number" && typeof raw.maxActiveSandboxes === "number"
+      ? { concurrency: { active: raw.activeSandboxes, max: raw.maxActiveSandboxes } }
+      : {}),
+    // Boat's own encoding: 0 is inside the plan, more is a paid burst, null is a refusal.
+    ...(raw.nextStartDollars === undefined
+      ? {}
+      : raw.nextStartDollars === null
+        ? { startCost: "refused" as const }
+        : raw.nextStartDollars > 0
+          ? { startCost: "paid" as const, startDollars: raw.nextStartDollars }
+          : { startCost: "included" as const }),
+    maxTtlMinutes: isTrial ? TRIAL_MAX_TTL_MINUTES : MAX_TTL_MINUTES,
+    ...(raw.machineTypes === undefined || raw.machineTypes === null
+      ? {}
+      : {
+          sizes: raw.machineTypes.map((machine) => {
+            const reason = boundedText(machine.reason);
+            return {
+              id: machine.type,
+              available: machine.available,
+              ...(reason === undefined ? {} : { reason }),
+            };
+          }),
+        }),
+    ...(plan === undefined ? {} : { plan }),
+    ...(raw.checkoutRequired === true || !raw.canStart ? { billingUrl: BOAT_BILLING_URL } : {}),
+  };
+};
+
 // Only flags, never `envContents` or `secretFiles`: those hold real credential values and must
 // not leave the server that owns the provider key.
 const BoatEnvironment = Schema.Struct({
@@ -75,7 +185,7 @@ const info = {
     { id: "large", label: "Large", detail: "8 vCPU · 16 GB · 111 GB" },
     { id: "xlarge", label: "Extra large", detail: "16 vCPU · 32 GB · 251 GB" },
   ],
-} satisfies Omit<SandboxProviderInfo, "configured">;
+} satisfies SandboxProviderDriver["info"];
 
 export const boatDriver: SandboxProviderDriver = {
   info,
@@ -87,7 +197,10 @@ export const boatDriver: SandboxProviderDriver = {
       stage: "create",
       schema: BoatSandbox,
       request: jsonBody(
-        authorize(HttpClientRequest.post(`${BOAT_API_BASE}/sandboxes`), input.config.apiKey),
+        HttpClientRequest.setHeaders(
+          authorize(HttpClientRequest.post(`${BOAT_API_BASE}/sandboxes`), input.config.apiKey),
+          { "Idempotency-Key": input.idempotencyKey },
+        ),
         {
           name: input.name,
           type: input.size,
@@ -112,6 +225,13 @@ export const boatDriver: SandboxProviderDriver = {
       ...(url === undefined ? {} : { publicUrl: url }),
     } satisfies CreatedSandbox;
   }),
+  limits: (input) =>
+    requestJson({
+      provider: "boat",
+      stage: "config",
+      schema: BoatLimits,
+      request: authorize(HttpClientRequest.get(`${BOAT_API_BASE}/limits`), input.config.apiKey),
+    }).pipe(Effect.map(toLimits)),
   listEnvironments: Effect.fn("Boat.listEnvironments")(function* (input) {
     const listed = yield* requestJson({
       provider: "boat",

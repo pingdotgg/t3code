@@ -1182,6 +1182,11 @@ export function createServerEnvironmentAtoms<R, E>(
     tag: WS_METHODS.sandboxesEnvironments,
     idleTtlMs: 0,
   });
+  const sandboxesLimits = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:sandboxes:limits",
+    tag: WS_METHODS.sandboxesLimits,
+    idleTtlMs: 0,
+  });
   const sandboxesListRevisionAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make(0).pipe(
       Atom.keepAlive,
@@ -1219,6 +1224,7 @@ export function createServerEnvironmentAtoms<R, E>(
     updateStateAtom,
     sandboxesProviders,
     sandboxesEnvironments,
+    sandboxesLimits,
     sandboxesList,
     sandboxesStop: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:sandboxes:stop",

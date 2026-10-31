@@ -20,6 +20,13 @@ import { Spinner } from "../ui/spinner";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { EnvironmentModeCard } from "./EnvironmentModeCard";
 import { SandboxProviderLogo } from "./SandboxProviderLogo";
+import {
+  describeSandboxFailure,
+  SandboxQuotaLine,
+  SandboxStartBlocked,
+  SandboxStartConfirmation,
+  useSandboxStartCheck,
+} from "./SandboxStartLimits";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
@@ -31,10 +38,13 @@ const EMPTY_PROVIDERS: ReadonlyArray<SandboxProviderInfo> = [];
 const EMPTY_CREDENTIAL_ENVIRONMENTS: ReadonlyArray<SandboxCredentialEnvironment> = [];
 const NO_CREDENTIAL_ENVIRONMENT = "__none__";
 
-const describeCredentialEnvironment = (environment: SandboxCredentialEnvironment): string => {
+const describeCredentialEnvironment = (
+  environment: SandboxCredentialEnvironment,
+  providerLabel: string,
+): string => {
   if (environment.safeForThirdParties) {
     return environment.proxyAiCredentials
-      ? "Passes nothing. AI calls go through Boat's proxy, so real keys stay outside the sandbox."
+      ? `Passes nothing. AI calls go through ${providerLabel}'s proxy, so real keys stay outside the sandbox.`
       : "Passes nothing: no secrets, GitHub token, or agent logins.";
   }
   const passes = [
@@ -52,6 +62,9 @@ const formatFailure = (error: unknown): string =>
     : typeof error === "string"
       ? error
       : "Failed to create sandbox.";
+
+// T3's default sandbox lifetime; a plan with a shorter auto-stop maximum is called out.
+const DEFAULT_TTL_MINUTES = 480;
 
 const providerDefaultSize = (provider: SandboxProviderInfo): string =>
   provider.sizes[1]?.id ?? provider.sizes[0]?.id ?? "";
@@ -89,12 +102,16 @@ export function SandboxEnvironmentFields({
   const provider = providers.find((candidate) => candidate.kind === selectedKind) ?? providers[0];
   const selectedSize = size === "" ? (provider ? providerDefaultSize(provider) : "") : size;
   const environmentsQuery = useEnvironmentQuery(
-    provider?.kind === "boat"
+    provider?.capabilities.credentialEnvironments
       ? serverEnvironment.sandboxesEnvironments({
           environmentId,
-          input: { provider: "boat" },
+          input: { provider: provider.kind },
         })
       : null,
+  );
+  const startCheck = useSandboxStartCheck({ environmentId, provider, size: selectedSize });
+  const sizeAvailability = new Map(
+    (startCheck.limits?.sizes ?? []).map((entry) => [entry.id, entry] as const),
   );
   const credentialEnvironments =
     environmentsQuery.data?.environments ?? EMPTY_CREDENTIAL_ENVIRONMENTS;
@@ -113,10 +130,12 @@ export function SandboxEnvironmentFields({
     isProvisioning ||
     provider === undefined ||
     !canWriteSettings ||
+    startCheck.blocked !== null ||
     (passesCredentials && !allowCredentials);
 
   const handleCreate = async () => {
     if (provider === undefined) return;
+    startCheck.cancel();
     setIsProvisioning(true);
     onProvisioningChange?.(true);
     onErrorChange(null);
@@ -133,15 +152,20 @@ export function SandboxEnvironmentFields({
           : { environment: credentialEnvironment, allowCredentials: true }),
       },
     });
+    // Any attempt can spend a start, so the quota line re-reads the provider either way.
+    startCheck.refresh();
     if (created._tag === "Failure") {
       if (!isAtomCommandInterrupted(created)) {
-        const message = formatFailure(squashAtomCommandFailure(created));
-        onErrorChange(message);
+        const failure = describeSandboxFailure(
+          squashAtomCommandFailure(created),
+          "Could not create sandbox",
+        );
+        onErrorChange(failure.description);
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not create sandbox",
-            description: message,
+            title: failure.title,
+            description: failure.description,
           }),
         );
       }
@@ -266,15 +290,25 @@ export function SandboxEnvironmentFields({
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
-                  {provider.sizes.map((candidate) => (
-                    <SelectItem key={candidate.id} value={candidate.id}>
-                      {candidate.label}, {candidate.detail}
-                    </SelectItem>
-                  ))}
+                  {provider.sizes.map((candidate) => {
+                    const availability = sizeAvailability.get(candidate.id);
+                    const unavailable = availability !== undefined && !availability.available;
+                    return (
+                      <SelectItem key={candidate.id} value={candidate.id} disabled={unavailable}>
+                        {candidate.label}, {candidate.detail}
+                        {unavailable
+                          ? `. ${availability.reason ?? "Not available on this plan."}`
+                          : ""}
+                      </SelectItem>
+                    );
+                  })}
                 </SelectPopup>
               </Select>
             </label>
           </div>
+          {startCheck.limits === null ? null : (
+            <SandboxQuotaLine limits={startCheck.limits} defaultTtlMinutes={DEFAULT_TTL_MINUTES} />
+          )}
 
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block">
@@ -302,11 +336,11 @@ export function SandboxEnvironmentFields({
             </label>
           </div>
 
-          {provider.kind === "boat" ? (
+          {provider.capabilities.credentialEnvironments ? (
             <div className="space-y-2">
               <label className="block">
                 <span className="mb-1.5 block text-xs font-medium text-foreground">
-                  Boat environment
+                  {provider.label} environment
                 </span>
                 <Select
                   value={
@@ -319,7 +353,10 @@ export function SandboxEnvironmentFields({
                     setAllowCredentials(false);
                   }}
                 >
-                  <SelectTrigger aria-label="Boat credential environment" size="default">
+                  <SelectTrigger
+                    aria-label={`${provider.label} credential environment`}
+                    size="default"
+                  >
                     <SelectValue>
                       {selectedCredentialEnvironment?.name ?? "No credentials (recommended)"}
                     </SelectValue>
@@ -339,12 +376,13 @@ export function SandboxEnvironmentFields({
               </label>
               <p className="text-2xs leading-relaxed text-muted-foreground">
                 {selectedCredentialEnvironment === undefined
-                  ? "No Boat secrets, GitHub token, or agent logins reach the sandbox."
-                  : describeCredentialEnvironment(selectedCredentialEnvironment)}
+                  ? `No ${provider.label} secrets, GitHub token, or agent logins reach the sandbox.`
+                  : describeCredentialEnvironment(selectedCredentialEnvironment, provider.label)}
               </p>
               {environmentsQuery.error ? (
                 <p className="text-2xs text-destructive">
-                  Could not list Boat environments. The sandbox will start with no credentials.
+                  Could not list {provider.label} environments. The sandbox will start with no
+                  credentials.
                 </p>
               ) : null}
               {passesCredentials ? (
@@ -359,7 +397,8 @@ export function SandboxEnvironmentFields({
                       />
                       <span>
                         I understand this sandbox will receive the credentials listed above. Prefer
-                        a Boat environment that is safe for third parties or leaves out secrets.
+                        a {provider.label} environment that is safe for third parties or leaves out
+                        secrets.
                       </span>
                     </label>
                   </AlertDescription>
@@ -384,17 +423,38 @@ export function SandboxEnvironmentFields({
               </AlertDescription>
             </Alert>
           ) : null}
+          {startCheck.blocked === null ? null : (
+            <SandboxStartBlocked
+              reason={startCheck.blocked.reason}
+              billingUrl={startCheck.limits?.billingUrl}
+            />
+          )}
           {error ? <p className="text-xs text-destructive">{error}</p> : null}
 
-          <Button
-            variant="outline"
-            className="w-full"
-            disabled={disabled}
-            onClick={() => void handleCreate()}
-          >
-            {isProvisioning ? <Spinner className="size-3.5" /> : <PlusIcon className="size-3.5" />}
-            {isProvisioning ? "Provisioning sandbox…" : `Create ${provider.label} sandbox`}
-          </Button>
+          {startCheck.isConfirming && !isProvisioning ? (
+            <SandboxStartConfirmation
+              warnings={startCheck.assessment?.warnings ?? []}
+              confirmLabel="Create anyway"
+              onConfirm={() => void handleCreate()}
+              onCancel={startCheck.cancel}
+            />
+          ) : (
+            <Button
+              variant="outline"
+              className="w-full"
+              disabled={disabled}
+              onClick={() =>
+                startCheck.needsConfirmation ? startCheck.confirm() : void handleCreate()
+              }
+            >
+              {isProvisioning ? (
+                <Spinner className="size-3.5" />
+              ) : (
+                <PlusIcon className="size-3.5" />
+              )}
+              {isProvisioning ? "Provisioning sandbox…" : `Create ${provider.label} sandbox`}
+            </Button>
+          )}
         </>
       )}
     </div>

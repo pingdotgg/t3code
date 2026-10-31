@@ -1,4 +1,5 @@
 import {
+  assessSandboxStart,
   ExecutionEnvironmentDescriptor,
   type EnvironmentId,
   type SandboxCreateInput,
@@ -8,6 +9,8 @@ import {
   type SandboxCredentialEnvironmentsResult,
   type SandboxDeleteInput,
   type SandboxLifecycleInput,
+  type SandboxLimitsInput,
+  type SandboxLimitsResult,
   type SandboxListResult,
   type SandboxRecord,
   type SandboxResumeResult,
@@ -18,6 +21,7 @@ import {
   type SandboxProvidersResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -29,7 +33,12 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SandboxRecords from "../persistence/SandboxRecords.ts";
-import { requestJson, shellQuote, type SandboxProviderDriver } from "./SandboxProvider.ts";
+import {
+  requestJson,
+  shellQuote,
+  type SandboxProviderConfig,
+  type SandboxProviderDriver,
+} from "./SandboxProvider.ts";
 import { SANDBOX_PROVIDER_DRIVERS } from "./providers/index.ts";
 
 // Starts `t3 serve` only when nothing answers on its port, then waits for it. Shared by install and
@@ -120,6 +129,9 @@ export class SandboxProvisioner extends Context.Service<
     readonly environments: (
       input: SandboxCredentialEnvironmentsInput,
     ) => Effect.Effect<SandboxCredentialEnvironmentsResult, SandboxProviderError>;
+    readonly limits: (
+      input: SandboxLimitsInput,
+    ) => Effect.Effect<SandboxLimitsResult, SandboxProviderError>;
     readonly list: Effect.Effect<SandboxListResult, SandboxProviderError>;
     readonly stop: (
       input: SandboxLifecycleInput,
@@ -135,6 +147,7 @@ const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const records = yield* SandboxRecords.SandboxRecordRepository;
   const httpClient = yield* HttpClient.HttpClient;
+  const crypto = yield* Crypto.Crypto;
   const onHttp = Effect.provideService(HttpClient.HttpClient, httpClient);
 
   const resolveApiKey = Effect.fn("SandboxProvisioner.resolveApiKey")(function* (
@@ -199,10 +212,44 @@ const make = Effect.gen(function* () {
       providers: SANDBOX_PROVIDER_DRIVERS.map((driver): SandboxProviderInfo => ({
         ...driver.info,
         configured: (value.sandboxProviders[driver.info.kind]?.apiKey.trim() ?? "") !== "",
+        capabilities: {
+          limits: driver.limits !== undefined,
+          stopResume: driver.stop !== undefined && driver.resume !== undefined,
+          credentialEnvironments: driver.listEnvironments !== undefined,
+        },
       })),
     })),
     Effect.orDie,
   );
+
+  // Refuses a start the provider would refuse or that cannot fit, before anything bills. Limits that
+  // cannot be read never block: the provider stays the authority and reports its own error.
+  const preflightStart = Effect.fn("SandboxProvisioner.preflightStart")(function* (
+    driver: SandboxProviderDriver,
+    config: SandboxProviderConfig,
+    size: string | undefined,
+  ) {
+    if (driver.limits === undefined) return null;
+    const limits = yield* onHttp(driver.limits({ config })).pipe(Effect.orElseSucceed(() => null));
+    if (limits === null) return null;
+    const { blocked } = assessSandboxStart(limits, {
+      providerLabel: driver.info.label,
+      nowMillis: DateTime.toEpochMillis(yield* DateTime.now),
+      ...(size === undefined ? {} : { size }),
+    });
+    if (blocked !== null) {
+      return yield* new SandboxProviderError({
+        provider: driver.info.kind,
+        stage: "config",
+        code: blocked.code,
+        detail: blocked.reason,
+        ...(blocked.retryAfterSeconds === undefined
+          ? {}
+          : { retryAfterSeconds: blocked.retryAfterSeconds }),
+      });
+    }
+    return limits;
+  });
 
   const create = Effect.fn("SandboxProvisioner.create")(function* (input: SandboxCreateInput) {
     const driver = findDriver(input.provider);
@@ -210,7 +257,6 @@ const make = Effect.gen(function* () {
     const config = { apiKey };
     const label = input.label?.trim() || `${driver.info.label} sandbox`;
     const size = input.size?.trim() || driver.defaultSize;
-    const ttlMinutes = input.ttlMinutes ?? 480;
     if (input.environment !== undefined && input.allowCredentials !== true) {
       return yield* new SandboxProviderError({
         provider: input.provider,
@@ -219,7 +265,21 @@ const make = Effect.gen(function* () {
           "This sandbox would receive the credential environment's secrets. Confirm that explicitly first.",
       });
     }
+    const limits = yield* preflightStart(driver, config, size);
+    // The record keeps the clamped lifetime, so its deadline matches what the provider enforces.
+    const ttlMinutes = Math.min(input.ttlMinutes ?? 480, limits?.maxTtlMinutes ?? Infinity);
 
+    const idempotencyKey = yield* crypto.randomUUIDv4().pipe(
+      Effect.mapError(
+        (cause) =>
+          new SandboxProviderError({
+            provider: input.provider,
+            stage: "create",
+            detail: "Could not generate a request id for the provider.",
+            cause,
+          }),
+      ),
+    );
     const sandbox = yield* onHttp(
       driver.create({
         config,
@@ -227,6 +287,7 @@ const make = Effect.gen(function* () {
         size,
         ttlMinutes,
         environment: input.environment,
+        idempotencyKey,
       }),
     );
 
@@ -349,6 +410,16 @@ const make = Effect.gen(function* () {
     return { environments: listed };
   });
 
+  const limits = Effect.fn("SandboxProvisioner.limits")(function* (input: SandboxLimitsInput) {
+    const driver = findDriver(input.provider);
+    if (driver.limits === undefined) return { limits: null } satisfies SandboxLimitsResult;
+    const apiKey = yield* resolveApiKey(input.provider, undefined).pipe(Effect.option);
+    if (Option.isNone(apiKey)) return { limits: null } satisfies SandboxLimitsResult;
+    return {
+      limits: yield* onHttp(driver.limits({ config: { apiKey: apiKey.value } })),
+    } satisfies SandboxLimitsResult;
+  });
+
   const list = records.list.pipe(
     Effect.orDie,
     Effect.map((sandboxes): SandboxListResult => ({ sandboxes })),
@@ -411,12 +482,14 @@ const make = Effect.gen(function* () {
             ),
           );
     const apiKey = yield* resolveApiKey(record.provider, undefined);
+    // Providers such as Boat count a resume as a start, so it gets the same preflight as create.
+    const limits = yield* preflightStart(driver, { apiKey }, undefined);
     const resumed = yield* onHttp(
       driver.resume({
         config: { apiKey },
         sandboxId: record.sandboxId,
         // The provider's own TTL is a backstop; it must not outlive the record's deadline.
-        ttlMinutes: remainingMinutes,
+        ttlMinutes: Math.min(remainingMinutes, limits?.maxTtlMinutes ?? Infinity),
       }),
     );
     const httpBaseUrl = resumed.publicUrl ?? record.httpBaseUrl;
@@ -491,6 +564,7 @@ const make = Effect.gen(function* () {
     create,
     delete: remove,
     environments,
+    limits,
     list,
     stop,
     resume,
