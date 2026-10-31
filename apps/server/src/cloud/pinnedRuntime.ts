@@ -23,7 +23,12 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ProcessRunner from "../processRunner.ts";
-import { isExactServiceVersion, parseServiceState, SERVICE_STATE_FILE } from "./serviceProtocol.ts";
+import {
+  compareExactServiceVersions,
+  isExactServiceVersion,
+  parseServiceState,
+  SERVICE_STATE_FILE,
+} from "./serviceProtocol.ts";
 
 const PINNED_RUNTIME_DIR = "runtime";
 const PINNED_RUNTIME_INSTALL_TIMEOUT = Duration.minutes(10);
@@ -389,8 +394,8 @@ export function launcherOwnsVersionsDir(
 /** The executable a `t3.cmd` shim written by the install script or `t3 update` runs. */
 export const windowsShimTarget = (contents: string) => /^"([^"]+)"/m.exec(contents)?.[1];
 
-/** Where the `t3` launchers written by the install scripts and `t3 update` point. */
-const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targets")(function* (
+/** The `t3` launchers written by the install scripts and `t3 update`, with where each points. */
+const shellLaunchers = Effect.fn("cloud.pinned_runtime.shell_launchers")(function* (
   baseDir: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -414,7 +419,7 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
     .realPath(versionsDir)
     .pipe(Effect.orElseSucceed(() => versionsDir));
   const unrecorded: Array<string> = [];
-  const targets: Array<string> = [];
+  const launchers: Array<{ readonly launcher: string; readonly target: string }> = [];
   for (const launcher of [...recorded, ...found]) {
     const target =
       platform === "win32"
@@ -425,7 +430,7 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
         : // Fully resolved, through chained links and a symlinked T3 home alike.
           yield* fs.realPath(launcher).pipe(Effect.orElseSucceed(() => undefined));
     if (target === undefined) continue;
-    targets.push(target);
+    launchers.push({ launcher, target });
     if (
       (launcherOwnsVersionsDir(path, versionsDir, target) ||
         launcherOwnsVersionsDir(path, realVersionsDir, target)) &&
@@ -442,8 +447,81 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
       })
       .pipe(Effect.ignore);
   }
-  return targets;
+  return launchers;
 });
+
+/** Points a `t3` launcher at a runtime: a symlink swapped in atomically, or a Windows shim. */
+export const writeShellLauncher = Effect.fn("cloud.pinned_runtime.write_shell_launcher")(function* (
+  launcher: string,
+  entryPath: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  if ((yield* HostProcess.Platform) === "win32") {
+    return yield* fs.writeFileString(launcher, `@echo off\r\n"${entryPath}" %*`);
+  }
+  const tempLink = `${launcher}.${process.pid}.tmp`;
+  yield* fs.symlink(entryPath, tempLink);
+  yield* fs.rename(tempLink, launcher);
+});
+
+/**
+ * Moves `t3` launchers that point at an older runtime of this home to `version`, so the CLI on
+ * PATH follows a background service the app updated. A launcher on a newer runtime, one for
+ * another install, or a plain copy of the executable is left alone.
+ */
+export const advanceShellLaunchers = Effect.fn("cloud.pinned_runtime.advance_shell_launchers")(
+  function* (input: { readonly baseDir: string; readonly version: string }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const platform = yield* HostProcess.Platform;
+    const runtime = pinnedRuntimePaths(path, input.baseDir, input.version, platform);
+    const installed = yield* fs.readFileString(runtime.sentinelPath).pipe(
+      Effect.map((sentinel) => sentinel.trim() === input.version),
+      Effect.orElseSucceed(() => false),
+    );
+    if (!installed) return [];
+    const versionsDir = pinnedRuntimeVersionsDir(path, input.baseDir);
+    const realVersionsDir = yield* fs
+      .realPath(versionsDir)
+      .pipe(Effect.orElseSucceed(() => versionsDir));
+    const advanced: Array<string> = [];
+    for (const launcher of yield* shellLaunchers(input.baseDir)) {
+      if (advanced.includes(launcher.launcher)) continue;
+      // Like `t3 update`, only a link straight into the runtimes is a launcher to move.
+      const target =
+        platform === "win32"
+          ? launcher.target
+          : yield* fs.readLink(launcher.launcher).pipe(
+              Effect.map((link) => path.resolve(path.dirname(launcher.launcher), link)),
+              Effect.orElseSucceed(() => undefined),
+            );
+      const ownedBy =
+        target === undefined
+          ? undefined
+          : [versionsDir, realVersionsDir].find((dir) =>
+              launcherOwnsVersionsDir(path, dir, target),
+            );
+      if (target === undefined || ownedBy === undefined) continue;
+      const launcherVersion = path.relative(ownedBy, target).split(path.sep)[0] ?? "";
+      if (
+        !isExactServiceVersion(launcherVersion) ||
+        compareExactServiceVersions(launcherVersion, input.version) >= 0
+      ) {
+        continue;
+      }
+      yield* writeShellLauncher(launcher.launcher, runtime.entryPath).pipe(
+        Effect.andThen(Effect.sync(() => advanced.push(launcher.launcher))),
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not move a t3 launcher to the running version.", {
+            launcher: launcher.launcher,
+            cause,
+          }),
+        ),
+      );
+    }
+    return advanced;
+  },
+);
 
 /**
  * Resolved executables rather than command lines: a server started through the `t3` symlink
@@ -558,7 +636,7 @@ const selectUnusedRuntimes = Effect.fn("cloud.pinned_runtime.select_unused")(fun
   const foldCase = (value: string) => (platform === "win32" ? value.toLowerCase() : value);
   const references = [
     executables.value,
-    ...(yield* shellLauncherTargets(input.baseDir)),
+    ...(yield* shellLaunchers(input.baseDir)).map(({ target }) => target),
     ...input.references,
   ].map(foldCase);
   // Process executables are resolved, so they name the real path of a symlinked T3 home.

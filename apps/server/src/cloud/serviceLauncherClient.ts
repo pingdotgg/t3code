@@ -1,6 +1,7 @@
 import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -105,6 +106,8 @@ export class ServiceLauncherClient extends Context.Service<
       ServerSelfUpdateOutcome | undefined,
       ServiceLauncherClientError
     >;
+    /** Completes once the service keeps this version: at once, or when a trial update commits. */
+    readonly committed: Effect.Effect<void>;
   }
 >()("t3/cloud/serviceLauncherClient") {}
 
@@ -214,6 +217,8 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
     );
 
   const pending = context?.update?.status === "pending" ? context.update : undefined;
+  const committed = yield* Deferred.make<void>();
+  if (pending === undefined) yield* Deferred.succeed(committed, undefined);
   const outcome =
     context?.update === undefined || context.update.status === "pending"
       ? undefined
@@ -228,12 +233,14 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
             if (reply.type !== "committed") {
               return Effect.die("service launcher returned an impossible prepared response");
             }
-            return Effect.succeed({
-              id: pending.id,
-              fromVersion: pending.fromVersion,
-              targetVersion: pending.targetVersion,
-              status: "committed" as const,
-            });
+            return Deferred.succeed(committed, undefined).pipe(
+              Effect.as({
+                id: pending.id,
+                fromVersion: pending.fromVersion,
+                targetVersion: pending.targetVersion,
+                status: "committed" as const,
+              }),
+            );
           }),
         )
       : Effect.succeed(outcome);
@@ -242,6 +249,7 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
     managed,
     requestUpdate,
     prepareTrial,
+    committed: Deferred.await(committed),
   });
 });
 

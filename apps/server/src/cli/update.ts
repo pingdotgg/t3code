@@ -28,6 +28,7 @@ import {
   pinnedRuntimePaths,
   prunePinnedRuntimes,
   windowsShimTarget,
+  writeShellLauncher,
 } from "../cloud/pinnedRuntime.ts";
 import { compareExactServiceVersions, isExactServiceVersion } from "../cloud/serviceProtocol.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -112,13 +113,11 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     const current = yield* fs.readFileString(shimPath).pipe(Effect.option);
     const quoted = Option.isSome(current) ? windowsShimTarget(current.value) : undefined;
     if (quoted === undefined || !ownsTarget(quoted)) return Option.none<string>();
-    yield* fs
-      .writeFileString(shimPath, `@echo off\r\n"${input.targetEntryPath}" %*`)
-      .pipe(
-        Effect.mapError(
-          () => new CliUpdateError({ reason: `Could not rewrite the t3 launcher at ${shimPath}.` }),
-        ),
-      );
+    yield* writeShellLauncher(shimPath, input.targetEntryPath).pipe(
+      Effect.mapError(
+        () => new CliUpdateError({ reason: `Could not rewrite the t3 launcher at ${shimPath}.` }),
+      ),
+    );
     return Option.some(shimPath);
   }
 
@@ -126,9 +125,7 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
   if (Option.isNone(linkTarget)) return Option.none<string>();
   const resolvedTarget = path.resolve(path.dirname(input.launchedAs), linkTarget.value);
   if (!ownsTarget(resolvedTarget)) return Option.none<string>();
-  const tempLink = `${input.launchedAs}.${process.pid}.tmp`;
-  yield* fs.symlink(input.targetEntryPath, tempLink).pipe(
-    Effect.andThen(fs.rename(tempLink, input.launchedAs)),
+  yield* writeShellLauncher(input.launchedAs, input.targetEntryPath).pipe(
     Effect.mapError(
       () =>
         new CliUpdateError({ reason: `Could not repoint the t3 launcher at ${input.launchedAs}.` }),
