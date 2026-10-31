@@ -738,6 +738,7 @@ describe("EnvironmentSupervisor", () => {
         phase: "reconnecting",
         error: null,
         traceId: null,
+        retryAt: waiting.retryAt,
       });
 
       yield* harness.wake("application-active");

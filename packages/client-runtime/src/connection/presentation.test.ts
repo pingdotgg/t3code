@@ -154,6 +154,7 @@ describe("connection presentation", () => {
       phase: "reconnecting",
       error: "Disconnected.",
       traceId: "trace-1",
+      retryAt: 1,
     });
   });
 
