@@ -2050,6 +2050,186 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("loads the thread again when agentcast's approvals change with the runtime mode", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // Codex reads MCP config only when it loads a thread, so a turn that leaves full-access
+        // must unload and resume the thread before agentcast's write tools ask again.
+        const previousMain = process.env.T3CODE_AGENTCAST_MAIN;
+        process.env.T3CODE_AGENTCAST_MAIN = "/opt/agentcast/dist/main.js";
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            if (previousMain === undefined) delete process.env.T3CODE_AGENTCAST_MAIN;
+            else process.env.T3CODE_AGENTCAST_MAIN = previousMain;
+          }),
+        );
+        const scenario = "codex-agentcast-approvals";
+        const nativeThreadId = "agentcast-approvals-thread";
+        yield* (yield* McpProviderSessions.McpProviderSessions).set({
+          environmentId: EnvironmentId.make("environment-codex-agentcast"),
+          threadId: ThreadId.make(`thread-${scenario}`),
+          providerSessionId: `provider-session-${scenario}`,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer secret-codex-token",
+          browserToolsAvailable: true,
+        });
+        const turnModes = ["full-access", "approval-required", "full-access"] as const;
+        const turnIds = ["agentcast-turn-1", "agentcast-turn-2", "agentcast-turn-3"];
+        const turnText = (index: number) => `Desktop round ${index + 1}.`;
+        const turnParams = yield* Effect.forEach(turnModes, (runtimeMode, index) =>
+          CodexAdapterV2.buildCodexTurnStartParams({
+            nativeThreadId,
+            codexInput: [{ type: "text", text: turnText(index) }],
+            runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, runtimeMode },
+            modelSelection: CODEX_TEST_MODEL_SELECTION,
+            hasT3Mcp: true,
+            browserToolsAvailable: true,
+            deviceToolsAvailable: false,
+            omitServiceTier: false,
+          }),
+        );
+        const turn = (
+          index: number,
+          id: number,
+        ): ReadonlyArray<CodexReplay.CodexAppServerReplayEntry> => [
+          {
+            type: "expect_outbound",
+            label: `turn ${index + 1} turn/start`,
+            frame: { id, method: "turn/start", params: turnParams[index] },
+          },
+          {
+            type: "emit_inbound",
+            label: `turn ${index + 1} turn/start`,
+            frame: {
+              id,
+              result: { turn: makeCodexReplayTurn({ id: turnIds[index]!, status: "inProgress" }) },
+            },
+          },
+          ...(["turn/started", "turn/completed"] as const).map(
+            (method): CodexReplay.CodexAppServerReplayEntry => ({
+              type: "emit_inbound",
+              label: `turn ${index + 1} ${method}`,
+              frame: {
+                method,
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({
+                    id: turnIds[index]!,
+                    status: method === "turn/started" ? "inProgress" : "completed",
+                  }),
+                },
+              },
+            }),
+          ),
+        ];
+        const reload = (
+          id: number,
+          by: string,
+        ): ReadonlyArray<CodexReplay.CodexAppServerReplayEntry> => [
+          {
+            type: "expect_outbound",
+            label: `${by}: thread/unsubscribe`,
+            frame: { id, method: "thread/unsubscribe", params: { threadId: nativeThreadId } },
+          },
+          {
+            type: "emit_inbound",
+            label: `${by}: thread/unsubscribe`,
+            frame: { id, result: { status: "unsubscribed" } },
+          },
+          {
+            type: "expect_outbound",
+            label: `${by}: thread/resume`,
+            frame: {
+              id: id + 1,
+              method: "thread/resume",
+              params: {
+                threadId: nativeThreadId,
+                excludeTurns: true,
+                config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: `${by}: thread/resume`,
+            frame: {
+              id: id + 1,
+              result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } },
+            },
+          },
+        ];
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId: turnIds[0]!,
+                prompt: turnText(0),
+              }).slice(0, -3),
+              // Started in full-access: the first full-access turn needs no reload.
+              ...turn(0, 3),
+              // T3 resumes the thread in approval-required mode: a loaded thread keeps its
+              // config through thread/resume, so it is unloaded first. The first unload fails;
+              // T3's retry must unload again, not trust approvals that never loaded.
+              {
+                type: "expect_outbound",
+                label: "T3 resume: failed thread/unsubscribe",
+                frame: {
+                  id: 4,
+                  method: "thread/unsubscribe",
+                  params: { threadId: nativeThreadId },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "T3 resume: failed thread/unsubscribe",
+                frame: { id: 4, error: { code: -32603, message: "app-server busy" } },
+              },
+              ...reload(5, "T3 resume retry"),
+              ...turn(1, 7),
+              // A turn that crosses full-access with no resume reloads the thread itself.
+              ...reload(8, "turn"),
+              ...turn(2, 10),
+            ],
+          }),
+        );
+        for (const [index, runtimeMode] of turnModes.entries()) {
+          if (index === 1) {
+            const resume = harness.runtime.resumeThread({
+              providerThread: harness.providerThread,
+              modelSelection: CODEX_TEST_MODEL_SELECTION,
+              runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, runtimeMode },
+            });
+            const failed = yield* resume.pipe(
+              Effect.match({ onFailure: () => true, onSuccess: () => false }),
+            );
+            assert.isTrue(failed);
+            yield* resume;
+          }
+          yield* harness.runtime.startTurn({
+            ...makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`agentcast-approvals-${index + 1}`),
+              text: turnText(index),
+            }),
+            runOrdinal: index + 1,
+            providerTurnOrdinal: index + 1,
+            runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, runtimeMode },
+          });
+          yield* harness.awaitTerminal(index + 1);
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("preserves T3 context on the wire and restores it after compaction", () =>
     Effect.scoped(
       Effect.gen(function* () {
