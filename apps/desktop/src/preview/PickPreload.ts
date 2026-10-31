@@ -17,6 +17,7 @@ import type {
 import { createAnnotationIdSource } from "./AnnotationIds.ts";
 import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
+import { pickElementAtPoint } from "./PickTarget.ts";
 import { installRecordingCursor } from "./RecordingCursor.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS } from "./RecordingInput.ts";
 import {
@@ -263,13 +264,16 @@ function isAnnotationNode(element: Element): boolean {
 }
 
 function pickFromPoint(clientX: number, clientY: number): Element | null {
-  for (const candidate of document.elementsFromPoint(clientX, clientY)) {
-    if (!(candidate instanceof Element)) continue;
-    if (isAnnotationNode(candidate) || candidate.hasAttribute(INPUT_LAYER_ATTRIBUTE)) continue;
-    if (candidate === document.documentElement || candidate === document.body) continue;
-    return candidate;
-  }
-  return null;
+  return pickElementAtPoint(
+    document,
+    clientX,
+    clientY,
+    (element) =>
+      isAnnotationNode(element) ||
+      element.hasAttribute(INPUT_LAYER_ATTRIBUTE) ||
+      element === document.documentElement ||
+      element === document.body,
+  );
 }
 
 function describeRawElement(element: Element): string {
