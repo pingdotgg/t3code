@@ -1,7 +1,9 @@
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as References from "effect/References";
 import { Argument, Command, GlobalFlag } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
 
@@ -66,7 +68,14 @@ const showCommand = Command.make("show", projectLocationFlags).pipe(
   ),
   Command.withHandler(
     Effect.fn("cli.policy.show")(function* (flags) {
-      const policy = yield* ManagedPolicy.ManagedPolicy.pipe(Effect.provide(ManagedPolicy.layer));
+      // The command prints the policy itself; the server's startup log line would repeat it.
+      const policy = yield* ManagedPolicy.ManagedPolicy.pipe(
+        Effect.provide(
+          ManagedPolicy.layer.pipe(
+            Layer.provide(Layer.succeed(References.MinimumLogLevel, "Warn")),
+          ),
+        ),
+      );
       const installed = yield* ManagedPolicy.loadedPolicy(policy);
       yield* Console.log(describePolicy(policy, installed));
       const config = yield* resolveCliAuthConfig(flags, yield* GlobalFlag.LogLevel);
