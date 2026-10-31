@@ -46,15 +46,21 @@ export function useScheduledTaskActions(environmentId: EnvironmentId) {
     reportFailure: false,
   });
   const [busyTaskId, setBusyTaskId] = useState<ScheduledTaskId | null>(null);
-  const [requested, setRequested] = useState<RequestedScheduledTaskEnabled | null>(null);
+  const [requested, setRequested] = useState<
+    ReadonlyMap<ScheduledTaskId, RequestedScheduledTaskEnabled>
+  >(() => new Map());
 
-  const isEnabled = (task: ScheduledTask) => displayedScheduledTaskEnabled(task, requested);
+  const isEnabled = (task: ScheduledTask) =>
+    displayedScheduledTaskEnabled(task, requested.get(task.id) ?? null);
   const act = async (task: ScheduledTask, action: ScheduledTaskAction) => {
     if (busyTaskId !== null || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
       return;
     setBusyTaskId(task.id);
     const enabled = !isEnabled(task);
-    if (action === "toggle") setRequested({ taskId: task.id, enabled, since: task.updatedAt });
+    if (action === "toggle")
+      setRequested((current) =>
+        new Map(current).set(task.id, { taskId: task.id, enabled, since: task.updatedAt }),
+      );
     const result =
       action === "run"
         ? await runNow({ environmentId, input: { id: task.id } })
@@ -62,7 +68,12 @@ export function useScheduledTaskActions(environmentId: EnvironmentId) {
           ? await setEnabled({ environmentId, input: { id: task.id, enabled } })
           : await remove({ environmentId, input: { id: task.id } });
     setBusyTaskId(null);
-    if (result._tag === "Failure" && action === "toggle") setRequested(null);
+    if (result._tag === "Failure" && action === "toggle")
+      setRequested((current) => {
+        const next = new Map(current);
+        next.delete(task.id);
+        return next;
+      });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(FAILURE_TITLES[action], error instanceof Error ? error.message : "Try again.");
