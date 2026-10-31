@@ -1645,6 +1645,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           flavor.extractSubagentSessionEvent !== undefined && !followsAgentWorkState
             ? undefined
             : flavor.extractSubagentUpdate?.(tool);
+        const foregroundToolFlavor = { ...flavor, extractSubagentUpdate };
         let turnAttached = yield* Deferred.make<boolean>();
         const activeSessionId = yield* Ref.make<string | null>(null);
         const contextUsageBySessionId = yield* Ref.make(
@@ -2028,7 +2029,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             runtimeGeneration,
             Effect.gen(function* () {
               yield* Ref.set(runtimeRestartRequired, true);
-              if (!followsAgentWorkState) return;
+              if (!followsAgentWorkState) {
+                // A held native turn has no prompt fiber left to fail it.
+                if (flavor.ownsNativeTurnAfterPrompt !== true) return;
+                const context = yield* Ref.get(activeTurn);
+                if (context === null || !context.promptSettled || context.finalized) return;
+                yield* cancelPendingRuntimeRequests();
+                yield* finalizeTurn(
+                  context,
+                  "failed",
+                  makeProviderFailure({ class: "transport_error" }),
+                );
+                return;
+              }
               agentWork = { sessionUpdate: "state_update", state: "idle", stopReason: "error" };
               for (const child of nativeChildren.values()) {
                 if (child.status !== "running") continue;
@@ -3425,9 +3438,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (hasDeferredBackgroundWork(context)) return true;
           if (flavor.ownsNativeTurnAfterPrompt !== true) return false;
           for (const tool of context.tools.values()) {
-            if (acpCompletedTurnShouldTerminalizeTool(tool, { ...flavor, extractSubagentUpdate })) {
+            if (acpCompletedTurnShouldTerminalizeTool(tool, foregroundToolFlavor)) {
               return true;
             }
+          }
+          for (const request of Ref.getUnsafe(pendingRuntimeRequests).values()) {
+            if (request.runtimeRequest.providerTurnId === context.providerTurnId) return true;
           }
           return false;
         };
@@ -3440,6 +3456,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (holdsDeferredFinalize(context)) return;
             yield* scheduleDeferredFinalize(context);
           });
+
+        const releasePendingRuntimeRequest = Effect.fn("AcpAdapterV2.releasePendingRuntimeRequest")(
+          function* (requestId: RuntimeRequestId) {
+            const released = yield* Ref.modify(pendingRuntimeRequests, (current) => {
+              const updated = new Map(current);
+              updated.delete(String(requestId));
+              return [current.get(String(requestId)), updated] as const;
+            });
+            if (flavor.ownsNativeTurnAfterPrompt !== true || released === undefined) return;
+            const context = yield* Ref.get(activeTurn);
+            if (context?.providerTurnId !== released.runtimeRequest.providerTurnId) return;
+            yield* rearmDeferredFinalize(context);
+          },
+        );
 
         // let breaks circular inference from monitor hydration re-entry.
         let emitTool: (
@@ -5506,11 +5536,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   Effect.ensuring(
                     runRuntimeCallbackAtGeneration(
                       generation,
-                      Ref.update(pendingRuntimeRequests, (current) => {
-                        const updated = new Map(current);
-                        updated.delete(String(requestId));
-                        return updated;
-                      }),
+                      releasePendingRuntimeRequest(requestId),
                     ).pipe(Effect.asVoid),
                   ),
                 );
@@ -6208,11 +6234,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 Effect.ensuring(
                   runRuntimeCallbackAtGeneration(
                     handlerGeneration,
-                    Ref.update(pendingRuntimeRequests, (current) => {
-                      const updated = new Map(current);
-                      updated.delete(String(requestId));
-                      return updated;
-                    }),
+                    releasePendingRuntimeRequest(requestId),
                   ).pipe(Effect.asVoid),
                 ),
               );
@@ -7110,8 +7132,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           status: "completed" | "failed" = "completed",
         ) {
           for (const tool of context.tools.values()) {
-            if (!acpCompletedTurnShouldTerminalizeTool(tool, { ...flavor, extractSubagentUpdate }))
-              continue;
+            if (!acpCompletedTurnShouldTerminalizeTool(tool, foregroundToolFlavor)) continue;
             yield* emitTool(context, tool, status);
           }
         });

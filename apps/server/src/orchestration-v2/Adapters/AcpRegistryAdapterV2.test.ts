@@ -2252,6 +2252,148 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("fails a MiniMax Code continuation whose process exits while its tool runs", () =>
+    Effect.gen(function* () {
+      const { update } = claudeFrames;
+      const { minimax, gate } = yield* openMiniMaxContinuationWithRunningTool(
+        [
+          {
+            ...update(MINIMAX_ROOT_SESSION, {
+              sessionUpdate: "session_info_update",
+              title: "after exit",
+            }),
+            label: "after-exit",
+          },
+        ],
+        ["after-exit"],
+      );
+      yield* minimax.terminate();
+      gate.release("after-exit");
+      const seen = yield* minimax.until(
+        (event) =>
+          event.type === "turn.terminal" ||
+          (event.type === "provider_thread.updated" &&
+            event.providerThread.nativeMetadata?.title === "after exit"),
+      );
+      const terminal = seen.at(-1)!;
+      if (terminal.type !== "turn.terminal") throw new Error("Process exit left the run open");
+      assert.equal(terminal.status, "failed");
+      assert.equal(terminal.failure?.class, "transport_error");
+      assert.equal(terminal.runOrdinal, 2);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect.each([
+    {
+      kind: "approval",
+      method: "session/request_permission",
+      params: {
+        sessionId: MINIMAX_ROOT_SESSION,
+        toolCall: { toolCallId: "write-config", title: "Write config", kind: "edit" },
+        options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+      },
+      answer: { decision: "accept" as const },
+      response: { outcome: { outcome: "selected", optionId: "allow" } },
+    },
+    {
+      kind: "question",
+      method: "elicitation/create",
+      params: {
+        sessionId: MINIMAX_ROOT_SESSION,
+        mode: "form",
+        message: "Which file?",
+        requestedSchema: {
+          type: "object",
+          properties: { file: { type: "string", title: "File", enum: ["a.ts", "b.ts"] } },
+          required: ["file"],
+        },
+      },
+      answer: { answers: { file: "a.ts" } },
+      response: { action: "accept", content: { file: "a.ts" } },
+    },
+  ] as const)("keeps a MiniMax Code continuation open while its $kind waits", (testCase) =>
+    Effect.gen(function* () {
+      const { update } = claudeFrames;
+      const gate = makeProviderReplayGate(["late", "request", "quiet"]);
+      const minimax = yield* openClaudeReplaySession(
+        [
+          ...minimaxResolvedPrompt,
+          {
+            ...update(MINIMAX_ROOT_SESSION, {
+              sessionUpdate: "agent_thought_chunk",
+              content: { type: "text", text: "Asking before I continue." },
+            }),
+            label: "late",
+          },
+          update(MINIMAX_ROOT_SESSION, {
+            sessionUpdate: "session_info_update",
+            title: "late output sent",
+          }),
+          {
+            type: "emit_inbound",
+            label: "request",
+            frame: { kind: "request", method: testCase.method, params: testCase.params },
+          },
+          {
+            ...update(MINIMAX_ROOT_SESSION, {
+              sessionUpdate: "session_info_update",
+              title: "still waiting",
+            }),
+            label: "quiet",
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "response", method: testCase.method, result: testCase.response },
+          },
+          update(MINIMAX_ROOT_SESSION, {
+            sessionUpdate: "session_info_update",
+            title: "answered",
+          }),
+        ],
+        gate,
+        true,
+        "minimax-code",
+      );
+      yield* minimax.runtime.startTurn(minimax.turnInput(1));
+      assert.equal((yield* minimax.terminal).status, "completed");
+      gate.release("late");
+      yield* minimax.throughMarker("late output sent");
+      assert.lengthOf(minimax.offers, 1);
+      yield* minimax.offers[0]!.dispatchIfCurrent!(Effect.void);
+      yield* minimax.runtime.startTurn(minimax.turnInput(2, { continuation: true }));
+      gate.release("request");
+      const asked = yield* minimax.until(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+      );
+      const request = asked.at(-1)!;
+      if (request.type !== "runtime_request.updated") throw new Error("Missing request");
+      yield* TestClock.adjust("10 seconds");
+      gate.release("quiet");
+      const waiting = [...asked, ...(yield* minimax.throughMarker("still waiting"))];
+      assert.isFalse(
+        waiting.some((event) => event.type === "turn.terminal"),
+        "a pending request keeps the continuation run open",
+      );
+      assert.isFalse(
+        waiting.some(
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status !== "pending",
+        ),
+      );
+      yield* minimax.runtime.respondToRuntimeRequest({
+        requestId: request.runtimeRequest.id,
+        ...testCase.answer,
+      });
+      const answered = yield* minimax.throughMarker("answered");
+      assert.isFalse(answered.some((event) => event.type === "turn.terminal"));
+      yield* TestClock.adjust("3 seconds");
+      const terminal = yield* minimax.terminal;
+      assert.equal(terminal.status, "completed");
+      assert.equal(terminal.runOrdinal, 2);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("fails active Claude work and releases its children when the process exits", () =>
     Effect.gen(function* () {
       const session = yield* openClaudeReplaySession([
