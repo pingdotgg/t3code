@@ -4,6 +4,7 @@ import { Globe, Link } from "lucide-react";
 
 import type { BrowserHistoryEntry } from "~/browserHistoryStore";
 import { Button } from "~/components/ui/button";
+import { LabeledSection } from "~/components/ui/labeled-section";
 
 import { PreviewLocalServerCard } from "./PreviewLocalServerCard";
 import { PreviewRecentUrlCard } from "./PreviewRecentUrlCard";
@@ -58,8 +59,7 @@ export function PreviewEmptyState({
           ) : null}
         </div>
         {servers.length > 0 ? (
-          <section className="flex flex-col gap-2">
-            <h3 className="text-meta font-medium text-dim-foreground">Local servers</h3>
+          <LabeledSection label="Local servers">
             {servers.map((server) => (
               <PreviewLocalServerCard
                 key={`${server.host}:${server.port}`}
@@ -67,11 +67,10 @@ export function PreviewEmptyState({
                 onOpen={() => onOpenUrl(server.requestedUrl)}
               />
             ))}
-          </section>
+          </LabeledSection>
         ) : null}
         {recents.length > 0 ? (
-          <section className="flex flex-col gap-2">
-            <h3 className="text-meta font-medium text-dim-foreground">Recently used</h3>
+          <LabeledSection label="Recently used">
             <div className="flex flex-col">
               {recents.map((entry) => (
                 <PreviewRecentUrlCard
@@ -82,7 +81,7 @@ export function PreviewEmptyState({
                 />
               ))}
             </div>
-          </section>
+          </LabeledSection>
         ) : null}
       </div>
     </div>

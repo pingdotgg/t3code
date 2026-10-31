@@ -37,6 +37,8 @@ function header(title: string) {
         onOpenThread={() => {}}
         rightPanelOpen={false}
         onNewThreadInProject={() => {}}
+        besideAvailable={new Set()}
+        onOpenBeside={() => {}}
       />
       <div tabIndex={0}>Outside rename</div>
     </>

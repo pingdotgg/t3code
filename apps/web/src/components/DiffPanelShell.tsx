@@ -21,7 +21,8 @@ function getDiffPanelHeaderRowClassName(mode: DiffPanelMode) {
 
 export function DiffPanelShell(props: {
   mode: DiffPanelMode;
-  header: ReactNode;
+  /** Null when a panel tab bar carries the header (PanelTabBreadcrumb, PanelTabActions). */
+  header: ReactNode | null;
   children: ReactNode;
 }) {
   const shouldUseDragRegion = isElectron && props.mode !== "sheet" && props.mode !== "embedded";
@@ -29,13 +30,16 @@ export function DiffPanelShell(props: {
   return (
     <div
       className={cn(
-        "flex h-full min-w-0 flex-col bg-background",
+        // Under a pane's tab row the diff reaches up to the pane's top edge
+        // (--surface-top-inset, index.css).
+        "flex h-[calc(100%+var(--surface-top-inset,0px))] min-w-0 flex-col bg-background",
         props.mode === "inline"
           ? "w-[42vw] min-w-[360px] max-w-[560px] shrink-0 border-l border-border"
           : "w-full",
       )}
+      data-surface-reaches-under-header={props.header === null ? "" : undefined}
     >
-      {shouldUseDragRegion ? (
+      {props.header === null ? null : shouldUseDragRegion ? (
         <div className={getDiffPanelHeaderRowClassName(props.mode)}>{props.header}</div>
       ) : (
         <div className={getDiffPanelHeaderRowClassName(props.mode)} data-surface-subheader>
@@ -93,7 +97,7 @@ function DiffCodeLineSkeleton({ width }: { width: "short" | "medium" | "long" })
 export function DiffPanelLoadingState(props: { label: string }) {
   return (
     <div
-      className="min-h-0 flex-1 overflow-hidden bg-background"
+      className="min-h-0 flex-1 overflow-hidden bg-background pt-under-header"
       role="status"
       aria-live="polite"
       aria-label={props.label}

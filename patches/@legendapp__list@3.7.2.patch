@@ -103,10 +103,27 @@ index 9ebfddc183a9b202d35c990a387c9b628feeb185..489050190144997ac72de8f4f7c62194
      if (ownsMeasuredItem) {
        const index = state.indexByKey.get(measurement.itemKey);
 diff --git a/react.js b/react.js
-index 515545471e08426fc90856256db9491db0ca4b92..b741735df1fbc0c954ed48f15590abce727d5336 100644
+index 515545471e08426fc90856256db9491db0ca4b92..bd734821b6698ef1ceb21f8a65dc6c5ce2dd95b0 100644
 --- a/react.js
 +++ b/react.js
-@@ -5635,6 +5635,19 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem, notif
+@@ -3489,6 +3489,16 @@ function abortBootstrapInitialScroll(ctx) {
+ 
+ // src/core/containerLayoutBaseline.ts
+ var containerLayoutBaselines = /* @__PURE__ */ new WeakMap();
++// Client rects include ancestor transforms (a zoomed-out overview scales the
++// list), layout sizes do not. Item sizes are layout sizes, so undo the scale.
++function measureLayoutRect(element) {
++  const rect = element.getBoundingClientRect();
++  const layoutWidth = element.offsetWidth;
++  if (!layoutWidth || !rect.width) return rect;
++  const scale = rect.width / layoutWidth;
++  if (Math.abs(scale - 1) < 0.05) return rect;
++  return { height: rect.height / scale, left: rect.left, top: rect.top, width: rect.width / scale, x: rect.x, y: rect.y };
++}
+ function getContainerLayoutBaseline(element) {
+   return containerLayoutBaselines.get(element);
+ }
+@@ -5635,6 +5645,19 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem, notif
  }
  
  // src/core/measureContainersInLayoutEffect.ts
@@ -126,7 +143,7 @@ index 515545471e08426fc90856256db9491db0ca4b92..b741735df1fbc0c954ed48f15590abce
  function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
    var _a3, _b, _c;
    const dataChangeEpoch = ctx.state.dataChangeEpoch;
-@@ -5646,13 +5659,13 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+@@ -5646,13 +5669,13 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
      const element = viewRef == null ? void 0 : viewRef.current;
      if (itemKey !== void 0 && element && isContainerItemCurrent(ctx, containerId, itemKey)) {
        const generation = (_b = ctx.state.containerItemGenerations[containerId]) != null ? _b : 0;
@@ -143,7 +160,25 @@ index 515545471e08426fc90856256db9491db0ca4b92..b741735df1fbc0c954ed48f15590abce
        });
      }
    }
-@@ -6296,9 +6309,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+@@ -6214,7 +6237,7 @@ function useOnLayoutSync({
+     };
+     let prevRect;
+     if (measureInLayoutEffect) {
+-      const rect = element.getBoundingClientRect();
++      const rect = measureLayoutRect(element);
+       emit(toLayout(rect), true);
+       prevRect = rect;
+     }
+@@ -6227,7 +6250,7 @@ function useOnLayoutSync({
+         left: entry.contentRect.left,
+         top: entry.contentRect.top,
+         width: borderBoxSize.inlineSize
+-      } : (_a4 = target == null ? void 0 : target.getBoundingClientRect()) != null ? _a4 : entry.contentRect;
++      } : (_a4 = target == null ? void 0 : measureLayoutRect(target)) != null ? _a4 : entry.contentRect;
+       const previousRect = prevRect != null ? prevRect : getContainerLayoutBaseline(element);
+       const didSizeChange = previousRect === void 0 || rectObserved.width !== previousRect.width || rectObserved.height !== previousRect.height;
+       prevRect = rectObserved;
+@@ -6296,9 +6319,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
        var _a4;
        if (state.itemKey === currentItemKey) {
          const element = ref.current;
@@ -156,10 +191,27 @@ index 515545471e08426fc90856256db9491db0ca4b92..b741735df1fbc0c954ed48f15590abce
          applyLayout();
        }
 diff --git a/react.mjs b/react.mjs
-index ce08abe7ee62e8940f9c6ff169829244bd6bb736..fce79caef8387e517cbab8051b213cb57b1df590 100644
+index ce08abe7ee62e8940f9c6ff169829244bd6bb736..56261d4834230b1d7211d164a9391e14457694ce 100644
 --- a/react.mjs
 +++ b/react.mjs
-@@ -5614,6 +5614,19 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem, notif
+@@ -3468,6 +3468,16 @@ function abortBootstrapInitialScroll(ctx) {
+ 
+ // src/core/containerLayoutBaseline.ts
+ var containerLayoutBaselines = /* @__PURE__ */ new WeakMap();
++// Client rects include ancestor transforms (a zoomed-out overview scales the
++// list), layout sizes do not. Item sizes are layout sizes, so undo the scale.
++function measureLayoutRect(element) {
++  const rect = element.getBoundingClientRect();
++  const layoutWidth = element.offsetWidth;
++  if (!layoutWidth || !rect.width) return rect;
++  const scale = rect.width / layoutWidth;
++  if (Math.abs(scale - 1) < 0.05) return rect;
++  return { height: rect.height / scale, left: rect.left, top: rect.top, width: rect.width / scale, x: rect.x, y: rect.y };
++}
+ function getContainerLayoutBaseline(element) {
+   return containerLayoutBaselines.get(element);
+ }
+@@ -5614,6 +5624,19 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem, notif
  }
  
  // src/core/measureContainersInLayoutEffect.ts
@@ -179,7 +231,7 @@ index ce08abe7ee62e8940f9c6ff169829244bd6bb736..fce79caef8387e517cbab8051b213cb5
  function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
    var _a3, _b, _c;
    const dataChangeEpoch = ctx.state.dataChangeEpoch;
-@@ -5625,13 +5638,13 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+@@ -5625,13 +5648,13 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
      const element = viewRef == null ? void 0 : viewRef.current;
      if (itemKey !== void 0 && element && isContainerItemCurrent(ctx, containerId, itemKey)) {
        const generation = (_b = ctx.state.containerItemGenerations[containerId]) != null ? _b : 0;
@@ -196,7 +248,25 @@ index ce08abe7ee62e8940f9c6ff169829244bd6bb736..fce79caef8387e517cbab8051b213cb5
        });
      }
    }
-@@ -6275,9 +6288,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+@@ -6193,7 +6216,7 @@ function useOnLayoutSync({
+     };
+     let prevRect;
+     if (measureInLayoutEffect) {
+-      const rect = element.getBoundingClientRect();
++      const rect = measureLayoutRect(element);
+       emit(toLayout(rect), true);
+       prevRect = rect;
+     }
+@@ -6206,7 +6229,7 @@ function useOnLayoutSync({
+         left: entry.contentRect.left,
+         top: entry.contentRect.top,
+         width: borderBoxSize.inlineSize
+-      } : (_a4 = target == null ? void 0 : target.getBoundingClientRect()) != null ? _a4 : entry.contentRect;
++      } : (_a4 = target == null ? void 0 : measureLayoutRect(target)) != null ? _a4 : entry.contentRect;
+       const previousRect = prevRect != null ? prevRect : getContainerLayoutBaseline(element);
+       const didSizeChange = previousRect === void 0 || rectObserved.width !== previousRect.width || rectObserved.height !== previousRect.height;
+       prevRect = rectObserved;
+@@ -6275,9 +6298,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
        var _a4;
        if (state.itemKey === currentItemKey) {
          const element = ref.current;

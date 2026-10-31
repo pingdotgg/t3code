@@ -4,7 +4,7 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useShallow } from "zustand/react/shallow";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 
 import { previewBridge } from "~/components/preview/previewBridge";
 import {
@@ -15,7 +15,11 @@ import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { useClientSettingsHydrated } from "~/hooks/useSettings";
 import { cn, isMacPlatform } from "~/lib/utils";
 
-import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
+import {
+  resolveBrowserSurfacePanelRect,
+  syncBrowserSurfaceWrapper,
+  useBrowserSurfaceStore,
+} from "./browserSurfaceStore";
 import { useActiveBrowserRecordingTabIds } from "./browserRecording";
 import {
   browserViewportSettingKey,
@@ -188,7 +192,10 @@ export function HostedBrowserWebview(props: {
     // Guest clicks never reach this document, so replay a pointerdown to dismiss host popups.
     // The guest preload reports each press, since the guest does not always take focus.
     const dismissHostPopups = () => {
-      webview.dispatchEvent(
+      const slot = document.querySelector(
+        `[data-browser-surface-slot="${CSS.escape(runtimeTabId)}"]`,
+      );
+      (slot?.closest("[data-layout-tab-id]") ? slot : webview).dispatchEvent(
         new PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" }),
       );
     };
@@ -292,6 +299,15 @@ export function HostedBrowserWebview(props: {
     const frameId = window.requestAnimationFrame(syncContentPresentation);
     return () => window.cancelAnimationFrame(frameId);
   }, [syncContentPresentation]);
+
+  // The slot moves the wrapper on screen directly (BrowserSurfaceSlot); a
+  // render that shows or hides it takes or drops that placement.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Publish the committed wrapper placement to the external browser surface registry.
+  useLayoutEffect(() => {
+    syncBrowserSurfaceWrapper(runtimeTabId, wrapperRef.current, active);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Remove this wrapper from the browser surface registry when its runtime tab unmounts.
+  useEffect(() => () => syncBrowserSurfaceWrapper(runtimeTabId, null, false), [runtimeTabId]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the webview wrapper element to its origin for a new tab or viewport size
   useEffect(() => {
