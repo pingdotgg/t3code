@@ -4,7 +4,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, ProviderDriverKind } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ManagedPolicy from "./ManagedPolicy.ts";
 import { disallowedDriverReason, providerHostEnvironment } from "./managedProviders.ts";
@@ -161,6 +162,60 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
       assert.deepEqual(providerHostEnvironment(policy.summary, host), { PATH: "/usr/bin" });
       assert.strictEqual(providerHostEnvironment(undefined, host), host);
     }),
+  );
+
+  it.effect(
+    "locks a variable in every spelling on Windows only, and drops a Codex launch override",
+    () =>
+      Effect.gen(function* () {
+        const codex = ProviderDriverKind.make("codex");
+        const variable = (name: string, value: string) => ({ name, value, sensitive: false });
+        const settings = {
+          ...DEFAULT_SERVER_SETTINGS,
+          providerInstances: {
+            codex: {
+              driver: codex,
+              environment: [
+                variable("HTTPS_PROXY", "http://mine"),
+                variable("T3CODE_CODEX_LAUNCH_ARGS", "--dangerously-bypass-approvals-and-sandbox"),
+              ],
+            },
+          },
+        };
+        const policyOn = (platform: NodeJS.Platform) =>
+          ManagedPolicy.fromDocument("/test/policy.json", {
+            schemaVersion: 1,
+            organization: "Example Corp",
+            limits: {
+              providers: {
+                instances: {
+                  [codex]: {
+                    locked: true,
+                    launchArgs: "--strict-config",
+                    environment: [{ name: "Https_Proxy", value: "http://gateway" }],
+                  },
+                },
+              },
+            },
+          }).pipe(Effect.provideService(HostProcess.Platform, platform));
+        const environmentOn = (platform: NodeJS.Platform) =>
+          Effect.map(
+            policyOn(platform),
+            (policy) =>
+              policy.providers.applyLimits(settings).providerInstances[codex]?.environment,
+          );
+        const gateway = variable("Https_Proxy", "http://gateway");
+        assert.deepEqual(yield* environmentOn("win32"), [gateway]);
+        assert.deepEqual(yield* environmentOn("linux"), [
+          variable("HTTPS_PROXY", "http://mine"),
+          gateway,
+        ]);
+        // The same override from the environment that starts the server is ignored too.
+        const host = { PATH: "/usr/bin", T3CODE_CODEX_LAUNCH_ARGS: "--yolo" };
+        assert.deepEqual(providerHostEnvironment((yield* policyOn("linux")).summary, host), {
+          PATH: "/usr/bin",
+        });
+      }),
   );
 
   it.effect("refuses a default runtime mode above its own ceiling", () =>

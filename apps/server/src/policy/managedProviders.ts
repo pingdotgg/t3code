@@ -140,9 +140,9 @@ export const disallowedDriverReason = (
 };
 
 /**
- * Host variables that replace a provider's launch configuration. They come from whoever starts
- * the server, so a runtime-mode ceiling, which makes launch configuration the administrator's,
- * ignores them.
+ * Variables that replace a provider's launch configuration. They come from whoever starts the
+ * server or from the user's instance settings, so a policy that locks launch arguments, as a
+ * runtime-mode ceiling does, ignores them.
  */
 const LAUNCH_OVERRIDE_VARIABLES = ["T3CODE_CODEX_LAUNCH_ARGS"] as const;
 
@@ -151,7 +151,9 @@ export const providerHostEnvironment = (
   summary: ManagedPolicySummary | undefined,
   environment: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv => {
-  if (summary?.limits?.maxRuntimeMode === undefined) return environment;
+  const codex =
+    summary?.limits?.providers?.lockedInstanceFields?.[ProviderDriverKind.make("codex")];
+  if (codex?.includes("config.launchArgs") !== true) return environment;
   const next = { ...environment };
   for (const name of LAUNCH_OVERRIDE_VARIABLES) delete next[name];
   return next;
@@ -198,15 +200,13 @@ interface DriverRule {
   readonly environment: "all" | "locked" | "fill";
 }
 
-// Windows reads a variable name without regard to case, so a lock covers every spelling.
-const variableKey = (name: string) => name.toUpperCase();
-
 const pinnedValue = (pin: ManagedProviderInstance | undefined, field: string): unknown =>
   pin === undefined ? undefined : (pin as Record<string, unknown>)[field];
 
 const overlayInstance = (
   instance: ProviderInstanceConfig,
   rule: DriverRule,
+  variableKey: (name: string) => string,
 ): ProviderInstanceConfig => {
   const config = { ...configRecord(instance) };
   for (const field of rule.config) {
@@ -229,9 +229,14 @@ const overlayInstance = (
     rule.environment === "all" ? pinnedEnvironment : [];
   if (rule.environment !== "all") {
     const seen = new Set<string>();
+    // A user's override would replace launch arguments the administrator locked.
+    const overrides = rule.config.includes("launchArgs")
+      ? new Set(LAUNCH_OVERRIDE_VARIABLES.map(variableKey))
+      : new Set<string>();
     // The last entry for a name wins at launch, so a lock replaces every entry with that name.
     for (const variable of instance.environment ?? []) {
       const key = variableKey(variable.name);
+      if (overrides.has(key)) continue;
       const pinned = rule.environment === "locked" ? pinnedByName.get(key) : undefined;
       if (pinned === undefined) environment.push(variable);
       else if (!seen.has(key)) environment.push(pinned);
@@ -256,10 +261,13 @@ const overlayInstance = (
  */
 export function makeManagedProviders(
   limits: ManagedProviderLimits,
-  maxRuntimeMode?: RuntimeMode,
+  maxRuntimeMode: RuntimeMode | undefined,
+  platform: NodeJS.Platform,
 ):
   | { readonly _tag: "Valid"; readonly providers: ManagedProviders }
   | { readonly _tag: "Invalid"; readonly reason: string } {
+  // Windows reads a variable name without regard to case, so there a lock covers every spelling.
+  const variableKey = (name: string) => (platform === "win32" ? name.toUpperCase() : name);
   for (const driver of limits.allowedDrivers ?? []) {
     if (!KNOWN_DRIVERS.has(driver)) {
       return { _tag: "Invalid", reason: `"${driver}" in allowedDrivers is not a known provider` };
@@ -338,7 +346,9 @@ export function makeManagedProviders(
     }
     for (const [instanceId, instance] of Object.entries(providerInstances)) {
       const rule = rules.get(instance.driver);
-      if (rule !== undefined) providerInstances[instanceId] = overlayInstance(instance, rule);
+      if (rule !== undefined) {
+        providerInstances[instanceId] = overlayInstance(instance, rule, variableKey);
+      }
     }
     // A cleared selection falls back to the text generation model, which is resolved afterwards.
     const result: ServerSettings = {
