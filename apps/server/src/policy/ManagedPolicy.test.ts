@@ -120,6 +120,17 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
             ...base,
             settings: { "storageCleanup.worktreeAfterDays": { value: 7, locked: true } },
           }),
+          // T3CODE_CODEX_LAUNCH_ARGS in the instance's own variables would replace them.
+          JSON.stringify({
+            ...base,
+            settings: {
+              "providerInstances.codex.driver": { value: "codex", locked: true },
+              "providerInstances.codex.config.launchArgs": {
+                value: "-c model_provider=corp",
+                locked: true,
+              },
+            },
+          }),
         ],
         (contents) =>
           loadFrom(contents).pipe(
@@ -127,13 +138,14 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
             Effect.map((error) => error.reason),
           ),
       );
-      assert.lengthOf(reasons, 11);
+      assert.lengthOf(reasons, 12);
       assert.include(reasons[3], "storageCleanup.logsAfterDayz");
       assert.include(reasons[6], "adds entries users could not remove");
       assert.include(reasons[7], "adds entries users could not remove");
       assert.include(reasons[8], 'manage "defaultModelSelection" as a whole');
       assert.include(reasons[9], 'manage "idleCompaction" instead');
       assert.include(reasons[10], 'lock "worktreeCleanup" too');
+      assert.include(reasons[11], 'lock "providerInstances.codex.environment" too');
     }),
   );
 

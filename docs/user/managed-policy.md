@@ -131,6 +131,9 @@ A few settings need care:
   rules.
 - Manage `idleCompaction`, not the older `compactIdleThreads`. A Claude instance's own idle
   compaction choice still wins over `idleCompaction`.
+- A variable in a provider instance can replace its launch arguments, so a lock on
+  `providerInstances.<id>.config` or its `launchArgs` needs `providerInstances.<id>.environment`
+  locked too. Locking the whole instance covers both.
 
 ## Limits
 
@@ -206,7 +209,9 @@ T3 Connect. To keep other remote access but turn off T3 Connect alone, set `"con
 When it starts, the server also turns off each Tailscale Serve route, HTTPS or TCP, that forwards
 to it, such as one `t3 pair --tailscale` set up, and leaves other routes alone. It does not start
 while such a route stays on, or while Tailscale's answer cannot be read; the error names the
-command that turns the route off. It does start when Tailscale is not installed, not running, or
+command that turns the route off. A route whose target is a name, such as `localhost` or another
+machine on the same port, also stops it, since a name can resolve to this server; change the route
+or T3 Code's port. It does start when Tailscale is not installed, not running, or
 logged out, since nothing forwards then; a route Tailscale kept returns when Tailscale runs again,
 so restart T3 Code after that.
 
