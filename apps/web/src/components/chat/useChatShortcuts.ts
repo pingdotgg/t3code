@@ -11,6 +11,12 @@ import { isInSideChatPane } from "../../lib/sideChatPane";
 import { getTerminalFocusOwner, type TerminalFocusOwner } from "../../lib/terminalFocus";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { BranchToolbarHandle } from "../BranchToolbar";
+import {
+  useLayoutPaneFocusedRef,
+  useLayoutPaneOwnsThreadRef,
+  RELATED_CHAT_COMMANDS,
+} from "../../layout/layoutPaneContext";
+import { isModalDialogOpen } from "../../lib/modalDialog";
 import { shouldTypeToFocusComposer } from "./composerFocusRedirect";
 import { composerShortcutCommands } from "./composerShortcuts";
 
@@ -53,23 +59,38 @@ interface ChatShortcutsInput {
 export function useChatShortcuts(input: ChatShortcutsInput) {
   const embedded = input.embedded === true;
   const composerElement = embedded ? (input.composerElement ?? null) : null;
+  const paneFocusedRef = useLayoutPaneFocusedRef();
+  const paneOwnsThreadRef = useLayoutPaneOwnsThreadRef();
   const handleShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (!paneOwnsThreadRef.current) return;
+    const focused = paneFocusedRef.current;
     const { keybindings } = input;
-    if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
+    if (focused && preventRepeatedTerminalCloseShortcut(event, keybindings)) {
       event.stopPropagation();
       return;
     }
     if (input.threadFindActive && event.key === "Escape") return;
-    if (isTerminalCloseConfirmPending() && preventTerminalCloseShortcut(event, keybindings)) {
+    if (
+      focused &&
+      isTerminalCloseConfirmPending() &&
+      preventTerminalCloseShortcut(event, keybindings)
+    ) {
       event.stopPropagation();
       return;
     }
-    if (!input.enabled || isCommandPaletteOpen() || isInSideChatPane(event.target)) return;
+    if (
+      !input.enabled ||
+      isCommandPaletteOpen() ||
+      isModalDialogOpen() ||
+      isInSideChatPane(event.target)
+    )
+      return;
     const terminalFocusOwner = getTerminalFocusOwner();
     if (event.defaultPrevented && terminalFocusOwner === null) return;
     const shortcutContext = input.getShortcutContext(event.target);
 
     if (
+      focused &&
       !shortcutContext.terminalFocus &&
       !shortcutContext.modelPickerOpen &&
       shouldTypeToFocusComposer(event) &&
@@ -83,7 +104,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     const command = resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
       context: shortcutContext,
     });
-    if (!command) return;
+    if (!command || (!focused && !RELATED_CHAT_COMMANDS.has(command))) return;
     const run =
       input.commands[command] ??
       composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command] ??
@@ -94,6 +115,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
   });
   const dismissFind = useEffectEvent((event: KeyboardEvent) => {
     if (
+      !paneOwnsThreadRef.current ||
       event.key !== "Escape" ||
       !input.threadFindActive ||
       event.defaultPrevented ||

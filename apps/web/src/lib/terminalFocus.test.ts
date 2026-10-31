@@ -208,6 +208,24 @@ describe("focusTerminal", () => {
     unregisterPanel();
   });
 
+  it("keeps workspace focus when entering a pane with its drawer open", () => {
+    const ref = threadRef("workspace-focus");
+    useTerminalUiStateStore.getState().ensureTerminal(ref, "drawer", { open: true, active: true });
+    const drawer = vi.fn(() => true);
+    const unregister = registerTerminalFocusTarget({
+      threadRef: ref,
+      terminalId: "drawer",
+      focus: drawer,
+    });
+    const leave = focusTerminalOnThreadEnter(ref, true);
+    expect(drawer).not.toHaveBeenCalled();
+    leave();
+    const leaveAgain = focusTerminalOnThreadEnter(ref);
+    expect(drawer).toHaveBeenCalledTimes(1);
+    leaveAgain();
+    unregister();
+  });
+
   it("re-entering a thread after in-thread terminal actions focuses the drawer", () => {
     const ref = threadRef("re-entered");
     useTerminalUiStateStore.getState().ensureTerminal(ref, "drawer", { open: true, active: true });
