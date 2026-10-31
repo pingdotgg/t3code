@@ -5,16 +5,14 @@ import { Badge } from "../ui/badge";
 import { resolvePullRequestState } from "./pullRequestPresentation";
 
 /**
- * One layer of a stack. In the stack menu it reads "#num Title" over where the layer sits, with a
- * badge for the layers worth calling out; the confirm dialogs use the compact "#num · state" line.
+ * Stack navigation puts the title over its number and branch; confirmations use a compact row.
  */
 export function PullRequestStackLayerContent({
   layer,
   terminology,
   compact = false,
   position,
-  size,
-  base,
+
   current = false,
 }: {
   layer: PullRequestStack["layers"][number];
@@ -44,16 +42,11 @@ export function PullRequestStackLayerContent({
       </>
     );
   }
-  const subline =
-    position === 1 && base
-      ? `base: ${base}`
-      : position !== undefined && size !== undefined
-        ? `layer ${position} of ${size}`
-        : layer.headBranch;
+
   const badge = current ? (
-    <Badge variant="info">This {terminology.shortLabel}</Badge>
+    <Badge variant="success">This {terminology.shortLabel}</Badge>
   ) : layer.state === "merged" ? (
-    <Badge variant="secondary">Merged</Badge>
+    <Badge variant="merged">Merged</Badge>
   ) : layer.state === "closed" ? (
     <Badge variant="secondary">Closed</Badge>
   ) : layer.isDraft ? (
@@ -61,15 +54,19 @@ export function PullRequestStackLayerContent({
   ) : null;
   return (
     <>
-      <state.Icon aria-label={state.label} className={cn("size-4 shrink-0", state.toneClassName)} />
-      <span className="min-w-0 flex-1">
-        <span className="flex min-w-0 items-baseline gap-1.5">
-          <span className="shrink-0 font-mono text-meta text-muted-foreground">
-            #{layer.number}
-          </span>
-          <span className="truncate">{layer.title || layer.headBranch}</span>
+      <span className="flex w-4 shrink-0 flex-col items-center gap-1 self-stretch pt-2">
+        <state.Icon
+          aria-label={state.label}
+          className={cn("size-4 shrink-0", state.toneClassName)}
+        />
+        {position !== undefined ? <span className="w-px flex-1 bg-border" /> : null}
+      </span>
+      <span className="min-w-0 flex-1 py-2">
+        <span className="block truncate text-label">{layer.title || layer.headBranch}</span>
+        <span className="mt-0.5 flex min-w-0 gap-1.5 font-mono text-meta text-muted-foreground">
+          <span>#{layer.number}</span>
+          <span className="truncate">{layer.headBranch}</span>
         </span>
-        <span className="block truncate text-meta text-muted-foreground">{subline}</span>
       </span>
       {badge}
     </>

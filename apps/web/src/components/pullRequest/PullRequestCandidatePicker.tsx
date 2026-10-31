@@ -23,6 +23,7 @@ export function PullRequestCandidatePicker<T>({
   query,
   onQueryChange,
   searchLabel,
+  popupWidth,
   isPending,
   error,
   candidates,
@@ -46,6 +47,7 @@ export function PullRequestCandidatePicker<T>({
   query: string;
   onQueryChange: (query: string) => void;
   searchLabel: string;
+  popupWidth: "reviewers" | "labels";
   isPending: boolean;
   error: string | null;
   candidates: ReadonlyArray<T>;
@@ -110,7 +112,11 @@ export function PullRequestCandidatePicker<T>({
           </Button>
         }
       />
-      <ComboboxPopup align="start" side="bottom" className="w-72">
+      <ComboboxPopup
+        align="start"
+        side="bottom"
+        className={popupWidth === "reviewers" ? "w-85" : "w-80"}
+      >
         <ComboboxSearchInput
           aria-label={searchLabel}
           placeholder={searchLabel}
