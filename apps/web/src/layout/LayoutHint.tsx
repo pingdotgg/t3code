@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useState, type CSSProperties } from "react"
 import { Kbd } from "../components/ui/kbd";
 import { shortcutLabelForCommand } from "../keybindings";
 import { cn } from "../lib/utils";
+import { observeResize } from "../lib/observeResize";
 import { useThreadShell } from "../state/entities";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { countedLayoutWorkspaces } from "./layoutCommands";
@@ -69,12 +70,19 @@ function useHintPlacement() {
       });
     };
     place();
+    const pane = host.querySelector("[data-layout-pane-focused='true'][data-layout-pane-id]");
+    const composer = pane?.querySelector('[data-chat-composer-stack="true"]');
+    const stopResize = observeResize(
+      [host, ...(pane ? [pane] : []), ...(composer ? [composer] : [])],
+      place,
+    );
     // A pane that just landed can mount its composer a frame later.
     const frame = window.requestAnimationFrame(place);
     host.addEventListener("scroll", place, { capture: true, passive: true });
     window.addEventListener("resize", place);
     return () => {
       window.cancelAnimationFrame(frame);
+      stopResize();
       host.removeEventListener("scroll", place, { capture: true });
       window.removeEventListener("resize", place);
     };
