@@ -3563,6 +3563,16 @@ export function ChatComposer(props: ChatComposerProps) {
                                   ? DISCONNECTED_COMPOSER_PLACEHOLDER
                                   : "Ask anything, @tag files/folders, $use skills, or / for commands"
                     }
+                    narrowPlaceholder={
+                      !isComposerApprovalState &&
+                      !activePendingProgress &&
+                      !showPlanFollowUpPrompt &&
+                      !projectSelectionRequired &&
+                      !showProviderUnavailable &&
+                      environmentUnavailable === null
+                        ? "Ask anything…"
+                        : undefined
+                    }
                     disabled={
                       projectSelectionRequired ||
                       isChoiceOnlyPendingQuestion ||
