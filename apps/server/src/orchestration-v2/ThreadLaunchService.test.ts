@@ -357,7 +357,7 @@ it.effect.each(
         creationSource: createdBy === "agent" ? "mcp" : "web",
       });
       const result = yield* tasks.runNow({ id: task.id });
-      assert.equal(result.task.lastRunStatus, "succeeded");
+      assert.equal(result.task.lastRunStatus, "running");
       const projectThreads = yield* threads.listProjectThreads({
         projectId,
         includeSubagents: false,
@@ -463,7 +463,7 @@ it.effect("runs a thread-bound automation on the provider the thread uses now", 
     });
 
     const result = yield* tasks.runNow({ id: task.id });
-    assert.equal(result.task.lastRunStatus, "succeeded");
+    assert.equal(result.task.lastRunStatus, "running");
     const projection = yield* threads.getThreadProjection(launched.threadId);
     const message = projection.messages.find((item) => item.scheduledTaskId === task.id);
     const run = projection.runs.find((item) => item.id === message?.runId);
@@ -507,6 +507,68 @@ it.effect("retains automation and sender attribution while a message waits in th
     assert.equal(message?.senderThreadId, senderThreadId);
     assert.equal(message?.text, "Run the audit");
   }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("an automation queued behind a running turn records how its own turn ends", () => {
+  const harness = makeHarness({ runSetup: () => Effect.never });
+  const layerScheduledTasks = ScheduledTasks.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        harness.layer,
+        NodeCrypto.layer,
+        Scheduler.layer,
+        Layer.mock(SecretRequests.SecretRequests)({}),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const tasks = yield* ScheduledTasks.ScheduledTaskService;
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const launched = yield* launches.launch(
+      launchInput({
+        command: "command:automation:outcome",
+        thread: "thread:automation:outcome",
+        message: "First message",
+        workspace: { type: "worktree", baseRef: "main" },
+      }),
+    );
+    const { task } = yield* tasks.upsert({
+      id: ScheduledTaskId.make("scheduled-task:outcome"),
+      title: "Daily audit",
+      prompt: "Audit performance and crashes.",
+      enabled: false,
+      schedule: { type: "interval", everyMs: 60_000 },
+      projectId,
+      threadId: launched.threadId,
+      workspaceStrategy: { type: "root" },
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const ran = yield* tasks.runNow({ id: task.id });
+    assert.equal(ran.task.lastRunStatus, "running");
+    const projection = yield* threads.getThreadProjection(launched.threadId);
+    const queued = projection.runs.find((run) => run.status === "queued");
+    assert.isDefined(queued);
+
+    yield* threads.dispatch({
+      type: "queued-run.cancel",
+      commandId: CommandId.make("command:automation:outcome:cancel"),
+      threadId: launched.threadId,
+      runId: queued!.id,
+    });
+    yield* tasks.subscribeList().pipe(
+      Stream.filter(({ tasks: listed }) => listed[0]?.lastRunStatus === "failed"),
+      Stream.take(1),
+      Stream.runDrain,
+    );
+    const [settled] = (yield* tasks.list()).tasks;
+    assert.equal(settled?.lastRunError, "The run was cancelled.");
+    assert.equal(settled?.runCount, 1);
+  }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerScheduledTasks)));
 });
 
 it.effect("provisions independent launches concurrently instead of behind a global semaphore", () =>
@@ -1010,7 +1072,7 @@ it.effect("runs a Scratch scheduled task saved with a worktree in its own folder
       WHERE task_id = ${task.id}
     `;
     const ran = yield* tasks.runNow({ id: task.id });
-    assert.equal(ran.task.lastRunStatus, "succeeded");
+    assert.equal(ran.task.lastRunStatus, "running");
     const [thread] = yield* threads.listProjectThreads({ projectId, includeSubagents: false });
     assert.isDefined(thread);
     const projection = yield* preparationSettled(thread!.id);
