@@ -81,7 +81,9 @@ function SwitchPlan({
   // After a partial switch this app may already be on the track; then only remotes move.
   const switchesLocal = crossesLocal && !updatesOff;
   const [checking, setChecking] = useState(false);
-  const everything = useUpdateEverything(switchesLocal ? release.version : null, release);
+  const everything = useUpdateEverything(switchesLocal ? release.version : null, {
+    channelSwitch: release,
+  });
   const label = channelSwitchLabel(release.channel);
   // This app's reinstall restarts every server it hosts, so each of their databases must allow it.
   const localBlocked = localSwitchBlockReason(
