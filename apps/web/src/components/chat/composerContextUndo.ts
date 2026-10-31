@@ -60,6 +60,7 @@ export function useRetainedContextPayloads(draftTargetKey: string): RetainedCont
 
 export function reconcileAttachmentContextReferences(input: {
   referencedContextIds: ReadonlySet<string>;
+  previousReferencedContextIds: ReadonlySet<string>;
   files: ReadonlyArray<ComposerFileAttachment>;
   images: ReadonlyArray<ComposerImageAttachment>;
   previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
@@ -76,7 +77,11 @@ export function reconcileAttachmentContextReferences(input: {
   const filesToRemove: string[] = [];
   for (const file of input.files) {
     const contextId = fileContextReference(file).contextId;
-    if (input.referencedContextIds.has(contextId)) continue;
+    if (
+      input.referencedContextIds.has(contextId) ||
+      !input.previousReferencedContextIds.has(contextId)
+    )
+      continue;
     input.retained.files.set(contextId, file);
     filesToRemove.push(file.id);
   }
