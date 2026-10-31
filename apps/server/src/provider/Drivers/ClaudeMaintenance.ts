@@ -46,7 +46,7 @@ const readUpdateChannel = Effect.fn("ClaudeMaintenance.readUpdateChannel")(funct
     platform === "darwin"
       ? "/Library/Application Support/ClaudeCode"
       : platform === "win32"
-        ? path.join(environment.PROGRAMDATA || "C:\\ProgramData", "ClaudeCode")
+        ? path.join(environment.PROGRAMFILES || "C:\\Program Files", "ClaudeCode")
         : "/etc/claude-code";
   const dropInDirectory = path.join(managedDirectory, "managed-settings.d");
   const dropIns = yield* fs.readDirectory(dropInDirectory).pipe(Effect.orElseSucceed(() => []));
