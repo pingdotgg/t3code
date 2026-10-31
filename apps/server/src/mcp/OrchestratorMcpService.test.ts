@@ -1643,6 +1643,127 @@ describe("OrchestratorMcpService provider resolution", () => {
   );
 
   it.effect(
+    "implicit delegation uses the fallback model when the parent's provider is out of usage",
+    () =>
+      Effect.gen(function* () {
+        const fallbackInstanceId = ProviderInstanceId.make("claudeAgent");
+        const fallbackModelSelection = {
+          instanceId: fallbackInstanceId,
+          model: "claude-sonnet-4-6",
+        };
+        const exhaustedCodex: ServerProvider = {
+          ...providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+          usageLimits: {
+            checkedAt: "2026-09-13T00:00:00.000Z",
+            windows: [
+              {
+                id: "weekly",
+                kind: "weekly",
+                label: "Weekly",
+                usedPercent: 100,
+                resetsAt: "2999-01-01T00:00:00.000Z",
+              },
+            ],
+          },
+        };
+        for (const testCase of [
+          {
+            target: { providerInstanceId: codexInstanceId },
+            expected: { instanceId: codexInstanceId, model: "gpt-5.4" },
+          },
+          { target: undefined, expected: fallbackModelSelection },
+        ]) {
+          const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+          const task = {
+            id: taskId,
+            threadId: parentThreadId,
+            runId: parentRunId,
+            parentNodeId,
+            origin: "app_owned",
+            createdBy: "agent",
+            driver: ProviderDriverKind.make("codex"),
+            providerInstanceId: testCase.expected.instanceId,
+            providerThreadId: null,
+            childThreadId,
+            nativeTaskRef: null,
+            prompt: "Summarize the diff.",
+            title: null,
+            model: testCase.expected.model,
+            status: "running",
+            result: null,
+            startedAt: null,
+            completedAt: null,
+          };
+          let delegated = false;
+          const layerDependencies = Layer.mergeAll(
+            NodeServices.layer,
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              hasReceipt: () => Effect.succeed(false),
+              getThreadRecords: (threadId) =>
+                Effect.succeed(
+                  threadId === parentThreadId
+                    ? parentProjection(delegated ? [task] : [])
+                    : childProjection,
+                ),
+              dispatch: (command) =>
+                Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+                  Effect.andThen(
+                    Effect.sync(() => {
+                      delegated = true;
+                    }),
+                  ),
+                  Effect.as({
+                    sequence: 1,
+                    storedEvents: [
+                      {
+                        sequence: 1,
+                        commandId: null,
+                        event: { type: "subagent.updated", payload: task },
+                      },
+                    ],
+                  } as never),
+                ),
+            }),
+            providerRegistryLayer([
+              exhaustedCodex,
+              providerSnapshot({
+                instanceId: fallbackInstanceId,
+                driver: ProviderDriverKind.make("claudeAgent"),
+                model: "claude-sonnet-4-6",
+              }),
+            ]),
+            adapterRegistryLayer([codexInstanceId, fallbackInstanceId]),
+            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+            ServerSettings.layerTest({ fallbackModelSelection }),
+          );
+
+          yield* Effect.gen(function* () {
+            const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+            yield* service.delegateTask(scope, {
+              task: "Summarize the diff.",
+              target: testCase.target,
+              mode: "async",
+              clientRequestId: "delegate-usage-fallback-1",
+            });
+            const commands = yield* Ref.get(dispatched);
+            assert.deepEqual(
+              (commands[0] as { modelSelection: unknown }).modelSelection,
+              testCase.expected,
+              testCase.target === undefined ? "implicit" : "explicit",
+            );
+          }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+        }
+      }),
+  );
+
+  it.effect(
     "retrying an accepted driver-only delegation replays even after the project disables every candidate",
     () =>
       Effect.gen(function* () {
