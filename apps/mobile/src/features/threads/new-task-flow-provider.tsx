@@ -492,9 +492,10 @@ export function NewTaskFlowProvider(
     if (!option) {
       return;
     }
-    const selection = withRememberedModelOptions(
-      options ? { ...option.selection, options } : option.selection,
-    );
+    const selection =
+      options !== undefined
+        ? { ...option.selection, options }
+        : withRememberedModelOptions(option.selection);
     const provider = selectedEnvironmentServerConfig?.providers.find(
       (candidate) => candidate.instanceId === selection.instanceId,
     );

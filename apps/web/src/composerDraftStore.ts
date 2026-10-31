@@ -649,7 +649,7 @@ function modelSelectionByProviderToOptions(
   if (!map) return null;
   const result: ProviderOptionSelectionsByProvider = {};
   for (const [provider, selection] of Object.entries(map)) {
-    if (selection?.options && selection.options.length > 0) {
+    if (selection?.options) {
       result[provider] = selection.options;
     }
   }
@@ -992,7 +992,7 @@ function normalizeModelSelection(
   }
   if (Array.isArray(candidate?.options)) {
     const selections = coerceProviderOptionSelections(candidate.options);
-    return createModelSelection(instanceId, model, selections) as NormalizedModelSelection;
+    return { instanceId, model, options: selections ?? [] };
   }
   const kindForLegacyOptions = normalizeProviderDriverKind(instanceId);
   const modelOptions = kindForLegacyOptions
@@ -2868,11 +2868,15 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               return state;
             }
             const current = state.stickyModelSelectionByProvider[normalized.instanceId];
-            // Model-only updates omit options; preserve sticky traits across model switches and new chats.
+            // Model-only updates retain ordinary traits; Daybreak follows explicit selections.
             const nextSelection =
               normalized.options !== undefined
                 ? normalized
-                : createModelSelection(normalized.instanceId, normalized.model, current?.options);
+                : createModelSelection(
+                    normalized.instanceId,
+                    normalized.model,
+                    current?.options?.filter((option) => option.id !== "cyberAccessProgram"),
+                  );
             const nextMap: Partial<Record<ProviderInstanceId, ModelSelection>> = {
               ...state.stickyModelSelectionByProvider,
               [normalized.instanceId]: nextSelection,

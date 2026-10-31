@@ -201,6 +201,9 @@ export const CodexDriver: ProviderDriver<
         config,
       },
       {
+        models: Effect.suspend(() => snapshot.getSnapshot).pipe(
+          Effect.map((snapshot) => snapshot.models),
+        ),
         onUsageLimits: (update) => snapshot.applyUsageLimits(update),
         compatibility: installation.compatibility,
       },

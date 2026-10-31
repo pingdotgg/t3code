@@ -74,6 +74,7 @@ import type {
   ProviderThreadId,
   ProviderTurnId,
   ProviderInstanceId,
+  ServerProviderModel,
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
@@ -680,6 +681,7 @@ const decodeTurnReasoningEffort = Schema.decodeUnknownEffect(
 
 const CodexTurnStartParamsWithCollaborationMode = CodexSchema.V2TurnStartParams.pipe(
   Schema.fieldsAssign({
+    cyberAccessProgram: Schema.optionalKey(CodexSchema.V2TurnStartParams__CyberAccessProgram),
     collaborationMode: Schema.optionalKey(CodexSchema.ClientRequest__CollaborationMode),
     additionalContext: Schema.optionalKey(
       Schema.Record(Schema.String, CodexSchema.V2TurnStartParams__AdditionalContextEntry),
@@ -742,6 +744,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>;
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
     readonly modelSelection: ModelSelection;
+    readonly cyberAccessProgram?: CodexSchema.V2TurnStartParams__CyberAccessProgram;
     readonly hasT3Mcp?: boolean;
     readonly browserToolsAvailable?: boolean;
     readonly deviceToolsAvailable?: boolean;
@@ -810,6 +813,9 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
           ...(effort === undefined ? {} : { reasoning_effort: effort }),
         },
       },
+      ...(input.cyberAccessProgram === undefined
+        ? {}
+        : { cyberAccessProgram: input.cyberAccessProgram }),
     });
   },
 );
@@ -1563,7 +1569,10 @@ export type CodexAdapterV2DriverEnv =
 
 export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapterV2")(function* (
   { instanceId, environment, enabled, config }: ProviderAdapterDriverCreateInput<CodexSettings>,
-  hooks: Pick<CodexAdapterV2Options, "onUsageLimits" | "resolveRuntime" | "compatibility"> = {},
+  hooks: Pick<
+    CodexAdapterV2Options,
+    "models" | "onUsageLimits" | "resolveRuntime" | "compatibility"
+  > = {},
 ) {
   const clientFactory = yield* CodexAppServerClientFactory;
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
@@ -1612,6 +1621,7 @@ export interface CodexAdapterV2Options {
   readonly settings: CodexSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly clientFactory: CodexAppServerClientFactoryShape;
+  readonly models?: Effect.Effect<ReadonlyArray<ServerProviderModel>>;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   readonly resolveRuntime?: Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>;
   readonly compatibility?: (
@@ -6635,6 +6645,48 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           );
         });
 
+        const resolveCyberAccessProgram = Effect.fn("CodexAdapterV2.resolveCyberAccessProgram")(
+          function* (selection: ModelSelection) {
+            const models =
+              selection.instanceId === adapterOptions.instanceId && adapterOptions.models
+                ? yield* adapterOptions.models
+                : [];
+            const descriptor = models
+              .find((model) => !model.isCustom && model.slug === selection.model)
+              ?.capabilities?.optionDescriptors?.find(
+                (option) => option.id === "cyberAccessProgram",
+              );
+            const programs =
+              descriptor?.type === "select"
+                ? CodexSchema.V2TurnStartParams__CyberAccessProgram.literals.filter((program) =>
+                    descriptor.options.some((option) => option.id === program),
+                  )
+                : [];
+            const requestedProgram = selection.options?.find(
+              (option) => option.id === "cyberAccessProgram",
+            )?.value;
+            // A saved Off can outlive the catalog metadata and its hidden control. Omit the
+            // unsupported field in that case, while saved colors still require advertised access.
+            if (requestedProgram === "standard" && programs.length === 0) return undefined;
+            // Omission lets Codex choose automatically, so only an advertised Standard is safe
+            // as a default when the catalog exposes Daybreak treatments.
+            const cyberAccessProgram = programs.find(
+              (program) => program === (requestedProgram ?? "standard"),
+            );
+            if (
+              cyberAccessProgram === undefined &&
+              (requestedProgram !== undefined || programs.length > 0)
+            ) {
+              return yield* toProtocolError(
+                requestedProgram === undefined
+                  ? "This model requires an explicit Daybreak option; choose an available Blue or Red option before starting a turn."
+                  : "The selected Daybreak option is no longer available for this model; refresh the model catalog and choose an available Daybreak option or a different model.",
+              );
+            }
+            return cyberAccessProgram;
+          },
+        );
+
         const startNativeTurn = Effect.fn("CodexAdapterV2.startNativeTurn")(
           function* (
             turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
@@ -6642,11 +6694,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ) {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+            const cyberAccessProgram = yield* resolveCyberAccessProgram(turnInput.modelSelection);
             const turnStartParams = yield* buildCodexTurnStartParams({
               nativeThreadId: threadId,
               codexInput,
               runtimePolicy: turnInput.runtimePolicy,
               modelSelection: turnInput.modelSelection,
+              ...(cyberAccessProgram === undefined ? {} : { cyberAccessProgram }),
               hasT3Mcp: mcpSession !== undefined,
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
@@ -6719,6 +6773,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             command: OrchestrationV2GoalCommand,
           ) {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
+            if (command.type === "set" || command.type === "resume") {
+              yield* resolveCyberAccessProgram(turnInput.modelSelection);
+            }
             rootProviderThreads.set(threadId, turnInput.providerThread);
             const readGoal = client
               .request("thread/goal/get", { threadId })

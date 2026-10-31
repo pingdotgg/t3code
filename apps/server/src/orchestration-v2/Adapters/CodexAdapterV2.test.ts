@@ -11,6 +11,7 @@ import {
   EnvironmentId,
   MessageId,
   type ModelSelection,
+  type ServerProviderModel,
   NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2ProviderThread,
@@ -71,6 +72,7 @@ import type * as ProviderContinuationRequests from "@t3tools/provider-core/serve
 import * as ModelManifest from "../../provider/ModelManifest.ts";
 import { resolveProviderCompatibility } from "../../provider/providerCompatibility.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
+import { mapCodexModelCapabilities } from "../../provider/CodexProvider.ts";
 import { withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
 import * as CodexAdapterV2Testkit from "./CodexAdapterV2.testkit.ts";
 
@@ -82,6 +84,31 @@ const isProviderAdapterEventStreamError = Schema.is(
   ProviderAdapter.ProviderAdapterEventStreamError,
 );
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+
+function codexDaybreakTestModel(
+  programs: ReadonlyArray<CodexSchema.V2ModelListResponse__CyberAccessProgram> | null = [
+    "standard",
+    "daybreakBlue",
+    "daybreakRed",
+  ],
+): ServerProviderModel {
+  return {
+    slug: CODEX_TEST_MODEL_SELECTION.model,
+    name: "Test",
+    isCustom: false,
+    capabilities: mapCodexModelCapabilities({
+      id: "test",
+      model: CODEX_TEST_MODEL_SELECTION.model,
+      displayName: "Test",
+      description: "Test",
+      hidden: false,
+      isDefault: false,
+      defaultReasoningEffort: "medium",
+      supportedReasoningEfforts: [],
+      ...(programs === null ? {} : { availableAccessPrograms: { cyber: programs } }),
+    }),
+  };
+}
 
 describe("CodexAdapterV2 context usage", () => {
   it("uses the current context rather than cumulative processed tokens", () => {
@@ -573,6 +600,7 @@ function codexReplayPreamble(input: {
   readonly prompt: string;
   readonly sentPrompt?: string;
   readonly effort?: string;
+  readonly cyberAccessProgram?: string;
 }): Array<CodexReplay.CodexAppServerReplayEntry> {
   return [
     {
@@ -679,6 +707,9 @@ function codexReplayPreamble(input: {
               ...(input.effort === undefined ? {} : { reasoning_effort: input.effort }),
             },
           },
+          ...(input.cyberAccessProgram === undefined
+            ? {}
+            : { cyberAccessProgram: input.cyberAccessProgram }),
         },
       },
     },
@@ -1142,6 +1173,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
     beforeEmitInbound?: CodexReplay.CodexAppServerReplayDriver["beforeEmitInbound"],
+    models?: CodexAdapterV2.CodexAdapterV2Options["models"],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1196,6 +1228,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         fileSystem,
         idAllocator,
         serverConfig,
+        ...(models === undefined ? {} : { models }),
         continuationRequests: {
           offer: (request) =>
             Effect.sync(() => {
@@ -7422,7 +7455,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
-  describe("native goals", () => {
+  describe("Daybreak and native goals", () => {
     const nativeThreadId = "goal-thread";
     const objective = "Ship the feature";
     const codexGoal = (status: string, tokensUsed: number) => ({
@@ -7486,6 +7519,306 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         event.type === "provider_thread.updated" ? [event.providerThread.goal?.status ?? null] : [],
       );
 
+    it.effect.each([
+      ["daybreakBlue", ["standard", "daybreakRed"], null],
+      ["daybreakBlue", [], null],
+      ["daybreakBlue", ["daybreakRed"], null],
+      ["standard", ["daybreakRed"], null],
+      [undefined, ["daybreakRed"], null],
+      [undefined, ["standard", "daybreakRed"], "standard"],
+      ["daybreakRed", ["daybreakRed"], "daybreakRed"],
+      ["standard", ["standard"], "standard"],
+      ["standard", null, undefined],
+      ["standard", [], undefined],
+      ["daybreakBlue", ["standard"], null],
+      ["daybreakRed", ["standard"], null],
+      ["daybreakBlue", null, null],
+      ["daybreakRed", null, null],
+      [undefined, ["standard"], "standard"],
+      [undefined, null, undefined],
+    ] as const)(
+      "revalidates saved %s against refreshed %j after resume (wire: %s, null rejects)",
+      ([program, nextPrograms, expected]) =>
+        Effect.gen(function* () {
+          const catalog = yield* Ref.make([codexDaybreakTestModel()]);
+          const transcript = makeCodexReplayTranscript({
+            scenario: `daybreak-refresh-${program}-${expected}`,
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId: "first",
+                prompt: "work",
+                cyberAccessProgram: program ?? "standard",
+              }),
+              notification("first turn done", "turn/completed", {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: "first", status: "completed" }),
+              }),
+              ...request(
+                4,
+                "thread/resume",
+                {
+                  threadId: nativeThreadId,
+                  excludeTurns: true,
+                  config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                },
+                { thread: { id: nativeThreadId, updatedAt: 1782622450 } },
+              ),
+              ...(expected === null
+                ? []
+                : withReplayRequestId(
+                    codexReplayPreamble({
+                      nativeThreadId,
+                      nativeTurnId: "second",
+                      prompt: "work",
+                      ...(expected === undefined ? {} : { cyberAccessProgram: expected }),
+                    }).slice(5),
+                    5,
+                  )),
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(
+            transcript,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            Ref.get(catalog),
+          );
+          const turnInput = {
+            ...(yield* goalTurnInput(harness, "work")),
+            modelSelection: {
+              ...CODEX_TEST_MODEL_SELECTION,
+              options: program === undefined ? [] : [{ id: "cyberAccessProgram", value: program }],
+            },
+          };
+          yield* harness.runtime.startTurn(turnInput);
+          yield* harness.firstTerminal;
+          yield* Ref.set(
+            catalog,
+            nextPrograms === null || nextPrograms.length
+              ? [codexDaybreakTestModel(nextPrograms)]
+              : [],
+          );
+          const providerThread = yield* harness.runtime.resumeThread({
+            providerThread: harness.providerThread,
+          });
+          const nextTurn = harness.runtime.startTurn({
+            ...turnInput,
+            providerThread,
+            runOrdinal: 2,
+            providerTurnOrdinal: 2,
+            attemptId: RunAttemptId.make("second-attempt"),
+          });
+          if (expected === null) {
+            const error = yield* Effect.flip(nextTurn);
+            assert.include(
+              errorCauseChainText(error),
+              program === undefined
+                ? "requires an explicit Daybreak option"
+                : "selected Daybreak option is no longer available",
+            );
+          } else {
+            yield* nextTurn;
+          }
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+    );
+
+    it.effect.each([
+      ["daybreakBlue", ["standard", "daybreakRed"], false, false],
+      ["daybreakRed", [], false, false],
+      ["invalid", ["standard", "daybreakBlue"], false, false],
+      ["daybreakBlue", ["standard", "daybreakBlue"], true, false],
+      ["daybreakRed", ["standard", "daybreakRed"], false, true],
+      [true, ["standard", "daybreakBlue"], false, false],
+    ] as const)(
+      "rejects unsupported Daybreak %s (catalog %j, wrong instance %s, custom %s)",
+      ([program, programs, wrongInstance, isCustom]) =>
+        Effect.gen(function* () {
+          const requests: string[] = [];
+          const harness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({ scenario: "daybreak-reject", entries: sessionStart }),
+            undefined,
+            (method) =>
+              Effect.sync(() => {
+                requests.push(method);
+              }),
+            undefined,
+            undefined,
+            Effect.succeed([{ ...codexDaybreakTestModel(programs), isCustom }]),
+          );
+          const input = yield* goalTurnInput(harness, "work");
+          const error = yield* Effect.flip(
+            harness.runtime.startTurn({
+              ...input,
+              modelSelection: {
+                ...input.modelSelection,
+                ...(wrongInstance ? { instanceId: ProviderInstanceId.make("other-codex") } : {}),
+                options: [{ id: "cyberAccessProgram", value: program }],
+              },
+            }),
+          );
+          assert.include(
+            errorCauseChainText(error),
+            "selected Daybreak option is no longer available",
+          );
+          assert.notInclude(requests, "turn/start");
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+    );
+
+    it.effect.each([
+      ["other-instance", undefined],
+      ["other-instance", "standard"],
+      ["custom-model", undefined],
+      ["custom-model", "standard"],
+    ] as const)("omits account access for %s with saved choice %s", ([scope, program]) =>
+      Effect.gen(function* () {
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "daybreak-scope",
+            entries: codexReplayPreamble({
+              nativeThreadId,
+              nativeTurnId: "scope-turn",
+              prompt: "work",
+            }),
+          }),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          Effect.succeed([{ ...codexDaybreakTestModel(), isCustom: scope === "custom-model" }]),
+        );
+        const input = yield* goalTurnInput(harness, "work");
+        yield* harness.runtime.startTurn({
+          ...input,
+          modelSelection: {
+            ...input.modelSelection,
+            ...(scope === "other-instance"
+              ? { instanceId: ProviderInstanceId.make("other-codex") }
+              : {}),
+            ...(program === undefined
+              ? {}
+              : { options: [{ id: "cyberAccessProgram", value: program }] }),
+          },
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
+    it.effect.each(["/goal Ship the feature", "/goal resume"])(
+      "rejects revoked Daybreak before dispatching %s",
+      (text) =>
+        Effect.gen(function* () {
+          const requests: string[] = [];
+          const harness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({ scenario: "daybreak-goal-reject", entries: sessionStart }),
+            undefined,
+            (method) =>
+              Effect.sync(() => {
+                requests.push(method);
+              }),
+            undefined,
+            undefined,
+            Effect.succeed([codexDaybreakTestModel(["standard", "daybreakRed"])]),
+          );
+          const input = yield* goalTurnInput(harness, text);
+          const error = yield* Effect.flip(
+            harness.runtime.startTurn({
+              ...input,
+              modelSelection: {
+                ...input.modelSelection,
+                options: [{ id: "cyberAccessProgram", value: "daybreakBlue" }],
+              },
+            }),
+          );
+          assert.include(
+            errorCauseChainText(error),
+            "selected Daybreak option is no longer available",
+          );
+          assert.deepEqual(requests, ["initialize", "thread/start"]);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+    );
+
+    it.effect("forwards the selected Daybreak treatment when resuming a native goal", () =>
+      Effect.gen(function* () {
+        const turnEntries = codexReplayPreamble({
+          nativeThreadId,
+          nativeTurnId: "resumed-goal-turn",
+          prompt: "unused",
+          cyberAccessProgram: "daybreakBlue",
+        })
+          .slice(5)
+          .map((entry) =>
+            entry.type === "expect_outbound" &&
+            Predicate.isObject(entry.frame) &&
+            Predicate.isObject(entry.frame.params)
+              ? {
+                  ...entry,
+                  frame: { ...entry.frame, params: { ...entry.frame.params, input: [] } },
+                }
+              : entry,
+          );
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "daybreak-goal-resume",
+            entries: [
+              ...sessionStart,
+              ...request(
+                3,
+                "thread/goal/get",
+                { threadId: nativeThreadId },
+                { goal: codexGoal("paused", 0) },
+              ),
+              ...withReplayRequestId(turnEntries, 4),
+              ...request(
+                5,
+                "thread/goal/set",
+                { threadId: nativeThreadId, status: "active" },
+                { goal: codexGoal("active", 0) },
+              ),
+            ],
+          }),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          Effect.succeed([codexDaybreakTestModel(["daybreakBlue"])]),
+        );
+        const input = yield* goalTurnInput(harness, "/goal resume");
+        yield* harness.runtime.startTurn({
+          ...input,
+          modelSelection: {
+            ...input.modelSelection,
+            options: [{ id: "cyberAccessProgram", value: "daybreakBlue" }],
+          },
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
     it.effect("keeps a /goal run open across the turns Codex continues on its own", () =>
       Effect.gen(function* () {
         const transcript = makeCodexReplayTranscript({
@@ -7505,6 +7838,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 nativeTurnId: "goal-turn-1",
                 prompt: objective,
                 sentPrompt: `Start working toward this goal: ${objective}`,
+                cyberAccessProgram: "daybreakRed",
               }).slice(5),
               5,
             ),
@@ -7538,8 +7872,22 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             }),
           ],
         });
-        const harness = yield* makeCodexReplayHarness(transcript);
-        yield* harness.runtime.startTurn(yield* goalTurnInput(harness, `/goal ${objective}`));
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          Effect.succeed([codexDaybreakTestModel(["daybreakRed"])]),
+        );
+        const turnInput = yield* goalTurnInput(harness, `/goal ${objective}`);
+        yield* harness.runtime.startTurn({
+          ...turnInput,
+          modelSelection: {
+            ...turnInput.modelSelection,
+            options: [{ id: "cyberAccessProgram", value: "daybreakRed" }],
+          },
+        });
         yield* harness.firstTerminal;
 
         const idAllocator = yield* IdAllocator.IdAllocatorV2;

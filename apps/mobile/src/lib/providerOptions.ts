@@ -1,12 +1,10 @@
+import { getModelTraitDescriptors } from "@t3tools/client-runtime/model-traits";
 import type {
   ModelCapabilities,
   ProviderOptionDescriptor,
   ProviderOptionSelection,
 } from "@t3tools/contracts";
-import {
-  buildProviderOptionSelectionsFromDescriptors,
-  getProviderOptionDescriptors,
-} from "@t3tools/shared/model";
+import { buildProviderOptionSelectionsFromDescriptors } from "@t3tools/shared/model";
 
 export function resolveProviderOptionDescriptors(input: {
   readonly capabilities: ModelCapabilities | null | undefined;
@@ -15,7 +13,7 @@ export function resolveProviderOptionDescriptors(input: {
   if (!input.capabilities) {
     return [];
   }
-  return getProviderOptionDescriptors({
+  return getModelTraitDescriptors({
     caps: input.capabilities,
     selections: input.selections,
   });

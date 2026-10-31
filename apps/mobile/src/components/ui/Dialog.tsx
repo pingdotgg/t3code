@@ -1,9 +1,24 @@
 import { Alert } from "react-native";
-import type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
+import type {
+  ConfirmDialogRequest,
+  DialogAlertOptions,
+  TextInputDialogRequest,
+} from "./Dialog.types";
 
-export type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
+export type {
+  ConfirmDialogRequest,
+  DialogAlertOptions,
+  TextInputDialogRequest,
+} from "./Dialog.types";
 
-export function alert(...args: Parameters<typeof Alert.alert>): void {
+export function alert(
+  ...args: [
+    title: string,
+    message?: string,
+    buttons?: Parameters<typeof Alert.alert>[2],
+    options?: DialogAlertOptions,
+  ]
+): void {
   Alert.alert(...args);
 }
 

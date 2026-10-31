@@ -1,5 +1,9 @@
 import {
   buildTraitsTriggerDisplay,
+  DAYBREAK_OPTION_ID,
+  getModelTraitDescriptors,
+  visibleModelTraitDescriptors,
+  preserveExplicitDaybreakOption,
   getDescriptorStringValue,
   getTraitSelectChange,
   replaceDescriptorCurrentValue,
@@ -18,7 +22,6 @@ import {
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionCurrentLabel,
-  getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
 } from "@t3tools/shared/model";
@@ -116,6 +119,7 @@ function getSelectedTraits(
   modelOptions: ProviderOptions | null | undefined,
   allowPromptInjectedEffort: boolean,
   planModeEnabled: boolean,
+  allowDaybreak = true,
 ) {
   const caps = getProviderModelCapabilities(models, model, provider, planModeEnabled);
   const modelIsUnavailable =
@@ -127,19 +131,23 @@ function getSelectedTraits(
           ? modelOptions
           : modelOptions?.filter((option) => option.id !== "agent" || option.value !== "plan"),
       )
-    : getProviderOptionDescriptors({
+    : getModelTraitDescriptors({
         caps,
         selections: modelOptions,
       });
-  const selectDescriptors = descriptors.filter(
+  const visibleDescriptors = visibleModelTraitDescriptors(descriptors, allowDaybreak);
+  const selectDescriptors = visibleDescriptors.filter(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
       descriptor.type === "select",
   );
-  const booleanDescriptors = descriptors.filter(
+  const booleanDescriptors = visibleDescriptors.filter(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "boolean" }> =>
       descriptor.type === "boolean",
   );
-  const primarySelectDescriptor = selectDescriptors[0] ?? null;
+  const primarySelectDescriptor =
+    selectDescriptors.find(
+      (descriptor) => descriptor.id !== DAYBREAK_OPTION_ID && descriptor.id !== "serviceTier",
+    ) ?? null;
   const contextWindowDescriptor =
     selectDescriptors.find((descriptor) => descriptor.id === "contextWindow") ?? null;
   const agentDescriptor = selectDescriptors.find((descriptor) => descriptor.id === "agent") ?? null;
@@ -167,6 +175,7 @@ function getSelectedTraits(
 
   return {
     caps,
+    modelOptions,
     descriptors,
     selectDescriptors,
     booleanDescriptors,
@@ -194,6 +203,7 @@ export function getTraitsSectionVisibility(input: {
   modelOptions?: ProviderOptions | null | undefined;
   allowPromptInjectedEffort?: boolean;
   planModeEnabled: boolean;
+  allowDaybreak?: boolean;
 }) {
   const selected = getSelectedTraits(
     input.provider,
@@ -203,6 +213,7 @@ export function getTraitsSectionVisibility(input: {
     input.modelOptions,
     input.allowPromptInjectedEffort ?? true,
     input.planModeEnabled,
+    input.allowDaybreak ?? true,
   );
 
   const showEffort = selected.primarySelectDescriptor !== null;
@@ -219,6 +230,7 @@ export function getTraitsSectionVisibility(input: {
     showContextWindow,
     showAgent,
     hasAnyControls:
+      selected.selectDescriptors.length > 0 ||
       showEffort ||
       showThinking ||
       showFastMode ||
@@ -242,6 +254,7 @@ export function getReasoningTraitStep(input: {
   reportedModelSelection: ModelSelection | null | undefined;
   prompt: string;
   planModeEnabled: boolean;
+  allowDaybreak?: boolean;
   direction: 1 | -1;
 }) {
   const selected = getSelectedTraits(
@@ -252,6 +265,7 @@ export function getReasoningTraitStep(input: {
     input.modelOptions,
     true,
     input.planModeEnabled,
+    input.allowDaybreak ?? true,
   );
   if (selected.modelIsUnavailable || selected.ultrathinkInBodyText) return null;
   const descriptor = selected.selectDescriptors.find((entry) =>
@@ -281,6 +295,19 @@ export function getReasoningTraitStep(input: {
   return change?.modelOptions ? { prompt: change.prompt, modelOptions: change.modelOptions } : null;
 }
 
+export function shouldRenderTraitsControls(input: {
+  provider: ProviderDriverKind;
+  models: ReadonlyArray<ServerProviderModel>;
+  model: string | null | undefined;
+  promptUltrathink?: PromptUltrathink | undefined;
+  modelOptions: ProviderOptions | null | undefined;
+  allowPromptInjectedEffort?: boolean;
+  planModeEnabled: boolean;
+  allowDaybreak?: boolean;
+}): boolean {
+  return getTraitsSectionVisibility(input).hasAnyControls;
+}
+
 export interface TraitsMenuContentProps {
   provider: ProviderDriverKind;
   instanceId?: ProviderInstanceId;
@@ -293,6 +320,7 @@ export interface TraitsMenuContentProps {
   reportedModelSelection?: ModelSelection | null | undefined;
   allowPromptInjectedEffort?: boolean;
   planModeEnabled: boolean;
+  allowDaybreak?: boolean;
   triggerClassName?: string;
 }
 
@@ -310,6 +338,7 @@ export function useTraitsSelection({
   reportedModelSelection,
   allowPromptInjectedEffort = true,
   planModeEnabled,
+  allowDaybreak = true,
   triggerClassName: _triggerClassName,
   ...persistence
 }: TraitsSelectionInput) {
@@ -339,6 +368,7 @@ export function useTraitsSelection({
     modelOptions,
     allowPromptInjectedEffort,
     planModeEnabled,
+    allowDaybreak,
   });
   return {
     ...selected,
@@ -359,12 +389,19 @@ export function useTraitsSelection({
       onPromptEdit?.(
         (prompt) => getTraitSelectChange(selected, descriptor, prompt, value)?.prompt ?? prompt,
       );
-      updateModelOptions(change.modelOptions);
+      updateModelOptions(
+        descriptor.id === DAYBREAK_OPTION_ID
+          ? change.modelOptions
+          : preserveExplicitDaybreakOption(change.modelOptions, modelOptions),
+      );
     },
     changeBoolean: (descriptorId: string, value: boolean) => {
       updateModelOptions(
-        buildProviderOptionSelectionsFromDescriptors(
-          replaceDescriptorCurrentValue(selected.descriptors, descriptorId, value),
+        preserveExplicitDaybreakOption(
+          buildProviderOptionSelectionsFromDescriptors(
+            replaceDescriptorCurrentValue(selected.descriptors, descriptorId, value),
+          ),
+          modelOptions,
         ),
       );
     },
@@ -498,7 +535,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   }
   const { label: triggerLabel } = buildTraitsTriggerDisplay({
     provider: props.provider,
-    descriptors: traits.descriptors,
+    descriptors: visibleModelTraitDescriptors(traits.descriptors, props.allowDaybreak),
     primarySelectDescriptorId: traits.primarySelectDescriptor?.id ?? null,
     ultrathinkPromptControlled: traits.ultrathinkPromptControlled,
     modelSelection:

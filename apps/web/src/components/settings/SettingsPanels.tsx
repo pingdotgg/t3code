@@ -1775,6 +1775,7 @@ export function ThreadsSettingsPanel() {
                 />
                 {textGenInstanceEntry ? (
                   <TraitsPicker
+                    allowDaybreak={false}
                     provider={textGenProvider}
                     models={textGenInstanceEntry?.models ?? []}
                     model={textGenModel}
