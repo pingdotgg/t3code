@@ -287,11 +287,11 @@ export function ProjectScriptEditorDialog({
             <AlertDialogDescription>This action cannot be undone.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button size="sm" variant="secondary" />}>
+            <AlertDialogClose render={<Button size="standard" variant="secondary" />}>
               Cancel
             </AlertDialogClose>
             <Button
-              size="sm"
+              size="standard"
               variant="destructive"
               disabled={!canEditActions}
               onClick={() => {
@@ -627,7 +627,7 @@ function ProjectScriptEditorForm({
         {isEditing && (
           <Button
             type="button"
-            size="sm"
+            size="standard"
             variant="secondary"
             className="sm:mr-auto"
             disabled={isSaving || !canEditActions}
@@ -637,10 +637,10 @@ function ProjectScriptEditorForm({
             Delete
           </Button>
         )}
-        <Button type="button" size="sm" variant="secondary" onClick={close}>
+        <Button type="button" size="standard" variant="secondary" onClick={close}>
           Cancel
         </Button>
-        <Button form={formId} type="submit" size="sm" disabled={isSaving || !canEditActions}>
+        <Button form={formId} type="submit" size="standard" disabled={isSaving || !canEditActions}>
           {isSaving ? "Saving…" : isEditing ? "Save changes" : "Save action"}
           {isSaving ? null : <DialogSubmitKbd />}
         </Button>
