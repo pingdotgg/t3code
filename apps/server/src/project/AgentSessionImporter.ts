@@ -25,6 +25,7 @@ import {
 } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -41,6 +42,8 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 import * as ProjectService from "./ProjectService.ts";
 
+/** Onboarding import counts are a label; a few updates a second is plenty. */
+const IMPORT_PROGRESS_INTERVAL_MS = 250;
 const IMPORT_EVENT_PREFIX = "agent-session-import:v2";
 const CLAUDE_SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -177,8 +180,12 @@ const make = Effect.gen(function* () {
   const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const ceiling = settingsService.managedPolicy?.limits?.maxRuntimeMode;
+  /**
+   * `onProgress` hears the running imported + skipped count at most every 250 ms.
+   */
   const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
     input: AgentSessionImportInput,
+    onProgress?: (processedCount: number) => Effect.Effect<void>,
   ) {
     const project = yield* projects.getById(input.projectId).pipe(
       Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-projects", cause })),
@@ -235,6 +242,16 @@ const make = Effect.gen(function* () {
     const importedThreadIds = new Set<ThreadId>();
     let importedCount = 0;
     let skippedCount = 0;
+    let lastReportedAt = Number.NEGATIVE_INFINITY;
+    const reportProgress =
+      onProgress === undefined
+        ? Effect.void
+        : Effect.gen(function* () {
+            const now = yield* Clock.currentTimeMillis;
+            if (now - lastReportedAt < IMPORT_PROGRESS_INTERVAL_MS) return;
+            lastReportedAt = now;
+            yield* onProgress(importedCount + skippedCount);
+          });
 
     yield* Stream.runForEach(outcomes, (outcome) =>
       Effect.gen(function* () {
@@ -446,7 +463,7 @@ const make = Effect.gen(function* () {
         } else if (imported === false) {
           skippedCount += 1;
         }
-      }),
+      }).pipe(Effect.andThen(reportProgress)),
     );
 
     return { importedCount, skippedCount } satisfies AgentSessionImportResult;
