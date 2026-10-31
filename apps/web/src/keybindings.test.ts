@@ -14,6 +14,7 @@ import {
 import {
   effectiveShortcutsForCommand,
   formatShortcutLabel,
+  formatShortcutLabelParts,
   isRichTextBoldShortcut,
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
@@ -736,6 +737,33 @@ describe("resolveShortcutCommand", () => {
       "diff.toggle",
     );
   });
+});
+
+describe("formatShortcutLabel", () => {
+  it.each([
+    ["MacIntel", ["⌃", "⌥", "⇧", "⌘", "D"], "⌃⌥⇧⌘D"],
+    ["Linux", ["Ctrl", "Alt", "Shift", "D"], "Ctrl+Alt+Shift+D"],
+    ["Win32", ["Ctrl", "Alt", "Shift", "D"], "Ctrl+Alt+Shift+D"],
+  ] as const)("formats modifier pills and text for %s", (platform, parts, label) => {
+    const shortcut = modShortcut("d", { ctrlKey: true, altKey: true, shiftKey: true });
+
+    assert.strictEqual(formatShortcutLabel(shortcut, platform), label);
+    assert.deepStrictEqual(formatShortcutLabelParts(shortcut, platform), parts);
+  });
+
+  it.each([
+    ["MacIntel", ["⌘", "+"], "⌘+"],
+    ["Linux", ["Ctrl", "+"], "Ctrl++"],
+    ["Win32", ["Ctrl", "+"], "Ctrl++"],
+  ] as const)(
+    "preserves the literal plus key in pills and text for %s",
+    (platform, parts, label) => {
+      const shortcut = modShortcut("+");
+
+      assert.strictEqual(formatShortcutLabel(shortcut, platform), label);
+      assert.deepStrictEqual(formatShortcutLabelParts(shortcut, platform), parts);
+    },
+  );
 });
 
 describe("isRichTextBoldShortcut", () => {

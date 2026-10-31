@@ -24,6 +24,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   type KeybindingCommand,
+  type KeybindingShortcut,
   type KeybindingWhenNode,
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
@@ -36,7 +37,7 @@ import {
 
 import { isElectron } from "../../env";
 import { useOpenInPreferredEditor } from "../../editorPreferences";
-import { formatShortcutLabel } from "../../keybindings";
+import { formatShortcutLabel, formatShortcutLabelParts } from "../../keybindings";
 import { cn } from "../../lib/utils";
 import { serverEnvironment } from "../../state/server";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -76,34 +77,12 @@ import { keybindingSearchAnchorId, searchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
 
-function KeybindingPill({ value }: { value: string }) {
-  // Keys dedupe repeated parts; a literal "+" in a shortcut splits into empty strings.
-  const seenParts = new Map<string, number>();
-  const parts = value.split("+").map((part) => {
-    const seen = seenParts.get(part) ?? 0;
-    seenParts.set(part, seen + 1);
-    return { part, key: seen === 0 ? part : `${part}-${seen}` };
-  });
+function KeybindingPill({ shortcut }: { shortcut: KeybindingShortcut }) {
+  const parts = formatShortcutLabelParts(shortcut);
   return (
     <KbdGroup>
-      {parts.map(({ part, key }) => (
-        <Kbd key={key}>
-          {part === "mod"
-            ? navigator.platform.toLowerCase().includes("mac")
-              ? "⌘"
-              : "Ctrl"
-            : part === "shift"
-              ? "⇧"
-              : part === "alt"
-                ? navigator.platform.toLowerCase().includes("mac")
-                  ? "⌥"
-                  : "Alt"
-                : part === "ctrl"
-                  ? "⌃"
-                  : part.length === 1
-                    ? part.toUpperCase()
-                    : part}
-        </Kbd>
+      {parts.map((part, index) => (
+        <Kbd key={index === parts.length - 1 ? "key" : part}>{part}</Kbd>
       ))}
     </KbdGroup>
   );
@@ -815,7 +794,7 @@ function KeybindingKeyControl({
             pillClassName,
           )}
         >
-          <KeybindingPill value={row.key} />
+          <KeybindingPill shortcut={row.binding.shortcut} />
         </button>
       ) : (
         <Input
