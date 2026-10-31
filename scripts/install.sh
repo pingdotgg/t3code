@@ -288,14 +288,16 @@ ln -s "${target_dir}/t3" "${command_link}.$$.tmp" && mv -f "${command_link}.$$.t
   fail "could not link ${command_link}"
 case "$kind" in
   # An empty spot is linked without -f, so a file that appears after the check above is kept.
-  "") ln -s "$command_link" "$public" || fail "could not link ${public}; something else was created there." ;;
+  # Into the folder, so an entry of any kind already named t3 makes ln fail instead of filling it.
+  "") ln -s "$command_link" "${bin_dir}/" || fail "could not link ${public}; something else was created there." ;;
   older)
     # Moved aside before it is checked again, so the check sees exactly what gets replaced.
-    aside="${bin_dir}/.t3.$$.old"
-    mv -f "$public" "$aside" || fail "could not replace ${public}"
+    # Reserved first, so an entry left by an earlier install is never replaced.
+    aside="$(mktemp "${bin_dir}/.t3.XXXXXX")" || fail "could not replace ${public}"
+    mv -f "$public" "$aside" || { rm -f "$aside"; fail "could not replace ${public}"; }
     if [ -n "$(link_kind "$aside")" ]; then
       linked=true
-      ln -s "$command_link" "$public" || linked=false
+      ln -s "$command_link" "${bin_dir}/" || linked=false
       rm -f "$aside"
       "$linked" || fail "could not link ${public}; something else was created there."
     else

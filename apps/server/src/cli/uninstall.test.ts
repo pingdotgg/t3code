@@ -41,8 +41,14 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
         yield* findOwnedLauncher({ launchedAs: viaCommandLink, versionsDir }),
         viaCommandLink,
       );
-      // A version run directly is not a launcher.
+      // A version run directly is not a launcher, nor another tool's link that selects it.
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: exe, versionsDir }));
+      const managed = path.join(root, "manager/t3");
+      const managedBin = path.join(root, "bin/t3-managed");
+      yield* fs.makeDirectory(path.dirname(managed), { recursive: true });
+      yield* fs.symlink(exe, managed);
+      yield* fs.symlink(managed, managedBin);
+      assert.isUndefined(yield* findOwnedLauncher({ launchedAs: managedBin, versionsDir }));
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: theirs, versionsDir }));
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: copy, versionsDir }));
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: undefined, versionsDir }));

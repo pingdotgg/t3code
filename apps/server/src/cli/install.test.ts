@@ -100,25 +100,31 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       yield* provide(installCli());
       assert.equal(yield* fs.readLink(link), commandLink);
 
-      // Another program may write its t3 at any moment, here at the first symlink this
-      // install makes. Whether the spot was empty, held an older link, or the command
-      // link, that file is kept.
+      // Another program may write its t3 at any moment, here once, at the first symlink this
+      // install makes. Whether the spot was empty, held an older link, or the command link,
+      // that file is kept.
+      let fired = false;
       const racing = installCli().pipe(
         Effect.provideService(FileSystem.FileSystem, {
           ...fs,
           symlink: (target, to) =>
-            fs
-              .writeFileString(`${link}.new`, "#!/bin/sh\necho raced\n")
-              .pipe(
-                Effect.andThen(fs.rename(`${link}.new`, link)),
-                Effect.andThen(fs.symlink(target, to)),
-              ),
+            (fired
+              ? Effect.void
+              : fs
+                  .writeFileString(`${link}.new`, "#!/bin/sh\necho raced\n")
+                  .pipe(
+                    Effect.andThen(fs.rename(`${link}.new`, link)),
+                    Effect.andThen(Effect.sync(() => (fired = true))),
+                  )
+            ).pipe(Effect.andThen(fs.symlink(target, to))),
         }),
       );
       for (const before of [undefined, older, commandLink]) {
+        fired = false;
         yield* fs.remove(link);
         if (before !== undefined) yield* fs.symlink(before, link);
         const raced = yield* provide(racing).pipe(Effect.result);
+        assert.isTrue(fired);
         assert.equal(yield* fs.readFileString(link), "#!/bin/sh\necho raced\n", before);
         assert.deepStrictEqual(yield* fs.readDirectory(path.dirname(link)), ["t3"]);
         // Nothing was replaced over the command link's own spot, so that install succeeds.

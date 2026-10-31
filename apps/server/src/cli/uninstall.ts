@@ -72,8 +72,8 @@ const ownsLauncher = Effect.fn("cli.uninstall.owns_launcher")(function* (
     .realPath(versionsDir)
     .pipe(Effect.orElseSucceed(() => versionsDir));
   const linkText = yield* fs.readLink(launcher).pipe(Effect.option);
-  // The link's own text keeps a pruned (dangling) target; the real path sees through a
-  // symlinked T3 home. Only a link counts: a version's own executable resolves into versions too.
+  // The link's own text keeps a pruned (dangling) target; its real folder sees through a
+  // symlinked T3 home. Only a direct link counts: a chain through another tool's link is theirs.
   const targets =
     platform === "win32"
       ? [
@@ -86,7 +86,12 @@ const ownsLauncher = Effect.fn("cli.uninstall.owns_launcher")(function* (
         ? []
         : [
             path.resolve(path.dirname(launcher), linkText.value),
-            yield* fs.realPath(launcher).pipe(Effect.orElseSucceed(() => undefined)),
+            yield* fs
+              .realPath(path.dirname(path.resolve(path.dirname(launcher), linkText.value)))
+              .pipe(
+                Effect.map((directory) => path.join(directory, path.basename(linkText.value))),
+                Effect.orElseSucceed(() => undefined),
+              ),
           ];
   // The command link sits beside versions; a link to it may dangle after a prune.
   const commandLinks = [versionsDir, realVersionsDir].map((dir) =>
@@ -250,9 +255,14 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
   for (const launcher of plan.launchers) {
     // The prompt can wait a long time; never delete a file that replaced the launcher meanwhile.
     const owns = (candidate: string) => ownsLauncher(candidate, plan.versionsDir);
+    // Windows keeps the checked removal; its shims are out of the moved-aside swap.
     const removed =
       (yield* owns(launcher)) &&
-      (yield* replaceOwnedLink({ link: launcher, owns }).pipe(
+      (yield* (
+        platform === "win32"
+          ? fs.remove(launcher, { force: true }).pipe(Effect.as(true))
+          : replaceOwnedLink({ link: launcher, owns })
+      ).pipe(
         Effect.mapError(
           () => new CliUninstallError({ reason: `Could not remove the launcher at ${launcher}.` }),
         ),

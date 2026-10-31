@@ -75,9 +75,8 @@ const classifyCommandLink = Effect.fn("cli.install.classify_command_link")(funct
     .pipe(Effect.orElseSucceed(() => versionsDir));
   const desktopLauncher = path.join(baseDir, "bin", "t3");
   const realDesktopLauncher = yield* real(desktopLauncher);
-  // Fully resolved too; a dangling link (a pruned version) keeps its own text.
-  const resolved = yield* fs.realPath(link).pipe(Effect.orElseSucceed(() => target));
-  const older = [target, realTarget, resolved].some(
+  // Only the direct target: a chain through another tool's link is that tool's.
+  const older = [target, realTarget].some(
     (candidate) =>
       isVersionExecutable(path, versionsDir, candidate) ||
       isVersionExecutable(path, realVersionsDir, candidate) ||

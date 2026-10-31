@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -112,6 +113,7 @@ export const make = Effect.gen(function* () {
   const replaceOurLink = (input: { readonly link: string; readonly target?: string }) =>
     replaceOwnedLink({ ...input, owns: isOurLink }).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
     );
 
   // PATH can reach the regular launcher directly; removal still requires isOurLink.

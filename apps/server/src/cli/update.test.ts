@@ -105,8 +105,15 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       yield* fs.symlink(elsewhere, foreign);
       yield* fs.makeDirectory(path.dirname(otherLauncher), { recursive: true });
       yield* fs.symlink(otherHome, otherLauncher);
+      // Another tool's link that happens to select one of our versions is still that tool's.
+      const managed = path.join(root, "manager/t3");
+      const managedBin = path.join(root, "manager-bin/t3");
+      yield* fs.makeDirectory(path.dirname(managed), { recursive: true });
+      yield* fs.makeDirectory(path.dirname(managedBin), { recursive: true });
+      yield* fs.symlink(newExe, managed);
+      yield* fs.symlink(managed, managedBin);
 
-      for (const launchedAs of [copy, foreign, otherLauncher, undefined]) {
+      for (const launchedAs of [copy, foreign, otherLauncher, managedBin, undefined]) {
         const repointed = yield* repointLauncher({
           launchedAs,
           versionsDir: path.join(root, "runtime/versions"),
@@ -116,6 +123,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       }
       assert.equal(yield* fs.readLink(foreign), elsewhere);
       assert.equal(yield* fs.readLink(otherLauncher), otherHome);
+      assert.equal(yield* fs.readLink(managedBin), managed);
     }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 
