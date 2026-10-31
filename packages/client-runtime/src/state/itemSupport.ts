@@ -1,4 +1,12 @@
-import type { OrchestrationV2ThreadProjection, TurnItemId } from "@t3tools/contracts";
+import type {
+  OrchestrationV2ThreadProjection,
+  ScopedThreadRef,
+  TurnItemId,
+} from "@t3tools/contracts";
+
+import { Atom } from "effect/reactivity";
+
+import type { createEnvironmentThreadDetailAtoms } from "./threadDetail.ts";
 
 type Projection = OrchestrationV2ThreadProjection;
 
@@ -130,4 +138,29 @@ export function v2ItemSupportEqual(left: V2ItemSupport, right: V2ItemSupport): b
     left.contextHandoff === right.contextHandoff &&
     left.contextTransfer === right.contextTransfer
   );
+}
+
+export function createV2ItemCapabilitiesAtom(
+  details: Pick<ReturnType<typeof createEnvironmentThreadDetailAtoms>, "quietThreadAtom">,
+  ref: ScopedThreadRef,
+  itemId: TurnItemId,
+) {
+  return Atom.make((get) => {
+    const thread = get(details.quietThreadAtom(ref));
+    if (thread === null) return undefined;
+    const projection = thread.projection;
+    // Keep the source lookup's precedence: a projected row can have a different
+    // item identity, or be the only retained copy of a synthetic item.
+    const item =
+      projection.turnItems.find((candidate) => candidate.id === itemId) ??
+      projection.visibleTurnItems.find((candidate) => candidate.sourceItemId === itemId)?.item;
+    if (item?.providerThreadId == null) return undefined;
+    const providerThread = projection.providerThreads.find(
+      (candidate) => candidate.id === item.providerThreadId,
+    );
+    if (providerThread?.providerSessionId == null) return undefined;
+    return projection.providerSessions.find(
+      (candidate) => candidate.id === providerThread.providerSessionId,
+    )?.capabilities;
+  });
 }
