@@ -32,7 +32,7 @@ import * as ConnectionWakeups from "../connection/wakeups.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
-import { request, subscribeDynamic } from "../rpc/client.ts";
+import { request, subscribeDynamic, subscriptionRetryDelay } from "../rpc/client.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
 import { THREAD_SNAPSHOT_IDLE_TTL_MS } from "./threadRetention.ts";
@@ -54,6 +54,8 @@ import {
   type EnvironmentThreadState,
   type EnvironmentThreadStatus,
 } from "./threadState.ts";
+
+const THREAD_SUBSCRIPTION_RETRY_DELAY = "250 millis";
 
 function statusWithoutLiveData(
   data: Option.Option<OrchestrationV2ThreadProjection>,
@@ -933,7 +935,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   });
 
   yield* markSynchronizing;
-  yield* Effect.forkScoped(
+  let defectRetries = 0;
+  const followThread = (): Effect.Effect<
+    void,
+    never,
+    EnvironmentSupervisor.EnvironmentSupervisor
+  > =>
     subscribeDynamic(
       ORCHESTRATION_V2_WS_METHODS.subscribeThread,
       Effect.fn("EnvironmentThreadState.makeSubscribeInput")(function* (session) {
@@ -1028,11 +1035,37 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       {
         onDefect: () => setStreamError("Could not synchronize the thread."),
         onExpectedFailure: (cause) => setStreamError(formatThreadError(cause)),
-        retryExpectedFailureAfter: "250 millis",
+        retryExpectedFailureAfter: THREAD_SUBSCRIPTION_RETRY_DELAY,
         resubscribe: foregroundResubscriptions,
       },
-    ).pipe(Stream.runForEachArray(applyItems)),
-  );
+    ).pipe(
+      Stream.runForEachArray((items) =>
+        applyItems(items).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              defectRetries = 0;
+            }),
+          ),
+        ),
+      ),
+      // A defect (an undecodable snapshot, or one applyItems cannot handle) ends the
+      // subscription for good; resubscribe the way reselecting the thread would.
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterrupts(cause)) return Effect.interrupt;
+        const retryDelay = subscriptionRetryDelay(THREAD_SUBSCRIPTION_RETRY_DELAY, defectRetries);
+        defectRetries += 1;
+        return Effect.logWarning("Thread subscription failed; resubscribing.", {
+          cause: Cause.pretty(cause),
+          environmentId,
+          threadId,
+        }).pipe(
+          Effect.andThen(setStreamError("Could not synchronize the thread.")),
+          Effect.andThen(Effect.sleep(retryDelay)),
+          Effect.andThen(Effect.suspend(followThread)),
+        );
+      }),
+    );
+  yield* Effect.forkScoped(followThread());
 
   return state;
 });
