@@ -64,6 +64,7 @@ import { useAppActive, useReduceMotionEnabled } from "../../lib/appState";
 import { cn } from "../../lib/cn";
 import { THREAD_WORK_ROW_MIN_HEIGHT, type deriveThreadWorkLogSizing } from "../../lib/layout";
 import {
+  expandedWorkRowCall,
   formatItemFullDetail,
   type ThreadFeedActivity,
   workEntryRowLabel,
