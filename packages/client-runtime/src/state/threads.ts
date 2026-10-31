@@ -977,10 +977,6 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             ),
           );
           let budgetStartMillis = yield* Ref.get(pendingCreationBudgetStartMillis);
-          if (budgetStartMillis === undefined) {
-            budgetStartMillis = yield* Clock.currentTimeMillis;
-            yield* Ref.set(pendingCreationBudgetStartMillis, budgetStartMillis);
-          }
           let missingProbes = 0;
           probe: for (;;) {
             const httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =
@@ -1016,10 +1012,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                 break probe;
               }
               case "missing": {
-                // The send holding this pre-allocated id commits its launch seconds
-                // later; keep probing with backoff so the subscription revives on
-                // the same instance. The budget counts probe request time, so once
-                // it lapses the id is treated as deleted as before.
+                // The send holding this pre-allocated id commits seconds later;
+                // probe with backoff until the budget lapses, then treat the id
+                // as deleted. Only a confirmed missing starts the deadline, so
+                // an exit on transport failure leaves no stale start behind.
+                if (budgetStartMillis === undefined) {
+                  budgetStartMillis = yield* Clock.currentTimeMillis;
+                  yield* Ref.set(pendingCreationBudgetStartMillis, budgetStartMillis);
+                }
                 const elapsedMillis = (yield* Clock.currentTimeMillis) - budgetStartMillis;
                 if (elapsedMillis >= THREAD_PENDING_CREATION_PROBE_BUDGET_MILLIS) {
                   yield* setDeleted();

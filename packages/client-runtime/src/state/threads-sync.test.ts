@@ -522,36 +522,72 @@ describe("EnvironmentThreads", () => {
       });
       yield* awaitThreadState(h.observed, (value) => value.status === "synchronizing");
 
-      // Three 30s probes plus backoff spend the 90s budget; sleep-only accounting
-      // would probe 17 times before lapsing.
+      // The deadline starts at the first confirmed missing, then every 30s
+      // request counts against it; sleep-only accounting probes ~17 times.
       for (let i = 0; i < 10; i++) {
         yield* TestClock.adjust("30 seconds");
       }
       const state = yield* awaitThreadState(h.observed, (value) => value.status === "deleted");
       expect(Option.isNone(state.data)).toBe(true);
-      expect(yield* Ref.get(h.loaderCalls)).toBe(3);
+      expect(yield* Ref.get(h.loaderCalls)).toBe(4);
       expect(yield* SubscriptionRef.get(h.subscriptionCount)).toBe(0);
     }),
   );
 
-  it.effect("preserves the pending-creation budget across foreground resubscriptions", () =>
+  it.effect("keeps the retained budget across a failed probe and a socket round trip", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness({
-        httpSnapshot: { _tag: "missing" },
+        httpSnapshots: [
+          ...Array.from({ length: 15 }, () => ({ _tag: "missing" }) as const),
+          { _tag: "unavailable" },
+          { _tag: "missing" },
+        ],
       });
       yield* awaitThreadState(h.observed, (value) => value.status === "synchronizing");
 
-      // Spendmost of the budget in the first subscription attempt, then a
-      // foreground wakeup resubscribes; the deadline must not restart.
+      // 15 missing probes spend ~80s of budget, then a foreground wakeup
+      // replaces the attempt. Its first probe hits a transport failure and
+      // falls back to the socket, which must not clear or restart the
+      // deadline; the next attempt's first missing finishes it.
       yield* TestClock.adjust("80 seconds");
       yield* Queue.offer(h.wakeups, "application-active");
-      // A per-attempt budget would leave 70s to burn before deletion; the
-      // preserved one lapses within these 20 seconds.
-      yield* TestClock.adjust("20 seconds");
+      // The replacement attempt must actually run before time advances any
+      // further: the resubscription opens the socket.
+      const socketOpens = yield* SubscriptionRef.changes(h.subscriptionCount).pipe(
+        Stream.filter((count) => count >= 1),
+        Stream.runHead,
+      );
+      expect(Option.isSome(socketOpens)).toBe(true);
+
+      yield* Queue.offer(h.wakeups, "application-active");
+      yield* TestClock.adjust("12 seconds");
       const state = yield* awaitThreadState(h.observed, (value) => value.status === "deleted");
       expect(Option.isNone(state.data)).toBe(true);
-      // Neither attempt may have opened the socket while pending.
-      expect(yield* SubscriptionRef.get(h.subscriptionCount)).toBe(0);
+      expect(yield* Ref.get(h.loaderCalls)).toBe(23);
+      expect(yield* SubscriptionRef.get(h.subscriptionCount)).toBe(1);
+    }),
+  );
+
+  it.effect("a transport failure during the first probe does not start the deadline", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({
+        httpSnapshots: [{ _tag: "unavailable" }, { _tag: "missing" }],
+      });
+      yield* awaitThreadState(h.observed, (value) => value.status === "synchronizing");
+
+      // The only probe exits on a transport failure and falls back to the
+      // socket, so the deadline must not begin until a missing is confirmed;
+      // a stale start would delete the thread on the next attempt's first
+      // missing instead of giving it a full budget.
+      yield* TestClock.adjust("100 seconds");
+      yield* Queue.offer(h.wakeups, "application-active");
+      yield* TestClock.adjust("2 seconds");
+      // Post-fix the first missing starts a fresh budget and backoff keeps
+      // probing (calls 2-5); a stale start would have deleted at call 2.
+      expect(yield* Ref.get(h.loaderCalls)).toBe(5);
+      yield* TestClock.adjust("95 seconds");
+      const state = yield* awaitThreadState(h.observed, (value) => value.status === "deleted");
+      expect(Option.isNone(state.data)).toBe(true);
     }),
   );
 
