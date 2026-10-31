@@ -49,7 +49,8 @@ const CATALOG = {
 /** The gateway's HTTP API and T3's agent-device CLI, recording what was asked of them. */
 const fakePool = (
   options: {
-    readonly failOpen?: boolean;
+    /** What the agent-device CLI prints before exiting 1 from `open`. */
+    readonly failOpen?: unknown;
     readonly holdOpen?: {
       readonly entered: Deferred.Deferred<void>;
       readonly proceed: Deferred.Deferred<void>;
@@ -92,9 +93,7 @@ const fakePool = (
           if (command === "open") {
             if (options.failOpen) {
               return {
-                stdout: JSON.stringify({
-                  error: { message: "No device matches.", hint: "Retry." },
-                }),
+                stdout: JSON.stringify(options.failOpen),
                 stderr: "",
                 code: ChildProcessSpawner.ExitCode(1),
                 timedOut: false,
@@ -343,7 +342,9 @@ describe("Simlock device host", () => {
 
   it.effect("closes the session of a failed open so no lease is left behind", () =>
     Effect.gen(function* () {
-      const pool = yield* fakePool({ failOpen: true });
+      const pool = yield* fakePool({
+        failOpen: { error: { message: "No device matches.", hint: "Retry." } },
+      });
       const scope = yield* Scope.make();
       const host = yield* makeHost(pool, config(), scope);
       const ready = yield* host.ensureReady(() => Effect.void);
@@ -354,6 +355,47 @@ describe("Simlock device host", () => {
       // The failed open freed its slot.
       expect(yield* ready.devices.boot(iphone!).pipe(Effect.flip)).toBeDefined();
       yield* Scope.close(scope, Exit.void);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("tells the user what agent-device reported when a device fails to open", () =>
+    Effect.gen(function* () {
+      const pool = yield* fakePool({
+        failOpen: {
+          success: false,
+          error: {
+            code: "COMMAND_FAILED",
+            message: "Invalid daemon response",
+            cause: {
+              message: "Unexpected non-whitespace character after JSON at position 4",
+            },
+            hint: "Retry with --debug and inspect diagnostics log for details.",
+            details: { requestId: "22a6bf10a567b2a1", line: "404 Not Found" },
+          },
+        },
+      });
+      const scope = yield* Scope.make();
+      const host = yield* makeHost(pool, config(), scope);
+      const ready = yield* host.ensureReady(() => Effect.void);
+      const pixel = (yield* ready.devices.list).devices.find(({ name }) => name === "Pixel 9");
+      const failure = yield* ready.devices.boot(pixel!).pipe(Effect.flip);
+      expect(failure.message).not.toContain("The device host sent no details.");
+      expect(failure.message).toContain("Invalid daemon response");
+      expect(failure.message).toContain("404 Not Found");
+      yield* Scope.close(scope, Exit.void);
+
+      // A details bag without a usable response line still keeps agent-device's message.
+      const oddPool = yield* fakePool({
+        failOpen: { error: { message: "Invalid daemon response", details: { line: 17 } } },
+      });
+      const oddScope = yield* Scope.make();
+      const oddReady = yield* (yield* makeHost(oddPool, config(), oddScope)).ensureReady(
+        () => Effect.void,
+      );
+      const [oddDevice] = (yield* oddReady.devices.list).devices;
+      const oddFailure = yield* oddReady.devices.boot(oddDevice!).pipe(Effect.flip);
+      expect(oddFailure.message).toContain("Invalid daemon response");
+      yield* Scope.close(oddScope, Exit.void);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
