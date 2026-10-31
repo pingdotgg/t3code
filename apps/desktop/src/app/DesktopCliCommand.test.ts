@@ -210,6 +210,16 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       // A folder already on PATH wins, even written with a trailing slash.
       process.env.PATH = `${path.join(home, "bin")}/`;
       expect((yield* after.install).installedPath).toBe(path.join(home, "bin", "t3"));
+
+      // An old link of ours is updated where it is, not moved to a folder that may be off PATH.
+      yield* fs.remove(path.join(home, "bin", "t3"));
+      yield* fs.symlink(path.join(home, "old-t3", "bin", "t3"), path.join(home, "bin", "t3"));
+      process.env.PATH = "";
+      expect((yield* after.install).installedPath).toBe(path.join(home, "bin", "t3"));
+      expect(yield* fs.readLink(path.join(home, "bin", "t3"))).toBe(
+        path.join(home, "new-t3", "bin", "t3"),
+      );
+      expect(yield* fs.exists(path.join(home, ".local", "bin", "t3"))).toBe(false);
     }).pipe(Effect.scoped),
   );
 

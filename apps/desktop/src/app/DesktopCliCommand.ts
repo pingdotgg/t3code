@@ -27,7 +27,8 @@ export class DesktopCliCommandError extends Schema.TaggedError<DesktopCliCommand
 
 const userCandidates = (home: string) => [`${home}/.local/bin`, `${home}/bin`];
 
-// Older builds also linked into these macOS folders; still find and remove those links there.
+// Older builds also linked into these macOS folders. Such a link is found, updated in place, and
+// removed, but no new link goes there.
 const knownLocations = (home: string, platform: NodeJS.Platform) =>
   platform === "darwin"
     ? [...userCandidates(home), "/opt/homebrew/bin", "/usr/local/bin"]
@@ -279,12 +280,14 @@ export const make = Effect.gen(function* () {
         `Another t3 at ${shadowedBy.value} runs first in a new terminal. Remove it, or run the launcher directly at ${launcher}.`,
       );
     }
-    // An old link of ours stays until the new one exists, so a failure never leaves no t3.
+    // An old link of ours is updated where it is, so a t3 that works now keeps working. It is
+    // removed only once a new link exists elsewhere.
     const onPath = pathEntries(process.env.PATH, ":").map((entry) => entry.replace(/\/+$/, ""));
-    for (const directory of [
+    for (const directory of new Set([
+      ...(replaced === undefined ? [] : [path.dirname(replaced)]),
       ...candidates.filter((candidate) => onPath.includes(candidate)),
       ...candidates.filter((candidate) => !onPath.includes(candidate)),
-    ]) {
+    ])) {
       const link = path.join(directory, "t3");
       const created = (yield* exists(directory))
         ? yield* writableDirectory(directory)
