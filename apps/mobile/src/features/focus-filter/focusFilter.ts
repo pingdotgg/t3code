@@ -51,8 +51,8 @@ export const initialAllowlist: Effect.Effect<FocusAllowlist> = readAllowlist.pip
 
 /**
  * Keeps the iOS Focus filter and the registry in step. iOS runs the filter's `perform()` only
- * while the app process is running, so the app also rereads the filter on every return to the
- * foreground.
+ * while the app process is running, so the app also rereads the filter once it is listening and on
+ * every return to the foreground.
  */
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -76,15 +76,17 @@ export const layer = Layer.effectDiscard(
       Effect.flatMap(registry.setFocusAllowlist),
       Effect.catch((cause) => Effect.logWarning("Could not read the iOS Focus filter.", cause)),
     );
-    yield* Stream.callback<"foreground" | { readonly allowlist: FocusAllowlist }>((queue) =>
+    yield* Stream.callback<"reread" | { readonly allowlist: FocusAllowlist }>((queue) =>
       Effect.acquireRelease(
         Effect.sync(() => {
           const appState = AppState.addEventListener("change", (state) => {
-            if (state === "active") Queue.offerUnsafe(queue, "foreground");
+            if (state === "active") Queue.offerUnsafe(queue, "reread");
           });
           const change = module.addListener("onChange", (event) => {
             Queue.offerUnsafe(queue, { allowlist: focusAllowlist(event.environmentIds) });
           });
+          // Catches a change made between the launch read and these listeners.
+          Queue.offerUnsafe(queue, "reread");
           return () => {
             appState.remove();
             change.remove();
@@ -94,7 +96,7 @@ export const layer = Layer.effectDiscard(
       ).pipe(Effect.asVoid),
     ).pipe(
       Stream.runForEach((signal) =>
-        signal === "foreground" ? refresh : registry.setFocusAllowlist(signal.allowlist),
+        signal === "reread" ? refresh : registry.setFocusAllowlist(signal.allowlist),
       ),
       Effect.forkScoped,
     );
