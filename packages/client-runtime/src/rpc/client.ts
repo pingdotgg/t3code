@@ -320,7 +320,7 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                 Stream.mapEffect(() =>
                   options.session === undefined
                     ? SubscriptionRef.get(supervisor.session)
-                    : Effect.succeed(Option.some(options.session)),
+                    : Effect.succeedSome(options.session),
                 ),
               ),
             );
