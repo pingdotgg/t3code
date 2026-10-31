@@ -81,7 +81,12 @@ const REVIEW_BRANCH_SUBJECT_LIMIT = 300;
 const REVIEW_BRANCH_COMMIT_MAX_OUTPUT_BYTES = 128 * 1024;
 // Client patch parsers require a/ and b/ prefixes; override user diff prefix settings.
 export const PATCH_RENDER_PREFIX_ARGS = ["--src-prefix=a/", "--dst-prefix=b/"] as const;
+// Goes before the subcommand. core.quotePath, on by default, writes every byte
+// outside ASCII as octal, which clients would show as a name like "\320\235...".
+// Off, git still quotes the names the patch format needs it to.
+export const PATCH_RENDER_CONFIG_ARGS = ["-c", "core.quotePath=false"] as const;
 const REVIEW_DIFF_ARGS = [
+  ...PATCH_RENDER_CONFIG_ARGS,
   "diff",
   "--find-renames",
   "--no-color",
