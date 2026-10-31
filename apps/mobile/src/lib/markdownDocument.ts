@@ -467,9 +467,12 @@ export function markdownWithFileEmbeds(
   collect(root);
   const edits: MarkdownEdit[] = [];
   let lastSplit: { paragraph: Paragraph; end: number } | undefined;
-  // Text that opens a block once a paragraph break puts it first; it keeps the filename link.
-  const blockStart =
-    /^(?:#{1,6}|[-+*>]|\d{1,9}[.)])(?:[ \t]|$)|^(?:[-*_][ \t]*){3,}$|^(?:`{3,}|~{3,})|^\[(?:\\.|[^\]\\])*\]:/;
+  // Text split off a paragraph must stay paragraphs: a marker could become a heading or list.
+  const staysParagraphs = (text: string) =>
+    parser
+      .parse(text.replace(/(\r?\n)[ \t>]*/g, "$1"))
+      .children.every((child) => child.type === "paragraph");
+  const quoteDepth = (prefix: string) => prefix.split(">").length - 1;
   // Paragraph breaks around an embed, keeping the `>` markers of the quotes around it.
   const breaksAround = (
     paragraph: Paragraph,
@@ -481,8 +484,15 @@ export function markdownWithFileEmbeds(
     if (first === undefined || last === undefined) return null;
     const prefix = markdown.slice(markdown.lastIndexOf("\n", first - 1) + 1, first);
     if (!/^[ \t>]*$/.test(prefix) || markdown.slice(first, last).includes("||")) return null;
-    const next = /^[ \t]*(?:\r?\n[ \t>]*)?([^\r\n]*)/.exec(markdown.slice(end, last))![1]!;
-    if (blockStart.test(next)) return null;
+    // A lazy continuation line sits outside the quote, so the embed would fall out of it.
+    const lines = markdown.slice(first, last).split("\n").slice(1);
+    if (lines.some((line) => quoteDepth(/^[ \t>]*/.exec(line)![0]) !== quoteDepth(prefix)))
+      return null;
+    if (
+      !staysParagraphs(markdown.slice(first, start)) ||
+      !staysParagraphs(markdown.slice(end, last))
+    )
+      return null;
     const blank = prefix.trimEnd();
     const breaks: MarkdownEdit[] = [];
     const afterPrevious =

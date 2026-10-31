@@ -321,6 +321,17 @@ describe("file embeds in native thread and file Markdown", () => {
       ["a heading", `# ${video}`, `# ${link}`],
       ["a spoiler", `||see ${video}||`, `||see ${link}||`],
       ["text that would open a list", `${video} - demo`, `${link} - demo`],
+      ["a lazy block quote line", `> text\n${video}`, `> text\n${link}`],
+      [
+        "text that a split would turn into a setext heading",
+        `intro\n--- ${video}`,
+        `intro\n--- ${link}`,
+      ],
+      [
+        "text that a split would turn into a setext heading",
+        `intro\n=== ${video}`,
+        `intro\n=== ${link}`,
+      ],
       ["a next line that would open a list", `${video}\n2. next`, `${link}\n2. next`],
       ["a table cell", `| a |\n| --- |\n| ${video} |`, `| a |\n| --- |\n| ${link} |`],
       ["a link", `text [${video}](https://example.com)`, "text [x.mp4](https://example.com)"],
