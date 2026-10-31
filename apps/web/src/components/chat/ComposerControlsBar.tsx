@@ -136,8 +136,8 @@ export function ComposerControlsBar(props: {
     hiddenBlockCount: restingHiddenBlockCount,
     hiddenBlockIds: hiddenRestingBlockIds,
   } = resolveComposerControlsOwnership({
-    matchesDefault: accessMatchesDefault || props.permissionsShownInStrip,
-    collapsed: composerControlsCollapsed,
+    matchesDefault: false,
+    collapsed: false,
     measuredHiddenBlockCount,
   });
   const controlSize = composerControlsCollapsed ? "xs" : "sm";
