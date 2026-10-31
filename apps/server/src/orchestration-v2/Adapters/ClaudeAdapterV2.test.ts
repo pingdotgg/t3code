@@ -10105,6 +10105,110 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  const openIdleWakeTurn = (attemptPrefix: string) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make(`${attemptPrefix}-1`),
+          text: "Run the build in the background.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+      yield* Queue.offer(harness.sdkMessages, turnOneResult);
+      yield* harness.awaitTerminal(1);
+      yield* harness.offerAndWait(wakeNotification);
+      yield* harness.offerAndWait(wakeTurnInit);
+      assert.lengthOf(harness.continuationRequests, 1);
+      const startContinuation = (providerTurnOrdinal: number) =>
+        harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`${attemptPrefix}-continuation`),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+      return { harness, now, startContinuation };
+    });
+
+  it.effect("settles the continuation when a queued prompt joins the opened wake turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { harness, now, startContinuation } = yield* openIdleWakeTurn(
+          "attempt-claude-wake-joined",
+        );
+        assert.equal(harness.continuationRequests[0]?.notification?.outcome, "completed");
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-wake-joined-2"),
+            text: "Webhook: a pull request was labeled.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+          }),
+        );
+        yield* harness.until(() => harness.offeredMessages.length === 2);
+        // Claude answers the notification and the prompt in one turn with one result.
+        yield* harness.offerAndWait(wakeAssistant);
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000140",
+            result: "Ledger drift applied and the webhook handled.",
+            numTurns: 4,
+          }),
+        );
+        yield* harness.awaitTerminal(2);
+        assert.equal(harness.terminalEvents()[1]?.status, "completed");
+
+        yield* startContinuation(3);
+        yield* harness.awaitTerminal(3);
+        assert.equal(harness.terminalEvents()[2]?.status, "completed");
+        assert.lengthOf(harness.offeredMessages, 2);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("settles an opened wake run that goes idle without a result", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { harness, startContinuation } = yield* openIdleWakeTurn("attempt-claude-wake-idle");
+        yield* startContinuation(2);
+        assert.lengthOf(harness.terminalEvents(), 1);
+
+        yield* TestClock.adjust("9 minutes");
+        yield* harness.offerAndWait(wakeAssistant);
+        yield* TestClock.adjust("1 minute");
+        assert.lengthOf(harness.terminalEvents(), 1);
+
+        yield* TestClock.adjust("10 minutes");
+        yield* harness.awaitTerminal(2);
+        assert.equal(harness.terminalEvents()[1]?.status, "completed");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([true, false])(
     "carries a rejected wake rate limit into the continuation failure (event=%s)",
     (standaloneEvent) =>

@@ -322,6 +322,8 @@ const CLAUDE_MCP_REGISTRATION_TIMEOUT = "90 seconds";
 // Claude can consume a subagent result before the launching turn ends, leaving
 // its notification with no native wake turn to answer the continuation.
 const CLAUDE_WAKE_TURN_START_DEADLINE = "2 minutes";
+// An opened wake turn that streams nothing and holds no tool call this long is idle.
+const CLAUDE_WAKE_TURN_IDLE_DEADLINE = "10 minutes";
 // Claude Code flushes transcript writes every 100 ms, so a workflow member's
 // reply can land after the progress frame that settles it. Its transcript
 // stays the source of its answer this long after it settles.
@@ -4034,6 +4036,7 @@ interface ActiveClaudeTurnContext {
   promptEcho: "pending" | "confirmed";
   promptStarted: boolean;
   nativeWakeStarted: boolean;
+  wakeFrames: number;
   gatedFramesBeforeEcho: number;
   readonly heldRootFrames: Array<SDKMessage>;
 }
@@ -4818,6 +4821,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         >();
         // Buffered idle outcomes must not settle a resumed child again.
         const appliedSubagentOutcomes = new WeakSet<SDKMessage>();
+        // A prompt offered into an opened wake turn is answered with it; that turn's result settles the prompt.
+        const wakeStartsAnsweredByPrompt = new WeakSet<SDKMessage>();
         // Subagent frames can precede the task_started that registers their owner.
         const pendingSubagentFramesByToolUseId = yield* Ref.make(
           new Map<string, ReadonlyArray<SDKMessage>>(),
@@ -9472,12 +9477,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const message = input.message;
           const context = yield* Ref.get(activeTurn);
           const liveQuery = yield* Ref.get(queryContext);
-          if (
-            context?.promptUuid === null &&
-            liveQuery?.query === input.query &&
-            isClaudeRootTurnFrame(message)
-          ) {
-            context.nativeWakeStarted = true;
+          if (context?.promptUuid === null && liveQuery?.query === input.query) {
+            context.wakeFrames += 1;
+            if (isClaudeRootTurnFrame(message)) context.nativeWakeStarted = true;
           }
           if (
             context === null ||
@@ -10474,6 +10476,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               promptEcho: isClaudeProviderContinuationTurn(turnInput) ? "confirmed" : "pending",
               promptStarted: false,
               nativeWakeStarted: false,
+              wakeFrames: 0,
               gatedFramesBeforeEcho: 0,
               heldRootFrames: [],
             };
@@ -10538,6 +10541,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (userMessage !== null) {
               yield* attachTurn;
               yield* startUserTurnForWakeReports(nativeThreadId);
+              const buffered = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? [];
+              const openWakeStart = buffered.findLast(isClaudeTurnStartMessage);
+              if (
+                openWakeStart !== undefined &&
+                !buffered
+                  .slice(buffered.indexOf(openWakeStart))
+                  .some((entry) => entry.type === "result")
+              ) {
+                wakeStartsAnsweredByPrompt.add(openWakeStart);
+              }
               yield* Effect.uninterruptibleMask((restore) =>
                 restore(
                   querySession.query.offer(userMessage, () => {
@@ -10640,37 +10653,67 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   yield* handleSdkMessage({ query: querySession.query, message: lastResult });
                   return;
                 }
+                const latestWakeStart = drained.findLast(isClaudeTurnStartMessage);
                 if (hasOpaqueTaskNotification && !context.nativeWakeStarted) {
                   const completedAt = yield* DateTime.now;
                   yield* finalizeActiveTurn({ context, status: "completed", completedAt });
-                } else if (!context.nativeWakeStarted) {
-                  yield* Effect.sleep(CLAUDE_WAKE_TURN_START_DEADLINE).pipe(
-                    Effect.andThen(
-                      sdkMessageLock.withPermits(1)(
-                        Effect.gen(function* () {
-                          if (
-                            (yield* Ref.get(activeTurn)) !== context ||
-                            (yield* Ref.get(queryContext)) !== querySession ||
-                            querySession.stopping ||
-                            context.nativeWakeStarted ||
-                            (yield* Ref.get(interruptedTurns)).has(context.providerTurnId)
-                          )
-                            return;
-                          yield* Effect.logWarning(
-                            "orchestration-v2.claude-wake-turn-never-opened",
-                            {
-                              providerTurnId: context.providerTurnId,
-                              nativeThreadId,
-                            },
-                          );
-                          const completedAt = yield* DateTime.now;
-                          yield* finalizeActiveTurn({ context, status: "completed", completedAt });
-                        }),
-                      ),
-                    ),
-                    Effect.forkIn(sessionScope),
-                  );
+                  return;
                 }
+                if (
+                  latestWakeStart !== undefined &&
+                  wakeStartsAnsweredByPrompt.has(latestWakeStart)
+                ) {
+                  yield* Effect.logInfo("orchestration-v2.claude-wake-turn-answered-by-prompt", {
+                    providerTurnId: context.providerTurnId,
+                    nativeThreadId,
+                  });
+                  const completedAt = yield* DateTime.now;
+                  yield* finalizeActiveTurn({ context, status: "completed", completedAt });
+                  return;
+                }
+                yield* Effect.gen(function* () {
+                  let framesSeen = context.wakeFrames;
+                  while (true) {
+                    yield* Effect.sleep(
+                      context.nativeWakeStarted
+                        ? CLAUDE_WAKE_TURN_IDLE_DEADLINE
+                        : CLAUDE_WAKE_TURN_START_DEADLINE,
+                    );
+                    const settled = yield* sdkMessageLock.withPermits(1)(
+                      Effect.gen(function* () {
+                        if (
+                          (yield* Ref.get(activeTurn)) !== context ||
+                          (yield* Ref.get(queryContext)) !== querySession ||
+                          querySession.stopping ||
+                          (yield* Ref.get(interruptedTurns)).has(context.providerTurnId)
+                        )
+                          return true;
+                        if (
+                          context.nativeWakeStarted &&
+                          (context.wakeFrames !== framesSeen ||
+                            context.toolCalls.size > 0 ||
+                            (yield* Ref.get(pendingRuntimeRequests)).size > 0)
+                        ) {
+                          framesSeen = context.wakeFrames;
+                          return false;
+                        }
+                        yield* Effect.logWarning(
+                          context.nativeWakeStarted
+                            ? "orchestration-v2.claude-wake-turn-went-idle"
+                            : "orchestration-v2.claude-wake-turn-never-opened",
+                          {
+                            providerTurnId: context.providerTurnId,
+                            nativeThreadId,
+                          },
+                        );
+                        const completedAt = yield* DateTime.now;
+                        yield* finalizeActiveTurn({ context, status: "completed", completedAt });
+                        return true;
+                      }),
+                    );
+                    if (settled) return;
+                  }
+                }).pipe(Effect.forkIn(sessionScope));
               }),
             );
           },
