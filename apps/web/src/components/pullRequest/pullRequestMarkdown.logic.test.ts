@@ -3,7 +3,7 @@ import remarkParse from "remark-parse";
 import { unified } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 
-import { remarkPullRequestAutolinks } from "./pullRequestMarkdown.logic";
+import { pullRequestAttachments, remarkPullRequestAutolinks } from "./pullRequestMarkdown.logic";
 
 type Node = {
   type: string;
@@ -41,6 +41,36 @@ describe("remarkPullRequestAutolinks", () => {
       ["#12", "https://github.com/team/repo/issues/12", "reference"],
       ["abcdef1", "https://github.com/team/repo/commit/abcdef1", "commit"],
       ["#13", "https://example.com", undefined],
+    ]);
+  });
+});
+
+describe("pullRequestAttachments", () => {
+  it("collects body media and image references once while leaving code alone", () => {
+    expect(
+      pullRequestAttachments(
+        [
+          "![Before](https://example.com/before.png)",
+          "![Again](https://example.com/before.png)",
+          "![After][result]",
+          "",
+          "[result]: https://example.com/after.png",
+          "",
+          "https://example.com/demo.mp4",
+          "",
+          "```md",
+          "![Code](https://example.com/code.png)",
+          "```",
+          "    ![Indented](https://example.com/indented.png)",
+          "![Unsafe](javascript:alert)",
+          '<img src="https://example.com/screenshot.png" alt="Screenshot" />',
+        ].join("\n"),
+      ),
+    ).toEqual([
+      { url: "https://example.com/before.png", media: "image", caption: "Image 1" },
+      { url: "https://example.com/after.png", media: "image", caption: "Image 2" },
+      { url: "https://example.com/demo.mp4", media: "video", caption: "Video 3" },
+      { url: "https://example.com/screenshot.png", media: "image", caption: "Image 4" },
     ]);
   });
 });
