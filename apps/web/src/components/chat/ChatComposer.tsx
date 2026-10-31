@@ -1,4 +1,5 @@
 import { VoiceInputSetup } from "./VoiceInputSetup";
+import { ComposerApprovalPanel } from "./ComposerApprovalPanel";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
@@ -30,6 +31,7 @@ import type {
   EnvironmentContextRecord,
   ResolvedKeybindingsConfig,
   RuntimeMode,
+  ProviderApprovalDecision,
   RuntimeRequestId,
   ScopedThreadRef,
   ServerProvider,
@@ -109,6 +111,7 @@ import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerTriggerState } from "./useComposerTriggerState";
 import { useComposerMenuItems } from "./useComposerMenuItems";
+import { observeComposerPromptLayout } from "./observeComposerPromptLayout";
 import { useComposerMultilinePrompt } from "./useComposerMultilinePrompt";
 import {
   reconcileAttachmentContextReferences,
@@ -378,6 +381,10 @@ export interface ChatComposerProps {
     readonly connection: EnvironmentConnectionPresentation;
   } | null;
 
+  onRespondToApproval?: (
+    requestId: RuntimeRequestId,
+    decision: ProviderApprovalDecision,
+  ) => Promise<unknown>;
   activePendingApproval: PendingApproval | null;
   pendingApprovals: PendingApproval[];
   onHeldRequestIdsChange: (requestIds: ReadonlySet<string>) => void;
@@ -428,6 +435,7 @@ export interface ChatComposerProps {
   threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
   /** Where approval, question and plan cards render, above the tray. */
   requestCardHost: HTMLDivElement | null;
+  trayControlsHost?: HTMLDivElement | null;
   /** The thread's branch, shown on command approvals next to the working directory. */
   onComposerOverlayHeightChange: (height: number) => void;
   /** The new-thread strip names the permissions, so the controls row hides its chip. */
@@ -1000,6 +1008,16 @@ export function ChatComposer(props: ChatComposerProps) {
   const [composerMenuAnchor, setComposerMenuAnchor] = useState<HTMLDivElement | null>(null);
   const [hasWrappedPrompt, observeWrappedPrompt] = useComposerMultilinePrompt();
   const hasMultilinePrompt = prompt.includes("\n") || hasWrappedPrompt;
+  const attachComposerBody = useStableCallback((node: HTMLDivElement | null) => {
+    setComposerMenuAnchor(node);
+    const stopLayout = node ? observeComposerPromptLayout(node) : undefined;
+    const stopObserving = observeWrappedPrompt(node);
+    return () => {
+      setComposerMenuAnchor(null);
+      stopObserving?.();
+      stopLayout?.();
+    };
+  });
   // A pending question stays expanded: its card moves into the banner dock,
   // so collapsing would leave the surface empty and squashed beneath it.
   const isComposerCollapsedMobile =
@@ -1211,23 +1229,13 @@ export function ChatComposer(props: ChatComposerProps) {
   const editPromptFromTraitsStable = useStableCallback(editPromptFromTraits);
   const promptUltrathink = readPromptUltrathink(prompt);
 
-  const [inlineRestingControlsHost, setInlineRestingControlsHost] = useState<HTMLDivElement | null>(
-    null,
-  );
   const {
     controlsRef: restingComposerControlsRef,
-    attachControls: attachRestingComposerControls,
-    hiddenBlockCount: restingControlsHiddenBlockCount,
-    iconOnlyBlockCount: restingControlsIconOnlyBlockCount,
-    pickerIconOnly: restingControlsPickerIconOnly,
-    controlsVisible: restingControlsVisible,
-  } = useRestingComposerControlsLayout(inlineRestingControlsHost);
-  const {
     attachControls: attachExpandedComposerControls,
     hiddenBlockCount: expandedControlsHiddenBlockCount,
     iconOnlyBlockCount: expandedControlsIconOnlyBlockCount,
     pickerIconOnly: expandedControlsPickerIconOnly,
-  } = useRestingComposerControlsLayout(null, true);
+  } = useRestingComposerControlsLayout(props.trayControlsHost ?? null);
   const pendingPrimaryAction = activePendingProgress
     ? {
         questionIndex: activePendingProgress.questionIndex,
@@ -2377,18 +2385,8 @@ export function ChatComposer(props: ChatComposerProps) {
     importContextRecords,
     expandMobileComposer: expandMobileComposerStable,
   });
-  const showMobilePendingAnswerActions =
-    isMobileViewport &&
-    !isComposerCollapsedMobile &&
-    pendingPrimaryAction !== null &&
-    requestCardHost === null;
-  const composerControlsCollapsed = isComposerCollapsedMobile;
-  // The collapsed mobile web composer keeps a second controls row inside the card.
-  const showInlineRestingControls = isComposerCollapsedMobile;
-  const composerControlsHidden = showInlineRestingControls && !restingControlsVisible;
-  if (composerControlsHidden && isComposerModelPickerOpen) {
-    setIsComposerModelPickerOpen(false);
-  }
+  const composerControlsCollapsed = true;
+  const composerControlsHidden = false;
   const collapsedComposerImagePreviews =
     standaloneComposerImages.length > 0 ? (
       <ComposerRestingImagePreviews
@@ -2402,22 +2400,12 @@ export function ChatComposer(props: ChatComposerProps) {
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   const composerMainSurfaceRef = useComposerRestingTransition(
-    composerControlsCollapsed,
+    isComposerCollapsedMobile,
     restingComposerControlsRef,
     onComposerOverlayHeightChange,
     panelAnimationsActive,
     panelAnimationDurationMs,
   );
-  const restingHiddenBlockCount = showInlineRestingControls
-    ? restingControlsHiddenBlockCount
-    : composerControlsCollapsed
-      ? 0
-      : expandedControlsHiddenBlockCount;
-  const iconOnlyBlockCount = showInlineRestingControls
-    ? restingControlsIconOnlyBlockCount
-    : composerControlsCollapsed
-      ? 0
-      : expandedControlsIconOnlyBlockCount;
   const composerControls = (
     <ComposerControlsBar
       environmentId={environmentId}
@@ -2438,13 +2426,11 @@ export function ChatComposer(props: ChatComposerProps) {
       handleRuntimeModeChange={handleRuntimeModeChange}
       composerControlsCollapsed={composerControlsCollapsed}
       effortDisplay={settings.effortDisplay}
-      permissionsShownInStrip={props.permissionsShownInStrip}
+      permissionsShownInStrip={false}
       composerControlsHidden={composerControlsHidden}
-      restingHiddenBlockCount={restingHiddenBlockCount}
-      iconOnlyBlockCount={iconOnlyBlockCount}
-      pickerIconOnly={
-        showInlineRestingControls ? restingControlsPickerIconOnly : expandedControlsPickerIconOnly
-      }
+      restingHiddenBlockCount={expandedControlsHiddenBlockCount}
+      iconOnlyBlockCount={expandedControlsIconOnlyBlockCount}
+      pickerIconOnly={expandedControlsPickerIconOnly}
       showProviderUnavailable={showProviderUnavailable}
       providerSetupInstanceId={providerSetupInstanceId}
       onOpenProviderSetup={onOpenProviderSetup}
@@ -3246,6 +3232,7 @@ export function ChatComposer(props: ChatComposerProps) {
   const requestCard =
     !isComposerCollapsedMobile && pendingUserInputs.length > 0 ? (
       <ComposerPendingUserInputPanel
+        actionsInComposer
         pendingUserInputs={pendingUserInputs}
         cwd={gitCwd ?? undefined}
         threadRef={routeThreadRef}
@@ -3265,6 +3252,15 @@ export function ChatComposer(props: ChatComposerProps) {
         onSubmit={submitComposerStable}
         onPrevious={onPreviousActivePendingUserInputQuestion}
         onWriteAnswer={focusComposer}
+      />
+    ) : activePendingApproval && props.onRespondToApproval ? (
+      <ComposerApprovalPanel
+        key={activePendingApproval.requestId}
+        approval={activePendingApproval}
+        count={pendingApprovals.length}
+        disabled={!canOperateThread}
+        isResponding={respondingRequestIds.includes(activePendingApproval.requestId)}
+        onRespond={props.onRespondToApproval}
       />
     ) : null;
 
@@ -3342,6 +3338,24 @@ export function ChatComposer(props: ChatComposerProps) {
       {...threadContextDropTargetProps()}
     >
       {requestCardHost && requestCard ? createPortal(requestCard, requestCardHost) : null}
+      {props.trayControlsHost
+        ? createPortal(
+            <div
+              ref={attachExpandedComposerControls}
+              data-chat-composer-resting-controls="true"
+              className="flex min-w-0 items-center gap-0.5"
+            >
+              <ComposerStashBadge
+                count={stashQueue.length}
+                menuOpen={isStashMenuOpen}
+                pulseKey={stashPulseKey}
+                onToggleMenu={toggleStashMenuStable}
+              />
+              {composerControls}
+            </div>,
+            props.trayControlsHost,
+          )
+        : null}
       <ComposerBanner.Dock>
         <ComposerBannerStack items={shelfItems} />
       </ComposerBanner.Dock>
@@ -3428,16 +3442,12 @@ export function ChatComposer(props: ChatComposerProps) {
             ) : null}
 
             <div
-              ref={(node) => {
-                setComposerMenuAnchor(node);
-                const stopObserving = observeWrappedPrompt(node);
-                return () => {
-                  setComposerMenuAnchor(null);
-                  stopObserving?.();
-                };
-              }}
+              ref={attachComposerBody}
               data-chat-composer-body="true"
-              className={cn("relative py-2 ps-3.5 pe-2", isComposerCollapsedMobile && "hidden")}
+              className={cn(
+                "composer-prompt-body relative grid min-h-12 grid-cols-1 items-center py-2 ps-3.5 pe-2",
+                isComposerCollapsedMobile && "hidden",
+              )}
             >
               {isStashMenuOpen && !composerMenuOpen && (
                 <ComposerCommandMenuLayer
@@ -3491,21 +3501,21 @@ export function ChatComposer(props: ChatComposerProps) {
                 </ComposerCommandMenuLayer>
               )}
 
-              {!isComposerCollapsedMobile &&
-                pendingUserInputs.length === 0 &&
-                editingQueuedAttachments !== null &&
-                editingQueuedAttachments.length > 0 && (
-                  <ComposerQueuedAttachmentRow
-                    attachments={editingQueuedAttachments}
-                    onRemove={onRemoveEditingQueuedAttachment}
-                  />
-                )}
+              <div className="mb-1.5 w-full [grid-area:attachments] empty:hidden">
+                {!isComposerCollapsedMobile &&
+                  pendingUserInputs.length === 0 &&
+                  editingQueuedAttachments !== null &&
+                  editingQueuedAttachments.length > 0 && (
+                    <ComposerQueuedAttachmentRow
+                      attachments={editingQueuedAttachments}
+                      onRemove={onRemoveEditingQueuedAttachment}
+                    />
+                  )}
+                {composerAttachmentMediaRow}
+                {composerAttachmentFileList}
+              </div>
 
-              {composerAttachmentMediaRow}
-
-              {composerAttachmentFileList}
-
-              <div className="relative">
+              <div className="composer-prompt-editor relative min-w-0 py-1.5 [grid-area:prompt]">
                 {previewFile ? (
                   <ComposerFilePreviewDialog
                     file={previewFile}
@@ -3537,7 +3547,7 @@ export function ChatComposer(props: ChatComposerProps) {
                     buildContextClipboardFragment={buildContextClipboardFragmentStable}
                     importContextFragment={importContextFragmentStable}
                     skills={selectedProviderSkills}
-                    className={cn(showMobilePendingAnswerActions && "max-sm:pb-12")}
+
                     onChange={onPromptChangeStable}
                     onCommandKeyDown={onComposerCommandKeyStable}
                     onPageScrollKeyDown={onPageScrollKeyDown}
@@ -3579,62 +3589,97 @@ export function ChatComposer(props: ChatComposerProps) {
                     }
                   />
                 </ComposerContextActionsContext>
-                {showMobilePendingAnswerActions ? (
-                  <div
-                    data-chat-composer-mobile-pending-actions="true"
-                    data-chat-composer-actions="right"
-                    data-chat-composer-transition-actions="true"
-                    data-chat-composer-primary-actions-compact={
-                      isComposerPrimaryActionsCompact ? "true" : "false"
-                    }
-                    className={cn("absolute bottom-0 right-0 flex items-center justify-end gap-1")}
-                  >
-                    {composerAttachButton}
-                    <ComposerFooterPrimaryActions
-                      compact={isComposerPrimaryActionsCompact}
-                      canOperateThread={canOperateThread}
-                      compactBeforeSendTokens={props.resumeCompactionTokens}
-                      keepFullHistory={props.keepFullHistory}
-                      onToggleKeepFullHistory={props.onToggleKeepFullHistory}
-                      pendingAction={pendingPrimaryAction}
-                      isRunning={phase === "running"}
-                      canInterrupt={canInterrupt}
-                      followUpBehavior={followUpBehavior}
-                      canSteer={!isCompacting}
-                      alternateShortcutLabel={shortcutLabelForCommand(
-                        keybindings,
-                        "composer.sendAlternate",
-                        {
-                          context: {
-                            composerFocus: true,
-                            draftThreadRoute: routeKind === "draft",
-                            turnRunning: true,
-                            composerRequiresModifier: composerRequiresModifier(
-                              settings.sendShortcut,
-                              prompt,
-                            ),
-                          },
-                        },
-                      )}
-                      isSendBusy={isSendBusy}
-                      sendDisabledReason={voiceSendDisabledReason}
-                      isEnvironmentUnavailable={
-                        environmentUnavailable !== null ||
-                        noProviderAvailable ||
-                        projectSelectionRequired
-                      }
-                      isPreparingWorktree={isPreparingWorktree}
-                      hasSendableContent={composerSendState.hasSendableContent}
-                      canResume={showResumeAction}
-                      preserveComposerFocusOnPointerDown
-                      isEditingQueuedMessage={isEditingQueuedMessage}
-                      onSubmitMessage={handleSubmitMessageStable}
-                      onResume={onResume}
-                      onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
-                      onInterrupt={handleInterruptPrimaryActionStable}
-                    />
-                  </div>
-                ) : null}
+              </div>
+              <div
+                data-chat-composer-actions="right"
+                data-chat-composer-transition-actions="true"
+                className="z-1 flex w-max max-w-full items-center justify-end gap-1.5 self-start justify-self-end [grid-area:prompt]"
+              >
+                {composerAttachButton}
+                <ComposerFooterPrimaryActions
+                  compact={isComposerPrimaryActionsCompact}
+                  canOperateThread={canOperateThread}
+                  pendingAction={pendingPrimaryAction}
+                  isRunning={phase === "running"}
+                  canInterrupt={canInterrupt}
+                  followUpBehavior={followUpBehavior}
+                  canSteer={!isCompacting}
+                  alternateShortcutLabel={shortcutLabelForCommand(
+                    keybindings,
+                    "composer.sendAlternate",
+                    {
+                      context: {
+                        composerFocus: true,
+                        draftThreadRoute: routeKind === "draft",
+                        turnRunning: true,
+                        composerRequiresModifier: composerRequiresModifier(
+                          settings.sendShortcut,
+                          prompt,
+                        ),
+                      },
+                    },
+                  )}
+                  voiceInputActive={voiceInputActive}
+                  isSendBusy={isSendBusy}
+                  sendDisabledReason={voiceSendDisabledReason}
+                  isEnvironmentUnavailable={
+                    environmentUnavailable !== null ||
+                    noProviderAvailable ||
+                    projectSelectionRequired
+                  }
+                  isPreparingWorktree={isPreparingWorktree}
+                  hasSendableContent={composerSendState.hasSendableContent || voiceInputActive}
+                  canResume={showResumeAction}
+                  preserveComposerFocusOnPointerDown={isMobileViewport}
+                  isEditingQueuedMessage={isEditingQueuedMessage}
+                  onSubmitMessage={handleSubmitMessageStable}
+                  onResume={onResume}
+                  onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
+                  onInterrupt={handleInterruptPrimaryActionStable}
+                  compactBeforeSendTokens={props.resumeCompactionTokens}
+                  keepFullHistory={props.keepFullHistory}
+                  onToggleKeepFullHistory={props.onToggleKeepFullHistory}
+                >
+                  {speechInput.available ? (
+                    <>
+                      <ComposerSpeechRecordingPill
+                        state={speechInput.state}
+                        progress={null}
+                        finishShortcutLabel={dictationShortcutLabel}
+                        cancelShortcutLabel="Esc"
+                        level={speechInput.level}
+                        disabled={dictationDisabled}
+                        onStart={() => void speechInput.start()}
+                        onStop={() => void speechInput.stop()}
+                        onCancel={() => speechInput.cancel()}
+                        onSkipPostProcessing={() => speechInput.skipPostProcessing()}
+                      />
+                      <ComposerSpeechButton
+                        state={speechInput.state}
+                        progress={null}
+                        shortcutLabel={dictationShortcutLabel}
+                        disabled={dictationDisabled}
+                        onStart={() => void speechInput.start()}
+                        onCancel={() => speechInput.cancel()}
+                      />
+                    </>
+                  ) : null}
+                  <VoiceInputSetup
+                    environmentId={speechInput.transcriptionEnvironmentId}
+                    open={speechInput.setup.open}
+                    step={speechInput.setup.step}
+                    status={speechInput.status}
+                    model={speechInput.setup.model}
+                    language={speechInput.setup.language}
+                    downloading={speechInput.setup.downloading}
+                    error={speechInput.setup.error}
+                    onOpenChange={speechInput.setup.setOpen}
+                    onRetryCatalog={speechInput.setup.retryCatalog}
+                    onDownload={() => void speechInput.setup.download()}
+                    onCancelDownload={() => void speechInput.setup.cancelDownload()}
+                    onStartRecording={() => void speechInput.setup.startRecording()}
+                  />
+                </ComposerFooterPrimaryActions>
               </div>
             </div>
             {speechInput.preview ? (
@@ -3644,149 +3689,6 @@ export function ChatComposer(props: ChatComposerProps) {
               >
                 <span>{speechInput.preview.committed}</span>
                 <span className="text-muted-foreground">{speechInput.preview.tentative}</span>
-              </div>
-            ) : null}
-
-            {isComposerCollapsedMobile && speechInput.state.phase === "idle" ? null : (
-              <div
-                data-chat-composer-footer="true"
-                className={cn(
-                  "flex min-w-0 flex-nowrap items-center overflow-visible px-2 pb-2",
-                  pendingUserInputs.length > 0 && "pt-2",
-                  showMobilePendingAnswerActions &&
-                    speechInput.state.phase === "idle" &&
-                    "hidden sm:flex",
-                )}
-              >
-                <ComposerStashBadge
-                  count={stashQueue.length}
-                  menuOpen={isStashMenuOpen}
-                  pulseKey={stashPulseKey}
-                  onToggleMenu={toggleStashMenuStable}
-                />
-                {composerAttachButton ? <div className="me-2">{composerAttachButton}</div> : null}
-                <div
-                  data-chat-composer-actions="right"
-                  data-chat-composer-transition-actions="true"
-                  data-chat-composer-primary-actions-compact={
-                    isComposerPrimaryActionsCompact ? "true" : "false"
-                  }
-                  className="flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-2"
-                >
-                  <div
-                    ref={attachExpandedComposerControls}
-                    data-chat-composer-controls="footer"
-                    data-chat-composer-footer-controls="true"
-                    className="relative flex min-w-0 flex-1 items-center justify-end gap-0.5"
-                  >
-                    {composerControls}
-                  </div>
-                  <ComposerFooterPrimaryActions
-                    compact={isComposerPrimaryActionsCompact}
-                    canOperateThread={canOperateThread}
-                    pendingAction={requestCard && requestCardHost ? null : pendingPrimaryAction}
-                    isRunning={phase === "running"}
-                    canInterrupt={canInterrupt}
-                    followUpBehavior={followUpBehavior}
-                    canSteer={!isCompacting}
-                    alternateShortcutLabel={shortcutLabelForCommand(
-                      keybindings,
-                      "composer.sendAlternate",
-                      {
-                        context: {
-                          composerFocus: true,
-                          draftThreadRoute: routeKind === "draft",
-                          turnRunning: true,
-                          composerRequiresModifier: composerRequiresModifier(
-                            settings.sendShortcut,
-                            prompt,
-                          ),
-                        },
-                      },
-                    )}
-                    voiceInputActive={voiceInputActive}
-                    isSendBusy={isSendBusy}
-                    sendDisabledReason={voiceSendDisabledReason}
-                    isEnvironmentUnavailable={
-                      environmentUnavailable !== null ||
-                      noProviderAvailable ||
-                      projectSelectionRequired
-                    }
-                    isPreparingWorktree={isPreparingWorktree}
-                    hasSendableContent={composerSendState.hasSendableContent || voiceInputActive}
-                    canResume={showResumeAction}
-                    preserveComposerFocusOnPointerDown={isMobileViewport}
-                    isEditingQueuedMessage={isEditingQueuedMessage}
-                    onSubmitMessage={handleSubmitMessageStable}
-                    onResume={onResume}
-                    onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
-                    onInterrupt={handleInterruptPrimaryActionStable}
-                    compactBeforeSendTokens={props.resumeCompactionTokens}
-                    keepFullHistory={props.keepFullHistory}
-                    onToggleKeepFullHistory={props.onToggleKeepFullHistory}
-                  >
-                    {speechInput.available ? (
-                      <>
-                        <ComposerSpeechRecordingPill
-                          state={speechInput.state}
-                          progress={null}
-                          finishShortcutLabel={dictationShortcutLabel}
-                          cancelShortcutLabel="Esc"
-                          level={speechInput.level}
-                          disabled={dictationDisabled}
-                          onStart={() => void speechInput.start()}
-                          onStop={() => void speechInput.stop()}
-                          onCancel={() => speechInput.cancel()}
-                          onSkipPostProcessing={() => speechInput.skipPostProcessing()}
-                        />
-                        <ComposerSpeechButton
-                          state={speechInput.state}
-                          progress={null}
-                          shortcutLabel={dictationShortcutLabel}
-                          disabled={dictationDisabled}
-                          onStart={() => void speechInput.start()}
-                          onCancel={() => speechInput.cancel()}
-                        />
-                      </>
-                    ) : null}
-                    <VoiceInputSetup
-                      environmentId={speechInput.transcriptionEnvironmentId}
-                      open={speechInput.setup.open}
-                      step={speechInput.setup.step}
-                      status={speechInput.status}
-                      model={speechInput.setup.model}
-                      language={speechInput.setup.language}
-                      downloading={speechInput.setup.downloading}
-                      error={speechInput.setup.error}
-                      onOpenChange={speechInput.setup.setOpen}
-                      onRetryCatalog={speechInput.setup.retryCatalog}
-                      onDownload={() => void speechInput.setup.download()}
-                      onCancelDownload={() => void speechInput.setup.cancelDownload()}
-                      onStartRecording={() => void speechInput.setup.startRecording()}
-                    />
-                  </ComposerFooterPrimaryActions>
-                </div>
-              </div>
-            )}
-            {showInlineRestingControls ? (
-              <div className="h-8">
-                <div
-                  ref={setInlineRestingControlsHost}
-                  className="absolute bottom-2 inset-x-4 min-w-0"
-                >
-                  <div
-                    ref={attachRestingComposerControls}
-                    data-chat-composer-resting-controls="true"
-                    aria-hidden={restingControlsVisible ? undefined : true}
-                    inert={restingControlsVisible ? undefined : true}
-                    className={cn(
-                      "relative flex w-max min-w-0 max-w-full items-center",
-                      !restingControlsVisible && "invisible",
-                    )}
-                  >
-                    {composerControls}
-                  </div>
-                </div>
               </div>
             ) : null}
           </div>

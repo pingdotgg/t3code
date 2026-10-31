@@ -330,6 +330,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       </>
     );
   }
+  const compactTone = keepFullHistory ? "text-muted-foreground" : "text-warning-foreground";
 
   return (
     <div data-chat-composer-compact-send="true" className="flex items-center gap-2">
@@ -337,8 +338,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         <TooltipTrigger
           render={
             <Button
-              size="xs"
-              variant={keepFullHistory ? "ghost-muted" : "warning-outline"}
+              size="action"
+              variant="pill"
               {...pointerFocusProps}
               aria-pressed={!keepFullHistory}
               aria-label={`Compact ${compactTokens} tokens of history before sending`}
@@ -347,11 +348,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             />
           }
         >
-          <Minimize2Icon aria-hidden="true" />
-          <span className="@max-[480px]/composer-surface:hidden">
+          <Minimize2Icon aria-hidden="true" className={compactTone} />
+          <span className={cn("@max-[480px]/composer-surface:hidden", compactTone)}>
             {keepFullHistory ? "Full" : "Compact"}
           </span>
-          <span className="tabular-nums">{compactTokens}</span>
+          <span className={cn("tabular-nums", compactTone)}>{compactTokens}</span>
         </TooltipTrigger>
         <TooltipPopup>
           <div>
