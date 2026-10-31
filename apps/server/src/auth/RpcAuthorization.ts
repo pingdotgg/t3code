@@ -116,8 +116,8 @@ export const RPC_REQUIRED_SCOPES = {
   // Delivery logs hold request bodies, so they need the same scope as the URL.
   [WS_METHODS.scheduledTasksListWebhookDeliveries]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksGetWebhookDelivery]: AuthOrchestrationOperateScope,
-  // Plugins run as the server's OS user, so changing what runs takes the administrative scope
-  // that also manages pairing and sessions; standard pairing never grants it.
+  // Plugins run as the server's OS user, so changing what runs requires access:write,
+  // which current standard pairings also receive for managing access.
   [WS_METHODS.pluginsList]: AuthOrchestrationReadScope,
   [WS_METHODS.pluginsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.pluginsAdd]: AuthAccessWriteScope,
