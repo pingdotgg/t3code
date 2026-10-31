@@ -211,11 +211,18 @@ function DialogFooter({
   );
 }
 
-function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
+function DialogTitle({
+  className,
+  size = "default",
+  ...props
+}: DialogPrimitive.Title.Props & { size?: "default" | "page" }) {
   return (
     <DialogPrimitive.Title
       className={cn(
-        "wrap-anywhere text-label [font-size:0.9375rem] font-semibold text-strong-foreground leading-snug",
+        "wrap-anywhere text-strong-foreground",
+        size === "page"
+          ? "text-title"
+          : "text-label [font-size:0.9375rem] font-semibold leading-snug",
         className,
       )}
       data-slot="dialog-title"
