@@ -8,6 +8,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerSettings as ContractServerSettings,
+  ThreadId,
 } from "@t3tools/contracts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as DateTime from "effect/DateTime";
@@ -22,6 +23,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 
@@ -50,7 +52,31 @@ interface ScannerTestInput {
   readonly importedWorkspaceRoots?: ReadonlyArray<string>;
   readonly configBaseDir?: string;
   readonly providerInstances?: ContractServerSettings["providerInstances"];
+  readonly importedTranscripts?: {
+    readonly cwd: string;
+    readonly sources: ReadonlyArray<AgentSessionImportSource>;
+  };
 }
+
+const layerRuntimeRepository = (imported: ScannerTestInput["importedTranscripts"]) =>
+  Layer.mock(ProviderSessionRuntime.ProviderSessionRuntimeRepository)({
+    list: () =>
+      Effect.sync(() =>
+        (imported?.sources ?? []).map((source): ProviderSessionRuntime.ProviderSessionRuntime => ({
+          threadId: ThreadId.make(
+            `import:${source.providerInstanceId}:${source.providerSessionId}`,
+          ),
+          providerName: source.provider,
+          providerInstanceId: source.providerInstanceId,
+          adapterKey: source.provider,
+          runtimeMode: "full-access",
+          status: "stopped",
+          lastSeenAt: "2026-01-01T00:00:00.000Z",
+          resumeCursor: null,
+          runtimePayload: { cwd: imported?.cwd, importedTranscripts: [source] },
+        })),
+      ),
+  });
 
 const layerScannerTest = (input: ScannerTestInput) =>
   AgentSessionScanner.layer.pipe(
@@ -88,6 +114,7 @@ const layerScannerTest = (input: ScannerTestInput) =>
           input.configBaseDir ?? { prefix: "t3code-scanner-config-" },
         ),
         layerProjectStore(input.importedWorkspaceRoots ?? []),
+        layerRuntimeRepository(input.importedTranscripts),
       ),
     ),
   );
@@ -1392,6 +1419,117 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         });
         expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Skipped", "Importable"]);
         expect(outcomes[1]).toMatchObject({ thread: { providerSessionId: "older" } });
+      }),
+    );
+
+    it.effect("repeated imports reach older transcripts behind already-imported ones", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-repeat-import-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-repeat-import-codex-");
+        const workspace = yield* makeTempDir("t3code-repeat-import-workspace-");
+        const sessionIds = Array.from(
+          { length: 102 },
+          (_, index) => `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        );
+        for (const [index, sessionId] of sessionIds.entries()) {
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "p", `${sessionId}.jsonl`),
+            // 999 cwd-less records cost 1,000 metadata records, so 100 newer transcripts
+            // exhaust MAX_METADATA_RECORDS_PER_SOURCE.
+            contents:
+              "{}\n".repeat(999) +
+              `${encodeTranscriptRecord({
+                type: "user",
+                cwd: workspace,
+                sessionId,
+                timestamp: "2026-08-23T12:00:00.000Z",
+                message: { role: "user", content: `Prompt ${index}` },
+              })}\n`,
+            mtimeMs: nowMs - (index + 1) * 60_000,
+          });
+        }
+
+        const completed: Array<AgentSessionImportSource> = [];
+        const imported = yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          while (true) {
+            const outcomes = yield* scanner
+              .recentThreads(workspace, completed)
+              .pipe(Stream.runCollect);
+            const added = Array.from(outcomes).flatMap((outcome) =>
+              outcome._tag === "Importable" ? [outcome.source] : [],
+            );
+            if (added.length === 0) return completed;
+            completed.push(...added);
+          }
+        }).pipe(
+          Effect.provide(
+            layerScannerTest({
+              claudeHomePath,
+              codexHomePath,
+              importedTranscripts: { cwd: workspace, sources: completed },
+            }),
+          ),
+        );
+
+        expect(imported.map((source) => source.providerSessionId).toSorted()).toEqual(sessionIds);
+      }),
+    );
+
+    it.effect("lists projects whose transcripts sit behind already-imported ones", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-hidden-project-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-hidden-project-codex-");
+        const imported = yield* makeTempDir("t3code-hidden-project-imported-");
+        const hidden = yield* makeTempDir("t3code-hidden-project-hidden-");
+        for (const index of Array.from({ length: 101 }, (_, value) => value)) {
+          const sessionId = `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "p", `${sessionId}.jsonl`),
+            contents:
+              "{}\n".repeat(999) +
+              `${encodeTranscriptRecord({
+                type: "user",
+                cwd: index === 100 ? hidden : imported,
+                sessionId,
+                message: { role: "user", content: `Prompt ${index}` },
+              })}\n`,
+            mtimeMs: nowMs - (index + 1) * 60_000,
+          });
+        }
+
+        const completed: Array<AgentSessionImportSource> = [];
+        const scans = yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          const before = yield* scanner.scan;
+          const outcomes = yield* scanner.recentThreads(imported).pipe(Stream.runCollect);
+          completed.push(
+            ...Array.from(outcomes).flatMap((outcome) =>
+              outcome._tag === "Importable" ? [outcome.source] : [],
+            ),
+          );
+          return { before, after: yield* scanner.scan };
+        }).pipe(
+          Effect.provide(
+            layerScannerTest({
+              claudeHomePath,
+              codexHomePath,
+              importedTranscripts: { cwd: imported, sources: completed },
+            }),
+          ),
+        );
+
+        expect(scans.before.candidates.map((candidate) => candidate.path)).toEqual([imported]);
+        expect(scans.after.candidates.map((candidate) => candidate.path)).toEqual([
+          imported,
+          hidden,
+        ]);
       }),
     );
 
