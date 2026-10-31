@@ -526,7 +526,7 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
     !entry.removed && !child.stopping && entry.child === child && isAlive(child);
 
   /** Runs a host call outside the read loop, owned by the child's generation. */
-  const serveHostCall = (
+  const serveHostCall = Effect.fn("PluginSupervisor.serveHostCall")((
     entry: Entry,
     child: Child,
     requestId: number,
@@ -558,7 +558,7 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
       Effect.forkIn(child.hostWork, { startImmediately: true }),
       Effect.asVoid,
     );
-  };
+  });
 
   const handleLine = Effect.fnUntraced(function* (entry: Entry, child: Child, line: string) {
     const decoded = decodePluginChildMessage(line);
@@ -1070,7 +1070,7 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
       Effect.sync(() => Option.fromUndefinedOr(entries.get(pluginId)?.state)),
     ),
     subscribe: PubSub.subscribe(events),
-    serveHostMethod: (method, handler) =>
+    serveHostMethod: Effect.fn("PluginSupervisor.serveHostMethod")((method, handler) =>
       Effect.acquireRelease(
         Effect.sync(() => {
           if (hostMethods.has(method)) throw new Error(`Host method ${method} is already served.`);
@@ -1078,6 +1078,7 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
         }),
         () => Effect.sync(() => hostMethods.delete(method)),
       ),
+    ),
   });
 });
 

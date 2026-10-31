@@ -174,13 +174,8 @@ export const make = Effect.fn("contributions.status.make")(function* () {
   const mutex = yield* Semaphore.make(1);
   let nextGeneration = 0;
 
-  /**
-   * Binding a thread only records ownership; capacity is taken by the first
-   * visible item and returned by the last clear, so silent producers never
-   * crowd out ones that show something, and a rejected producer's later set
-   * is admitted once capacity frees up. Each pool's caps count only its own
-   * sources.
-   */
+  // Each producer pool counts visible items only; silent bindings consume no capacity.
+  // Clearing the last item frees capacity, so a previously rejected producer can become visible.
   const admitsNewItem = (threadId: ThreadId, slot: SourceSlot) => {
     if (slot.items.size >= CONTRIBUTION_STATUS_MAX_ITEMS_PER_SOURCE) return false;
     const limits = poolLimits(slot.source);

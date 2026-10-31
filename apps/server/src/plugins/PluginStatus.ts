@@ -1,13 +1,5 @@
-/**
- * Thread statuses set by plugins with the `status` capability.
- *
- * A plugin is a status producer like a provider session: its items go through
- * the shared contribution status store as one `plugin` source per plugin, so
- * every client that renders provider statuses renders them too. Statuses
- * belong to the plugin's running process: they are cleared on every client
- * when that process's generation is disabled, removed, or exits for any
- * reason, and the next process starts with none.
- */
+// Statuses belong to a plugin process generation and clear when that process stops.
+// Use the shared contribution store so provider and plugin statuses reach the same clients.
 import {
   CONTRIBUTION_STATUS_TEXT_MAX_LENGTH,
   PLUGIN_STATUS_CAPABILITY,
@@ -87,7 +79,7 @@ const checkKey = (key: string) =>
     ? Effect.void
     : Effect.fail(hostError("Status keys must be 1 to 64 characters without control characters."));
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.fn("PluginStatus.make")(function* () {
   const supervisor = yield* PluginSupervisor;
   const store = yield* ContributionStatusStore;
