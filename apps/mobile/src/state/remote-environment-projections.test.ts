@@ -33,6 +33,7 @@ function presentation(
     connection: { phase: "connected", error: null, traceId: null },
     serverConfig,
     refusedRouteIds: [],
+    pausedByFocus: false,
   };
 }
 

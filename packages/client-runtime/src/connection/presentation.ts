@@ -43,6 +43,8 @@ export interface EnvironmentPresentation {
   readonly serverConfig: EnvironmentServerConfig | null;
   /** See `SupervisorConnectionState.refusedRouteIds`. */
   readonly refusedRouteIds: ReadonlyArray<string>;
+  /** Switched on, but an iOS Focus filter leaves it out. */
+  readonly pausedByFocus: boolean;
 }
 
 function failureError(

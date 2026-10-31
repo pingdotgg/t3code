@@ -65,6 +65,7 @@ function routesList(routes: ReadonlyArray<ConnectionRoute>) {
     connection: { phase: "available", error: null, traceId: null },
     serverConfig: null,
     refusedRouteIds: [],
+    pausedByFocus: false,
   };
   return <EnvironmentRoutesList environment={environment} onAddRoute={() => undefined} />;
 }

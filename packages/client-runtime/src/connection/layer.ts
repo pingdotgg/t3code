@@ -8,6 +8,7 @@ import { orchestrationProtocolCompatibilityError } from "./compatibility.ts";
 
 import * as ConnectionResolver from "./resolver.ts";
 import * as ConnectionDriver from "./driver.ts";
+import type { FocusAllowlist } from "./catalog.ts";
 import * as EnvironmentRegistry from "./registry.ts";
 import * as ConnectionOnboarding from "./onboarding.ts";
 import { connectionRoutes, hasRelayRoute } from "./routes.ts";
@@ -71,7 +72,12 @@ export const watchDiscoveredCompatibility = Effect.fn("connection.watchDiscovere
   },
 );
 
-export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
+export function layerWithOptions(
+  options: RpcSession.RpcSessionOptions & {
+    /** Applied before saved environments start, so a Focus-paused one never begins connecting. */
+    readonly initialFocusAllowlist?: Effect.Effect<FocusAllowlist>;
+  },
+) {
   const layerDriver = ConnectionDriver.layer.pipe(
     Layer.provide(Layer.mergeAll(ConnectionResolver.layer, RpcSession.layer(options))),
   );
@@ -88,6 +94,9 @@ export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
       const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
       const platformSource = yield* PlatformConnectionSource.PlatformConnectionSource;
       yield* watchDiscoveredCompatibility().pipe(Effect.forkScoped);
+      if (options.initialFocusAllowlist !== undefined) {
+        yield* registry.setFocusAllowlist(yield* options.initialFocusAllowlist);
+      }
       yield* registry.start;
       yield* platformSource.registrations.pipe(
         Stream.runForEach(registry.reconcilePlatform),

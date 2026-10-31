@@ -57,6 +57,23 @@ export interface ConnectionCatalogEntry {
   readonly serverUpdateRequired?: boolean;
 }
 
+/** Environments an active Focus filter allows; `null` when no Focus restricts connections. */
+export type FocusAllowlist = ReadonlySet<EnvironmentId> | null;
+
+export const isPausedByFocus = (entry: ConnectionCatalogEntry, allowlist: FocusAllowlist) =>
+  entry.enabled && allowlist !== null && !allowlist.has(entry.target.environmentId);
+
+/** The single rule for whether a saved environment should hold a connection. */
+export const shouldConnect = (entry: ConnectionCatalogEntry, allowlist: FocusAllowlist) =>
+  entry.enabled && entry.unsupportedReason === undefined && !isPausedByFocus(entry, allowlist);
+
+export const sameFocusAllowlist = (left: FocusAllowlist, right: FocusAllowlist) =>
+  left === right ||
+  (left !== null &&
+    right !== null &&
+    left.size === right.size &&
+    [...left].every((environmentId) => right.has(environmentId)));
+
 export class BearerConnectionCredential extends Schema.TaggedClass<BearerConnectionCredential>()(
   "BearerConnectionCredential",
   {
