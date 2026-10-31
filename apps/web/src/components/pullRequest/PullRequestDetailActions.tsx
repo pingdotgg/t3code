@@ -5,7 +5,7 @@ import type {
   PullRequestUpdateMethod,
 } from "@t3tools/contracts";
 import { CheckIcon, ChevronDownIcon, FolderGit2Icon, GitBranchIcon, PlayIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 
 import { AnimatedWidth } from "~/components/AnimatedWidth";
 import { cn } from "~/lib/utils";
@@ -214,6 +214,7 @@ export function PullRequestPrimaryAction({
   resolveConflicts: ReactNode;
 }) {
   const inlineConfirm = useInlineActionConfirm(pullRequestKey);
+  const mergeBlockedDescriptionId = useId();
   const actionPending = pendingAction !== null;
   return (
     <>
@@ -370,6 +371,27 @@ export function PullRequestPrimaryAction({
               : inlineConfirm.isArmed("merge")
                 ? "Confirm merge?"
                 : selectedMergeMethodLabel}
+          </TooltipPopup>
+        </Tooltip>
+      ) : primaryAction === "blocked" ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                size="xs"
+                variant="default"
+                aria-disabled="true"
+                aria-label="Merge blocked"
+                aria-describedby={mergeBlockedDescriptionId}
+              >
+                <PullRequestGlyph.merged aria-hidden className="size-3.5" />
+                <span className="@max-[30rem]/pr-header:hidden">Merge blocked</span>
+              </Button>
+            }
+          />
+          <TooltipPopup side="top" id={mergeBlockedDescriptionId} role="tooltip">
+            The repository's rules block merging until their requirements are met, such as resolving
+            conversations
           </TooltipPopup>
         </Tooltip>
       ) : (primaryAction === "merged" || primaryAction === "closed") &&
