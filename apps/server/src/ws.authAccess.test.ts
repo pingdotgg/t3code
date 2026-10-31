@@ -57,7 +57,6 @@ import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
-import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
@@ -152,7 +151,7 @@ const layerUnusedAuthAccessRpcServices = Layer.mergeAll(
   Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({}),
   Layer.mock(Orchestrator.OrchestratorV2)({}),
   Layer.mock(OtlpEndpointCheck.OtlpEndpointCheck)({}),
-  Layer.mock(PortScanner.PortDiscovery)({}),
+  Layer.mock(PortScanner.PortDiscovery)({ trackAgent: () => () => undefined }),
   Layer.mock(PreviewManager.PreviewManager)({}),
   Layer.mock(ProcessDiagnostics.ProcessDiagnostics)({}),
   Layer.mock(ProcessResourceMonitor.ProcessResourceMonitor)({}),
@@ -267,9 +266,8 @@ it.effect(
                 scopes: AuthStandardClientScopes,
               },
               {},
-              {},
-              yield* PreviewAutomationBroker.PreviewAutomationBroker,
               yield* ServerBrowser.ServerBrowser,
+              () => Effect.void,
             ).pipe(
               Layer.provide(
                 Layer.mergeAll(
@@ -334,7 +332,6 @@ it.effect(
       Effect.provide(
         Layer.mergeAll(
           Layer.fresh(layerAuth),
-          Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
           Layer.mock(ServerBrowser.ServerBrowser)({}),
         ),
       ),
