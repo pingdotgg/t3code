@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   ASSISTANT_CITATION_CONTEXT_LENGTH,
   ASSISTANT_CITATION_MAX_COMMENT_LENGTH,
+  ASSISTANT_CITATION_MAX_ID_LENGTH,
   ASSISTANT_CITATION_MAX_TEXT_LENGTH,
   EnvironmentId,
   MessageId,
@@ -125,9 +126,9 @@ describe("assistant citation references", () => {
   it("accepts complete 8k CJK quotes and comments with maximum-sized source selectors", () => {
     const largeCitation: AssistantCitation = {
       ...citation,
-      environmentId: EnvironmentId.make("環".repeat(512)),
-      threadId: ThreadId.make("線".repeat(512)),
-      messageId: MessageId.make("文".repeat(512)),
+      environmentId: EnvironmentId.make("環".repeat(ASSISTANT_CITATION_MAX_ID_LENGTH)),
+      threadId: ThreadId.make("線".repeat(ASSISTANT_CITATION_MAX_ID_LENGTH)),
+      messageId: MessageId.make("文".repeat(ASSISTANT_CITATION_MAX_ID_LENGTH)),
       text: "引".repeat(ASSISTANT_CITATION_MAX_TEXT_LENGTH),
       comment: "注".repeat(ASSISTANT_CITATION_MAX_COMMENT_LENGTH),
       start: Number.MAX_SAFE_INTEGER - ASSISTANT_CITATION_MAX_TEXT_LENGTH,
