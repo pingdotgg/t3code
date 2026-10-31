@@ -1,46 +1,6 @@
+import { secondTick } from "@t3tools/client-runtime/clock";
 import { useSyncExternalStore } from "react";
 
-// One shared tick on wall-clock second boundaries: every live duration label
-// updates in the same frame instead of each repainting on its own phase.
-
-function currentSecond(): number {
-  return Math.floor(Date.now() / 1000) * 1000;
-}
-
-let nowSecond = currentSecond();
-let timerId: number | null = null;
-const listeners = new Set<() => void>();
-
-function scheduleTick(): void {
-  timerId = window.setTimeout(
-    () => {
-      nowSecond = currentSecond();
-      for (const listener of listeners) listener();
-      scheduleTick();
-    },
-    1000 - (Date.now() % 1000),
-  );
-}
-
-function subscribe(listener: () => void): () => void {
-  if (listeners.size === 0) scheduleTick();
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-    if (listeners.size === 0 && timerId !== null) {
-      window.clearTimeout(timerId);
-      timerId = null;
-    }
-  };
-}
-
-function getSnapshot(): number {
-  // While the timer runs the cached value is returned untouched, as
-  // useSyncExternalStore requires between change notifications.
-  if (timerId === null) nowSecond = currentSecond();
-  return nowSecond;
-}
-
 export function useNowSecond(): number {
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  return useSyncExternalStore(secondTick.subscribe, secondTick.getSnapshot, secondTick.getSnapshot);
 }

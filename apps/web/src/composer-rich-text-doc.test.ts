@@ -5,6 +5,7 @@ import { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { EditorState, TextSelection } from "@tiptap/pm/state";
 import { splitBlockKeepMarks } from "@tiptap/pm/commands";
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
+import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 
 import {
   collapseExpandedComposerCursor,
@@ -91,6 +92,28 @@ function roundTrip(value: string) {
 }
 
 describe("editable math source", () => {
+  it.each(["app/routes/posts.$postId.tsx", "pages/posts/[id].tsx"])(
+    "keeps a mentioned file whose name looks like TeX as a chip: %s",
+    (path) => {
+      const source = `fix ${serializeComposerFileLink(path)} please`;
+      const map = roundTrip(source);
+      expect(map.value).toBe(source);
+      expect(
+        map.runs.filter((run) => run.kind === "token" && run.nodeName === "composer-mention"),
+      ).toHaveLength(1);
+    },
+  );
+
+  it.each([
+    "before $x + @README.md$ after",
+    "before \\(x + @README.md\\) after",
+    "\\[x + @README.md\\] after",
+  ])("keeps a mention that ends a formula inside the formula: %s", (source) => {
+    const map = roundTrip(source);
+    expect(map.value).toBe(source);
+    expect(map.runs.some((run) => run.kind === "token")).toBe(false);
+  });
+
   it.each([
     "Area $x_i^2$ after",
     "before \\(\\frac{1}{2}\\) after",

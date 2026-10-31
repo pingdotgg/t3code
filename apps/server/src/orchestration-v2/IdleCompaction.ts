@@ -1,4 +1,4 @@
-import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import { isListedThreadLineage, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import { COMPACTION_SUGGESTION_MIN_TOKENS } from "@t3tools/shared/claudeCompaction";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
@@ -50,7 +50,7 @@ export function idleCompactionWindow(
   if (thread.settledAt !== null || thread.settledOverride === "settled") return null;
   if (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs)
     return null;
-  if (thread.lineage.relationshipToParent === "subagent") return null;
+  if (!isListedThreadLineage(thread.lineage)) return null;
   const latestRun = runs.reduce<(typeof runs)[number] | null>(
     (latest, run) => (latest === null || run.ordinal > latest.ordinal ? run : latest),
     null,
