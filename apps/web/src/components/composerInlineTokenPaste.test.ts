@@ -10,7 +10,11 @@ import {
   threadContextRecord,
 } from "@t3tools/shared/composerContextReferences";
 import { threadDeepLink } from "@t3tools/shared/threadDeepLinks";
-import { importPastedComposerText, readPastedComposerContext } from "./composerInlineTokenPaste";
+import {
+  importPastedComposerText,
+  readPastedComposerContext,
+  isComposerContextPaste,
+} from "./composerInlineTokenPaste";
 const ref = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
 const record = threadContextRecord(ref, "Fix login");
 function clipboard(text: string, rich = false) {
@@ -64,4 +68,11 @@ describe("pasted thread deep links", () => {
       ),
     ).toBe(formatComposerContextReference(record));
   });
+});
+
+it("allows large logs with an incidental thread URL to fold", () => {
+  expect(isComposerContextPaste(clipboard("log line\n".repeat(10000) + threadDeepLink(ref)))).toBe(
+    false,
+  );
+  expect(isComposerContextPaste(clipboard(threadDeepLink(ref)))).toBe(true);
 });

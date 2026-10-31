@@ -361,3 +361,16 @@ describe("public thread URL paste", () => {
     expect(result?.skippedThreads).toEqual([]);
   });
 });
+
+it("preserves a public URL when the destination cannot read its environment", async () => {
+  const text = "See https://app.t3.codes/unknown/thread";
+  const result = await importComposerContextClipboard(
+    { text, fragment: "", html: "" },
+    0,
+    new AbortController().signal,
+    0,
+    EnvironmentId.make("destination"),
+  );
+  expect(result?.text).toBe(text);
+  expect(result?.context.records).toEqual([]);
+});

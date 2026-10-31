@@ -19,6 +19,8 @@ import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
 
+import { hostedThreadLinkAction } from "./hostedThreadLink";
+
 const OPENER_STORAGE_KEY = "t3code:prompt-link-opener";
 const Opener = Schema.NullOr(Schema.Literals(["app", "browser"]));
 
@@ -69,6 +71,13 @@ export function useHostedPromptLinkLanding(enabled: boolean): ReactNode | null {
       ? promptLinkAppPath(new URL(href, window.location.origin).href, window.location.origin)
       : null;
   if (appPath === null || continuedHref === href) return null;
+  const threadAction = hostedThreadLinkAction(
+    appPath,
+    isReady,
+    environments.map((e) => e.environmentId),
+  );
+  if (threadAction === "wait") return <></>;
+  if (threadAction === "continue") return null;
   const canContinue = isReady && environments.length > 0;
   if (opener === "browser") {
     if (canContinue) return null;

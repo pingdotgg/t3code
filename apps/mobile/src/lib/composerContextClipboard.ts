@@ -71,11 +71,28 @@ export async function importComposerContextClipboard(
   /** The machines the destination links to, whose threads its agent can read too. */
   linkedEnvironments: ReadonlyMap<EnvironmentId, string> = new Map(),
 ) {
-  const { text, fragment } = normalizeThreadClipboard(
+  const normalized = normalizeThreadClipboard(
     input.text,
     decodeComposerContextFragment(input.fragment) ?? decodeComposerContextClipboardHtml(input.html),
   );
+  const fragment = normalized.fragment;
   if (!fragment) return null;
+  const outside =
+    destinationEnvironmentId === undefined
+      ? []
+      : threadContextsOutsideEnvironment({
+          text: normalized.text,
+          records: fragment.records,
+          environmentId: destinationEnvironmentId,
+          linkedEnvironments,
+        });
+  const outsideIds = new Set(outside.map((record) => record.contextId));
+  const accepted = new Map(
+    fragment.records
+      .filter((record) => !outsideIds.has(record.contextId))
+      .map((record) => [record.contextId, record.contextId]),
+  );
+  const text = normalizeThreadClipboard(input.text, fragment, accepted).text;
   const selected = referencedComposerContext(text, { version: 1, records: fragment.records });
   const imported = reidentifyComposerContext(text, selected?.records ?? [], uuidv4);
   const skippedThreads =

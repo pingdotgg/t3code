@@ -1,8 +1,4 @@
-import type {
-  ComposerContextClipboardFragment,
-  ScopedThreadRef,
-  ThreadPullRequestLink,
-} from "@t3tools/contracts";
+import type { ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 
 import { threadDeepLink } from "@t3tools/shared/threadDeepLinks";
@@ -15,8 +11,6 @@ export interface ThreadReferenceCopyTarget {
   readonly value: string;
   /** What a toast or palette row shows for the copy. */
   readonly description: string;
-  /** T3's clipboard format, which pastes a thread back into a composer as a chip. */
-  readonly fragment?: ComposerContextClipboardFragment;
   readonly clipboardTarget: string;
   readonly successTitle: string;
   readonly failureTitle: string;
@@ -32,7 +26,6 @@ export function threadChipCopyTarget(
     kind: "thread",
     value: threadDeepLink(threadRef),
     description: record.title,
-    fragment: { version: 1, source: { environmentId: threadRef.environmentId }, records: [record] },
     clipboardTarget: "thread",
     successTitle: "Thread copied",
     failureTitle: "Failed to copy thread",

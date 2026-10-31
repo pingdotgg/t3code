@@ -169,4 +169,29 @@ class ComposerPasteTest {
     assertEquals("unchanged", editor.text.toString())
     assertNull(intercepted)
   }
+
+  @Test
+  fun regularPasteSendsPlainThreadUrlsToTheContextImporter() {
+    for (url in listOf("https://app.t3.codes/environment/thread", "t3code://threads/environment/thread")) {
+      clipboard.setPrimaryClip(ClipData.newPlainText("test", url))
+      editor.setText("before")
+      editor.setSelection(6)
+      var payload: Map<String, String>? = null
+      editor.pasteContextListener = { payload = it }
+      assertTrue(editor.onTextContextMenuItem(android.R.id.paste))
+      assertEquals(url, payload?.get("text"))
+      assertEquals("before", editor.text.toString())
+    }
+  }
+
+  @Test
+  fun incidentalThreadUrlsDoNotBypassLargeTextFolding() {
+    val text = "log line\n".repeat(5000) + "https://app.t3.codes/environment/thread"
+    clipboard.setPrimaryClip(ClipData.newPlainText("test", text))
+    editor.pasteContextListener = { error("Large logs must use the text folding path") }
+    var intercepted: String? = null
+    editor.pasteTextListener = { value, _, _ -> intercepted = value }
+    assertTrue(editor.onTextContextMenuItem(android.R.id.paste))
+    assertEquals(text, intercepted)
+  }
 }

@@ -5,6 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { parseThreadDeepLink, threadDeepLink } from "@t3tools/shared/threadDeepLinks";
 import { promptLinkAppPath } from "@t3tools/shared/promptLinks";
 import { readPairingAppLink, resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import { useRouter } from "@tanstack/react-router";
@@ -28,7 +29,11 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { resolveThreadRouteTarget } from "../../threadRoutes";
 import { assetEnvironment } from "../../state/assets";
 import { readProject, readThreadShell } from "../../state/entities";
-import { useEnvironmentHttpBaseUrl, usePrimaryEnvironment } from "../../state/environments";
+import {
+  useEnvironments,
+  useEnvironmentHttpBaseUrl,
+  usePrimaryEnvironment,
+} from "../../state/environments";
 import { previewEnvironment } from "../../state/preview";
 import { allReachableShellsLiveAtom } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -81,6 +86,7 @@ function threadShowingBrowser(
 export function DesktopWebLinkCoordinator() {
   const router = useRouter();
   const primaryEnvironment = usePrimaryEnvironment();
+  const { environments } = useEnvironments();
   const openPullRequestsInApp = useClientSettings((settings) => settings.pullRequestLinksOpenInApp);
   const openChangeRequest = useOpenChangeRequestLink();
   const { scratchEnvironmentId, openScratchProject } = useScratchProject();
@@ -207,8 +213,17 @@ export function DesktopWebLinkCoordinator() {
       return;
     }
     const appPath = promptLinkAppPath(url);
-    if (appPath !== null) {
+    const bareThread = parseThreadDeepLink(url);
+    if (
+      appPath !== null &&
+      (bareThread === null ||
+        environments.some((e) => e.environmentId === bareThread.environmentId))
+    ) {
       await router.navigate({ href: appPath });
+      return;
+    }
+    if (bareThread !== null) {
+      await openInBrowser(threadDeepLink(bareThread));
       return;
     }
     const routeParams = router.state.matches.at(-1)?.params ?? {};

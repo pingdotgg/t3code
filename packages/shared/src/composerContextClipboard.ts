@@ -20,36 +20,51 @@ export function normalizeThreadClipboard(
   fragment: ComposerContextClipboardFragment | null,
   acceptedIds?: ReadonlyMap<string, string>,
 ) {
+  if (!text.includes("app.t3.codes/") && !text.includes("://threads/")) return { text, fragment };
   const records = [...(fragment?.records ?? [])];
+  const byThread = new Map(
+    records.flatMap((record) =>
+      record.kind === "thread" && !("payload" in record)
+        ? [[JSON.stringify([record.environmentId, record.threadId]), record] as const]
+        : [],
+    ),
+  );
+  const ids = new Set(records.map((record) => record.contextId));
   let source = fragment?.source;
-  // Skip code spans/fences and consume Markdown links as a unit to avoid nesting references.
+  // Consume code and every Markdown link as a unit; never rewrite a URL inside another link.
   const normalized = text.replace(
-    /(`{3,}|~{3,})[\s\S]*?(?:\1|$)|(`+)[^\n]*?\2|\[([^\]\n]*)\]\((https:\/\/app\.t3\.codes\/[^\s)]+|t3code(?:-dev|-preview)?:\/\/threads\/[^\s)]+)\)|<?(?:https:\/\/app\.t3\.codes\/|t3code(?:-dev|-preview)?:\/\/threads\/)[^\s<>`]+>?/g,
-    (value, fence, span, label, href) => {
-      if (fence || span) return value;
-      const ref = parseThreadDeepLink(href ?? value.replace(/^<|>$/g, ""));
+    /(?<fence>`{3,}|~{3,})[\s\S]*?(?:\k<fence>|$)|(?<span>`+)[^\n]*?\k<span>|!?\[(?<label>(?:\\.|[^\]\\\n]){0,512})\]\((?<href>[^\s)]{1,4096})\)|(?<![\w/:=?&.-])(?<bare><(?:https:\/\/app\.t3\.codes\/|t3code(?:-dev|-preview)?:\/\/threads\/)[^\s<>`]+>|(?:https:\/\/app\.t3\.codes\/|t3code(?:-dev|-preview)?:\/\/threads\/)[^\s<>`]+)/g,
+    (value, ...args) => {
+      const groups = args.at(-1) as {
+        fence?: string;
+        span?: string;
+        label?: string;
+        href?: string;
+        bare?: string;
+      };
+      if (groups.fence || groups.span || value.startsWith("![")) return value;
+      const candidate = groups.href ?? groups.bare;
+      if (!candidate) return value;
+      const punctuation =
+        groups.bare && !candidate.startsWith("<")
+          ? (candidate.match(/[.,;:!?)\]\x27\x22]+$/)?.[0] ?? "")
+          : "";
+      const address = punctuation ? candidate.slice(0, -punctuation.length) : candidate;
+      const ref = parseThreadDeepLink(address.replace(/^<|>$/g, ""));
       if (!ref) return value;
-      const existing = records.find(
-        (record) =>
-          record.kind === "thread" &&
-          !("payload" in record) &&
-          record.environmentId === ref.environmentId &&
-          record.threadId === ref.threadId,
-      );
-      let record = existing ?? threadContextRecord(ref, label || ref.threadId);
-      if (!existing && records.some((candidate) => candidate.contextId === record.contextId)) {
-        record = {
-          ...record,
-          contextId: toKindScopedComposerContextId(
-            "thread",
-            ref.environmentId + "/" + ref.threadId,
-          ),
-        };
+      const key = JSON.stringify([ref.environmentId, ref.threadId]);
+      let record = byThread.get(key);
+      if (!record) {
+        record = threadContextRecord(ref, groups.label || ref.threadId);
+        if (ids.has(record.contextId))
+          record = { ...record, contextId: toKindScopedComposerContextId("thread", key) };
+        records.push(record);
+        ids.add(record.contextId);
+        byThread.set(key, record);
       }
       if (acceptedIds && !acceptedIds.has(record.contextId)) return value;
-      if (!existing) records.push(record);
       source ??= { environmentId: ref.environmentId };
-      return formatComposerContextReference(record);
+      return formatComposerContextReference(record) + punctuation;
     },
   );
   return {

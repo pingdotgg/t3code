@@ -350,6 +350,7 @@ export function useComposerContextImport(input: {
         if (record.kind === "preview-annotation" && record.screenshotContextId) {
           skippedDependentAttachmentIds.add(record.screenshotContextId);
         }
+        if (record.kind === "thread") rewritten.set(record.contextId, record.contextId);
         continue;
       }
       const conflicts = existing !== undefined;

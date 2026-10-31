@@ -67,3 +67,34 @@ it("keeps identical thread ids on different machines distinct", () => {
     records.map((record) => record.contextId),
   );
 });
+
+it.each([
+  "See https://app.t3.codes/env/thread.",
+  "(https://app.t3.codes/env/thread)",
+  "https://app.t3.codes/env/thread, then",
+])("keeps punctuation outside thread IDs: %s", (text) => {
+  const result = normalizeThreadClipboard(text, null);
+  expect(result.fragment?.records).toMatchObject([{ threadId: "thread" }]);
+  expect(result.text.endsWith(text.endsWith("then") ? ", then" : text.slice(-1))).toBe(true);
+});
+it.each([
+  "https://example.com/?next=https://app.t3.codes/env/thread",
+  "[ https://app.t3.codes/env/thread ](https://example.com)",
+  "[Example](https://example.com/?next=https://app.t3.codes/env/thread)",
+])("leaves foreign URLs and Markdown labels intact: %s", (text) => {
+  expect(normalizeThreadClipboard(text, null)).toEqual({ text, fragment: null });
+});
+it.each([
+  "[".repeat(80000),
+  '[{"a":1},'.repeat(125000),
+  "[".repeat(80000) + " https://app.t3.codes/env/thread",
+])("handles large bracket-heavy pastes", (text) => {
+  const result = normalizeThreadClipboard(text, null);
+  expect(result.text.startsWith(text.slice(0, 80000))).toBe(true);
+});
+it.each(["/assets/index.js", "/.well-known/assetlinks.json", "/guest/x", "/new/x"])(
+  "rejects reserved web paths: %s",
+  (path) => {
+    expect(parseThreadDeepLink("https://app.t3.codes" + path)).toBeNull();
+  },
+);
