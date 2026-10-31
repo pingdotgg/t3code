@@ -488,7 +488,8 @@ function LiveActivityRow({
   active?: boolean;
   shimmer?: boolean;
 }) {
-  const animated = active && !failed;
+  const { pendingRequest, turnEnded } = use(TimelineRowActivityCtx);
+  const animated = active && !failed && !pendingRequest && !turnEnded;
   const showShimmer = animated && shimmer;
   return (
     <div
@@ -855,7 +856,8 @@ const WorkingWindowItemView = memo(function WorkingWindowItemView({
 
 function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey: string }) {
   const ctx = use(TimelineRowCtx);
-  const { isCompacting, isPreparingWorktree, turnEnded } = use(TimelineRowActivityCtx);
+  const { isCompacting, isPreparingWorktree, turnEnded, pendingRequest } =
+    use(TimelineRowActivityCtx);
   const [full, setFull] = useState(false);
   const observeHeight = (element: HTMLDivElement | null) => {
     if (!element) return;
@@ -876,6 +878,7 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
   const shown = open ? window.items : window.items.slice(-WORKING_WINDOW_TAIL);
   const showThinking =
     !turnEnded &&
+    !pendingRequest &&
     !workingWindowItemIsLive(window.items.at(-1)) &&
     !isCompacting &&
     !isPreparingWorktree &&
