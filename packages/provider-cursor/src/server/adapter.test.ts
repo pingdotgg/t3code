@@ -13,12 +13,14 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -438,6 +440,167 @@ describe("CursorAdapterV2", () => {
           answers,
         );
       }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
+  it.effect("coalesces streamed text into bounded snapshots without delaying a slow stream", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-text-" });
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-text-thread");
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const finished = yield* Deferred.make<void>();
+      let sendUpdate: ((update: InteractionUpdate) => Effect.Effect<void>) | undefined;
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        settings: yield* decodeCursorSettings({}),
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.succeed({
+              agentId: "native-cursor-text",
+              listMessages: Effect.succeed([]),
+              close: Effect.void,
+              send: (input) =>
+                Effect.sync(() => {
+                  sendUpdate = (update) => input.onDelta!(update).pipe(Effect.orDie);
+                  return {
+                    agentId: "native-cursor-text",
+                    runId: "native-cursor-text-run",
+                    wait: Deferred.await(finished).pipe(
+                      Effect.as({
+                        id: "native-cursor-text-run",
+                        requestId: "native-request",
+                        status: "finished" as const,
+                        model: { id: "composer-2.5" },
+                        durationMs: 1,
+                      }),
+                    ),
+                    cancel: Effect.void,
+                  };
+                }),
+            }),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-text-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn({
+        threadId,
+        providerThread,
+        modelSelection,
+        runtimePolicy,
+        runId: RunId.make("cursor-text-run"),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("cursor-text-attempt"),
+        rootNodeId: NodeId.make("cursor-text-root"),
+        appThread: {
+          id: threadId,
+          projectId: ProjectId.make("cursor-text-project"),
+          createdBy: "user",
+          creationSource: "web",
+          title: "Cursor text",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        message: {
+          messageId: MessageId.make("cursor-text-message"),
+          createdBy: "user",
+          creationSource: "web",
+          text: "hi",
+          attachments: [],
+        },
+      });
+      assert.isDefined(sendUpdate);
+      const chunk = "tok0 word ";
+      for (let index = 0; index < 1_000; index += 1) {
+        yield* sendUpdate!({ type: "text-delta", text: chunk });
+      }
+      yield* TestClock.adjust("50 millis");
+      // The window has passed since the last snapshot, so this delta emits at once.
+      yield* TestClock.adjust("50 millis");
+      yield* sendUpdate!({ type: "text-delta", text: "end" });
+      yield* sendUpdate!({ type: "text-delta", text: "!" });
+      // Reasoning closes the assistant segment while its next flush is pending.
+      yield* sendUpdate!({ type: "thinking-delta", text: "next" });
+      yield* TestClock.adjust("50 millis");
+      yield* Deferred.succeed(finished, undefined);
+      const streamed = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+      );
+
+      const reply = chunk.repeat(1_000);
+      assert.deepEqual(
+        streamed.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+            ? [[event.turnItem.status, event.turnItem.text]]
+            : [],
+        ),
+        [
+          ["running", chunk],
+          ["running", reply],
+          ["running", `${reply}end`],
+          ["completed", `${reply}end!`],
+        ],
+      );
+      assert.deepEqual(
+        streamed.flatMap((event) =>
+          event.type === "message.updated" ? [[event.message.streaming, event.message.text]] : [],
+        ),
+        [
+          [true, chunk],
+          [true, reply],
+          [true, `${reply}end`],
+          [false, `${reply}end!`],
+        ],
+      );
+      assert.deepEqual(
+        streamed.flatMap((event) =>
+          event.type === "node.updated" && event.node.kind === "assistant_message"
+            ? [event.node.status]
+            : [],
+        ),
+        ["running", "completed"],
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(

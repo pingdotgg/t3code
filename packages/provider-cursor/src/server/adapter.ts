@@ -39,6 +39,7 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -891,6 +892,12 @@ const MAX_CURSOR_STREAMED_OUTPUT_CHARS = 256 * 1024;
 const CURSOR_RESUME_NO_PROGRESS_MESSAGE =
   "Agent turn stopped after repeated resume attempts made no progress";
 
+// Full-text snapshots of a streaming segment are at least this far apart, instead
+// of one per delta, which grew with the square of the reply length. A delta after
+// a quiet interval and the segment's close still emit at once. The flush is
+// scheduled, not a deadline, so it can land later under host load.
+const CURSOR_TEXT_FLUSH_INTERVAL_MS = 50;
+
 interface ActiveCursorToolCall {
   readonly callId: string;
   toolCall: ToolCall;
@@ -916,6 +923,11 @@ interface ActiveCursorTextSegment {
   readonly nativeItemId: string;
   readonly startedAt: DateTime.Utc;
   text: string;
+  // When the last snapshot was emitted, or null before the running node and
+  // first text.
+  emittedAtMs: number | null;
+  // Text changed since the last emission; a delayed flush is scheduled.
+  dirty: boolean;
 }
 
 interface ActiveCursorTextStream {
@@ -1041,15 +1053,43 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           providerTurnId: context.providerTurnId,
         });
 
+        const textEmissionPermit = yield* Semaphore.make(1);
+        /**
+         * Claims the stream's current segment for one emission. A `flushOf` call
+         * is a delayed flush: it emits only while that segment is still current
+         * and has unsent text.
+         */
+        const takeTextSnapshot = (
+          stream: ActiveCursorTextStream,
+          completed: boolean,
+          flushOf: ActiveCursorTextSegment | undefined,
+          now: DateTime.Utc,
+        ) => {
+          const segment = stream.current;
+          if (segment === null || segment.text.length === 0) return null;
+          if (flushOf !== undefined && (segment !== flushOf || !segment.dirty)) return null;
+          // The node carries no text, so it changes only when the segment opens
+          // and when it completes.
+          const emitsNode = completed || segment.emittedAtMs === null;
+          segment.emittedAtMs = DateTime.toEpochMillis(now);
+          segment.dirty = false;
+          // Read the text in the same step that clears `dirty`. Deltas appended
+          // while this emission yields mark the segment dirty again and reach the
+          // next flush or the close.
+          return { segment, text: segment.text, emitsNode };
+        };
+
         const emitAssistant = Effect.fnUntraced(function* (
           context: ActiveCursorTurn,
           completed: boolean,
+          flushOf?: ActiveCursorTextSegment,
         ) {
-          const segment = context.assistant.current;
-          if (segment === null || segment.text.length === 0) {
+          const now = yield* DateTime.now;
+          const snapshot = takeTextSnapshot(context.assistant, completed, flushOf, now);
+          if (snapshot === null) {
             return;
           }
-          const now = yield* DateTime.now;
+          const { segment, text } = snapshot;
           const ordinal = yield* resolveItemOrdinal(context, segment.nativeItemId);
           const nodeId = idAllocator.derive.nodeFromProviderItem({
             driver: CursorAgentSdk.CURSOR_PROVIDER,
@@ -1068,27 +1108,29 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             nativeId: segment.nativeItemId,
             strength: "weak" as const,
           };
-          yield* emitProviderEvent({
-            type: "node.updated",
-            driver: CursorAgentSdk.CURSOR_PROVIDER,
-            node: {
-              id: nodeId,
-              threadId: context.input.threadId,
-              runId: context.input.runId,
-              parentNodeId: context.input.rootNodeId,
-              rootNodeId: context.input.rootNodeId,
-              kind: "assistant_message",
-              status: completed ? "completed" : "running",
-              countsForRun: false,
-              providerThreadId: context.input.providerThread.id,
-              providerTurnId: context.providerTurnId,
-              nativeItemRef,
-              runtimeRequestId: null,
-              checkpointScopeId: null,
-              startedAt: segment.startedAt,
-              completedAt: completed ? now : null,
-            },
-          });
+          if (snapshot.emitsNode) {
+            yield* emitProviderEvent({
+              type: "node.updated",
+              driver: CursorAgentSdk.CURSOR_PROVIDER,
+              node: {
+                id: nodeId,
+                threadId: context.input.threadId,
+                runId: context.input.runId,
+                parentNodeId: context.input.rootNodeId,
+                rootNodeId: context.input.rootNodeId,
+                kind: "assistant_message",
+                status: completed ? "completed" : "running",
+                countsForRun: false,
+                providerThreadId: context.input.providerThread.id,
+                providerTurnId: context.providerTurnId,
+                nativeItemRef,
+                runtimeRequestId: null,
+                checkpointScopeId: null,
+                startedAt: segment.startedAt,
+                completedAt: completed ? now : null,
+              },
+            });
+          }
           yield* emitProviderEvent({
             type: "message.updated",
             driver: CursorAgentSdk.CURSOR_PROVIDER,
@@ -1100,7 +1142,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               runId: context.input.runId,
               nodeId,
               role: "assistant",
-              text: segment.text,
+              text,
               attachments: [],
               streaming: !completed,
               createdAt: segment.startedAt,
@@ -1127,21 +1169,23 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               updatedAt: now,
               type: "assistant_message",
               messageId,
-              text: segment.text,
+              text,
               streaming: !completed,
             },
           });
-        });
+        }, textEmissionPermit.withPermit);
 
         const emitReasoning = Effect.fnUntraced(function* (
           context: ActiveCursorTurn,
           completed: boolean,
+          flushOf?: ActiveCursorTextSegment,
         ) {
-          const segment = context.reasoning.current;
-          if (segment === null || segment.text.length === 0) {
+          const now = yield* DateTime.now;
+          const snapshot = takeTextSnapshot(context.reasoning, completed, flushOf, now);
+          if (snapshot === null) {
             return;
           }
-          const now = yield* DateTime.now;
+          const { segment, text } = snapshot;
           const ordinal = yield* resolveItemOrdinal(context, segment.nativeItemId);
           const nodeId = idAllocator.derive.nodeFromProviderItem({
             driver: CursorAgentSdk.CURSOR_PROVIDER,
@@ -1156,27 +1200,29 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             nativeId: segment.nativeItemId,
             strength: "weak" as const,
           };
-          yield* emitProviderEvent({
-            type: "node.updated",
-            driver: CursorAgentSdk.CURSOR_PROVIDER,
-            node: {
-              id: nodeId,
-              threadId: context.input.threadId,
-              runId: context.input.runId,
-              parentNodeId: context.input.rootNodeId,
-              rootNodeId: context.input.rootNodeId,
-              kind: "reasoning",
-              status: completed ? "completed" : "running",
-              countsForRun: false,
-              providerThreadId: context.input.providerThread.id,
-              providerTurnId: context.providerTurnId,
-              nativeItemRef,
-              runtimeRequestId: null,
-              checkpointScopeId: null,
-              startedAt: segment.startedAt,
-              completedAt: completed ? now : null,
-            },
-          });
+          if (snapshot.emitsNode) {
+            yield* emitProviderEvent({
+              type: "node.updated",
+              driver: CursorAgentSdk.CURSOR_PROVIDER,
+              node: {
+                id: nodeId,
+                threadId: context.input.threadId,
+                runId: context.input.runId,
+                parentNodeId: context.input.rootNodeId,
+                rootNodeId: context.input.rootNodeId,
+                kind: "reasoning",
+                status: completed ? "completed" : "running",
+                countsForRun: false,
+                providerThreadId: context.input.providerThread.id,
+                providerTurnId: context.providerTurnId,
+                nativeItemRef,
+                runtimeRequestId: null,
+                checkpointScopeId: null,
+                startedAt: segment.startedAt,
+                completedAt: completed ? now : null,
+              },
+            });
+          }
           yield* emitProviderEvent({
             type: "turn_item.updated",
             driver: CursorAgentSdk.CURSOR_PROVIDER,
@@ -1196,11 +1242,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               completedAt: completed ? now : null,
               updatedAt: now,
               type: "reasoning",
-              text: segment.text,
+              text,
               streaming: !completed,
             },
           });
-        });
+        }, textEmissionPermit.withPermit);
 
         const appendTextSegment = Effect.fnUntraced(function* (input: {
           readonly context: ActiveCursorTurn;
@@ -1214,6 +1260,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               nativeItemId: `${input.kind}:${input.context.run.runId}:${input.stream.nextSegment}`,
               startedAt: yield* DateTime.now,
               text: "",
+              emittedAtMs: null,
+              dirty: false,
             };
           }
           input.stream.current.text += input.text;
@@ -1233,6 +1281,33 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           }
           yield* emitReasoning(context, true);
           context.reasoning.current = null;
+        });
+
+        /**
+         * Publishes a text change. It emits at once when the segment's last
+         * snapshot is at least CURSOR_TEXT_FLUSH_INTERVAL_MS old, so live output
+         * starts immediately and a slow stream is never delayed. Faster changes
+         * share one flush at the end of that interval. Completing the segment
+         * emits its final text and makes a pending flush a no-op.
+         */
+        const publishTextSegment = Effect.fnUntraced(function* (
+          context: ActiveCursorTurn,
+          kind: "assistant" | "reasoning",
+        ) {
+          const emit = kind === "assistant" ? emitAssistant : emitReasoning;
+          const segment = context[kind].current;
+          if (segment === null || segment.dirty) return;
+          // Clamped so a wall clock that steps back cannot stretch the flush delay.
+          const sinceLastMs =
+            segment.emittedAtMs === null
+              ? CURSOR_TEXT_FLUSH_INTERVAL_MS
+              : Math.max(0, DateTime.toEpochMillis(yield* DateTime.now) - segment.emittedAtMs);
+          if (sinceLastMs >= CURSOR_TEXT_FLUSH_INTERVAL_MS) return yield* emit(context, false);
+          segment.dirty = true;
+          yield* emit(context, false, segment).pipe(
+            Effect.delay(CURSOR_TEXT_FLUSH_INTERVAL_MS - sinceLastMs),
+            Effect.forkIn(sessionScope),
+          );
         });
 
         const emitToolArtifacts = Effect.fnUntraced(function* (input: {
@@ -2018,7 +2093,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 kind: "assistant",
                 text: update.text,
               });
-              yield* emitAssistant(context, false);
+              yield* publishTextSegment(context, "assistant");
               return;
             case "thinking-delta":
               yield* completeAssistant(context);
@@ -2028,7 +2103,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 kind: "reasoning",
                 text: update.text,
               });
-              yield* emitReasoning(context, false);
+              yield* publishTextSegment(context, "reasoning");
               return;
             case "thinking-completed":
               yield* completeReasoning(context);
