@@ -1211,13 +1211,17 @@ export function replaceLayoutTabContent(
 }
 
 /**
- * Show content the way niri opens a window: focus the tab already showing
- * it, wherever it is, or open it in a new column right after the focused one.
+ * Ordinary navigation focuses existing content or replaces the focused tab.
+ * New tabs and splits are explicit placements through openLayoutTab.
  */
 export function showLayoutContent(state: LayoutState, content: LayoutTabContent): LayoutState {
   const existing = findLayoutTabByContent(state, content);
   if (existing) return focusLayoutTab(state, existing.tab.id);
-  return openLayoutTab(state, content, { placement: "new-column" });
+  const focused = selectFocusedTab(state);
+  if (focused && content.kind !== "launcher") {
+    return replaceLayoutTabContent(state, focused.id, content);
+  }
+  return openLayoutTab(state, content);
 }
 
 /**
