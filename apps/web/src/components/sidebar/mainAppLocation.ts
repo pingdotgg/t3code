@@ -17,7 +17,27 @@ export function isSidebarUtilityPage(pathname: string) {
 // are still recorded; they are real app URLs, so returning to one is harmless.
 const SHELL_LESS_PATHS = new Set(["/pair", "/connect", "/connect-agent", GUEST_PAGE_PATH]);
 
-let mainAppHref: string | null = null;
+const MAIN_APP_HREF_KEY = "t3code:main-app-href";
+
+function readMainAppHref() {
+  try {
+    const href = window.sessionStorage.getItem(MAIN_APP_HREF_KEY);
+    return href?.startsWith("/") &&
+      !href.startsWith("//") &&
+      !isAppModalPage(href.split(/[?#]/, 1)[0] ?? "")
+      ? href
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+let mainAppHref = readMainAppHref();
+
+export function getMainAppHref() {
+  return mainAppHref;
+}
+
 let appModalReturnHref: string | null = null;
 
 /** Remembers where Settings, Usage, and the utility pages lead back to. */
@@ -27,7 +47,13 @@ export function startMainAppLocationTracking(router: AnyRouter): () => void {
     if (isAppModalPage(pathname) || SHELL_LESS_PATHS.has(pathname)) return;
     const href = withoutAssistantCitationHash(router.state.location.href);
     appModalReturnHref = href;
-    if (!isSidebarUtilityPage(pathname)) mainAppHref = href;
+    if (isSidebarUtilityPage(pathname)) return;
+    mainAppHref = href;
+    try {
+      window.sessionStorage.setItem(MAIN_APP_HREF_KEY, href);
+    } catch {
+      // The in-memory return location still works when storage is unavailable.
+    }
   };
   record();
   return router.subscribe("onResolved", record);
