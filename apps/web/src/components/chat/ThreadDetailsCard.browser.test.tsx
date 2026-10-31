@@ -19,7 +19,7 @@ const threadB: ScopedThreadRef = {
   threadId: ThreadId.make("thread-b"),
 };
 const container = { width: 1200, height: 800 };
-const placement = { x: 908, y: 0, right: 12, width: 280, height: 400 } as const;
+const placement = { x: 916, y: 0, right: 12, width: 272, height: 400 } as const;
 
 function setup() {
   useRightPanelStore.setState({ threadPanelVisibilityByThreadKey: {} });
