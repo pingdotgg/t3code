@@ -1055,7 +1055,8 @@ export function ThemeLibrary({
                 const checkboxId = `remove-theme-${customTheme.id}`;
                 return (
                   <label
-                    className="group relative flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-card border border-transparent surface-card-settings-rim p-3 has-checked:border-ring has-checked:surface-selected hover:surface-ghost-hover"
+                    className="relative flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-card border border-transparent surface-card-settings-rim p-3 data-checked:border-ring data-checked:surface-selected hover:surface-ghost-hover"
+                    data-checked={checked ? "" : undefined}
                     htmlFor={checkboxId}
                     key={customTheme.id}
                   >
@@ -1075,7 +1076,12 @@ export function ThemeLibrary({
                           );
                         }}
                       />
-                      <CheckIcon className="pointer-events-none col-start-1 row-start-1 size-3.5 shrink-0 self-center justify-self-center stroke-primary-foreground opacity-0 group-has-checked:opacity-100 sm:size-3" />
+                      <CheckIcon
+                        className={cn(
+                          "pointer-events-none col-start-1 row-start-1 size-3.5 shrink-0 self-center justify-self-center stroke-primary-foreground sm:size-3",
+                          checked ? "opacity-100" : "opacity-0",
+                        )}
+                      />
                     </span>
                     <span className="flex min-h-12 items-center justify-center gap-1">
                       {card.previews.map((preview) => (

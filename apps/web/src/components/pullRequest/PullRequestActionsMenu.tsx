@@ -21,6 +21,7 @@ import {
   CopyIcon,
   HammerIcon,
   LinkIcon,
+  LayoutPanelTopIcon,
   MessageCircleQuestionIcon,
   MoreHorizontalIcon,
   RotateCcwIcon,
@@ -72,6 +73,7 @@ export function PullRequestActionsMenu({
   detail,
   terminology,
   linkThreadRef,
+  onOpenAsWorkspace,
   onThreadPickerOpenChange,
   refreshing,
   refreshFromHost,
@@ -120,6 +122,7 @@ export function PullRequestActionsMenu({
   detail: PullRequestDetail;
   terminology: ChangeRequestTerminology;
   linkThreadRef: ScopedThreadRef | null;
+  onOpenAsWorkspace?: (() => void) | undefined;
   onThreadPickerOpenChange: (open: boolean) => void;
   refreshing: boolean;
   refreshFromHost: () => Promise<void>;
@@ -280,6 +283,13 @@ export function PullRequestActionsMenu({
           <MenuItem disabled={guideRunning} onClick={writeGuide}>
             <SparklesIcon className="size-3.5" />
             {guideRunning ? "Writing guide..." : !guideWritten ? "Write guide" : "Rewrite guide"}
+          </MenuItem>
+        ) : null}
+        {onOpenAsWorkspace ? (
+          // Its own workspace: the chat with its terminal, and this panel beside it.
+          <MenuItem onClick={onOpenAsWorkspace}>
+            <LayoutPanelTopIcon className="size-3.5" />
+            Open as workspace
           </MenuItem>
         ) : null}
         {showCheckout ? (

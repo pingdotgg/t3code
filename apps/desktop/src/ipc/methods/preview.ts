@@ -1,6 +1,7 @@
 import {
   DesktopPreviewAnnotationSendEnabledInputSchema,
   DesktopPreviewAnnotationThemeInputSchema,
+  DesktopPreviewForwardedShortcutsInputSchema,
   DesktopPreviewAnnotationVoiceStateSchema,
   DesktopPreviewPickElementInputSchema,
   DesktopPreviewArtifactInputSchema,
@@ -363,6 +364,16 @@ const setAnnotationTheme = DesktopIpc.makeIpcMethod({
   }),
 });
 
+const setForwardedKeyChords = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_FORWARDED_KEY_CHORDS_CHANNEL,
+  payload: DesktopPreviewForwardedShortcutsInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setForwardedKeyChords")(function* ({ shortcuts }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setForwardedKeyChords(shortcuts);
+  }),
+});
+
 const pickElement = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_PICK_ELEMENT_CHANNEL,
   payload: DesktopPreviewPickElementInputSchema,
@@ -461,6 +472,7 @@ export const methods = [
   clearCache,
   getPreviewConfig,
   setAnnotationTheme,
+  setForwardedKeyChords,
   setAnnotationSendEnabled,
   pickElement,
   cancelPickElement,
