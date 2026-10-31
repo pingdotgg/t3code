@@ -423,6 +423,28 @@ it.live("names a proxied login by its saved ChatGPT email only when Codex reads 
     );
     const profileOnly = yield* proxied("acct-1", "file");
     assert.strictEqual(profileOnly.auth.email, "profile@example.com");
+    for (const { email, profile, expected } of [
+      { email: null, profile: { email: "profile@example.com" }, expected: "profile@example.com" },
+      { email: "same@example.com", profile: null, expected: "same@example.com" },
+      { email: "same@example.com", profile: { email: null }, expected: "same@example.com" },
+      { email: null, profile: { email: null }, expected: undefined },
+    ]) {
+      const nullableClaims = {
+        email,
+        "https://api.openai.com/profile": profile,
+        "https://api.openai.com/auth": claims["https://api.openai.com/auth"],
+      };
+      yield* fileSystem.writeFileString(
+        path.join(codexHome, "auth.json"),
+        JSON.stringify({
+          tokens: {
+            id_token: `header.${Buffer.from(JSON.stringify(nullableClaims)).toString("base64url")}.sig`,
+          },
+        }),
+      );
+      const nullable = yield* proxied("acct-1", "file");
+      assert.strictEqual(nullable.auth.email, expected);
+    }
     const stalledLogin = yield* proxied("acct-1", "file").pipe(
       Effect.provideService(FileSystem.FileSystem, {
         ...fileSystem,

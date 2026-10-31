@@ -108,9 +108,9 @@ const decodeCodexAuthFile = Schema.decodeUnknownOption(
 const decodeCodexIdTokenClaims = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
-      email: Schema.optionalKey(Schema.String),
+      email: Schema.optionalKey(Schema.NullOr(Schema.String)),
       "https://api.openai.com/profile": Schema.optionalKey(
-        Schema.Struct({ email: Schema.optionalKey(Schema.String) }),
+        Schema.NullOr(Schema.Struct({ email: Schema.optionalKey(Schema.NullOr(Schema.String)) })),
       ),
       "https://api.openai.com/auth": Schema.Struct({ chatgpt_account_id: Schema.String }),
     }),
