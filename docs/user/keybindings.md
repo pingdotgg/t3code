@@ -109,6 +109,24 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 `mod` means Command on macOS and Control elsewhere. Other modifiers are
 `cmd` / `meta`, `ctrl` / `control`, `alt` / `option`, and `shift`.
 
+## Terminal clipboard shortcuts
+
+To add your own terminal copy and paste shortcuts, bind `terminal.copy` and
+`terminal.paste` in **Settings → Keybindings**, with the condition `terminalFocus`.
+For example, these rules use the Super key on Linux and Windows, or Command on macOS:
+
+```json
+[
+  { "key": "meta+c", "command": "terminal.copy", "when": "terminalFocus" },
+  { "key": "meta+v", "command": "terminal.paste", "when": "terminalFocus" }
+]
+```
+
+Copy uses the terminal's selected output; without a selection it leaves the
+clipboard alone. Paste requires permission to write to the terminal. These bindings
+add shortcuts without changing the platform's built-in terminal shortcuts.
+Your window manager must pass the chosen keys through to T3 Code.
+
 ## When conditions
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
