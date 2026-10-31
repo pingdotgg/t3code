@@ -49,7 +49,7 @@ it.effect(
         ],
       );
       assert.deepEqual(a[1]!.capabilities, native[0]!.capabilities);
-      assert.isNull(a[0]!.capabilities);
+      assert.deepEqual(a[0]!.capabilities, native[0]!.capabilities);
       const b = yield* chatGptModels("account-b", native).pipe(
         Effect.provideService(HttpClient.HttpClient, http),
       );
@@ -70,5 +70,56 @@ it.effect("does not present a cached catalog as account entitlements when discov
       chatGptModels("account-a", []).pipe(Effect.provideService(HttpClient.HttpClient, http)),
     );
     assert.strictEqual(error._tag, "ChatGptCatalogError");
+  }),
+);
+
+it.effect("borrows catalog-only reasoning capabilities by variant, then by native order", () =>
+  Effect.gen(function* () {
+    const http = HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(
+            JSON.stringify({
+              models: [
+                { slug: "gpt-6.1-sol", display_name: "Sol", visibility: "list" },
+                { slug: "gpt-6.1-terra", display_name: "Terra", visibility: "list" },
+                { slug: "gpt-6-astra", display_name: "Astra", visibility: "list" },
+              ],
+            }),
+          ),
+        ),
+      ),
+    );
+    const reasoning = (currentValue: string) => ({
+      optionDescriptors: [
+        {
+          id: "reasoningEffort",
+          label: "Reasoning",
+          type: "select" as const,
+          options: ["low", "medium", "high", "xhigh", "max", "ultra"].map((id) => ({
+            id,
+            label: id,
+            isDefault: id === currentValue,
+          })),
+          currentValue,
+        },
+      ],
+    });
+    const native = [
+      { slug: "gpt-6-astra", name: "Astra", isCustom: false, capabilities: null },
+      { slug: "gpt-6-luna", name: "Luna", isCustom: false, capabilities: reasoning("low") },
+      { slug: "gpt-6-sol", name: "Sol", isCustom: false, capabilities: reasoning("medium") },
+    ];
+    const models = yield* chatGptModels("account-a", native).pipe(
+      Effect.provideService(HttpClient.HttpClient, http),
+    );
+    assert.deepEqual(models[0]!.capabilities, native[2]!.capabilities);
+    assert.deepEqual(models[1]!.capabilities, native[1]!.capabilities);
+    assert.isNull(models[2]!.capabilities);
+    const withoutCapabilities = yield* chatGptModels("account-a", [native[0]!]).pipe(
+      Effect.provideService(HttpClient.HttpClient, http),
+    );
+    assert.isTrue(withoutCapabilities.every((model) => model.capabilities === null));
   }),
 );

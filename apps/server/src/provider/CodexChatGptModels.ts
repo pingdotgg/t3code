@@ -30,17 +30,24 @@ export const chatGptModels = Effect.fn("chatGptModels")(function* (
   );
   if (response.status !== 200) return yield* new ChatGptCatalogError({ status: response.status });
   const catalog = yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Catalog)));
+  const fallbackCapabilities =
+    nativeModels.find((model) => model.capabilities)?.capabilities ?? null;
   return catalog.models
     .filter((model) => model.visibility === "list")
-    .map(
-      (model) =>
-        ({
-          ...nativeModels.find((native) => native.slug === model.slug),
-          capabilities:
-            nativeModels.find((native) => native.slug === model.slug)?.capabilities ?? null,
-          slug: model.slug,
-          name: model.display_name,
-          isCustom: false,
-        }) satisfies ServerProviderModel,
-    );
+    .map((model) => {
+      const native = nativeModels.find((native) => native.slug === model.slug);
+      const variant = model.slug.split("-").at(-1);
+      const capabilities = native
+        ? native.capabilities
+        : (nativeModels.find(
+            (candidate) => candidate.slug.endsWith(`-${variant}`) && candidate.capabilities,
+          )?.capabilities ?? fallbackCapabilities);
+      return {
+        ...native,
+        capabilities,
+        slug: model.slug,
+        name: model.display_name,
+        isCustom: false,
+      } satisfies ServerProviderModel;
+    });
 }, Effect.timeout("15 seconds"));
