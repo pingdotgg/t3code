@@ -1,7 +1,7 @@
 import { SymbolView } from "./ui/AppSymbol";
 import { AppText } from "./ui/AppText";
 import { Image } from "expo-image";
-import { memo, useLayoutEffect, useState } from "react";
+import { memo, useLayoutEffect, useMemo, useState } from "react";
 import { View } from "react-native";
 import type { EnvironmentId, ProjectIconOverride } from "@t3tools/contracts";
 import {
@@ -163,9 +163,13 @@ function ProjectFaviconImage(props: {
   );
 
   const { themeAppearance } = useAppearancePreferences();
-  const inlineFaviconUrl = faviconRequest?.faviconUrl.startsWith("data:")
-    ? resolveProjectFaviconColorScheme(faviconRequest.faviconUrl, themeAppearance)
-    : null;
+  const inlineFaviconUrl = useMemo(
+    () =>
+      faviconRequest?.faviconUrl.startsWith("data:")
+        ? resolveProjectFaviconColorScheme(faviconRequest.faviconUrl, themeAppearance)
+        : null,
+    [faviconRequest?.faviconUrl, themeAppearance],
+  );
 
   const showImage = faviconRequest !== null && status === "loaded";
   const fallbackGlyph = showImage ? null : projectAutoMonogram(props.projectTitle);
