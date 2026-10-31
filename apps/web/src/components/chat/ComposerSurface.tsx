@@ -46,7 +46,7 @@ function ContextStrip({ className, ...props }: ComponentProps<"div">) {
       data-slot="composer-tray-row"
       // 8px on the right, so a trailing chip's hover fill ends on the send pill's edge.
       className={cn(
-        "group/composer-context relative flex min-h-7.5 min-w-0 items-center gap-1 ps-1.5 pe-2 py-1 text-meta text-muted-foreground",
+        "group/composer-context relative flex h-7.5 min-w-0 items-center gap-1 ps-1.5 pe-2 py-1 text-meta text-muted-foreground",
         className,
       )}
       {...props}
