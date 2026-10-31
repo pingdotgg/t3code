@@ -215,7 +215,7 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
     setViewportSize: vi.fn(async (size: typeof viewport) => {
       viewport = size;
     }),
-    goto: vi.fn(async (next: string) => {
+    goto: vi.fn(async (next: string, _options?: { timeout?: number }) => {
       const busyScript = renderer.busyScript;
       renderer.gotoStarted.resolve();
       if (busyScript) {
@@ -754,11 +754,8 @@ it.live.each(["load", "none"] as const)(
         expect(status.url).toBe("http://localhost:5173/next");
         expect(navigated).toMatchObject({ _tag: "Success" });
         // Waiting on the busy script spends the navigation's own budget.
-        const [, gotoOptions] = contexts[0]!.page.goto.mock.calls.at(-1)! as [
-          string,
-          { timeout: number },
-        ];
-        expect(gotoOptions.timeout).toBeLessThan(200);
+        const [, gotoOptions] = contexts[0]!.page.goto.mock.calls.at(-1)!;
+        expect(gotoOptions?.timeout).toBeLessThan(200);
         expect(waited).toMatchObject({ _tag: "Success" });
       }),
     ).pipe(Effect.provide(layer)),
