@@ -152,8 +152,8 @@ threads in a folder for each project. A project with no active threads has no fo
 pick it in the project filter. Click a folder to open or close it. A closed folder shows how
 many threads it holds, and a dot when one of them needs you. Use the pen button on a folder, or
 right-click it, to start a thread in that project. Pinned threads stay above the folders, and
-Snoozed and Settled stay below them. In this mode you cannot drag threads, and the Working section
-is off. Each device keeps its own choice.
+Snoozed and Settled stay below them. In this mode you can drag a thread onto the composer to
+mention it, but not within the sidebar, and the Working section is off. Each device keeps its own choice.
 
 ## Settle finished work
 
