@@ -56,18 +56,18 @@ it.effect("shares one first scan that an interrupted caller does not cancel", ()
   Effect.gen(function* () {
     const calls = yield* Ref.make(0);
     const release = yield* Deferred.make<void>();
+    const started = yield* Deferred.make<void>();
     const read = yield* makeStaleWhileRevalidate(
-      Ref.updateAndGet(calls, (count) => count + 1).pipe(Effect.tap(() => Deferred.await(release))),
+      Ref.updateAndGet(calls, (count) => count + 1).pipe(Effect.tap(() => Deferred.succeed(started, undefined)), Effect.tap(() => Deferred.await(release))),
       "60 seconds",
     );
 
     // A connect that times out or disconnects mid-scan leaves the scan running.
     const interrupted = yield* read.pipe(Effect.forkChild);
-    yield* Effect.yieldNow;
+    yield* Deferred.await(started);
     yield* Fiber.interrupt(interrupted);
 
     const next = yield* read.pipe(Effect.forkChild);
-    yield* Effect.yieldNow;
     yield* Deferred.succeed(release, undefined);
     assert.equal(yield* Fiber.join(next), 1);
     assert.equal(yield* Ref.get(calls), 1);

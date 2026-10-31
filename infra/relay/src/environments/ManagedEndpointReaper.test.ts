@@ -186,7 +186,6 @@ function harness(input?: {
     claimRelease: () => Effect.die("unused"),
     withClaimedTunnel: () => Effect.die("unused"),
     claimDeprovision: () => Effect.die("unused"),
-    remove: () => Effect.die("unused"),
     removeClaimed: () => Effect.die("unused"),
   });
   const provider = ManagedEndpointProvider.ManagedEndpointProvider.of({
@@ -677,7 +676,8 @@ describe("ManagedEndpointReaper", () => {
   });
 
   it.effect("rotates the deletion order so persistent failures do not starve later tunnels", () => {
-    const entries = Array.from({ length: 200 }, (_, index) =>
+    const limit = ManagedEndpointReaper.MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT;
+    const entries = Array.from({ length: limit * 2 }, (_, index) =>
       tunnel({
         id: `tunnel-${index}`,
         suffix: index.toString(16).padStart(16, "0"),
@@ -688,7 +688,7 @@ describe("ManagedEndpointReaper", () => {
     const state = harness({
       tunnels: entries,
       allocations: recoverableOwners(entries),
-      failDeleteWhen: (id) => Number(id.split("-")[1]) < 100,
+      failDeleteWhen: (id) => Number(id.split("-")[1]) < limit,
     });
 
     return Effect.gen(function* () {
@@ -697,14 +697,15 @@ describe("ManagedEndpointReaper", () => {
       yield* reaper.sweep;
       yield* TestClock.setTime(NOW_MILLIS + 5 * 60 * 1_000);
       yield* reaper.sweep;
-      const later = state.deleted.filter((id) => Number(id.split("-")[1]) >= 100);
+      const later = state.deleted.filter((id) => Number(id.split("-")[1]) >= limit);
       expect(later.length).toBeGreaterThan(0);
     }).pipe(Effect.provide(state.layer));
   });
 
   it.effect("rotates the attempt budget across both statuses over consecutive sweeps", () => {
+    const limit = ManagedEndpointReaper.MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT;
     const entries = (["down", "inactive"] as const).flatMap((status) =>
-      Array.from({ length: 100 }, (_, index) =>
+      Array.from({ length: limit }, (_, index) =>
         tunnel({
           id: `${status}-${index}`,
           suffix: `${status === "down" ? "a" : "b"}${index.toString(16).padStart(15, "0")}`,
@@ -720,13 +721,13 @@ describe("ManagedEndpointReaper", () => {
       yield* TestClock.setTime(NOW_MILLIS);
       yield* reaper.sweep;
       const firstStatus = state.deleted[0]!.split("-")[0];
-      expect(state.deleted).toHaveLength(100);
+      expect(state.deleted).toHaveLength(limit);
       expect(state.deleted.every((id) => id.startsWith(`${firstStatus}-`))).toBe(true);
 
       state.deleted.length = 0;
       yield* TestClock.setTime(NOW_MILLIS + 5 * 60 * 1_000);
       yield* reaper.sweep;
-      expect(state.deleted).toHaveLength(100);
+      expect(state.deleted).toHaveLength(limit);
       expect(state.deleted.every((id) => !id.startsWith(`${firstStatus}-`))).toBe(true);
     }).pipe(Effect.provide(state.layer));
   });

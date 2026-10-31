@@ -30,16 +30,12 @@ function shiftPositions(node: Root | RootContent, offset: number, lines: number)
   }
 }
 
-/** Keep the full document pipeline while avoiding parsing a completed code-heavy
- * prefix on every token. A closed top-level fence followed by a blank line is a
- * parsing boundary. Definitions are document-wide, so they require a full parse.
- */
+// Cache completed fences followed by blank lines; document-wide definitions require a full parse.
 function createIncrementalMarkdownParser(parse: Parser): Parser {
   let cached: ParsedPrefix | undefined;
 
   return (source, file) => {
-    // A streaming CR can become half of a CRLF. A BOM at the suffix boundary
-    // would be stripped by a new parser although it is inside the full document.
+    // Streaming CR may become CRLF; parsing a suffix separately would strip an internal BOM.
     if (source.includes("\r") || source.includes("\uFEFF")) return parse(source, file);
 
     const prefix = cached && source.startsWith(cached.source) ? cached : undefined;
@@ -49,8 +45,7 @@ function createIncrementalMarkdownParser(parse: Parser): Parser {
       if (hasDefinitions(root)) return parse(source, file);
       shiftPositions(root, prefix.offset, prefix.line - 1);
       if (root.position) root.position.start = { line: 1, column: 1, offset: 0 };
-      // Remark transforms mutate their input. The cache owns pristine nodes and
-      // each render receives its own copy, including source positions.
+      // Remark mutates nodes; give each render a clone of the pristine cache.
       root.children.unshift(...structuredClone(prefix.children));
     } else {
       root = parse(source, file);
@@ -84,9 +79,7 @@ function createIncrementalMarkdownParser(parse: Parser): Parser {
   };
 }
 
-/** One cache per streaming renderer. Extra syntax plugins must use the normal
- * parser because their document-wide dependencies are not known here.
- */
+/** Use one cache per streaming renderer; extra syntax plugins require the normal parser. */
 export function createIncrementalMarkdownPlugin(): Plugin<[], Root> {
   let parser: Parser | undefined;
   return function () {
@@ -94,9 +87,7 @@ export function createIncrementalMarkdownPlugin(): Plugin<[], Root> {
     if (!original) return;
     parser ??= createIncrementalMarkdownParser((source, file) => original(source, file) as Root);
     const parseDocument = parser;
-    // ReactMarkdown creates a processor per render. Its first parse is the
-    // document; transforms can then parse synthetic recovery text on that same
-    // processor. Those parses must not read or replace the document's cache.
+    // ReactMarkdown parses recovery text second; only the first parse may access the document cache.
     let documentParsed = false;
     this.parser = (source, file) => {
       if (documentParsed) return original(source, file);

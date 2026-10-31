@@ -160,11 +160,9 @@ const isTrueLiteral = (test: ESTree.Expression): boolean => {
   );
 };
 
-// `for (...) { yield* Effect.yieldNow } return yield* Effect.die("timed out")`
-// keys a failure on the loop running out, which makes the bound a budget.
-// A loop is polling when a predicate decides whether it keeps going: a conditional exit in the
-// body, or a test that is neither `true` nor a counter the loop advances. A fixed-count flush
-// followed by unrelated error handling is not polling, so what comes after the loop is ignored.
+// A loop polls when a predicate decides whether it continues: a conditional exit in the body,
+// or a test that is neither `true` nor a counter the loop advances. A fixed-count flush is
+// not polling, so code after the loop is ignored.
 const hasPredicateExit = (loop: LoopNode): boolean =>
   hasConditionalExit(loop.body) ||
   (loop.test != null && !isTrueLiteral(loop.test) && !isCounterTest(loop));

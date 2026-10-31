@@ -17,28 +17,10 @@ type Entry<A> =
       readonly refreshing: boolean;
     };
 
-/**
- * Memoizes a discovery that is cheap when warm and slow on a loaded host, for
- * callers that sit on the client connect path. Until a value exists, callers
- * wait on one shared scan. After that every call returns the last good value
- * immediately; once the value is older than `ttl`, one refresh replaces it in
- * the background.
- *
- * Scans run on their own fiber in the scope that built the cache, never on a
- * caller's. Callers time out and disconnect mid-connect, and neither may cancel
- * a scan other callers are waiting on, or throw away work a slow host needs
- * more than one connect to finish. Only successes are stored: a failed scan
- * leaves the previous state, so the next caller starts over. Expiry uses the
- * monotonic clock so a wall-clock adjustment cannot keep a stale entry alive.
- *
- * Closing the scope interrupts any scan (and cleans up a scoped probe process).
- * A refresh is capped at `REFRESH_TIMEOUT` so a probe hung on an unresponsive
- * mount cannot leave the entry stale forever; a first scan is not, because
- * callers that already timed out still pick up its result later.
- */
-export const makeStaleWhileRevalidate = <A>(discover: Effect.Effect<A>, ttl: Duration.Input) => {
+// Shared scans survive caller cancellation; monotonic TTL bounds cache age.
+// Warm reads return stale data while a scope-owned, bounded refresh runs.
+export const makeStaleWhileRevalidate = Effect.fn("StaleWhileRevalidate.make")(function* <A>(discover: Effect.Effect<A>, ttl: Duration.Input) {
   const ttlNanos = Duration.toNanosUnsafe(Duration.fromInputUnsafe(ttl));
-  return Effect.gen(function* () {
     const scope = yield* Effect.scope;
     const state = yield* Ref.make<Entry<A>>({ _tag: "Empty" });
 
@@ -95,5 +77,4 @@ export const makeStaleWhileRevalidate = <A>(discover: Effect.Effect<A>, ttl: Dur
       );
       return yield* result;
     });
-  });
-};
+});
