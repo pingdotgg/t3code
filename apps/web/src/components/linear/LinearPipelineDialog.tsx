@@ -398,7 +398,10 @@ function PipelineDialogBody({
                     key={candidate.id}
                     pipeline={candidate}
                     selected={candidate.id === pipelineId}
-                    lastUsed={candidate.name === lastUsed}
+                    lastUsed={
+                      pipelines.pipelines.find((entry) => entry.name === lastUsed)?.id ===
+                      candidate.id
+                    }
                   />
                 ))}
               </RadioGroup>
