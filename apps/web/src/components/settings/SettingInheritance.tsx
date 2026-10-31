@@ -6,7 +6,7 @@ import {
   type ServerSettings,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
-import { CheckIcon, ChevronRightIcon, LayersIcon } from "lucide-react";
+import { ChevronRightIcon, LayersIcon } from "lucide-react";
 import * as Equal from "effect/Equal";
 
 import { cn } from "../../lib/utils";
@@ -188,10 +188,10 @@ export function SettingInheritance({
   const key = keys[0];
   if (!key || targets.length === 0) return null;
   const hasMultipleEnvironments = new Set(targets.map((target) => target.environmentId)).size > 1;
-  const overrideSummary =
+  const overrideCount =
     overridingProjects.length > 0
-      ? `${summary} · ${overridingProjects.length} project ${overridingProjects.length === 1 ? "override" : "overrides"}`
-      : summary;
+      ? `${overridingProjects.length} project ${overridingProjects.length === 1 ? "override" : "overrides"}`
+      : null;
   const chains = targets.flatMap((target) => {
     const environment = environments.find(
       (candidate) => candidate.environmentId === target.environmentId,
@@ -201,17 +201,20 @@ export function SettingInheritance({
     const path = scopeContext?.scope.members.find(
       (member) => member.environmentId === target.environmentId && member.id === target.projectId,
     )?.workspaceRoot;
-    const secondary = [labels.secondary, path?.split(/[\\/]/).filter(Boolean).slice(-2).join("/")]
-      .filter(Boolean)
-      .join(" · ");
+    const secondary = [
+      path?.split(/[\\/]/).filter(Boolean).slice(-2).join("/"),
+      labels.secondary,
+    ].filter(Boolean);
     const layers = settingInheritanceLayers(target, environment.serverConfig.settings, key);
     const winningLayer = layers.find((layer) => layer.effective);
     return [
       {
         id: `${target.environmentId}:${target.projectId ?? ""}`,
         target,
-        label: [labels.primary, secondary].filter(Boolean).join(" · "),
-        machineLabel: [labels.primary, labels.secondary].filter(Boolean).join(" · "),
+        label: labels.primary,
+        secondary,
+        machineLabel: labels.primary,
+        machineDetail: labels.secondary,
         overrides: environment.serverConfig.settings.projectSettingsOverrides,
         machine: resolveEnvironmentMachineKind(environment.serverConfig),
         layers,
@@ -230,8 +233,17 @@ export function SettingInheritance({
         target.environmentId === scopeContext?.target?.environmentId &&
         target.projectId === scopeContext?.target?.projectId,
     ) ?? chains[0];
-  const machineLabelFor = (environmentId: string) =>
-    chains.find((entry) => entry.target.environmentId === environmentId)?.machineLabel ?? "";
+  const machineLabelFor = (environmentId: string) => {
+    const chain = chains.find((entry) => entry.target.environmentId === environmentId);
+    return (
+      <>
+        <span className="block truncate">{chain?.machineLabel}</span>
+        {chain?.machineDetail ? (
+          <span className="block truncate">{chain.machineDetail}</span>
+        ) : null}
+      </>
+    );
+  };
   const groups: (typeof chains)[] = [];
   for (const chain of hasMultipleEnvironments && primary
     ? [primary, ...chains.filter((entry) => entry !== primary)]
@@ -252,7 +264,7 @@ export function SettingInheritance({
                 <Button
                   size="icon-micro"
                   variant="ghost-muted"
-                  aria-label={`${overrideSummary}. Show where this value comes from`}
+                  aria-label={`${summary}${overrideCount ? `. ${overrideCount}` : ""}. Show where this value comes from`}
                 />
               }
             />
@@ -266,10 +278,13 @@ export function SettingInheritance({
             )}
           />
         </TooltipTrigger>
-        <TooltipPopup side="top">{overrideSummary}</TooltipPopup>
+        <TooltipPopup side="top">
+          <span className="block">{summary}</span>
+          {overrideCount ? <span className="block">{overrideCount}</span> : null}
+        </TooltipPopup>
       </Tooltip>
       <PopoverPopup align="start" width="md" padding="none">
-        <div className="divide-y divide-border/60">
+        <div className="divide-y divide-divider">
           {groups.map((members) => {
             const first = members[0];
             if (!first) return null;
@@ -280,14 +295,14 @@ export function SettingInheritance({
                   <li
                     key={layer.key}
                     className={cn(
-                      "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 rounded-md px-2 py-1",
-                      layer.effective && "bg-foreground/[0.06]",
+                      "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 rounded-row px-2 py-1",
+                      layer.effective && "bg-settings-effective-fill",
                     )}
                   >
                     <span
                       className={cn(
                         "min-w-0 truncate",
-                        layer.effective ? "font-medium text-foreground" : "text-muted-foreground",
+                        layer.effective ? "text-foreground" : "text-muted-foreground",
                       )}
                     >
                       {layer.key === "environment" ? "Environment" : layer.label}
@@ -296,17 +311,27 @@ export function SettingInheritance({
                       className={cn(
                         "flex items-center gap-1.5 tabular-nums",
                         layer.effective
-                          ? "text-foreground"
+                          ? "font-medium text-foreground"
                           : layer.set
                             ? "text-muted-foreground"
-                            : "text-muted-foreground/60",
+                            : "text-dim-foreground",
                       )}
                     >
                       <span className="max-w-32 truncate">{layer.value}</span>
                       {layer.effective ? (
-                        <CheckIcon aria-hidden className="size-3.5 shrink-0 text-primary" />
+                        <span
+                          aria-hidden
+                          className="flex size-3.5 shrink-0 items-center justify-center"
+                        >
+                          <span className="size-1.5 rounded-full bg-strong-foreground" />
+                        </span>
                       ) : (
-                        <span aria-hidden className="size-3.5 shrink-0" />
+                        <span
+                          aria-hidden
+                          className="flex size-3.5 shrink-0 items-center justify-center"
+                        >
+                          <span className="size-1.5 rounded-full bg-settings-inactive-dot" />
+                        </span>
                       )}
                     </span>
                   </li>
@@ -320,7 +345,7 @@ export function SettingInheritance({
                     <EnvironmentMachineIcon
                       aria-hidden
                       kind={machine}
-                      className="size-3.5 shrink-0"
+                      className="size-3.25 shrink-0"
                     />
                     <span className="min-w-0 truncate">{target.label}</span>
                   </h4>
@@ -351,7 +376,7 @@ export function SettingInheritance({
                             className="size-3 shrink-0 text-muted-foreground [[data-panel-open]_&]:rotate-90"
                           />
                         </span>
-                        <span className="flex min-w-0 flex-col gap-0.5 text-xs text-muted-foreground">
+                        <span className="flex min-w-0 flex-col gap-0.5 text-meta text-muted-foreground">
                           {members.map((member) => (
                             <span
                               key={member.id}
@@ -362,7 +387,17 @@ export function SettingInheritance({
                                 kind={member.machine}
                                 className="size-3 shrink-0"
                               />
-                              <span className="truncate">{member.label}</span>
+                              <span className="min-w-0">
+                                <span className="block truncate">{member.label}</span>
+                                {member.secondary.map((detail) => (
+                                  <span
+                                    key={detail}
+                                    className="block truncate text-meta text-muted-foreground"
+                                  >
+                                    {detail}
+                                  </span>
+                                ))}
+                              </span>
                             </span>
                           ))}
                         </span>
@@ -376,7 +411,7 @@ export function SettingInheritance({
                   <>
                     {chain}
                     {hasMultipleEnvironments ? (
-                      <p className="px-2 pt-1.5 text-xs text-muted-foreground">
+                      <p className="px-2 pt-1.5 text-meta text-muted-foreground">
                         Same on all machines
                       </p>
                     ) : null}
@@ -389,7 +424,7 @@ export function SettingInheritance({
                   if (overriding.length === 0) return null;
                   const foldOverrides = hasMultipleEnvironments && overriding.length > 3;
                   const header = (
-                    <div className="flex items-center justify-between gap-3 px-2 text-xs text-muted-foreground">
+                    <div className="flex items-center justify-between gap-3 px-2 text-meta text-muted-foreground">
                       {foldOverrides ? (
                         <CollapsibleTrigger render={<InlineButton tone="muted" />}>
                           <ChevronRightIcon
@@ -411,7 +446,10 @@ export function SettingInheritance({
                   const projects = (
                     <ul
                       role="list"
-                      className={cn("mt-0.5 text-sm", foldOverrides && "max-h-48 overflow-y-auto")}
+                      className={cn(
+                        "mt-0.5 text-body",
+                        foldOverrides && "max-h-48 overflow-y-auto",
+                      )}
                     >
                       {overriding.map((project) => (
                         <li
@@ -426,7 +464,7 @@ export function SettingInheritance({
                               <span className="truncate">{project.label}</span>
                             </InlineButton>
                             {hasMultipleEnvironments ? (
-                              <span className="max-w-full truncate text-xs text-muted-foreground">
+                              <span className="max-w-full truncate text-meta text-muted-foreground">
                                 {machineLabelFor(project.environmentId)}
                               </span>
                             ) : null}
@@ -447,7 +485,7 @@ export function SettingInheritance({
                     </ul>
                   );
                   return (
-                    <div className="mt-2 border-t border-border/60 pt-2">
+                    <div className="mt-2 border-t border-divider pt-2">
                       {foldOverrides ? (
                         <Collapsible>
                           {header}

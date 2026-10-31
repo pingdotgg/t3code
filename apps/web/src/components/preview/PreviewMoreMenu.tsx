@@ -137,7 +137,7 @@ export function PreviewMoreMenu({
           <span>Zoom</span>
           <span className="flex items-center gap-1">
             <Button
-              variant="outline"
+              variant="secondary"
               size="icon-xs"
               type="button"
               onClick={actions.zoomOut}
@@ -150,7 +150,7 @@ export function PreviewMoreMenu({
               {zoomLabel}
             </span>
             <Button
-              variant="outline"
+              variant="secondary"
               size="icon-xs"
               type="button"
               onClick={actions.zoomIn}

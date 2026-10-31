@@ -103,7 +103,7 @@ export function DatabaseStorageNotice({
             control={
               <div className="flex flex-wrap items-center gap-1.5">
                 <Button
-                  variant="outline"
+                  variant="secondary"
                   size="xs"
                   onClick={() => copyToClipboard(status.compactCommand, undefined)}
                 >
@@ -169,7 +169,7 @@ function ReclaimRow({
       control={
         <div className="flex flex-wrap items-center gap-1.5">
           <Button
-            variant="outline"
+            variant="secondary"
             size="xs"
             disabled={restarting}
             onClick={() => setConfirming(true)}
@@ -189,7 +189,7 @@ function ReclaimRow({
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
-                <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+                <AlertDialogClose render={<Button variant="secondary" />}>Cancel</AlertDialogClose>
                 <Button onClick={() => void start()}>Restart and reclaim</Button>
               </AlertDialogFooter>
             </AlertDialogPopup>

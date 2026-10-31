@@ -34,7 +34,7 @@ export function MarkdownDetails({
   const content = childNodes.filter((_, index) => index !== summaryIndex);
 
   return (
-    <div className="my-2 border-y border-border/60">
+    <div className="my-2 border-y border-border">
       <Collapsible
         open={expanded}
         onOpenChange={setIsOpen}
@@ -46,16 +46,13 @@ export function MarkdownDetails({
           data-markdown-details-summary=""
         >
           <ChevronRightIcon
-            className="size-4 shrink-0 text-muted-foreground transition-transform"
+            className="size-4 shrink-0 text-dim-foreground transition-transform"
             aria-hidden
           />
           <span>{summary}</span>
         </CollapsibleTrigger>
         <CollapsiblePanel ref={revealRef} hiddenUntilFound={searching}>
-          <div
-            className="pb-3 ps-6 text-foreground/[calc(90%+var(--appearance-contrast-boost)/10)]"
-            data-markdown-details-content=""
-          >
+          <div className="pb-3 ps-6 text-foreground" data-markdown-details-content="">
             {content}
           </div>
         </CollapsiblePanel>

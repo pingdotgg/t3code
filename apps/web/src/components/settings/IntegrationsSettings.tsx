@@ -932,7 +932,7 @@ function DeviceIntegrationControls({
           {state.supportsToolInspection ? (
             <Button
               size="sm"
-              variant="outline"
+              variant="secondary"
               disabled={!environmentId || pending !== null || busy}
               onClick={() => {
                 if (!environmentId) return;
@@ -1320,7 +1320,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             render={
               <Button
                 size="sm"
-                variant="outline"
+                variant="secondary"
                 disabled={profileWritesDisabled || importInFlight}
               />
             }
@@ -1379,7 +1379,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
         </Menu>
       }
     >
-      <div className="mt-2 mb-2 overflow-hidden rounded-lg border border-border/60">
+      <div className="mt-2 mb-2 overflow-hidden rounded-control border border-border/60 surface-card-settings">
         {listedProfiles.map((profile, index) => {
           const builtIn = isBuiltInBrowserProfileId(profile.id);
           const isDefault = profile.id === resolvedDefaultId;
@@ -1415,7 +1415,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                 )}
                 {isDefault ? (
                   <span className={cn("flex", profileWritesDisabled && "opacity-64")}>
-                    <Badge>Default</Badge>
+                    <Badge variant="secondary">Default</Badge>
                   </span>
                 ) : null}
               </span>
@@ -1510,7 +1510,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
           <AlertDialogFooter>
             <AlertDialogClose
               disabled={profileRemovalInFlight}
-              render={<Button variant="outline" disabled={profileRemovalInFlight} />}
+              render={<Button variant="secondary" disabled={profileRemovalInFlight} />}
             >
               Cancel
             </AlertDialogClose>
@@ -1544,7 +1544,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="secondary" />}>Cancel</AlertDialogClose>
             <Button
               variant="destructive"
               onClick={() => {

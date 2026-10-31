@@ -108,7 +108,7 @@ export function WorktreeBaseBranchPicker({
       <ComboboxTrigger
         id={id}
         disabled={disabled || !cwd}
-        render={<Button variant="outline" size="sm" />}
+        render={<Button variant="secondary" size="sm" />}
         className="w-full justify-between "
       >
         <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground" />

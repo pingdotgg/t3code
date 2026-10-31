@@ -4,23 +4,25 @@ import type {
   ServerProviderCompatibilityAdvisory,
 } from "@t3tools/contracts";
 
+import type { StatusDotTone } from "../ui/status-dot";
+
 export const PROVIDER_STATUS_STYLES = {
   disabled: {
-    dot: "bg-muted-foreground/50",
+    dot: "neutral",
   },
   error: {
-    dot: "bg-destructive",
+    dot: "danger",
   },
   neutral: {
-    dot: "bg-muted-foreground",
+    dot: "neutral",
   },
   ready: {
-    dot: "bg-success",
+    dot: "success",
   },
   warning: {
-    dot: "bg-warning",
+    dot: "warning",
   },
-} as const;
+} as const satisfies Record<string, { dot: StatusDotTone }>;
 
 export type ProviderStatusKey = keyof typeof PROVIDER_STATUS_STYLES;
 
@@ -67,13 +69,14 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
   if (provider.auth.status === "unauthenticated") {
     const authLabel = provider.auth.label ?? provider.auth.type;
     return {
-      headline: authLabel ? `Not authenticated · ${authLabel}` : "Not authenticated",
+      headline: "Not authenticated",
+      authLabel,
       detail: provider.message ?? null,
     };
   }
   if (isAntigravitySignInUnchecked(provider)) {
     return {
-      headline: "Installed · Sign-in not checked",
+      headline: "Sign-in not checked",
       detail: provider.message ?? null,
     };
   }
@@ -93,7 +96,8 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
   if (provider.auth.status === "authenticated") {
     const authLabel = provider.auth.label ?? provider.auth.type;
     return {
-      headline: authLabel ? `Authenticated · ${authLabel}` : "Authenticated",
+      headline: "Authenticated",
+      authLabel,
       detail: provider.message ?? null,
     };
   }
