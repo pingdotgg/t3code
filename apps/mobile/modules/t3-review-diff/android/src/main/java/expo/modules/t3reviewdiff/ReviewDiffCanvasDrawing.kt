@@ -185,7 +185,8 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
   fun prepareRows(
     tokens: Map<String, List<DiffToken>>,
     style: DiffStyle,
-    width: Int
+    width: Int,
+    isCancelled: () -> Boolean = { false }
   ): (List<DiffRow>) -> CodeLayoutCache {
     configureCodePaint(theme.text, 0, style)
     val paint = TextPaint(textPaint)
@@ -196,7 +197,7 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
         style.codePaddingPx * 2f
       ).toInt()
     return { rows ->
-      cache.apply { layout(rows, tokens, paint, style, colors, availableWidth) }
+      cache.apply { layout(rows, tokens, paint, style, colors, availableWidth, isCancelled) }
     }
   }
 
@@ -218,6 +219,39 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
   private var widthTokens: Map<String, List<DiffToken>>? = null
   private var widthStyle: DiffStyle? = null
   private var measuredContentWidth = 0
+  private var asciiCharacterWidth = 0f
+  private var asciiFixedPitch = false
+
+  fun tokensChangeWidth(
+    previous: Map<String, List<DiffToken>>,
+    next: Map<String, List<DiffToken>>,
+    style: DiffStyle
+  ): Boolean {
+    if (widthStyle != style) return true
+    fun changed(id: String): Boolean {
+      val before = previous[id]
+      val after = next[id]
+      if (before == after) return false
+      return if (widthEntries.containsKey(id) ||
+        before.orEmpty().any { it.fontStyle and 3 != 0 } ||
+        after.orEmpty().any { it.fontStyle and 3 != 0 }
+      ) {
+        // Native run boundaries and fallback fonts can change advances, including ASCII italics.
+        before?.size != after?.size || before.orEmpty().indices.any { index ->
+          val old = before.orEmpty()[index]
+          val new = after.orEmpty()[index]
+          old.content != new.content || old.fontStyle and 3 != new.fontStyle and 3
+        }
+      } else {
+        before != null && after != null &&
+          before.sumOf { it.content.length } != after.sumOf { it.content.length }
+      }
+    }
+    val changed = next.keys.any(::changed) || previous.keys.any { it !in next && changed(it) }
+    // Paint-only patches must not make the next comment/viewport update remeasure rows.
+    if (!changed) widthTokens = next
+    return changed
+  }
 
   fun contentWidth(
     rows: List<DiffRow>,
@@ -233,20 +267,30 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     }
     // Comment heights and viewport resizing do not change unwrapped text widths.
     if (widthRows !== rows || widthTokens !== tokens || widthStyle != style) {
-      if (widthStyle != style) widthEntries = emptyMap()
+      if (widthStyle != style) {
+        widthEntries = emptyMap()
+        configureCodePaint(theme.text, 0, style)
+        asciiCharacterWidth = textPaint.measureText("M")
+        // Some system font weights resolve to proportional fallbacks even for "monospace".
+        val glyphs = CharArray(95) { (' '.code + it).toChar() }.concatToString()
+        val advances = FloatArray(glyphs.length)
+        textPaint.getTextWidths(glyphs, advances)
+        asciiFixedPitch = advances.all { it == asciiCharacterWidth }
+      }
       val next = HashMap<String, WidthEntry>()
       var widest = 0f
       for (row in rows) {
         if (row.kind != "line" && row.kind != "hunk") continue
         val rowTokens = if (row.kind == "line") tokens[row.id] else null
-        val cached = widthEntries[row.id]
-        val entry = if (cached?.row == row && cached.tokens == rowTokens) {
-          cached
+        val asciiWidth = asciiRowWidth(row, rowTokens)
+        val measured = if (asciiWidth >= 0f) {
+          asciiWidth
         } else {
-          WidthEntry(row, rowTokens, measureRowWidth(row, rowTokens, style))
+          val entry = widthEntry(row, rowTokens, style)
+          next[row.id] = entry
+          entry.width
         }
-        next[row.id] = entry
-        widest = max(widest, entry.width)
+        widest = max(widest, measured)
       }
       widthEntries = next
       widthRows = rows
@@ -257,6 +301,30 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
       ).toInt()
     }
     return measuredContentWidth
+  }
+
+  private fun widthEntry(row: DiffRow, tokens: List<DiffToken>?, style: DiffStyle): WidthEntry {
+    val cached = widthEntries[row.id]
+    return if (cached?.row == row && cached.tokens == tokens) {
+      cached
+    } else {
+      WidthEntry(row, tokens, measureRowWidth(row, tokens, style))
+    }
+  }
+
+  private fun asciiRowWidth(row: DiffRow, tokens: List<DiffToken>?): Float {
+    val fixedPitch = asciiFixedPitch && row.kind == "line" && row.isPlainAscii
+    if (!fixedPitch || tokens.orEmpty().any { it.fontStyle and 3 != 0 }) {
+      return -1f
+    }
+    val length = if (tokens.isNullOrEmpty()) {
+      row.content.length
+    } else {
+      tokens.sumOf {
+        it.content.length
+      }
+    }
+    return length * asciiCharacterWidth
   }
 
   private fun measureRowWidth(row: DiffRow, tokens: List<DiffToken>?, style: DiffStyle): Float {
@@ -314,7 +382,6 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     val highlightHeight = max(4f * density, min(bottom - top - 4f * density, fontHeight))
     val highlightTop = (top + bottom - highlightHeight) / 2f
     row.wordDiffRanges.forEach { range ->
-      // A wrapped row splits the highlight at each visual line boundary.
       lines.starts.forEachIndexed { line, lineStart ->
         val start = max(range.start, lineStart)
         val end = min(range.end, lines.end(line, Int.MAX_VALUE))
@@ -332,7 +399,6 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     }
   }
 
-  /** Draws a code row's text, or its syntax [tokens] when present, one visual line per start. */
   @Suppress("LongParameterList")
   fun drawCode(
     canvas: Canvas,

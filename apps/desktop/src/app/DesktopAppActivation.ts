@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Local socket ownership checks need lstat, an atomic rename, and a directory watch at the Node adapter boundary.
+import { pipe } from "effect/Function";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
@@ -151,8 +152,10 @@ export async function startDesktopAppControlServer(input: {
       }
 
       if (!isDesktopAppActivationRequest(parsed)) {
-        finish(
-          invalidResponse(requestIdFromUnknown(parsed), "The desktop app request is invalid."),
+        pipe(
+          requestIdFromUnknown(parsed),
+          (requestId) => invalidResponse(requestId, "The desktop app request is invalid."),
+          finish,
         );
         return;
       }
@@ -186,10 +189,7 @@ export async function startDesktopAppControlServer(input: {
       server.listen(address);
     });
 
-  // Closing a Unix socket server unlinks the path it was bound to, even when
-  // another app's socket lives there now. Bind a staging path and move it onto
-  // the address instead, so a later close only unlinks the staging path, which
-  // is already gone.
+  // Closing unlinks the original bind path, even if another app replaced it. Bind a staging path first.
 
   const bindUnix = async (directory: string, mode: "take-over" | "claim-free") => {
     const staging = NodePath.join(directory, `${NodeCrypto.randomBytes(6).toString("hex")}.tmp`);
@@ -213,7 +213,6 @@ export async function startDesktopAppControlServer(input: {
   let server: NodeNet.Server;
   let inode: number | null = null;
   if (input.directory === null) {
-    // Named pipes close with the app that owns them, so no other app can remove this one.
     server = await listen(input.address);
   } else {
     await prepareUnixDirectory({ directory: input.directory, userId: input.userId });
@@ -222,10 +221,10 @@ export async function startDesktopAppControlServer(input: {
 
   let closed = false;
   const reclaimOnce = async () => {
-    // Never replace a socket that exists, so two apps cannot trade the path back and forth.
+    // Replacing an existing socket would let two apps trade the path indefinitely.
     if (closed || input.directory === null || (await inodeAt(input.address)) !== null) return;
     if (await prepareUnixDirectory({ directory: input.directory, userId: input.userId })) {
-      // A watch follows the directory's inode, so a recreated directory needs a new one.
+      // Directory watches follow inodes, so recreate the watch after directory replacement.
       watchDirectory(input.directory);
     }
     const next = await bindUnix(input.directory, "claim-free").catch(
@@ -269,7 +268,7 @@ export async function startDesktopAppControlServer(input: {
     close: async () => {
       if (closed) return;
       closed = true;
-      // A running reclaim can replace the watcher, so close the watcher after it.
+      // Reclaim can replace the watcher; close it afterward.
       await pendingReclaim;
       watcher?.close();
       for (const socket of sockets) socket.destroy();
@@ -386,7 +385,10 @@ export const make = Effect.gen(function* () {
         webContents.send(DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL, request);
       });
     }),
-    complete: (response) => Effect.sync(() => broker.complete(response)),
+    // The IPC handler owns the activation-completion span.
+    complete: Effect.fnUntraced(function* (response) {
+      return yield* Effect.sync(() => broker.complete(response));
+    }),
   });
 });
 
