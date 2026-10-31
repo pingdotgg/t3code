@@ -5,7 +5,11 @@ import { cn } from "~/lib/utils";
 // Colors come from the nearest kbd-in-* / kbd-on-* context (buttons,
 // fields, menus, popovers, tooltips set one), falling back to the standalone
 // key hint: the kbd recipe with a muted label.
-function Kbd({ className, size = "default", ...props }: React.ComponentProps<"kbd"> & { size?: "default" | "sm" }) {
+function Kbd({
+  className,
+  size = "default",
+  ...props
+}: React.ComponentProps<"kbd"> & { size?: "default" | "sm" }) {
   return (
     <kbd
       className={cn(
