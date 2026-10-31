@@ -123,6 +123,21 @@ export class ApnsDeliveryTransportError extends Schema.TaggedError<ApnsDeliveryT
   }
 }
 
+export class ApnsDeliveryJobRetryableFailure extends Schema.TaggedError<ApnsDeliveryJobRetryableFailure>()(
+  "ApnsDeliveryJobRetryableFailure",
+  {
+    sourceJobId: Schema.String,
+    kind: RelayDeliveryKindSchema,
+    apnsStatus: Schema.NullOr(Schema.Number),
+  },
+) {
+  override get message(): string {
+    return `APNs ${this.kind} delivery job '${this.sourceJobId}' failed and will be retried`;
+  }
+}
+
+export type ApnsSignedJobError = ApnsDeliveryError | ApnsDeliveryJobRetryableFailure;
+
 const decodeRelayAgentActivityAggregateStateJson = Schema.decodeUnknownOption(
   Schema.fromJsonString(RelayAgentActivityAggregateStateSchema),
 );
@@ -318,6 +333,16 @@ function isPermanentApnsTokenFailure(result: Apns.ApnsDeliveryResult): boolean {
   );
 }
 
+function isRetryableApnsStatus(status: number): boolean {
+  return status === 429 || (status >= 500 && status < 600);
+}
+
+type ApnsSendResult = Apns.ApnsDeliveryResult & { readonly retryable: boolean };
+
+function classifyApnsResponse(result: Apns.ApnsDeliveryResult): ApnsSendResult {
+  return { ...result, retryable: !result.ok && isRetryableApnsStatus(result.status) };
+}
+
 function duplicateJobResult(input: {
   readonly deviceId: string;
   readonly kind: RelayDeliveryKind;
@@ -362,7 +387,7 @@ const recoverApnsDeliveryTransportError = (
     readonly sourceJobId: string | null;
   },
   cause: Apns.ApnsError,
-): Effect.Effect<Apns.ApnsDeliveryResult> => {
+): Effect.Effect<ApnsSendResult> => {
   const error = new ApnsDeliveryTransportError({
     deviceId: input.deviceId,
     kind: input.kind,
@@ -387,6 +412,11 @@ const recoverApnsDeliveryTransportError = (
       status: 0,
       reason: cause.message,
       apnsId: null,
+      // A request that got no answer may succeed later; JWT errors are
+      // configuration problems that a retry cannot fix.
+      retryable:
+        cause._tag === "ApnsHttpRequestError" &&
+        (cause.status === null || isRetryableApnsStatus(cause.status)),
     }),
   );
 };
@@ -493,16 +523,16 @@ export class ApnsDeliveries extends Context.Service<
     }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
     readonly sendLiveActivity: (
       input: SendLiveActivityDeliveryInput,
-    ) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryError>;
+    ) => Effect.Effect<RelayDeliveryResult, ApnsSignedJobError>;
     readonly processSignedJob: (
       body: unknown,
-    ) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryError>;
+    ) => Effect.Effect<RelayDeliveryResult, ApnsSignedJobError>;
     readonly sendPushNotification: (input: {
       readonly target: LiveActivityDeliveryTarget;
       readonly token: string;
       readonly sourceJobId: string;
       readonly notification: ApnsNotificationPayload;
-    }) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryError>;
+    }) => Effect.Effect<RelayDeliveryResult, ApnsSignedJobError>;
   }
 >()("t3code-relay/agentActivity/ApnsDeliveries") {}
 
@@ -626,6 +656,19 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const failForRetry = Effect.fn("relay.apns_deliveries.fail_for_retry")(function* (input: {
+    readonly sourceJobId: string;
+    readonly kind: RelayDeliveryKind;
+    readonly result: ApnsSendResult;
+  }) {
+    yield* attempts.releaseSourceJob({ sourceJobId: input.sourceJobId });
+    return yield* new ApnsDeliveryJobRetryableFailure({
+      sourceJobId: input.sourceJobId,
+      kind: input.kind,
+      apnsStatus: input.result.status === 0 ? null : input.result.status,
+    });
+  });
+
   const sendLiveActivity: ApnsDeliveries["Service"]["sendLiveActivity"] = Effect.fn(
     "relay.apns_deliveries.send_live_activity",
   )(function* (input) {
@@ -744,12 +787,16 @@ const make = Effect.gen(function* () {
         issuedAtUnixSeconds: epochSeconds,
       })
       .pipe(
+        Effect.map(classifyApnsResponse),
         Effect.catchTags({
           ApnsJwtEncodingError: recoverTransportError,
           ApnsJwtSigningError: recoverTransportError,
           ApnsHttpRequestError: recoverTransportError,
         }),
       );
+    if (input.sourceJobId && result.retryable) {
+      return yield* failForRetry({ sourceJobId: input.sourceJobId, kind: input.kind, result });
+    }
     if (result.ok) {
       yield* liveActivities.markDelivery({
         userId: input.target.user_id,
@@ -893,12 +940,20 @@ const make = Effect.gen(function* () {
         issuedAtUnixSeconds: epochSeconds,
       })
       .pipe(
+        Effect.map(classifyApnsResponse),
         Effect.catchTags({
           ApnsJwtEncodingError: recoverTransportError,
           ApnsJwtSigningError: recoverTransportError,
           ApnsHttpRequestError: recoverTransportError,
         }),
       );
+    if (input.sourceJobId && result.retryable) {
+      return yield* failForRetry({
+        sourceJobId: input.sourceJobId,
+        kind: "push_notification",
+        result,
+      });
+    }
     if (isPermanentApnsTokenFailure(result)) {
       yield* liveActivities.invalidateDeliveryToken({
         userId: input.target.user_id,
