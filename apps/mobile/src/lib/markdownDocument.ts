@@ -1,4 +1,4 @@
-import type { Root, RootContent } from "mdast";
+import type { Definition, Root, RootContent } from "mdast";
 import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
@@ -302,7 +302,8 @@ const SUMMARY_CLOSE_TAG = /^<\/summary\s*>$/i;
 interface HtmlToken {
   readonly at: number;
   readonly tag: string;
-  readonly nodeStart: number;
+  /** Only a tag in a top-level HTML block can start a fold. */
+  readonly topLevel: boolean;
 }
 
 interface DetailsFold {
@@ -312,30 +313,10 @@ interface DetailsFold {
   readonly open: boolean;
 }
 
-function definitionLabel(label: string): string {
-  return label.replace(/\s+/g, " ").trim().toLowerCase();
-}
-
-interface Definition {
-  readonly start: number;
-  readonly source: string;
-}
-
-// Each segment renders as its own document, so it carries the definitions its labels name.
-function withDefinitions(
-  markdown: string,
-  start: number,
-  definitions: ReadonlyMap<string, Definition>,
-): string {
-  if (definitions.size === 0) return markdown;
-  const needed = new Set<string>();
-  for (const match of markdown.matchAll(/\[([^[\]]+)\]/g)) {
-    const definition = definitions.get(definitionLabel(match[1]!));
-    if (!definition) continue;
-    if (definition.start < start || definition.start >= start + markdown.length)
-      needed.add(definition.source);
-  }
-  return needed.size === 0 ? markdown : `${[...needed].join("\n")}\n\n${markdown}`;
+// The identifier keeps the label's source escapes, and labels match case-insensitively.
+function definitionLine(node: Definition): string {
+  const title = node.title == null ? "" : ` "${node.title.replace(/["\\&]/g, "\\$&")}"`;
+  return `[${node.identifier}]: ${markdownDestination(node.url)}${title}`;
 }
 
 /** The summary only counts once its closing tag arrives, as the fold's first child. */
@@ -345,12 +326,18 @@ function detailsSummary(
   index: number,
 ): { readonly text: string; readonly end: number } | null {
   const opening = tokens[index]!;
-  const summary = tokens[index + 1];
+  let end = opening.at + opening.tag.length;
+  let next = index + 1;
+  while (tokens[next]?.tag.startsWith("<!--") && !markdown.slice(end, tokens[next]!.at).trim()) {
+    end = tokens[next]!.at + tokens[next]!.tag.length;
+    next += 1;
+  }
+  const summary = tokens[next];
   if (!summary || !SUMMARY_TAG.test(summary.tag)) return null;
-  if (markdown.slice(opening.at + opening.tag.length, summary.at).trim()) return null;
+  if (markdown.slice(end, summary.at).trim()) return null;
   let text = "";
-  let end = summary.at + summary.tag.length;
-  for (let next = index + 2; next < tokens.length; next += 1) {
+  end = summary.at + summary.tag.length;
+  for (next += 1; next < tokens.length; next += 1) {
     const token = tokens[next]!;
     if (DETAILS_TAG.test(token.tag)) return null;
     text += markdown.slice(end, token.at);
@@ -363,41 +350,49 @@ function detailsSummary(
 }
 
 /**
- * Splits top-level `<details>` blocks out as folds. Tags count only in top-level HTML nodes,
- * so code and folds inside containers stay Markdown for `markdownWithHtml` to flatten.
- * An unclosed fold runs to the end, as an HTML parser closes it while a reply streams.
+ * Splits top-level `<details>` blocks out as folds. Folds inside containers stay Markdown for
+ * `markdownWithHtml` to flatten, but an open fold closes at any `</details>` outside code, as
+ * web's HTML parser does. An unclosed fold runs to the end while a reply streams.
  */
 export function splitMarkdownDetails(markdown: string): ReadonlyArray<MarkdownDetailsSegment> {
   const whole = [{ kind: "markdown" as const, markdown, sourceOffset: 0 }];
   if (!/<details/i.test(markdown)) return whole;
   const tokens: HtmlToken[] = [];
-  const definitions = new Map<string, Definition>();
-  for (const child of parser.parse(markdown).children) {
-    const start = child.position?.start.offset;
-    const end = child.position?.end.offset;
-    if (start === undefined || end === undefined) continue;
-    if (child.type === "definition") {
-      const label = definitionLabel(child.label ?? child.identifier);
-      if (!definitions.has(label))
-        definitions.set(label, { start, source: markdown.slice(start, end) });
-    } else if (child.type === "html") {
+  const definitions: string[] = [];
+  const collect = (node: MarkdownNode) => {
+    if (!("children" in node)) return;
+    for (const child of node.children) {
+      if (child.type === "definition") definitions.push(definitionLine(child));
+      if (child.type !== "html") {
+        collect(child);
+        continue;
+      }
+      const start = child.position?.start.offset;
+      const end = child.position?.end.offset;
+      if (start === undefined || end === undefined) continue;
+      // Source offsets, not `value`, which drops container markers such as "> ".
       for (const tag of markdownHtmlTags(markdown.slice(start, end)))
-        tokens.push({ at: start + tag.index, tag: tag[0], nodeStart: start });
+        tokens.push({ at: start + tag.index, tag: tag[0], topLevel: node.type === "root" });
     }
-  }
+  };
+  collect(parser.parse(markdown));
+  // Each segment renders as its own document, so it carries every definition.
+  const definitionBlock = definitions.join("\n");
+  const withDefinitions = (text: string) =>
+    definitionBlock && text.includes("[") ? `${definitionBlock}\n\n${text}` : text;
   const segments: MarkdownDetailsSegment[] = [];
   let cursor = 0;
+  const pushMarkdown = (end: number) => {
+    const text = markdown.slice(cursor, end);
+    if (text.trim())
+      segments.push({ kind: "markdown", markdown: withDefinitions(text), sourceOffset: cursor });
+  };
   const pushFold = (fold: DetailsFold, end: number) => {
-    if (fold.start > cursor)
-      segments.push({
-        kind: "markdown",
-        markdown: withDefinitions(markdown.slice(cursor, fold.start), cursor, definitions),
-        sourceOffset: cursor,
-      });
+    pushMarkdown(fold.start);
     segments.push({
       kind: "details",
       summary: fold.summary,
-      body: withDefinitions(markdown.slice(fold.bodyStart, end), fold.bodyStart, definitions),
+      body: withDefinitions(markdown.slice(fold.bodyStart, end)),
       open: fold.open,
       sourceOffset: fold.start,
     });
@@ -405,7 +400,7 @@ export function splitMarkdownDetails(markdown: string): ReadonlyArray<MarkdownDe
   let fold: DetailsFold | null = null;
   let depth = 0;
   for (let index = 0; index < tokens.length; index += 1) {
-    const { at, tag, nodeStart } = tokens[index]!;
+    const { at, tag, topLevel } = tokens[index]!;
     const details = DETAILS_TAG.exec(tag);
     if (!details) continue;
     if (details[1]) {
@@ -419,14 +414,10 @@ export function splitMarkdownDetails(markdown: string): ReadonlyArray<MarkdownDe
       depth += 1;
       continue;
     }
-    // A fold opens only at the start of a block or right after the previous fold.
-    const floor = Math.max(nodeStart, cursor);
-    let start = at;
-    while (start > floor && /\s/.test(markdown[start - 1]!)) start -= 1;
-    if (start > floor) continue;
+    if (!topLevel) continue;
     const summary = detailsSummary(markdown, tokens, index);
     fold = {
-      start,
+      start: at,
       bodyStart: summary?.end ?? at + tag.length,
       summary: summary?.text ?? "Details",
       open: attribute(tag, "open") !== null,
@@ -438,12 +429,7 @@ export function splitMarkdownDetails(markdown: string): ReadonlyArray<MarkdownDe
     cursor = markdown.length;
   }
   if (segments.length === 0) return whole;
-  if (cursor < markdown.length)
-    segments.push({
-      kind: "markdown",
-      markdown: withDefinitions(markdown.slice(cursor), cursor, definitions),
-      sourceOffset: cursor,
-    });
+  pushMarkdown(markdown.length);
   return segments;
 }
 

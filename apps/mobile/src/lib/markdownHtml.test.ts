@@ -177,16 +177,63 @@ describe("details folds in chat Markdown", () => {
     ]);
   });
 
-  it("gives every segment the reference definitions it uses", () => {
-    const definition = "[docs]: https://example.com/docs";
-    const segments = splitMarkdownDetails(
-      `See [Docs][docs].\n\n<details>\n<summary>A</summary>\n\n![Before][DOCS]\n\n</details>\n\n${definition}`,
-    );
-    expect(segments).toMatchObject([
-      { kind: "markdown", markdown: expect.stringContaining(definition) },
-      { kind: "details", body: expect.stringContaining(definition) },
-      { kind: "markdown", markdown: `\n\n${definition}` },
+  it("gives every segment every reference definition, wherever it was written", () => {
+    const quoted = '> [a\\]b]: https://example.com/a "T \\"q\\""\n> [S]: https://example.com/s';
+    const definitions =
+      '[a\\]b]: <https://example.com/a> "T \\"q\\""\n[s]: <https://example.com/s>\n\n';
+    expect(
+      splitMarkdownDetails(
+        `See [Docs][a\\]b] and [ſ].\n\n<details>\n<summary>A</summary>\n\n![B][a\\]b]\n\n</details>\n\n${quoted}`,
+      ),
+    ).toMatchObject([
+      { kind: "markdown", markdown: `${definitions}See [Docs][a\\]b] and [ſ].\n\n` },
+      { kind: "details", body: `${definitions}\n\n![B][a\\]b]\n\n` },
+      { kind: "markdown", markdown: `${definitions}\n\n${quoted}` },
     ]);
+  });
+
+  it.each([
+    [
+      "a paragraph",
+      "<details>\n<summary>A</summary>\n\nSome text.</details>\n\nAfter the fold, important.",
+      "\n\nSome text.",
+      "\n\nAfter the fold, important.",
+    ],
+    [
+      "a list item",
+      "<details>\n<summary>A</summary>\n\n- item\n  </details>\n\nAfter.",
+      "\n\n- item\n  ",
+      "\n\nAfter.",
+    ],
+    [
+      "a paragraph after a compact opener",
+      "<details><summary>A</summary>\n\nHidden</details> tail\n\nVisible answer.",
+      "\n\nHidden",
+      " tail\n\nVisible answer.",
+    ],
+  ])("closes a fold at a closing tag inside %s", (_, markdown, body, after) => {
+    expect(splitMarkdownDetails(markdown)).toMatchObject([
+      { kind: "details", summary: "A", body },
+      { kind: "markdown", markdown: after },
+    ]);
+  });
+
+  it("splits compact sibling folds with text between them in one HTML block", () => {
+    expect(
+      splitMarkdownDetails(
+        "<details><summary>A</summary>a</details>\nExplanation\n<details><summary>B</summary>b</details>",
+      ),
+    ).toMatchObject([
+      { kind: "details", summary: "A", body: "a" },
+      { kind: "markdown", markdown: "\nExplanation\n" },
+      { kind: "details", summary: "B", body: "b" },
+    ]);
+  });
+
+  it("reads the summary after a comment", () => {
+    expect(
+      splitMarkdownDetails("<details> <!-- c -->\n<summary>A</summary>\n\nBody\n</details>"),
+    ).toMatchObject([{ kind: "details", summary: "A", body: "\n\nBody\n" }]);
   });
 
   it("folds an unclosed fold to the end while the reply streams", () => {

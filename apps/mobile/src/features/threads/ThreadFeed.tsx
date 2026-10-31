@@ -1190,14 +1190,55 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly onToggleDisclosure: (anchorKey: string | null) => void;
 }) {
   const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
-  const segments = useMemo(() => splitCodexArtifactTemplateMarkdown(liveMarkdown), [liveMarkdown]);
+  // Folds split first so an artifact template inside a fold stays in its body.
+  const segments = useMemo(() => splitMarkdownDetails(liveMarkdown), [liveMarkdown]);
   const threadIcons = useThreadChipIcons(props.environmentId, liveMarkdown);
   const linkHandlers: MarkdownLinkHandlers = {
     ...props.linkHandlers,
     linkCustomization: (href) =>
       withChipIcon(props.linkHandlers.linkCustomization?.(href), threadIcons.get(href)),
   };
+  const renderBlocks = (key: string, markdown: string) => (
+    <AssistantMarkdownBlocks
+      key={key}
+      markdown={markdown}
+      markdownStyles={props.markdownStyles}
+      linkHandlers={linkHandlers}
+      onUseArtifactTemplate={props.onUseArtifactTemplate}
+      renderImage={props.renderImage}
+      skills={props.skills}
+    />
+  );
 
+  return segments.map((segment) => {
+    if (segment.kind === "details") {
+      return (
+        <MarkdownDetailsFold
+          key={`details:${segment.sourceOffset}`}
+          summary={segment.summary}
+          open={segment.open}
+          onToggle={() => props.onToggleDisclosure(props.disclosureAnchorKey ?? null)}
+        >
+          {renderBlocks("body", segment.body)}
+        </MarkdownDetailsFold>
+      );
+    }
+    return renderBlocks(`markdown:${segment.sourceOffset}`, segment.markdown);
+  });
+});
+
+function AssistantMarkdownBlocks(props: {
+  readonly markdown: string;
+  readonly markdownStyles: MarkdownStyleSet;
+  readonly linkHandlers: MarkdownLinkHandlers;
+  readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
+  readonly renderImage: MarkdownImageRenderer;
+  readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
+}) {
+  const segments = useMemo(
+    () => splitCodexArtifactTemplateMarkdown(props.markdown),
+    [props.markdown],
+  );
   return segments.map((segment) => {
     if (segment.kind === "artifact-template") {
       return (
@@ -1208,55 +1249,17 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
         />
       );
     }
+    if (segment.markdown.trim().length === 0) return null;
     return (
-      <AssistantMarkdownBlocks
+      <SelectableMarkdownText
         key={`markdown:${segment.sourceOffset}`}
-        markdown={segment.markdown}
-        markdownStyles={props.markdownStyles}
-        linkHandlers={linkHandlers}
-        renderImage={props.renderImage}
+        markdown={renderCodexInlineDirectivesAsMarkdown(segment.markdown)}
         skills={props.skills}
-        onToggleDisclosure={() => props.onToggleDisclosure(props.disclosureAnchorKey ?? null)}
+        textStyle={props.markdownStyles.nativeTextStyle}
+        {...props.linkHandlers}
+        renderImage={props.renderImage}
       />
     );
-  });
-});
-
-// Nested folds stay flattened inside their outer fold's body.
-function AssistantMarkdownBlocks(props: {
-  readonly markdown: string;
-  readonly markdownStyles: MarkdownStyleSet;
-  readonly linkHandlers: MarkdownLinkHandlers;
-  readonly renderImage: MarkdownImageRenderer;
-  readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
-  readonly onToggleDisclosure: () => void;
-}) {
-  const segments = useMemo(() => splitMarkdownDetails(props.markdown), [props.markdown]);
-  const renderMarkdown = (key: string, markdown: string) => (
-    <SelectableMarkdownText
-      key={key}
-      markdown={renderCodexInlineDirectivesAsMarkdown(markdown)}
-      skills={props.skills}
-      textStyle={props.markdownStyles.nativeTextStyle}
-      {...props.linkHandlers}
-      renderImage={props.renderImage}
-    />
-  );
-  return segments.map((segment) => {
-    if (segment.kind === "details") {
-      return (
-        <MarkdownDetailsFold
-          key={`details:${segment.sourceOffset}`}
-          summary={segment.summary}
-          open={segment.open}
-          onToggle={props.onToggleDisclosure}
-        >
-          {segment.body.trim().length > 0 ? renderMarkdown("body", segment.body) : null}
-        </MarkdownDetailsFold>
-      );
-    }
-    if (segment.markdown.trim().length === 0) return null;
-    return renderMarkdown(`markdown:${segment.sourceOffset}`, segment.markdown);
   });
 }
 
