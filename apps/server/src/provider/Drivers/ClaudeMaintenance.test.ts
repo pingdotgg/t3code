@@ -31,13 +31,17 @@ const snapshot: ServerProvider = {
   skills: [],
 };
 
-const fixture = Effect.fn("ClaudeMaintenance.test.fixture")(function* (npm = false) {
+const fixture = Effect.fn("ClaudeMaintenance.test.fixture")(function* (
+  npm = false,
+  platform: NodeJS.Platform = "linux",
+  programFiles?: string,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const directory = yield* fs.makeTempDirectoryScoped();
   const binaryPath = npm
     ? path.join(directory, "lib/node_modules/@anthropic-ai/claude-code/cli.js")
-    : path.join(directory, ".local/bin/claude");
+    : path.join(directory, ".local/bin", platform === "win32" ? "claude.exe" : "claude");
   yield* fs.makeDirectory(path.dirname(binaryPath), { recursive: true });
   yield* fs.writeFileString(binaryPath, "#!/bin/sh\n");
   yield* fs.chmod(binaryPath, 0o755);
@@ -45,16 +49,22 @@ const fixture = Effect.fn("ClaudeMaintenance.test.fixture")(function* (npm = fal
   yield* fs.makeDirectory(configDirectory);
   const settingsPath = path.join(configDirectory, "settings.json");
   const managed = new Map<string, string>();
+  const managedDirectory =
+    platform === "win32"
+      ? `${programFiles ?? "C:/Program Files"}/ClaudeCode`
+      : platform === "darwin"
+        ? "/Library/Application Support/ClaudeCode"
+        : "/etc/claude-code";
   const testFs = FileSystem.makeNoop({
     ...fs,
     readFileString: (file, ...args) =>
-      file.replaceAll("\\", "/").startsWith("/etc/claude-code/")
+      file.replaceAll("\\", "/").startsWith(`${managedDirectory}/`)
         ? managed.has(file.replaceAll("\\", "/"))
           ? Effect.succeed(managed.get(file.replaceAll("\\", "/"))!)
           : fs.readFileString(path.join(directory, "missing"))
         : fs.readFileString(file, ...args),
     readDirectory: (file) =>
-      file.replaceAll("\\", "/") === "/etc/claude-code/managed-settings.d"
+      file.replaceAll("\\", "/") === `${managedDirectory}/managed-settings.d`
         ? Effect.succeed(
             [...managed.keys()]
               .filter((key) => key.includes("/managed-settings.d/"))
@@ -65,6 +75,7 @@ const fixture = Effect.fn("ClaudeMaintenance.test.fixture")(function* (npm = fal
   return {
     fs,
     managed,
+    managedDirectory,
     settingsPath,
     resolve: resolveClaudeMaintenance({ binaryPath, env: { PATH: "" } }).pipe(
       Effect.provideService(
@@ -72,10 +83,11 @@ const fixture = Effect.fn("ClaudeMaintenance.test.fixture")(function* (npm = fal
         ChildProcessSpawner.make(() => Effect.die("version checks must not run a subprocess")),
       ),
       Effect.provideService(FileSystem.FileSystem, testFs),
-      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.Platform, platform),
       Effect.provideService(HostProcess.Environment, {
         PATH: "",
         CLAUDE_CONFIG_DIR: configDirectory,
+        ...(programFiles ? { PROGRAMFILES: programFiles } : {}),
       }),
     ),
   };
@@ -200,51 +212,61 @@ it.layer(NodeServices.layer)("ClaudeMaintenance", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("separates channel caches and honors managed overrides and feed invalidation", () =>
-    Effect.gen(function* () {
-      const f = yield* fixture();
-      const requests: string[] = [];
-      const client = HttpClient.make((request) => {
-        requests.push(request.url);
-        return Effect.succeed(
-          HttpClientResponse.fromWeb(
-            request,
-            new Response(request.url.endsWith("/stable") ? "2.1.308" : "2.1.314"),
-          ),
+  it.effect.each([
+    { name: "Linux", platform: "linux", programFiles: undefined },
+    { name: "macOS", platform: "darwin", programFiles: undefined },
+    { name: "Windows default path", platform: "win32", programFiles: undefined },
+    { name: "Windows custom path", platform: "win32", programFiles: "D:/Programs" },
+  ] as const)(
+    "separates channel caches and honors $name managed overrides and feed invalidation",
+    (row) =>
+      Effect.gen(function* () {
+        const f = yield* fixture(false, row.platform, row.programFiles);
+        const requests: string[] = [];
+        const client = HttpClient.make((request) => {
+          requests.push(request.url);
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(request.url.endsWith("/stable") ? "2.1.308" : "2.1.314"),
+            ),
+          );
+        });
+        const versions = yield* ProviderLatestVersions.make();
+        const check = Effect.gen(function* () {
+          const capabilities = yield* f.resolve;
+          return yield* enrichProviderSnapshotWithVersionAdvisory(snapshot, capabilities);
+        }).pipe(
+          Effect.provideService(HttpClient.HttpClient, client),
+          Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, versions),
         );
-      });
-      const versions = yield* ProviderLatestVersions.make();
-      const check = Effect.gen(function* () {
-        const capabilities = yield* f.resolve;
-        return yield* enrichProviderSnapshotWithVersionAdvisory(snapshot, capabilities);
-      }).pipe(
-        Effect.provideService(HttpClient.HttpClient, client),
-        Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, versions),
-      );
-      expect((yield* check).versionAdvisory?.latestVersion).toBe("2.1.314");
-      yield* f.fs.writeFileString(f.settingsPath, '{"autoUpdatesChannel":"stable"}');
-      expect((yield* check).versionAdvisory?.latestVersion).toBe("2.1.308");
-      f.managed.set("/etc/claude-code/managed-settings.json", '{"autoUpdatesChannel":"latest"}');
-      expect((yield* check).versionAdvisory?.latestVersion).toBe("2.1.314");
-      f.managed.set(
-        "/etc/claude-code/managed-settings.d/20-channel.json",
-        '{"autoUpdatesChannel":"stable"}',
-      );
-      f.managed.set(
-        "/etc/claude-code/managed-settings.d/10-channel.json",
-        '{"autoUpdatesChannel":"latest"}',
-      );
-      expect((yield* check).versionAdvisory?.latestVersion).toBe("2.1.308");
-      expect(requests).toHaveLength(2);
-      const capabilities = yield* f.resolve.pipe(
-        Effect.provideService(HttpClient.HttpClient, client),
-      );
-      yield* invalidateLatestProviderVersion(capabilities).pipe(
-        Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, versions),
-      );
-      yield* check;
-      expect(requests).toHaveLength(3);
-    }).pipe(Effect.scoped),
+        expect((yield* check).versionAdvisory?.latestVersion).toBe("2.1.314");
+        yield* f.fs.writeFileString(f.settingsPath, '{"autoUpdatesChannel":"stable"}');
+        expect((yield* check).versionAdvisory?.latestVersion).toBe("2.1.308");
+        f.managed.set(
+          `${f.managedDirectory}/managed-settings.json`,
+          '{"autoUpdatesChannel":"latest"}',
+        );
+        expect((yield* check).versionAdvisory?.latestVersion).toBe("2.1.314");
+        f.managed.set(
+          `${f.managedDirectory}/managed-settings.d/20-channel.json`,
+          '{"autoUpdatesChannel":"stable"}',
+        );
+        f.managed.set(
+          `${f.managedDirectory}/managed-settings.d/10-channel.json`,
+          '{"autoUpdatesChannel":"latest"}',
+        );
+        expect((yield* check).versionAdvisory?.latestVersion).toBe("2.1.308");
+        expect(requests).toHaveLength(2);
+        const capabilities = yield* f.resolve.pipe(
+          Effect.provideService(HttpClient.HttpClient, client),
+        );
+        yield* invalidateLatestProviderVersion(capabilities).pipe(
+          Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, versions),
+        );
+        yield* check;
+        expect(requests).toHaveLength(3);
+      }).pipe(Effect.scoped),
   );
 
   it.effect("bounds stalled feed bodies and skips disabled update checks", () =>
