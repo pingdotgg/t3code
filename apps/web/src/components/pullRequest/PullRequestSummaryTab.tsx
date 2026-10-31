@@ -1,4 +1,3 @@
-import { pullRequestCommentPreview } from "./pullRequestMarkdown.logic";
 import {
   parsePullRequestAnchor,
   pullRequestAnchorMatchesUrl,
@@ -23,7 +22,6 @@ import {
 } from "@t3tools/contracts";
 import {
   ArrowDownUpIcon,
-  ChevronDownIcon,
   ChevronRightIcon,
   CornerDownRightIcon,
   HammerIcon,
@@ -67,6 +65,7 @@ import {
   isPullRequestCommentFinished,
   orderPullRequestComments,
   pagePullRequestConversationItems,
+  pullRequestBodyPreview,
   pullRequestConversationItemComments,
   pullRequestConversationItems,
   pullRequestConversationSummary,
@@ -91,6 +90,11 @@ import { pullRequestAttachments } from "./pullRequestMarkdown.logic";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
+import {
+  PullRequestCommentTime,
+  PullRequestResolvedThreadRow,
+  PullRequestReviewEntry,
+} from "./PullRequestQuietEntries";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import {
   type PullRequestCompletionScope,
@@ -115,32 +119,7 @@ function CommentIdentity({
   return (
     <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1 text-meta">
       <PullRequestActorLabel actor={actor} profileUrl={profileUrl} className="max-w-full" />
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            comment.url ? (
-              <a
-                href={comment.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-muted-foreground hover:text-foreground hover:underline"
-              />
-            ) : (
-              <span className="text-muted-foreground" />
-            )
-          }
-        >
-          <time dateTime={comment.createdAt}>
-            <RelativeTime timestamp={comment.createdAt} />
-          </time>
-        </TooltipTrigger>
-        <TooltipPopup>
-          <span className="flex flex-col gap-0.5">
-            <span>{new Date(comment.createdAt).toLocaleString()}</span>
-            {comment.url ? <span>Open comment on host</span> : null}
-          </span>
-        </TooltipPopup>
-      </Tooltip>
+      <PullRequestCommentTime createdAt={comment.createdAt} url={comment.url} />
     </div>
   );
 }
@@ -254,88 +233,18 @@ function AddToChatButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-function CollapsedComment({
-  comment,
-  editing,
-  label,
-  body,
-  reactionBar,
-  resolveButton,
-  detail,
-  thread,
-  replyCount = 0,
-  replies = null,
-  moreReplies = null,
-  onAddToChat,
-  defaultOpen = false,
-  linkTarget = false,
-}: {
-  linkTarget?: boolean;
-  defaultOpen?: boolean;
-  comment: PullRequestComment;
-  editing: CommentEditing;
-  label: string;
-  body: string | null;
-  reactionBar: ReactNode;
-  resolveButton: ReactNode;
-  detail: PullRequestDetailView;
-  thread: PullRequestConversationThread | undefined;
-  replyCount?: number;
-  replies?: ReactNode;
-  moreReplies?: ReactNode;
-  onAddToChat?: (() => void) | undefined;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  const statusTriggerRef = useRef<HTMLButtonElement>(null);
+function AddToChatIconButton({ onClick }: { onClick: () => void }) {
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <article
-        data-pr-link-target={linkTarget || undefined}
-        className="group data-[pr-link-target=true]:ring-1 data-[pr-link-target=true]:ring-primary/40 rounded-card border border-border surface-card [contain-intrinsic-block-size:44px] [content-visibility:auto]"
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button size="icon-xs" variant="ghost-muted" aria-label="Add to chat" onClick={onClick} />
+        }
       >
-        <div className="p-3">
-          <div className="flex flex-wrap items-baseline gap-2">
-            <CommentIdentity comment={comment} detail={detail} />
-            {replyCount > 0 ? (
-              <span className="shrink-0 py-1 text-meta text-muted-foreground">
-                {replyCount} {replyCount === 1 ? "reply" : "replies"}
-              </span>
-            ) : null}
-            <CollapsibleTrigger ref={statusTriggerRef} variant="muted">
-              {label}
-              <ChevronDownIcon
-                aria-hidden
-                className={cn("size-3.5 transition-transform", open && "rotate-180")}
-              />
-            </CollapsibleTrigger>
-            {/* Collapsed, the status label already says "Resolved". */}
-            {open ? resolveButton : null}
-            {onAddToChat ? <AddToChatButton onClick={onAddToChat} /> : null}
-            {reactionBar}
-          </div>
-          <CommentLocation comment={comment} thread={thread} />
-          {!open && body ? (
-            <CollapsibleTrigger
-              className="mt-2 block w-full truncate text-left text-meta text-muted-foreground hover:text-foreground"
-              onClick={() => statusTriggerRef.current?.focus({ preventScroll: true })}
-            >
-              {pullRequestCommentPreview(body)}
-            </CollapsibleTrigger>
-          ) : null}
-        </div>
-        <CollapsiblePanel>
-          {open ? (
-            <div className="px-3 pb-3">
-              {body === null && !editing.canEdit(comment) ? null : (
-                <CommentBody className="mt-2" comment={comment} editing={editing} />
-              )}
-              {replies ? <div className="mt-3">{replies}</div> : null}
-            </div>
-          ) : null}
-        </CollapsiblePanel>
-        {moreReplies ? <div className="px-3 pb-3">{moreReplies}</div> : null}
-      </article>
-    </Collapsible>
+        <MessageSquarePlusIcon className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup>Add to chat</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -724,7 +633,7 @@ export function PullRequestSummaryTab({
 
   const reactionBarFor = (comment: PullRequestComment) => (
     <PullRequestReactionBar
-      className="ml-auto justify-end"
+      className="justify-start"
       reactions={comment.reactions ?? []}
       canReact={detail.capabilities.reactions === true}
       subjectId={comment.id}
@@ -769,9 +678,9 @@ export function PullRequestSummaryTab({
         key={`${detail.url}:${comment.id}`}
         data-pr-link-target={matchesLink(comment.url) || undefined}
         tabIndex={matchesLink(comment.url) ? -1 : undefined}
-        className="group data-[pr-link-target=true]:ring-1 data-[pr-link-target=true]:ring-primary/40 rounded-card border border-border surface-card [contain-intrinsic-block-size:160px] [content-visibility:auto]"
+        className="group data-[pr-link-target=true]:ring-1 data-[pr-link-target=true]:ring-primary/40 rounded-xl surface-panel py-2.5 [contain-intrinsic-block-size:160px] [content-visibility:auto]"
       >
-        <div className="flex flex-wrap items-baseline gap-2 rounded-t-card surface-selected-soft px-3 py-2.5">
+        <div className="flex flex-wrap items-center gap-1.5 px-3">
           <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-2 text-meta text-muted-foreground">
             <CommentIdentity comment={comment} detail={detail} />
             {outcome ? (
@@ -802,7 +711,6 @@ export function PullRequestSummaryTab({
           {onAddToChat && chat !== null ? (
             <AddToChatButton onClick={() => onAddToChat(chat)} />
           ) : null}
-          {reactionBarFor(comment)}
         </div>
         {reply ? null : (
           <div className="px-3">
@@ -810,17 +718,85 @@ export function PullRequestSummaryTab({
           </div>
         )}
         {body === null && !commentEditing.canEdit(comment) ? null : (
-          <CommentBody className="px-3 py-3" comment={comment} editing={commentEditing} />
+          <CommentBody className="mt-2 px-3" comment={comment} editing={commentEditing} />
         )}
+        <div className="mt-2 flex px-3">{reactionBarFor(comment)}</div>
         {footer}
       </article>
     );
   };
 
-  const renderComment = (comment: PullRequestComment, footer?: ReactNode) =>
-    renderCommentCard(comment, undefined, { footer });
+  const renderReview = (comment: PullRequestComment, footer?: ReactNode) => {
+    const body = visibleBody(comment.body);
+    const outcome = pullRequestReviewOutcome(comment.reviewState);
+    const finding: PullRequestFinding | null =
+      outcome === "approved" || body === null ? null : { kind: "comment", comment };
+    const chat = chatSubject(comment, undefined);
+    const reactions = comment.reactions ?? [];
+    const hasDetail = body !== null || commentEditing.canEdit(comment) || reactions.length > 0;
+    const actor = comment.author;
+    return (
+      <div key={`${detail.url}:${comment.id}:${matchesLink(comment.url) ? linked?.count : 0}`} data-pr-link-target={matchesLink(comment.url) || undefined} className="data-[pr-link-target=true]:ring-1 data-[pr-link-target=true]:ring-primary/40">
+        <PullRequestReviewEntry
+          defaultOpen={matchesLink(comment.url)}
+          actor={actor}
+          profileUrl={
+            actor
+              ? sourceControlClients.get(detail.provider).authorProfileUrl(actor.login, detail.url)
+              : null
+          }
+          createdAt={comment.createdAt}
+          url={comment.url}
+          outcome={outcome}
+          stateLabel={
+            comment.reviewState ? reviewStateLabel(comment.reviewState).toLowerCase() : "reviewed"
+          }
+          preview={body === null ? null : pullRequestBodyPreview(body)}
+          action={
+            <>
+              {onAddToChat && chat !== null ? (
+                <AddToChatIconButton onClick={() => onAddToChat(chat)} />
+              ) : null}
+              {onFixFinding && finding ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        size="icon-xs"
+                        variant="ghost-muted"
+                        aria-label={fixFindingLabel}
+                        disabled={pendingFinding !== null && pendingFinding !== undefined}
+                        onClick={() => onFixFinding(finding)}
+                      />
+                    }
+                  >
+                    <HammerIcon className="size-3" />
+                  </TooltipTrigger>
+                  <TooltipPopup>
+                    {pendingFinding === pullRequestFindingKey(finding)
+                      ? "Preparing..."
+                      : fixFindingLabel}
+                  </TooltipPopup>
+                </Tooltip>
+              ) : null}
+            </>
+          }
+        >
+          {hasDetail ? (
+            <>
+              {body === null && !commentEditing.canEdit(comment) ? null : (
+                <CommentBody comment={comment} editing={commentEditing} />
+              )}
+              <div className="mt-2 flex">{reactionBarFor(comment)}</div>
+            </>
+          ) : null}
+        </PullRequestReviewEntry>
+        {footer}
+      </div>
+    );
+  };
 
-  const renderThreadCard = (thread: PullRequestReviewThread) => (
+  const renderThreadCard = (thread: PullRequestConversationThread) => (
     <ReviewThreadCard
       // Named with the pull request too: a thread id is the host's own.
       key={`${detail.url}:${thread.id}`}
@@ -910,29 +886,32 @@ export function PullRequestSummaryTab({
       ) : null;
     const moreReplies =
       item.kind === "thread" && item.hasMoreReplies ? <PullRequestMoreReplies {...item} /> : null;
-    if (isPullRequestCommentFinished(comment, thread)) {
-      const chat = chatSubject(comment, thread);
+    if (item.kind === "thread" && isPullRequestCommentFinished(comment, thread)) {
+      const chat = chatSubject(comment, item.thread);
       return (
-        <CollapsedComment
-          key={`${detail.url}:${item.kind}:${item.id}:${itemMatchesLink(item) ? linked?.count : 0}`}
+        <PullRequestResolvedThreadRow
+          key={`${detail.url}:thread:${item.id}:${itemMatchesLink(item) ? linked?.count : 0}`}
           defaultOpen={itemMatchesLink(item)}
-          linkTarget={matchesLink(comment.url)}
-          comment={comment}
-          editing={commentEditing}
-          detail={detail}
-          thread={thread}
-          label={thread?.isResolved ? "Resolved" : "Review dismissed"}
-          body={visibleBody(comment.body)}
-          replyCount={item.kind === "thread" ? item.replies.length + item.moreReplies : 0}
-          replies={replies}
-          moreReplies={moreReplies}
-          onAddToChat={onAddToChat && chat !== null ? () => onAddToChat(chat) : undefined}
-          reactionBar={reactionBarFor(comment)}
-          resolveButton={resolveButtonFor(thread)}
-        />
+          path={item.thread.path}
+          line={item.thread.line}
+          outdated={item.thread.isOutdated}
+          dismissed={!item.thread.isResolved}
+          commentCount={item.thread.commentCount ?? item.replies.length + 1 + item.moreReplies}
+          action={
+            onAddToChat && chat !== null ? (
+              <AddToChatIconButton onClick={() => onAddToChat(chat)} />
+            ) : null
+          }
+        >
+          {renderThreadCard(item.thread)}
+        </PullRequestResolvedThreadRow>
       );
     }
-    if (item.kind === "comment") return renderCommentCard(comment, undefined);
+    if (item.kind === "comment") {
+      return comment.kind === "review"
+        ? renderReview(comment)
+        : renderCommentCard(comment, undefined);
+    }
     return (
       <div key={`${detail.url}:thread:${item.id}`} className="space-y-2">
         {renderCommentCard(comment, thread)}
@@ -953,7 +932,7 @@ export function PullRequestSummaryTab({
       className="h-full overflow-y-auto"
       data-pull-request-summary-scroll
     >
-      {readiness ? <section className="px-4 pt-3 pb-4">{readiness}</section> : null}
+      {readiness ? <section className="px-4 pt-3.5 pb-1.5">{readiness}</section> : null}
 
       <Section
         key={`description:${detail.url}`}
@@ -978,7 +957,9 @@ export function PullRequestSummaryTab({
             />
           ) : (
             <div className="flex items-start gap-1" data-pr-description>
-              <PullRequestMarkdown
+              <PullRequestCommentBody
+                key={detail.url}
+                variant="description"
                 className="min-w-0 flex-1"
                 text={description.trim().length > 0 ? description : "_No description provided._"}
                 cwd={detail.workspaceRoot}
@@ -1131,10 +1112,10 @@ export function PullRequestSummaryTab({
               <div className="space-y-3">
                 {conversation.changeRequests.map((entry) => (
                   <div key={`pinned:${entry.comment.id}`}>
-                    {renderComment(
+                    {renderReview(
                       entry.comment,
                       entry.openThreadCount > 0 || entry.reRequestedAt ? (
-                        <div className="flex items-center gap-2 px-3 pb-3 text-meta text-muted-foreground">
+                        <div className="flex items-center gap-2 px-3 pt-0.5 text-meta text-muted-foreground">
                           {entry.openThreadCount > 0 ? (
                             <span className="inline-flex items-center gap-1.5">
                               <CornerDownRightIcon aria-hidden className="size-3.5" />
