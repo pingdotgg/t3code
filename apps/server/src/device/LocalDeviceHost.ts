@@ -226,8 +226,6 @@ const hubSdkEnvironment = Effect.fn("LocalDeviceHost.hubSdkEnvironment")(functio
   }
   // The hub resolves adb inside an SDK even when the distro installs it separately on PATH.
   const fs = yield* FileSystem.FileSystem;
-  const info = yield* fs.stat(sdk.root).pipe(Effect.option);
-  if (Option.isNone(info) || info.value.type !== "Directory") return environment;
   const entries = yield* fs.readDirectory(sdk.root).pipe(Effect.option);
   if (Option.isNone(entries)) return environment;
   const root = yield* fs.makeTempDirectoryScoped({ directory, prefix: "android-sdk-" });
@@ -548,6 +546,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     Effect.fnUntraced(
       function* (hub: HubProcess, hubTool: DeviceToolPaths) {
         yield* Effect.result(hub.child.exitCode);
+        yield* stopHub(hub);
         const running = yield* Ref.get(runningRef);
         if (running?.hub.child.pid !== hub.child.pid) return;
         const uptime = (yield* Clock.currentTimeMillis) - hub.startedAtMillis;
@@ -716,6 +715,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     if (running) {
       const alive = yield* running.hub.child.isRunning.pipe(Effect.orElseSucceed(() => false));
       if (alive) return running;
+      yield* stopHub(running.hub);
     }
     const nodePath = yield* resolveNodeExecutable("Local device support", hostEnvironment).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),

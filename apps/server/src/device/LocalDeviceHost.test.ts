@@ -42,6 +42,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     stateDir: string,
   ) => Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
   avdOutput: ProcessRunner.ProcessRunOutput = processOutput(0),
+  systemAdb = false,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -49,6 +50,19 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   const hub = { running: true, spawnFails: false };
   const stateDir = agentDeviceStateDir(path, path.join(baseDir, "userdata"));
   const daemonHealthy = yield* Ref.make(true);
+  const sdkRoot = path.join(baseDir, "sdk");
+  const bin = path.join(baseDir, "bin");
+  if (systemAdb) {
+    for (const file of [
+      path.join(sdkRoot, "emulator", "emulator"),
+      path.join(sdkRoot, "cmdline-tools", "latest", "bin", "avdmanager"),
+    ]) {
+      yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+      yield* fs.writeFileString(file, "");
+    }
+    yield* fs.makeDirectory(bin);
+    yield* fs.symlink(process.execPath, path.join(bin, "adb"));
+  }
   for (const [name, version, entry] of [
     ["expo-device-hub", DEVICE_HUB_VERSION, "dist/server/cli.mjs"],
     ["agent-device", AGENT_DEVICE_VERSION, "bin/agent-device.mjs"],
@@ -61,7 +75,11 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   }
   const host = yield* LocalDeviceHost.make().pipe(
     Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
-    Effect.provideService(HostProcess.Environment, { HOME: baseDir, PATH: "" }),
+    Effect.provideService(HostProcess.Environment, {
+      HOME: baseDir,
+      PATH: systemAdb ? bin : "",
+      ...(systemAdb ? { ANDROID_HOME: sdkRoot } : {}),
+    }),
     Effect.provideService(HostProcess.IsExecutable, false),
     Effect.provideService(HostProcess.Platform, "darwin"),
     Effect.provideService(
@@ -260,19 +278,26 @@ describe("AgentDevice startup", () => {
   it.effect("keeps releasing agent sessions while a dead hub fails to restart and after", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const { host, hub } = yield* agentFixture((stateDir) =>
-        fs
-          .writeFileString(
-            `${stateDir}/daemon.json`,
-            JSON.stringify({ httpPort: 12345, token: "test-token" }),
-          )
-          .pipe(Effect.orDie, Effect.as(processOutput(0))),
+      const { host, hub, stateDir } = yield* agentFixture(
+        (stateDir) =>
+          fs
+            .writeFileString(
+              `${stateDir}/daemon.json`,
+              JSON.stringify({ httpPort: 12345, token: "test-token" }),
+            )
+            .pipe(Effect.orDie, Effect.as(processOutput(0))),
+        processOutput(0),
+        HostProcess.Platform.defaultValue() !== "win32",
       );
       yield* host.ensureAgentReady(() => Effect.void);
+      const sdkViews = fs
+        .readDirectory(stateDir)
+        .pipe(Effect.map((entries) => entries.filter((entry) => entry.startsWith("android-sdk-"))));
       hub.running = false;
       hub.spawnFails = true;
       expect((yield* host.ensureReady(() => Effect.void).pipe(Effect.result))._tag).toBe("Failure");
       expect((yield* host.current)?.releaseAgentSession).toBeTypeOf("function");
+      expect(yield* sdkViews).toEqual([]);
       hub.spawnFails = false;
       yield* host.ensureReady(() => Effect.void);
       expect((yield* host.current)?.releaseAgentSession).toBeTypeOf("function");
@@ -535,79 +560,33 @@ it.effect("never prepares a temporary SDK view on Windows", () =>
   ),
 );
 
-it.effect.each([
-  { name: "missing", statError: "NotFound", type: "Directory", readError: "NotFound" },
-  { name: "not a directory", statError: undefined, type: "File", readError: "BadResource" },
-  {
-    name: "inaccessible",
-    statError: "PermissionDenied",
-    type: "Directory",
-    readError: "PermissionDenied",
-  },
-  { name: "unreadable", statError: undefined, type: "Directory", readError: "PermissionDenied" },
-  {
-    name: "removed before listing",
-    statError: undefined,
-    type: "Directory",
-    readError: "NotFound",
-  },
-] as const)(
-  "does not prepare an SDK view when the root is $name",
-  ({ statError, type, readError }) =>
+it.effect.each(["NotFound", "BadResource", "PermissionDenied"] as const)(
+  "does not prepare an SDK view when listing the root fails with %s",
+  (reason) =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-unavailable-sdk-" });
-      const info = yield* fs.stat(directory);
       const environment = { ANDROID_HOME: "/unavailable-sdk", PATH: "/usr/bin" };
-      let views = 0;
-      let listings = 0;
-      const result = yield* LocalDeviceHost.__testing
-        .hubSdkEnvironment(
-          environment,
-          { root: environment.ANDROID_HOME, adbPath: "/usr/bin/adb" },
-          directory,
-        )
-        .pipe(
-          Effect.provideService(
-            FileSystem.FileSystem,
-            FileSystem.makeNoop({
-              stat: () =>
-                statError
-                  ? Effect.fail(
-                      PlatformError.systemError({
-                        _tag: statError,
-                        module: "FileSystem",
-                        method: "stat",
-                      }),
-                    )
-                  : Effect.succeed({ ...info, type }),
-              readDirectory: () => {
-                listings++;
-                return Effect.fail(
-                  PlatformError.systemError({
-                    _tag: readError,
-                    module: "FileSystem",
-                    method: "readDirectory",
-                  }),
-                );
-              },
-              makeTempDirectoryScoped: (options) =>
-                fs.makeTempDirectoryScoped(options).pipe(
-                  Effect.tap(() =>
-                    Effect.sync(() => {
-                      views++;
-                    }),
-                  ),
-                ),
-            }),
-          ),
-        );
+      const result = yield* LocalDeviceHost.__testing.hubSdkEnvironment(
+        environment,
+        { root: environment.ANDROID_HOME, adbPath: "/usr/bin/adb" },
+        "/must-not-be-used",
+      );
       expect(result).toBe(environment);
-      expect(views).toBe(0);
-      expect(listings).toBe(statError || type !== "Directory" ? 0 : 1);
     }).pipe(
       Effect.scoped,
-      Effect.provide(NodeServices.layer),
+      Effect.provideService(
+        FileSystem.FileSystem,
+        FileSystem.makeNoop({
+          readDirectory: () =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: reason,
+                module: "FileSystem",
+                method: "readDirectory",
+              }),
+            ),
+          makeTempDirectoryScoped: () => Effect.die("An unavailable SDK must not allocate a view"),
+        }),
+      ),
       Effect.provideService(HostProcess.Platform, "darwin"),
       Effect.provide(NodePath.layerPosix),
     ),
