@@ -57,6 +57,7 @@ import {
   awaitAttachmentUploads,
   getUploadedAttachments,
   readAttachmentUpload,
+  refreshExpiredAttachmentUploads,
   releaseAttachmentUpload,
   releaseDraftAttachment,
   releaseDraftAttachments,
@@ -208,6 +209,91 @@ describe("attachmentUploadQueue", () => {
       releaseAttachmentUpload(imageId);
     }
     vi.unstubAllGlobals();
+  });
+
+  it("reuploads an expired image while retaining other ready images", async () => {
+    const images = [makeImage("first"), makeImage("second")].map((image) => ({
+      ...image,
+      name: "image.png",
+    }));
+    let minted = 0;
+    mocks.runAtomCommand.mockImplementation(async (_registry, command) => {
+      if (command !== mocks.createUploadUrl) return { _tag: "Success", value: undefined };
+      const attachmentId = `pending-test-${++minted}`;
+      return {
+        _tag: "Success",
+        value: {
+          attachmentId,
+          relativeUrl: `/api/attachments/upload/${attachmentId}`,
+          expiresAt: 1,
+        },
+      };
+    });
+    for (const image of images) startAttachmentUpload({ environmentId: firstEnvironment, image });
+    await Promise.resolve();
+    const initial = awaitAttachmentUploads(images.map((image) => image.id));
+    TestXmlHttpRequest.requests.forEach((request) => request.complete());
+    await initial;
+    mocks.executeAtomQuery.mockImplementation(
+      async (_registry, target: { input: { resource: { attachmentId: string } } }) =>
+        target.input.resource.attachmentId === "pending-test-1"
+          ? { _tag: "Failure", error: { _tag: "AssetAttachmentNotFoundError" } }
+          : { _tag: "Success", value: {} },
+    );
+    const refreshing = refreshExpiredAttachmentUploads({ environmentId: firstEnvironment, images });
+    await vi.waitFor(() => expect(TestXmlHttpRequest.requests).toHaveLength(3));
+    TestXmlHttpRequest.requests[2]!.complete();
+    await refreshing;
+    expect(
+      getUploadedAttachments({ environmentId: firstEnvironment, images })?.map((image) => image.id),
+    ).toEqual(["pending-test-3", "pending-test-2"]);
+    expect(TestXmlHttpRequest.requests).toHaveLength(3);
+  });
+
+  it("keeps an upload failed when verification cannot reach the server", async () => {
+    const image = makeImage("connection-failure");
+    useAttachmentUploadStore.setState({
+      uploadsByImageId: {
+        [image.id]: {
+          status: "ready",
+          environmentId: firstEnvironment,
+          attachmentId: "pending-original",
+        },
+      },
+    });
+    mocks.executeAtomQuery.mockRejectedValueOnce(new Error("offline"));
+    await refreshExpiredAttachmentUploads({ environmentId: firstEnvironment, images: [image] });
+    expect(readAttachmentUpload(image.id)).toMatchObject({ status: "failed" });
+    expect(getUploadedAttachments({ environmentId: firstEnvironment, images: [image] })).toBeNull();
+    expect(TestXmlHttpRequest.requests).toHaveLength(0);
+  });
+
+  it("does not resurrect an image removed while its upload is being checked", async () => {
+    const image = makeImage("removed-during-verification");
+    useAttachmentUploadStore.setState({
+      uploadsByImageId: {
+        [image.id]: {
+          status: "ready",
+          environmentId: firstEnvironment,
+          attachmentId: "pending-original",
+        },
+      },
+    });
+    let finish!: (value: unknown) => void;
+    mocks.executeAtomQuery.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const refresh = refreshExpiredAttachmentUploads({
+      environmentId: firstEnvironment,
+      images: [image],
+    });
+    releaseAttachmentUpload(image.id);
+    finish({ _tag: "Failure", error: { _tag: "AssetAttachmentNotFoundError" } });
+    await refresh;
+    expect(readAttachmentUpload(image.id)).toBeUndefined();
+    expect(TestXmlHttpRequest.requests).toHaveLength(0);
   });
 
   it("keeps an attachment local until its own environment grants write access", async () => {

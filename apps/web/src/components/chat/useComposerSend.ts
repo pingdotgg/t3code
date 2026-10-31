@@ -103,6 +103,7 @@ import { type ComposerDispatchMode } from "@t3tools/client-runtime/state/compose
 import {
   awaitAttachmentUploads,
   getUploadedAttachments,
+  refreshExpiredAttachmentUploads,
   readAttachmentUpload,
   releaseDraftAttachments,
   retryAttachmentUpload,
@@ -942,6 +943,23 @@ export function useComposerSend(input: ComposerSendInput) {
       multipleTargets.push(resolved);
     }
 
+    const draftSignature = () => {
+      const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      return JSON.stringify({
+        prompt: draft?.prompt ?? "",
+        images: draft?.images.map((image) => image.id) ?? [],
+        files: draft?.files.map((file) => file.id) ?? [],
+        terminalContexts: draft?.terminalContexts ?? [],
+        previewAnnotations: draft?.previewAnnotations ?? [],
+        reviewComments: draft?.reviewComments ?? [],
+        threadContexts: draft?.threadContexts ?? [],
+        environmentContexts: draft?.environmentContexts ?? [],
+      });
+    };
+    const draftBeforePreparation = draftSignature();
+    const draftChangedDuringPreparation = () =>
+      draftSignature() !== draftBeforePreparation ||
+      composerRef.current?.hasPendingAttachments() === true;
     sendInFlightRef.current = true;
     const sendGeneration = ++composerSendGenerationRef.current;
     const attachmentCapabilitiesBeforeUpload = readLiveAttachmentCapabilities();
@@ -967,6 +985,11 @@ export function useComposerSend(input: ComposerSendInput) {
         });
       }
       await awaitAttachmentUploads(composerAttachmentsSnapshot.map((attachment) => attachment.id));
+      await refreshExpiredAttachmentUploads({
+        environmentId,
+        images: composerAttachmentsSnapshot,
+        draftTarget: composerDraftTarget,
+      });
       const attachmentCapabilitiesAfterUpload = readLiveAttachmentCapabilities();
       if (attachmentCapabilitiesAfterUpload.fileBlockReason !== null) {
         sendInFlightRef.current = false;
@@ -1007,6 +1030,17 @@ export function useComposerSend(input: ComposerSendInput) {
     }
 
     const attachmentCapabilitiesBeforeDispatch = readLiveAttachmentCapabilities();
+    if (draftChangedDuringPreparation()) {
+      sendInFlightRef.current = false;
+      setThreadError(
+        threadIdForSend,
+        "Draft changed while preparing this message. Review it and send again.",
+      );
+      setDockedDraftHeroThreadKey((currentThreadKey) =>
+        currentThreadKey === activeThreadKey ? null : currentThreadKey,
+      );
+      return;
+    }
     if (
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
       attachmentCapabilitiesBeforeDispatch.fileBlockReason !== null
@@ -1182,6 +1216,7 @@ export function useComposerSend(input: ComposerSendInput) {
         readFileBlockReason: () => readLiveAttachmentCapabilities().fileBlockReason,
         buildOutgoingMessageContext,
         isCurrentSend: () => composerSendGenerationRef.current === sendGeneration,
+        draftChangedDuringPreparation,
       });
       return;
     }

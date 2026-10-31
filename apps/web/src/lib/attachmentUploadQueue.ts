@@ -1,5 +1,6 @@
 import {
   AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
   type ChatAttachment,
   type EnvironmentId,
@@ -578,6 +579,46 @@ export function verifyStashedAttachmentUpload(input: {
 
 export async function awaitAttachmentUploads(imageIds: ReadonlyArray<string>): Promise<void> {
   await Promise.all(imageIds.map((imageId) => jobsByImageId.get(imageId)?.settled));
+}
+
+/** Revalidate ready uploads at send time; a long-lived draft can outlive server cleanup. */
+export async function refreshExpiredAttachmentUploads(input: {
+  readonly environmentId: EnvironmentId;
+  readonly images: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>;
+  readonly draftTarget?: ComposerThreadTarget;
+}): Promise<void> {
+  if (!readEnvironmentScope(input.environmentId, AuthOrchestrationReadScope)) return;
+  await Promise.all(
+    input.images.map(async (image) => {
+      const upload = readAttachmentUpload(image.id);
+      if (upload?.status !== "ready" || upload.environmentId !== input.environmentId) return;
+      const verification = await verifyStashedAttachmentUpload({
+        environmentId: input.environmentId,
+        attachmentId: upload.attachmentId,
+      }).catch((error: unknown): PersistedAttachmentVerification => ({ status: "failed", error }));
+      // The user may have removed or replaced the attachment while verification was in flight.
+      if (readAttachmentUpload(image.id) !== upload) return;
+      if (verification.status === "verified") return;
+      if (verification.status === "missing" && image.file) {
+        clearUploadState(image.id);
+        startAttachmentUpload({
+          environmentId: input.environmentId,
+          image,
+          ...(input.draftTarget !== undefined ? { draftTarget: input.draftTarget } : {}),
+        });
+        return;
+      }
+      setUploadState(image.id, {
+        status: "failed",
+        environmentId: input.environmentId,
+        reason:
+          verification.status === "missing"
+            ? "Uploaded attachment expired. Remove it and attach it again."
+            : "Uploaded attachment could not be verified. Retry when the server reconnects.",
+      });
+    }),
+  );
+  await awaitAttachmentUploads(input.images.map((image) => image.id));
 }
 
 export function getUploadedAttachments(input: {
