@@ -452,7 +452,6 @@ export const ClientSettingsSchema = Schema.Struct({
   fontFamilyTerminal: FontFamilyPreference.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
 
   fontSmoothing: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  // Older installs also decode to null; onboarding must additionally require an empty workspace.
   onboardingCompletedAt: Schema.NullOr(Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1797,7 +1796,6 @@ export const ClientSettingsPatch = Schema.Struct({
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
   diffLayout: Schema.optionalKey(DiffLayout),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
-  onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),
   fontSizePrompt: Schema.optionalKey(PromptFontSize),
   fontSizeCode: Schema.optionalKey(CodeFontSize),
@@ -1807,6 +1805,7 @@ export const ClientSettingsPatch = Schema.Struct({
   fontFamilySans: Schema.optionalKey(FontFamilyPreference),
   fontFamilyTerminal: Schema.optionalKey(FontFamilyPreference),
   fontSmoothing: Schema.optionalKey(Schema.Boolean),
+  onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   favorites: Schema.optionalKey(ModelFavorites),
   providerModelPreferences: Schema.optionalKey(ProviderModelPreferences),
   pullRequestMergeMethodOverrides: Schema.optionalKey(
