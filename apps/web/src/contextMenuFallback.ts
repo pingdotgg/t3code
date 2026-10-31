@@ -397,7 +397,7 @@ export function showContextMenuFallback<T extends string>(
       menu.tabIndex = -1;
 
       // Size to the content and scroll only past the viewport; clampMenuPosition
-      // keeps the same 6px inset on each edge.
+      // keeps the same viewport clearance on each edge.
       const inner = document.createElement("div");
       inner.className =
         "max-h-[calc(100vh-0.5rem)] min-w-0 max-w-sm overflow-y-auto overflow-x-hidden p-1.5";

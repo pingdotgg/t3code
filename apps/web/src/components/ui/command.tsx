@@ -36,11 +36,16 @@ function CommandDialogBackdrop({ className, ...props }: CommandDialogPrimitive.B
   );
 }
 
-function CommandDialogViewport({ className, ...props }: CommandDialogPrimitive.Viewport.Props) {
+function CommandDialogViewport({
+  className,
+  size = "default",
+  ...props
+}: CommandDialogPrimitive.Viewport.Props & { size?: "default" | "content" }) {
   return (
     <CommandDialogPrimitive.Viewport
       className={cn(
-        "pointer-events-none fixed inset-0 z-50 flex flex-col items-center px-4 py-[max(--spacing(4),4vh)] sm:py-24",
+        "pointer-events-none fixed inset-0 z-50 flex flex-col items-center px-4 py-[max(--spacing(4),4vh)]",
+        size === "content" ? "sm:py-22" : "sm:py-24",
         className,
       )}
       data-slot="command-dialog-viewport"
@@ -54,16 +59,18 @@ function CommandDialogPopup({
   children,
   onBackdropPointerDown,
   surface = "palette",
+  size = "default",
   ...props
 }: CommandDialogPrimitive.Popup.Props & {
   onBackdropPointerDown?: React.PointerEventHandler<HTMLDivElement>;
   surface?: "palette" | "dialog";
+  size?: "default" | "content";
 }) {
   const popupRef = useRef<HTMLDivElement>(null);
   return (
     <CommandDialogPortal>
       <CommandDialogBackdrop onPointerDown={onBackdropPointerDown} />
-      <CommandDialogViewport>
+      <CommandDialogViewport size={size}>
         <CommandDialogPrimitive.Popup
           // The first tabbable can be an input addon, such as a submenu's Back button.
           initialFocus={() => popupRef.current?.querySelector("input") ?? true}
@@ -71,7 +78,8 @@ function CommandDialogPopup({
           className={cn(
             COMMAND_DIALOG_POPUP_CLASS,
             surface === "dialog" && "[--surface-shadow:var(--dialog-shadow)]!",
-            "pointer-events-auto max-h-[min(36rem,calc(100dvh-8rem))] max-w-140 text-foreground",
+            "pointer-events-auto max-h-[min(36rem,calc(100dvh-8rem))] text-foreground",
+            size === "content" ? "max-w-150" : "max-w-140",
             className,
           )}
           data-slot="command-dialog-popup"
