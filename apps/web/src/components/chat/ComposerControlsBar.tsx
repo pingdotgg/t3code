@@ -35,9 +35,8 @@ import { resolveComposerControlsOwnership } from "./composerControlsOwnership";
  * permissions), mode controls and the overflow menu for blocks that do not fit. Rendered in the
  * expanded footer or the resting controls host.
  */
-// Model and effort share one trigger; hover and open states brighten its text, not a box.
-const TEXT_CONTROL_STATES =
-  "hover:bg-transparent data-pressed:bg-transparent data-popup-open:bg-transparent data-pressed:text-foreground data-popup-open:text-foreground";
+// Model and effort share one trigger; it stays filled while its popup is open.
+const MODEL_TRIGGER_STATES = "data-popup-open:bg-accent data-popup-open:text-foreground";
 
 export function ComposerControlsBar(props: {
   environmentId: EnvironmentId;
@@ -217,8 +216,8 @@ export function ComposerControlsBar(props: {
       modelOptionsByInstance={modelOptionsByInstance}
       size={controlSize}
       triggerClassName={cn(
-        "group/model-trigger pe-1",
-        TEXT_CONTROL_STATES,
+        "group/model-trigger",
+        MODEL_TRIGGER_STATES,
         composerControlsCollapsed ? "min-w-13 shrink text-xs!" : "min-w-13",
       )}
       triggerSuffix={effort.suffix}
