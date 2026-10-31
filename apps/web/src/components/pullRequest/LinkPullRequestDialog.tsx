@@ -9,7 +9,8 @@ import {
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { observeResize } from "~/lib/observeResize";
 
 import { usePullRequestPreviewTarget } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
@@ -134,6 +135,15 @@ function LinkPullRequestDialog({
   onOpenChange,
 }: LinkPullRequestDialogProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [contentInset, setContentInset] = useState(0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Align the portaled dialog with the actual content bounds, including a resized or collapsed sidebar.
+  useLayoutEffect(() => {
+    const content = document.querySelector<HTMLElement>("main[data-slot=sidebar-inset]");
+    if (!content) return;
+    const update = () => setContentInset(content.getBoundingClientRect().left);
+    update();
+    return observeResize(content, update);
+  }, []);
   const [reference, setReference] = useState("");
   const [dirty, setDirty] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -198,7 +208,13 @@ function LinkPullRequestDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => (pending ? undefined : onOpenChange(next))}>
-      <DialogPopup className="max-w-110" initialFocus={inputRef} showCloseButton={false}>
+      <DialogPopup
+        className="max-w-110"
+        initialFocus={inputRef}
+        showCloseButton={false}
+        placement="content-top"
+        contentInset={contentInset}
+      >
         <div className="flex min-h-0 flex-col gap-4 px-5 pt-5 pb-4 [--type-body:0.8125rem] [--type-label:0.8125rem] [--type-prompt:0.8125rem]">
           <div className="flex flex-col gap-1">
             <div className="[--type-label:0.9375rem]">
