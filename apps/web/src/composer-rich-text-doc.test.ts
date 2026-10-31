@@ -1066,6 +1066,48 @@ describe("inline code entry", () => {
     },
   );
 
+  it.each([
+    [
+      "formats a pair",
+      "do ",
+      [
+        { type: "text", text: "do " },
+        { type: "text", marks: [{ type: "code" }], text: "xyz" },
+      ],
+    ],
+    [
+      "keeps a pair literal after an unmatched backtick",
+      "a ` ",
+      [{ type: "text", text: "a ` `xyz`" }],
+    ],
+  ])("%s whose backticks came from a dead key", (_name, prefix, content) => {
+    const editor = editorFor();
+    type(editor, prefix);
+    editor.view.dispatch(editor.state.tr.insertText("`").setMeta("composition", 1));
+    editor.view.dispatch(editor.state.tr.insertText("`").setMeta("composition", 2));
+    editor.commands.setTextSelection(prefix.length + 2);
+    type(editor, "xyz");
+    expect(editor.state.doc.textContent).toBe(`${prefix}\`xyz\``);
+
+    editor.commands.setTextSelection(prefix.length + 6);
+    expect(editor.state.doc.firstChild?.toJSON().content).toEqual(content);
+  });
+
+  it("does not reuse the closing backtick of a literal pair to open code", () => {
+    const editor = editorFor();
+    editor.view.dispatch(editor.state.tr.insertText("is `enabled`", 1));
+    type(editor, " and `");
+    expect(editor.state.doc.firstChild?.toJSON().content).toEqual([
+      { type: "text", text: "is `enabled` and `" },
+    ]);
+
+    type(editor, "persist`");
+    expect(editor.state.doc.firstChild?.toJSON().content).toEqual([
+      { type: "text", text: "is `enabled` and " },
+      { type: "text", marks: [{ type: "code" }], text: "persist" },
+    ]);
+  });
+
   it("keeps composition edits literal until the caret leaves the typed pair", () => {
     const editor = editorFor();
     type(editor, "``");
