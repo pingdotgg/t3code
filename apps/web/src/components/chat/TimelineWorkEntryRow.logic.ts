@@ -239,8 +239,5 @@ export function remarkThoughtPreview(fallback: string) {
   };
 }
 
-// Stable lists, so every preview shares one Markdown processor and its cache.
-export const THOUGHT_PREVIEW_PLUGINS = {
-  thinking: [[remarkThoughtPreview, "Thinking"]],
-  thought: [[remarkThoughtPreview, "Thought"]],
-} as const satisfies Record<string, PluggableList>;
+export const THOUGHT_PREVIEW_PLUGINS: PluggableList = [[remarkThoughtPreview, "Thought"]];
+export const THINKING_PREVIEW_PLUGINS: PluggableList = [[remarkThoughtPreview, "Thinking"]];

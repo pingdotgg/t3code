@@ -1,25 +1,39 @@
+import { flushSync } from "react-dom";
 import { AudioPreview } from "../files/AudioPreview";
-import { onTestFinished } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
-import { stubGlobal } from "../../../test/render";
 import {
   ComposerContextId,
   EnvironmentId,
   MessageId,
+  NodeId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   RunAttemptId,
   RunId,
   RuntimeRequestId,
   TurnItemId,
   ScheduledTaskId,
   ThreadId,
+  type OrchestrationV2Subagent,
 } from "@t3tools/contracts";
-import type { LegendListRef } from "@legendapp/list/react";
-import { createRef, Profiler, StrictMode, type ComponentProps, type ReactElement } from "react";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { LegendList, type LegendListRef } from "@legendapp/list/react";
+import {
+  createRef,
+  Profiler,
+  StrictMode,
+  useState,
+  type ComponentProps,
+  type ReactElement,
+} from "react";
+import * as DateTime from "effect/DateTime";
+import { Atom } from "effect/reactivity";
+import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
 import "~/index.css";
 
-import { act, fakeTimers, render } from "../../../test/render";
+import { environmentThreadDetails } from "../../state/threads";
+import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
+import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import {
@@ -128,6 +142,43 @@ function message(
   };
 }
 
+function work(id: string, entry: Record<string, unknown>): Entry {
+  return {
+    id,
+    kind: "work",
+    createdAt: CREATED_AT,
+    entry: { id, createdAt: CREATED_AT, ...entry },
+  } as Entry;
+}
+
+function v2Item(type: string, fields: Record<string, unknown>) {
+  const id = (fields.id as string | undefined) ?? type;
+  return {
+    position: 0,
+    visibility: "local",
+    sourceThreadId: "thread-1",
+    sourceItemId: id,
+    item: {
+      id,
+      threadId: "thread-1",
+      runId: "run-1",
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "completed",
+      title: null,
+      startedAt: null,
+      completedAt: null,
+      updatedAt: {},
+      type,
+      ...fields,
+    },
+  } as never;
+}
+
 async function renderElement(element: ReactElement, options: { router?: false } = {}) {
   const container = document.createElement("div");
   container.style.cssText = "height: 1200px; width: 900px; display: flex; flex-direction: column;";
@@ -164,6 +215,84 @@ function setup({ scheduledTasks = [] as ReadonlyArray<{ id: string; title: strin
 
 const TASK_ID = ScheduledTaskId.make("task-1");
 const AUTOMATION_PROMPT = "Triage the inbox\n\nLabel every new issue and close duplicates.";
+
+describe("MessagesTimeline work rows", () => {
+  it.each(["delegated", "legacy", "missing"] as const)(
+    "uses the reported task for %s completion notifications",
+    async (source) => {
+      setup();
+      const now = DateTime.makeUnsafe(CREATED_AT);
+      const childThreadId = ThreadId.make("shared-child");
+      const task = (
+        id: string,
+        status: OrchestrationV2Subagent["status"],
+        result: string,
+      ): OrchestrationV2Subagent => ({
+        id: NodeId.make(id),
+        threadId: ThreadId.make("thread-1"),
+        runId: null,
+        parentNodeId: NodeId.make("parent-root"),
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Simplify delivery",
+        title: "Simplify delivery",
+        model: null,
+        status,
+        result,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      });
+      const tasks = [
+        task("original", "interrupted", "Old interrupted progress"),
+        task("continued", "completed", "Final implementation report"),
+        task("follow-up", "completed", "Follow-up explanation"),
+      ];
+      using _threadAtom = vi.spyOn(environmentThreadDetails, "threadAtom").mockReturnValue(
+        Atom.make({
+          projection: { subagents: tasks, turnItems: [], visibleTurnItems: [] },
+        }) as never,
+      );
+      const onOpenThread = vi.fn();
+      await using screen = await renderTimeline(
+        (source === "delegated" ? ["continued", "follow-up"] : [source]).map((id) =>
+          work(`notification-${id}`, {
+            label: "Notification fallback",
+            tone: "info",
+            itemType: "notification",
+            projectedItem: v2Item("notification", {
+              id: `notification-${id}`,
+              source:
+                source === "legacy"
+                  ? { kind: "subagent", childThreadId }
+                  : { kind: "delegated_task", childThreadId, taskIds: [NodeId.make(id)] },
+              outcome: "completed",
+              summary: "Notification fallback",
+            }),
+          }),
+        ),
+        { onOpenThread },
+      );
+      if (source === "delegated") {
+        expect(screen.text()).toContain("Final implementation report");
+        expect(screen.text()).toContain("Follow-up explanation");
+        expect(screen.text()).not.toContain("Old interrupted progress");
+        await click(screen.buttons("Open Simplify delivery")[0]!);
+        expect(onOpenThread).toHaveBeenCalledWith(childThreadId);
+      } else if (source === "legacy") {
+        expect(screen.text()).toContain("Old interrupted progress");
+      } else {
+        expect(screen.text()).toContain("Notification fallback");
+        expect(screen.text()).not.toContain("Old interrupted progress");
+      }
+    },
+  );
+});
 
 describe("MessagesTimeline messages", () => {
   it("settles when equally long messages have very different rendered heights", async () => {
@@ -1070,6 +1199,73 @@ it("renders automatic compaction as one live divider that finishes with its reas
     .toBeVisible();
   expect(container.querySelectorAll('[role="separator"]')).toHaveLength(1);
   expect(container.textContent).not.toContain("Compacting before");
+});
+
+function TimelineChangedFilesCard() {
+  const [expanded, setExpanded] = useState(true);
+  return (
+    <ChangedFilesCard
+      runId={RunId.make("run-1")}
+      files={["src/a.ts", "src/b.ts", "src/c.ts"].map((path) => ({
+        path,
+        kind: "modified",
+        additions: 1,
+        deletions: 0,
+      }))}
+      totals={{ count: 3, additions: 3, deletions: 0 }}
+      allDirectoriesExpanded={expanded}
+      resolvedTheme="light"
+      onToggleAllDirectories={() => setExpanded((value) => !value)}
+      onOpenTurnDiff={() => {}}
+    />
+  );
+}
+
+function ChangedFilesTimeline() {
+  return (
+    <LegendList
+      data={["files", "after"]}
+      keyExtractor={(item) => item}
+      estimatedItemSize={100}
+      recycleItems={false}
+      className="h-[600px]"
+      renderItem={({ item }) =>
+        item === "files" ? <TimelineChangedFilesCard /> : <div data-testid="after">After</div>
+      }
+    />
+  );
+}
+
+describe("ChangedFilesCard", () => {
+  it.each(["folder", "all folders"])(
+    "measures %s collapse and expansion in the same commit",
+    async (toggle) => {
+      await using screen = await render(<ChangedFilesTimeline />);
+      const after = () =>
+        screen.container.querySelector('[data-testid="after"]')!.getBoundingClientRect().top;
+      const cardBottom = () =>
+        screen.container.querySelector("[data-changed-files-state]")!.getBoundingClientRect()
+          .bottom;
+      await vi.waitFor(() => expect(after()).toBe(cardBottom()));
+      const topBefore = after();
+      const button = () =>
+        screen.container.querySelector<HTMLButtonElement>(
+          toggle === "folder"
+            ? '[data-changed-file-row="src"] button'
+            : 'button[aria-label$="all folders"]',
+        )!;
+      await act(() => {
+        flushSync(() => button().click());
+        expect(screen.container.textContent).not.toContain("a.ts");
+        expect(after()).toBe(topBefore - 3 * 28);
+      });
+      await act(() => {
+        flushSync(() => button().click());
+        expect(screen.container.textContent).toContain("a.ts");
+        expect(after()).toBe(topBefore);
+      });
+    },
+  );
 });
 
 it("keeps concurrent approvals actionable outside collapsed work and restores settled rows", async () => {
