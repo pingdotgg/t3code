@@ -8374,4 +8374,144 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
   });
+
+  describe("Codex permission approvals", () => {
+    const nativeThreadId = "permission-approval-thread";
+    const nativeTurnId = "permission-approval-turn";
+    const prompt = "Install the dependency.";
+
+    const requestPermissions = (
+      scenario: string,
+      params: {
+        readonly permissions: CodexSchema.PermissionsRequestApprovalParams["permissions"];
+        readonly reason: string | null;
+      },
+    ) =>
+      Effect.gen(function* () {
+        const pending = yield* Queue.unbounded<OrchestrationV2RuntimeRequest>();
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+              {
+                type: "emit_inbound",
+                label: "permissions approval",
+                frame: {
+                  id: 0,
+                  method: "item/permissions/requestApproval",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    itemId: "permissions-1",
+                    cwd: "/w",
+                    startedAtMs: 1,
+                    ...params,
+                  },
+                },
+              },
+              {
+                type: "expect_outbound",
+                label: "permissions decision",
+                frame: { id: 0, result: { permissions: params.permissions, scope: "turn" } },
+              },
+              {
+                type: "emit_inbound",
+                label: "turn completed",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          }),
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"
+              ? Queue.offer(pending, event.runtimeRequest)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`${scenario}-attempt`),
+            text: prompt,
+          }),
+        );
+        const request = yield* Queue.take(pending);
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: request.id,
+          decision: "accept",
+        });
+        yield* harness.firstTerminal;
+        return harness.events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "approval_request" &&
+            event.turnItem.requestId === request.id,
+        );
+      });
+
+    it.effect("shows the network access a permissions request grants beside its reason", () =>
+      Effect.gen(function* () {
+        const event = yield* requestPermissions("permissions-network", {
+          permissions: { network: { enabled: true } },
+          reason: "Need to fetch a dependency",
+        });
+
+        assert.equal(event?.type, "turn_item.updated");
+        if (event?.type === "turn_item.updated" && event.turnItem.type === "approval_request") {
+          assert.match(event.turnItem.prompt ?? "", /network/i);
+          assert.equal(event.turnItem.reason, "Need to fetch a dependency");
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
+    it.effect("shows each filesystem path and access mode a permissions request grants", () =>
+      Effect.gen(function* () {
+        const event = yield* requestPermissions("permissions-filesystem", {
+          permissions: {
+            fileSystem: {
+              read: ["/w/docs"],
+              entries: [
+                { access: "read", path: { type: "path", path: "/w/docs" } },
+                { access: "write", path: { type: "path", path: "/w/out" } },
+                { access: "deny", path: { type: "path", path: "/w/secrets" } },
+                ...Array.from({ length: 20 }, (_, index) => ({
+                  access: "read" as const,
+                  path: { type: "path" as const, path: `/w/extra-${index}` },
+                })),
+              ],
+            },
+          },
+          reason: null,
+        });
+
+        assert.equal(event?.type, "turn_item.updated");
+        if (event?.type === "turn_item.updated" && event.turnItem.type === "approval_request") {
+          const described = event.turnItem.prompt ?? "";
+          for (const fact of ["/w/docs", "read", "/w/out", "write", "/w/secrets", "deny"]) {
+            assert.include(described, fact);
+          }
+          assert.equal(described.split("/w/docs").length - 1, 1);
+          assert.include(described, "/w/extra-19");
+          assert.isUndefined(event.turnItem.reason);
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+  });
 });

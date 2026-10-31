@@ -756,7 +756,9 @@ function toWorkLogEntry(
     case "approval_request":
       return {
         ...common,
-        ...(item.prompt ? { detail: item.prompt } : {}),
+        ...(item.prompt || item.reason
+          ? { detail: [item.prompt, item.reason].filter(Boolean).join("\n\n") }
+          : {}),
         requestKind: item.requestKind,
         toolData: item,
       };

@@ -387,7 +387,9 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
         />
       ) : null}
 
-      {item.type === "approval_request" ? <StructuredValue value={item.prompt} /> : null}
+      {item.type === "approval_request" ? (
+        <StructuredValue value={[item.prompt, item.reason].filter(Boolean).join("\n\n")} />
+      ) : null}
       {item.type === "user_input_request" ? (
         <StructuredValue
           value={item.questions
