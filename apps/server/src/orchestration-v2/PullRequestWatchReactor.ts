@@ -293,7 +293,7 @@ export const make = Effect.gen(function* () {
 
   const giveUp = (target: WatchTarget) =>
     record(target, null, {
-      text: `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it failed to read it from the host ${READ_FAILURE_LIMIT} times in a row. Check it yourself, and call watch_pull_request to watch it again.`,
+      text: `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it failed to read it from the host ${READ_FAILURE_LIMIT} times in a row. Check it yourself, and call watch_pull_request only if it is still open.`,
       notification: {
         source: { kind: "monitor" },
         outcome: "failed",
@@ -476,11 +476,20 @@ export const make = Effect.gen(function* () {
       Effect.all(
         [
           pullRequests.detail({ ...reference, allowStale: false }),
-          plan.activity
-            ? pullRequests.activity(reference).pipe(Effect.asSome)
-            : Effect.succeed(Option.none<PullRequestActivity>()),
+          Effect.exit(
+            plan.activity
+              ? pullRequests.activity(reference).pipe(Effect.asSome)
+              : Effect.succeed(Option.none<PullRequestActivity>()),
+          ),
         ],
         { concurrency: 2 },
+      ).pipe(
+        // Activity is irrelevant once the pull request is closed or merged, so it cannot block ending.
+        Effect.flatMap(([detail, activity]) =>
+          detail.state === "open"
+            ? Effect.map(activity, (activity) => [detail, activity] as const)
+            : Effect.succeed([detail, Option.none<PullRequestActivity>()] as const),
+        ),
       ),
     );
     if (Exit.isFailure(read)) {
