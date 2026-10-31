@@ -76,6 +76,8 @@ interface ExitWatch<E> {
   readonly runs: QueuedRunsAtom;
   readonly runId: RunId;
   readonly onRunLeftQueue: (threadKey: string, edit: E) => void;
+  /** Asks the server to hold the run while it is edited, or release it. */
+  readonly hold?: (editing: boolean) => void;
   cancel: (() => void) | null;
 }
 
@@ -169,19 +171,25 @@ export function makeQueuedRunEditStore<E extends { readonly runId: RunId }>(opti
       watch: {
         readonly runs: QueuedRunsAtom;
         readonly onRunLeftQueue: (threadKey: string, edit: E) => void;
+        readonly hold?: (editing: boolean) => void;
       },
     ) {
+      const previous = watches.get(threadKey);
       stopWatch(threadKey);
       write(threadKey, edit);
       const next: ExitWatch<E> = { ...watch, runId: edit.runId, cancel: null };
       watches.set(threadKey, next);
       subscribe(threadKey, next);
+      // Hold before releasing, so neither run can start in between.
+      if (watches.get(threadKey) === next) next.hold?.(true);
+      if (previous !== undefined && previous.runId !== edit.runId) previous.hold?.(false);
     },
     update(threadKey: string, f: (edit: E) => E) {
       const edit = get(threadKey);
       if (edit !== null) write(threadKey, f(edit));
     },
     end(threadKey: string) {
+      watches.get(threadKey)?.hold?.(false);
       stopWatch(threadKey);
       write(threadKey, null);
     },
@@ -204,6 +212,8 @@ export function makeQueuedRunEditStore<E extends { readonly runId: RunId }>(opti
         }
         if (watches.get(threadKey) !== watch) return false;
         if (succeeded) {
+          // After the save, which the server receives first, so the run starts with it.
+          watch.hold?.(false);
           stopWatch(threadKey);
           write(threadKey, null);
           return true;

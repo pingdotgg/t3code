@@ -164,7 +164,10 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
   return {
     activeRun,
     queuedRuns,
-    isHeld: projection.runs.some((run) => run.status === "queued" && run.queueHeld === true),
+    // An edit hold counts, so a hold left by a client that went away can be resumed.
+    isHeld: projection.runs.some(
+      (run) => run.status === "queued" && (run.queueHeld === true || run.editing === true),
+    ),
     canSendNow:
       activeRun === null &&
       projection.thread.archivedAt == null &&

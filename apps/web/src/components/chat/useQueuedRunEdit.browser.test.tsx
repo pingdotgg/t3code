@@ -46,12 +46,16 @@ vi.mock("../../hooks/useSettings", () => ({
 const runsKey = (ref: ScopedThreadRef) => `${ref.environmentId}:${ref.threadId}`;
 
 vi.mock("../../state/threads", async () => {
-  const { Atom } = await import("effect/reactivity");
+  const { AsyncResult, Atom } = await import("effect/reactivity");
   const key = (ref: ScopedThreadRef) => `${ref.environmentId}:${ref.threadId}`;
   return {
     threadEnvironment: {
       snapshotAtom: () => Atom.make(null),
       editQueuedRun: {},
+      setQueuedRunEditing: {
+        label: "set-queued-run-editing",
+        run: async () => AsyncResult.success(undefined),
+      },
     },
     environmentThreadDetails: {
       statusAtom: () => Atom.make("ready"),

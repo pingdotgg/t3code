@@ -5766,6 +5766,109 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("holds a queued message and the ones behind it while it is edited", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-edited-queue");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Edited queue",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      for (const [index, text] of ["Active", "Edited", "Behind"].entries()) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:message:${index}`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:message:${index}`),
+          text,
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: index === 0 ? "start_immediately" : "queue_after_active" },
+        });
+      }
+      const [active, edited, behind] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      const setEditing = (editing: boolean) =>
+        orchestrator.dispatch({
+          type: "queued-run.editing",
+          commandId: CommandId.make(`${threadId}:editing:${editing}`),
+          threadId,
+          runId: edited!.id,
+          editing,
+        });
+      yield* setEditing(true);
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:completed`),
+            type: "run.updated",
+            threadId,
+            runId: active!.id,
+            occurredAt: now,
+            payload: { ...active!, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      yield* orchestrator.resumeQueuedRuns;
+      const waiting = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        waiting.runs.map((run) => run.status),
+        ["completed", "queued", "queued"],
+      );
+
+      // Another device cannot send the edited message, but can send the others.
+      const rejected = yield* orchestrator
+        .dispatch({
+          type: "queued-run.start",
+          commandId: CommandId.make(`${threadId}:send-edited`),
+          threadId,
+          runId: edited!.id,
+        })
+        .pipe(Effect.flip);
+      assert.equal(rejected._tag, "OrchestratorDispatchError");
+      yield* orchestrator.dispatch({
+        type: "queued-run.start",
+        commandId: CommandId.make(`${threadId}:send-behind`),
+        threadId,
+        runId: behind!.id,
+      });
+      const sent = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(sent.runs.find((run) => run.id === behind!.id)?.status, "starting");
+      assert.isTrue(sent.runs.find((run) => run.id === edited!.id)?.editing);
+
+      yield* setEditing(false);
+      const sentRun = sent.runs.find((run) => run.id === behind!.id)!;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:behind-completed`),
+            type: "run.updated",
+            threadId,
+            runId: sentRun.id,
+            occurredAt: now,
+            payload: { ...sentRun, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      yield* orchestrator.resumeQueuedRuns;
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(after.runs.find((run) => run.id === edited!.id)?.status, "starting");
+    }),
+  );
+
   it.effect("places held queued messages after a continuation that started first", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

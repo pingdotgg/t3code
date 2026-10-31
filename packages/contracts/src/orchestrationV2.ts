@@ -681,6 +681,8 @@ export const OrchestrationV2Run = Schema.Struct({
   status: OrchestrationV2RunStatus,
   queuePosition: Schema.optional(Schema.NullOr(PositiveInt)),
   queueHeld: Schema.optional(Schema.Boolean),
+  // A client has this queued message open for editing; it and the runs behind it wait.
+  editing: Schema.optional(Schema.Boolean),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -3246,6 +3248,13 @@ export const OrchestrationV2Command = Schema.Union([
     text: Schema.String,
     // Replaces all attachments; absent preserves them for older clients editing text.
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("queued-run.editing"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    editing: Schema.Boolean,
   }),
   Schema.Struct({
     type: Schema.Literal("runtime-request.respond"),
