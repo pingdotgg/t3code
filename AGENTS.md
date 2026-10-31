@@ -154,6 +154,7 @@ For mobile verification, a missing or outdated native client is an install step,
 - UI changes need before/after images. Motion or timing needs a short video.
 - Upload PR evidence to GitHub. Never commit PR-only screenshots or assets such as `.github/pr-assets/`.
 - One request is one PR. Split it only when the maintainer asks. Outside contributions follow the stricter [one problem per PR](CONTRIBUTING.md#one-problem) rule.
+- Right before you merge, run `vp run pr-merge-check <pr>...` with every PR you are about to merge, then run the `gh pr merge --match-head-commit` commands it prints, at once and in that order. Green PR CI can be days old, and GitHub reports `CLEAN` here even when a PR is far behind `main`, so `mergeStateStatus` is not a freshness check.
 - When babysitting: call `watch_pull_request` and end your turn. T3 Code wakes you on checks, comments, or conflicts. Do not poll or sleep. Verify each bot finding against the source, fix real ones, dismiss false positives with a written reason. Stay quiet when nothing is new. Stop when the bots are green on the latest commit.
 
 ## Documentation

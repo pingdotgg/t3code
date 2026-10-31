@@ -180,6 +180,12 @@ change the limit (`1` runs the steps one by one). A step that runs past `--timeo
 run's summary instead of running again. Any change to a file, the install, or a generated file runs
 the checks again.
 
+`vp run pr-merge-check <pr>...` runs the same checks on GitHub's current `main` with the given PRs
+merged in order, in a temporary worktree. Run it right before merging, with the whole batch, then
+run the merge commands it prints. They are pinned to the tested heads. With `origin` on GitCafe, it
+fetches from the `github` remote, because the mirror can lag about a minute. The ruleset does not require branches
+to be up to date, because main takes too many merges a day, so a PR's green CI can be days old.
+
 While you iterate, run single checks:
 
 ```sh
