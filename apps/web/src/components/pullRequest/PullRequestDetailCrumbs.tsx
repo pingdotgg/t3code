@@ -1,7 +1,8 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { ArrowLeftIcon, ExternalLinkIcon } from "lucide-react";
-import type { MouseEvent as ReactMouseEvent } from "react";
+import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 
+import { resolvePullRequestState } from "./pullRequestPresentation";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { Button, InlineButton } from "../ui/button";
@@ -13,7 +14,8 @@ interface CrumbsPullRequest {
   readonly provider: string;
   readonly number: number;
   readonly repository: string;
-  readonly title: string;
+  readonly state: "open" | "merged" | "closed";
+  readonly isDraft: boolean;
 }
 
 const openNumberContextMenu = (event: ReactMouseEvent, detail: CrumbsPullRequest): void => {
@@ -25,9 +27,6 @@ const openNumberContextMenu = (event: ReactMouseEvent, detail: CrumbsPullRequest
     position: { x: event.clientX, y: event.clientY },
   });
 };
-
-const ROW_CLASS_NAME =
-  "col-start-1 row-start-1 flex min-w-0 items-center text-muted-foreground transition-[opacity,transform] ease-out motion-reduce:transform-none motion-reduce:transition-none";
 
 function BackButton({
   onBack,
@@ -96,117 +95,40 @@ function NumberLink({
   );
 }
 
-/**
- * The number and title by default, swapped for repository crumbs while the title is being edited.
- */
 export function PullRequestDetailCrumbs({
   detail,
   toneClassName,
-  condensed,
-  repositoryUrl,
   openOnHostText,
   onBack,
+  children,
 }: {
   detail: CrumbsPullRequest | null;
   toneClassName: string | null;
-  condensed: boolean;
-  repositoryUrl: string | null;
   openOnHostText: string;
   onBack: (() => void) | undefined;
+  children?: ReactNode;
 }) {
-  const ready = detail !== null && toneClassName !== null;
+  const state = detail ? resolvePullRequestState(detail) : null;
   return (
-    <div className="mt-3 grid h-8 min-w-0 items-center overflow-hidden pl-4">
-      <div
-        aria-hidden={condensed}
-        inert={condensed}
-        className={cn(
-          ROW_CLASS_NAME,
-          "gap-1 text-body sm:text-meta",
-          condensed
-            ? "pointer-events-none -translate-y-1 opacity-0 duration-100"
-            : "translate-y-0 opacity-100 delay-50 duration-150",
-        )}
-      >
-        {ready ? (
-          <>
-            {onBack ? (
-              <BackButton
-                onBack={onBack}
-                focusable
-                plural={sourceControlClients.get(detail.provider).changeRequest.plural}
-              />
-            ) : null}
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  repositoryUrl ? (
-                    <InlineButton
-                      tone="muted"
-                      onClick={() => void readLocalApi()?.shell.openExternal(repositoryUrl)}
-                      className="min-w-0 shrink"
-                    >
-                      <span className="min-w-0 truncate">{detail.repository}</span>
-                    </InlineButton>
-                  ) : (
-                    <span className="min-w-0 truncate text-label text-muted-foreground sm:text-meta">
-                      {detail.repository}
-                    </span>
-                  )
-                }
-              />
-              <TooltipPopup side="top">
-                {repositoryUrl ? `Open ${detail.repository} repository` : detail.repository}
-              </TooltipPopup>
-            </Tooltip>
-            <NumberLink
-              detail={detail}
-              toneClassName={toneClassName}
-              openOnHostText={openOnHostText}
-              focusable
-            />
-          </>
-        ) : null}
-      </div>
-      <div
-        aria-hidden={!condensed}
-        inert={!condensed}
-        className={cn(
-          ROW_CLASS_NAME,
-          "gap-1.5 text-meta",
-          condensed
-            ? "translate-y-0 opacity-100 delay-50 duration-150"
-            : "pointer-events-none translate-y-1 opacity-0 duration-100",
-        )}
-      >
-        {ready ? (
-          <>
-            {onBack ? (
-              <BackButton
-                onBack={onBack}
-                focusable={condensed}
-                plural={sourceControlClients.get(detail.provider).changeRequest.plural}
-              />
-            ) : null}
-            <NumberLink
-              detail={detail}
-              toneClassName={toneClassName}
-              openOnHostText={openOnHostText}
-              focusable={condensed}
-            />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="min-w-0 truncate text-label text-foreground">
-                    {detail.title}
-                  </span>
-                }
-              />
-              <TooltipPopup side="top">{detail.title}</TooltipPopup>
-            </Tooltip>
-          </>
-        ) : null}
-      </div>
+    <div className="mt-2 flex min-h-6 min-w-0 flex-wrap items-center gap-1.5 pl-4 text-label text-muted-foreground">
+      {detail && toneClassName && state ? (
+        <>
+          {onBack ? (
+            <BackButton onBack={onBack} focusable plural={sourceControlClients.get(detail.provider).changeRequest.plural} />
+          ) : null}
+          <NumberLink detail={detail} toneClassName={toneClassName} openOnHostText={openOnHostText} focusable />
+          {detail.state !== "open" || detail.isDraft ? (
+            <span className={cn(
+              "inline-flex h-5 shrink-0 items-center gap-1 rounded-md border px-[7px] text-caption",
+              detail.state === "merged" ? "border-merged-foreground/25 bg-merged-tint text-merged-foreground" : detail.state === "closed" ? "border-error-foreground/25 bg-error-tint text-error-foreground" : "border-border bg-badge-neutral text-muted-foreground",
+            )}>
+              <state.Icon aria-hidden className="size-[11px]" />
+              {state.label}
+            </span>
+          ) : null}
+          {children}
+        </>
+      ) : null}
     </div>
   );
 }
