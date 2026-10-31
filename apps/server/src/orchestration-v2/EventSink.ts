@@ -1,8 +1,10 @@
 import {
   CommandId,
+  isOrchestrationV2WorkActive,
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2Subagent,
   OrchestrationV2StoredEvent,
   ProviderThreadId,
   RunAttemptId,
@@ -127,6 +129,17 @@ export interface EventSinkV2Shape {
   /** Commits only if the full provider row equals expected; some writers do not advance updatedAt. */
   readonly writeIfProviderThreadUnchanged: (input: {
     readonly expected: OrchestrationV2ProviderThread;
+    readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+  }) => Effect.Effect<
+    {
+      readonly committed: boolean;
+      readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
+    },
+    EventSinkV2Error
+  >;
+  /** Commits only while the subagent is still active with the start it had when read; a resume reopens it with a new start. */
+  readonly writeIfSubagentActive: (input: {
+    readonly expected: OrchestrationV2Subagent;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   }) => Effect.Effect<
     {
@@ -616,6 +629,50 @@ const layerBase: Layer.Layer<
       );
     });
 
+    const writeIfSubagentActiveEffect = Effect.fn(
+      "orchestrationV2.EventSink.writeIfSubagentActive",
+    )(function* (input: Parameters<EventSinkV2Shape["writeIfSubagentActive"]>[0]) {
+      yield* Effect.annotateCurrentSpan({
+        "orchestration_v2.event_count": input.events.length,
+        "orchestration_v2.subagent_id": input.expected.id,
+      });
+      const expectedStartedAt = yield* ProjectionStore.encodeSubagentStartedAt(input.expected);
+
+      return yield* commitThenPublish(
+        Effect.gen(function* () {
+          const rows = yield* sql<{
+            readonly status: OrchestrationV2Subagent["status"];
+            readonly started_at: string | null;
+          }>`
+              SELECT status, started_at
+              FROM orchestration_v2_projection_subagents
+              WHERE subagent_id = ${input.expected.id}
+              LIMIT 1
+            `;
+          const current = rows[0];
+          if (
+            current === undefined ||
+            current.started_at !== expectedStartedAt ||
+            !isOrchestrationV2WorkActive(current.status)
+          ) {
+            return {
+              committed: false as const,
+              storedEvents: [] as ReadonlyArray<OrchestrationV2StoredEvent>,
+            };
+          }
+
+          const normalized = yield* normalizeEvents(input.events);
+          const storedEvents = yield* eventStore.append({ events: normalized });
+          const outcomes = yield* applyStoredEvents(storedEvents);
+          return { committed: true as const, storedEvents, outcomes };
+        }),
+        (result) =>
+          result.committed
+            ? publishStoredEvents(result.storedEvents, result.outcomes)
+            : Effect.void,
+      );
+    });
+
     const existingCommandResult =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(function* (commandId: CommandId) {
@@ -924,6 +981,12 @@ const layerBase: Layer.Layer<
         ),
       writeIfProviderThreadUnchanged: (input) =>
         writeIfProviderThreadUnchangedEffect(input).pipe(
+          Effect.mapError(
+            (cause) => new EventSinkWriteError({ eventCount: input.events.length, cause }),
+          ),
+        ),
+      writeIfSubagentActive: (input) =>
+        writeIfSubagentActiveEffect(input).pipe(
           Effect.mapError(
             (cause) => new EventSinkWriteError({ eventCount: input.events.length, cause }),
           ),

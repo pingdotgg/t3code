@@ -1145,6 +1145,12 @@ function nullableStringField(payload: Record<string, unknown>, field: string): s
   return typeof value === "string" ? value : String(value);
 }
 
+/** The started_at value a subagent row stores, for writes that compare it at commit time. */
+export const encodeSubagentStartedAt = (subagent: OrchestrationV2Subagent) =>
+  encodeSubagentPayload(subagent).pipe(
+    Effect.map((json) => nullableStringField(parseEncodedPayload(json), "startedAt")),
+  );
+
 function booleanInt(value: boolean): 0 | 1 {
   return value ? 1 : 0;
 }
