@@ -135,6 +135,14 @@ export const ProviderAdapterV2Event = Schema.Union([
     itemId: TurnItemId,
     chunk: Schema.String,
   }),
+  /** Unpersisted predicted next prompt; arrives after the run's root terminal. */
+  Schema.Struct({
+    type: Schema.Literal("prompt_suggestion.updated"),
+    driver: ProviderDriverKind,
+    threadId: ThreadId,
+    runId: RunId,
+    text: Schema.String,
+  }),
   Schema.Struct({
     type: Schema.Literal("runtime_request.updated"),
     driver: ProviderDriverKind,

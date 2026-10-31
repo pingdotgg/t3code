@@ -6,6 +6,7 @@ import {
   ModelSelection,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
+  type OrchestrationV2PromptSuggestion,
   type OrchestrationV2ProviderThread,
   OrchestrationV2RuntimeRequest,
   ProviderInstanceId,
@@ -32,6 +33,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { normalizeModelMetricLabel } from "../observability/Attributes.ts";
 import {
@@ -64,6 +66,8 @@ const busyTurnPrefix = (providerThreadId: ProviderThreadId) => `${providerThread
 const busyTurnKey = (providerThreadId: ProviderThreadId, runOrdinal: number) =>
   `${busyTurnPrefix(providerThreadId)}${runOrdinal}`;
 const UNLOAD_THREAD_TIMEOUT_MS = 10 * 1000;
+/** Suggestions outlive their sessions, so keep only the most recently updated threads. */
+const MAX_PROMPT_SUGGESTIONS = 256;
 const WORKING_RUN_STATUSES: ReadonlySet<string> = new Set([
   "preparing",
   "starting",
@@ -208,6 +212,10 @@ export interface ProviderSessionManagerV2Shape {
     readonly providerSessionId: ProviderSessionId;
     readonly threadId: ThreadId;
   }) => Effect.Effect<ReadonlyArray<ThreadId>>;
+  /** The thread's latest predicted next prompt, then each replacement. */
+  readonly subscribePromptSuggestion: (
+    threadId: ThreadId,
+  ) => Stream.Stream<OrchestrationV2PromptSuggestion>;
 }
 
 export class ProviderSessionManagerV2 extends Context.Service<
@@ -342,6 +350,9 @@ export const layerWithOptions = (
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
+      const promptSuggestions = yield* SubscriptionRef.make<
+        ReadonlyMap<ThreadId, NonNullable<OrchestrationV2PromptSuggestion>>
+      >(new Map());
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
@@ -1949,6 +1960,18 @@ export const layerWithOptions = (
             if (event.type === "command_output.delta") {
               return commandOutput.append(event);
             }
+            if (event.type === "prompt_suggestion.updated") {
+              return SubscriptionRef.update(promptSuggestions, (current) => {
+                const next = new Map(current);
+                next.delete(event.threadId);
+                next.set(event.threadId, { runId: event.runId, text: event.text });
+                for (const threadId of next.keys()) {
+                  if (next.size <= MAX_PROMPT_SUGGESTIONS) break;
+                  next.delete(threadId);
+                }
+                return next;
+              });
+            }
             const releaseLiveOutput =
               event.type === "turn_item.updated" &&
               event.turnItem.type === "command_execution" &&
@@ -2557,6 +2580,11 @@ export const layerWithOptions = (
               ),
             ),
         ),
+        subscribePromptSuggestion: (threadId) =>
+          SubscriptionRef.changes(promptSuggestions).pipe(
+            Stream.map((suggestions) => suggestions.get(threadId) ?? null),
+            Stream.changes,
+          ),
       } satisfies ProviderSessionManagerV2Shape);
     }),
   );

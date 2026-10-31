@@ -6566,6 +6566,55 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("offers the prompt suggestion Claude sends after a completed turn", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const input = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("attempt-prompt-suggestion"),
+        text: "Add a subtract function.",
+        attachments: [],
+      });
+      yield* harness.runtime.startTurn(input);
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000690", result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "prompt_suggestion",
+          suggestion: "  add tests for subtract\n",
+          uuid: "00000000-0000-4000-8000-000000000691",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* harness.until(() =>
+        harness.events.some((event) => event.type === "prompt_suggestion.updated"),
+      );
+      assert.equal(harness.getOpenedOptions()?.promptSuggestions, true);
+      assert.deepEqual(
+        harness.events.filter((event) => event.type === "prompt_suggestion.updated"),
+        [
+          {
+            type: "prompt_suggestion.updated",
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            threadId: harness.threadId,
+            runId: input.runId,
+            text: "add tests for subtract",
+          },
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect("merges cumulative stream usage into the message_start counts", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarnessWithOptions({

@@ -676,9 +676,18 @@ export const CodexSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    promptSuggestions: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({
+        title: "Suggest next prompt",
+        description:
+          "After each turn, Codex predicts your next message with one short cached request. Press Tab in an empty composer to use it.",
+        providerSettingsForm: { control: "switch" },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "shadowHomePath", "launchArgs"],
+    order: ["binaryPath", "homePath", "shadowHomePath", "promptSuggestions", "launchArgs"],
   },
 );
 export type CodexSettings = typeof CodexSettings.Type;
@@ -769,9 +778,25 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    promptSuggestions: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({
+        title: "Suggest next prompt",
+        description:
+          "After each turn, Claude predicts your next message. Press Tab in an empty composer to use it.",
+        providerSettingsForm: { control: "switch" },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "autoCompactWindow", "idleCompaction", "launchArgs"],
+    order: [
+      "binaryPath",
+      "homePath",
+      "autoCompactWindow",
+      "idleCompaction",
+      "promptSuggestions",
+      "launchArgs",
+    ],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
