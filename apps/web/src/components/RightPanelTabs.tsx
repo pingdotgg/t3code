@@ -280,7 +280,10 @@ export function surfaceShortcutActionForKey<
   if (event.metaKey || event.ctrlKey || event.altKey) return null;
   const key = surfaceShortcutKey(event);
   return (
-    actions.find((action) => action.available && action.shortcut !== "" && action.shortcut.toLowerCase() === key) ?? null
+    actions.find(
+      (action) =>
+        action.available && action.shortcut !== "" && action.shortcut.toLowerCase() === key,
+    ) ?? null
   );
 }
 
