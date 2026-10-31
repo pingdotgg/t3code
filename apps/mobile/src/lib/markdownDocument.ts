@@ -486,7 +486,11 @@ export function markdownWithFileEmbeds(
     if (!/^[ \t>]*$/.test(prefix) || markdown.slice(first, last).includes("||")) return null;
     // A lazy continuation line sits outside the quote, so the embed would fall out of it.
     const lines = markdown.slice(first, last).split("\n").slice(1);
-    if (lines.some((line) => quoteDepth(/^[ \t>]*/.exec(line)![0]) !== quoteDepth(prefix)))
+    const linePrefixes = lines.map((line) => /^[ \t>]*/.exec(line)![0]);
+    if (linePrefixes.some((linePrefix) => quoteDepth(linePrefix) !== quoteDepth(prefix)))
+      return null;
+    // After a paragraph break, a line indented this far would become a code block.
+    if (linePrefixes.some((linePrefix) => /(?:^|>) ?(?: {4}| {0,3}\t)/.test(linePrefix)))
       return null;
     if (
       !staysParagraphs(markdown.slice(first, start)) ||

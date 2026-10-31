@@ -322,6 +322,10 @@ describe("file embeds in native thread and file Markdown", () => {
       ["a spoiler", `||see ${video}||`, `||see ${link}||`],
       ["text that would open a list", `${video} - demo`, `${link} - demo`],
       ["a lazy block quote line", `> text\n${video}`, `> text\n${link}`],
+      ["a line indented like code", `text\n    ${video}`, `text\n    ${link}`],
+      ["a quote line indented like code", `> text\n>     ${video}`, `> text\n>     ${link}`],
+      ["a tab-indented line", `text\n\t${video}`, `text\n\t${link}`],
+      ["text before a code-indented line", `${video}\n    tail`, `${link}\n    tail`],
       [
         "text that a split would turn into a setext heading",
         `intro\n--- ${video}`,
