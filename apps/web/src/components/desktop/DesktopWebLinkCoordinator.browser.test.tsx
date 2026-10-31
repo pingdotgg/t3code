@@ -16,6 +16,8 @@ const state = vi.hoisted(() => ({
   confirm: vi.fn(async (_message: string) => true),
   connectPairing: vi.fn(async (_input: { pairingUrl: string }) => ({ _tag: "Success" })),
   localEnvironmentDisabled: false,
+  catalogReady: true,
+  environmentIds: ["local"] as string[],
 }));
 
 // One connected primary environment that can read pull requests. Its project list and
@@ -31,6 +33,10 @@ vi.mock(import("@tanstack/react-router"), async (original) => ({
 vi.mock(import("../../state/environments"), async (original) => ({
   ...(await original()),
   usePrimaryEnvironmentId: () => "local" as EnvironmentId,
+  useEnvironments: (() => ({
+    isReady: state.catalogReady,
+    environments: state.environmentIds.map((environmentId) => ({ environmentId })),
+  })) as never,
   usePrimaryEnvironment: (() =>
     state.localEnvironmentDisabled
       ? null
@@ -147,6 +153,8 @@ function setup() {
   vi.clearAllMocks();
   state.confirm.mockResolvedValue(true);
   state.localEnvironmentDisabled = false;
+  state.catalogReady = true;
+  state.environmentIds = ["local"];
   state.projects = [];
   state.routeParams = {};
   state.preview
@@ -175,14 +183,21 @@ async function mount(...urls: string[]) {
       },
     }),
   );
-  stack.use(
+  const screen = stack.use(
     await render(
       <AppAtomRegistryProvider>
         <DesktopWebLinkCoordinator />
       </AppAtomRegistryProvider>,
     ),
   );
-  return stack.move();
+  return Object.assign(stack.move(), {
+    rerender: () =>
+      screen.rerender(
+        <AppAtomRegistryProvider>
+          <DesktopWebLinkCoordinator />
+        </AppAtomRegistryProvider>,
+      ),
+  });
 }
 
 it("holds a launch PR link until project discovery settles, then opens the PR view", async () => {
@@ -335,3 +350,28 @@ it("does not hold a PR link for project discovery that never settles with Local 
   await using _coordinator = await mount(pullRequestUrl);
   await vi.waitFor(() => expect(state.openScratchProject).toHaveBeenCalledOnce());
 });
+
+it.each([false, true])(
+  "keeps a saved remote startup thread link queued until its catalog loads (local disabled: %s)",
+  async (localEnvironmentDisabled) => {
+    setup();
+    state.localEnvironmentDisabled = localEnvironmentDisabled;
+    state.catalogReady = false;
+    state.environmentIds = [];
+    await using coordinator = await mount("t3code://threads/remote/thread");
+    expect(state.navigate).not.toHaveBeenCalled();
+    expect(state.openScratchProject).not.toHaveBeenCalled();
+    expect(state.openLink).not.toHaveBeenCalled();
+
+    const navigated = new Promise<void>((resolve) => {
+      state.navigate.mockImplementationOnce(async () => resolve());
+    });
+    state.environmentIds = ["remote"];
+    state.catalogReady = true;
+    await coordinator.rerender();
+    await navigated;
+    expect(state.navigate).toHaveBeenCalledExactlyOnceWith({ href: "/remote/thread" });
+    expect(state.openScratchProject).not.toHaveBeenCalled();
+    expect(state.openLink).not.toHaveBeenCalled();
+  },
+);

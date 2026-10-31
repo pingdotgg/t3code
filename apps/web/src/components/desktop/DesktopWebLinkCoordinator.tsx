@@ -86,7 +86,7 @@ function threadShowingBrowser(
 export function DesktopWebLinkCoordinator() {
   const router = useRouter();
   const primaryEnvironment = usePrimaryEnvironment();
-  const { environments } = useEnvironments();
+  const { environments, isReady: environmentsReady } = useEnvironments();
   const openPullRequestsInApp = useClientSettings((settings) => settings.pullRequestLinksOpenInApp);
   const openChangeRequest = useOpenChangeRequestLink();
   const { scratchEnvironmentId, openScratchProject } = useScratchProject();
@@ -104,9 +104,11 @@ export function DesktopWebLinkCoordinator() {
   // A sync IPC read; the setting only changes across a relaunch.
   const [localEnvironmentDisabled] = useState(isLocalEnvironmentDisabled);
   // With Local environment disabled there is no primary to wait for, so links run against the
-  // saved remote environments instead of waiting forever.
+  // saved remote environments instead of waiting forever. The catalog must finish loading
+  // before the bridge drains startup links, so saved remotes are not mistaken for unknown ones.
   const ready =
     webLinks !== undefined &&
+    environmentsReady &&
     (localEnvironmentDisabled ||
       (primaryEnvironment?.connection.phase === "connected" &&
         primaryEnvironment.serverConfig !== null));
