@@ -21,6 +21,7 @@ import {
   buildCodexInitializeParams,
   codexAppServerEnvironment,
   codexDefaultReasoningEffortOverride,
+  RATE_LIMITS_PROBE_TIMEOUT_MS,
 } from "../../provider/CodexProvider.ts";
 import {
   codexRateLimitsToUpdate,
@@ -85,6 +86,7 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -4385,28 +4387,56 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(Effect.orDie),
         );
 
+        const applyRateLimitSnapshot = Effect.fnUntraced(function* (
+          update: CodexRateLimitSnapshot,
+        ) {
+          yield* Ref.update(rateLimitSnapshot, (previous) =>
+            mergeCodexRateLimits(previous, update),
+          );
+          const resetAt = codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot));
+          for (const item of (yield* Ref.get(limitedTurnItems)).values()) {
+            if (resetAt === null || item.failure.resetAt != null) continue;
+            const updated = {
+              ...item,
+              updatedAt: yield* DateTime.now,
+              failure: { ...item.failure, resetAt },
+            };
+            yield* Ref.update(limitedTurnItems, (current) =>
+              new Map(current).set(item.providerThreadId!, updated),
+            );
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CODEX_PROVIDER,
+              turnItem: updated,
+            });
+          }
+        });
+
+        // A 429 that kills a run's first request never delivers a codex-family
+        // notification, so a usage-limit failure without a reset time reads
+        // fresh limits straight from the app-server.
+        const backfillRateLimitSnapshot = Effect.fn("CodexAdapterV2.backfillRateLimitSnapshot")(
+          function* (): Effect.fn.Return<void> {
+            const response = yield* client.request("account/rateLimits/read", null).pipe(
+              Effect.timeoutOption(Duration.millis(RATE_LIMITS_PROBE_TIMEOUT_MS)),
+              Effect.map(Option.getOrUndefined),
+              Effect.catch((error) =>
+                Effect.logWarning("Codex rate-limit read failed.", { cause: error }).pipe(
+                  Effect.as(undefined),
+                ),
+              ),
+            );
+            if (response === undefined) return;
+            yield* applyRateLimitSnapshot(
+              response.rateLimitsByLimitId?.codex ?? response.rateLimits,
+            );
+          },
+        );
+
         yield* client.handleServerNotification("account/rateLimits/updated", (payload) =>
           Effect.gen(function* () {
-            const previous = yield* Ref.getAndUpdate(rateLimitSnapshot, (previous) =>
-              mergeCodexRateLimits(previous, payload.rateLimits),
-            );
-            const resetAt = codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot));
-            for (const item of (yield* Ref.get(limitedTurnItems)).values()) {
-              if (resetAt === null || item.failure.resetAt != null) continue;
-              const updated = {
-                ...item,
-                updatedAt: yield* DateTime.now,
-                failure: { ...item.failure, resetAt },
-              };
-              yield* Ref.update(limitedTurnItems, (current) =>
-                new Map(current).set(item.providerThreadId!, updated),
-              );
-              yield* emitProviderEvent({
-                type: "turn_item.updated",
-                driver: CODEX_PROVIDER,
-                turnItem: updated,
-              });
-            }
+            const previous = yield* Ref.get(rateLimitSnapshot);
+            yield* applyRateLimitSnapshot(payload.rateLimits);
             const update = codexRateLimitsToUpdate(payload.rateLimits, previous);
             if (update && adapterOptions.onUsageLimits) {
               const checkedAt = DateTime.formatIso(yield* DateTime.now);
@@ -5787,6 +5817,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             yield* Ref.update(limitedTurnItems, (items) =>
               new Map(items).set(context.providerThread.id, item),
             );
+            // Forked because the read's own response arrives on the protocol
+            // reader fiber this terminal handler runs on.
+            if (current.failure.resetAt == null) {
+              yield* backfillRateLimitSnapshot().pipe(Effect.forkIn(scope));
+            }
           }
         });
 

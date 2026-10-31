@@ -5394,6 +5394,131 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  // regression: #27773 a 429 on a run's first request still reports the reset time
+  it.effect(
+    "recovers resetAt from a fresh rate-limits read when the 429 never primed the snapshot",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = "native-limit-cold-429";
+          const nativeTurnId = "turn-limit-cold-429";
+          const message = "Provider stopped this request.";
+          const resetAt = "2033-05-19T07:20:00.000Z";
+          const transcript = makeCodexReplayTranscript({
+            scenario: "codex-limit-cold-429",
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
+              {
+                type: "emit_inbound",
+                label: "error",
+                frame: {
+                  method: "error",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    willRetry: false,
+                    error: { message, codexErrorInfo: "usageLimitExceeded" },
+                  },
+                },
+              },
+              // The 429's own notification is an empty non-codex snapshot the adapter must ignore.
+              {
+                type: "emit_inbound",
+                label: "account/rateLimits/updated",
+                frame: {
+                  method: "account/rateLimits/updated",
+                  params: {
+                    rateLimits: { limitId: "premium", primary: null, secondary: null },
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "turn/completed",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: {
+                      ...makeCodexReplayTurn({ id: nativeTurnId, status: "failed" }),
+                      error: { message, codexErrorInfo: "usageLimitExceeded" },
+                    },
+                  },
+                },
+              },
+              {
+                type: "expect_outbound",
+                label: "account/rateLimits/read",
+                frame: { id: 4, method: "account/rateLimits/read", params: null },
+              },
+              {
+                type: "emit_inbound",
+                label: "account/rateLimits/read",
+                frame: {
+                  id: 4,
+                  result: {
+                    rateLimits: { limitId: "premium", primary: null, secondary: null },
+                    rateLimitsByLimitId: {
+                      codex: {
+                        limitId: "codex",
+                        primary: {
+                          usedPercent: 100,
+                          resetsAt: 2000100000,
+                          windowDurationMins: 300,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          });
+          const resetReceipt = yield* Deferred.make<void>();
+          const readRequests: Array<string> = [];
+          const harness = yield* makeCodexReplayHarness(
+            transcript,
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "error" &&
+              event.turnItem.failure.resetAt === resetAt
+                ? Deferred.succeed(resetReceipt, undefined)
+                : Effect.void,
+            (method) =>
+              Effect.sync(() => {
+                readRequests.push(method);
+              }),
+          );
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              text: "Continue.",
+              attemptId: RunAttemptId.make("attempt-limit-cold-429"),
+            }),
+          );
+          yield* harness.firstTerminal;
+          const terminal = harness.terminalEvents()[0];
+          assert.equal(terminal?.status, "failed");
+          if (terminal?.status !== "failed") return;
+          assert.equal(terminal.failure.class, "usage_limit");
+          yield* Deferred.await(resetReceipt);
+          assert.include(readRequests, "account/rateLimits/read");
+          const item = harness.events.find(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "error" &&
+              event.turnItem.failure.resetAt === resetAt,
+          );
+          assert.isDefined(item);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
   const FAILED_SCENARIO = "codex-failed-mid-command";
   const FAILED_NATIVE_THREAD = "native-codex-failed-thread";
   const FAILED_NATIVE_TURN = "native-codex-failed-turn";
