@@ -1,6 +1,6 @@
 import { THINKING_PREVIEW_PLUGINS, THOUGHT_PREVIEW_PLUGINS } from "./TimelineWorkEntryRow.logic";
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
-import { MESSAGE_HEADING_LEVEL, TimelineRowTimestamp } from "./TimelineRowParts";
+import { MESSAGE_HEADING_LEVEL } from "./TimelineRowParts";
 import {
   TimelineRowActivityCtx,
   TimelineRowCtx,
@@ -15,7 +15,6 @@ import {
 import {
   buildToolCallExpandedBody,
   workEntryIconName,
-  workEntryRawCommand,
   workToneIcon,
 } from "./TimelineWorkEntryRow.logic";
 import { WorkLogDetails, WorkLogRow } from "./WorkLog";
@@ -142,6 +141,7 @@ type WorkEntryRowProps = {
   workEntry: TimelineWorkEntry;
   workspaceRoot: string | undefined;
   displayLabel?: string | undefined;
+  expandable?: boolean;
   onToggleEntry?: (() => void) | undefined;
   /** A failed test run reads in the error tone, keeping its own tool icon. */
   severeFailure?: boolean | undefined;
@@ -170,7 +170,13 @@ export const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEn
 });
 
 function WorkEntryLogRow(props: WorkEntryRowProps) {
-  const { workEntry, workspaceRoot, displayLabel, severeFailure = false } = props;
+  const {
+    workEntry,
+    workspaceRoot,
+    displayLabel,
+    expandable = true,
+    severeFailure = false,
+  } = props;
   const ctx = use(TimelineRowCtx);
   const { threadRef, onImageExpand, timestampFormat } = ctx;
   const { retryableWorkspacePreparationRunIds, onRetryWorkspacePreparation } = ctx;
@@ -236,13 +242,6 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           >
             {label}
           </span>
-        }
-        trailing={
-          <TimelineRowTimestamp
-            createdAt={workEntry.createdAt}
-            timestampFormat={timestampFormat}
-            alwaysVisible
-          />
         }
       >
         {!warning ? (
@@ -320,27 +319,15 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           workspaceRoot,
         })
       : null;
-  const canExpand =
-    previewText.trim().length > 0 ||
-    (workEntry.itemType === "dynamic_tool" && workEntry.toolData !== undefined) ||
-    Boolean(
-      workEntryRawCommand(workEntry) ||
-      workEntry.command?.trim() ||
-      workEntry.detail?.trim() ||
-      workEntry.changedFiles?.length ||
-      viewedImage,
-    );
   const inspectedItem =
     plainOutput === undefined &&
     workEntry.projectedItem &&
     v2ItemInspectorHasContent(workEntry.projectedItem.item)
       ? workEntry.projectedItem
       : undefined;
-  // A projected item the inspector can't show only expands to its plain body, if it has one.
-  const bodyOnlyProjectedItem =
-    plainOutput === undefined && !inspectedItem && workEntry.projectedItem !== undefined;
+  // Check the body before offering a disclosure, including for non-projected entries.
   const expandedBody =
-    (expanded || bodyOnlyProjectedItem) && !isReasoning
+    (expanded || !inspectedItem) && !isReasoning
       ? plainOutput !== undefined
         ? plainOutput
         : buildToolCallExpandedBody(
@@ -355,11 +342,15 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     workEntry.projectedItem !== undefined &&
     turnItemNeedsDetailFetch(workEntry.projectedItem.item);
   const canExpandProjectedItem =
-    plainOutput !== undefined
-      ? Boolean(plainOutput || viewedImage || workEntry.questionAnswer || plainOutputFetches)
-      : bodyOnlyProjectedItem && !isReasoning
-        ? Boolean(expandedBody || viewedImage || workEntry.questionAnswer)
-        : canExpand || inspectedItem !== undefined;
+    expandable &&
+    Boolean(
+      expandedBody ||
+      inspectedItem ||
+      viewedImage ||
+      workEntry.questionAnswer ||
+      plainOutputFetches ||
+      (isReasoning && workEntry.detail?.trim()),
+    );
   const iconWrapperClass = cn(
     "flex size-3.5 items-center justify-center",
     showWarningIndicator
@@ -514,21 +505,15 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           !toolIconAcceptsTint(entryToolIcon) ? (
             <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
           ) : null}
-          <TimelineRowTimestamp createdAt={workEntry.createdAt} timestampFormat={timestampFormat} />
-          <span
-            className={cn(
-              "flex size-4 shrink-0 items-center justify-center",
-              !canExpandProjectedItem && "invisible",
-            )}
-            aria-hidden
-          >
+          {canExpandProjectedItem ? (
             <ChevronRightIcon
+              aria-hidden
               className={cn(
                 "size-3 shrink-0 text-dim-foreground transition-transform duration-200",
                 expanded && "rotate-90",
               )}
             />
-          </span>
+          ) : null}
         </>
       }
     >
