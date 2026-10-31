@@ -1,3 +1,6 @@
+import * as NodeEvents from "node:events";
+import * as NodeReadline from "node:readline";
+
 import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -75,19 +78,152 @@ describe("ElectronApp", () => {
     }).pipe(Effect.provide(ElectronApp.layer)),
   );
 
-  it.effect("relaunches the AppImage file rather than its temporary mount", () =>
+  it.effect("uses an AppImage only when its mount contains the current executable", () =>
     Effect.gen(function* () {
       const electronApp = yield* ElectronApp.ElectronApp;
-      yield* electronApp.relaunch({ execPath: process.execPath, args: ["--x"] }).pipe(
-        Effect.provideService(HostProcess.Platform, "linux"),
-        Effect.provideService(HostProcess.Environment, {
-          APPIMAGE: "/home/me/Apps/T3-Code.AppImage",
-        }),
-      );
-
-      const [, args] = spawnMock.mock.calls[0] as unknown as [string, ReadonlyArray<string>];
-      assert.deepStrictEqual(args.slice(4), ["/home/me/Apps/T3-Code.AppImage", "--x"]);
+      const currentExecPath = "/tmp/t3-mount/t3code";
+      for (const [execPath, env, expected] of [
+        [currentExecPath, {}, currentExecPath],
+        [currentExecPath, { APPIMAGE: "/Apps/Other.AppImage" }, currentExecPath],
+        [currentExecPath, { APPDIR: "/tmp/t3-mount" }, currentExecPath],
+        [
+          currentExecPath,
+          { APPIMAGE: "/Apps/Other.AppImage", APPDIR: "/unrelated/mount" },
+          currentExecPath,
+        ],
+        [
+          currentExecPath,
+          { APPIMAGE: "/Apps/T3.AppImage", APPDIR: "/tmp/t3-mount/" },
+          "/Apps/T3.AppImage",
+        ],
+        [currentExecPath, { APPIMAGE: "/Apps/Other.AppImage", APPDIR: "/tmp/t3" }, currentExecPath],
+        [
+          currentExecPath,
+          { APPIMAGE: "/Apps/Other.AppImage", APPDIR: "/tmp/t3-mount/../other" },
+          currentExecPath,
+        ],
+        [
+          currentExecPath,
+          { APPIMAGE: "/Apps/Other.AppImage", APPDIR: "tmp/t3-mount" },
+          currentExecPath,
+        ],
+        [
+          "/tmp/t3-mount/custom",
+          { APPIMAGE: "/Apps/T3.AppImage", APPDIR: "/tmp/t3-mount" },
+          "/tmp/t3-mount/custom",
+        ],
+      ] as const) {
+        spawnMock.mockClear();
+        yield* electronApp
+          .relaunch({ execPath, args: ["--x"] })
+          .pipe(
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(HostProcess.Environment, env),
+            Effect.provideService(HostProcess.ExecutablePath, currentExecPath),
+          );
+        const [, args] = spawnMock.mock.calls[0] as unknown as [string, ReadonlyArray<string>];
+        assert.deepStrictEqual(args.slice(4), [expected, "--x"]);
+      }
     }).pipe(Effect.provide(ElectronApp.layer)),
+  );
+
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- These real subprocess fixtures require the host Linux /proc filesystem.
+  it.runIf(process.platform === "linux")(
+    "waits while the old process is live, then executes after exit",
+    async () => {
+      const { spawn } =
+        await vi.importActual<typeof import("node:child_process")>("node:child_process");
+      const old = spawn(process.execPath, ["-e", 'process.stdin.resume(); console.log("ready")']);
+      const oldExit = NodeEvents.EventEmitter.once(old, "exit");
+      const oldLines = NodeReadline.createInterface({ input: old.stdout })[Symbol.asyncIterator]();
+      let relaunch: import("node:child_process").ChildProcessWithoutNullStreams | undefined;
+      try {
+        assert.strictEqual((await oldLines.next()).value, "ready");
+        const launch = ElectronApp.linuxRelaunchCommand(old.pid!, "/bin/sh", [
+          "-c",
+          'printf "%s\\n" "$@"',
+          "relaunch",
+          "it's",
+          "with spaces",
+        ]);
+        // Gate the real loop at sleep so the assertion needs no timing assumptions.
+        const args = [...launch.args];
+        args[1] = 'sleep() { printf "waiting\\n"; read -r release; }; ' + args[1];
+        relaunch = spawn(launch.command, args);
+        const relaunchExit = NodeEvents.EventEmitter.once(relaunch, "exit");
+        const lines = NodeReadline.createInterface({ input: relaunch.stdout })[
+          Symbol.asyncIterator
+        ]();
+        assert.strictEqual((await lines.next()).value, "waiting");
+        relaunch.stdin.write("continue\n");
+        assert.strictEqual((await lines.next()).value, "waiting");
+        old.stdin.end();
+        await oldExit;
+        relaunch.stdin.end("continue\n");
+        assert.strictEqual((await lines.next()).value, "it's");
+        assert.strictEqual((await lines.next()).value, "with spaces");
+        assert.deepStrictEqual(await relaunchExit, [0, null]);
+      } finally {
+        old.stdin.end();
+        old.kill();
+        relaunch?.stdin.end();
+        relaunch?.kill();
+      }
+    },
+  );
+
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- These real subprocess fixtures require the host Linux /proc filesystem.
+  it.runIf(process.platform === "linux")(
+    "executes while the old PID is still an unreaped zombie",
+    async () => {
+      const { spawn } =
+        await vi.importActual<typeof import("node:child_process")>("node:child_process");
+      // Keep the child unreaped until stdin closes; waitid confirms it has exited.
+      const owner = spawn("python3", [
+        "-c",
+        `
+import os, sys
+pid = os.fork()
+if pid == 0:
+    os._exit(0)
+try:
+    os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT)
+    print(pid, flush=True)
+    sys.stdin.read()
+finally:
+    os.waitpid(pid, 0)
+`,
+      ]);
+      const ownerExit = NodeEvents.EventEmitter.once(owner, "exit");
+      const ownerLines = NodeReadline.createInterface({ input: owner.stdout })[
+        Symbol.asyncIterator
+      ]();
+      let relaunch: import("node:child_process").ChildProcessWithoutNullStreams | undefined;
+      try {
+        const pid = Number((await ownerLines.next()).value);
+        assert.ok(pid > 0);
+        assert.doesNotThrow(() => process.kill(pid, 0));
+        const launch = ElectronApp.linuxRelaunchCommand(pid, "/bin/sh", [
+          "-c",
+          'printf "executed\\n"',
+        ]);
+        const args = [...launch.args];
+        // A mistaken live-process wait fails immediately rather than hanging the test.
+        args[1] = 'sleep() { printf "waiting\\n"; exit 1; }; ' + args[1];
+        relaunch = spawn(launch.command, args);
+        const relaunchExit = NodeEvents.EventEmitter.once(relaunch, "exit");
+        const lines = NodeReadline.createInterface({ input: relaunch.stdout })[
+          Symbol.asyncIterator
+        ]();
+        assert.strictEqual((await lines.next()).value, "executed");
+        assert.deepStrictEqual(await relaunchExit, [0, null]);
+        assert.doesNotThrow(() => process.kill(pid, 0));
+      } finally {
+        relaunch?.kill();
+        owner.stdin.end();
+        await ownerExit;
+      }
+    },
   );
 
   it.effect("keeps Electron's relauncher on other platforms", () =>

@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // The Linux relaunch must outlive this process; scoped ChildProcess kills children on exit.
 import * as NodeChildProcess from "node:child_process";
+import * as NodePath from "node:path";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
@@ -57,7 +58,7 @@ export function linuxRelaunchCommand(
     command: "/bin/sh",
     args: [
       "-c",
-      'while kill -0 "$1" 2>/dev/null; do sleep 0.1; done; shift; exec "$@"',
+      'while kill -0 "$1" 2>/dev/null && ! grep -q "^State:[[:space:]]*Z" "/proc/$1/status" 2>/dev/null; do sleep 0.1; done; shift; exec "$@"',
       "t3code-relaunch",
       String(pid),
       execPath,
@@ -204,12 +205,23 @@ export const make = ElectronApp.of({
       yield* Effect.sync(() => Electron.app.relaunch(options));
       return;
     }
-    const execPath = options.execPath ?? process.execPath;
+    const currentExecPath = yield* HostProcess.ExecutablePath;
+    const execPath = options.execPath ?? currentExecPath;
     // The AppImage mount goes away with this process, so start the AppImage itself.
-    const appImage = (yield* HostProcess.Environment).APPIMAGE?.trim();
+    const env = yield* HostProcess.Environment;
+    const appImage = env.APPIMAGE?.trim();
+    const appDir = env.APPDIR?.trim();
+    const relativeExecPath = appDir ? NodePath.posix.relative(appDir, execPath) : "";
+    const isAppImageExecutable =
+      appDir &&
+      NodePath.posix.isAbsolute(appDir) &&
+      NodePath.posix.isAbsolute(execPath) &&
+      relativeExecPath !== "" &&
+      relativeExecPath !== ".." &&
+      !relativeExecPath.startsWith("../");
     const launch = linuxRelaunchCommand(
       process.pid,
-      appImage && execPath === process.execPath ? appImage : execPath,
+      appImage && execPath === currentExecPath && isAppImageExecutable ? appImage : execPath,
       options.args ?? process.argv.slice(1),
     );
     yield* Effect.sync(() => {
