@@ -160,7 +160,12 @@ export interface DeviceHostReady {
   readonly run: (
     command: string,
     args: ReadonlyArray<string>,
-    options?: { readonly timeoutMs?: number; readonly stdin?: string },
+    options?: {
+      readonly timeoutMs?: number;
+      readonly stdin?: string;
+      /** Local output cap; SSH output is not capped. */
+      readonly maxOutputBytes?: number;
+    },
   ) => Effect.Effect<{ readonly stdout: string; readonly stderr: string; readonly code: number }>;
   readonly helpers: {
     readonly serveSimAxSettings: string | null;
