@@ -1,12 +1,15 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   type ModelSelection,
+  type ServerProvider,
+  type UnifiedSettings,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
 
+import { mergeEnvironmentSettings } from "../../hooks/useSettings";
 import {
   getCustomModelOptionsByInstance,
   resolveEffectiveDefaultModelSelection,
@@ -47,6 +50,14 @@ function isWorktreeSubmodules(value: string | null): value is WorktreeSubmodules
   return value !== null && (WORKTREE_SUBMODULES_OPTIONS as readonly string[]).includes(value);
 }
 
+function resolveDisplayedDefaultModel(
+  settings: UnifiedSettings,
+  providers: ReadonlyArray<ServerProvider>,
+): ModelSelection | null {
+  const stored = resolveDefaultProviderModelSelection(providers, settings.defaultModelSelection);
+  return stored ? resolveEffectiveDefaultModelSelection(settings, providers, stored) : null;
+}
+
 export function ProjectDefaultsSettings({ category }: { category: ProjectSettingsCategory }) {
   const { scope, target, targets, connectedEnvironments } = useSettingsScope();
   const settings = useScopedSettings();
@@ -61,13 +72,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     (representative?.serverConfig
       ? providersByEnvironment.get(representative.environmentId)
       : undefined) ?? EMPTY_SERVER_PROVIDERS;
-  const storedSelection = resolveDefaultProviderModelSelection(
-    providers,
-    settings.defaultModelSelection,
-  );
-  const selection = storedSelection
-    ? resolveEffectiveDefaultModelSelection(settings, providers, storedSelection)
-    : null;
+  const selection = resolveDisplayedDefaultModel(settings, providers);
   const entries = providerInstanceEntriesFor(providers, settings, target?.projectId ?? null);
   const modelOptions = getCustomModelOptionsByInstance(
     settings,
@@ -81,9 +86,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     const candidateProviders = providersByEnvironment.get(candidate.environmentId);
     return candidateProviders?.length
       ? [
-          resolveDefaultProviderModelSelection(
+          resolveDisplayedDefaultModel(
+            mergeEnvironmentSettings(candidate.settings, settings),
             candidateProviders,
-            candidate.settings.defaultModelSelection,
           ),
         ]
       : [];
