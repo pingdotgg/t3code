@@ -426,7 +426,6 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   };
   const handleStopBackgroundWorkStable = useStableCallback(handleStopBackgroundWork);
   const openRelatedThreadGenerationRef = useRef(0);
-  // A bare id is in this thread's environment; a task delegated to a linked one passes its ref.
   const onOpenRelatedThread = async (target: ThreadId | ScopedThreadRef) => {
     const generation = ++openRelatedThreadGenerationRef.current;
     const threadRef = typeof target === "string" ? scopeThreadRef(environmentId, target) : target;

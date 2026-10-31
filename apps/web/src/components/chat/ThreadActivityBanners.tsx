@@ -35,7 +35,6 @@ import type { ThreadNowItem } from "./ThreadNow";
 export function childInputNowItem(input: {
   readonly childThreadInputs: ReadonlyArray<EnvironmentThreadShell>;
   readonly parentAwaitingUser: boolean;
-  /** Children can live in a linked environment, so they open by full ref. */
   readonly onOpenThread: (ref: ScopedThreadRef) => void;
 }): ThreadNowItem | null {
   const { childThreadInputs } = input;
