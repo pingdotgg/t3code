@@ -39,11 +39,11 @@ describe("HistorySwipeNavigation", () => {
     ["swiping left over content without overflow", "none", 0, [[-130]], "back"],
     ["swiping right over content without overflow", "none", 0, [[130]], "forward"],
   ])("%s", async (_name, scroller, scrollLeft, steps, navigates) => {
+    await using screen = await render(<HistorySwipeNavigation />);
     using back = vi.spyOn(window.history, "back").mockImplementation(() => undefined);
     using forward = vi.spyOn(window.history, "forward").mockImplementation(() => undefined);
     using _canGoBack = vi.spyOn(window.navigation, "canGoBack", "get").mockReturnValue(true);
     using _canGoForward = vi.spyOn(window.navigation, "canGoForward", "get").mockReturnValue(true);
-    await using screen = await render(<HistorySwipeNavigation />);
     const { viewport, content } = mountPanel(screen.container, scroller, scrollLeft);
 
     for (const [deltaX, scrollLeftAfter] of [...steps, [0] as const]) {
