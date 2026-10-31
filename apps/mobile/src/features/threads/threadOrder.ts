@@ -285,6 +285,157 @@ export function threadDropLifecycle(
   };
 }
 
+export type ThreadMovePlan =
+  | { readonly section: "settled" }
+  | {
+      readonly section: "pinned" | "active";
+      readonly assignments: readonly { readonly id: string; readonly orderKey: string }[];
+    };
+
+/** Mirror the server's projection of a planned drop, so the arrange sheet can
+ * stack moves locally and send only the result. */
+export function applyThreadMove<T extends EnvironmentThreadShell>(
+  threads: readonly T[],
+  movedId: string,
+  plan: ThreadMovePlan,
+  now: string,
+): T[] {
+  const keys = new Map(
+    plan.section === "settled" ? [] : plan.assignments.map(({ id, orderKey }) => [id, orderKey]),
+  );
+  return threads.map((thread) => {
+    const id = rowId(thread);
+    if (id !== movedId && !keys.has(id)) return thread;
+    let next: T = thread;
+    if (id === movedId) {
+      if (plan.section === "settled")
+        return {
+          ...thread,
+          settledOverride: "settled",
+          settledAt:
+            thread.settledOverride === "settled" &&
+            thread.settledAt != null &&
+            thread.pinnedAt == null
+              ? thread.settledAt
+              : now,
+          unsettledAt: null,
+          pinnedAt: null,
+          pinOrderKey: null,
+          activeOrderKey: null,
+          snoozedUntil: null,
+        };
+      if (plan.section === "pinned")
+        next = {
+          ...next,
+          pinnedAt: thread.pinnedAt ?? now,
+          settledOverride: thread.settledOverride === "settled" ? "active" : thread.settledOverride,
+          settledAt: thread.settledOverride === "settled" ? null : thread.settledAt,
+          snoozedUntil: null,
+        };
+      if (plan.section === "active") {
+        const lifecycle = threadDropLifecycle(thread, "active", now);
+        if (lifecycle.unpin) next = { ...next, pinnedAt: null, pinOrderKey: null };
+        if (lifecycle.unsettle)
+          next = { ...next, settledOverride: "active", settledAt: null, unsettledAt: now };
+        if (lifecycle.unsnooze) next = { ...next, snoozedUntil: null };
+      }
+    }
+    const key = keys.get(id);
+    if (key === undefined) return next;
+    return plan.section === "pinned"
+      ? { ...next, pinOrderKey: key }
+      : { ...next, activeOrderKey: key };
+  });
+}
+
+const ARRANGEMENT_FIELDS = [
+  "pinnedAt",
+  "pinOrderKey",
+  "activeOrderKey",
+  "settledOverride",
+  "settledAt",
+  "unsettledAt",
+  "snoozedUntil",
+] as const;
+
+/** The arrangement fields a draft changed. Fields it never touched stay live,
+ * so a server change made while the sheet is open (an auto-settle, an unpin
+ * from another device) is not reverted on save. */
+export type ThreadArrangementPatch = Partial<
+  Pick<EnvironmentThreadShell, (typeof ARRANGEMENT_FIELDS)[number]>
+>;
+
+/** Fold one move into the drafts, recording only the fields it changed. */
+export function recordThreadMove(
+  drafts: ReadonlyMap<string, ThreadArrangementPatch>,
+  before: readonly EnvironmentThreadShell[],
+  after: readonly EnvironmentThreadShell[],
+): Map<string, ThreadArrangementPatch> {
+  const next = new Map(drafts);
+  after.forEach((shell, index) => {
+    const previous = before[index]!;
+    if (shell === previous) return;
+    const patch: Record<string, unknown> = { ...next.get(rowId(shell)) };
+    for (const field of ARRANGEMENT_FIELDS)
+      if (shell[field] !== previous[field] || field in patch) patch[field] = shell[field];
+    next.set(rowId(shell), patch);
+  });
+  return next;
+}
+
+/** Lay drafted arrangement fields over the live shells, keeping everything
+ * else (title, runtime, untouched lifecycle fields) current. */
+export function withThreadDrafts<T extends EnvironmentThreadShell>(
+  threads: readonly T[],
+  drafts: ReadonlyMap<string, ThreadArrangementPatch>,
+): readonly T[] {
+  if (drafts.size === 0) return threads;
+  return threads.map((thread) => {
+    const patch = drafts.get(rowId(thread));
+    if (patch === undefined) return thread;
+    const draft = { ...thread, ...patch };
+    if (draft.pinnedAt != null && thread.pinnedAt == null)
+      return {
+        ...draft,
+        settledOverride: thread.settledOverride === "settled" ? "active" : draft.settledOverride,
+        settledAt: thread.settledOverride === "settled" ? null : draft.settledAt,
+        snoozedUntil: null,
+      };
+    return draft;
+  });
+}
+
+export type ThreadArrangementCommand =
+  | { readonly type: "settle" | "unpin" | "unsettle" | "unsnooze" }
+  | { readonly type: "pin"; readonly orderKey: string | null }
+  | { readonly type: "reorderPin" | "reorderActive"; readonly orderKey: string };
+
+/** The commands that turn `saved` into `draft`, in the order they must run. */
+export function threadArrangementCommands(
+  saved: EnvironmentThreadShell,
+  draft: EnvironmentThreadShell,
+): ThreadArrangementCommand[] {
+  // Settle clears the pin and both keys; pin clears the parked states.
+  if (draft.pinnedAt != null && saved.pinnedAt == null)
+    return [{ type: "pin", orderKey: draft.pinOrderKey }];
+  if (draft.settledOverride === "settled")
+    return saved.settledOverride === "settled" &&
+      saved.pinnedAt === draft.pinnedAt &&
+      saved.snoozedUntil === draft.snoozedUntil
+      ? []
+      : [{ type: "settle" }];
+  const commands: ThreadArrangementCommand[] = [];
+  if (draft.pinnedAt == null && saved.pinnedAt != null) commands.push({ type: "unpin" });
+  if (saved.settledOverride === "settled") commands.push({ type: "unsettle" });
+  if (draft.snoozedUntil == null && saved.snoozedUntil != null) commands.push({ type: "unsnooze" });
+  if (draft.pinnedAt != null) {
+    if (draft.pinOrderKey != null && draft.pinOrderKey !== saved.pinOrderKey)
+      commands.push({ type: "reorderPin", orderKey: draft.pinOrderKey });
+  } else if (draft.activeOrderKey != null && draft.activeOrderKey !== saved.activeOrderKey)
+    commands.push({ type: "reorderActive", orderKey: draft.activeOrderKey });
+  return commands;
+}
+
 export type ThreadDragSection = "pinned" | "active" | "snoozed" | "settled";
 
 export function threadDragAction(source: ThreadDragSection, destination: ThreadDragSection) {

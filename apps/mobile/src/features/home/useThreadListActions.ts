@@ -1,4 +1,8 @@
-import type { ThreadMoveDestination } from "../threads/threadOrder";
+import type {
+  ThreadArrangementCommand,
+  ThreadArrangementPatch,
+  ThreadMoveDestination,
+} from "../threads/threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { showThreadUndoNotice } from "./thread-undo-notice";
@@ -26,9 +30,13 @@ import {
   threadDropBusyAtom,
 } from "../../state/thread-order";
 import {
+  applyThreadMove,
   createPendingThreadOrder,
   createThreadMovePlanner,
+  recordThreadMove,
+  threadArrangementCommands,
   threadDropLifecycle,
+  withThreadDrafts,
 } from "../threads/threadOrder";
 import { getThreadListV2OrderedSection } from "../threads/threadListV2";
 import { threadCanArchive } from "./threadArchive";
@@ -189,6 +197,69 @@ function confirmThreadDeletion(
   });
 }
 
+/** Validate and plan a move against `shells` (live, or the arrange sheet's
+ * draft). Plan against the complete section so filtering does not change a move. */
+function planThreadMove(
+  shells: readonly EnvironmentThreadShell[],
+  thread: EnvironmentThreadShell,
+  direction: ThreadMoveDestination,
+) {
+  if (!checkThreadOperationPermission(thread, "Could not move thread")) return null;
+  const current = shells.find(
+    (row) => row.id === thread.id && row.environmentId === thread.environmentId,
+  );
+  if (!current || current.archivedAt !== null) return null;
+  thread = current;
+  const section =
+    typeof direction === "object" && direction.section !== undefined
+      ? direction.section
+      : thread.pinnedAt != null
+        ? "pinned"
+        : "active";
+  if (section === "settled") {
+    if (!environmentConfigLoaded(thread.environmentId)) return null;
+    return { thread, section } as const;
+  }
+  const configs = appAtomRegistry.get(environmentServerConfigsAtom);
+  const connectedEnvironmentIds = new Set(appAtomRegistry.get(connectedEnvironmentIdsAtom));
+  if (!connectedEnvironmentIds.has(thread.environmentId)) return null;
+  if (!configs.has(thread.environmentId)) {
+    Dialog.alert(
+      "Could not move thread",
+      "This environment's server does not support reordering these threads. Update the server to arrange them.",
+    );
+    return null;
+  }
+  const ordered = getThreadListV2OrderedSection({
+    threads: shells,
+    section,
+    now: new Date().toISOString(),
+    queuedThreadKeys: appAtomRegistry.get(queuedThreadKeysAtom),
+    settlementEnvironmentIds: new Set(configs.keys()),
+    snoozeEnvironmentIds: new Set(configs.keys()),
+  });
+  const assignments = createThreadMovePlanner({
+    allThreads: shells,
+    ordered,
+    section,
+    reorderableEnvironmentIds: new Set(
+      [...configs.keys()].filter((environmentId) => connectedEnvironmentIds.has(environmentId)),
+    ),
+  })(scopedThreadKey(thread.environmentId, thread.id), direction);
+  if (assignments === null) return null;
+  const crossSection = !ordered.some(
+    (row) => row.id === thread.id && row.environmentId === thread.environmentId,
+  );
+  const shellByKey = new Map(
+    shells.map((shell) => [scopedThreadKey(shell.environmentId, shell.id), shell]),
+  );
+  for (const assignment of assignments) {
+    const target = shellByKey.get(assignment.id);
+    if (target && !checkThreadOperationPermission(target, "Could not move thread")) return null;
+  }
+  return { thread, section, ordered, assignments, crossSection, shellByKey } as const;
+}
+
 export function useThreadListActions(): {
   readonly archiveThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
@@ -205,6 +276,14 @@ export function useThreadListActions(): {
   readonly moveThread: (
     thread: EnvironmentThreadShell,
     direction: ThreadMoveDestination,
+  ) => Promise<boolean>;
+  readonly previewThreadMove: (
+    drafts: ReadonlyMap<string, ThreadArrangementPatch>,
+    thread: EnvironmentThreadShell,
+    direction: ThreadMoveDestination,
+  ) => ReadonlyMap<string, ThreadArrangementPatch> | null;
+  readonly saveThreadArrangement: (
+    drafts: ReadonlyMap<string, ThreadArrangementPatch>,
   ) => Promise<boolean>;
   readonly renameThread: (thread: EnvironmentThreadShell) => void;
   readonly regenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
@@ -562,75 +641,71 @@ export function useThreadListActions(): {
     });
   };
 
-  // Plan against the complete section so filtering does not change a move.
   const reorderPinnedMutation = useAtomCommand(threadEnvironment.reorderPin, {
     reportFailure: false,
   });
   const reorderActiveMutation = useAtomCommand(threadEnvironment.reorderActive, {
     reportFailure: false,
   });
-  const moveThread = async (thread: EnvironmentThreadShell, direction: ThreadMoveDestination) => {
-    if (!checkThreadOperationPermission(thread, "Could not move thread")) return false;
-    if (getPendingThreadOrder() !== null || appAtomRegistry.get(threadDropBusyAtom)) return false;
-    const shells = appAtomRegistry.get(environmentThreadShells.navigationThreadShellsAtom);
-    const current = shells.find(
-      (row) => row.id === thread.id && row.environmentId === thread.environmentId,
-    );
-    if (!current || current.archivedAt !== null) return false;
-    thread = current;
-    const section =
-      typeof direction === "object" && direction.section !== undefined
-        ? direction.section
-        : thread.pinnedAt != null
-          ? "pinned"
-          : "active";
-    if (section === "settled") {
-      if (!environmentConfigLoaded(thread.environmentId)) return false;
-      appAtomRegistry.set(threadDropBusyAtom, true);
-      const settled = await settleThread(thread);
-      appAtomRegistry.set(threadDropBusyAtom, false);
-      return settled;
-    }
-    const configs = appAtomRegistry.get(environmentServerConfigsAtom);
-    const connectedEnvironmentIds = new Set(appAtomRegistry.get(connectedEnvironmentIdsAtom));
-
-    if (!connectedEnvironmentIds.has(thread.environmentId)) return false;
-
-    if (!configs.has(thread.environmentId)) {
+  const reorderThread = async (
+    target: EnvironmentThreadShell,
+    section: "pinned" | "active",
+    orderKey: string,
+  ) => {
+    if (!checkThreadOperationPermission(target, "Could not move thread")) return false;
+    ThreadUndo.invalidate("pin", scopedThreadKey(target.environmentId, target.id));
+    const result = await (section === "pinned" ? reorderPinnedMutation : reorderActiveMutation)({
+      environmentId: target.environmentId,
+      input: { threadId: target.id, orderKey },
+    });
+    if (result._tag === "Failure") {
+      const error = Cause.squash(result.cause);
       Dialog.alert(
         "Could not move thread",
-        "This environment's server does not support reordering these threads. Update the server to arrange them.",
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : "The thread could not be moved.",
       );
       return false;
     }
-    const ordered = getThreadListV2OrderedSection({
-      threads: shells,
-      section,
-      now: new Date().toISOString(),
-      queuedThreadKeys: appAtomRegistry.get(queuedThreadKeysAtom),
-      settlementEnvironmentIds: new Set(configs.keys()),
-      snoozeEnvironmentIds: new Set(configs.keys()),
+    return true;
+  };
+  const pinThreadAt = async (thread: EnvironmentThreadShell, orderKey: string | null) => {
+    if (!checkThreadOperationPermission(thread, "Could not pin thread")) return false;
+    ThreadUndo.invalidate("pin", scopedThreadKey(thread.environmentId, thread.id));
+    ThreadUndo.invalidate("settle", scopedThreadKey(thread.environmentId, thread.id));
+    ThreadUndo.invalidate("snooze", scopedThreadKey(thread.environmentId, thread.id));
+    const result = await pinMutation({
+      environmentId: thread.environmentId,
+      input: { threadId: thread.id, ...(orderKey === null ? {} : { orderKey }) },
     });
-    const assignments = createThreadMovePlanner({
-      allThreads: shells,
-      ordered,
-      section,
-      reorderableEnvironmentIds: new Set(
-        [...configs.keys()].filter((environmentId) => connectedEnvironmentIds.has(environmentId)),
-      ),
-    })(scopedThreadKey(thread.environmentId, thread.id), direction);
-    if (assignments === null) return false;
-    const lifecycle = threadDropLifecycle(thread, section, new Date().toISOString());
-    const crossSection = !ordered.some(
-      (row) => row.id === thread.id && row.environmentId === thread.environmentId,
-    );
-    const shellByKey = new Map(
-      shells.map((shell) => [scopedThreadKey(shell.environmentId, shell.id), shell]),
-    );
-    for (const assignment of assignments) {
-      const target = shellByKey.get(assignment.id);
-      if (target && !checkThreadOperationPermission(target, "Could not move thread")) return false;
+    if (result._tag === "Failure") {
+      const error = Cause.squash(result.cause);
+      Dialog.alert(
+        "Could not pin thread",
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : "The thread could not be pinned.",
+      );
+      return false;
     }
+    return true;
+  };
+  const moveThread = async (thread: EnvironmentThreadShell, direction: ThreadMoveDestination) => {
+    if (getPendingThreadOrder() !== null || appAtomRegistry.get(threadDropBusyAtom)) return false;
+    const plan = planThreadMove(
+      appAtomRegistry.get(environmentThreadShells.navigationThreadShellsAtom),
+      thread,
+      direction,
+    );
+    if (plan === null) return false;
+    thread = plan.thread;
+    if (plan.section === "settled") {
+      appAtomRegistry.set(threadDropBusyAtom, true);
+      return settleThread(thread).finally(() => appAtomRegistry.set(threadDropBusyAtom, false));
+    }
+    const { section, assignments, crossSection, shellByKey } = plan;
+    const lifecycle = threadDropLifecycle(thread, section, new Date().toISOString());
     selectionHaptic();
     appAtomRegistry.set(threadDropBusyAtom, true);
     const pending = crossSection
@@ -638,31 +713,20 @@ export function useThreadListActions(): {
       : beginPendingThreadOrder(
           createPendingThreadOrder({
             section,
-            ordered,
+            ordered: plan.ordered,
             movedId: scopedThreadKey(thread.environmentId, thread.id),
             direction,
             assignments,
           }),
         );
-    const reorder = section === "pinned" ? reorderPinnedMutation : reorderActiveMutation;
-    const moved = await (async () => {
+    let succeeded = false;
+    return (async () => {
       if (crossSection) {
         if (section === "pinned") {
           const orderKey = assignments.find(
             ({ id }) => id === scopedThreadKey(thread.environmentId, thread.id),
           )?.orderKey;
-          // Same as pinThread: older Unpinned, Settled, or Snoozed undos would fight this pin.
-          ThreadUndo.invalidate("pin", scopedThreadKey(thread.environmentId, thread.id));
-          ThreadUndo.invalidate("settle", scopedThreadKey(thread.environmentId, thread.id));
-          ThreadUndo.invalidate("snooze", scopedThreadKey(thread.environmentId, thread.id));
-          const result = await pinMutation({
-            environmentId: thread.environmentId,
-            input: { threadId: thread.id, ...(orderKey === undefined ? {} : { orderKey }) },
-          });
-          if (result._tag === "Failure") {
-            Dialog.alert("Could not pin thread", String(Cause.squash(result.cause)));
-            return false;
-          }
+          if (!(await pinThreadAt(thread, orderKey ?? null))) return false;
         } else {
           if (lifecycle.unpin && !(await unpinThread(thread))) return false;
           if (lifecycle.unsettle && !(await unsettleThread(thread))) return false;
@@ -680,29 +744,90 @@ export function useThreadListActions(): {
         if (pending !== null && !pending.isPending()) return false;
         const target = shellByKey.get(assignment.id);
         if (target === undefined) continue;
-        if (!checkThreadOperationPermission(target, "Could not move thread")) return false;
-        ThreadUndo.invalidate("pin", scopedThreadKey(target.environmentId, target.id));
-        const result = await reorder({
-          environmentId: target.environmentId,
-          input: { threadId: target.id, orderKey: assignment.orderKey },
-        });
-        if (result._tag === "Failure") {
-          const error = Cause.squash(result.cause);
-          Dialog.alert(
-            "Could not move thread",
-            error instanceof Error && error.message.trim().length > 0
-              ? error.message
-              : "The thread could not be moved.",
-          );
-          return false;
-        }
+        // Keep confirmed keys when a later environment rejects its write.
+        if (!(await reorderThread(target, section, assignment.orderKey))) return false;
       }
+      succeeded = true;
       pending?.complete();
       return true;
-    })();
-    if (!moved) pending?.cancel();
-    appAtomRegistry.set(threadDropBusyAtom, false);
-    return moved;
+    })().finally(() => {
+      if (!succeeded) pending?.cancel();
+      appAtomRegistry.set(threadDropBusyAtom, false);
+    });
+  };
+  /** The arrange sheet's drafts after one more move, or null when it cannot run. */
+  const previewThreadMove = (
+    drafts: ReadonlyMap<string, ThreadArrangementPatch>,
+    thread: EnvironmentThreadShell,
+    direction: ThreadMoveDestination,
+  ) => {
+    const savedShells = appAtomRegistry.get(environmentThreadShells.navigationThreadShellsAtom);
+    const shells = withThreadDrafts(savedShells, drafts);
+    const plan = planThreadMove(shells, thread, direction);
+    if (plan === null) return null;
+    selectionHaptic();
+    return recordThreadMove(
+      drafts,
+      savedShells,
+      applyThreadMove(
+        shells,
+        scopedThreadKey(plan.thread.environmentId, plan.thread.id),
+        plan,
+        new Date().toISOString(),
+      ),
+    );
+  };
+  const runArrangementCommand = (
+    thread: EnvironmentThreadShell,
+    command: ThreadArrangementCommand,
+  ) => {
+    switch (command.type) {
+      case "settle":
+        return settleThread(thread);
+      case "pin":
+        return pinThreadAt(thread, command.orderKey);
+      case "unpin":
+        return unpinThread(thread);
+      case "unsettle":
+        return unsettleThread(thread);
+      case "unsnooze":
+        return unsnoozeThread(thread);
+      case "reorderPin":
+        return reorderThread(thread, "pinned", command.orderKey);
+      case "reorderActive":
+        return reorderThread(thread, "active", command.orderKey);
+    }
+  };
+  /** Send the arrange sheet's drafts. Threads save independently; resolves
+   * false if any write failed, leaving that thread at its last saved state. */
+  const saveThreadArrangement = async (drafts: ReadonlyMap<string, ThreadArrangementPatch>) => {
+    if (drafts.size === 0) return true;
+    if (getPendingThreadOrder() !== null || appAtomRegistry.get(threadDropBusyAtom)) return false;
+    appAtomRegistry.set(threadDropBusyAtom, true);
+    return (async () => {
+      const shells = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
+      const available = new Set(
+        shells.map((thread) => scopedThreadKey(thread.environmentId, thread.id)),
+      );
+      if ([...drafts.keys()].some((key) => !available.has(key))) {
+        Dialog.alert(
+          "Could not save arrangement",
+          "Some threads are no longer available. Reconnect their environment and retry, or close to discard your changes.",
+        );
+        return false;
+      }
+      const results = await Promise.all(
+        shells.map(async (thread) => {
+          const patch = drafts.get(scopedThreadKey(thread.environmentId, thread.id));
+          if (patch === undefined || thread.archivedAt !== null) return true;
+          for (const command of threadArrangementCommands(thread, { ...thread, ...patch })) {
+            if (!(await runArrangementCommand(thread, command))) return false;
+          }
+          return true;
+        }),
+      );
+      return results.every(Boolean);
+    })().finally(() => appAtomRegistry.set(threadDropBusyAtom, false));
   };
 
   const confirmDeleteThread = (thread: EnvironmentThreadShell) =>
@@ -719,6 +844,8 @@ export function useThreadListActions(): {
     unpinThread,
     setThreadAutoSettle,
     moveThread,
+    previewThreadMove,
+    saveThreadArrangement,
     renameThread,
     regenerateThreadTitle,
   };
