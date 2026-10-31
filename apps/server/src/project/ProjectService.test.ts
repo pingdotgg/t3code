@@ -738,3 +738,97 @@ it.effect("rejects an update that waited on the lock while its project was delet
     );
   }).pipe(Effect.provide(layerProjectServiceDependencies)),
 );
+
+it.effect("serializes unowned-folder cleanup with a project registration already committing", () =>
+  Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const firstReachedCommit = yield* Deferred.make<void>();
+    const releaseFirst = yield* Deferred.make<void>();
+    const gatedSink = EventSink.EventSinkV2.of({
+      ...eventSink,
+      commitProjectCommand: (input) =>
+        input.projectId === "project:race:first"
+          ? Deferred.succeed(firstReachedCommit, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseFirst)),
+              Effect.andThen(eventSink.commitProjectCommand(input)),
+            )
+          : eventSink.commitProjectCommand(input),
+    });
+    const service = yield* ProjectService.make.pipe(
+      Effect.provideService(EventSink.EventSinkV2, gatedSink),
+    );
+    const claim = (name: string) =>
+      service.create({
+        commandId: CommandId.make(`command:race:${name}`),
+        projectId: ProjectId.make(`project:race:${name}`),
+        title: name,
+        workspaceRoot: "/work/race",
+      });
+    const first = yield* claim("first").pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(firstReachedCommit);
+    let removed = false;
+    const second = yield* service
+      .whileWorkspaceUnowned(
+        "/work/race/",
+        Effect.sync(() => {
+          removed = true;
+        }),
+      )
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    assert.isUndefined(second.pollUnsafe());
+    yield* Deferred.succeed(releaseFirst, undefined);
+    assert.equal((yield* Fiber.join(first)).id, "project:race:first");
+    yield* Fiber.join(second);
+    assert.isFalse(removed);
+  }).pipe(Effect.provide(layerProjectServiceDependencies)),
+);
+
+it.effect("rejects registration when cleanup removes the folder while it waits for the lock", () =>
+  Effect.gen(function* () {
+    const cleanupStarted = yield* Deferred.make<void>();
+    const releaseCleanup = yield* Deferred.make<void>();
+    let exists = true;
+    const service = yield* ProjectService.make.pipe(
+      Effect.provideService(WorkspacePaths.WorkspacePaths, {
+        normalizeWorkspaceRoot: (workspaceRoot) =>
+          exists
+            ? Effect.succeed(workspaceRoot)
+            : Effect.fail(
+                new WorkspacePaths.WorkspaceRootNotExistsError({
+                  workspaceRoot,
+                  normalizedWorkspaceRoot: workspaceRoot,
+                }),
+              ),
+        resolveRelativePathWithinRoot: ({ workspaceRoot, relativePath }) =>
+          Effect.succeed({ absolutePath: `${workspaceRoot}/${relativePath}`, relativePath }),
+      }),
+    );
+    const cleanup = yield* service
+      .whileWorkspaceUnowned(
+        "/work/removed",
+        Deferred.succeed(cleanupStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseCleanup)),
+          Effect.andThen(
+            Effect.sync(() => {
+              exists = false;
+            }),
+          ),
+        ),
+      )
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(cleanupStarted);
+    const registration = yield* service
+      .create({
+        commandId: CommandId.make("command:cleanup-race:create"),
+        projectId: ProjectId.make("project:cleanup-race"),
+        title: "Removed",
+        workspaceRoot: "/work/removed",
+      })
+      .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+    assert.isUndefined(registration.pollUnsafe());
+    yield* Deferred.succeed(releaseCleanup, undefined);
+    yield* Fiber.join(cleanup);
+    assert.instanceOf(yield* Fiber.join(registration), ProjectService.ProjectOperationError);
+    assert.isTrue(Option.isNone(yield* service.getById(ProjectId.make("project:cleanup-race"))));
+  }).pipe(Effect.provide(layerProjectServiceDependencies)),
+);
