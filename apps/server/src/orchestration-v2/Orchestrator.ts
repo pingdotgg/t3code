@@ -109,6 +109,7 @@ import {
   cancelledBeforeStart,
   continuationFailedBeforePrompt,
   continuationStartRetryDelayMs,
+  neverStarted,
   isRestartContinuationSource,
   runOutcome,
 } from "./RestartBackgroundNote.ts";
@@ -5311,7 +5312,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection = applyToProjection(projection, event);
     }
 
-    const continuedTaskId = projection.runs.find(
+    let continuedTaskId = projection.runs.find(
       (run) => run.id === command.restartContinuationOfRunId,
     )?.delegatedTaskId;
 
@@ -5530,6 +5531,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         taskIds: delivery.taskIds,
       };
     }
+    if (delegatedCompletion !== undefined && projection.thread.lineage.parentThreadId !== null) {
+      const source = projection.runs.find((run) => run.id === delegatedCompletion.parentRunId);
+      const parent = yield* projectionStore
+        .getThreadRecords(projection.thread.lineage.parentThreadId, ["subagents"])
+        .pipe(mapDispatchError(command));
+      const task = parent.subagents.find((task) => task.id === source?.delegatedTaskId);
+      // Nested results continue the pending follow-up rather than creating another obligation.
+      if (task?.result === null && task.completionDelivery?.state !== "disposed") {
+        continuedTaskId = task.id;
+      }
+    }
     // Route durable mailbox deliveries under the thread lock, using the live
     // session's capabilities. Never interrupt/restart a turn for a notification.
     if (
@@ -5550,6 +5562,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       if (
         active !== undefined &&
+        (continuedTaskId === undefined || active.delegatedTaskId === continuedTaskId) &&
         activeTurn !== undefined &&
         providerThread?.providerSessionId != null &&
         (activeMessage === undefined || !isNativeMaintenanceCommand(activeMessage))
@@ -12141,6 +12154,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
 
+      // Each follow-up waits for its own nested work, independently of later queued follow-ups.
+      if (
+        taskRuns.length > 0 &&
+        !taskRuns.every(neverStarted) &&
+        delegatedTaskProgress({
+          ...childControls,
+          runs: taskRuns,
+          subagents: childControls.subagents.filter((task) =>
+            taskRuns.some((run) => run.id === task.runId),
+          ),
+        }).state !== "result_available"
+      )
+        return;
+
       const childResult = yield* projectionStore.getThreadRecords(
         childThreadId,
         ["messages", "turnItems"],
@@ -13549,6 +13576,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const runs = child.runs.filter((run) => run.delegatedTaskId === taskId);
         const run = runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
         if (run === undefined || delegatedTaskTerminalStatus(run.status) === null) return true;
+        if (runs.every(neverStarted)) return false;
+        if (
+          delegatedTaskProgress({
+            ...child,
+            runs,
+            subagents: child.subagents.filter((task) =>
+              runs.some((taskRun) => taskRun.id === task.runId),
+            ),
+          }).state !== "result_available"
+        )
+          return true;
         return yield* childAwaitsRestartContinuation(runs, run);
       }
       const progress = delegatedTaskProgress(child);
