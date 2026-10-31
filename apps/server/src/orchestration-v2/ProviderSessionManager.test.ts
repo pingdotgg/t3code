@@ -42,6 +42,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -1067,7 +1068,7 @@ const makeTestInstanceRegistry = Effect.fnUntraced(function* (
   const { registry, mutator } = yield* ProviderInstanceRegistry.makeProviderInstanceRegistry({
     drivers: [driver],
     configMap: configMap("/home/original"),
-  });
+  }).pipe(Effect.provide(Layer.mock(SecretResolver.SecretResolver)({})));
   return {
     openedHomes,
     layer: Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, registry),
