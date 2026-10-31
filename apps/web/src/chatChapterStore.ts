@@ -62,24 +62,15 @@ function createChapterStorage() {
 export const useChatChapterStore = create<ChatChapterStoreState>()(
   persist(
     (set) => {
-      const writeChapters = (
-        threadRef: ScopedThreadRef,
-        update: (current: readonly ChatChapter[]) => readonly ChatChapter[],
-      ) =>
-        set((state) => {
-          const threadKey = scopedThreadKey(threadRef);
-          const next = update(state.chaptersByThreadKey[threadKey] ?? NO_CHAPTERS);
-          const chaptersByThreadKey = { ...state.chaptersByThreadKey };
-          if (next.length === 0) delete chaptersByThreadKey[threadKey];
-          else chaptersByThreadKey[threadKey] = next;
-          return { chaptersByThreadKey };
-        });
       return {
         chaptersByThreadKey: {},
         revealRequest: null,
         togglePin: (threadRef, message) =>
-          writeChapters(threadRef, (current) =>
-            current.some((chapter) => chapter.messageId === message.id)
+          set((state) => {
+            const threadKey = scopedThreadKey(threadRef);
+            const current = state.chaptersByThreadKey[threadKey] ?? NO_CHAPTERS;
+            const isPinned = current.some((chapter) => chapter.messageId === message.id);
+            const next = isPinned
               ? current.filter((chapter) => chapter.messageId !== message.id)
               : [
                   ...current,
@@ -88,12 +79,35 @@ export const useChatChapterStore = create<ChatChapterStoreState>()(
                     title: chapterTitleFromText(message.text),
                     createdAt: message.createdAt,
                   },
-                ].toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
-          ),
+                ].toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
+            const chaptersByThreadKey = { ...state.chaptersByThreadKey };
+            if (next.length === 0) delete chaptersByThreadKey[threadKey];
+            else chaptersByThreadKey[threadKey] = next;
+            const matchesReveal =
+              isPinned &&
+              state.revealRequest?.threadKey === threadKey &&
+              state.revealRequest.messageId === message.id;
+            return {
+              chaptersByThreadKey,
+              ...(matchesReveal ? { revealRequest: null } : {}),
+            };
+          }),
         unpin: (threadRef, messageId) =>
-          writeChapters(threadRef, (current) =>
-            current.filter((chapter) => chapter.messageId !== messageId),
-          ),
+          set((state) => {
+            const threadKey = scopedThreadKey(threadRef);
+            const current = state.chaptersByThreadKey[threadKey] ?? NO_CHAPTERS;
+            const next = current.filter((chapter) => chapter.messageId !== messageId);
+            const chaptersByThreadKey = { ...state.chaptersByThreadKey };
+            if (next.length === 0) delete chaptersByThreadKey[threadKey];
+            else chaptersByThreadKey[threadKey] = next;
+            const matchesReveal =
+              state.revealRequest?.threadKey === threadKey &&
+              state.revealRequest.messageId === messageId;
+            return {
+              chaptersByThreadKey,
+              ...(matchesReveal ? { revealRequest: null } : {}),
+            };
+          }),
         requestReveal: (threadRef, messageId) =>
           set((state) => ({
             revealRequest: {

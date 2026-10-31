@@ -45,18 +45,20 @@ export const ChatChaptersMenu = memo(function ChatChaptersMenu({
           <ol aria-label="Chapters" className="flex max-h-96 flex-col gap-0.5 overflow-y-auto">
             {chapters.map((chapter) => (
               <li key={chapter.messageId} className="flex items-start gap-1">
-                <Button
-                  type="button"
-                  size="sm-multiline"
-                  variant="ghost"
-                  onClick={() => {
-                    requestReveal(threadRef, chapter.messageId);
-                    setOpen(false);
-                  }}
-                  className="min-w-0 flex-1 justify-start text-left break-words"
-                >
-                  {chapter.title}
-                </Button>
+                <div className="min-w-0 flex-1">
+                  <Button
+                    type="button"
+                    size="sm-multiline"
+                    variant="ghost"
+                    onClick={() => {
+                      requestReveal(threadRef, chapter.messageId);
+                      setOpen(false);
+                    }}
+                    className="w-full justify-start text-left"
+                  >
+                    <span className="min-w-0 break-words">{chapter.title}</span>
+                  </Button>
+                </div>
                 <Button
                   aria-label={`Remove chapter ${chapter.title}`}
                   type="button"
