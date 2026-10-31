@@ -36,6 +36,7 @@ import {
 } from "../motion/workspaceSwitch";
 import { LayoutResizeHandles } from "./ColumnResizeHandle";
 import { LayoutStripHint } from "./LayoutHint";
+import { LayoutOnboarding } from "./LayoutOnboarding";
 import { LayoutKeyboard } from "./LayoutShortcutsOverlay";
 import { LayoutDropZones } from "./DropZones";
 import {
@@ -1389,6 +1390,7 @@ export function LayoutSurfaceHost({
       {active ? (
         <>
           <LayoutStripHint />
+          <LayoutOnboarding />
           <LayoutDropZones />
           <LayoutKeyboard />
           <LayoutOverview />
