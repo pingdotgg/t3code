@@ -2185,6 +2185,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Offered only where the default placeholder would show, so it never hides a pending question.
   const offeredPromptSuggestion =
     phase !== "running" &&
+    composerContextRecords.size === 0 &&
     !isComposerApprovalState &&
     !activePendingProgress &&
     !(showPlanFollowUpPrompt && activeProposedPlan) &&

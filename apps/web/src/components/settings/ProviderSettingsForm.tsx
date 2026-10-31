@@ -326,6 +326,8 @@ interface ProviderSettingsFormProps {
   readonly onChange: (nextConfig: Record<string, unknown> | undefined) => void;
   /** Where the secret providers offered for `SettingsSecretValue` fields are configured. */
   readonly environmentId?: EnvironmentId | undefined;
+  /** Render only these fields; omit to render every visible field. */
+  readonly fieldKeys?: ReadonlyArray<string>;
 }
 
 function SecretSettingsControl({
@@ -661,8 +663,11 @@ export function ProviderSettingsForm({
   variant,
   onChange,
   environmentId,
+  fieldKeys,
 }: ProviderSettingsFormProps) {
-  const fields = deriveProviderSettingsFields(definition, value);
+  const fields = deriveProviderSettingsFields(definition, value).filter(
+    (field) => fieldKeys === undefined || fieldKeys.includes(field.key),
+  );
   const isLocalAcp =
     definition.driverKind === "acpRegistry" &&
     readProviderConfigString(value, "source") === "local";
