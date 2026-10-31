@@ -245,7 +245,7 @@ export function WelcomeWizard({
             // The brand lockup (pen FB3cD): "Code" shares the mark's color at 600.
             <div className="flex items-baseline gap-1.5" role="img" aria-label="T3 Code">
               <T3Wordmark className="h-4 w-auto shrink-0" aria-hidden />
-              <span className="text-title tracking-tight">Code</span>
+              <span className="text-title tracking-tight [--type-title:1.125rem]">Code</span>
             </div>
           }
         >

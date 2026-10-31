@@ -240,8 +240,9 @@ export function ArchivedThreadsPanel() {
           )}
         </SettingsSection>
       ) : allArchivedGroups.length === 0 ? (
-        <section id={searchableSetting("archive").id} tabIndex={-1}>
+        <section id={searchableSetting("archive").id} tabIndex={-1} className="pt-19">
           <SettingsEmptyState
+            align="start"
             ghostRows={3}
             title="No archived threads"
             description="Threads you archive stay searchable here and can be restored at any time."
