@@ -97,8 +97,11 @@ export function useProjectGroupUpdate() {
 /** Pin state for a project group, shared by every list that can pin or unpin a project. */
 export function useProjectPin() {
   const { updateProjectGroup, canOrganizeProjectGroup } = useProjectGroupUpdate();
+  const environments = [...new Set(useProjects().map((project) => project.environmentId))].map(
+    (environmentId) => ({ environmentId }),
+  );
   const operableEnvironmentIds = useEnvironmentsWithScope(
-    useProjects(),
+    environments,
     AuthOrchestrationOperateScope,
   );
   type PinnableGroup = {
@@ -138,7 +141,7 @@ export function checkProjectAccess(
     : null;
 }
 
-export function reportProjectFailure(title: string, result: AtomCommandResult<void, unknown>) {
+export function reportProjectFailure(title: string, result: AtomCommandResult<unknown, unknown>) {
   if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
   const error = squashAtomCommandFailure(result);
   toastManager.add(

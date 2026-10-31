@@ -120,7 +120,7 @@ import { useStartTriage } from "../hooks/useStartTriage";
 import { pickTriageEnvironment } from "../lib/triageTarget";
 import { useNewProject } from "../hooks/useNewProject";
 import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
-import { useProjectPin } from "../hooks/useProjectGroupUpdate";
+import { reportProjectFailure, useProjectPin } from "../hooks/useProjectGroupUpdate";
 import {
   useEnvironmentProviders,
   useEnvironments,
@@ -276,6 +276,8 @@ function openIntentView(intent: CommandPaletteOpenIntent | null): CommandPalette
       return null;
   }
 }
+
+const NEW_THREAD_NO_PROJECT_VALUE = "new-thread-in:no-project";
 
 export function CommandPalette({ children }: { children: ReactNode }) {
   useCommandPaletteMount();
@@ -789,33 +791,31 @@ function OpenCommandPaletteDialog(props: {
     true,
   );
 
-  const projectThreadItems = useOrderWhileOpen(
+  const openingOrderThreadItems = useOrderWhileOpen(
     (() => {
       const isScratch = (project: CommandPaletteProject) =>
         isScratchProject(project, scratchWorkspaceRootFor(project.environmentId));
-      const projectItems = enumerateCommandPaletteItems(
-        buildNewThreadInProjectItems({
-          projects: pickerProjects.filter((project) => !isScratch(project)),
-          projectGroupByTargetKey,
-          locationByEnvironmentId: projectEnvironmentLocationById,
-          pin: projectPin,
-          runProject: async (project) => {
-            const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
-            const contextualRefBelongsToGroup =
-              contextualProjectRef !== null &&
-              group?.memberProjectRefs.some(
-                (projectRef) =>
-                  projectRef.environmentId === contextualProjectRef.environmentId &&
-                  projectRef.projectId === contextualProjectRef.projectId,
-              );
-            await handleNewThread(
-              contextualRefBelongsToGroup
-                ? contextualProjectRef
-                : scopeProjectRef(project.environmentId, project.id),
+      const projectItems = buildNewThreadInProjectItems({
+        projects: pickerProjects.filter((project) => !isScratch(project)),
+        projectGroupByTargetKey,
+        locationByEnvironmentId: projectEnvironmentLocationById,
+        pin: projectPin,
+        runProject: async (project) => {
+          const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
+          const contextualRefBelongsToGroup =
+            contextualProjectRef !== null &&
+            group?.memberProjectRefs.some(
+              (projectRef) =>
+                projectRef.environmentId === contextualProjectRef.environmentId &&
+                projectRef.projectId === contextualProjectRef.projectId,
             );
-          },
-        }),
-      );
+          await handleNewThread(
+            contextualRefBelongsToGroup
+              ? contextualProjectRef
+              : scopeProjectRef(project.environmentId, project.id),
+          );
+        },
+      });
       if (scratchTargetEnvironmentId === null) return projectItems;
 
       const noProjectIndex = newThreadNoProjectIndex(
@@ -832,7 +832,7 @@ function OpenCommandPaletteDialog(props: {
         ...projectItems.slice(0, noProjectIndex),
         {
           kind: "action" as const,
-          value: "new-thread-in:no-project",
+          value: NEW_THREAD_NO_PROJECT_VALUE,
           searchTerms: ["no project", "without project", "none"],
           title: "No project",
           icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
@@ -844,6 +844,15 @@ function OpenCommandPaletteDialog(props: {
     })(),
     (item) => item.value,
     true,
+  );
+  // Jump shortcuts follow the rows as shown, so a pin cannot move a number to another row.
+  const projectJumpItems = new Map(
+    enumerateCommandPaletteItems(
+      openingOrderThreadItems.filter((item) => item.value !== NEW_THREAD_NO_PROJECT_VALUE),
+    ).map((item) => [item.value, item] as const),
+  );
+  const projectThreadItems = openingOrderThreadItems.map(
+    (item) => projectJumpItems.get(item.value) ?? item,
   );
 
   const {
@@ -1765,7 +1774,7 @@ function OpenCommandPaletteDialog(props: {
         void updateProject({
           environmentId: existing.environmentId,
           input: { projectId: existing.id, archived: false },
-        });
+        }).then((result) => reportProjectFailure("Failed to unarchive project", result));
       }
       const latestThread = getLatestThreadForProject(
         threads.filter((thread) => thread.environmentId === existing.environmentId),

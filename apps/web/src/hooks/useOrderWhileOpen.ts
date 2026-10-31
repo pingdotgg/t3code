@@ -14,9 +14,20 @@ export function keepOrder<T>(
     .map(({ item }) => item);
 }
 
+/** `order` with keys it has not seen added at the end, or `order` itself when nothing is new. */
+export function withArrivedKeys(
+  order: ReadonlyArray<string> | null,
+  keys: ReadonlyArray<string>,
+): ReadonlyArray<string> | null {
+  const known = new Set(order);
+  const arrived = keys.filter((itemKey) => !known.has(itemKey));
+  return arrived.length === 0 ? order : [...(order ?? []), ...arrived];
+}
+
 /**
  * Keeps the order a list had when it opened, so a row that a pin moves does not slide out
- * from under the pointer or the keyboard highlight. The new order shows on the next open.
+ * from under the pointer or the keyboard highlight. Rows that load later join at the end and
+ * then hold their place too. The new order shows on the next open.
  */
 export function useOrderWhileOpen<T>(
   items: ReadonlyArray<T>,
@@ -24,7 +35,12 @@ export function useOrderWhileOpen<T>(
   open: boolean,
 ): T[] {
   const [order, setOrder] = useState<ReadonlyArray<string> | null>(null);
-  if (open && order === null && items.length > 0) setOrder(items.map(key));
-  if (!open && order !== null) setOrder(null);
-  return keepOrder(items, open ? order : null, key);
+  if (!open) {
+    if (order !== null) setOrder(null);
+    return [...items];
+  }
+  const ordered = keepOrder(items, order, key);
+  const nextOrder = withArrivedKeys(order, ordered.map(key));
+  if (nextOrder !== order) setOrder(nextOrder);
+  return ordered;
 }
