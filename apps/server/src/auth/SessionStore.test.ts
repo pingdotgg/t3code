@@ -8,6 +8,7 @@ import * as Deferred from "effect/Deferred";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Record from "effect/Record";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -15,6 +16,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 
+import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -133,6 +135,55 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 
+  it.effect("prunes sessions revoked or expired more than a day ago and keeps the rest", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const authSessions = yield* AuthSessions.AuthSessionRepository;
+      const revokedLongAgo = yield* sessions.issue({ subject: "t3 thread cli" });
+      const expiredLongAgo = yield* sessions.issue({ ...relaySessionInput, subject: "expired" });
+      const expiredButConnected = yield* sessions.issue(relaySessionInput);
+      const active = yield* sessions.issue({ subject: "active" });
+      yield* sessions.revoke(revokedLongAgo.sessionId);
+      yield* sessions.markConnected(expiredButConnected.sessionId);
+
+      yield* TestClock.adjust(Duration.days(2));
+      const recentlyRevoked = yield* sessions.issue({ subject: "t3 thread cli" });
+      yield* sessions.revoke(recentlyRevoked.sessionId);
+
+      const pruned = yield* sessions.pruneStale();
+
+      const stored = yield* Effect.all(
+        Record.map(
+          { revokedLongAgo, expiredLongAgo, expiredButConnected, active, recentlyRevoked },
+          ({ sessionId }) => authSessions.getById({ sessionId }).pipe(Effect.map(Option.isSome)),
+        ),
+      );
+      expect(stored).toEqual({
+        revokedLongAgo: false,
+        expiredLongAgo: false,
+        expiredButConnected: true,
+        active: true,
+        recentlyRevoked: true,
+      });
+      expect(pruned).toBe(2);
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("prunes a backlog larger than one delete batch in a single pass", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      yield* Effect.forEach(Array.from({ length: 1201 }), () =>
+        sessions
+          .issue({ subject: "t3 thread cli" })
+          .pipe(Effect.flatMap(({ sessionId }) => sessions.revoke(sessionId))),
+      );
+      yield* TestClock.adjust(Duration.days(2));
+
+      expect(yield* sessions.pruneStale()).toBe(1201);
+      expect(yield* sessions.pruneStale()).toBe(0);
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
   it.effect("keys remote cookies by environment identity instead of state directory", () =>
     Effect.gen(function* () {
       const cookieName = (stateDir: string, environmentId: EnvironmentId) =>
@@ -197,6 +248,27 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         const sessions = yield* SessionStore.SessionStore;
         expect((yield* Effect.flip(sessions.verify(token)))._tag).toBe("SessionTokenRevokedError");
       }).pipe(Effect.provide(layerReopenedA), Effect.scoped);
+    }),
+  );
+
+  it.effect("keeps a revoked reusable dev credential revoked after pruning and restart", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const token = "pruned-reusable-dev-auth-token-that-is-long-enough";
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-dev-auth-prune-" });
+      const layerInitial = yield* makeDiskSessionStoreLayer(baseDir, token);
+      yield* Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        yield* sessions.revoke((yield* sessions.verify(token)).sessionId);
+        yield* TestClock.adjust(Duration.days(2));
+        yield* sessions.pruneStale();
+      }).pipe(Effect.provide(Layer.merge(layerInitial, TestClock.layer())), Effect.scoped);
+
+      const layerReopened = yield* makeDiskSessionStoreLayer(baseDir, token);
+      yield* Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        expect((yield* Effect.flip(sessions.verify(token)))._tag).toBe("SessionTokenRevokedError");
+      }).pipe(Effect.provide(layerReopened), Effect.scoped);
     }),
   );
 

@@ -17,6 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
@@ -24,6 +25,7 @@ import * as Option from "effect/Option";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AuthSessions from "../persistence/AuthSessions.ts";
+import { forkParked } from "../serverActivation.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import {
   REUSABLE_DEV_SESSION_EXPIRES_AT,
@@ -351,6 +353,17 @@ export class OtherSessionsRevocationError extends Schema.TaggedError<OtherSessio
   }
 }
 
+export class StaleSessionsPruneError extends Schema.TaggedError<StaleSessionsPruneError>()(
+  "StaleSessionsPruneError",
+  {
+    ...sessionCredentialInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to prune stale sessions.";
+  }
+}
+
 export const SessionCredentialInternalError = Schema.Union([
   SessionClaimsEncodingError,
   SessionCredentialIssueError,
@@ -360,6 +373,7 @@ export const SessionCredentialInternalError = Schema.Union([
   ActiveSessionsListError,
   SessionRevocationError,
   OtherSessionsRevocationError,
+  StaleSessionsPruneError,
 ]);
 export type SessionCredentialInternalError = typeof SessionCredentialInternalError.Type;
 
@@ -420,12 +434,14 @@ export class SessionStore extends Context.Service<
     ) => Effect.Effect<number, SessionCredentialInternalError>;
     readonly markConnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
+    readonly pruneStale: () => Effect.Effect<number, SessionCredentialInternalError>;
   }
 >()("t3/auth/SessionStore") {}
 
 const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
+const STALE_SESSION_RETENTION = Duration.days(1);
 
 const SessionClaims = Schema.Struct({
   v: Schema.Literals([1, 2]),
@@ -1034,6 +1050,23 @@ const make = Effect.gen(function* () {
     return revokedSessionIds.length;
   });
 
+  const pruneStale: SessionStore["Service"]["pruneStale"] = Effect.fn("SessionStore.pruneStale")(
+    function* () {
+      const now = yield* DateTime.now;
+      const connectedSessions = yield* Ref.get(connectedSessionsRef);
+      const pruned = yield* authSessions.deleteStale({
+        cutoff: DateTime.subtractDuration(now, STALE_SESSION_RETENTION),
+        excludeSessionIds: Array.from(connectedSessions.keys()),
+        // A reusable dev session is recreated from its configured token on startup, so its
+        // revoked row is the only thing keeping that token revoked.
+        keepSessionIdPrefix: REUSABLE_DEV_SESSION_PREFIX,
+      });
+      yield* Effect.annotateCurrentSpan({ "auth_sessions.pruned": pruned });
+      return pruned;
+    },
+    Effect.mapError((cause) => new StaleSessionsPruneError({ cause })),
+  );
+
   const awaitInvalidation = Effect.fn(function* (sessionId: AuthSessionId) {
     return yield* Effect.scoped(
       Effect.gen(function* () {
@@ -1079,7 +1112,23 @@ const make = Effect.gen(function* () {
     revokeAllExcept,
     markConnected,
     markDisconnected,
+    pruneStale,
   });
 });
+
+/** Server-only: CLI processes build `layer` too and must not start this loop. */
+export const layerPruneStale = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const sessions = yield* SessionStore;
+    yield* forkParked(
+      sessions.pruneStale().pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to prune stale auth sessions", { cause }),
+        ),
+        Effect.repeat(Schedule.spaced(Duration.hours(1))),
+      ),
+    );
+  }),
+);
 
 export const layer = Layer.effect(SessionStore, make).pipe(Layer.provideMerge(AuthSessions.layer));
