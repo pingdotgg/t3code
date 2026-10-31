@@ -4577,14 +4577,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             // Long network transfers bypass the short-command pool used by local Git reads.
             { timeoutMs: Duration.toMillis(Duration.minutes(5)) },
           );
-          yield* runGit("GitVcsDriver.fetchRemoteRef.materialize", input.cwd, [
-            "branch",
-            "--no-track",
-            ...(input.force === true ? ["--force"] : []),
-            "--",
-            input.localBranch,
-            temporaryRef,
-          ]);
+          // Checkout can reset the current branch while protecting uncommitted work.
+          yield* runGit(
+            "GitVcsDriver.fetchRemoteRef.materialize",
+            input.cwd,
+            input.force === true
+              ? ["checkout", "--no-track", "-B", input.localBranch, temporaryRef, "--"]
+              : ["branch", "--no-track", "--", input.localBranch, temporaryRef],
+          );
         }),
       (temporaryRef) =>
         runGit("GitVcsDriver.fetchRemoteRef.cleanup", input.cwd, [

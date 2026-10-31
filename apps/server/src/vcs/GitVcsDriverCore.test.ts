@@ -3386,6 +3386,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal((yield* git(cwd, ["rev-parse", "feature/pr"])).trim(), headSha);
 
         yield* git(cwd, ["branch", "-f", "feature/pr", initialBranch]);
+        yield* git(cwd, ["checkout", "feature/pr"]);
+        yield* writeTextFile(cwd, "README.md", "local readme edit\n");
         yield* driver.fetchRemoteRef({
           cwd,
           remoteName: "origin",
@@ -3394,6 +3396,54 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           force: true,
         });
         assert.equal((yield* git(cwd, ["rev-parse", "feature/pr"])).trim(), headSha);
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), "feature/pr");
+        assert.equal(yield* git(cwd, ["show", ":feature.txt"]), "feature");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        assert.equal(yield* fileSystem.readFileString(path.join(cwd, "feature.txt")), "feature\n");
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(cwd, "README.md")),
+          "local readme edit\n",
+        );
+
+        yield* writeTextFile(cwd, "feature.txt", "local commit\n");
+        yield* git(cwd, ["add", "feature.txt"]);
+        yield* git(cwd, ["commit", "-m", "local feature commit"]);
+        const localSha = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* writeTextFile(cwd, "feature.txt", "uncommitted work\n");
+        const conflicting = yield* driver
+          .fetchRemoteRef({
+            cwd,
+            remoteName: "origin",
+            remoteRef: "refs/pull-requests/1/from",
+            localBranch: "feature/pr",
+            force: true,
+          })
+          .pipe(Effect.result);
+        assert.isTrue(Result.isFailure(conflicting));
+        assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), localSha);
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(cwd, "feature.txt")),
+          "uncommitted work\n",
+        );
+
+        yield* git(cwd, ["restore", "--", "README.md", "feature.txt"]);
+        yield* git(cwd, ["checkout", initialBranch]);
+        const otherWorktree = path.join(yield* makeTmpDir("git-vcs-driver-worktree-"), "checkout");
+        yield* git(cwd, ["worktree", "add", otherWorktree, "feature/pr"]);
+        const inUse = yield* driver
+          .fetchRemoteRef({
+            cwd,
+            remoteName: "origin",
+            remoteRef: "refs/pull-requests/1/from",
+            localBranch: "feature/pr",
+            force: true,
+          })
+          .pipe(Effect.result);
+        assert.isTrue(Result.isFailure(inUse));
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), initialBranch);
+        assert.equal(yield* git(otherWorktree, ["rev-parse", "HEAD"]), localSha);
+        yield* git(cwd, ["worktree", "remove", otherWorktree]);
 
         yield* git(cwd, ["branch", "-D", "feature/pr"]);
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
