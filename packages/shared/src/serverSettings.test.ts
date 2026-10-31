@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_SPEECH_POST_PROCESSING_MODELS,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -24,6 +25,7 @@ import {
   isModelSelectionProviderEnabled,
   parsePersistedServerObservabilitySettings,
   resolveSourceControlWriterModelSelection,
+  resolveSpeechPostProcessingModelSelection,
 } from "./serverSettings.ts";
 
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
@@ -91,6 +93,195 @@ describe("serverSettings helpers", () => {
     expect(stillOff.idleCompaction).toBe("off");
     const on = applyServerSettingsPatch(off, { compactIdleThreads: true });
     expect([on.idleCompaction, on.compactIdleThreads]).toEqual(["beforeCacheExpires", true]);
+  });
+
+  it("uses voice defaults in the configured fallback order, including custom instances", () => {
+    const entries = [
+      ["codex", { model: "gpt-6-luna", options: [{ id: "reasoningEffort", value: "low" }] }],
+      ["claudeAgent", { model: "claude-haiku-4-5", options: [{ id: "thinking", value: false }] }],
+      ["cursor", { model: "composer-2", options: [{ id: "reasoning", value: "low" }] }],
+      ["grok", { model: "grok-build", options: [{ id: "reasoningEffort", value: "low" }] }],
+      ["opencode", { model: "opencode/big-pickle", options: [{ id: "variant", value: "low" }] }],
+      ["antigravity", { model: "antigravity-default", options: [] }],
+    ] as const;
+    for (let index = 0; index < entries.length; index++) {
+      const settings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        speechPostProcessingModelSelection: createModelSelection(
+          ProviderInstanceId.make("missing"),
+          "custom",
+        ),
+        providerInstances: Object.fromEntries(
+          entries.map(([driver], candidateIndex) => [
+            driver,
+            {
+              driver: ProviderDriverKind.make(driver),
+              enabled: candidateIndex >= index,
+              config: {},
+            },
+          ]),
+        ),
+      };
+      const [driver, defaults] = entries[index]!;
+      expect(resolveSpeechPostProcessingModelSelection(settings)).toEqual(
+        createModelSelection(ProviderInstanceId.make(driver), defaults.model, defaults.options),
+      );
+      const customSettings = {
+        ...settings,
+        providerInstances: {
+          ...settings.providerInstances,
+          [driver]: { driver: ProviderDriverKind.make(driver), enabled: false, config: {} },
+          custom: { driver: ProviderDriverKind.make(driver), enabled: true, config: {} },
+        },
+      };
+      expect(resolveSpeechPostProcessingModelSelection(customSettings)).toEqual(
+        createModelSelection(ProviderInstanceId.make("custom"), defaults.model, defaults.options),
+      );
+    }
+  });
+
+  it("preserves an enabled custom voice selection independently of text generation", () => {
+    const selection = createModelSelection(ProviderInstanceId.make("voice"), "custom-model", [
+      { id: "variant", value: "high" },
+    ]);
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      speechPostProcessingModelSelection: selection,
+      providerInstances: {
+        voice: { driver: ProviderDriverKind.make("opencode"), enabled: true, config: {} },
+      },
+    };
+    expect(resolveSpeechPostProcessingModelSelection(settings)).toBe(selection);
+    expect(settings.textGenerationModelSelection).toBe(
+      DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+    );
+  });
+
+  it("uses the supported model default when low reasoning is not advertised", () => {
+    const selection = createModelSelection(
+      ProviderInstanceId.make("opencode"),
+      "opencode/big-pickle",
+      [{ id: "variant", value: "low" }],
+    );
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      speechPostProcessingModelSelection: selection,
+      providerInstances: {
+        opencode: { driver: ProviderDriverKind.make("opencode"), enabled: true, config: {} },
+      },
+    };
+    const provider: ServerProvider = {
+      instanceId: ProviderInstanceId.make("opencode"),
+      driver: ProviderDriverKind.make("opencode"),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-10-01T00:00:00.000Z",
+      models: [
+        {
+          slug: "opencode/big-pickle",
+          name: "Big Pickle",
+          isCustom: false,
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "variant",
+                label: "Reasoning",
+                type: "select",
+                options: [{ id: "high", label: "High", isDefault: true }],
+              },
+            ],
+          },
+        },
+      ],
+      slashCommands: [],
+      skills: [],
+    };
+    expect(resolveSpeechPostProcessingModelSelection(settings, [provider])).toEqual({
+      instanceId: "opencode",
+      model: "opencode/big-pickle",
+    });
+    expect(
+      resolveSpeechPostProcessingModelSelection(settings, [
+        {
+          ...provider,
+          models: [
+            {
+              ...provider.models[0]!,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "variant",
+                    label: "Reasoning",
+                    type: "select",
+                    options: [{ id: "low", label: "Low" }],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ]),
+    ).toEqual(selection);
+    expect(settings.speechPostProcessingModelSelection).toBe(selection);
+  });
+
+  it("returns no voice selection when every provider is disabled", () => {
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: Object.fromEntries(
+        Object.keys(DEFAULT_SPEECH_POST_PROCESSING_MODELS).map((driver) => [
+          driver,
+          { driver: ProviderDriverKind.make(driver), enabled: false, config: {} },
+        ]),
+      ),
+    };
+    expect(resolveSpeechPostProcessingModelSelection(settings)).toBeNull();
+  });
+
+  it("checks configured drivers when resolving managed voice fallbacks", () => {
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        codex: { driver: ProviderDriverKind.make("opencode"), enabled: true, config: {} },
+        voice: { driver: ProviderDriverKind.make("claudeAgent"), enabled: true, config: {} },
+        claudeAgent: { driver: ProviderDriverKind.make("claudeAgent"), enabled: false, config: {} },
+      },
+    };
+    expect(
+      resolveSpeechPostProcessingModelSelection(
+        settings,
+        undefined,
+        (driver) => driver === "claudeAgent",
+      ),
+    ).toEqual({
+      instanceId: "voice",
+      model: "claude-haiku-4-5",
+      options: [{ id: "thinking", value: false }],
+    });
+    expect(resolveSpeechPostProcessingModelSelection(settings, undefined, () => false)).toBeNull();
+  });
+
+  it("keeps the built-in voice prompt selected until custom instructions are nonempty", () => {
+    const blank = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      speechPostProcessingPrompt: { mode: "custom", customInstructions: "   " },
+    });
+    expect(blank.speechPostProcessingPrompt).toEqual({ mode: "default", customInstructions: "" });
+
+    const custom = applyServerSettingsPatch(blank, {
+      speechPostProcessingPrompt: { mode: "custom", customInstructions: "Keep product names." },
+    });
+    expect(custom.speechPostProcessingPrompt).toEqual({
+      mode: "custom",
+      customInstructions: "Keep product names.",
+    });
+    expect(
+      applyServerSettingsPatch(custom, {
+        speechPostProcessingPrompt: { customInstructions: "" },
+      }).speechPostProcessingPrompt,
+    ).toEqual({ mode: "default", customInstructions: "" });
   });
 
   it("changes a cleanup rule without replacing the machine's other rules", () => {
@@ -292,31 +483,30 @@ describe("serverSettings helpers", () => {
     });
   });
 
-  it("replaces text generation selection across providers without leaking stale options", () => {
-    const current = {
-      ...DEFAULT_SERVER_SETTINGS,
-      textGenerationModelSelection: createModelSelection(
-        ProviderInstanceId.make("codex"),
-        "gpt-5.4-mini",
-        [
+  it.each(["textGenerationModelSelection", "speechPostProcessingModelSelection"] as const)(
+    "replaces %s across providers without leaking stale options",
+    (selectionKey) => {
+      const current = {
+        ...DEFAULT_SERVER_SETTINGS,
+        [selectionKey]: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4-mini", [
           { id: "reasoningEffort", value: "high" },
           { id: "fastMode", value: true },
-        ],
-      ),
-    };
+        ]),
+      };
 
-    expect(
-      applyServerSettingsPatch(current, {
-        textGenerationModelSelection: {
-          instanceId: ProviderInstanceId.make("opencode"),
-          model: "openai/gpt-5",
-        },
-      }).textGenerationModelSelection,
-    ).toEqual({
-      instanceId: "opencode",
-      model: "openai/gpt-5",
-    });
-  });
+      expect(
+        applyServerSettingsPatch(current, {
+          [selectionKey]: {
+            instanceId: ProviderInstanceId.make("opencode"),
+            model: "openai/gpt-5",
+          },
+        })[selectionKey],
+      ).toEqual({
+        instanceId: "opencode",
+        model: "openai/gpt-5",
+      });
+    },
+  );
 
   it("falls back from a disabled source control writer provider without clearing its selection", () => {
     const instanceId = ProviderInstanceId.make("codex_writer");
