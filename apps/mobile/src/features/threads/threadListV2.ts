@@ -45,20 +45,23 @@ import {
 
 export const threadListInboxReturns = createInboxReturnTracker();
 
-export function resolveThreadListV2ProviderDrivers(
+/**
+ * Provider drivers for a row's trailing icon stack, back to front. Instances
+ * missing from the environment's config are skipped, and an unresolved
+ * current provider yields nothing so the row never draws a stale stack.
+ */
+export function resolveThreadListV2ProviderStack(
   thread: Pick<EnvironmentThreadShell, "providerInstanceHistory" | "modelSelection" | "runtime">,
   providers: ReadonlyArray<ThreadListProvider> | undefined,
-): ReadonlyArray<string> {
+): ReadonlyArray<ThreadListProvider> {
   if (providers === undefined) return [];
   const stack = resolveThreadProviderStack(thread);
-  const drivers = stack.flatMap((instanceId) => {
-    const driver = providers.find((provider) => provider.instanceId === instanceId)?.driver;
-    return driver === undefined ? [] : [driver];
+  const owners = stack.flatMap((instanceId) => {
+    const owner = providers.find((provider) => provider.instanceId === instanceId);
+    return owner === undefined ? [] : [owner];
   });
-  const currentDriver = providers.find(
-    (provider) => provider.instanceId === stack[stack.length - 1],
-  )?.driver;
-  return currentDriver === undefined ? [] : drivers;
+  const current = providers.find((provider) => provider.instanceId === stack[stack.length - 1]);
+  return current === undefined ? [] : owners;
 }
 
 export type ThreadListV2Status =

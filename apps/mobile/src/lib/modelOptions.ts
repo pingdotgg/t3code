@@ -28,6 +28,13 @@ export type ModelOption = {
   readonly providerDriver: string;
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   readonly providerIconUrl?: string | undefined;
+  /** The instance's chosen glyph and badge text, for its provider icon. */
+  readonly providerAppearance?: {
+    readonly icon?: string | undefined;
+    readonly badgeLabel?: string | undefined;
+    readonly displayName: string;
+    readonly accentColor?: string | undefined;
+  };
   readonly providerBadge?: {
     readonly displayName: string;
     readonly accentColor?: string;
@@ -266,6 +273,7 @@ export function buildModelOptions(
   const badgeEntries = (config?.providers ?? []).map((provider) => ({
     driverKind: provider.driver,
     enabled: provider.enabled,
+    icon: provider.icon,
     acpRegistryAgentId: registryAgentId(provider.instanceId),
   }));
   const providerBadgeFor = (instanceId: ModelSelection["instanceId"]) => {
@@ -287,6 +295,8 @@ export function buildModelOptions(
         {
           driverKind: driver,
           accentColor,
+          icon: snapshot?.icon ?? instance?.icon,
+          badgeLabel: snapshot?.badgeLabel ?? instance?.badgeLabel,
           acpRegistryAgentId: registryAgentId(instanceId),
           enabled: snapshot?.enabled ?? instance?.enabled ?? false,
         },
@@ -337,6 +347,12 @@ export function buildModelOptions(
         ...(provider.iconUrl ? { providerIconUrl: provider.iconUrl } : {}),
         isHidden: !model.isCustom && hiddenModels.has(model.slug),
         canHide: !model.isCustom,
+        providerAppearance: {
+          icon: provider.icon,
+          badgeLabel: provider.badgeLabel,
+          displayName: providerLabel,
+          accentColor: provider.accentColor,
+        },
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
         ...(updateRequired ? { providerUpdateRequired: updateRequired } : {}),
@@ -399,6 +415,12 @@ export function buildModelOptions(
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,
         providerDriver,
+        providerAppearance: {
+          icon: provider?.icon ?? instanceConfig?.icon,
+          badgeLabel: provider?.badgeLabel ?? instanceConfig?.badgeLabel,
+          displayName: providerLabel,
+          accentColor: provider?.accentColor ?? instanceConfig?.accentColor,
+        },
         providerBadge: providerBadgeFor(fallbackModelSelection.instanceId),
         isDefault: false,
         isLegacy: model?.isLegacy === true,

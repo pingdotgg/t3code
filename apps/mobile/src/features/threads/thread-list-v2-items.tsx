@@ -71,7 +71,7 @@ import {
   resolveThreadListV2SnoozePresets,
   threadHasUnseenCompletion,
   resolveThreadListV2Status,
-  resolveThreadListV2ProviderDrivers,
+  resolveThreadListV2ProviderStack,
   resolveThreadListV2SwipeActions,
   type ThreadListV2Status,
 } from "./threadListV2";
@@ -662,14 +662,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const dormant = useSwipeRowDormant(props.activationKey);
 
   const selectThread = () => onSelectThread(thread);
-  const { providerDrivers, providerIconUrl } = useMemo(() => {
+  const { providerStack, providerIconUrl } = useMemo(() => {
     const provider = props.providers?.find(
       (candidate) =>
         candidate.instanceId ===
         (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
     );
     return {
-      providerDrivers: resolveThreadListV2ProviderDrivers(thread, props.providers),
+      providerStack: resolveThreadListV2ProviderStack(thread, props.providers),
       providerIconUrl: provider?.iconUrl,
     };
   }, [thread, props.providers]);
@@ -1258,13 +1258,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ) : null}
         {providerInstance ? (
           <View className="flex-row items-center">
-            {providerDrivers.slice(0, -1).map(
-              (driver, index) => (
-                /* oxlint-disable react/no-array-index-key -- Provider history can repeat a driver; these decorative icons have no local state. */ <View
-                  key={`${driver}:${index}`}
+            {providerStack.slice(0, -1).map(
+              (owner, index) => (
+                /* oxlint-disable react/no-array-index-key -- Provider history can repeat an instance; these decorative icons have no local state. */ <View
+                  key={`${owner.instanceId}:${index}`}
                   className="-mr-1 opacity-30"
                 >
-                  <ProviderIcon provider={driver} size={12} />
+                  <ProviderIcon
+                    provider={owner.driver}
+                    iconUrl={owner.iconUrl}
+                    appearance={owner}
+                    size={12}
+                  />
                 </View>
               ) /* oxlint-enable react/no-array-index-key */,
             )}
@@ -1274,6 +1279,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               size={14}
               displayName={providerInstance.displayName}
               accentColor={providerInstance.accentColor}
+              icon={providerInstance.icon}
+              badgeLabel={providerInstance.badgeLabel}
               showBadge={providerInstance.showBadge}
               surfaceColor={rowAppearance.providerIconSurfaceColor}
             />

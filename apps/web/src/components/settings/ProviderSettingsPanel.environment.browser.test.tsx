@@ -1,3 +1,6 @@
+import * as Cause from "effect/Cause";
+import type { ProviderInstanceConfig } from "@t3tools/contracts";
+import type { Screen } from "../../../test/render";
 import { RegistryContext } from "@effect/atom-react";
 import {
   DEFAULT_UNIFIED_SETTINGS,
@@ -237,7 +240,141 @@ async function setup() {
   await setProviders([]);
 }
 
+async function commitInstanceField(
+  screen: Screen,
+  field: "badge-label" | "display-name",
+  value: string,
+) {
+  const input = screen.container.querySelector<HTMLInputElement>(
+    `#provider-instance-${codexId}-${field}`,
+  );
+  expect(input).not.toBeNull();
+  await userEvent.fill(input!, value);
+  await act(async () => input!.blur());
+}
+
+async function chooseInstanceIcon(label: string) {
+  await userEvent.click(page.getByRole("combobox", { name: "Icon for Codex" }));
+  await userEvent.click(page.getByRole("option", { name: label, exact: true }));
+}
+
+const savedInstance = (call: number) => {
+  const [mutation] = state.mutateProviderInstance.mock.calls[call] ?? [];
+  expect(mutation).toBeDefined();
+  return (mutation as { instance: ProviderInstanceConfig }).instance;
+};
+
+function holdFirstSave() {
+  let finish!: () => void;
+  state.mutateProviderInstance.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = () => resolve(AsyncResult.success({}));
+      }),
+  );
+  return () => act(async () => finish());
+}
+
 describe("EnvironmentProviderSettings routing", () => {
+  it("keeps a badge label being saved when an icon is picked", async () => {
+    await setup();
+    const finish = holdFirstSave();
+    await using screen = await render(panel());
+    await commitInstanceField(screen, "badge-label", "PX");
+    await chooseInstanceIcon("Claude");
+    await finish();
+    expect(savedInstance(1)).toMatchObject({ badgeLabel: "PX", icon: "claudeAgent" });
+  });
+
+  it("keeps another client's unedited field while a local change is saving", async () => {
+    await setup();
+    const finish = holdFirstSave();
+    await using screen = await render(panel());
+    await commitInstanceField(screen, "badge-label", "PX");
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: { [codexId]: { driver: ProviderDriverKind.make("codex"), icon: "grok" } },
+    };
+    await screen.rerender(panel());
+    await commitInstanceField(screen, "display-name", "Work");
+    await finish();
+    expect(savedInstance(1)).toMatchObject({ icon: "grok", badgeLabel: "PX", displayName: "Work" });
+  });
+
+  it("keeps a saved edit across a rerender before the server echoes it", async () => {
+    await setup();
+    await using screen = await render(panel());
+    await commitInstanceField(screen, "badge-label", "PX");
+    await screen.rerender(panel());
+    await chooseInstanceIcon("Claude");
+    expect(savedInstance(1)).toMatchObject({ badgeLabel: "PX", icon: "claudeAgent" });
+  });
+
+  it("keeps a clear when an older save's echo arrives before the next edit", async () => {
+    await setup();
+    await using screen = await render(panel());
+    await commitInstanceField(screen, "badge-label", "PX");
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: { driver: ProviderDriverKind.make("codex"), badgeLabel: "PX" },
+      },
+    };
+    await screen.rerender(panel());
+    await commitInstanceField(screen, "badge-label", "");
+    await chooseInstanceIcon("Claude");
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: { driver: ProviderDriverKind.make("codex"), badgeLabel: "PX" },
+      },
+    };
+    await screen.rerender(panel());
+    await commitInstanceField(screen, "display-name", "Work");
+    expect(savedInstance(3)).toMatchObject({ icon: "claudeAgent", displayName: "Work" });
+    expect(savedInstance(3)).not.toHaveProperty("badgeLabel");
+  });
+
+  it("starts an edit immediately after a reset from defaults", async () => {
+    await setup();
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: { driver: ProviderDriverKind.make("codex"), badgeLabel: "OLD" },
+      },
+    };
+    await using screen = await render(panel());
+    await commitInstanceField(screen, "badge-label", "PX");
+    await userEvent.click(
+      page.getByRole("button", { name: "Reset Codex provider settings to default", exact: true }),
+    );
+    await chooseInstanceIcon("Claude");
+    expect(savedInstance(2)).toEqual({
+      driver: ProviderDriverKind.make("codex"),
+      icon: "claudeAgent",
+    });
+  });
+
+  it.each([false, true])(
+    "starts the next edit from server state after a save fails (overlap: %s)",
+    async (overlap) => {
+      await setup();
+      const finish = overlap ? holdFirstSave() : undefined;
+      state.mutateProviderInstance.mockResolvedValueOnce(
+        AsyncResult.failure(Cause.fail(new Error("settings write failed"))),
+      );
+      await using screen = await render(panel());
+      if (overlap) await commitInstanceField(screen, "display-name", "Work");
+      await commitInstanceField(screen, "badge-label", "PX");
+      await finish?.();
+      await chooseInstanceIcon("Claude");
+      const saved = savedInstance(overlap ? 2 : 1);
+      expect(saved).toMatchObject({ icon: "claudeAgent" });
+      if (overlap) expect(saved.displayName).toBe("Work");
+      expect(saved).not.toHaveProperty("badgeLabel");
+    },
+  );
+
   it("does not substitute another account when the requested instance was removed", async () => {
     await setup();
     await setProviders([provider()]);

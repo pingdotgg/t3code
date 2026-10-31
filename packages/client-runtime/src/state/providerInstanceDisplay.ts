@@ -1,7 +1,8 @@
 import {
   defaultInstanceIdForDriver,
   PROVIDER_DISPLAY_NAMES,
-  type ProviderDriverKind,
+  PROVIDER_INSTANCE_INITIALS_ICON,
+  ProviderDriverKind,
   type ServerProvider,
 } from "@t3tools/contracts";
 
@@ -43,6 +44,60 @@ export function providerInstanceInitials(label: string): string {
     .join("");
 }
 
+/** Badge labels render at most this many characters; longer ones are clipped. */
+export const PROVIDER_INSTANCE_BADGE_LABEL_MAX_CHARS = 3;
+
+/**
+ * The badge text for an instance: its configured label, clipped by code point
+ * so an emoji never splits, or the display name's initials.
+ */
+export function resolveProviderInstanceBadgeLabel(input: {
+  readonly displayName: string;
+  readonly badgeLabel?: string | undefined;
+}): string {
+  const label = input.badgeLabel?.trim();
+  if (!label) return providerInstanceInitials(input.displayName);
+  return Array.from(label).slice(0, PROVIDER_INSTANCE_BADGE_LABEL_MAX_CHARS).join("");
+}
+
+/** Driver slugs whose logo every client can draw, in the order settings offers them. */
+export const PROVIDER_INSTANCE_LOGO_ICONS: ReadonlyArray<ProviderDriverKind> = [
+  "claudeAgent",
+  "codex",
+  "cursor",
+  "grok",
+  "opencode",
+  "antigravity",
+  "pi",
+].map((slug) => ProviderDriverKind.make(slug));
+
+/**
+ * The driver slug whose glyph an instance draws: its chosen logo when this
+ * client knows it, otherwise its own driver's.
+ */
+export function resolveProviderInstanceGlyphDriver(input: {
+  readonly driverKind: ProviderDriverKind;
+  readonly icon?: string | undefined;
+}): ProviderDriverKind {
+  const chosen = PROVIDER_INSTANCE_LOGO_ICONS.find((logo) => logo === input.icon);
+  return chosen ?? input.driverKind;
+}
+
+/**
+ * Font size for a badge label drawn as the glyph, as a fraction of the glyph's
+ * width. Sized so the widest bold letters and emoji still fit on one line.
+ */
+export function providerInstanceInitialsGlyphScale(label: string): number {
+  const length = Array.from(label).length;
+  return length <= 1 ? 0.7 : length === 2 ? 0.46 : 0.32;
+}
+
+/** Whether an instance draws its badge label in place of a logo. */
+export function isProviderInstanceInitialsIcon(icon: string | undefined): boolean {
+  return icon === PROVIDER_INSTANCE_INITIALS_ICON;
+}
+
+/** Only `#rrggbb` accent colors render; anything else is treated as unset. */
 export function normalizeProviderAccentColor(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed) return undefined;
@@ -61,32 +116,43 @@ export function providerAccentForegroundColor(accentColor: string) {
   return blackContrast >= whiteContrast ? "#000000" : "#ffffff";
 }
 
+interface InstanceGlyphIdentity {
+  readonly driverKind: ProviderDriverKind;
+  readonly enabled: boolean;
+  readonly icon?: string | undefined;
+  readonly acpRegistryAgentId?: string | undefined;
+}
+
+// Two instances look alike when they draw the same glyph: a chosen logo this
+// client knows wins over the driver's, and ACP agents each have their own.
+function instanceGlyphKey(entry: InstanceGlyphIdentity): string {
+  const glyphDriver = resolveProviderInstanceGlyphDriver(entry);
+  if (glyphDriver === "acpRegistry") return `acp:${entry.acpRegistryAgentId ?? ""}`;
+  return `logo:${glyphDriver}`;
+}
+
+/**
+ * Whether an instance's icon carries the account badge: accent color or badge
+ * label set, or several instances drawing the same glyph so it alone is
+ * ambiguous. An initials glyph already is the badge text, so it never gets one.
+ * Shared by the composer trigger, the picker rail, and sidebar/thread rows.
+ */
 export function shouldShowInstanceBadge(
-  entry: {
-    readonly driverKind: ProviderDriverKind;
+  entry: InstanceGlyphIdentity & {
     readonly accentColor?: string | undefined;
-    readonly acpRegistryAgentId?: string | undefined;
-    readonly enabled: boolean;
+    readonly badgeLabel?: string | undefined;
   },
-  entries: Iterable<{
-    readonly driverKind: ProviderDriverKind;
-    readonly acpRegistryAgentId?: string | undefined;
-    readonly enabled: boolean;
-  }>,
+  entries: Iterable<InstanceGlyphIdentity>,
 ): boolean {
-  if (entry.accentColor) return true;
-  let sharedProviderCount = 0;
+  if (isProviderInstanceInitialsIcon(entry.icon)) return false;
+  if (entry.accentColor || entry.badgeLabel) return true;
+  const glyphKey = instanceGlyphKey(entry);
+  let sharedGlyphCount = 0;
   for (const candidate of entries) {
-    if (candidate.driverKind !== entry.driverKind) continue;
-    // Historical threads still need to distinguish accounts that are all disabled.
     if (entry.enabled && !candidate.enabled) continue;
-    if (
-      entry.driverKind === "acpRegistry" &&
-      candidate.acpRegistryAgentId !== entry.acpRegistryAgentId
-    ) {
-      continue;
-    }
-    if (++sharedProviderCount > 1) return true;
+    if (isProviderInstanceInitialsIcon(candidate.icon)) continue;
+    if (instanceGlyphKey(candidate) !== glyphKey) continue;
+    if (++sharedGlyphCount > 1) return true;
   }
   return false;
 }

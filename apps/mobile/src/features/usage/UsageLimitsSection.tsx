@@ -23,7 +23,7 @@ import { Atom } from "effect/reactivity";
 import { Linking, Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { ProviderIcon } from "../../components/ProviderIcon";
+import { ProviderIcon, type ProviderGlyphAppearance } from "../../components/ProviderIcon";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
@@ -158,6 +158,8 @@ function AccountInstanceLabel({ value }: { readonly value: string }) {
 
 export function AccountLimits(props: {
   readonly driver: Driver;
+  /** The instance's chosen glyph and badge text, when the account is an instance. */
+  readonly appearance?: ProviderGlyphAppearance | undefined;
   readonly accentColor?: string | undefined;
   readonly label: string;
   readonly instanceLabel: string;
@@ -183,7 +185,7 @@ export function AccountLimits(props: {
       }
     >
       <View className="flex-row items-center gap-2">
-        <ProviderIcon provider={props.driver} size={16} />
+        <ProviderIcon provider={props.driver} appearance={props.appearance} size={16} />
         <View className="min-w-0 flex-1 flex-row items-baseline gap-2">
           <Text className="text-base font-t3-medium text-foreground">{props.label}</Text>
           {props.instanceLabel !== props.label ? (

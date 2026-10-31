@@ -163,6 +163,8 @@ function HandoffEndpoint(props: {
           size={14}
           displayName={resolveProviderInstanceDisplayName(provider)}
           accentColor={provider.accentColor}
+          icon={provider.icon}
+          badgeLabel={provider.badgeLabel}
           showBadge
           surfaceColor={props.surfaceColor}
         />
@@ -170,6 +172,7 @@ function HandoffEndpoint(props: {
         <ProviderIcon
           provider={provider?.driver ?? props.instanceId}
           iconUrl={provider?.iconUrl}
+          appearance={provider}
           size={12}
         />
       )}

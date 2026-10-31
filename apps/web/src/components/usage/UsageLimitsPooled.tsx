@@ -32,6 +32,7 @@ import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
+import { PROVIDER_INSTANCE_INITIALS_ICON } from "@t3tools/contracts";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { providerClients } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
@@ -92,7 +93,12 @@ function AccountAvatar({
           String(account.driver)
         }
         accentColor={account.accentColor}
-        showBadge={Boolean(account.displayName)}
+        icon={account.icon}
+        badgeLabel={account.badgeLabel}
+        showBadge={
+          Boolean(account.displayName || account.badgeLabel) &&
+          account.icon !== PROVIDER_INSTANCE_INITIALS_ICON
+        }
         indicatorBackground="var(--popover)"
         className={cn("size-5", className)}
         iconClassName="size-4 text-foreground/80"

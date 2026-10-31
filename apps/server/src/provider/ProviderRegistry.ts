@@ -39,6 +39,7 @@ import {
 } from "./providerStatusCache.ts";
 import type {
   ProviderInstance,
+  ProviderInstanceAppearance,
   ProviderWorkspaceSnapshot,
 } from "@t3tools/provider-core/server/driver";
 import {
@@ -321,6 +322,35 @@ const correlateSnapshotWithSource = (
   return Effect.succeed(snapshot);
 };
 
+// Appearance comes from instance config, not the driver, and changes without
+// rebuilding the instance. It is applied as providers leave the registry, from
+// the latest config, so a refresh racing an edit can never restore old values.
+const stampAppearance = (
+  snapshot: ServerProvider,
+  appearance: ProviderInstanceAppearance,
+): ServerProvider => {
+  const { icon: _icon, badgeLabel: _badgeLabel, ...rest } = snapshot;
+  return {
+    ...rest,
+    ...(appearance.icon ? { icon: appearance.icon } : {}),
+    ...(appearance.badgeLabel ? { badgeLabel: appearance.badgeLabel } : {}),
+  };
+};
+
+const sameAppearance = (
+  left: ReadonlyMap<ProviderInstanceId, ProviderInstanceAppearance>,
+  right: ReadonlyMap<ProviderInstanceId, ProviderInstanceAppearance>,
+): boolean =>
+  left.size === right.size &&
+  [...left].every(([instanceId, appearance]) => {
+    const other = right.get(instanceId);
+    return (
+      other !== undefined &&
+      other.icon === appearance.icon &&
+      other.badgeLabel === appearance.badgeLabel
+    );
+  });
+
 const snapshotInstanceKey = (provider: ServerProvider): ProviderInstanceId => {
   return provider.instanceId;
 };
@@ -351,6 +381,20 @@ export const layer = Layer.effect(
       PubSub.unbounded<ReadonlyArray<ServerProvider>>(),
       PubSub.shutdown,
     );
+    // Live instances' appearance. Unavailable shadows are absent and keep the
+    // appearance they were built with.
+    const appearanceRef = yield* Ref.make<
+      ReadonlyMap<ProviderInstanceId, ProviderInstanceAppearance>
+    >(new Map());
+    const withAppearance = (providers: ReadonlyArray<ServerProvider>) =>
+      Ref.get(appearanceRef).pipe(
+        Effect.map((appearanceByInstance) =>
+          providers.map((provider) => {
+            const appearance = appearanceByInstance.get(provider.instanceId);
+            return appearance ? stampAppearance(provider, appearance) : provider;
+          }),
+        ),
+      );
 
     const bootInstances = yield* instanceRegistry.listInstances;
     const bootSources = bootInstances.map(buildSnapshotSource);
@@ -789,6 +833,33 @@ export const layer = Layer.effect(
           newlyAdded.push([instanceId, instance] as const);
         }
 
+        // Appearance edits keep the instance; pick up what every live
+        // instance should look like now, and re-emit if that changed.
+        const nextAppearance = new Map<ProviderInstanceId, ProviderInstanceAppearance>();
+        for (const [instanceId, instance] of nextByInstance) {
+          nextAppearance.set(instanceId, yield* instance.appearance ?? Effect.succeed({}));
+        }
+        const previousAppearance = yield* Ref.getAndSet(appearanceRef, nextAppearance);
+        // Remove retired instances before any reconciliation emission, so
+        // clients never receive them with their configured appearance stripped.
+        const [previousProviders, providers] = yield* Ref.modify(
+          providersRef,
+          (previousProviders) => {
+            const providers = orderProviderSnapshots(
+              previousProviders.filter((provider) =>
+                knownInstanceIds.has(snapshotInstanceKey(provider)),
+              ),
+            );
+            return [[previousProviders, providers] as const, providers];
+          },
+        );
+        if (
+          !sameAppearance(previousAppearance, nextAppearance) ||
+          haveProvidersChanged(previousProviders, providers)
+        ) {
+          yield* PubSub.publish(changesPubSub, providers);
+        }
+
         const rebuiltInstanceIds = new Set(
           newlyAdded
             .map(([instanceId]) => instanceId)
@@ -843,20 +914,6 @@ export const layer = Layer.effect(
         }
         yield* Ref.set(liveSubsRef, nextSubs);
 
-        const [previousProviders, providers] = yield* Ref.modify(
-          providersRef,
-          (previousProviders) => {
-            const providers = orderProviderSnapshots(
-              previousProviders.filter((provider) =>
-                knownInstanceIds.has(snapshotInstanceKey(provider)),
-              ),
-            );
-            return [[previousProviders, providers] as const, providers];
-          },
-        );
-        if (haveProvidersChanged(previousProviders, providers)) {
-          yield* PubSub.publish(changesPubSub, providers);
-        }
         yield* Ref.update(maintenanceActionStatesRef, (previous) => {
           const next = new Map(previous);
           for (const instanceId of previous.keys()) {
@@ -1026,20 +1083,35 @@ export const layer = Layer.effect(
     });
 
     return {
-      getProviders: Ref.get(providersRef),
+      getProviders: Ref.get(providersRef).pipe(Effect.flatMap(withAppearance)),
       refresh: (provider?: ProviderDriverKind) =>
-        refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
+        refresh(provider).pipe(
+          Effect.catchCause(recoverRefreshFailure),
+          Effect.flatMap(withAppearance),
+        ),
       refreshInstance: (instanceId: ProviderInstanceId) =>
-        refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+        refreshInstance(instanceId).pipe(
+          Effect.catchCause(recoverRefreshFailure),
+          Effect.flatMap(withAppearance),
+        ),
       reloadSecretsAndRefresh: (instanceId?: ProviderInstanceId) =>
-        reloadSecretsAndRefresh(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+        reloadSecretsAndRefresh(instanceId).pipe(
+          Effect.catchCause(recoverRefreshFailure),
+          Effect.flatMap(withAppearance),
+        ),
       refreshWorkspaceSnapshot: (input) =>
-        refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
-      refreshAfterUpdate,
+        refreshWorkspaceSnapshot(input).pipe(
+          Effect.catchCause(recoverRefreshFailure),
+          Effect.flatMap(withAppearance),
+        ),
+      refreshAfterUpdate: (provider, instanceId) =>
+        refreshAfterUpdate(provider, instanceId).pipe(Effect.flatMap(withAppearance)),
       getProviderMaintenanceCapabilitiesForInstance,
-      setProviderMaintenanceActionState,
+      setProviderMaintenanceActionState: (input) =>
+        setProviderMaintenanceActionState(input).pipe(Effect.flatMap(withAppearance)),
       get streamChanges() {
-        return Stream.fromPubSub(changesPubSub);
+        // Stamped as each list is consumed, so it always carries the latest appearance.
+        return Stream.fromPubSub(changesPubSub).pipe(Stream.mapEffect(withAppearance));
       },
     } satisfies ProviderRegistry["Service"];
   }),

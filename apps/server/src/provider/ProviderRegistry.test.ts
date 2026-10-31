@@ -11,6 +11,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -66,6 +67,7 @@ import {
 import { COMPACT_SLASH_COMMAND } from "@t3tools/provider-core/server/snapshotProbe";
 import type {
   ProviderInstance,
+  ProviderInstanceAppearance,
   ProviderWorkspaceSnapshot,
 } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
@@ -2122,6 +2124,180 @@ it.layer(
           assert.deepStrictEqual(yield* registry.refreshInstance(codexInstanceId), [
             withBundledCompatibility(cachedProvider),
           ]);
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
+
+    it.effect("stamps instance appearance from config over driver snapshots", () =>
+      Effect.gen(function* () {
+        const claudeDriver = ProviderDriverKind.make("claudeAgent");
+        const baseProvider = {
+          driver: claudeDriver,
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-04-29T10:00:00.000Z",
+          version: "1.0.0",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        } as const;
+        // Both drivers report stale appearance, as a cached snapshot would.
+        const kimiProvider = {
+          ...baseProvider,
+          instanceId: ProviderInstanceId.make("claude_kimi"),
+          icon: "codex",
+          badgeLabel: "OLD",
+        } as const satisfies ServerProvider;
+        const plainProvider = {
+          ...baseProvider,
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          icon: "grok",
+          badgeLabel: "OLD",
+        } as const satisfies ServerProvider;
+        const makeInstance = (
+          provider: ServerProvider,
+          appearance?: Effect.Effect<ProviderInstanceAppearance>,
+        ): ProviderInstance => ({
+          instanceId: provider.instanceId,
+          driverKind: provider.driver,
+          continuationIdentity: {
+            driverKind: provider.driver,
+            continuationKey: `${provider.driver}:instance:${provider.instanceId}`,
+          },
+          displayName: undefined,
+          appearance,
+          enabled: true,
+          snapshot: {
+            resolveMaintenance: () =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: provider.driver,
+                  packageName: null,
+                }),
+              ),
+            getSnapshot: Effect.succeed(provider),
+            refresh: Effect.succeed(provider),
+            streamChanges: Stream.empty,
+            applyUsageLimits: () => Effect.void,
+          },
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        });
+        const kimiAppearance = yield* Ref.make<ProviderInstanceAppearance>({
+          icon: "initials",
+          badgeLabel: "KI",
+        });
+        const instances = [
+          makeInstance(kimiProvider, Ref.get(kimiAppearance)),
+          makeInstance(plainProvider),
+        ];
+        const instancesRef = yield* Ref.make<ReadonlyArray<ProviderInstance>>(instances);
+        const changes = yield* PubSub.unbounded<void>();
+        const layerInstanceRegistry = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (instanceId) =>
+              Ref.get(instancesRef).pipe(
+                Effect.map((current) =>
+                  current.find((instance) => instance.instanceId === instanceId),
+                ),
+              ),
+            listInstances: Ref.get(instancesRef),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.fromPubSub(changes),
+            subscribeChanges: PubSub.subscribe(changes),
+          },
+        );
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const runtimeServices = yield* Layer.build(
+          ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
+            Layer.provideMerge(layerInstanceRegistry),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-appearance-",
+              }),
+            ),
+            Layer.provideMerge(layerBackgroundPolicyAlwaysRun),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ).pipe(Scope.provide(scope));
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          const providers = yield* registry.getProviders;
+          const appearanceOf = (instanceId: string) => {
+            const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+            return { icon: provider?.icon, badgeLabel: provider?.badgeLabel };
+          };
+          assert.deepStrictEqual(appearanceOf("claude_kimi"), {
+            icon: "initials",
+            badgeLabel: "KI",
+          });
+          assert.deepStrictEqual(appearanceOf("claudeAgent"), {
+            icon: undefined,
+            badgeLabel: undefined,
+          });
+
+          // Maintenance responses carry the same appearance as reads.
+          const maintained = yield* registry.setProviderMaintenanceActionState({
+            instanceId: ProviderInstanceId.make("claude_kimi"),
+            action: "update",
+            state: null,
+          });
+          assert.strictEqual(
+            maintained.find((provider) => provider.instanceId === "claude_kimi")?.badgeLabel,
+            "KI",
+          );
+
+          const updated = yield* registry.refreshAfterUpdate(
+            claudeDriver,
+            ProviderInstanceId.make("claude_kimi"),
+          );
+          assert.strictEqual(
+            updated.find((provider) => provider.instanceId === "claude_kimi")?.badgeLabel,
+            "KI",
+          );
+
+          // The registry restyles in place and announces a change.
+          const restyledList = yield* registry.streamChanges.pipe(
+            Stream.filter((list) =>
+              list.some(
+                (provider) => provider.instanceId === "claude_kimi" && provider.icon === "codex",
+              ),
+            ),
+            Stream.runHead,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          yield* Ref.set(kimiAppearance, { icon: "codex", badgeLabel: undefined });
+          yield* PubSub.publish(changes, undefined);
+          const restyled = Option.getOrThrow(yield* Fiber.join(restyledList)).find(
+            (provider) => provider.instanceId === "claude_kimi",
+          );
+          assert.deepStrictEqual(
+            { icon: restyled?.icon, badgeLabel: restyled?.badgeLabel },
+            { icon: "codex", badgeLabel: undefined },
+          );
+
+          // The first removal emission must already exclude the deleted
+          // instance, even when a retained instance is restyled at once.
+          const pullChanges = yield* Stream.toPull(registry.streamChanges);
+          yield* Ref.set(instancesRef, [instances[0]!]);
+          yield* Ref.set(kimiAppearance, { icon: "initials", badgeLabel: "NEW" });
+          yield* PubSub.publish(changes, undefined);
+          const removalChanges = yield* pullChanges;
+          for (const list of removalChanges) {
+            assert.deepStrictEqual(
+              list.map((provider) => provider.instanceId),
+              ["claude_kimi"],
+            );
+            assert.strictEqual(list[0]?.icon, "initials");
+            assert.strictEqual(list[0]?.badgeLabel, "NEW");
+          }
         }).pipe(Effect.provide(runtimeServices));
       }),
     );

@@ -27,7 +27,11 @@ import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretReso
 
 import { buildUnavailableProviderSnapshot } from "./unavailableProviderSnapshot.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
-import type { AnyProviderDriver, ProviderInstance } from "@t3tools/provider-core/server/driver";
+import type {
+  AnyProviderDriver,
+  ProviderInstance,
+  ProviderInstanceAppearance,
+} from "@t3tools/provider-core/server/driver";
 
 export class ProviderInstanceRegistry extends Context.Service<
   ProviderInstanceRegistry,
@@ -52,6 +56,7 @@ interface LiveEntry {
   readonly instance: ProviderInstance;
   readonly scope: Scope.Closeable;
   readonly entry: ProviderInstanceConfig;
+  readonly appearance: Ref.Ref<ProviderInstanceAppearance>;
   readonly secrets: InstanceSecrets;
 }
 
@@ -63,6 +68,18 @@ interface RegistryState {
 
 const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
   Equal.equals(a, b);
+
+const entryAppearance = (entry: ProviderInstanceConfig): ProviderInstanceAppearance => ({
+  icon: entry.icon,
+  badgeLabel: entry.badgeLabel,
+});
+
+/** Equality ignoring appearance, which changes without rebuilding the runtime. */
+const runtimeEntryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean => {
+  const { icon: _aIcon, badgeLabel: _aBadge, ...aRuntime } = a;
+  const { icon: _bIcon, badgeLabel: _bBadge, ...bRuntime } = b;
+  return Equal.equals(aRuntime, bRuntime);
+};
 
 const secretReferencesIn = (environment: ProviderInstanceEnvironment): Array<SecretReference> =>
   environment.flatMap((variable) => (typeof variable.value === "string" ? [] : [variable.value]));
@@ -164,6 +181,8 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
+        icon: entry.icon,
+        badgeLabel: entry.badgeLabel,
         reason: `Driver '${entry.driver}' is not registered in this build.`,
       }),
     };
@@ -186,6 +205,8 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
+        icon: entry.icon,
+        badgeLabel: entry.badgeLabel,
         reason: `Invalid config for instance '${rawInstanceId}': ${detail}`,
       }),
     };
@@ -201,6 +222,8 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
+        icon: entry.icon,
+        badgeLabel: entry.badgeLabel,
         reason: "Reading secrets…",
       }),
     };
@@ -221,6 +244,8 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
+        icon: entry.icon,
+        badgeLabel: entry.badgeLabel,
         reason: `Could not read ${unreadable.join(", ")} from its secret provider. Unlock it, then refresh.`,
       }),
     };
@@ -255,17 +280,21 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
+        icon: entry.icon,
+        badgeLabel: entry.badgeLabel,
         reason: `Driver '${entry.driver}' failed to create instance: ${createResult.failure.detail}`,
       }),
     };
   }
 
+  const appearance = yield* Ref.make(entryAppearance(entry));
   return {
     kind: "live" as const,
     live: {
-      instance: createResult.success,
+      instance: { ...createResult.success, appearance: Ref.get(appearance) },
       scope: childScope,
       entry,
+      appearance,
       secrets,
     },
   };
@@ -293,16 +322,21 @@ const makeReconcile = <R>(input: {
       // Close changed/removed scopes before replacements to preserve one live scope per id.
       const removedIds: Array<ProviderInstanceId> = [];
       const replacedIds = new Set<ProviderInstanceId>();
+      const restyledIds = new Set<ProviderInstanceId>();
       for (const [instanceId, live] of previousEntries) {
         if (!nextKeys.has(instanceId)) {
           removedIds.push(instanceId);
           continue;
         }
         const nextEntry = configMap[instanceId];
-        if (
-          rebuild.has(instanceId) ||
-          (nextEntry !== undefined && !entryEqual(live.entry, nextEntry))
-        ) {
+        if (rebuild.has(instanceId)) {
+          replacedIds.add(instanceId);
+          continue;
+        }
+        if (nextEntry === undefined || entryEqual(live.entry, nextEntry)) continue;
+        if (runtimeEntryEqual(live.entry, nextEntry)) {
+          restyledIds.add(instanceId);
+        } else {
           replacedIds.add(instanceId);
         }
       }
@@ -344,6 +378,12 @@ const makeReconcile = <R>(input: {
         nextOrder.push(instanceId);
 
         const existing = previousEntries.get(instanceId);
+        if (existing !== undefined && restyledIds.has(instanceId)) {
+          // Appearance-only update: keep the runtime, swap what it looks like.
+          yield* Ref.set(existing.appearance, entryAppearance(entry));
+          builtEntries.set(instanceId, { ...existing, entry });
+          continue;
+        }
         if (existing !== undefined && !replacedIds.has(instanceId)) {
           builtEntries.set(instanceId, existing);
           continue;
@@ -379,6 +419,7 @@ const makeReconcile = <R>(input: {
         orderChanged ||
         removedIds.length > 0 ||
         replacedIds.size > 0 ||
+        restyledIds.size > 0 ||
         builtEntries.size !== previousEntries.size;
       const unavailableChanged =
         builtUnavailable.size !== previousUnavailable.size ||

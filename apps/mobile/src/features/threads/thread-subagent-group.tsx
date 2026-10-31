@@ -56,7 +56,12 @@ function SubagentAvatar(props: {
       {driver === undefined ? (
         <SymbolView name="sparkles" size={13} tintColorClassName="accent-icon-muted" />
       ) : (
-        <ProviderIcon provider={driver} iconUrl={props.provider?.iconUrl} size={15} />
+        <ProviderIcon
+          provider={driver}
+          iconUrl={props.provider?.iconUrl}
+          appearance={props.provider}
+          size={15}
+        />
       )}
     </View>
   );

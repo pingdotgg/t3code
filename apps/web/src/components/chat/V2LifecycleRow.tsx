@@ -206,12 +206,18 @@ function SubagentAvatar({
   driver,
   displayName,
   iconUrl,
+  icon,
+  badgeLabel,
+  accentColor,
   status,
   className,
 }: {
   driver?: ProviderDriverKind | undefined;
   displayName?: string | undefined;
   iconUrl?: string | undefined;
+  icon?: string | undefined;
+  badgeLabel?: string | undefined;
+  accentColor?: string | undefined;
   status?: OrchestrationV2TurnItem["status"] | undefined;
   className?: string;
 }) {
@@ -227,6 +233,9 @@ function SubagentAvatar({
         <ProviderInstanceIcon
           driverKind={driver}
           displayName={displayName ?? driver}
+          accentColor={accentColor}
+          icon={icon}
+          badgeLabel={badgeLabel}
           acpRegistryIconUrl={iconUrl}
           className="z-auto"
           iconClassName="size-3.5"
@@ -279,12 +288,29 @@ export function EnvironmentSubagentAvatar({
     (providers) =>
       providers?.find((provider) => provider.instanceId === providerInstanceId)?.iconUrl,
   );
+  const icon = useAtomValue(
+    providersAtom,
+    (providers) => providers?.find((provider) => provider.instanceId === providerInstanceId)?.icon,
+  );
+  const badgeLabel = useAtomValue(
+    providersAtom,
+    (providers) =>
+      providers?.find((provider) => provider.instanceId === providerInstanceId)?.badgeLabel,
+  );
+  const accentColor = useAtomValue(
+    providersAtom,
+    (providers) =>
+      providers?.find((provider) => provider.instanceId === providerInstanceId)?.accentColor,
+  );
   return (
     <SubagentAvatar
       {...props}
       driver={providerDriver ?? (remote === undefined ? driver : undefined)}
       displayName={displayName}
       iconUrl={iconUrl}
+      icon={icon}
+      badgeLabel={badgeLabel}
+      accentColor={accentColor}
     />
   );
 }
@@ -643,6 +669,8 @@ function HandoffEndpoint(props: {
               driverKind={entry?.driverKind ?? ProviderDriverKind.make(props.instanceId)}
               displayName={entry?.displayName ?? props.instanceId}
               accentColor={entry?.accentColor}
+              icon={entry?.icon}
+              badgeLabel={entry?.badgeLabel}
               acpRegistryAgentId={entry?.acpRegistryAgentId}
               acpRegistryIconUrl={entry?.acpRegistryIconUrl}
               showBadge={showBadge}

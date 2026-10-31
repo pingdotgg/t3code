@@ -3,7 +3,11 @@ import { type CSSProperties, memo } from "react";
 import {
   normalizeProviderAccentColor,
   providerAccentForegroundColor,
-  providerInstanceInitials,
+  isProviderInstanceInitialsIcon,
+  PROVIDER_INSTANCE_LOGO_ICONS,
+  providerInstanceInitialsGlyphScale,
+  resolveProviderInstanceBadgeLabel,
+  resolveProviderInstanceGlyphDriver,
 } from "@t3tools/client-runtime/state/provider-instance-display";
 
 import { ProviderDriverKind } from "@t3tools/contracts";
@@ -30,6 +34,23 @@ const PROVIDER_TEXT_COLOR_BY_PROVIDER: Partial<Record<ProviderDriverKind, string
   [ProviderDriverKind.make("antigravity")]: "text-[#5b87bf]",
 };
 
+const PROVIDER_LOGO_LABEL: Partial<Record<ProviderDriverKind, string>> = {
+  [ProviderDriverKind.make("codex")]: "OpenAI",
+  [ProviderDriverKind.make("claudeAgent")]: "Claude",
+  [ProviderDriverKind.make("opencode")]: "OpenCode",
+  [ProviderDriverKind.make("cursor")]: "Cursor",
+  [ProviderDriverKind.make("grok")]: "Grok",
+  [ProviderDriverKind.make("antigravity")]: "Antigravity",
+  [ProviderDriverKind.make("pi")]: "Pi",
+};
+
+/** Logos an instance can choose, in the order settings offers them. */
+export const PROVIDER_INSTANCE_LOGO_OPTIONS = PROVIDER_INSTANCE_LOGO_ICONS.map((icon) => ({
+  icon,
+  label: PROVIDER_LOGO_LABEL[icon] ?? icon,
+}));
+
+/** Brand text color for a provider label; package glyphs supply theirs as CSS variables. */
 export function providerTextColor(driverKind: ProviderDriverKind): {
   readonly className?: string;
   readonly style?: CSSProperties;
@@ -61,6 +82,9 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   driverKind: ProviderDriverKind;
   displayName: string;
   accentColor?: string | undefined;
+  /** Chosen glyph: a driver slug with a logo, or the initials icon. */
+  icon?: string | undefined;
+  badgeLabel?: string | undefined;
   acpRegistryAgentId?: string | undefined;
   acpRegistryIconUrl?: string | undefined;
   showBadge?: boolean;
@@ -71,8 +95,11 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   badgeClassName?: string;
   indicatorBackground?: string;
 }) {
-  const Icon = PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null;
-  const packageIcon = providerClients.get(props.driverKind)?.icon;
+  const glyphDriver = resolveProviderInstanceGlyphDriver(props);
+  const Icon = PROVIDER_ICON_BY_PROVIDER[glyphDriver] ?? null;
+  const drawsInitials = isProviderInstanceInitialsIcon(props.icon);
+  const badgeLabel = resolveProviderInstanceBadgeLabel(props);
+  const packageIcon = providerClients.get(glyphDriver)?.icon;
   const indicatorBackground = props.indicatorBackground ?? "var(--card)";
   const accentColor = normalizeProviderAccentColor(props.accentColor);
   const accentStyle = accentColor
@@ -83,7 +110,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
     : undefined;
   const badgeContent = props.badgeContent ?? "initials";
   const iconClassName = cn(props.size === "compact" && "size-3.5", props.iconClassName);
-  const isAcpRegistry = props.driverKind === "acpRegistry";
+  const isAcpRegistry = glyphDriver === "acpRegistry";
   const acpRegistryIconUrl = resolveProviderInstanceAcpRegistryIconUrl({
     driverKind: props.driverKind,
     agentId: props.acpRegistryAgentId,
@@ -99,7 +126,25 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       style={accentStyle}
       data-provider-accent-color={accentColor}
     >
-      {isAcpRegistry ? (
+      {drawsInitials ? (
+        // Container units scale the label with whatever size the caller gives
+        // the glyph, from a 12px thread row to the 20px picker rail.
+        <span
+          className={cn(
+            "@container flex size-5 shrink-0 items-center justify-center",
+            iconClassName,
+            accentColor && "text-(--provider-accent)",
+          )}
+          aria-hidden
+        >
+          <span
+            className="font-bold leading-none whitespace-nowrap"
+            style={{ fontSize: `${providerInstanceInitialsGlyphScale(badgeLabel) * 100}cqw` }}
+          >
+            {badgeLabel}
+          </span>
+        </span>
+      ) : isAcpRegistry ? (
         <AcpRegistryAgentIcon
           className={cn("size-5 rounded-none bg-transparent", iconClassName)}
           fallbackClassName="size-full"
@@ -115,7 +160,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
         <Icon className={cn("size-5 shrink-0", iconClassName)} aria-hidden />
       ) : (
         <span className={cn("text-3xs font-semibold leading-none", iconClassName)}>
-          {providerInstanceInitials(props.displayName)}
+          {badgeLabel}
         </span>
       )}
       {props.showBadge ? (
@@ -132,7 +177,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
           style={{ borderColor: indicatorBackground }}
           aria-hidden
         >
-          {badgeContent === "initials" ? providerInstanceInitials(props.displayName) : null}
+          {badgeContent === "initials" ? badgeLabel : null}
         </span>
       ) : null}
     </span>

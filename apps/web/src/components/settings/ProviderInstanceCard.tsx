@@ -39,7 +39,7 @@ import {
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useStableCallback } from "../../hooks/useStableCallback";
-import { normalizeProviderAccentColor } from "../../providerInstances";
+import { normalizeProviderAccentColor, shouldShowInstanceBadge } from "../../providerInstances";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -62,6 +62,7 @@ import {
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
+import { ProviderInstanceAppearanceControls } from "./ProviderInstanceAppearanceControls";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
@@ -633,7 +634,12 @@ interface ProviderInstanceCardProps {
   readonly onSelect?: (() => void) | undefined;
   readonly readOnly?: boolean | undefined;
   readonly canWriteSettings?: boolean;
-  readonly onUpdate: (nextInstance: ProviderInstanceConfig) => void;
+  /**
+   * Receives each edit as a change to apply to the newest instance, so quick
+   * edits to different fields compose instead of each sending a stale copy.
+   */
+  readonly onUpdate: (update: (current: ProviderInstanceConfig) => ProviderInstanceConfig) => void;
+  /** Default slots hide this footer and reset through the outer action. */
   readonly onDelete?: (() => void) | undefined;
   readonly headerAction?: ReactNode | undefined;
   readonly setup?: ReactNode;
@@ -780,14 +786,24 @@ export function ProviderInstanceCard({
     liveModels: liveProvider?.models,
     customModels,
   });
+  // Sets or, given `undefined`, removes one field of the newest instance.
+  const updateField = <Key extends keyof ProviderInstanceConfig>(
+    key: Key,
+    value: ProviderInstanceConfig[Key] | undefined,
+  ) =>
+    onUpdate((current) => {
+      const next = { ...current };
+      if (value === undefined) {
+        delete next[key];
+      } else {
+        next[key] = value;
+      }
+      return next;
+    });
+
   const updateDisplayName = (value: string) => {
     const trimmed = value.trim();
-    const { displayName: _omit, ...rest } = instance;
-    onUpdate(
-      trimmed.length > 0
-        ? ({ ...rest, displayName: trimmed } as ProviderInstanceConfig)
-        : (rest as ProviderInstanceConfig),
-    );
+    updateField("displayName", trimmed.length > 0 ? trimmed : undefined);
   };
 
   const updateEnabled = (value: boolean) => {
@@ -795,47 +811,54 @@ export function ProviderInstanceCard({
       projectOverride.onChange(value);
       return;
     }
-    onUpdate({ ...instance, enabled: value });
+    updateField("enabled", value);
   };
 
   const updateAccentColor = (value: string) => {
-    const normalized = normalizeProviderAccentColor(value);
-    const { accentColor: _omit, ...rest } = instance;
-    onUpdate(
-      normalized
-        ? ({ ...rest, accentColor: normalized } as ProviderInstanceConfig)
-        : (rest as ProviderInstanceConfig),
-    );
+    updateField("accentColor", normalizeProviderAccentColor(value));
+  };
+
+  const updateIcon = (icon: string | undefined) => {
+    updateField("icon", icon || undefined);
+  };
+
+  const updateBadgeLabel = (badgeLabel: string | undefined) => {
+    updateField("badgeLabel", badgeLabel || undefined);
   };
 
   const updateConfig = (nextConfig: Record<string, unknown> | undefined) => {
-    const { config: _omit, ...rest } = instance;
-    onUpdate(
-      nextConfig !== undefined
-        ? ({ ...rest, config: nextConfig } as ProviderInstanceConfig)
-        : (rest as ProviderInstanceConfig),
-    );
+    updateField("config", nextConfig);
   };
 
   const updateCustomModels = useStableCallback((next: ReadonlyArray<CustomModelDefinition>) => {
-    const nextConfig = nextConfigBlobWithValue(
-      instance.config,
-      "customModels",
-      next.map(toCustomModelSetting),
-    );
-    const { config: _omit, ...rest } = instance;
-    onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
+    onUpdate((current) => ({
+      ...current,
+      config: nextConfigBlobWithValue(
+        current.config,
+        "customModels",
+        next.map(toCustomModelSetting),
+      ),
+    }));
   });
 
-  const updateEnvironment = (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => {
-    const cleaned = environment.filter((variable) => variable.name.trim().length > 0);
-    const { environment: _omit, ...rest } = instance;
-    onUpdate(
-      cleaned.length > 0
-        ? ({ ...rest, environment: cleaned } as ProviderInstanceConfig)
-        : (rest as ProviderInstanceConfig),
-    );
-  };
+  // Builds the next variables from the newest instance's, so an edit to one
+  // variable keeps another that is still being saved.
+  const updateEnvironment = (
+    nextEnvironment: (
+      current: ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined,
+    ) => ReadonlyArray<ProviderInstanceEnvironmentVariable>,
+  ) =>
+    onUpdate((current) => {
+      const { environment: _omit, ...rest } = current;
+      const cleaned = nextEnvironment(current.environment).filter(
+        (variable) => variable.name.trim().length > 0,
+      );
+      return (
+        cleaned.length > 0 ? { ...rest, environment: cleaned } : rest
+      ) as ProviderInstanceConfig;
+    });
+  // Drivers that need a named secret (Cursor's API key) get a dedicated field;
+  // the generic editor only shows the remaining variables.
   const environmentFields = driverOption?.environmentFields ?? [];
   const environmentFieldNames = new Set(environmentFields.map((field) => field.name));
   const genericEnvironment = providerEnvironmentWithoutNames(
@@ -845,22 +868,22 @@ export function ProviderInstanceCard({
   const updateGenericEnvironment = (
     environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>,
   ) => {
-    const dedicatedEnvironment = (instance.environment ?? []).filter((variable) =>
-      environmentFieldNames.has(variable.name),
-    );
-    updateEnvironment([...dedicatedEnvironment, ...environment]);
+    updateEnvironment((current) => [
+      ...(current ?? []).filter((variable) => environmentFieldNames.has(variable.name)),
+      ...environment,
+    ]);
   };
   const updateEnvironmentField = (field: ProviderEnvironmentField, value: string) => {
-    updateEnvironment(nextProviderEnvironmentWithFieldValue(instance.environment, field, value));
+    updateEnvironment((current) => nextProviderEnvironmentWithFieldValue(current, field, value));
   };
   const updateEnvironmentFieldSecret = (
     field: ProviderEnvironmentField,
     secret: SecretReference | undefined,
   ) => {
-    updateEnvironment(nextProviderEnvironmentWithFieldSecret(instance.environment, field, secret));
+    updateEnvironment((current) => nextProviderEnvironmentWithFieldSecret(current, field, secret));
   };
   const removeEnvironmentField = (field: ProviderEnvironmentField) => {
-    updateEnvironment(providerEnvironmentWithoutNames(instance.environment, new Set([field.name])));
+    updateEnvironment((current) => providerEnvironmentWithoutNames(current, new Set([field.name])));
   };
 
   const titleIconNode = (
@@ -868,6 +891,8 @@ export function ProviderInstanceCard({
       driverKind={driverKind ?? instance.driver}
       displayName={displayName}
       accentColor={accentColor}
+      icon={instance.icon}
+      badgeLabel={instance.badgeLabel}
       acpRegistryAgentId={
         readConfigString(instance.config, "source") === "local"
           ? undefined
@@ -878,7 +903,17 @@ export function ProviderInstanceCard({
           ? undefined
           : (readConfigString(instance.config, "registryIconUrl") ?? undefined)
       }
-      showBadge={Boolean(accentColor)}
+      // Preview only what this instance sets; sharing a glyph is a picker concern.
+      showBadge={shouldShowInstanceBadge(
+        {
+          driverKind: instance.driver,
+          enabled: instance.enabled !== false,
+          icon: instance.icon,
+          accentColor,
+          badgeLabel: instance.badgeLabel,
+        },
+        [],
+      )}
       className="size-5"
       iconClassName="size-4 text-foreground/80"
       badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
@@ -1239,6 +1274,31 @@ export function ProviderInstanceCard({
                 onCommit={updateDisplayName}
                 placeholder={driverOption?.label ?? "Instance label"}
                 spellCheck={false}
+              />
+            </div>
+          }
+        />
+        <SettingsRow
+          title="Icon"
+          description="Logo and badge label that tell this instance apart in pickers and the sidebar."
+          control={
+            <div
+              inert={readOnly}
+              aria-disabled={readOnly || undefined}
+              className={cn(
+                "flex w-full min-w-0 items-center justify-end gap-2 @min-[32rem]/settings-row:w-auto",
+                readOnly && "opacity-50 select-none",
+              )}
+            >
+              <ProviderInstanceAppearanceControls
+                instanceId={instanceId}
+                driverKind={instance.driver}
+                displayName={displayName}
+                accentColor={accentColor}
+                icon={instance.icon}
+                badgeLabel={instance.badgeLabel}
+                onIconChange={updateIcon}
+                onBadgeLabelChange={updateBadgeLabel}
               />
             </div>
           }

@@ -206,6 +206,36 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     Layer.provideMerge(layerBase),
   );
 
+  it.live("restyles an instance in place without rebuilding its runtime", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex_personal");
+      const base = {
+        driver: ProviderDriverKind.make("codex"),
+        enabled: false,
+        config: makeCodexConfig({}),
+      };
+      const { registry, mutator } = yield* makeProviderInstanceRegistry<CodexDriverEnv>({
+        drivers: [CodexDriver],
+        configMap: { [instanceId]: base },
+      });
+      const before = yield* registry.getInstance(instanceId);
+      expect(yield* before!.appearance!).toEqual({ icon: undefined, badgeLabel: undefined });
+
+      yield* mutator.reconcile({
+        [instanceId]: { ...base, icon: "initials", badgeLabel: "KI" },
+      });
+      const restyled = yield* registry.getInstance(instanceId);
+      expect(restyled).toBe(before);
+      expect(yield* restyled!.appearance!).toEqual({ icon: "initials", badgeLabel: "KI" });
+
+      // A runtime change still rebuilds.
+      yield* mutator.reconcile({
+        [instanceId]: { ...base, icon: "initials", badgeLabel: "KI", displayName: "Personal" },
+      });
+      expect(yield* registry.getInstance(instanceId)).not.toBe(before);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect.each(["replacement", "removal", "creation failure"] as const)(
     "detaches retired provider scopes after repeated %s",
     (scenario) =>
@@ -841,6 +871,8 @@ describe("ProviderInstanceRegistry secret environment", () => {
     const configMap: ProviderInstanceConfigMap = {
       [instanceId]: {
         driver: driverKind,
+        icon: "initials",
+        badgeLabel: "PX",
         config,
         environment: [
           { name: "OPENAI_API_KEY", value: secret, sensitive: true },
@@ -859,7 +891,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
       yield* PubSub.take(changes);
       return built;
     });
-    return { vault, reads, invalidated, created, configs, make, makeGated, gate };
+    return { vault, reads, invalidated, created, configs, configMap, make, makeGated, gate };
   }
 
   it.effect("starts an instance with the secret its environment points at", () => {
@@ -887,6 +919,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
       const [unavailable] = yield* registry.listUnavailable;
       expect(unavailable?.instanceId).toBe(instanceId);
       expect(unavailable?.unavailableReason).toContain("OPENAI_API_KEY");
+      expect(unavailable).toMatchObject({ icon: "initials", badgeLabel: "PX" });
     }).pipe(Effect.scoped);
   });
 
@@ -916,8 +949,21 @@ describe("ProviderInstanceRegistry secret environment", () => {
       yield* mutator.reloadSecrets(instanceId);
       expect(fixture.created).toHaveLength(1);
 
+      const before = yield* registry.getInstance(instanceId);
+      yield* mutator.reconcile({
+        ...fixture.configMap,
+        [instanceId]: { ...fixture.configMap[instanceId]!, icon: "initials", badgeLabel: "PX" },
+      });
+      expect(yield* registry.getInstance(instanceId)).toBe(before);
+      expect(yield* before!.appearance!).toEqual({ icon: "initials", badgeLabel: "PX" });
+
       fixture.vault.set(secret.reference, "sk-rotated");
       yield* mutator.reloadSecrets(instanceId);
+      expect(yield* registry.getInstance(instanceId)).not.toBe(before);
+      expect(yield* (yield* registry.getInstance(instanceId))!.appearance!).toEqual({
+        icon: "initials",
+        badgeLabel: "PX",
+      });
       expect(fixture.created.map((environment) => environment[0]?.value)).toEqual([
         "sk-live",
         "sk-rotated",
@@ -968,6 +1014,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
       expect(yield* registry.getInstance(instanceId)).toBeUndefined();
       const [pending] = yield* registry.listUnavailable;
       expect(pending?.unavailableReason).toBe("Reading secrets…");
+      expect(pending).toMatchObject({ icon: "initials", badgeLabel: "PX" });
 
       yield* Deferred.succeed(fixture.gate, undefined);
       yield* PubSub.take(changes);

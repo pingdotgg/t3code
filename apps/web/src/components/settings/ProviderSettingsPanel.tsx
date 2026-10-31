@@ -529,6 +529,15 @@ function AccessGatedProviderSettings({
   );
 }
 
+/** The edits a providers page has made to one instance, in order. */
+interface InstanceEdits {
+  readonly updates: Array<(current: ProviderInstanceConfig) => ProviderInstanceConfig>;
+  /** How many leading edits a successful save carried. */
+  confirmed: number;
+  /** Saves in flight. */
+  saving: number;
+}
+
 const NO_PROJECT_IDS: readonly ProjectId[] = [];
 const NO_FAVORITES: UnifiedSettings["favorites"] = [];
 
@@ -583,6 +592,7 @@ export function EnvironmentProviderSettings({
   >(() => new Set());
   const refreshingRef = useRef(false);
   const updatingInstanceIdsRef = useRef<Set<ProviderInstanceId>>(new Set());
+  const instanceEditsRef = useRef(new Map<ProviderInstanceId, InstanceEdits>());
 
   const acceptUrlAuthentication = useStableCallback(
     (instanceId: ProviderInstanceId, action: AcpRegistryUrlAuthAction) => {
@@ -779,13 +789,36 @@ export function EnvironmentProviderSettings({
     rows.find((row) => row.instanceId === selectedInstanceId) ??
     (targetInstanceMissing ? null : (rows[0] ?? null));
 
+  const settleInstanceEdits = (
+    instanceId: ProviderInstanceId,
+    edits: InstanceEdits,
+    carried: number,
+    succeeded: boolean,
+  ) => {
+    if (instanceEditsRef.current.get(instanceId) !== edits) return;
+    edits.saving -= 1;
+    if (succeeded) edits.confirmed = Math.max(edits.confirmed, carried);
+    if (edits.saving === 0) edits.updates.length = edits.confirmed;
+  };
+
   const persistInstance = async (
     instanceId: ProviderInstanceId,
-    next: ProviderInstanceConfig,
+    previous: ProviderInstanceConfig,
+    update: (current: ProviderInstanceConfig) => ProviderInstanceConfig,
     textGenerationModelSelection?: Parameters<
       typeof buildProviderInstanceUpdatePatch
     >[0]["textGenerationModelSelection"],
   ) => {
+    let edits = instanceEditsRef.current.get(instanceId);
+    if (edits === undefined) {
+      edits = { updates: [], confirmed: 0, saving: 0 };
+      instanceEditsRef.current.set(instanceId, edits);
+    }
+    edits.updates.push(update);
+    edits.saving += 1;
+    const carried = edits.updates.length;
+    const latest = settings.providerInstances?.[instanceId] ?? { driver: previous.driver };
+    const next = edits.updates.reduce((current, apply) => apply(current), latest);
     const { providerInstances: _providerInstances, ...patch } = buildProviderInstanceUpdatePatch({
       settings,
       instanceId,
@@ -796,6 +829,7 @@ export function EnvironmentProviderSettings({
       { operation: "upsert", instanceId, instance: next },
       patch,
     );
+    settleInstanceEdits(instanceId, edits, carried, result._tag === "Success");
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add({
@@ -810,28 +844,34 @@ export function EnvironmentProviderSettings({
     (
       instanceId: ProviderInstanceId,
       previous: ProviderInstanceConfig,
-      next: ProviderInstanceConfig,
+      update: (current: ProviderInstanceConfig) => ProviderInstanceConfig,
     ) => {
-      const isDisabling = next.enabled === false && resolveProviderInstanceEnabled(previous);
+      const isDisabling =
+        update(previous).enabled === false && resolveProviderInstanceEnabled(previous);
       const shouldClearTextGen =
         isDisabling &&
         resolveAppModelSelectionState(settings, serverProviders).instanceId === instanceId &&
         readEnvironmentScope(environmentId, AuthSettingsWriteScope);
       void persistInstance(
         instanceId,
-        next,
+        previous,
+        update,
         shouldClearTextGen ? DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection : undefined,
       );
     },
   );
 
   const enableInstance = useStableCallback(
-    (instanceId: ProviderInstanceId, next: ProviderInstanceConfig) =>
-      persistInstance(instanceId, next),
+    (
+      instanceId: ProviderInstanceId,
+      previous: ProviderInstanceConfig,
+      update: (current: ProviderInstanceConfig) => ProviderInstanceConfig,
+    ) => persistInstance(instanceId, previous, update),
   );
 
   const deleteInstance = useStableCallback(
     async (instanceId: ProviderInstanceId, instance: ProviderInstanceConfig) => {
+      instanceEditsRef.current.delete(instanceId);
       const updateResult = await persistProviderInstance({
         operation: "remove",
         instanceId,
@@ -868,10 +908,18 @@ export function EnvironmentProviderSettings({
   );
 
   const resetDefaultInstance = useStableCallback(async (driverKind: ProviderDriverKind) => {
+    const instanceId = defaultInstanceIdForDriver(driverKind);
+    const edits: InstanceEdits = {
+      updates: [(current) => ({ driver: current.driver })],
+      confirmed: 0,
+      saving: 1,
+    };
+    instanceEditsRef.current.set(instanceId, edits);
     const result = await persistProviderInstance({
       operation: "remove",
-      instanceId: defaultInstanceIdForDriver(driverKind),
+      instanceId,
     });
+    settleInstanceEdits(instanceId, edits, 1, result._tag === "Success");
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add({
@@ -1181,11 +1229,12 @@ interface ProviderInstanceRowActions {
   readonly updateInstance: (
     instanceId: ProviderInstanceId,
     previous: ProviderInstanceConfig,
-    next: ProviderInstanceConfig,
+    update: (current: ProviderInstanceConfig) => ProviderInstanceConfig,
   ) => void;
   readonly enableInstance: (
     instanceId: ProviderInstanceId,
-    next: ProviderInstanceConfig,
+    previous: ProviderInstanceConfig,
+    update: (current: ProviderInstanceConfig) => ProviderInstanceConfig,
   ) => Promise<void>;
   readonly deleteInstance: (
     instanceId: ProviderInstanceId,
@@ -1322,7 +1371,12 @@ function ProviderInstanceRow({
             authMethod={readAntigravityAuthMethod(instance.config)}
             enabled={resolveProviderInstanceEnabled(instance)}
             readOnly={readOnly}
-            onEnable={() => actions.enableInstance(instanceId, { ...instance, enabled: true })}
+            onEnable={() =>
+              actions.enableInstance(instanceId, instance, (current) => ({
+                ...current,
+                enabled: true,
+              }))
+            }
           />
         ) : mode === "editor" && codexSetupMode === "managed" ? (
           <CodexSetupSection
@@ -1333,17 +1387,17 @@ function ProviderInstanceRow({
             enabled={resolveProviderInstanceEnabled(instance)}
             readOnly={readOnly}
             onModeChange={(setupMode) =>
-              actions.enableInstance(instanceId, {
-                ...instance,
+              actions.enableInstance(instanceId, instance, (current) => ({
+                ...current,
                 enabled: true,
                 config: {
-                  ...(instance.config !== null && typeof instance.config === "object"
-                    ? instance.config
+                  ...(current.config !== null && typeof current.config === "object"
+                    ? current.config
                     : {}),
                   enabled: true,
                   setupMode,
                 },
-              })
+              }))
             }
           />
         ) : mode === "editor" &&
