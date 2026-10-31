@@ -1,9 +1,9 @@
 import { BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
-import { MonitorIcon, MoonIcon, PaletteIcon, SunIcon } from "lucide-react";
+import { AppWindowIcon, MonitorIcon, MoonIcon, PaletteIcon, SunIcon } from "lucide-react";
 
 import { useCustomThemes } from "../hooks/useCustomThemes";
 import { useEnvironmentThemeDefinitions } from "../hooks/useEnvironmentTheme";
-import { useTheme } from "../hooks/useTheme";
+import { APPEARANCE_CHOICES, useTheme, type AppearanceChoice } from "../hooks/useTheme";
 import { getThemeDefinition } from "../themePalette";
 import {
   ADDON_ICON_CLASS,
@@ -19,11 +19,12 @@ import {
 } from "./settings/ThemePreviewCircles";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 
-export const APPEARANCE_OPTIONS = [
-  { mode: "system", label: "System", icon: MonitorIcon },
-  { mode: "light", label: "Light", icon: SunIcon },
-  { mode: "dark", label: "Dark", icon: MoonIcon },
-] as const;
+const APPEARANCE_ICONS: Readonly<Record<AppearanceChoice, typeof MonitorIcon>> = {
+  system: MonitorIcon,
+  light: SunIcon,
+  "black-chrome": AppWindowIcon,
+  dark: MoonIcon,
+};
 
 export function notifyThemeSaveFailure(): void {
   toastManager.add(
@@ -59,7 +60,8 @@ export function useCommandPaletteThemeItems() {
     themeHalves,
     resolvedTheme,
     appearanceMode,
-    setAppearanceMode,
+    appearanceChoice,
+    setAppearanceChoice,
     setTheme,
     setThemeHalf,
   } = useTheme();
@@ -87,7 +89,7 @@ export function useCommandPaletteThemeItems() {
           titleTrailingContent: (
             <span className="flex shrink-0 items-center gap-2">
               {(themeHalves?.[resolvedTheme] ?? getThemeDefinition(theme)?.id ?? null) === id ? (
-                <span className="text-xs text-muted-foreground/70">Current</span>
+                <span className="text-xs text-dim-foreground">Current</span>
               ) : null}
               <span className="flex items-center gap-1" aria-hidden>
                 {previews.map((preview) => (
@@ -116,7 +118,7 @@ export function useCommandPaletteThemeItems() {
   const changeAppearanceItem: CommandPaletteSubmenuItem = {
     kind: "submenu",
     value: "action:change-appearance",
-    searchTerms: ["change appearance", "light", "dark", "system", "mode", "toggle"],
+    searchTerms: ["change appearance", "light", "dark", "system", "black chrome", "mode", "toggle"],
     title: "Change appearance",
     icon: <MonitorIcon className={ITEM_ICON_CLASS} />,
     addonIcon: <MonitorIcon className={ADDON_ICON_CLASS} />,
@@ -125,20 +127,23 @@ export function useCommandPaletteThemeItems() {
       {
         value: "appearance",
         label: "Change appearance",
-        items: APPEARANCE_OPTIONS.map(({ mode, label, icon: Icon }) => ({
-          kind: "action",
-          value: `appearance:${mode}`,
-          title: label,
-          searchTerms: [label, "appearance", "mode"],
-          icon: <Icon className={ITEM_ICON_CLASS} />,
-          titleTrailingContent:
-            appearanceMode === mode ? (
-              <span className="text-xs text-muted-foreground/70">Current</span>
-            ) : undefined,
-          run: async () => {
-            if (!setAppearanceMode(mode)) notifyThemeSaveFailure();
-          },
-        })),
+        items: APPEARANCE_CHOICES.map(({ choice, label }) => {
+          const Icon = APPEARANCE_ICONS[choice];
+          return {
+            kind: "action" as const,
+            value: `appearance:${choice}`,
+            title: label,
+            searchTerms: [label, "appearance", "mode"],
+            icon: <Icon className={ITEM_ICON_CLASS} />,
+            titleTrailingContent:
+              appearanceChoice === choice ? (
+                <span className="text-xs text-dim-foreground">Current</span>
+              ) : undefined,
+            run: async () => {
+              if (!setAppearanceChoice(choice)) notifyThemeSaveFailure();
+            },
+          };
+        }),
       },
     ],
   };

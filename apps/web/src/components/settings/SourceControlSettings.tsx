@@ -114,7 +114,7 @@ function sourceControlItemIcon(
   const Icon = isProviderDiscoveryItem(item)
     ? host && sourceControlIcon(host)
     : VCS_ICONS[item.kind];
-  return Icon ? <Icon className="size-4.5 text-foreground/80" aria-hidden /> : null;
+  return Icon ? <Icon className="size-4 text-foreground" aria-hidden /> : null;
 }
 
 function SourceControlItemMark({
@@ -130,7 +130,7 @@ function SourceControlItemMark({
   }
 
   return (
-    <span className="relative inline-flex size-5 shrink-0 items-center justify-center">
+    <span className="relative inline-flex size-5 shrink-0 items-center justify-center rounded-control surface-raised">
       {icon}
       <span
         className={cn(
@@ -172,7 +172,7 @@ function itemSummary({
               <RedactedAccount account={authAccount} />
             </>
           ) : null}
-          {authDetail ? <span>· {authDetail}</span> : null}
+          {authDetail ? <span className="basis-full">{authDetail}</span> : null}
         </>
       );
     }
@@ -232,7 +232,7 @@ function DiscoveryItemRow({
   return (
     <div
       className={cn(
-        "first:rounded-t-xl last:rounded-b-xl transition-colors hover:bg-muted/20",
+        "first:rounded-t-xl last:rounded-b-xl transition-colors hover:surface-ghost-hover",
         isVcsNotReady(item) && "opacity-80",
       )}
     >
@@ -242,7 +242,7 @@ function DiscoveryItemRow({
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <SourceControlItemMark item={item} />
               <span className="truncate text-sm font-medium text-foreground">{item.label}</span>
-              {version ? <code className="text-xs text-muted-foreground">{version}</code> : null}
+              {version ? <span className="text-xs text-dim-foreground">{version}</span> : null}
               {isVcsNotReady(item) ? (
                 <Badge variant="warning" size="sm">
                   Coming Soon
@@ -254,7 +254,7 @@ function DiscoveryItemRow({
                 </Badge>
               ) : null}
             </div>
-            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs leading-normal text-muted-foreground/80">
+            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs leading-normal text-dim-foreground">
               {itemSummary({ item, auth, authAccount })}
             </p>
           </div>
@@ -356,7 +356,7 @@ function EmptySourceControlDiscovery({
           </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
-          <Button size="sm" variant="outline" onClick={onScan} disabled={isPending}>
+          <Button size="sm" variant="secondary" onClick={onScan} disabled={isPending}>
             <RefreshIcon size="sm" refreshing={isPending} />
             Scan
           </Button>
@@ -372,7 +372,10 @@ export function SourceControlSettingsPanel() {
   const environmentId =
     environment?.connection.phase === "connected" ? environment.environmentId : null;
   const aggregate = scope.environmentIds.length !== 1 && connectedEnvironments.length > 1;
-  const environmentSuffix = aggregate && environment ? ` · ${environment.label}` : "";
+  const environmentContext =
+    aggregate && environment ? (
+      <span className="text-meta text-muted-foreground">{environment.label}</span>
+    ) : null;
   const discovery = useEnvironmentQuery(
     environmentId === null
       ? null
@@ -475,10 +478,7 @@ export function SourceControlSettingsPanel() {
         </SettingsSection>
       ) : isInitialScanPending ? (
         <>
-          <SourceControlSectionSkeleton
-            title={`Version Control${environmentSuffix}`}
-            headerAction={scanButton}
-          />
+          <SourceControlSectionSkeleton title="Version Control" headerAction={scanButton} />
           <SourceControlSectionSkeleton title="Source control providers" />
         </>
       ) : hasDiscoveryItems ? (
@@ -486,7 +486,8 @@ export function SourceControlSettingsPanel() {
           {hasVersionControlSystems ? (
             <SettingsSection
               id={searchableSetting("source-control").id}
-              title={`Version Control${environmentSuffix}`}
+              title="Version Control"
+              titleAction={environmentContext}
               headerAction={scanButton}
             >
               {result.versionControlSystems.map((item) => (
@@ -498,11 +499,8 @@ export function SourceControlSettingsPanel() {
           {result.sourceControlProviders.length > 0 ? (
             <SettingsSection
               id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
-              title={
-                hasVersionControlSystems
-                  ? "Source control providers"
-                  : `Source control providers${environmentSuffix}`
-              }
+              title="Source Control Providers"
+              titleAction={hasVersionControlSystems ? null : environmentContext}
               headerAction={hasVersionControlSystems ? null : scanButton}
             >
               {result.sourceControlProviders.map((item) => (

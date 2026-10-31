@@ -61,14 +61,7 @@ import {
 } from "@t3tools/contracts";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 
-import {
-  CheckIcon,
-  ChevronDownIcon,
-  FolderIcon,
-  ListFilterIcon,
-  PlusIcon,
-  SettingsIcon,
-} from "lucide-react";
+import { CheckIcon, FolderIcon, ListFilterIcon, SettingsIcon } from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -101,6 +94,7 @@ import { useShortcutModifierState } from "../shortcutModifierState";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
+import { observeResize } from "~/lib/observeResize";
 import { isMacPlatform } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
 import { configuredHostedAppUrl } from "../hostedPairing";
@@ -147,6 +141,7 @@ import {
   readThreadShell,
   useAllEnvironmentProjectSnapshotsReady,
   useDelegatedUnderParent,
+  useAllEnvironmentShellsBootstrapped,
   useProjects,
   useServerConfigs,
   useQuietThreadShells,
@@ -223,7 +218,7 @@ import { createSidebarListMotion } from "./Sidebar.motion";
 import {
   pickSnoozePreset,
   resolveSnoozePresets,
-  snoozeWakeLabel,
+  snoozeWakeShortLabel,
   type SnoozePreset,
 } from "./Sidebar.snooze";
 import { ProjectFavicon } from "./ProjectFavicon";
@@ -261,7 +256,7 @@ import {
   type SidebarProviderEntry,
   type SidebarSweepAction,
 } from "./sidebar/SidebarThreadRow";
-import { SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
+import { readDraftRow, SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
 import {
   SidebarProjectFolderHeader,
   sidebarFolderRowId,
@@ -895,6 +890,49 @@ function readRouteThreadKey(router: AnyRouter): string | null {
   return ref === null ? null : scopedThreadKey(ref);
 }
 
+// Matches the list's --fade-size: rows inside the fade read as cut off.
+const SIDEBAR_LIST_FADE_PX = 12;
+
+// Scrolls the thread list just enough to show the open thread's row whole and
+// clear of the edge fades. The far edge lands on a row boundary (the next row
+// in the direction of travel, or the list's end) so no neighbor shows sliced
+// through its text, unless the viewport is too short to fit both.
+function revealSidebarRow(viewport: HTMLElement, row: HTMLElement) {
+  const item = row.closest("li") ?? row;
+  const list = item.parentElement;
+  if (!list) return;
+  // Layout offsets, not rects: rows can be mid-glide (list motion transforms)
+  // when this runs, and a rect would report where the glide started.
+  const listTop =
+    list.getBoundingClientRect().top - viewport.getBoundingClientRect().top + viewport.scrollTop;
+  const top = (element: HTMLElement) => listTop + element.offsetTop;
+  const bottom = (element: HTMLElement) => top(element) + element.offsetHeight;
+  const sibling = (direction: "next" | "previous") => {
+    let candidate = direction === "next" ? item.nextElementSibling : item.previousElementSibling;
+    while (candidate instanceof HTMLElement && candidate.offsetHeight === 0) {
+      candidate =
+        direction === "next" ? candidate.nextElementSibling : candidate.previousElementSibling;
+    }
+    return candidate instanceof HTMLElement ? candidate : null;
+  };
+  const { scrollTop, clientHeight } = viewport;
+  const maxScroll = viewport.scrollHeight - clientHeight;
+  let target = scrollTop;
+  if (bottom(item) > scrollTop + clientHeight - SIDEBAR_LIST_FADE_PX) {
+    const next = sibling("next");
+    const withNext = next ? bottom(next) - clientHeight : maxScroll;
+    target = top(item) >= withNext + SIDEBAR_LIST_FADE_PX ? withNext : bottom(item) - clientHeight;
+    // A sliver left below would only fade the last row; finish the scroll.
+    if (maxScroll - target < SIDEBAR_LIST_FADE_PX) target = maxScroll;
+  } else if (top(item) < scrollTop + SIDEBAR_LIST_FADE_PX) {
+    const previous = sibling("previous");
+    const withPrevious = previous ? top(previous) : 0;
+    target =
+      bottom(item) <= withPrevious + clientHeight - SIDEBAR_LIST_FADE_PX ? withPrevious : top(item);
+  }
+  if (target !== scrollTop) viewport.scrollTop = Math.min(maxScroll, Math.max(0, target));
+}
+
 export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReveal }) {
   const {
     projects,
@@ -1147,7 +1185,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     clearSelection();
     setPersistedProjectScopeKeys([]);
   }, [clearSelection, revealWidensScope, setPersistedProjectScopeKeys]);
-  const revealActiveRow = useActiveRowReveal(routeReveal, routeRowThreadKey);
+  const revealActiveRow = useActiveRowReveal(routeReveal, routeRowThreadKey, (row) => {
+    const viewport = row.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+    if (viewport) revealSidebarRow(viewport, row);
+  });
   const showProjectEnvironments = projectGroupsSpanEnvironments(projectGroups);
   const scratchMachineLabelFor = (
     thread: Pick<SidebarThreadSummary, "environmentId" | "projectId">,
@@ -1189,20 +1230,38 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       ? {}
       : { projectIds: scopedProjectRefs.map((projectRef) => projectRef.projectId) },
   );
+  // Until every environment has answered, an empty list means "loading", not "empty".
+  const shellsBootstrapped = useAllEnvironmentShellsBootstrapped();
   const routeDraftIdForRows = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
+  // Capture the open draft during the route change so its row stays visible without repainting while typing.
+  // Fresh typing sessions have no prior snapshot and show no row.
+  const [routeDraftSnapshot, setRouteDraftSnapshot] = useState(() => ({
+    draftId: routeDraftIdForRows,
+    row: readDraftRow(routeDraftIdForRows),
+  }));
+  let routeDraftRow = routeDraftSnapshot.row;
+  if (routeDraftSnapshot.draftId !== routeDraftIdForRows) {
+    routeDraftRow = readDraftRow(routeDraftIdForRows);
+    setRouteDraftSnapshot({ draftId: routeDraftIdForRows, row: routeDraftRow });
+  }
+  // re-rendering the whole sidebar. Mirrors the block's row filter.
   const visibleDraftSessionCount = useComposerDraftStore((store) => {
     let count = 0;
     for (const [draftKey, session] of Object.entries(store.draftThreadsByThreadKey)) {
       if (session.promotedTo != null) {
         continue;
       }
-      if (!composerDraftHasUserContent(store.draftsByThreadKey[draftKey])) {
-        continue;
-      }
       if (
         scopedProjectKeys !== null &&
         !scopedProjectKeys.has(`${session.environmentId}:${session.projectId}`)
       ) {
+        continue;
+      }
+      if (draftKey === routeDraftIdForRows) {
+        if (routeDraftRow !== null) count += 1;
+        continue;
+      }
+      if (!composerDraftHasUserContent(store.draftsByThreadKey[draftKey])) {
         continue;
       }
       count += 1;
@@ -2041,6 +2100,41 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     routeThreadKey: routeRowThreadKey,
     snoozedThreadCount: snoozedThreads.length,
   });
+  // The open thread's row stays in view: when it first renders and on every
+  // navigation. Rows above can still grow after the first paint, so the list
+  // re-reveals on resize until the user touches it; after that their scroll
+  // position is left alone.
+  const routeRowRendered =
+    routeRowThreadKey !== null &&
+    sidebarListItems.some((item) => item.kind === "thread" && item.key === routeRowThreadKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the active row visible as layout changes until the user scrolls.
+  useEffect(() => {
+    if (routeRowThreadKey === null || !routeRowRendered || isSearchingThreads) return;
+    const list = threadListRef.current;
+    const viewport = list?.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+    if (!list || !viewport) return;
+    const navigationParent =
+      list.querySelector<HTMLElement>('[aria-current="page"]')?.dataset.sidebarParent;
+    let frame = 0;
+    const reveal = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const row = list.querySelector<HTMLElement>('[aria-current="page"]');
+        if (row && row.dataset.sidebarParent === navigationParent) revealSidebarRow(viewport, row);
+      });
+    };
+    const release = observeResize(list, reveal);
+    reveal();
+    const userInput = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+    for (const type of userInput) {
+      viewport.addEventListener(type, release, { passive: true });
+    }
+    return () => {
+      cancelAnimationFrame(frame);
+      release();
+      for (const type of userInput) viewport.removeEventListener(type, release);
+    };
+  }, [isSearchingThreads, routeRowRendered, routeRowThreadKey]);
   const draggedThreadKey = dragState?.activeKey;
   const draggedFromSection = dragState?.activeSection;
   const dragActivationY = dragState?.activationY;
@@ -3060,7 +3154,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         <ProjectFavicon project={scopedProjectGroups[0]} className="size-4" />
                       </span>
                     ) : (
-                      <ListFilterIcon className="size-4" />
+                      <ListFilterIcon className="size-3.5" />
                     )}
                   </ComboboxTrigger>
                   {/* Refocusing the trigger after a pointer close shows its focus ring and opens its tooltip. */}
@@ -3293,7 +3387,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             ) : (
               <p
                 role="status"
-                className="px-2 py-6 text-center text-xs text-sidebar-muted-foreground"
+                className="px-2 py-6 text-center text-meta text-sidebar-muted-foreground"
               >
                 {threadSearch.isPending ? "Searching thread messages…" : "No threads found"}
               </p>
@@ -3394,9 +3488,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             }
                             snoozeWakeLabelText={
                               section === "snoozed" && thread.snoozedUntil != null
-                                ? snoozeWakeLabel(thread.snoozedUntil, {
-                                    now: new Date().toISOString(),
-                                  })
+                                ? `Until ${snoozeWakeShortLabel(
+                                    thread.snoozedUntil,
+                                    new Date(),
+                                    timestampFormat,
+                                  )}`
                                 : null
                             }
                             wokeAt={threadWokeAt(thread, { now: snoozeNow })}
@@ -3445,6 +3541,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             onUnsettle={attemptUnsettle}
                             onSnooze={attemptSnooze}
                             onUnsnooze={attemptUnsnooze}
+                            onPin={attemptPin}
                             onUnpin={attemptUnpin}
                             onAcknowledgeWoke={acknowledgeWoke}
                             onFileDropThreads={handleThreadFileDrop}
@@ -3459,6 +3556,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           projectDisplayNameByKey={projectDisplayNameByKey}
                           scopedProjectKeys={scopedProjectKeys}
                           routeDraftId={routeDraftIdForRows}
+                          routeDraftRow={routeDraftRow}
                           onNavigateToDraft={navigateToDraft}
                           onDraftContextMenu={handleDraftContextMenu}
                         />,
@@ -3571,11 +3669,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               <SidebarSectionHeader
                                 key="settled-shelf-header"
                                 marker="settled-header"
+                                // The first shelf docks above the footer when
+                                // the list is shorter than the sidebar. An
+                                // empty shelf only shows while a drag can drop
+                                // into it.
                                 className={cn(
                                   workingThreads.length + snoozedThreads.length === 0 && "mt-auto",
+                                  settledCount === 0 && from === null && "invisible",
                                 )}
                                 label="Settled"
                                 count={settledCount}
+                                concealed={settledCount === 0 && from === null}
                                 dragging={from !== null}
                                 isDropTarget={dragTargetSection === "settled"}
                                 toggle={{
@@ -3618,10 +3722,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             olderSettledShelf.retry();
                             showMoreSettled();
                           }}
-                          className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground disabled:cursor-default"
+                          className="mx-0.5 flex h-5.5 w-[calc(100%-0.25rem)] cursor-pointer items-center rounded-row px-2 text-left text-sm font-medium text-dim-foreground outline-none hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default"
                         >
-                          {/* Plus means "add", so revealing more uses a chevron. */}
-                          <ChevronDownIcon aria-hidden className="size-4 shrink-0" />
                           {olderSettledShelf.loading
                             ? "Loading"
                             : olderSettledShelf.failed
@@ -3635,7 +3737,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               </DndContext>
             </TooltipProvider>
           ) : null}
-          {!isSearchingThreads &&
+          {shellsBootstrapped &&
+          !isSearchingThreads &&
           !hasProjectFolders &&
           visibleDraftSessionCount === 0 &&
           pinnedThreads.length +
@@ -3644,26 +3747,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             snoozedThreads.length +
             settledCount ===
             0 ? (
-            <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
+            <div className="flex flex-col items-start gap-1 p-2 text-xs">
+              <span className="text-muted-foreground">
+                {projects.length === 0
+                  ? "No projects yet"
+                  : scopedProjectGroups.length > 1
+                    ? "No threads in these projects yet"
+                    : scopedProjectGroups[0]
+                      ? `No threads in ${scopedProjectGroups[0].displayName} yet`
+                      : "No threads yet"}
+              </span>
               {projects.length === 0 ? (
-                <>
-                  <span>No projects yet</span>
-                  <button
-                    type="button"
-                    onClick={openAddProjectCommandPalette}
-                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-2xs font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-                  >
-                    <PlusIcon className="-mx-0.5 size-3" />
-                    Add project
-                  </button>
-                </>
-              ) : scopedProjectGroups.length > 1 ? (
-                "No threads in these projects yet"
-              ) : scopedProjectGroups[0] ? (
-                `No threads in ${scopedProjectGroups[0].displayName} yet`
-              ) : (
-                "No threads yet"
-              )}
+                <span className="text-dim-foreground">Add one to see its threads here.</span>
+              ) : null}
             </div>
           ) : null}
         </SidebarGroup>

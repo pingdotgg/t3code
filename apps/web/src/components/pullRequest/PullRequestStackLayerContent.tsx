@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
 import type { PullRequestStack } from "@t3tools/contracts";
 import { cn } from "~/lib/utils";
 import { resolvePullRequestState } from "./pullRequestPresentation";
@@ -19,8 +20,15 @@ export function PullRequestStackLayerContent({
       <span className="min-w-0 flex-1">
         <span className="block truncate">{layer.title || layer.headBranch}</span>
         <span className="block truncate text-xs font-normal text-muted-foreground">
-          #{layer.number} · {compact ? null : `${layer.headBranch} · `}
-          {state.label}
+          <Tooltip>
+            <TooltipTrigger render={<span tabIndex={0} />}>#{layer.number}</TooltipTrigger>
+            <TooltipPopup>
+              <span className="grid gap-1">
+                <span>{state.label}</span>
+                <span>{compact ? null : layer.headBranch}</span>
+              </span>
+            </TooltipPopup>
+          </Tooltip>
         </span>
       </span>
     </>
