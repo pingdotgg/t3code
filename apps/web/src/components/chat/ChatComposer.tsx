@@ -437,6 +437,7 @@ export interface ChatComposerProps {
   /** Where approval, question and plan cards render, above the tray. */
   requestCardHost: HTMLDivElement | null;
   trayControlsHost?: HTMLDivElement | null;
+  stashHost?: HTMLDivElement | null;
   /** The thread's branch, shown on command approvals next to the working directory. */
   onComposerOverlayHeightChange: (height: number) => void;
   /** The new-thread strip names the permissions, so the controls row hides its chip. */
@@ -3358,6 +3359,17 @@ export function ChatComposer(props: ChatComposerProps) {
       {...threadContextDropTargetProps()}
     >
       {requestCardHost && requestCard ? createPortal(requestCard, requestCardHost) : null}
+      {props.stashHost
+        ? createPortal(
+            <ComposerStashBadge
+              count={stashQueue.length}
+              menuOpen={isStashMenuOpen}
+              pulseKey={stashPulseKey}
+              onToggleMenu={toggleStashMenuStable}
+            />,
+            props.stashHost,
+          )
+        : null}
       {props.trayControlsHost
         ? createPortal(
             <div
@@ -3365,12 +3377,6 @@ export function ChatComposer(props: ChatComposerProps) {
               data-chat-composer-resting-controls="true"
               className="flex min-w-0 items-center gap-0.5"
             >
-              <ComposerStashBadge
-                count={stashQueue.length}
-                menuOpen={isStashMenuOpen}
-                pulseKey={stashPulseKey}
-                onToggleMenu={toggleStashMenuStable}
-              />
               {composerControls}
             </div>,
             props.trayControlsHost,
@@ -3604,6 +3610,7 @@ export function ChatComposer(props: ChatComposerProps) {
                         </span>
                       ) : undefined
                     }
+                    placeholderClassName="composer-prompt-placeholder truncate"
                     narrowPlaceholder={
                       !isComposerApprovalState &&
                       !activePendingProgress &&
