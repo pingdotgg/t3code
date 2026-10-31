@@ -43,6 +43,7 @@ import {
 } from "./baseSchemas.ts";
 import { AuthMcpClientAccess } from "./auth.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
+import { SkillVariantDelivery } from "./skillEvals.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
 import {
   OrchestrationSearchThreadsInput,
@@ -375,7 +376,14 @@ export const OrchestrationV2IdentityCapabilities = Schema.Struct({
 });
 export type OrchestrationV2IdentityCapabilities = typeof OrchestrationV2IdentityCapabilities.Type;
 
-export const OrchestrationV2ProviderCapabilities = Schema.Struct({
+export const SkillGating = Schema.Literals(["native", "instruction", "none"]);
+export type SkillGating = typeof SkillGating.Type;
+
+const OrchestrationV2ProviderCapabilitiesWire = Schema.Struct({
+  skillVariantDelivery: SkillVariantDelivery.pipe(
+    Schema.withDecodingDefault(Effect.succeed("unsupported" as const)),
+  ),
+  skillGating: Schema.optionalKey(SkillGating),
   sessions: OrchestrationV2SessionCapabilities,
   threads: OrchestrationV2ThreadCapabilities,
   turns: OrchestrationV2TurnCapabilities,
@@ -392,6 +400,29 @@ export const OrchestrationV2ProviderCapabilities = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({ enforcement: "client-boundary" as const })),
   ),
 });
+
+const OrchestrationV2ProviderCapabilitiesType = Schema.Struct({
+  ...OrchestrationV2ProviderCapabilitiesWire.fields,
+  skillVariantDelivery: SkillVariantDelivery,
+  skillGating: SkillGating,
+  runtimePolicy: OrchestrationV2RuntimePolicyCapabilities,
+});
+
+export const OrchestrationV2ProviderCapabilities = OrchestrationV2ProviderCapabilitiesWire.pipe(
+  Schema.decodeTo(
+    OrchestrationV2ProviderCapabilitiesType,
+    SchemaTransformation.transformEffect({
+      decode: (capabilities) =>
+        Effect.succeed({
+          ...capabilities,
+          skillGating:
+            capabilities.skillGating ??
+            (capabilities.skillVariantDelivery === "unsupported" ? "none" : "instruction"),
+        }),
+      encode: (capabilities) => Effect.succeed(capabilities),
+    }),
+  ),
+);
 export type OrchestrationV2ProviderCapabilities = typeof OrchestrationV2ProviderCapabilities.Type;
 
 export const OrchestrationV2LimitRecovery = Schema.Struct({

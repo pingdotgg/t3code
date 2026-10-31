@@ -48,6 +48,8 @@ const DEFAULT_FX_SETTINGS = Schema.decodeSync(FxSettings)({});
 
 const FxProviderCapabilitiesV2 = {
   ...AcpProviderCapabilitiesV2,
+  skillVariantDelivery: "unsupported",
+  skillGating: "none",
   sessions: {
     ...AcpProviderCapabilitiesV2.sessions,
     supportsModelSwitchInSession: true,

@@ -453,6 +453,18 @@ export interface ProviderAdapterV2TurnInput {
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
+  readonly skillPolicy?: {
+    readonly hash: string;
+    readonly entries: ReadonlyArray<{
+      readonly skillName: string;
+      readonly mode: "variant" | "off";
+      readonly variantPath: string | null;
+    }>;
+  };
+  readonly skillDirectives?: {
+    readonly text: string;
+    readonly hash: string;
+  };
 }
 
 export interface ProviderAdapterV2SteerInput {

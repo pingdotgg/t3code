@@ -4718,6 +4718,7 @@ describe("AcpAdapterV2", () => {
       const hostPlatform = yield* HostProcess.Platform;
       // Stands in for `grok inspect --json`, the catalog behind the `$` picker.
       const catalog = { skills: [{ name: "deploy", source: { path: "/s/deploy/SKILL.md" } }] };
+      const skillDirective = "<t3_skill_variants>\nvariant instructions\n</t3_skill_variants>";
       const grokPath = writeFakeCli({
         directory: yield* fileSystem.makeTempDirectoryScoped(),
         name: "grok",
@@ -4764,6 +4765,7 @@ describe("AcpAdapterV2", () => {
           runtimePolicy,
           now: yield* DateTime.now,
           messageText: text,
+          skillDirectives: { text: skillDirective, hash: "directive-hash" },
         }),
       );
       const prompt = yield* Stream.fromQueue(protocolEvents).pipe(
@@ -4775,10 +4777,16 @@ describe("AcpAdapterV2", () => {
       );
       const blocks = rawProtocolPromptTextBlocks(Option.getOrThrow(prompt));
       if (native) {
-        // Same shape as a typed native command: one bare text block, no T3 instructions.
-        assert.deepEqual(blocks, [{ type: "text", text: sent }]);
+        // Keep the native slash command first so the provider still recognizes it.
+        assert.deepEqual(blocks, [
+          { type: "text", text: sent },
+          { type: "text", text: skillDirective },
+        ]);
       } else {
-        assert.isTrue(blocks.some((block) => block.text.includes(sent)));
+        const promptText = blocks.map((block) => block.text).join("\n");
+        assert.include(promptText, sent);
+        assert.include(promptText, skillDirective);
+        assert.isBelow(promptText.indexOf(skillDirective), promptText.indexOf(sent));
         assert.isFalse(blocks.some((block) => block.text.trimStart().startsWith("/")));
       }
     }).pipe(Effect.provide(layerTest), Effect.scoped),

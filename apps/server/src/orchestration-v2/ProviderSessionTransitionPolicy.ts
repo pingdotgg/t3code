@@ -8,12 +8,16 @@ import { modelSelectionsEqual } from "@t3tools/shared/model";
 
 import type { ProviderContinuationIdentity } from "@t3tools/provider-core/server/driver";
 import type { ProviderSelectionTransitionPlan } from "@t3tools/provider-core/server/selectionTransition";
+import type { SkillContextOmission } from "../skills/skillContextContamination.ts";
 
 export type ProviderSessionTransition =
   | { readonly type: "reuse" }
   | { readonly type: "switch_model_in_session" }
   | { readonly type: "restart_and_resume" }
-  | { readonly type: "create_with_handoff" }
+  | {
+      readonly type: "create_with_handoff";
+      readonly skillContextOmissions?: ReadonlyArray<SkillContextOmission>;
+    }
   | { readonly type: "reject"; readonly reason: string };
 
 export interface ProviderSessionTransitionState {
@@ -33,9 +37,16 @@ export function decideProviderSessionTransition(input: {
   readonly current: ProviderSessionTransitionState | null;
   readonly target: ProviderSessionTransitionTarget;
   readonly selectionTransition?: ProviderSelectionTransitionPlan;
+  readonly skillContextOmissions?: ReadonlyArray<SkillContextOmission>;
 }): ProviderSessionTransition {
   if (!input.target.available) {
     return { type: "reject", reason: "The target provider instance is unavailable." };
+  }
+  if (input.skillContextOmissions !== undefined && input.skillContextOmissions.length > 0) {
+    return {
+      type: "create_with_handoff",
+      skillContextOmissions: input.skillContextOmissions,
+    };
   }
   if (input.current === null) {
     return { type: "create_with_handoff" };

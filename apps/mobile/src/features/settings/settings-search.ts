@@ -68,6 +68,16 @@ const SETTINGS_SEARCH_TERMS = {
     "login",
     "auth",
   ],
+  SettingsSkills: [
+    "agent skills",
+    "model variants",
+    "evals",
+    "evaluation",
+    "verdicts",
+    "enable",
+    "disable",
+    "revert",
+  ],
   SettingsEnvironmentSourceControl: [
     "git",
     "pull requests",

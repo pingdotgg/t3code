@@ -34,6 +34,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
+import * as SkillVariantService from "../../skills/SkillVariantService.ts";
 import { CommandPolicyCapabilityUnsupportedError } from "../CommandPolicy.ts";
 import {
   ClaudeAgentSdkQueryRunnerError,
@@ -119,6 +120,9 @@ function makeTestAdapter(input: {
   readonly subagentOnlyBackgroundWork?: boolean;
   readonly holdFirstTurn?: Deferred.Deferred<void>;
   readonly releaseFirstTurn?: Deferred.Deferred<void>;
+  readonly activatedSkillByRunOrdinal?: Readonly<
+    Record<number, { readonly name: string; readonly marker: string }>
+  >;
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: input.instanceId,
@@ -284,6 +288,7 @@ function makeTestAdapter(input: {
                 input.responseByThreadId?.[turnInput.threadId]?.[turnInput.runOrdinal] ??
                 input.responseByRunOrdinal[turnInput.runOrdinal] ??
                 `${input.driver} response for run ${turnInput.runOrdinal}`;
+              const activatedSkill = input.activatedSkillByRunOrdinal?.[turnInput.runOrdinal];
               const providerEvents: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event> = [
                 {
                   type: "provider_turn.updated",
@@ -304,6 +309,36 @@ function makeTestAdapter(input: {
                     completedAt: eventTime,
                   },
                 },
+                ...(activatedSkill === undefined
+                  ? []
+                  : [
+                      {
+                        type: "turn_item.updated" as const,
+                        driver: input.driver,
+                        turnItem: {
+                          id: TurnItemId.make(
+                            `turn-item:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}:skill`,
+                          ),
+                          threadId: turnInput.threadId,
+                          runId: turnInput.runId,
+                          nodeId: turnInput.rootNodeId,
+                          providerThreadId: turnInput.providerThread.id,
+                          providerTurnId,
+                          nativeItemRef: null,
+                          parentItemId: null,
+                          ordinal: turnInput.runOrdinal * 100,
+                          status: "completed" as const,
+                          title: null,
+                          startedAt: eventTime,
+                          completedAt: eventTime,
+                          updatedAt: eventTime,
+                          type: "dynamic_tool" as const,
+                          toolName: "Skill",
+                          input: { skill: activatedSkill.name },
+                          output: activatedSkill.marker,
+                        },
+                      },
+                    ]),
                 {
                   type: "turn_item.updated",
                   driver: input.driver,
@@ -422,6 +457,114 @@ class ClaudeMcpRegistrationTimeoutError extends Schema.TaggedError<ClaudeMcpRegi
 ) {}
 
 describe("orchestration v2 provider switching", () => {
+  it.live("replaces same-model native history after an activated variant changes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const name = "same-model-skill-contamination";
+        const testThreadId = ThreadId.make(`thread:${name}`);
+        const selection = {
+          ...CODEX_MODEL_SELECTION,
+          model: "gpt-5.6-sol",
+        } satisfies ModelSelection;
+        const cwd = yield* checkpointWorkspace(name);
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
+        const nativeThreadGeneration = yield* Ref.make(0);
+        const marker = "OBSOLETE_VARIANT_BODY_MARKER";
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: selection.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: selection,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            injectedHistory,
+            nativeThreadGeneration,
+            activatedSkillByRunOrdinal: { 1: { name: "review", marker } },
+          }),
+        ]);
+
+        const result = yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const variants = yield* SkillVariantService.SkillVariantService;
+          const created = yield* variants.mutate({
+            action: "create",
+            skillName: "review",
+            driver: CODEX_DRIVER,
+            model: selection.model,
+            body: `# Review\n\n${marker}`,
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`${name}:create`),
+            threadId: testThreadId,
+            projectId: ProjectId.make(`project:${name}`),
+            createdBy: "user",
+            creationSource: "web",
+            title: name,
+            modelSelection: selection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          const dispatch = (ordinal: number) =>
+            Effect.gen(function* () {
+              const completed = yield* orchestrator.streamDomainEvents.pipe(
+                Stream.filter(
+                  (event) =>
+                    event.type === "run.updated" &&
+                    event.payload.ordinal === ordinal &&
+                    event.payload.status === "completed",
+                ),
+                Stream.take(1),
+                Stream.runDrain,
+                Effect.forkScoped,
+              );
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`${name}:turn:${ordinal}`),
+                threadId: testThreadId,
+                messageId: MessageId.make(`${name}:turn:${ordinal}`),
+                createdBy: "user",
+                creationSource: "web",
+                text: `Review turn ${ordinal}.`,
+                attachments: [],
+                modelSelection: selection,
+                dispatchMode: { type: "start_immediately" },
+              });
+              yield* worker.drain();
+              yield* Fiber.join(completed);
+              yield* worker.drain();
+            });
+
+          yield* dispatch(1);
+          yield* variants.mutate({
+            action: "edit",
+            ruleId: created.ruleId,
+            body: "# Review\n\nUse the revised review process.",
+          });
+          yield* dispatch(2);
+          return {
+            projection: yield* orchestrator.getThreadProjection(testThreadId),
+            turns: yield* Ref.get(capturedTurns),
+            history: yield* Ref.get(injectedHistory),
+          };
+        }).pipe(Effect.provide(ProviderReplayHarness.layerWithRegistry({ name }, layerRegistry)));
+
+        assert.lengthOf(result.turns, 2);
+        assert.notEqual(result.turns[0]?.providerThreadId, result.turns[1]?.providerThreadId);
+        assert.notEqual(result.turns[0]?.nativeThreadId, result.turns[1]?.nativeThreadId);
+        assert.lengthOf(result.projection.contextHandoffs, 1);
+        const history = JSON.stringify(result.history);
+        assert.notInclude(history, marker);
+        assert.include(history, "[skill content omitted: not used with the current model]");
+      }),
+    ),
+  );
+
   it.live.each([
     "compact-native",
     "compact-legacy",

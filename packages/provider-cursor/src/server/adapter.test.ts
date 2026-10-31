@@ -63,6 +63,8 @@ describe("CursorAdapterV2", () => {
           browserToolsAvailable: true,
         });
         let sentWithMcpOverride = true;
+        let sentMessage = "";
+        const skillDirective = "<t3_skill_variants>\nvariant instructions\n</t3_skill_variants>";
         const modelSelection = { instanceId, model: "composer-2.5" };
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "full-access",
@@ -83,6 +85,10 @@ describe("CursorAdapterV2", () => {
                 send: (input) =>
                   Effect.gen(function* () {
                     sentWithMcpOverride = Object.hasOwn(input.options ?? {}, "mcpServers");
+                    if (typeof input.message !== "string") {
+                      assert.fail("expected a string prompt");
+                    }
+                    sentMessage = input.message;
                     // Recorded tasks stream partial args before start, then end without completion; live runs cannot force this.
                     const taskToolCall = {
                       type: "task" as const,
@@ -184,12 +190,18 @@ describe("CursorAdapterV2", () => {
             text: "Review the code.",
             attachments: [],
           },
+          skillDirectives: { text: skillDirective, hash: "directive-hash" },
         });
         const events = yield* runtime.events.pipe(
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
         );
         assert.isFalse(sentWithMcpOverride);
+        assert.include(sentMessage, skillDirective);
+        assert.isBelow(
+          sentMessage.indexOf(skillDirective),
+          sentMessage.indexOf("Review the code."),
+        );
         const rows = events.filter((event) => event.type === "subagent.updated");
         assert.equal(rows[0]?.subagent.status, "running");
         assert.equal(rows[0]?.subagent.model, model ?? null);

@@ -20,6 +20,26 @@ import { ProjectionStoreThreadNotFoundError } from "./ProjectionStore.ts";
 
 const layerTest = ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer));
 
+const providerItemBase = (id: string, ordinal: number) => {
+  const now = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+  return {
+    id: TurnItemId.make(`turn-item:${id}`),
+    threadId: ThreadId.make("thread:provider-context"),
+    runId: RunId.make("run:source"),
+    nodeId: null,
+    providerThreadId: ProviderThreadId.make("provider-thread:source"),
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal,
+    status: "completed" as const,
+    title: null,
+    startedAt: now,
+    completedAt: now,
+    updatedAt: now,
+  };
+};
+
 function importedItem(
   input:
     | {
@@ -160,6 +180,81 @@ it.layer(layerTest)("ContextHandoffService legacy import", (it) => {
   );
 });
 
+it.layer(layerTest)("ContextHandoffService skill sanitization", (it) => {
+  it.effect("replaces skill activation and variant reads before applying the token budget", () =>
+    Effect.gen(function* () {
+      const service = yield* ContextHandoffService.ContextHandoffServiceV2;
+      const variantPath = "/state/skill-variants/old-hash/SKILL.md";
+      const marker = "SECRET_SKILL_BODY";
+      const items: OrchestrationV2TurnItem[] = [
+        {
+          ...providerItemBase("skill", 1),
+          type: "dynamic_tool",
+          toolName: "Skill",
+          input: { skill: "review" },
+          output: marker.repeat(5_000),
+        },
+        {
+          ...providerItemBase("read", 2),
+          type: "command_execution",
+          input: `read ${variantPath}`,
+          output: marker.repeat(5_000),
+          exitCode: 0,
+        },
+        {
+          ...providerItemBase("unrelated", 3),
+          type: "command_execution",
+          input: "npm test",
+          output: "unrelated command output",
+          exitCode: 0,
+        },
+        {
+          ...providerItemBase("assistant", 4),
+          type: "assistant_message",
+          messageId: MessageId.make("message:assistant-context"),
+          text: "I used the review guidance and kept the unrelated result.",
+          streaming: false,
+        },
+      ];
+      const handoff = yield* service.prepareProviderHandoff({
+        threadId: ThreadId.make("thread:provider-context"),
+        targetRunId: RunId.make("run:target"),
+        transferId: null,
+        fromProviderThreadIds: [ProviderThreadId.make("provider-thread:source")],
+        toProviderThreadId: ProviderThreadId.make("provider-thread:target"),
+        fromProviderInstanceId: ProviderInstanceId.make("codex-old"),
+        toProviderInstanceId: ProviderInstanceId.make("codex-new"),
+        coveredRunOrdinals: { from: 1, to: 1 },
+        strategy: "full_thread_summary",
+        items,
+        skillContextOmissions: [
+          {
+            skillName: "review",
+            variantPaths: [variantPath],
+            skillPaths: ["/home/user/.claude/skills/review/SKILL.md"],
+          },
+        ],
+        createdAt: DateTime.makeUnsafe("2026-01-02T00:00:00.000Z"),
+      });
+
+      assert.notInclude(handoff.summaryText, marker);
+      assert.include(
+        handoff.summaryText,
+        "[skill content omitted: not used with the current model]",
+      );
+      const history = JSON.stringify(handoff.history?.messages);
+      assert.notInclude(history, marker);
+      assert.include(history, "[skill content omitted: not used with the current model]");
+      assert.include(handoff.summaryText, "unrelated command output");
+      assert.include(handoff.summaryText, "I used the review guidance");
+      assert.deepEqual(handoff.history?.omittedItemIds, []);
+      assert.deepEqual(
+        handoff.history?.messages.map((message) => message.itemId),
+        items.map((item) => item.id),
+      );
+    }),
+  );
+});
 it("caps the side chat context block, keeping the newest parent items", () => {
   const parentThreadId = ThreadId.make("thread:side-chat-parent");
   const digest = Array.from({ length: 60 }, (_, index) =>

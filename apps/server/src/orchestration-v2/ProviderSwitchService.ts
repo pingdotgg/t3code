@@ -5,6 +5,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -12,6 +13,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as SkillUsage from "../skills/SkillUsageService.ts";
+import * as SkillVariants from "../skills/SkillVariantService.ts";
+import { contaminatingSkillContexts } from "../skills/skillContextContamination.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import {
   decideProviderSessionTransition,
@@ -55,16 +59,21 @@ const isLiveProviderSession = (
 export const layer: Layer.Layer<
   ProviderSwitchServiceV2,
   never,
-  ProviderAdapterRegistry.ProviderAdapterRegistryV2
+  | ProviderAdapterRegistry.ProviderAdapterRegistryV2
+  | SkillUsage.SkillUsageService
+  | SkillVariants.SkillVariantService
 > = Layer.effect(
   ProviderSwitchServiceV2,
   Effect.gen(function* () {
     const adapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
+    const skillUsage = yield* SkillUsage.SkillUsageService;
+    const skillVariants = yield* SkillVariants.SkillVariantService;
     return ProviderSwitchServiceV2.of({
       plan: Effect.fn("ProviderSwitchService.plan")(
         function* ({ projection, targetModelSelection }) {
           const current = projection.thread.modelSelection;
           const instanceChanged = current.instanceId !== targetModelSelection.instanceId;
+          const selectionChanged = !modelSelectionsEqual(current, targetModelSelection);
           const getMetadata = (instanceId: typeof current.instanceId) =>
             adapters.getMetadata !== undefined
               ? adapters.getMetadata(instanceId)
@@ -100,7 +109,7 @@ export const layer: Layer.Layer<
           );
           const selectionTransition =
             current.instanceId === targetModelSelection.instanceId &&
-            !modelSelectionsEqual(current, targetModelSelection) &&
+            selectionChanged &&
             Option.isSome(targetAdapter) &&
             Option.isSome(currentInstance) &&
             (currentSession !== undefined || currentProviderThread !== undefined)
@@ -110,6 +119,33 @@ export const layer: Layer.Layer<
                   sessionCapabilities: negotiatedCapabilities ?? currentInstance.value.capabilities,
                 })
               : undefined;
+          const skillContextOmissions =
+            currentProviderThread !== undefined &&
+            Option.isSome(targetInstance) &&
+            Option.isSome(targetAdapter)
+              ? yield* Effect.gen(function* () {
+                  const activated = yield* skillUsage.activatedOnProviderThread(
+                    currentProviderThread.id,
+                  );
+                  if (activated.length === 0) return [];
+                  const targetResolution = yield* skillVariants.resolvePolicy({
+                    driver: targetInstance.value.driver,
+                    model: targetModelSelection.model,
+                    threadId: projection.thread.id,
+                  });
+                  return contaminatingSkillContexts({ activated, targetResolution });
+                }).pipe(
+                  Effect.catchCauseIf(
+                    (cause) => !Cause.hasInterrupts(cause),
+                    (cause) =>
+                      Effect.logWarning("Skill context contamination lookup failed", {
+                        threadId: projection.thread.id,
+                        providerThreadId: currentProviderThread.id,
+                        cause,
+                      }).pipe(Effect.as([])),
+                  ),
+                )
+              : [];
           const transition =
             Option.isNone(targetInstance) || Option.isNone(targetAdapter)
               ? ({
@@ -151,6 +187,7 @@ export const layer: Layer.Layer<
                     available: targetInstance.value.enabled,
                   },
                   ...(selectionTransition === undefined ? {} : { selectionTransition }),
+                  ...(skillContextOmissions.length === 0 ? {} : { skillContextOmissions }),
                 });
           if (transition.type === "reject") {
             return yield* new ProviderSwitchPlanError({

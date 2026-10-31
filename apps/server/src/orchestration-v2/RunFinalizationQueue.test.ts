@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as SkillUsage from "../skills/SkillUsageService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
@@ -23,9 +24,13 @@ import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitles from "./ThreadTitleRegenerationService.ts";
 
 it.effect.each([
-  ["starts the next turn after a post-capture Git status failure", false],
-  ["keeps the next turn queued when checkpoint capture fails", true],
-] as const)("%s", ([, captureFails]) => {
+  ["starts the next turn after a post-capture Git status failure", null],
+  ["keeps the next turn queued when checkpoint capture fails", "capture"],
+  ["keeps the next turn queued when skill evidence finalization fails", "skills"],
+] as const)("%s", ([, failure]) => {
+  const captureFails = failure === "capture";
+  const skillFinalizationFails = failure === "skills";
+  const finalizationFails = failure !== null;
   const threadId = ThreadId.make("thread:finalization-queue");
   const runId = RunId.make("run:finalization-queue");
   const scopeId = CheckpointScopeId.make("scope:finalization-queue");
@@ -70,6 +75,18 @@ it.effect.each([
       Layer.mergeAll(
         projections,
         observer,
+        Layer.mock(SkillUsage.SkillUsageService)({
+          finalizeRun: () =>
+            Effect.gen(function* () {
+              calls.push("skills");
+              if (skillFinalizationFails)
+                return yield* new SkillUsage.SkillUsagePersistenceError({
+                  operation: "finalize skill evidence",
+                  cause: new Error("skill evidence unavailable"),
+                });
+              return true;
+            }),
+        }),
         Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({
           execute: () =>
             Effect.gen(function* () {
@@ -118,15 +135,24 @@ it.effect.each([
       },
     ]);
 
-    assert.equal(yield* effectWorker.drain(2), captureFails ? 1 : 2);
+    assert.equal(yield* effectWorker.drain(2), finalizationFails ? 1 : 2);
     const captured = Option.getOrThrow(yield* queue.get("effect:finalization-queue:capture"));
     const started = Option.getOrThrow(yield* queue.get("effect:finalization-queue:start"));
-    assert.equal(captured.status, captureFails ? "pending" : "succeeded");
+    assert.equal(captured.status, finalizationFails ? "pending" : "succeeded");
     assert.equal(captured.attemptCount, 1);
-    assert.equal(started.status, captureFails ? "pending" : "succeeded");
-    assert.equal(started.attemptCount, captureFails ? 0 : 1);
-    assert.deepEqual(calls, captureFails ? ["capture"] : ["capture", "refresh", "start"]);
+    assert.equal(started.status, finalizationFails ? "pending" : "succeeded");
+    assert.equal(started.attemptCount, finalizationFails ? 0 : 1);
+    assert.deepEqual(
+      calls,
+      captureFails
+        ? ["capture"]
+        : skillFinalizationFails
+          ? ["capture", "skills"]
+          : ["capture", "skills", "refresh", "start"],
+    );
     if (captureFails) assert.include(captured.lastError ?? "", "checkpoint storage unavailable");
+    else if (skillFinalizationFails)
+      assert.include(captured.lastError ?? "", "Could not finalize skill evidence.");
     else assert.equal(captured.lastError, null);
   }).pipe(Effect.provide(Layer.fresh(worker)));
 });

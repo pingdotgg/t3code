@@ -146,6 +146,7 @@ it.effect.each(deliveries)(
           settings,
           environment: {},
           attachmentsDir: cwd,
+          stateDir: cwd,
           fileSystem: yield* FileSystem.FileSystem,
           path: yield* Path.Path,
           crypto: yield* Crypto.Crypto,

@@ -46,6 +46,32 @@ Settings that are environment-wide stay read-only while a project is selected. W
 targets disagree, a control shows **Mixed** until you choose one value. Appearance, keyboard,
 and other phone-only settings ignore the filter.
 
+## Skills
+
+Open **Settings → Agents → Skills** on web or desktop to review discovered skills by provider and
+model. Each model row shows which rule applies, whether the provider hard-blocks excluded skills,
+only instructs the model, or cannot deliver the policy, plus controlled and observational evidence.
+**Instruction (best effort)** means the provider does not enforce the rule: the model is asked to
+follow it, but can still use the base skill.
+
+Fork a skill for a model to copy its current `SKILL.md` into a T3-managed variant, then edit that copy
+without changing the original skill. **Turn off for this model** creates a model rule; use **Turn back
+on**, delete, restore, enable, disable, or revert to reverse changes. Mobile shows the same effective
+rule and gating status and supports the listed rule actions, while body editing and forking remain on
+web and desktop.
+
+Evaluation tasks pair a prompt with a rubric. Start an evaluation to compare the current effective
+policy with its default control. Trials run real agents in isolated worktrees, and trial and judge calls
+use provider subscriptions or paid APIs, so review the displayed run size before starting. The defaults
+use three repeats and three judge samples; increasing either setting multiplies cost.
+
+**Helps** and **Hurts** are controlled, paired verdicts with an effect, confidence interval, and task
+count. They require at least three repeats and three judge samples. Fewer than 50 independent tasks
+cannot receive a verdict. Runs with 50–99 tasks must clear the stricter effect gate shown in the app;
+runs with 100 or more use the standard gate. Prompt-type slices
+are exploratory and do not receive verdicts. Observational usage is confounded and should guide what
+to test, not be read as a controlled comparison.
+
 ## Pin and archive projects
 
 Pinned projects come first in the project pickers: the project picker on a new thread, the

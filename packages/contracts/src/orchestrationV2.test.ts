@@ -318,12 +318,24 @@ describe("orchestration V2 contracts", () => {
 
     const decoded = decodeOrchestrationV2ProviderCapabilities(legacyCapabilities);
     expect(decoded.runtimePolicy).toEqual({ enforcement: "client-boundary" });
+    expect(decoded.skillVariantDelivery).toBe("unsupported");
+    expect(decoded.skillGating).toBe("none");
 
-    const explicit = decodeOrchestrationV2ProviderCapabilities({
+    const instruction = decodeOrchestrationV2ProviderCapabilities({
       ...legacyCapabilities,
+      skillVariantDelivery: "developer-context",
       runtimePolicy: { enforcement: "native" },
     });
-    expect(explicit.runtimePolicy).toEqual({ enforcement: "native" });
+    expect(instruction.runtimePolicy).toEqual({ enforcement: "native" });
+    expect(instruction.skillVariantDelivery).toBe("developer-context");
+    expect(instruction.skillGating).toBe("instruction");
+
+    const native = decodeOrchestrationV2ProviderCapabilities({
+      ...legacyCapabilities,
+      skillVariantDelivery: "turn-prompt",
+      skillGating: "native",
+    });
+    expect(native.skillGating).toBe("native");
   });
 
   it.each(["  indented prompt\n", "\n \t\n"])(

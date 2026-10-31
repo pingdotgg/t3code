@@ -235,6 +235,22 @@ function makeClaudeTestTurnInput(input: {
   };
 }
 
+describe("ClaudeAdapterV2 skill directives", () => {
+  it("prepends directives to the current user message and preserves native skill dispatch", () => {
+    const directive = "<t3_skill_variants>\nvariant instructions\n</t3_skill_variants>";
+    const message = ClaudeAdapterV2.makeClaudeUserMessage({
+      text: "$review inspect this",
+      leadingTextBlock: directive,
+      skills: new Map([["review", { path: "/skills/review/SKILL.md", userInvocationOnly: false }]]),
+    });
+
+    assert.deepEqual(message.message.content, [
+      { type: "text", text: directive },
+      { type: "text", text: "/review inspect this" },
+    ]);
+  });
+});
+
 describe("ClaudeAdapterV2 runtime query policy", () => {
   it.each([
     "-- --thinking-display omitted",
@@ -871,6 +887,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: {},
           attachmentsDir,
+          stateDir: attachmentsDir,
           fileSystem,
           path: yield* Path.Path,
           crypto: yield* Crypto.Crypto,
@@ -988,6 +1005,7 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
       settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs },
       environment: {},
       attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-append-" }),
+      stateDir: cwd,
       fileSystem,
       path: yield* Path.Path,
       crypto: yield* Crypto.Crypto,
@@ -1384,6 +1402,7 @@ describe("ClaudeAdapterV2 resumeThread", () => {
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: { CLAUDE_CONFIG_DIR: configDir },
           attachmentsDir: configDir,
+          stateDir: configDir,
           fileSystem,
           path,
           crypto: yield* Crypto.Crypto,
@@ -1459,6 +1478,7 @@ describe("ClaudeAdapterV2 resume compaction", () => {
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: {},
           attachmentsDir,
+          stateDir: attachmentsDir,
           fileSystem,
           path: yield* Path.Path,
           crypto: yield* Crypto.Crypto,
@@ -1742,6 +1762,7 @@ describe("ClaudeAdapterV2 attachments", () => {
             settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: claudeHome },
             environment: {},
             attachmentsDir,
+            stateDir: attachmentsDir,
             fileSystem,
             path: yield* Path.Path,
             crypto: yield* Crypto.Crypto,
@@ -2274,6 +2295,7 @@ describe("ClaudeAdapterV2 native fork", () => {
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: { CLAUDE_CONFIG_DIR: "/custom/claude-home" },
           attachmentsDir,
+          stateDir: attachmentsDir,
           fileSystem,
           path: yield* Path.Path,
           crypto: yield* Crypto.Crypto,
@@ -2583,6 +2605,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: {},
           attachmentsDir,
+          stateDir: attachmentsDir,
           fileSystem,
           path: yield* Path.Path,
           crypto: yield* Crypto.Crypto,
@@ -2934,11 +2957,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "provider_thread.updated" }>
         >();
       let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+      const openedOptionsHistory: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOptions> = [];
       const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
         instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
         settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
         environment: options?.environment ?? {},
         attachmentsDir,
+        stateDir: attachmentsDir,
         fileSystem,
         path: yield* Path.Path,
         crypto: yield* Crypto.Crypto,
@@ -2959,6 +2984,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           open: (input) =>
             Effect.gen(function* () {
               openedOptions = input.options;
+              openedOptionsHistory.push(input.options);
               const processMessages =
                 options?.freshQueueOnReopen === true && processQueues.length > 0
                   ? yield* Queue.unbounded<SDKMessage>()
@@ -3110,6 +3136,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         planReceipts,
         providerThreadReceipts,
         getOpenedOptions: () => openedOptions,
+        openedOptionsHistory,
         terminalEvents,
         hasPendingBackgroundWork,
         until: changes.until,
@@ -4387,8 +4414,322 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     );
   });
 
+  it.effect("denies an off skill through Claude's native Skill tool gate", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const input = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("skill-policy-off"),
+        text: "Review this change.",
+        attachments: [],
+      });
+      yield* harness.runtime.startTurn({
+        ...input,
+        skillPolicy: {
+          hash: "a".repeat(64),
+          entries: [{ skillName: "review", mode: "off", variantPath: null }],
+        },
+      });
+
+      assert.deepEqual(harness.getOpenedOptions()?.disallowedTools, ["Skill(review)"]);
+      const content = harness.offeredMessages[0]?.message.content;
+      assert.isArray(content);
+      if (!Array.isArray(content)) return;
+      assert.include(String(content[0]?.type === "text" ? content[0].text : ""), "for this model");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("materializes Claude variants as a session-only local plugin", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const sourceDirectory = path.join(harness.attachmentsDir, "skill-variants", "b".repeat(64));
+      const sourcePath = path.join(sourceDirectory, "SKILL.md");
+      const body = "---\nname: review\n---\nUse the model-specific review flow.\n";
+      yield* fileSystem.makeDirectory(sourceDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(sourcePath, body);
+      const policyHash = "c".repeat(64);
+      const input = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("skill-policy-variant"),
+        text: "Review this change.",
+        attachments: [],
+      });
+      yield* harness.runtime.startTurn({
+        ...input,
+        skillPolicy: {
+          hash: policyHash,
+          entries: [{ skillName: "review", mode: "variant", variantPath: sourcePath }],
+        },
+      });
+
+      const pluginDirectory = path.join(
+        harness.attachmentsDir,
+        "skill-variants",
+        "claude-plugins",
+        policyHash,
+      );
+      assert.deepEqual(harness.getOpenedOptions()?.plugins, [
+        { type: "local", path: pluginDirectory },
+      ]);
+      assert.equal(harness.getOpenedOptions()?.pluginDelivery, "initialize");
+      assert.deepEqual(harness.getOpenedOptions()?.disallowedTools, ["Skill(review)"]);
+      assert.deepEqual(
+        JSON.parse(
+          yield* fileSystem.readFileString(
+            path.join(pluginDirectory, ".claude-plugin", "plugin.json"),
+          ),
+        ),
+        {
+          name: "t3-variants",
+          description: "T3 Code model-specific skill variants",
+          version: "1.0.0",
+        },
+      );
+      assert.equal(
+        yield* fileSystem.readFileString(
+          path.join(pluginDirectory, "skills", "review-t3-variant", "SKILL.md"),
+        ),
+        "---\nname: review-t3-variant\n---\nUse the model-specific review flow.\n",
+      );
+      const content = harness.offeredMessages[0]?.message.content;
+      assert.isArray(content);
+      if (!Array.isArray(content)) return;
+      assert.include(
+        String(content[0]?.type === "text" ? content[0].text : ""),
+        'use "t3-variants:review-t3-variant" for this model instead',
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("rejects duplicate derived Claude skill names before writing the plugin", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const sourceDirectory = path.join(harness.attachmentsDir, "skill-variants", "d".repeat(64));
+      const sourcePath = path.join(sourceDirectory, "SKILL.md");
+      yield* fileSystem.makeDirectory(sourceDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(sourcePath, "Use the review flow.\n");
+      const policyHash = "e".repeat(64);
+      const error = yield* Effect.flip(
+        harness.runtime.startTurn({
+          ...makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("skill-policy-duplicate-name"),
+            text: "Review this change.",
+            attachments: [],
+          }),
+          skillPolicy: {
+            hash: policyHash,
+            entries: [
+              { skillName: "review", mode: "variant", variantPath: sourcePath },
+              { skillName: "review", mode: "variant", variantPath: sourcePath },
+            ],
+          },
+        }),
+      );
+
+      assert.equal(error._tag, "ProviderAdapterTurnStartError");
+      const cause = error.cause as { readonly _tag?: string; readonly detail?: string } | undefined;
+      assert.equal(cause?._tag, "ProviderAdapterProtocolError");
+      assert.include(cause?.detail ?? "", "multiple skill variants");
+      assert.isFalse(
+        yield* fileSystem.exists(
+          path.join(harness.attachmentsDir, "skill-variants", "claude-plugins", policyHash),
+        ),
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("reopens Claude when the skill policy hash changes", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({ freshQueueOnReopen: true });
+      const now = yield* DateTime.now;
+      const turn = (ordinal: number, hash: string) => ({
+        ...makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make(`skill-policy-reopen-${ordinal}`),
+          text: `Review ${ordinal}.`,
+          attachments: [],
+          providerTurnOrdinal: ordinal,
+        }),
+        skillPolicy: {
+          hash,
+          entries: [{ skillName: "review", mode: "off" as const, variantPath: null }],
+        },
+      });
+
+      yield* harness.runtime.startTurn(turn(1, "d".repeat(64)));
+      yield* harness.offerAndWait(
+        makeResultFrame({ uuid: "skill-policy-reopen-result", result: "Done" }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      yield* harness.runtime.startTurn(turn(2, "e".repeat(64)));
+
+      assert.lengthOf(harness.openedOptionsHistory, 2);
+      assert.equal(harness.openedOptionsHistory[1]?.resume, WAKE_NATIVE_SESSION);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect.each(["base-to-off", "off-to-base", "variant-a-to-b"] as const)(
+    "rejects stale Claude skill gating during background work for %s",
+    (transition) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const variantPolicy = (name: "a" | "b") =>
+          Effect.gen(function* () {
+            const contentHash = name.repeat(64);
+            const directory = path.join(harness.attachmentsDir, "skill-variants", contentHash);
+            const variantPath = path.join(directory, "SKILL.md");
+            yield* fileSystem.makeDirectory(directory, { recursive: true });
+            yield* fileSystem.writeFileString(
+              variantPath,
+              `---\nname: review\n---\nUse variant ${name.toUpperCase()}.\n`,
+            );
+            return {
+              hash: contentHash,
+              entries: [{ skillName: "review", mode: "variant" as const, variantPath }],
+            };
+          });
+        const offPolicy = {
+          hash: "c".repeat(64),
+          entries: [{ skillName: "review", mode: "off" as const, variantPath: null }],
+        };
+        const firstPolicy =
+          transition === "base-to-off"
+            ? undefined
+            : transition === "off-to-base"
+              ? offPolicy
+              : yield* variantPolicy("a");
+        const secondPolicy =
+          transition === "base-to-off"
+            ? offPolicy
+            : transition === "off-to-base"
+              ? undefined
+              : yield* variantPolicy("b");
+        const now = yield* DateTime.now;
+        const turn = (ordinal: number) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`skill-policy-background-${transition}-${ordinal}`),
+            text: `Review ${ordinal}.`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+          });
+
+        yield* harness.runtime.startTurn({
+          ...turn(1),
+          ...(firstPolicy === undefined ? {} : { skillPolicy: firstPolicy }),
+        });
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        const refused = yield* harness.runtime
+          .startTurn({
+            ...turn(2),
+            ...(secondPolicy === undefined ? {} : { skillPolicy: secondPolicy }),
+          })
+          .pipe(Effect.result);
+        assert.equal(refused._tag, "Failure");
+        if (refused._tag === "Failure") {
+          assert.instanceOf(
+            refused.failure.cause,
+            ClaudeAdapterV2.ClaudeSkillPolicyChangeBlockedByBackgroundWorkError,
+          );
+          assert.equal(
+            makeProviderFailure({ cause: refused.failure, class: "provider_error" }).message,
+            "Skill settings changed for this model; wait for background work to finish or stop it, then resend",
+          );
+        }
+        assert.lengthOf(harness.openedOptionsHistory, 1);
+        assert.lengthOf(harness.offeredMessages, 1);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
+  it.effect("keeps live model switching when the skill policy hash is unchanged", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      const skillPolicy = {
+        hash: "f".repeat(64),
+        entries: [{ skillName: "review", mode: "off" as const, variantPath: null }],
+      };
+      const turn = (ordinal: number, modelSelection: ModelSelection) => ({
+        ...makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make(`skill-policy-live-model-${ordinal}`),
+          text: `Review ${ordinal}.`,
+          attachments: [],
+          providerTurnOrdinal: ordinal,
+          modelSelection,
+        }),
+        skillPolicy,
+      });
+
+      yield* harness.runtime.startTurn(turn(1, CLAUDE_TEST_MODEL_SELECTION));
+      yield* harness.offerAndWait(
+        makeResultFrame({ uuid: "skill-policy-live-model-result", result: "Done" }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      yield* harness.runtime.startTurn(
+        turn(2, { ...CLAUDE_TEST_MODEL_SELECTION, model: "claude-opus-5-5" }),
+      );
+
+      assert.lengthOf(harness.openedOptionsHistory, 1);
+      assert.deepInclude(harness.liveSelectionChanges, { model: "claude-opus-5-5" });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect(
-    "carries earlier user-only skill instructions on sends and steering with attachments",
+    "applies base, off, and variant skill dispatch on sends and steering with attachments",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -4409,6 +4750,24 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const harness = yield* makeWakeHarnessWithOptions({
           settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath },
         });
+        const variantDirectory = path.join(
+          harness.attachmentsDir,
+          "skill-variants",
+          "d".repeat(64),
+        );
+        const variantPath = path.join(variantDirectory, "SKILL.md");
+        yield* fs.makeDirectory(variantDirectory, { recursive: true });
+        yield* fs.writeFileString(
+          variantPath,
+          "---\nname: implement\n---\nFollow the model-specific implementation instructions.\n",
+        );
+        const skillPolicy = {
+          hash: "e".repeat(64),
+          entries: [
+            { skillName: "review", mode: "off" as const, variantPath: null },
+            { skillName: "implement", mode: "variant" as const, variantPath },
+          ],
+        };
         const input = makeClaudeTestTurnInput({
           threadId: harness.threadId,
           providerThread: harness.providerThread,
@@ -4418,12 +4777,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           attachments: [],
           runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd: homePath },
         });
-        yield* harness.runtime.startTurn(input);
+        yield* harness.runtime.startTurn({ ...input, skillPolicy });
 
-        const leadingText = `Ultrathink:\n/interrogate [The user invoked this skill. Follow the instructions at: ${path.join(homePath, "skills", "interrogate", "SKILL.md")}] then /review then /implement the fixes`;
-        assert.deepEqual(harness.offeredMessages[0]?.message.content, [
+        const leadingText = `Ultrathink:\n/interrogate [The user invoked this skill. Follow the instructions at: ${path.join(homePath, "skills", "interrogate", "SKILL.md")}] then $review then /t3-variants:implement-t3-variant the fixes`;
+        const sentContent = harness.offeredMessages[0]?.message.content;
+        assert.isArray(sentContent);
+        if (!Array.isArray(sentContent)) return;
+        assert.deepEqual(sentContent.slice(-2), [
           { type: "text", text: leadingText },
-          { type: "text", text: "/implement the fixes" },
+          { type: "text", text: "/t3-variants:implement-t3-variant the fixes" },
         ]);
 
         const attachment = ChatFileAttachment.make({
@@ -4454,7 +4816,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(harness.offeredMessages[1]?.priority, "now");
         assert.deepEqual(harness.offeredMessages[1]?.message.content, [
           { type: "text", text: `${leadingText}${attachmentNote}` },
-          { type: "text", text: `/implement the fixes${attachmentNote}` },
+          { type: "text", text: `/t3-variants:implement-t3-variant the fixes${attachmentNote}` },
         ]);
       }).pipe(
         Effect.provide(
@@ -8815,6 +9177,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: {},
           attachmentsDir,
+          stateDir: attachmentsDir,
           fileSystem,
           path: yield* Path.Path,
           crypto: yield* Crypto.Crypto,
@@ -9002,6 +9365,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             settings: DEFAULT_CLAUDE_SETTINGS,
             environment: {},
             attachmentsDir,
+            stateDir: attachmentsDir,
             fileSystem,
             path: yield* Path.Path,
             crypto: yield* Crypto.Crypto,
@@ -13078,6 +13442,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: {},
           attachmentsDir,
+          stateDir: attachmentsDir,
           fileSystem,
           path: yield* Path.Path,
           crypto: yield* Crypto.Crypto,
@@ -13247,6 +13612,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             settings: DEFAULT_CLAUDE_SETTINGS,
             environment: {},
             attachmentsDir,
+            stateDir: attachmentsDir,
             fileSystem,
             path: yield* Path.Path,
             crypto: yield* Crypto.Crypto,
@@ -13424,6 +13790,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: {},
           attachmentsDir,
+          stateDir: attachmentsDir,
           fileSystem,
           path: yield* Path.Path,
           crypto: yield* Crypto.Crypto,
@@ -13614,6 +13981,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({
             prefix: "t3-claude-append-replacement-attachments-",
           }),
+          stateDir: cwd,
           fileSystem,
           path: yield* Path.Path,
           crypto: yield* Crypto.Crypto,
@@ -13741,6 +14109,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             settings: DEFAULT_CLAUDE_SETTINGS,
             environment: {},
             attachmentsDir,
+            stateDir: attachmentsDir,
             fileSystem,
             path: yield* Path.Path,
             crypto: yield* Crypto.Crypto,

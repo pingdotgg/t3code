@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
+import * as SkillUsage from "../skills/SkillUsageService.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -16,7 +17,7 @@ export class RunFinalizationError extends Schema.TaggedError<RunFinalizationErro
     threadId: ThreadId,
     runId: RunId,
     scopeId: CheckpointScopeId,
-    operation: Schema.Literals(["capture-checkpoint", "refresh-workspace"]),
+    operation: Schema.Literals(["capture-checkpoint", "finalize-skill-turn", "refresh-workspace"]),
     cause: Schema.Defect(),
   },
 ) {}
@@ -50,6 +51,7 @@ export class RunFinalizationService extends Context.Service<
 
 const make = Effect.gen(function* () {
   const checkpointCapture = yield* CheckpointCapture.CheckpointCaptureServiceV2;
+  const skillUsage = yield* SkillUsage.SkillUsageService;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const observer = yield* RunFinalizationObserver;
 
@@ -61,6 +63,14 @@ const make = Effect.gen(function* () {
       .pipe(
         Effect.mapError(
           (cause) => new RunFinalizationError({ ...input, operation: "capture-checkpoint", cause }),
+        ),
+      );
+    yield* skillUsage
+      .finalizeRun(input.runId)
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new RunFinalizationError({ ...input, operation: "finalize-skill-turn", cause }),
         ),
       );
     const projection = yield* projections

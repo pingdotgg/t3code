@@ -191,6 +191,8 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     text = "hello",
     startProviderThread: OrchestrationV2ProviderThread = providerThread,
     turnPolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy = policy,
+    skillDirectives?: ProviderAdapter.ProviderAdapterV2TurnInput["skillDirectives"],
+    skillPolicy?: ProviderAdapter.ProviderAdapterV2TurnInput["skillPolicy"],
   ) =>
     runtime.startTurn({
       appThread: {
@@ -232,6 +234,8 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
       },
       modelSelection,
       runtimePolicy: turnPolicy,
+      ...(skillDirectives === undefined ? {} : { skillDirectives }),
+      ...(skillPolicy === undefined ? {} : { skillPolicy }),
     });
   return {
     nativeSessionId,
@@ -405,6 +409,87 @@ describe("OpenCodeAdapterV2", () => {
       assert.deepStrictEqual(updates.slice(1), [
         { sessionID: "root", permission: openCodePermissionRules(fullAccess) },
       ]);
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("updates reused sessions when the skill policy hash changes", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const updates: Array<{
+        sessionID: string;
+        permission: ReturnType<typeof openCodePermissionRules>;
+      }> = [];
+      let promptId: string | undefined;
+      const fullAccess = runtimePolicy("full-access", { cwd: "/workspace" });
+      const harness = yield* makeOpenCodeRuntimeHarness("skill-policy-change", "root", {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          update: async (input: (typeof updates)[number]) => {
+            updates.push(input);
+            return { data: { id: input.sessionID, time: { created: 1, updated: 2 } } };
+          },
+          promptAsync: async (input: { messageID?: string }) => {
+            promptId = input.messageID;
+            return { data: true };
+          },
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+      });
+      const entries = [{ skillName: "review", mode: "off" as const, variantPath: null }];
+
+      yield* harness.startTurn("first", harness.providerThread, fullAccess, undefined, {
+        hash: "policy-a",
+        entries,
+      });
+      const terminal = yield* harness.runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+        Effect.forkScoped,
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: "root",
+            info: {
+              id: promptId,
+              sessionID: "root",
+              role: "user",
+              time: { created: 1 },
+            },
+          },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.status",
+          properties: { sessionID: "root", status: { type: "busy" } },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.status",
+          properties: { sessionID: "root", status: { type: "idle" } },
+        }),
+      );
+      yield* Fiber.join(terminal);
+      yield* harness.startTurn("second", harness.providerThread, fullAccess, undefined, {
+        hash: "policy-b",
+        entries,
+      });
+
+      assert.lengthOf(updates, 2);
+      assert.deepEqual(updates[0]?.permission, updates[1]?.permission);
+      assert.deepEqual(updates[1]?.permission.at(-1), {
+        permission: "skill",
+        pattern: "review",
+        action: "deny",
+      });
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,
@@ -2593,6 +2678,31 @@ describe("OpenCodeAdapterV2", () => {
     assert.equal(permissionAction(approvalRequiredWorkspaceWrite, "edit"), "ask");
   });
 
+  it("appends exact skill denies after broad allows and scopes variant access", () => {
+    const rules = openCodePermissionRules(runtimePolicy("full-access"), {
+      hash: "policy-a",
+      entries: [
+        { skillName: "off-skill", mode: "off", variantPath: null },
+        {
+          skillName: "variant-skill",
+          mode: "variant",
+          variantPath: "/state/skill-variants/content/SKILL.md",
+        },
+      ],
+    });
+
+    assert.deepEqual(rules, [
+      { permission: "*", pattern: "*", action: "allow" },
+      {
+        permission: "external_directory",
+        pattern: "/state/skill-variants/content/*",
+        action: "allow",
+      },
+      { permission: "skill", pattern: "off-skill", action: "deny" },
+      { permission: "skill", pattern: "variant-skill", action: "deny" },
+    ]);
+  });
+
   it("enforces non-interactive sandbox policy through OpenCode permissions", () => {
     const readOnly = openCodePermissionRules(
       runtimePolicy("full-access", {
@@ -2650,6 +2760,11 @@ describe("OpenCodeAdapterV2", () => {
     assert.equal(permissionAction(childApprovalRules, "bash"), "ask");
     assert.equal(permissionAction(childApprovalRules, "task"), "deny");
 
+    const childSkillDenyRules = openCodeChildPermissionRules(approvalRequiredPolicy, [
+      { permission: "skill", pattern: "*", action: "deny" },
+    ]);
+    assert.equal(permissionAction(childSkillDenyRules, "skill"), "deny");
+
     const fullAccessChildRules = openCodeChildPermissionRules(runtimePolicy("full-access"), [
       { permission: "task", pattern: "*", action: "deny" },
     ]);
@@ -2660,6 +2775,23 @@ describe("OpenCodeAdapterV2", () => {
     );
     assert.equal(permissionAction(reappliedRules, "bash"), "ask");
     assert.equal(permissionAction(reappliedRules, "task"), "deny");
+
+    const skillPolicy = {
+      hash: "policy-a",
+      entries: [{ skillName: "review", mode: "off" as const, variantPath: null }],
+    };
+    const childSkillRules = openCodeChildPermissionRules(
+      runtimePolicy("full-access"),
+      [{ permission: "skill", pattern: "*", action: "allow" }],
+      [],
+      skillPolicy,
+    );
+    assert.equal(permissionAction(childSkillRules, "skill"), "deny");
+    assert.deepEqual(childSkillRules.at(-1), {
+      permission: "skill",
+      pattern: "review",
+      action: "deny",
+    });
   });
 
   it("uses the next native user message as the exclusive fork and revert boundary", () => {
@@ -2673,6 +2805,39 @@ describe("OpenCodeAdapterV2", () => {
     );
     assert.isUndefined(openCodeBoundaryAfterProviderTurn([first, synthetic, third], third.id));
   });
+  it.effect("appends skill directives to the per-turn system prompt", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      let promptInput: Parameters<OpencodeClient["session"]["promptAsync"]>[0] | undefined;
+      const harness = yield* makeOpenCodeRuntimeHarness("skill-directives", "root", {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          promptAsync: async (input: Parameters<OpencodeClient["session"]["promptAsync"]>[0]) => {
+            promptInput = input;
+            return { data: true };
+          },
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+      });
+      const directive = "<t3_skill_variants>\nvariant instructions\n</t3_skill_variants>";
+      yield* harness.startTurn("hello", harness.providerThread, harness.policy, {
+        text: directive,
+        hash: "directive-hash",
+      });
+
+      assert.isDefined(promptInput);
+      const system = promptInput.system;
+      if (system === undefined) {
+        assert.fail("expected a per-turn system prompt");
+      }
+      assert.isTrue(system.endsWith(directive));
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
 });
 
 it.effect.each([false, true])(

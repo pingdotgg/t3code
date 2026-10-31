@@ -53,6 +53,34 @@ it("uses the adapter's selection transition classification", () => {
   );
 });
 
+it("uses a fresh handoff when activated skill context is incompatible", () => {
+  const skillContextOmissions = [
+    {
+      skillName: "review",
+      variantPaths: ["/state/skill-variants/old/SKILL.md"],
+      skillPaths: ["/home/user/.claude/skills/review/SKILL.md"],
+    },
+  ];
+  const target = {
+    ...base,
+    modelSelection: { ...base.modelSelection, model: "gpt-5.2-codex" },
+    available: true,
+  };
+  assert.deepEqual(
+    decideProviderSessionTransition({
+      current: base,
+      target,
+      selectionTransition: { type: "apply_on_next_turn" },
+      skillContextOmissions,
+    }),
+    { type: "create_with_handoff", skillContextOmissions },
+  );
+  assert.deepEqual(
+    decideProviderSessionTransition({ current: null, target, skillContextOmissions }),
+    { type: "create_with_handoff", skillContextOmissions },
+  );
+});
+
 it("restarts compatible instances for workspace or runtime changes", () => {
   assert.deepEqual(
     decideProviderSessionTransition({

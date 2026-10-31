@@ -56,6 +56,11 @@ import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as SkillEvalService from "../skills/SkillEvalService.ts";
+import * as SkillReviewService from "../skills/SkillReviewService.ts";
+import * as SkillTurnPreparation from "../skills/SkillTurnPreparation.ts";
+import * as SkillUsageService from "../skills/SkillUsageService.ts";
+import * as SkillVariantService from "../skills/SkillVariantService.ts";
 
 export const layerEventInfrastructure = Layer.mergeAll(
   OrchestrationEventStore.layer,
@@ -123,7 +128,13 @@ const layerContextHandoffServiceProvided = ContextHandoffService.layer.pipe(
 );
 
 const layerProviderSwitchServiceProvided = ProviderSwitchService.layer.pipe(
-  Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
+  Layer.provide(
+    Layer.mergeAll(
+      ProviderAdapterRegistry.layerFromProviderInstanceRegistry,
+      SkillUsageService.layer,
+      SkillVariantService.layer,
+    ),
+  ),
 );
 
 const layerCommandOutputHubProvided = CommandOutputHub.layer.pipe(
@@ -147,6 +158,10 @@ const layerProviderAuthServiceProvided = ProviderAuthService.layer.pipe(
   Layer.provide(Layer.merge(ProjectionStore.layer, layerProviderSessionManagerProvided)),
 );
 
+const layerSkillTurnPreparationProvided = SkillTurnPreparation.layerOptionalProviderRegistry.pipe(
+  Layer.provide(Layer.merge(SkillUsageService.layer, SkillVariantService.layer)),
+);
+
 const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -156,6 +171,7 @@ const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
       layerEventSink,
       IdAllocator.layer,
       layerProviderEventIngestorProvided,
+      layerSkillTurnPreparationProvided,
       TurnItemPositionStore.layer,
     ),
   ),
@@ -207,7 +223,13 @@ const layerCheckpointCaptureServiceProvided = CheckpointCaptureService.layer.pip
   ),
 );
 const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
-  Layer.provide(Layer.merge(layerCheckpointCaptureServiceProvided, ProjectionStore.layer)),
+  Layer.provide(
+    Layer.mergeAll(
+      layerCheckpointCaptureServiceProvided,
+      ProjectionStore.layer,
+      SkillUsageService.layer,
+    ),
+  ),
 );
 
 const layerOrchestratorProvided = Orchestrator.layer.pipe(
@@ -274,6 +296,28 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
       layerThreadManagementProvided,
       layerCommandReceiptStoreProvided,
       IdAllocator.layer,
+    ),
+  ),
+);
+const layerSkillEvalServiceProvided = SkillEvalService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      IdAllocator.layer,
+      layerProjectService,
+      layerThreadLaunchProvided,
+      layerThreadManagementProvided,
+      ProviderAdapterRegistry.layerFromProviderInstanceRegistry,
+      SkillUsageService.layer,
+    ),
+  ),
+);
+const layerSkillReviewServiceProvided = SkillReviewService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerSkillEvalServiceProvided,
+      ProviderAdapterRegistry.layerFromProviderInstanceRegistry,
+      SkillUsageService.layer,
+      SkillVariantService.layer,
     ),
   ),
 );
@@ -372,6 +416,8 @@ export const layerProduction = Layer.mergeAll(
   layerProjectService,
   layerManagedProjectFoldersProvided,
   layerThreadLaunchProvided,
+  layerSkillEvalServiceProvided,
+  layerSkillReviewServiceProvided,
   layerScheduledTaskProvided,
   layerScratchThreadPromotionProvided,
   layerSecretRequestsProvided,

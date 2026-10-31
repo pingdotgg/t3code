@@ -37,6 +37,30 @@ describe("planClaudeSkillDispatch", () => {
     });
   });
 
+  it("dispatches variants through the T3 plugin namespace", () => {
+    expect(
+      planClaudeSkillDispatch("$review the diff", SKILLS, [
+        { skillName: "review", mode: "variant" },
+      ]),
+    ).toEqual({
+      leadingText: undefined,
+      commandText: "/t3-variants:review-t3-variant the diff",
+    });
+  });
+
+  it("leaves off skills as plain text while dispatching allowed mentions", () => {
+    const policy = [{ skillName: "review", mode: "off" as const }];
+    expect(planClaudeSkillDispatch("$review the diff", SKILLS, policy)).toBeUndefined();
+    expect(planClaudeSkillDispatch("$review then $implement the fixes", SKILLS, policy)).toEqual({
+      leadingText: "$review then /implement the fixes",
+      commandText: "/implement the fixes",
+    });
+    expect(planClaudeSkillDispatch("$implement then $review the diff", SKILLS, policy)).toEqual({
+      leadingText: undefined,
+      commandText: "/implement then $review the diff",
+    });
+  });
+
   it("dispatches currency-prefixed mentions and preserves their source boundaries", () => {
     for (const symbol of ["€", "£", "¥", "₹", "₩", "₿", "𑿝"]) {
       expect(

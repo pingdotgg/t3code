@@ -444,6 +444,87 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
   );
 });
 
+it.effect("skill trial judging rejects usage-limit fallback", () =>
+  Effect.gen(function* () {
+    const primary = ProviderInstanceId.make("codex");
+    const fallback = ProviderInstanceId.make("claude_work");
+    const instances: ProviderInstance[] = [primary, fallback].map((instanceId) => {
+      const driver = ProviderDriverKind.make(instanceId === primary ? "codex" : "claudeAgent");
+      const snapshot: ServerProvider = {
+        instanceId,
+        driver,
+        enabled: true,
+        installed: true,
+        status: "ready",
+        auth: { status: "authenticated" },
+        version: null,
+        checkedAt: "1970-01-01T00:00:00Z",
+        models: [],
+        slashCommands: [],
+        skills: [],
+        ...(instanceId === primary
+          ? {
+              usageLimits: {
+                checkedAt: "1970-01-01T00:00:00Z",
+                windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 100 }],
+              },
+            }
+          : {}),
+      };
+      return {
+        instanceId,
+        driverKind: driver,
+        continuationIdentity: { driverKind: driver, continuationKey: instanceId },
+        displayName: undefined,
+        enabled: true,
+        snapshot: { getSnapshot: Effect.succeed(snapshot) } as ProviderInstance["snapshot"],
+        orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+        textGeneration: TextGeneration.TextGeneration.of({
+          generateCommitMessage: () => Effect.die("unused"),
+          generatePrContent: () => Effect.die("unused"),
+          generateBranchName: () => Effect.die("unused"),
+          generateReviewGuide: () => Effect.die("unused"),
+          generateThreadTitle: () => Effect.die("unused"),
+          judgeSkillTrial: () => Effect.die("judge should not be called"),
+        }),
+      };
+    });
+    const service = yield* TextGeneration.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+            listInstances: Effect.succeed(instances),
+            getInstance: (id) =>
+              Effect.succeed(instances.find((instance) => instance.instanceId === id)),
+          }),
+          ServerSettings.layerTest({
+            providerInstances: {
+              [fallback]: { driver: ProviderDriverKind.make("claudeAgent"), config: {} },
+            },
+          }),
+          Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+            resolveLink: () => Effect.die("unused"),
+          }),
+        ),
+      ),
+    );
+
+    const failure = yield* Effect.flip(
+      service.judgeSkillTrial({
+        cwd: "/tmp",
+        modelSelection: { instanceId: primary, model: "gpt-5.6-sol" },
+        taskPrompt: "Implement the task.",
+        rubric: "Correctness.",
+        responseA: { status: "completed", finalMessage: "A", changedFiles: [], toolFailures: 0 },
+        responseB: { status: "completed", finalMessage: "B", changedFiles: [], toolFailures: 0 },
+      }),
+    );
+    expect(failure.operation).toBe("judgeSkillTrial");
+    expect(failure.detail).toContain("usage-limited");
+    expect(failure.detail).toContain("Fable or gpt-5.6-sol");
+  }),
+);
+
 it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhausted) =>
   Effect.gen(function* () {
     const primary = ProviderInstanceId.make("codex");
@@ -490,6 +571,7 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
           generatePrContent: () => Effect.die("unused"),
           generateBranchName: () => Effect.die("unused"),
           generateReviewGuide: () => Effect.die("unused"),
+          judgeSkillTrial: () => Effect.die("unused"),
           generateThreadTitle: (input) =>
             Effect.sync(() => {
               calls.push(input.modelSelection);

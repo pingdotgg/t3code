@@ -103,6 +103,7 @@ function curatedCauseMessages(cause: unknown): {
           };
         case "AcpModelSelectionError":
         case "ClaudeBackgroundWorkBlocksQueryReplacementError":
+        case "ClaudeSkillPolicyChangeBlockedByBackgroundWorkError":
         case "ClaudeAppendSystemPromptFileError":
         case "ClaudeAppendSystemPromptMissingValueError":
         case "ClaudeSettingsLaunchArgError":

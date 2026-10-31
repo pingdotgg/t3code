@@ -288,6 +288,8 @@ function createTextGeneration(
         title: "Update workflow",
       }),
     generateReviewGuide: () => Effect.succeed({ stops: [] }),
+    judgeSkillTrial: () =>
+      Effect.succeed({ preferred: "tie", scoreA: 3, scoreB: 3, rationale: "Equivalent." }),
     ...overrides,
   };
 
@@ -337,6 +339,7 @@ function createTextGeneration(
         ),
       ),
     generateReviewGuide: (input) => implementation.generateReviewGuide(input),
+    judgeSkillTrial: (input) => implementation.judgeSkillTrial(input),
   };
 }
 

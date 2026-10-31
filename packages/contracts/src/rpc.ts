@@ -377,6 +377,23 @@ import {
 } from "./scheduledTask.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import {
+  SkillEvalError,
+  SkillEvalRunControlInput,
+  SkillEvalRunDetail,
+  SkillEvalRunSummary,
+  SkillEvalTask,
+  SkillEvalTaskMutateInput,
+  SkillReviewDetail,
+  SkillReviewListItem,
+  SkillsEvalRunGetInput,
+  SkillsReadError,
+  SkillsReviewGetInput,
+  SkillsReviewListInput,
+  SkillVariantMutateInput,
+  SkillVariantMutationError,
+  SkillVariantRule,
+} from "./skillEvals.ts";
+import {
   ProjectCloneActionInput,
   ProjectCloneActionResult,
   ProjectCloneListEvent,
@@ -547,6 +564,13 @@ export const WS_METHODS = {
   guestShareCreate: "guestShare.create",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
+
+  skillsReviewList: "skills.review.list",
+  skillsReviewGet: "skills.review.get",
+  skillsVariantMutate: "skills.variant.mutate",
+  skillsEvalTaskMutate: "skills.evalTask.mutate",
+  skillsEvalRunControl: "skills.evalRun.control",
+  skillsEvalRunGet: "skills.evalRun.get",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -1950,6 +1974,42 @@ const WsScheduledTasksGetWebhookDeliveryRpc = Rpc.make(
   },
 );
 
+const WsSkillsReviewListRpc = Rpc.make(WS_METHODS.skillsReviewList, {
+  payload: SkillsReviewListInput,
+  success: Schema.Array(SkillReviewListItem),
+  error: Schema.Union([SkillsReadError, EnvironmentAuthorizationError]),
+});
+
+const WsSkillsReviewGetRpc = Rpc.make(WS_METHODS.skillsReviewGet, {
+  payload: SkillsReviewGetInput,
+  success: SkillReviewDetail,
+  error: Schema.Union([SkillsReadError, EnvironmentAuthorizationError]),
+});
+
+const WsSkillsVariantMutateRpc = Rpc.make(WS_METHODS.skillsVariantMutate, {
+  payload: SkillVariantMutateInput,
+  success: SkillVariantRule,
+  error: Schema.Union([SkillVariantMutationError, EnvironmentAuthorizationError]),
+});
+
+const WsSkillsEvalTaskMutateRpc = Rpc.make(WS_METHODS.skillsEvalTaskMutate, {
+  payload: SkillEvalTaskMutateInput,
+  success: SkillEvalTask,
+  error: Schema.Union([SkillEvalError, EnvironmentAuthorizationError]),
+});
+
+const WsSkillsEvalRunControlRpc = Rpc.make(WS_METHODS.skillsEvalRunControl, {
+  payload: SkillEvalRunControlInput,
+  success: SkillEvalRunSummary,
+  error: Schema.Union([SkillEvalError, SkillVariantMutationError, EnvironmentAuthorizationError]),
+});
+
+const WsSkillsEvalRunGetRpc = Rpc.make(WS_METHODS.skillsEvalRunGet, {
+  payload: SkillsEvalRunGetInput,
+  success: SkillEvalRunDetail,
+  error: Schema.Union([SkillsReadError, EnvironmentAuthorizationError]),
+});
+
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   payload: Schema.Struct({}),
   success: AuthAccessStreamEvent,
@@ -2035,6 +2095,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsSecretsAnswerRequestRpc,
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
+  WsSkillsReviewListRpc,
+  WsSkillsReviewGetRpc,
+  WsSkillsVariantMutateRpc,
+  WsSkillsEvalTaskMutateRpc,
+  WsSkillsEvalRunControlRpc,
+  WsSkillsEvalRunGetRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,

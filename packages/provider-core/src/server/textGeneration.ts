@@ -97,6 +97,32 @@ export type ReviewGuideGenerationResult = Omit<
   "headSha" | "generatedAt" | "modelSelection"
 >;
 
+export interface TrialTranscript {
+  readonly status: string;
+  readonly finalMessage: string;
+  readonly changedFiles: ReadonlyArray<{
+    readonly path: string;
+    readonly diff: string;
+  }>;
+  readonly toolFailures: number;
+}
+
+export interface SkillTrialJudgeInput {
+  readonly cwd: string;
+  readonly modelSelection: ModelSelection;
+  readonly taskPrompt: string;
+  readonly rubric: string;
+  readonly responseA: TrialTranscript;
+  readonly responseB: TrialTranscript;
+}
+
+export interface SkillTrialJudgeResult {
+  readonly preferred: "A" | "B" | "tie" | "unknown";
+  readonly scoreA: number | null;
+  readonly scoreB: number | null;
+  readonly rationale: string;
+}
+
 export interface ProviderTextGeneration {
   readonly generateCommitMessage: (
     input: CommitMessageGenerationInput,
@@ -117,4 +143,8 @@ export interface ProviderTextGeneration {
   readonly generateReviewGuide: (
     input: ReviewGuideGenerationInput,
   ) => Effect.Effect<ReviewGuideGenerationResult, TextGenerationError>;
+
+  readonly judgeSkillTrial: (
+    input: SkillTrialJudgeInput,
+  ) => Effect.Effect<SkillTrialJudgeResult, TextGenerationError>;
 }

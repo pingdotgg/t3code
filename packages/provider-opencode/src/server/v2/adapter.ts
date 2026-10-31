@@ -90,6 +90,8 @@ import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "../adapter.ts"
 import { openCodeToolTurnItem } from "../toolItems.ts";
 
 const OpenCode2ProviderCapabilities = {
+  skillVariantDelivery: "system-prompt",
+  skillGating: "native",
   sessions: {
     supportsMultipleProviderThreadsPerSession: true,
     supportsModelSwitchInSession: true,
@@ -285,6 +287,7 @@ interface ThreadState {
   title: string | undefined;
   rules: ReadonlyArray<Rule> | undefined;
   policy: RulesPolicy;
+  skillPolicy: OpenCodeSkillPolicy;
   readonly grants: Array<Rule>;
   readonly calls: Map<string, SubagentCall>;
   subagent:
@@ -319,6 +322,7 @@ type TurnTerminal =
   | { readonly status: "failed"; readonly failure: ReturnType<typeof makeProviderFailure> };
 
 type Rule = Permission.Rule;
+type OpenCodeSkillPolicy = ProviderAdapter.ProviderAdapterV2TurnInput["skillPolicy"];
 type RulesPolicy = Pick<
   ProviderAdapter.ProviderAdapterV2RuntimePolicy,
   "runtimeMode" | "interactionMode"
@@ -366,6 +370,36 @@ const mcpRules = (mcpServerName: string | null): ReadonlyArray<Rule> =>
         { action: `${mcpServerName}_*`, resource: "*", effect: "allow" },
       ];
 
+function variantDirectory(variantPath: string): string | null {
+  const separator = Math.max(variantPath.lastIndexOf("/"), variantPath.lastIndexOf("\\"));
+  return separator <= 0 ? null : variantPath.slice(0, separator);
+}
+
+export function openCode2SkillRules(skillPolicy: OpenCodeSkillPolicy): ReadonlyArray<Rule> {
+  if (skillPolicy === undefined) return [];
+  const directories = new Set(
+    skillPolicy.entries.flatMap((entry) => {
+      const directory =
+        entry.mode === "variant" && entry.variantPath !== null
+          ? variantDirectory(entry.variantPath)
+          : null;
+      return directory === null ? [] : [directory];
+    }),
+  );
+  return [
+    ...[...directories].toSorted().map((directory) => ({
+      action: "external_directory",
+      resource: `${directory.replace(/[\\/]$/, "")}/*`,
+      effect: "allow" as const,
+    })),
+    ...skillPolicy.entries.map((entry) => ({
+      action: "skill",
+      resource: entry.skillName,
+      effect: "deny" as const,
+    })),
+  ];
+}
+
 const sessionRules = (
   policy: RulesPolicy,
   paths: ReadonlyArray<Rule>,
@@ -394,6 +428,18 @@ const sameRules = (left: ReadonlyArray<Rule> | undefined, right: ReadonlyArray<R
       entry.resource === right[index]?.resource &&
       entry.effect === right[index]?.effect,
   );
+
+export function openCode2RulesNeedUpdate(input: {
+  readonly currentRules: ReadonlyArray<Rule> | undefined;
+  readonly currentSkillPolicyHash: string | undefined;
+  readonly nextRules: ReadonlyArray<Rule>;
+  readonly nextSkillPolicyHash: string | undefined;
+}): boolean {
+  return (
+    input.currentSkillPolicyHash !== input.nextSkillPolicyHash ||
+    !sameRules(input.currentRules, input.nextRules)
+  );
+}
 
 // Rejection without a message stops the whole execution, meaning Cancel.
 const DECLINED = "The user declined this request.";
@@ -521,6 +567,22 @@ const isWakeTurn = (turn: OrchestrationV2ProviderTurn) =>
 
 const INTERRUPT_TIMEOUT = "10 seconds";
 const INSTRUCTIONS_KEY = "t3-code";
+
+export function buildOpenCode2Instructions(input: {
+  readonly model: string;
+  readonly hasT3Mcp: boolean;
+  readonly hasDeviceTools: boolean;
+  readonly skillDirectives?: ProviderAdapter.ProviderAdapterV2TurnInput["skillDirectives"];
+}): string {
+  return [
+    buildRuntimeInstructions({ harness: "OpenCode", model: input.model }),
+    t3OrchestrationSystemPrompt(input.hasT3Mcp, input.hasDeviceTools),
+    input.skillDirectives?.text,
+  ]
+    .filter((part) => part !== undefined && part.length > 0)
+    .join("\n\n");
+}
+
 const RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY = "2 seconds";
 const RECONCILE_TIMEOUT = "15 seconds";
@@ -628,6 +690,15 @@ const skillsNamed = (text: string, known: ReadonlySet<string>) => [
     ),
   ),
 ];
+
+export function openCode2PromptSkills(
+  text: string,
+  known: ReadonlySet<string>,
+  skillPolicy: OpenCodeSkillPolicy,
+): ReadonlyArray<string> {
+  const governed = new Set(skillPolicy?.entries.map((entry) => entry.skillName) ?? []);
+  return skillsNamed(text, known).filter((name) => !governed.has(name));
+}
 
 const turnTokenUsage = (turn: ActiveTurn, status: OrchestrationV2ProviderTurn["status"]) =>
   turn.steps === 0
@@ -747,6 +818,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       title: undefined,
       rules: undefined,
       policy: input.runtimePolicy,
+      skillPolicy: undefined,
       grants: [],
       calls: new Map(),
       subagent,
@@ -1367,7 +1439,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* emitSubagent(call);
       // Reused child sessions may retain old mode rules; refresh policy as soon as the call identifies them.
       if (info === undefined) {
-        yield* writeRules(child, rootOf(call.state).policy).pipe(
+        const root = rootOf(call.state);
+        yield* writeRules(child, root.policy, root.skillPolicy ?? null).pipe(
           Effect.timeout(REQUEST_REPLY_TIMEOUT),
           Effect.ignore({ log: true }),
         );
@@ -2760,23 +2833,47 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       thread: Pick<ThreadState, "directory" | "agent" | "grants">,
       policy: RulesPolicy,
       appThreadId: string | null,
+      skillPolicy?: OpenCodeSkillPolicy,
     ) {
       const plan = policy.interactionMode === "plan";
       const paths =
         policy.runtimeMode === "full-access" && !plan
           ? []
           : yield* pathsFor(thread.directory, plan ? [thread.agent, "plan"] : [thread.agent]);
-      return sessionRules(
-        policy,
-        paths,
-        policy.runtimeMode === "full-access" ? [] : thread.grants,
-        appThreadId === null ? null : yield* mcpServerNameFor(appThreadId),
-      );
+      return [
+        ...sessionRules(
+          policy,
+          paths,
+          policy.runtimeMode === "full-access" ? [] : thread.grants,
+          appThreadId === null ? null : yield* mcpServerNameFor(appThreadId),
+        ),
+        ...openCode2SkillRules(skillPolicy),
+      ];
     });
 
-    const writeRules = Effect.fnUntraced(function* (state: ThreadState, policy: RulesPolicy) {
-      const rules = yield* rulesFor(state, policy, rootOf(state).providerThread.appThreadId);
-      if (!sameRules(state.rules, rules)) {
+    const writeRules = Effect.fnUntraced(function* (
+      state: ThreadState,
+      policy: RulesPolicy,
+      nextSkillPolicy?: OpenCodeSkillPolicy | null,
+    ) {
+      const skillPolicy =
+        nextSkillPolicy === undefined
+          ? (state.skillPolicy ?? rootOf(state).skillPolicy)
+          : (nextSkillPolicy ?? undefined);
+      const rules = yield* rulesFor(
+        state,
+        policy,
+        rootOf(state).providerThread.appThreadId,
+        skillPolicy,
+      );
+      if (
+        openCode2RulesNeedUpdate({
+          currentRules: state.rules,
+          currentSkillPolicyHash: state.skillPolicy?.hash,
+          nextRules: rules,
+          nextSkillPolicyHash: skillPolicy?.hash,
+        })
+      ) {
         yield* client.session.update({
           sessionID: Session.ID.make(state.sessionId),
           permissions: rules,
@@ -2784,6 +2881,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         state.rules = rules;
       }
       state.policy = policy;
+      state.skillPolicy = skillPolicy;
     });
 
     const writeTitle = Effect.fnUntraced(function* (state: ThreadState, title: string) {
@@ -3061,12 +3159,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           );
         if (mcpAvailable) state.mcp = wanted;
       }
-      const instructions = [
-        buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
-        t3OrchestrationSystemPrompt(mcpAvailable, mcpSession?.capabilities?.has("device") === true),
-      ]
-        .filter((part) => part !== undefined && part.length > 0)
-        .join("\n\n");
+      const instructions = buildOpenCode2Instructions({
+        model: turnInput.modelSelection.model,
+        hasT3Mcp: mcpAvailable,
+        hasDeviceTools: mcpSession?.capabilities?.has("device") === true,
+        ...(turnInput.skillDirectives === undefined
+          ? {}
+          : { skillDirectives: turnInput.skillDirectives }),
+      });
       if (instructions !== state.instructions) {
         yield* client.session.instructions.entry.put({
           sessionID: Session.ID.make(sessionId),
@@ -3317,13 +3417,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }
       }
       const skills = SKILL_MENTION.test(text)
-        ? skillsNamed(
+        ? openCode2PromptSkills(
             text,
             yield* client.skill.list({ location }).pipe(
               Effect.timeout(INVENTORY_TIMEOUT),
               Effect.map((list) => new Set(list.data.map((skill) => skill.id))),
               Effect.orElseSucceed(() => new Set<string>()),
             ),
+            turnInput.skillPolicy,
           )
         : [];
       const files = yield* promptFiles(turnInput.message.attachments);
@@ -3516,7 +3617,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   reason: "previous_turn_active",
                 });
               }
-              if (isContinuation(turnInput)) return yield* runWake(state, turnInput);
+              if (isContinuation(turnInput)) {
+                yield* writeRules(state, turnInput.runtimePolicy, turnInput.skillPolicy ?? null);
+                return yield* runWake(state, turnInput);
+              }
               const afterUnsettled = state.unsettled;
               let stillStopping = false;
               if (state.unsettled) {
@@ -3564,17 +3668,18 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 state.agent = agent;
               }
               // Refresh stale mode rules; running subagent updates are best effort because they outlive this turn.
-              yield* writeRules(state, turnInput.runtimePolicy);
+              yield* writeRules(state, turnInput.runtimePolicy, turnInput.skillPolicy ?? null);
               yield* writeTitle(state, turnInput.appThread.title).pipe(
                 Effect.timeout(REQUEST_REPLY_TIMEOUT),
                 Effect.ignore({ log: true }),
               );
               for (const call of runningCalls(state)) {
                 if (call.child === undefined) continue;
-                yield* writeRules(call.child, turnInput.runtimePolicy).pipe(
-                  Effect.timeout(REQUEST_REPLY_TIMEOUT),
-                  Effect.ignore({ log: true }),
-                );
+                yield* writeRules(
+                  call.child,
+                  turnInput.runtimePolicy,
+                  turnInput.skillPolicy ?? null,
+                ).pipe(Effect.timeout(REQUEST_REPLY_TIMEOUT), Effect.ignore({ log: true }));
               }
               if (!sameModel(model, state.model)) {
                 yield* client.session.switchModel({ sessionID: Session.ID.make(sessionId), model });

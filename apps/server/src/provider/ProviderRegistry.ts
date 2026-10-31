@@ -120,7 +120,7 @@ const makeManualProviderMaintenanceCapabilities = (provider: ProviderDriverKind)
 const hasModelCapabilities = (model: ServerProvider["models"][number]): boolean =>
   (model.capabilities?.optionDescriptors?.length ?? 0) > 0;
 
-const MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER = 16;
+const MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER = 64;
 
 function dropProviderWorkspaceSnapshot(provider: ServerProvider, cwd: string): ServerProvider {
   return provider.workspaceSnapshots?.some((snapshot) => snapshot.cwd === cwd)

@@ -4,6 +4,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  SkillTurnResolution,
   ThreadId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
@@ -12,6 +13,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as SkillUsage from "../skills/SkillUsageService.ts";
+import * as SkillVariants from "../skills/SkillVariantService.ts";
+import type { ActivatedSkillContext } from "../skills/skillContextContamination.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { acpSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import * as ProviderSwitch from "./ProviderSwitchService.ts";
@@ -69,6 +73,12 @@ function layerTest(
   metadata: Readonly<Record<string, { continuationKey: string }>>,
   planSelectionTransition: ProviderAdapter.ProviderAdapterV2["Service"]["planSelectionTransition"] = () =>
     Effect.succeed({ type: "restart_session" }),
+  skillContext: {
+    readonly activated?: ReadonlyArray<ActivatedSkillContext>;
+    readonly activatedFailure?: Error;
+    readonly targetResolution?: SkillTurnResolution;
+    readonly onResolvePolicy?: () => void;
+  } = {},
 ) {
   const adapter = (
     instanceId: ProviderInstanceId,
@@ -101,7 +111,31 @@ function layerTest(
           });
     },
   });
-  return ProviderSwitch.layer.pipe(Layer.provide(layerRegistry));
+  const layerSkillUsage = Layer.mock(SkillUsage.SkillUsageService)({
+    activatedOnProviderThread: () =>
+      skillContext.activatedFailure === undefined
+        ? Effect.succeed(skillContext.activated ?? [])
+        : Effect.fail(
+            new SkillUsage.SkillUsagePersistenceError({
+              operation: "load activated skills",
+              cause: skillContext.activatedFailure,
+            }),
+          ),
+  });
+  const layerSkillVariants = Layer.mock(SkillVariants.SkillVariantService)({
+    resolvePolicy: () =>
+      Effect.sync(() => {
+        skillContext.onResolvePolicy?.();
+        return (
+          skillContext.targetResolution ??
+          SkillTurnResolution.make({ entries: [], hash: "empty-resolution" })
+        );
+      }),
+    materialize: () => Effect.die("Provider switch planning must not materialize variants."),
+  });
+  return ProviderSwitch.layer.pipe(
+    Layer.provide(Layer.mergeAll(layerRegistry, layerSkillUsage, layerSkillVariants)),
+  );
 }
 
 it.effect("releases the newest live session, not the newest record overall", () =>
@@ -232,6 +266,64 @@ it.effect("hands off from a native provider thread after its session detaches", 
   ),
 );
 
+it.effect("carries skill context omissions across incompatible instances", () =>
+  Effect.gen(function* () {
+    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+    const result = yield* service.plan({
+      projection: deadNativeThreadProjection("stopped", CodexProviderCapabilitiesV2),
+      targetModelSelection: {
+        instanceId: ProviderInstanceId.make("codex_other"),
+        model: "gpt-5.2-codex",
+      },
+    });
+    assert.deepEqual(result.transition, {
+      type: "create_with_handoff",
+      skillContextOmissions: [
+        {
+          skillName: "review",
+          variantPaths: ["/state/skill-variants/old-hash/SKILL.md"],
+          skillPaths: ["/home/user/.claude/skills/review/SKILL.md"],
+        },
+      ],
+    });
+  }).pipe(
+    Effect.provide(
+      layerTest(
+        {
+          [currentInstanceId]: { continuationKey: "codex:account:primary" },
+          codex_other: { continuationKey: "codex:account:other" },
+        },
+        undefined,
+        {
+          activated: [
+            {
+              skillName: "review",
+              mode: "variant",
+              contentHash: "old-hash",
+              variantPath: "/state/skill-variants/old-hash/SKILL.md",
+              skillPath: "/home/user/.claude/skills/review/SKILL.md",
+            },
+          ],
+          targetResolution: SkillTurnResolution.make({
+            entries: [
+              {
+                skillName: "review",
+                ruleId: "rule:review-off",
+                revision: 1,
+                mode: "off",
+                contentHash: null,
+                variantPath: null,
+                origin: "rule",
+              },
+            ],
+            hash: "off-resolution",
+          }),
+        },
+      ),
+    ),
+  ),
+);
+
 it.effect.each(["stopped", "error"] as const)(
   "applies a model change on next turn when a %s session negotiated model switching",
   (deadStatus) =>
@@ -250,6 +342,227 @@ it.effect.each(["stopped", "error"] as const)(
         ),
       ),
     ),
+);
+
+it.effect("creates a sanitized handoff when an activated variant is disabled", () =>
+  Effect.gen(function* () {
+    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+    const result = yield* service.plan({
+      projection: deadNativeThreadProjection("stopped", CodexProviderCapabilitiesV2),
+      targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
+    });
+    assert.deepEqual(result.transition, {
+      type: "create_with_handoff",
+      skillContextOmissions: [
+        {
+          skillName: "review",
+          variantPaths: ["/state/skill-variants/old-hash/SKILL.md"],
+          skillPaths: ["/home/user/.claude/skills/review/SKILL.md"],
+        },
+      ],
+    });
+  }).pipe(
+    Effect.provide(
+      layerTest(
+        { [currentInstanceId]: { continuationKey: "codex:account:primary" } },
+        (input) => Effect.succeed(acpSelectionTransition(input)),
+        {
+          activated: [
+            {
+              skillName: "review",
+              mode: "variant",
+              contentHash: "old-hash",
+              variantPath: "/state/skill-variants/old-hash/SKILL.md",
+              skillPath: "/home/user/.claude/skills/review/SKILL.md",
+            },
+          ],
+          targetResolution: SkillTurnResolution.make({
+            entries: [
+              {
+                skillName: "review",
+                ruleId: "rule:review-off",
+                revision: 1,
+                mode: "off",
+                contentHash: null,
+                variantPath: null,
+                origin: "rule",
+              },
+            ],
+            hash: "off-resolution",
+          }),
+        },
+      ),
+    ),
+  ),
+);
+
+it.effect("creates a sanitized handoff for a same-model skill policy change", () =>
+  Effect.gen(function* () {
+    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+    const result = yield* service.plan({
+      projection: deadNativeThreadProjection("stopped", CodexProviderCapabilitiesV2),
+      targetModelSelection: projection().thread.modelSelection,
+    });
+    assert.deepEqual(result.transition, {
+      type: "create_with_handoff",
+      skillContextOmissions: [
+        {
+          skillName: "review",
+          variantPaths: ["/state/skill-variants/old-hash/SKILL.md"],
+          skillPaths: ["/home/user/.claude/skills/review/SKILL.md"],
+        },
+      ],
+    });
+  }).pipe(
+    Effect.provide(
+      layerTest(
+        { [currentInstanceId]: { continuationKey: "codex:account:primary" } },
+        (input) => Effect.succeed(acpSelectionTransition(input)),
+        {
+          activated: [
+            {
+              skillName: "review",
+              mode: "variant",
+              contentHash: "old-hash",
+              variantPath: "/state/skill-variants/old-hash/SKILL.md",
+              skillPath: "/home/user/.claude/skills/review/SKILL.md",
+            },
+          ],
+          targetResolution: SkillTurnResolution.make({
+            entries: [
+              {
+                skillName: "review",
+                ruleId: "rule:review-new",
+                revision: 2,
+                mode: "variant",
+                contentHash: "new-hash",
+                variantPath: "/state/skill-variants/new-hash/SKILL.md",
+                origin: "rule",
+              },
+            ],
+            hash: "new-resolution",
+          }),
+        },
+      ),
+    ),
+  ),
+);
+
+it.effect("skips policy resolution when the reusable provider thread has no skill evidence", () => {
+  let policyResolutions = 0;
+  return Effect.gen(function* () {
+    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+    const result = yield* service.plan({
+      projection: deadNativeThreadProjection("stopped", CodexProviderCapabilitiesV2),
+      targetModelSelection: projection().thread.modelSelection,
+    });
+    assert.equal(result.transition.type, "reuse");
+    assert.equal(policyResolutions, 0);
+  }).pipe(
+    Effect.provide(
+      layerTest(
+        { [currentInstanceId]: { continuationKey: "codex:account:primary" } },
+        (input) => Effect.succeed(acpSelectionTransition(input)),
+        { onResolvePolicy: () => policyResolutions++ },
+      ),
+    ),
+  );
+});
+
+it.effect("keeps the normal switch when contamination lookup fails", () =>
+  Effect.gen(function* () {
+    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+    const result = yield* service.plan({
+      projection: deadNativeThreadProjection("stopped", CodexProviderCapabilitiesV2),
+      targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
+    });
+    assert.equal(result.transition.type, "switch_model_in_session");
+  }).pipe(
+    Effect.provide(
+      layerTest(
+        { [currentInstanceId]: { continuationKey: "codex:account:primary" } },
+        (input) => Effect.succeed(acpSelectionTransition(input)),
+        { activatedFailure: new Error("skill evidence is unavailable") },
+      ),
+    ),
+  ),
+);
+
+it.effect("keeps the normal switch when the disabled skill was never activated", () =>
+  Effect.gen(function* () {
+    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+    const result = yield* service.plan({
+      projection: deadNativeThreadProjection("stopped", CodexProviderCapabilitiesV2),
+      targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
+    });
+    assert.equal(result.transition.type, "switch_model_in_session");
+  }).pipe(
+    Effect.provide(
+      layerTest(
+        { [currentInstanceId]: { continuationKey: "codex:account:primary" } },
+        (input) => Effect.succeed(acpSelectionTransition(input)),
+        {
+          targetResolution: SkillTurnResolution.make({
+            entries: [
+              {
+                skillName: "review",
+                ruleId: "rule:review-off",
+                revision: 1,
+                mode: "off",
+                contentHash: null,
+                variantPath: null,
+                origin: "rule",
+              },
+            ],
+            hash: "off-resolution",
+          }),
+        },
+      ),
+    ),
+  ),
+);
+
+it.effect("keeps the normal switch when the activated variant is unchanged", () =>
+  Effect.gen(function* () {
+    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+    const result = yield* service.plan({
+      projection: deadNativeThreadProjection("stopped", CodexProviderCapabilitiesV2),
+      targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
+    });
+    assert.equal(result.transition.type, "switch_model_in_session");
+  }).pipe(
+    Effect.provide(
+      layerTest(
+        { [currentInstanceId]: { continuationKey: "codex:account:primary" } },
+        (input) => Effect.succeed(acpSelectionTransition(input)),
+        {
+          activated: [
+            {
+              skillName: "review",
+              mode: "variant",
+              contentHash: "same-hash",
+              variantPath: "/state/skill-variants/same-hash/SKILL.md",
+              skillPath: "/home/user/.claude/skills/review/SKILL.md",
+            },
+          ],
+          targetResolution: SkillTurnResolution.make({
+            entries: [
+              {
+                skillName: "review",
+                ruleId: "rule:review",
+                revision: 2,
+                mode: "variant",
+                contentHash: "same-hash",
+                variantPath: "/state/skill-variants/same-hash/SKILL.md",
+                origin: "rule",
+              },
+            ],
+            hash: "same-resolution",
+          }),
+        },
+      ),
+    ),
+  ),
 );
 
 it.effect("rejects a model change the dead record never negotiated support for", () =>
