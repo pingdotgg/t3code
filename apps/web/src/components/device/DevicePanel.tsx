@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
 import { DeviceHostUpdates } from "./DeviceHostUpdates";
 import type {
   DevicePlatform,
@@ -266,9 +267,17 @@ export function DevicePanel(props: {
             <DeviceLoadingView
               name={pendingDevice?.name ?? "Devices"}
               description={
-                pendingDevice
-                  ? `${state.hosts.find((host) => host.id === pendingDevice.hostId)?.label ?? "Device host"} · ${pendingDevice.version}`
-                  : ""
+                pendingDevice ? (
+                  <span className="flex flex-col items-center gap-0.5">
+                    <span>
+                      {state.hosts.find((host) => host.id === pendingDevice.hostId)?.label ??
+                        "Device host"}
+                    </span>
+                    <span>{pendingDevice.version}</span>
+                  </span>
+                ) : (
+                  ""
+                )
               }
               stage="opening"
               message={
@@ -284,7 +293,7 @@ export function DevicePanel(props: {
               error={loadError !== null}
             >
               {loadError !== null ? (
-                <Button size="sm" variant="outline" onClick={refreshState}>
+                <Button size="sm" variant="secondary" onClick={refreshState}>
                   Retry
                 </Button>
               ) : null}
@@ -324,7 +333,7 @@ export function DevicePanel(props: {
                               key={deviceKey(device)}
                               className="flex items-center gap-3 px-3 py-3"
                             >
-                              <span className="grid size-8 shrink-0 place-items-center rounded-md border border-border/60">
+                              <span className="grid size-8 shrink-0 place-items-center rounded-control surface-raised">
                                 <Smartphone className="size-4" />
                               </span>
                               <div className="flex min-w-0 flex-1 flex-col">
@@ -332,11 +341,26 @@ export function DevicePanel(props: {
                                   {device.name}
                                 </span>
                                 <span className="truncate text-xs text-muted-foreground">
-                                  {`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version} · ${device.booted ? "Running" : "Stopped"}`}
+                                  <Tooltip>
+                                    <TooltipTrigger render={<span tabIndex={0} />}>
+                                      {device.version}
+                                    </TooltipTrigger>
+                                    <TooltipPopup>
+                                      <span className="grid gap-1">
+                                        <span>
+                                          {
+                                            state.hosts.find((host) => host.id === device.hostId)
+                                              ?.label
+                                          }
+                                        </span>
+                                        <span>{device.booted ? "Running" : "Stopped"}</span>
+                                      </span>
+                                    </TooltipPopup>
+                                  </Tooltip>
                                 </span>
                               </div>
                               <Button
-                                variant="outline"
+                                variant="secondary"
                                 size="sm"
                                 disabled={pendingDeviceKey !== null}
                                 aria-label={`${device.booted ? "Open" : "Start"} ${device.name}`}
@@ -370,7 +394,7 @@ export function DevicePanel(props: {
                 {loaded && !hostBusy ? (
                   <Button
                     className={grouped.length > 0 ? "self-start" : "self-center"}
-                    variant="outline"
+                    variant={grouped.length > 0 ? "ghost" : "secondary"}
                     size="sm"
                     onClick={() => void list({ environmentId, input: {} })}
                   >
@@ -390,7 +414,7 @@ function DeviceNotice(props: { readonly onDismiss: () => void; readonly children
   return (
     <div
       role="alert"
-      className="flex items-start gap-2 border-b bg-destructive/5 px-3 py-2 text-xs text-destructive"
+      className="flex items-start gap-2 border-b bg-error/5 px-3 py-2 text-xs text-error-foreground"
     >
       <CircleAlert className="mt-1 size-3.5 shrink-0" />
       <div

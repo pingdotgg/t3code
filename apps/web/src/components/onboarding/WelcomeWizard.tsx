@@ -94,7 +94,7 @@ import { presentSavedCloudEnvironmentConnection } from "../cloud/cloudEnvironmen
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { T3Wordmark } from "../T3Wordmark";
 import { Alert, AlertDescription } from "../ui/alert";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { InstallT3Commands } from "../InstallT3Commands";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -242,11 +242,10 @@ export function WelcomeWizard({
         <WizardHeader
           title="Set up T3 Code"
           identity={
+            // The brand lockup (pen FB3cD): "Code" shares the mark's color at 600.
             <div className="flex items-baseline gap-1.5" role="img" aria-label="T3 Code">
               <T3Wordmark className="h-4 w-auto shrink-0" aria-hidden />
-              <span className="text-2xl font-medium tracking-tight text-muted-foreground">
-                Code
-              </span>
+              <span className="text-2xl font-semibold tracking-tight">Code</span>
             </div>
           }
         >
@@ -344,7 +343,7 @@ function ConnectionStep({
   }, [ready]);
   return (
     <>
-      <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+      <h1 className="text-2xl font-semibold tracking-tight text-strong-foreground">
         Connect your computers
       </h1>
       <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">
@@ -356,7 +355,7 @@ function ConnectionStep({
           {directEnvironments.map((environment) => (
             <label
               key={environment.environmentId}
-              className="flex cursor-pointer items-center gap-3 rounded-lg border border-border bg-background px-3 py-3"
+              className="flex cursor-pointer items-center gap-3 rounded-control border border-border surface-card px-3 py-3"
             >
               <Checkbox
                 checked={selectedIds.has(environment.environmentId)}
@@ -385,7 +384,7 @@ function ConnectionStep({
                   </span>
                 ) : null}
                 {environment.connection.phase === "unsupported" && environment.connection.error ? (
-                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                  <span className="mt-0.5 block text-meta text-muted-foreground">
                     {environment.connection.error}
                   </span>
                 ) : null}
@@ -403,7 +402,7 @@ function ConnectionStep({
             onToggleEnvironment={onToggleEnvironment}
           />
         ) : null}
-        <div className="rounded-lg border border-border bg-background">
+        <div className="rounded-control border border-border surface-card">
           <Collapsible open={pairingOpen} onOpenChange={setPairingOpen}>
             <CollapsibleTrigger
               disabled={isPairing}
@@ -448,14 +447,12 @@ function ConnectionStep({
           {telemetryOff ?? "T3 Code collects anonymous usage data to help us improve it."} To read
           more about how your data is used{telemetryOff === undefined ? " and how to opt out" : ""},
           see our{" "}
-          <a
-            className="underline underline-offset-2 hover:text-foreground"
-            href={PRIVACY_POLICY_URL}
-            target="_blank"
-            rel="noreferrer noopener"
+          <InlineButton
+            tone="muted"
+            render={<a href={PRIVACY_POLICY_URL} target="_blank" rel="noreferrer noopener" />}
           >
             privacy policy
-          </a>
+          </InlineButton>
           .
         </p>
         <Button
@@ -492,7 +489,7 @@ function ConnectAccountOption({
   const onDiscoveryReady = () => setDiscoveryReady(true);
 
   return (
-    <div className="rounded-lg border border-border bg-background">
+    <div className="rounded-control border border-border surface-card">
       <Collapsible open={expanded && !!isSignedIn && discoveryReady} onOpenChange={setExpanded}>
         <CollapsibleTrigger
           disabled={disabled || !isLoaded}
@@ -990,7 +987,7 @@ function AgentCard({
   const providerState = getOnboardingProviderState(provider);
 
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-4">
+    <div className="flex items-center gap-3 rounded-control border border-border surface-card px-4 py-4">
       <ProviderInstanceIcon
         driverKind={ProviderDriverKind.make(driver)}
         displayName={displayName}
@@ -1000,7 +997,9 @@ function AgentCard({
         <span className="block text-sm font-medium text-foreground">{displayName}</span>
         <p className="mt-0.5 text-xs leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
           {providerState === "ready" ? "Ready to code." : summary.headline}
-          {providerState !== "ready" && summary.detail ? ` · ${summary.detail}` : ""}
+          {providerState !== "ready" && summary.detail ? (
+            <span className="block">{summary.detail}</span>
+          ) : null}
         </p>
       </div>
       <div className="shrink-0">
@@ -1132,9 +1131,9 @@ function AgentInstallTerminal({
   return (
     <div
       data-thread-terminal-drawer
-      className="mt-4 overflow-hidden rounded-lg border border-border/70 bg-background text-foreground"
+      className="mt-4 overflow-hidden rounded-control border border-border surface-card text-foreground"
     >
-      <div className="flex items-center justify-between border-b border-border/60 bg-background/60 px-3 py-1.5">
+      <div className="flex items-center justify-between border-b border-border surface-card px-3 py-1.5">
         <span className="text-2xs font-medium text-muted-foreground">
           {!canOperateTerminal ? (
             "This connection cannot control terminals."
@@ -1442,7 +1441,9 @@ function ImportStep({
   if (scans.every((scan) => scan.data === null) && scans.some((scan) => scan.isPending)) {
     return (
       <div className="flex h-full min-h-40 flex-col">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Your projects</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-strong-foreground">
+          Your projects
+        </h1>
         <div className="flex flex-1 flex-col items-center justify-center gap-3 py-6">
           <Spinner size="lg" tone="muted" />
           <p className="text-center text-sm text-muted-foreground">
@@ -1599,7 +1600,7 @@ function ImportCandidateList({
       ))}
       {other.length > 0 ? (
         <Collapsible>
-          <div className="flex items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-muted/40">
+          <div className="flex items-center gap-2.5 rounded-row px-2 py-1.5 hover:surface-ghost-hover">
             <Checkbox
               checked={otherSelected === other.length}
               indeterminate={otherSelected > 0 && otherSelected < other.length}
@@ -1613,7 +1614,7 @@ function ImportCandidateList({
             <CollapsibleTrigger className="group flex min-w-0 flex-1 items-center gap-1.5 text-left">
               <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-panel-open:rotate-90" />
               <span className="truncate text-sm text-muted-foreground">Other folders</span>
-              <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
+              <span className="ml-auto shrink-0 text-xs text-dim-foreground tabular-nums">
                 {other.length} {other.length === 1 ? "folder" : "folders"}
               </span>
             </CollapsibleTrigger>
@@ -1662,7 +1663,7 @@ function ImportRepositoryGroup({
   }
   return (
     <Collapsible defaultOpen>
-      <div className="flex items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-muted/40">
+      <div className="flex items-center gap-2.5 rounded-row px-2 py-1.5 hover:surface-ghost-hover">
         <Checkbox
           checked={selectedCount === keys.length}
           indeterminate={selectedCount > 0 && selectedCount < keys.length}
@@ -1728,7 +1729,7 @@ function ImportCandidateRow({
   return (
     <label
       className={cn(
-        "flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-muted/40 has-disabled:cursor-default",
+        "flex cursor-pointer items-center gap-2.5 rounded-row px-2 py-1.5 hover:surface-ghost-hover has-disabled:cursor-default",
         nested && "pl-8",
       )}
     >
@@ -1737,13 +1738,11 @@ function ImportCandidateRow({
         <TooltipTrigger
           render={<span className="flex min-w-0 flex-1 items-baseline gap-2 truncate" />}
         >
-          {label !== undefined ? (
-            <span className="truncate text-sm font-medium">{label}</span>
-          ) : null}
+          {label !== undefined ? <span className="truncate text-label">{label}</span> : null}
           {path !== undefined ? (
             <ProjectPathText
               path={path}
-              className={label === undefined ? "text-xs" : "text-2xs text-muted-foreground"}
+              className={label === undefined ? "text-caption" : "text-micro text-dim-foreground"}
             />
           ) : null}
         </TooltipTrigger>
@@ -1776,7 +1775,7 @@ function ImportRowMeta({
   const relative = lastActiveAt === null ? null : formatRelativeTime(lastActiveAt);
   const age = relative === null ? "" : relative.suffix === null ? "now" : relative.value;
   return (
-    <span className="ml-auto grid shrink-0 grid-cols-[1rem_1rem_1rem_2.5rem_2.25rem] items-center gap-x-1 text-xs text-muted-foreground tabular-nums">
+    <span className="ml-auto grid shrink-0 grid-cols-[1rem_1rem_1rem_2.5rem_2.25rem] items-center gap-x-1 text-xs text-dim-foreground tabular-nums">
       {AgentSessionSource.literals.map((source) => (
         <span key={source} className="flex size-4 items-center justify-center">
           {sources?.includes(source) ? (
@@ -1835,9 +1834,9 @@ function StepShell({
 }) {
   return (
     <>
-      <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
+      <h1 className="text-title tracking-tight text-strong-foreground">{title}</h1>
       {description ? (
-        <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">{description}</p>
+        <p className="mt-2.5 text-body leading-relaxed text-muted-foreground">{description}</p>
       ) : null}
       {children}
     </>

@@ -27,7 +27,7 @@ export function UsageShareBar({
   return (
     <div className="flex min-w-0 flex-col gap-2.5">
       <div className="flex items-baseline justify-between gap-3">
-        <h3 className="text-sm font-medium text-foreground">{label}</h3>
+        <h3 className="text-meta text-foreground">{label}</h3>
         {aside}
       </div>
       <div
@@ -46,12 +46,16 @@ export function UsageShareBar({
               }
             />
             <TooltipPopup>
-              {segment.label} · {format(segment.value)} · {formatPercent(segment.value / total)}
+              <div className="flex flex-col gap-0.5">
+                <span>{segment.label}</span>
+                <span>{format(segment.value)}</span>
+                <span>{formatPercent(segment.value / total)}</span>
+              </div>
             </TooltipPopup>
           </Tooltip>
         ))}
       </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-caption">
         {visible.map((segment) => (
           <span key={segment.label} className="flex items-center gap-1.5">
             <span

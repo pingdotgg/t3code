@@ -32,7 +32,15 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
     widthStorageKey,
   });
   if (!sheet) {
-    return <RightPanelTabs {...tabs} mode="inline" maximized={maximized} inlineSize={inlineSize} />;
+    return (
+      <RightPanelTabs
+        {...tabs}
+        mode="inline"
+        maximized={maximized}
+        inlineSize={inlineSize}
+        {...(maximized ? { layoutControls } : {})}
+      />
+    );
   }
   return (
     <RightPanelSheet

@@ -113,8 +113,6 @@ export function renderLoopbackAuthorizationCompleteHtml(
         margin: 0;
         font-size: 10px;
         font-weight: 700;
-        letter-spacing: 0.2em;
-        text-transform: uppercase;
       }
       .brand { color: rgba(255, 255, 255, 0.82); }
       .content { padding: 30px 32px 34px; }
@@ -123,8 +121,6 @@ export function renderLoopbackAuthorizationCompleteHtml(
         color: #2866cc;
         font-size: 10px;
         font-weight: 700;
-        letter-spacing: 0.18em;
-        text-transform: uppercase;
       }
       h1 { margin: 0; font-size: clamp(26px, 5vw, 34px); line-height: 1.12; letter-spacing: -0.035em; }
       .description { margin: 12px 0 0; color: #646975; font-size: 15px; line-height: 1.6; }
