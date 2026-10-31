@@ -61,6 +61,27 @@ export const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(functi
   return launcherOwnsVersionsDir(path, input.versionsDir, resolved) ? input.launchedAs : undefined;
 });
 
+// cmd.exe needs verbatim quoting and a literal path, with delayed expansion disabled.
+export function spawnWindowsRemoval(comspec: string, dir: string) {
+  return NodeChildProcess.spawn(
+    comspec,
+    [
+      "/d",
+      "/v:off",
+      "/s",
+      "/c",
+      '"ping -n 3 127.0.0.1 >nul & rmdir /s /q "%T3_UNINSTALL_RUNTIME%""',
+    ],
+    {
+      env: { ...process.env, T3_UNINSTALL_RUNTIME: dir },
+      windowsVerbatimArguments: true,
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    },
+  );
+}
+
 const planUninstall = Effect.fn("cli.uninstall.plan")(function* (input: {
   readonly baseDir: string;
 }) {
@@ -176,14 +197,7 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
       const runtimeDir = plan.runtimeDir;
       const comspec = environment["ComSpec"] ?? environment["COMSPEC"] ?? "cmd.exe";
       yield* Effect.try({
-        try: () => {
-          const child = NodeChildProcess.spawn(
-            comspec,
-            ["/d", "/c", `ping -n 3 127.0.0.1 >nul & rmdir /s /q "${runtimeDir}"`],
-            { detached: true, stdio: "ignore", windowsHide: true },
-          );
-          child.unref();
-        },
+        try: () => spawnWindowsRemoval(comspec, runtimeDir).unref(),
         catch: () =>
           new CliUninstallError({
             reason: `Could not schedule removal of ${runtimeDir}. Delete it yourself once this window is closed.`,
