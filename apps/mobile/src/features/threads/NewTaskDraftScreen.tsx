@@ -152,6 +152,8 @@ export function NewTaskDraftScreen(props: {
   };
   readonly draftId?: string;
   readonly incomingShareId?: string;
+  readonly autoFocusComposer?: boolean;
+  readonly takeDictationRequest?: () => boolean;
 }) {
   const [creationMetadata] = useState(makeTurnCommandMetadata);
   const projects = useProjects();
@@ -275,6 +277,11 @@ export function NewTaskDraftScreen(props: {
         project.id === props.initialProjectRef?.projectId,
     ),
   );
+  // The draft opens on the last-used project before switching to the route's; dictation must target the final draft.
+  const isOnRequestedProject =
+    selectedProject !== null &&
+    selectedProject.environmentId === props.initialProjectRef?.environmentId &&
+    selectedProject.id === props.initialProjectRef.projectId;
   // A route naming a draft that is gone, or whose project is gone, also
   // returns to the picker.
   const isRouteDraftMissing =
@@ -933,6 +940,8 @@ export function NewTaskDraftScreen(props: {
             </View>
           ),
           editorRef: promptInputRef,
+          autoFocus: props.autoFocusComposer ?? false,
+          takeDictationRequest: isOnRequestedProject ? props.takeDictationRequest : undefined,
           sendBlockedReason: setupBlockReason,
           interactionLocked: isComposerInteractionLocked,
         }}

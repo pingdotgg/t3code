@@ -35,6 +35,7 @@ const harness = vi.hoisted(() => {
     reset: () => undefined,
     checkout: vi.fn(),
     draftProjectRefs: [] as unknown[],
+    draftFocus: [] as Array<{ autoFocus?: boolean; takeDictation?: () => boolean }>,
     // Hook results stay stable across renders, as the real hooks' are. Only
     // main's screen reads these (see the main-comparison mocks below).
     layout: { deferThreadSelectionUntil: () => undefined },
@@ -59,8 +60,16 @@ vi.mock("./ThreadScreenHost", () => ({
   ThreadScreenFallback: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 vi.mock("./NewTaskDraftScreen", () => ({
-  NewTaskDraftScreen: (props: { initialProjectRef: { branch?: string | null } }) => {
+  NewTaskDraftScreen: (props: {
+    initialProjectRef: { branch?: string | null };
+    autoFocusComposer?: boolean;
+    takeDictationRequest?: () => boolean;
+  }) => {
     harness.draftProjectRefs.push(props.initialProjectRef);
+    harness.draftFocus.push({
+      autoFocus: props.autoFocusComposer,
+      takeDictation: props.takeDictationRequest,
+    });
     return <p>draft on {props.initialProjectRef.branch}</p>;
   },
 }));
@@ -95,6 +104,7 @@ vi.mock("@react-navigation/native", () => ({
 }));
 
 import { NewTaskDraftRouteScreen } from "./NewTaskDraftRouteScreen";
+import { requestNewTaskComposerFocus } from "./new-task-composer-focus";
 
 const project = { environmentId: "env-1", id: "project-1", workspaceRoot: "/repo" };
 const connected: Snapshot["catalog"] = {
@@ -188,4 +198,30 @@ it("hands the draft screen the same project ref across re-renders", async () => 
   // A stable ref lets the compiled screen skip re-rendering the draft screen at all; an unstable
   // one re-renders it with a second ref.
   expect(new Set(harness.draftProjectRefs).size).toBe(1);
+});
+
+it("keeps the keyboard down after a voice shortcut starts dictating", async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  harness.draftFocus.length = 0;
+  harness.set({ projects: [project], catalog: connected });
+  requestNewTaskComposerFocus("voice-request", "dictation");
+  const draft = { environmentId: "env-1", projectId: "project-1", requestId: "voice-request" };
+  harness.route = { key: "voice-route", name: "Thread", params: { draft } };
+
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+  act(() =>
+    root.render(
+      <NewTaskDraftRouteScreen
+        route={{ key: "voice-route", name: "Thread", params: draft } as never}
+      />,
+    ),
+  );
+  await vi.waitFor(() => expect(harness.draftFocus.length).toBeGreaterThan(0));
+
+  // The composer takes the request once dictation starts; a later render must not focus the editor.
+  expect(harness.draftFocus.at(-1)?.takeDictation?.()).toBe(true);
+  act(() => harness.set({ projects: [{ ...project }], catalog: { ...connected } }));
+  expect(harness.draftFocus.map((props) => props.autoFocus)).not.toContain(true);
 });

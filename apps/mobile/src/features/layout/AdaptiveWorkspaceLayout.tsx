@@ -13,7 +13,7 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId, ThreadId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { useFocusEffect } from "@react-navigation/native";
+import { StackActions, useFocusEffect } from "@react-navigation/native";
 import { NavigationContext, NavigationRouteContext, useNavigation } from "@react-navigation/native";
 import {
   use,
@@ -80,6 +80,9 @@ import { startOpeningDetail } from "../workspace/useSelectWorkspaceDetail";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { HomeListOptionsProvider } from "../home/home-list-options";
 import { newTaskDestination } from "../threads/new-task-project-selection";
+import { requestNewTaskComposerFocus } from "../threads/new-task-composer-focus";
+import { useNewTaskAppIntent } from "../shortcuts/useAppIntents";
+import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
 import { useOpenThreadPullRequests } from "../threads/use-open-thread-pull-requests";
@@ -633,6 +636,16 @@ function AdaptiveWorkspaceLayoutContent(
   useHardwareKeyboardCommand("newTask", () => {
     handleStartNewTask();
     return true;
+  });
+
+  useNewTaskAppIntent((intent) => {
+    const requestId = uuidv4();
+    // Devices without on-device transcription get the keyboard instead.
+    const dictates = intent === "voiceTask" && getLocalVoiceTranscriber() !== null;
+    requestNewTaskComposerFocus(requestId, dictates ? "dictation" : "keyboard");
+    navigation.dispatch(
+      StackActions.push("NewTaskProject", { startWithoutProject: true, requestId }),
+    );
   });
 
   // Create at root: the iOS sidebar renders in an independent navigation tree.

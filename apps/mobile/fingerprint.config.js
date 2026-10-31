@@ -14,5 +14,9 @@ if (!majorVersion) {
 
 module.exports = {
   nativeModuleSourceType: "files",
-  extraSources: [{ type: "contents", id: "appMajorVersion", contents: majorVersion }],
+  extraSources: [
+    { type: "contents", id: "appMajorVersion", contents: majorVersion },
+    // withIosAppIntents copies this into the app target; fingerprint only hashes the plugin itself.
+    { type: "file", filePath: "plugins/ios/T3AppIntents.swift", reasons: ["iosAppIntents"] },
+  ],
 };
