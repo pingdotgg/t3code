@@ -1,9 +1,7 @@
 import { ListFilterIcon } from "lucide-react";
 import { Maximize2, Minimize2 } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
-import { memo, type ReactNode, type Ref } from "react";
-import { cn } from "~/lib/utils";
-import { useLayoutPane } from "../../layout/layoutPaneContext";
+import { memo } from "react";
 
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
@@ -103,40 +101,3 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
   );
 });
 
-/** The thread panel toggle on a header whose right side the inline right panel covers. */
-export function ThreadPanelHeaderControl(props: PanelLayoutControlsProps) {
-  return (
-    <div
-      className="absolute top-[var(--workspace-pane-local-controls-top)] right-[calc(env(safe-area-inset-right)+0.75rem)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag] md:right-[calc(env(safe-area-inset-right)+0.5rem)]"
-      data-workspace-titlebar-controls
-    >
-      <PanelLayoutControls {...props} />
-    </div>
-  );
-}
-
-/** The pane's top-right panel controls. */
-export function WorkspaceTitlebarControls({
-  children,
-  ref,
-}: {
-  readonly children: ReactNode;
-  readonly ref?: Ref<HTMLDivElement> | undefined;
-}) {
-  const layoutPane = useLayoutPane();
-  return (
-    <div
-      ref={ref}
-      className={cn(
-        "pointer-events-none z-50 flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
-        // Several panes each carry their own cluster at their own top-right.
-        layoutPane.split
-          ? "absolute top-[var(--workspace-pane-local-controls-top)] right-[var(--workspace-pane-local-controls-right)]"
-          : "fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] mr-px",
-      )}
-      data-workspace-titlebar-controls
-    >
-      <div className="pointer-events-auto flex h-full items-center gap-1.5">{children}</div>
-    </div>
-  );
-}
