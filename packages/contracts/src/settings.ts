@@ -183,6 +183,19 @@ export const TerminalFontSize = Schema.Int.check(
 export type TerminalFontSize = typeof TerminalFontSize.Type;
 const DEFAULT_TERMINAL_FONT_SIZE: TerminalFontSize = 12;
 
+// Share of the window the terminal drawer covers when it opens in a thread the
+// user hasn't resized. The maximum doubles as the drawer's hard cap.
+export const MIN_TERMINAL_DRAWER_HEIGHT_PERCENT = 10;
+export const MAX_TERMINAL_DRAWER_HEIGHT_PERCENT = 75;
+export const TerminalDrawerHeightPercent = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_TERMINAL_DRAWER_HEIGHT_PERCENT,
+    maximum: MAX_TERMINAL_DRAWER_HEIGHT_PERCENT,
+  }),
+);
+export type TerminalDrawerHeightPercent = typeof TerminalDrawerHeightPercent.Type;
+const DEFAULT_TERMINAL_DRAWER_HEIGHT_PERCENT: TerminalDrawerHeightPercent = 30;
+
 // "artwork" follows the running channel and shows nothing on Latest. The fixed artwork
 // modes let any channel opt into a specific channel's art.
 export const EnvironmentIdentificationMode = Schema.Literals([
@@ -437,6 +450,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   fontSizeTerminal: TerminalFontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TERMINAL_FONT_SIZE)),
+  ),
+  terminalDrawerHeightPercent: TerminalDrawerHeightPercent.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_TERMINAL_DRAWER_HEIGHT_PERCENT)),
   ),
   fontFamilyCode: FontFamilyPreference.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   fontFamilyComposer: FontFamilyPreference.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -1754,6 +1770,7 @@ export const ClientSettingsPatch = Schema.Struct({
   fontSizePrompt: Schema.optionalKey(PromptFontSize),
   fontSizeCode: Schema.optionalKey(CodeFontSize),
   fontSizeTerminal: Schema.optionalKey(TerminalFontSize),
+  terminalDrawerHeightPercent: Schema.optionalKey(TerminalDrawerHeightPercent),
   fontFamilyCode: Schema.optionalKey(FontFamilyPreference),
   fontFamilyComposer: Schema.optionalKey(FontFamilyPreference),
   fontFamilySans: Schema.optionalKey(FontFamilyPreference),

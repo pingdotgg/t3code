@@ -9,9 +9,11 @@ import {
   MAX_APPEARANCE_CONTRAST,
   MAX_GLASS_OPACITY,
   MAX_PANEL_ANIMATION_DURATION_MS,
+  MAX_TERMINAL_DRAWER_HEIGHT_PERCENT,
   MIN_APPEARANCE_CONTRAST,
   MIN_GLASS_OPACITY,
   MIN_PANEL_ANIMATION_DURATION_MS,
+  MIN_TERMINAL_DRAWER_HEIGHT_PERCENT,
 } from "@t3tools/contracts/settings";
 import {
   resolveSidebarStageBackdropVariant,
@@ -118,6 +120,13 @@ export function AppearanceSettingsPanel() {
   const appearanceContrastSliderStyle = {
     "--settings-slider-progress": `${appearanceContrastRatio * 100}%`,
     "--settings-slider-fill-offset": `${0.5 - appearanceContrastRatio}rem`,
+  } as CSSProperties;
+  const terminalHeightRatio =
+    (settings.terminalDrawerHeightPercent - MIN_TERMINAL_DRAWER_HEIGHT_PERCENT) /
+    (MAX_TERMINAL_DRAWER_HEIGHT_PERCENT - MIN_TERMINAL_DRAWER_HEIGHT_PERCENT);
+  const terminalHeightSliderStyle = {
+    "--settings-slider-progress": `${terminalHeightRatio * 100}%`,
+    "--settings-slider-fill-offset": `${0.5 - terminalHeightRatio}rem`,
   } as CSSProperties;
   const panelAnimationDurationRatio =
     (settings.panelAnimationDurationMs - MIN_PANEL_ANIMATION_DURATION_MS) /
@@ -271,6 +280,55 @@ export function AppearanceSettingsPanel() {
                   <SelectItem value="full">Full</SelectItem>
                 </SelectPopup>
               </Select>
+            </div>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("setting-terminal-height")}
+          description="How much of the window the terminal drawer covers when it opens. Threads you resized by dragging keep their own height."
+          resetAction={
+            settings.terminalDrawerHeightPercent !==
+            DEFAULT_UNIFIED_SETTINGS.terminalDrawerHeightPercent ? (
+              <SettingResetButton
+                label="terminal height"
+                onClick={() =>
+                  updateSettings({
+                    terminalDrawerHeightPercent:
+                      DEFAULT_UNIFIED_SETTINGS.terminalDrawerHeightPercent,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="flex w-full items-center gap-3 sm:w-52">
+              <output
+                className="min-w-12 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
+                htmlFor="terminal-height"
+              >
+                {settings.terminalDrawerHeightPercent}%
+              </output>
+              <input
+                aria-label="Terminal height"
+                className="settings-slider min-w-0 flex-1"
+                id="terminal-height"
+                max={MAX_TERMINAL_DRAWER_HEIGHT_PERCENT}
+                min={MIN_TERMINAL_DRAWER_HEIGHT_PERCENT}
+                onChange={(event) => {
+                  const terminalDrawerHeightPercent = Number(event.currentTarget.value);
+                  if (
+                    Number.isInteger(terminalDrawerHeightPercent) &&
+                    terminalDrawerHeightPercent >= MIN_TERMINAL_DRAWER_HEIGHT_PERCENT &&
+                    terminalDrawerHeightPercent <= MAX_TERMINAL_DRAWER_HEIGHT_PERCENT
+                  ) {
+                    updateSettings({ terminalDrawerHeightPercent });
+                  }
+                }}
+                step={5}
+                style={terminalHeightSliderStyle}
+                type="range"
+                value={settings.terminalDrawerHeightPercent}
+              />
             </div>
           }
         />
