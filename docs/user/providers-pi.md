@@ -52,6 +52,10 @@ Blocking `select`, `confirm`, `input`, and `editor` dialogs work in T3 Code. Not
 the work log. Pi terminal decoration such as titles, status lines, and widgets does not have a T3
 Code equivalent.
 
+For multi-step work, Pi can keep a task list in the web and desktop work log through T3 Code's own
+todo tool, like other providers' task lists. To turn it off, add `--exclude-tools t3_update_todos`
+to Pi's launch arguments. Lists that Pi extensions draw as terminal widgets do not appear.
+
 ## Permission Modes
 
 T3 Code applies the composer permission mode through Pi's blocking tool hook:
@@ -60,6 +64,8 @@ T3 Code applies the composer permission mode through Pi's blocking tool hook:
 - **Auto-accept edits** allows Pi's edit and write tools, but asks before commands and extension
   tools.
 - **Full access** allows tools without T3 Code approval prompts.
+
+T3 Code's todo tool never asks, because it only updates the task list.
 
 The **Auto** option is not shown for Pi because Pi does not expose an AI approval reviewer.
 Threads that already stored Auto before Pi support was added behave and display as Supervised.
