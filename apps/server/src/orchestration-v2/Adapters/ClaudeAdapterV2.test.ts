@@ -4387,6 +4387,111 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     );
   });
 
+  it.effect.each([
+    {
+      failure: "authentication_failed",
+      apiErrorStatus: undefined,
+      opensFreshProcess: true,
+      backgroundShell: false,
+    },
+    {
+      failure: "authentication_failed",
+      apiErrorStatus: undefined,
+      opensFreshProcess: true,
+      backgroundShell: true,
+    },
+    {
+      failure: "server_error",
+      apiErrorStatus: undefined,
+      opensFreshProcess: false,
+      backgroundShell: false,
+    },
+    {
+      failure: "authentication_failed",
+      apiErrorStatus: 403,
+      opensFreshProcess: false,
+      backgroundShell: false,
+    },
+  ] as const)(
+    "after a turn fails with $failure (API status: $apiErrorStatus), the next turn opens a fresh process: $opensFreshProcess (background shell: $backgroundShell)",
+    ({ failure, apiErrorStatus, opensFreshProcess, backgroundShell }) =>
+      Effect.gen(function* () {
+        let closeCount = 0;
+        const harness = yield* makeWakeHarnessWithOptions({
+          freshQueueOnReopen: true,
+          close: (messages) =>
+            Effect.sync(() => {
+              closeCount += 1;
+            }).pipe(Effect.andThen(Queue.shutdown(messages))),
+        });
+        const now = yield* DateTime.now;
+        const startTurn = (attempt: string, text: string) =>
+          harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(attempt),
+              text,
+              attachments: [],
+            }),
+          );
+
+        yield* startTurn("attempt-claude-relogin-1", "Continue.");
+        if (backgroundShell) yield* harness.offerAndWait(wakeTaskStarted);
+        yield* Queue.offerAll(harness.sdkMessages, [
+          makeAssistantErrorFrame({ uuid: "00000000-0000-4000-8000-000000000611", error: failure }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000612",
+            result: "API Error",
+            ...(apiErrorStatus === undefined ? {} : { apiErrorStatus }),
+            terminalReason: "api_error",
+            isError: true,
+          }),
+        ]);
+        const failed = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(failed.status, "failed");
+
+        if (backgroundShell) {
+          const refused = yield* startTurn("attempt-claude-relogin-blocked", "Try again.").pipe(
+            Effect.result,
+          );
+          assert.equal(refused._tag, "Failure");
+          if (refused._tag === "Failure") {
+            assert.instanceOf(
+              refused.failure.cause,
+              ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError,
+            );
+          }
+          assert.lengthOf(harness.processQueues, 1);
+          assert.equal(closeCount, 0);
+          yield* harness.runtime.interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: failed.providerTurnId,
+            requestRuntimeRestart: true,
+          });
+        }
+        yield* startTurn("attempt-claude-relogin-2", "Try again.");
+        assert.equal(harness.processQueues.length, opensFreshProcess ? 2 : 1);
+        assert.equal(closeCount, opensFreshProcess ? 1 : 0);
+        if (opensFreshProcess) {
+          // The fresh process resumes the same Claude conversation.
+          assert.equal(harness.getOpenedOptions()?.resume, WAKE_NATIVE_SESSION);
+          assert.isUndefined(harness.getOpenedOptions()?.sessionId);
+        }
+        yield* Queue.offer(
+          harness.processQueues.at(-1)!,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000613", result: "Done." }),
+        );
+        const completed = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(completed.status, "completed");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
   it.effect(
     "carries earlier user-only skill instructions on sends and steering with attachments",
     () =>
@@ -5604,6 +5709,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.equal(terminal.status, "failed");
       if (terminal.status !== "failed") return;
       assert.include(terminal.failure.message, "run `claude auth login`");
+      assert.include(terminal.failure.message, "then send the message again");
       assert.include(terminal.failure.message, configDir);
       assert.include(terminal.failure.message, JSON.stringify(cwd));
       assert.notInclude(terminal.failure.message, "repeated API errors");
