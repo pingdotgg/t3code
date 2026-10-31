@@ -55,6 +55,7 @@ export function composerCommandKeyHandler(input: {
   readonly composerMenuOpenRef: RefObject<boolean>;
   readonly composerMenuItemsRef: RefObject<ComposerCommandItem[]>;
   readonly activeComposerMenuItemRef: RefObject<ComposerCommandItem | null>;
+  readonly composerDetailItem: ComposerCommandItem | null;
   readonly setComposerDraftPrompt: (
     target: ChatComposerProps["composerDraftTarget"],
     prompt: string,
@@ -66,7 +67,12 @@ export function composerCommandKeyHandler(input: {
   readonly toggleInteractionMode: () => void;
   readonly nudgeComposerMenuHighlight: (key: "ArrowDown" | "ArrowUp") => void;
   readonly onSelectComposerItem: (item: ComposerCommandItem) => void;
-  readonly resolveActiveComposerTrigger: () => { trigger: ComposerTrigger | null };
+  readonly onShowComposerMenuItemDetail: (itemId: string) => void;
+  readonly onCloseComposerMenuItemDetail: () => void;
+  readonly resolveActiveComposerTrigger: () => {
+    snapshot: { value: string; expandedCursor: number };
+    trigger: ComposerTrigger | null;
+  };
   readonly readComposerSnapshot: () => { value: string };
   readonly applyPromptReplacement: (
     rangeStart: number,
@@ -104,6 +110,7 @@ export function composerCommandKeyHandler(input: {
     composerMenuOpenRef,
     composerMenuItemsRef,
     activeComposerMenuItemRef,
+    composerDetailItem,
     setComposerDraftPrompt,
     setComposerCursor,
     setComposerTrigger,
@@ -112,6 +119,8 @@ export function composerCommandKeyHandler(input: {
     toggleInteractionMode,
     nudgeComposerMenuHighlight,
     onSelectComposerItem,
+    onShowComposerMenuItemDetail,
+    onCloseComposerMenuItemDetail,
     resolveActiveComposerTrigger,
     readComposerSnapshot,
     applyPromptReplacement,
@@ -187,11 +196,15 @@ export function composerCommandKeyHandler(input: {
       toggleInteractionMode();
       return true;
     }
-    const { trigger } = resolveActiveComposerTrigger();
+    const { snapshot, trigger } = resolveActiveComposerTrigger();
     const menuIsActive =
       !isLiteralPendingAnswer && (composerMenuOpenRef.current || trigger !== null);
     if (key === "Escape") {
       if (!menuIsActive || event.isComposing || event.keyCode === 229) return false;
+      if (composerDetailItem) {
+        onCloseComposerMenuItemDetail();
+        return true;
+      }
       dismissComposerTrigger(trigger);
       composerMenuOpenRef.current = false;
       return true;
@@ -199,6 +212,27 @@ export function composerCommandKeyHandler(input: {
     if (menuIsActive && (submissionIntent === null || submissionIntent === "foreground")) {
       const currentItems = composerMenuItemsRef.current;
       const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
+      const hasModifier = event.altKey || event.ctrlKey || event.metaKey || event.shiftKey;
+      if (
+        key === "ArrowRight" &&
+        !hasModifier &&
+        !composerDetailItem &&
+        (selectedItem?.type === "skill" || selectedItem?.description) &&
+        snapshot.expandedCursor >= snapshot.value.length
+      ) {
+        onShowComposerMenuItemDetail(selectedItem.id);
+        return true;
+      }
+      if (composerDetailItem) {
+        if ((key === "ArrowLeft" && !hasModifier) || key === "ArrowDown" || key === "ArrowUp") {
+          onCloseComposerMenuItemDetail();
+          return true;
+        }
+        if (key === "Enter" || key === "Tab") {
+          onSelectComposerItem(composerDetailItem);
+          return true;
+        }
+      }
       if (key === "ArrowDown" && currentItems.length > 0) {
         nudgeComposerMenuHighlight("ArrowDown");
         return true;

@@ -232,6 +232,11 @@ provider. On mobile, both are also available before starting a thread on
 The slash menu also includes skills unless you turn off **Settings → Chat →
 Show skills in slash menu**, under Advanced. Only skills enabled for the provider are listed.
 
+To read an entry's full description, click its info button, or press
+`ArrowRight` on the highlighted entry while the caret is at the end of the
+prompt. Skill details also show where the skill file lives. Press `Enter` to use
+the entry, or `ArrowLeft` or `Escape` to return to the list.
+
 After you add or change skills, plugins, or MCP servers, use **Restart agent
 session** in the command palette on web and desktop. The conversation continues,
 and your next message starts the agent again with the new setup.

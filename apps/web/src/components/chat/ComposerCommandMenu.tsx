@@ -1,10 +1,14 @@
+import { useAtomValue } from "@effect/atom-react";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import type { ComposerPathSearchTarget } from "@t3tools/client-runtime/state/threads";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   resolveProviderSkillSourceKind,
   type ProviderSkillSourceKind,
 } from "@t3tools/client-runtime/providerSkills";
 import {
+  AuthOrchestrationOperateScope,
+  PROVIDER_DISPLAY_NAMES,
   type EnvironmentId,
   type EnvironmentMachineKind,
   type ProjectEntry,
@@ -17,19 +21,34 @@ import {
 import {
   BlocksIcon,
   FolderIcon,
+  FolderOpenIcon,
+  InfoIcon,
   MessagesSquareIcon,
   PackageIcon,
   SettingsIcon,
   UserRoundIcon,
   type LucideIcon,
 } from "lucide-react";
-import { memo, useLayoutEffect, useRef } from "react";
+import { memo, useLayoutEffect, useRef, useState } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
+import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
 import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { Kbd } from "../ui/kbd";
+import { stackedThreadToast, toastManager } from "../ui/toast";
+import { useRemoteOpenResolution } from "../../remoteOpen";
+import { serverEnvironment } from "../../state/server";
+import { useEnvironmentScope } from "../../state/session";
+import { shellEnvironment } from "../../state/shell";
+import { useAtomCommand } from "../../state/use-atom-command";
+import {
+  revealInFileExplorerLabelForKind,
+  revealInFileExplorerLabelForOs,
+} from "../preview/fileExplorerLabel";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { ComposerBanner } from "./ComposerBanner";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
@@ -92,13 +111,17 @@ export type ComposerCommandItem =
 
 export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   listId: string;
+  environmentId: EnvironmentId;
   items: ComposerCommandItem[];
   resolvedTheme: "light" | "dark";
   isLoading: boolean;
   triggerKind: ComposerTriggerKind | null;
   emptyStateText?: string;
   activeItemId: string | null;
+  detailItem: ComposerCommandItem | null;
   onHighlightedItemChange: (itemId: string | null) => void;
+  onShowDetail: (itemId: string) => void;
+  onCloseDetail: () => void;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
@@ -127,7 +150,14 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         className="flex min-h-0 w-full flex-col overflow-hidden pb-(--chat-composer-attachment-overlap) **:data-[slot=command-item]:rounded-lg **:data-[slot=scroll-area-scrollbar]:data-[orientation=vertical]:my-4"
         data-composer-command-drawer="true"
       >
-        {props.items.length > 0 ? (
+        {props.detailItem ? (
+          <ComposerCommandItemDetail
+            item={props.detailItem}
+            environmentId={props.environmentId}
+            triggerKind={props.triggerKind}
+            onClose={props.onCloseDetail}
+          />
+        ) : props.items.length > 0 ? (
           <CommandList
             id={props.listId}
             aria-label={props.triggerKind ? LISTBOX_LABEL_BY_TRIGGER[props.triggerKind] : undefined}
@@ -143,6 +173,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
                   resolvedTheme={props.resolvedTheme}
                   isActive={props.activeItemId === item.id}
                   onHighlight={props.onHighlightedItemChange}
+                  onShowDetail={props.onShowDetail}
                   onSelect={props.onSelect}
                 />
               ))}
@@ -171,6 +202,10 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   );
 });
 
+const DETAIL_BUTTON_TEXT_FADE = {
+  maskImage: "linear-gradient(to left, transparent 1.5rem, black 2.75rem)",
+};
+
 const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   optionId: string;
   item: ComposerCommandItem;
@@ -178,8 +213,21 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   resolvedTheme: "light" | "dark";
   isActive: boolean;
   onHighlight: (itemId: string | null) => void;
+  onShowDetail: (itemId: string) => void;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
+  const descriptionRef = useRef<HTMLSpanElement>(null);
+  const [isDescriptionTruncated, setIsDescriptionTruncated] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the description node's size, since truncation is only known after layout
+  useLayoutEffect(() => {
+    const el = descriptionRef.current;
+    if (!props.isActive || !el) return;
+    const measure = () => setIsDescriptionTruncated(el.scrollWidth > el.clientWidth);
+    measure();
+    return observeResize(el, measure);
+  }, [props.isActive]);
+  const showDetailButton =
+    props.isActive && (props.item.type === "skill" || isDescriptionTruncated);
   const skillSourceKind =
     props.item.type === "skill" ? resolveProviderSkillSourceKind(props.item.skill) : null;
   const isSlashSkill =
@@ -239,8 +287,31 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
             props.item.label
           )}
         </span>
-        <span className="min-w-0 flex-1 truncate text-left text-secondary-label text-xs">
-          {props.item.description}
+        <span className="relative flex min-w-0 flex-1">
+          <span
+            ref={descriptionRef}
+            className="min-w-0 flex-1 truncate text-left text-secondary-label text-xs"
+            style={showDetailButton ? DETAIL_BUTTON_TEXT_FADE : undefined}
+          >
+            {props.item.description}
+          </span>
+          {showDetailButton ? (
+            <Button
+              size="icon-micro"
+              variant="ghost-muted"
+              className="absolute end-0 top-1/2 -translate-y-1/2"
+              aria-label={`Show details for ${props.item.label} (Right arrow)`}
+              onMouseDown={(event) => {
+                event.preventDefault();
+              }}
+              onClick={(event) => {
+                event.stopPropagation();
+                props.onShowDetail(props.item.id);
+              }}
+            >
+              <InfoIcon />
+            </Button>
+          ) : null}
         </span>
         {skillSourceKind ? (
           <SkillSourceBadge
@@ -252,6 +323,136 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
     </CommandItem>
   );
 });
+
+function ComposerCommandItemDetail(props: {
+  item: ComposerCommandItem;
+  environmentId: EnvironmentId;
+  triggerKind: ComposerTriggerKind | null;
+  onClose: () => void;
+}) {
+  const skill = props.item.type === "skill" ? props.item.skill : null;
+  const skillSourceKind = skill ? resolveProviderSkillSourceKind(skill) : null;
+  const description = skill?.description ?? props.item.description;
+  const provider =
+    props.item.type === "skill" || props.item.type === "provider-slash-command"
+      ? props.item.provider
+      : null;
+  return (
+    <div className="flex min-w-0 flex-col gap-2 px-4 pt-3 pb-7">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="min-w-0 flex-1 truncate font-sans text-sm font-medium">
+          {skill && props.triggerKind === "slash-command" ? (
+            <>
+              <span className="text-secondary-label">/skill:</span>
+              {formatProviderSkillDisplayName(skill)}
+            </>
+          ) : (
+            props.item.label
+          )}
+        </span>
+        {skillSourceKind ? (
+          <SkillSourceBadge kind={skillSourceKind} showSkillSuffix={false} />
+        ) : null}
+        <ComposerBanner.Dismiss
+          aria-label="Close details"
+          onMouseDown={(event) => {
+            event.preventDefault();
+          }}
+          onClick={props.onClose}
+        />
+      </div>
+      {description ? (
+        <p className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-secondary-label text-xs">
+          {description}
+        </p>
+      ) : null}
+      {provider || skill ? (
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
+          {skill ? (
+            <>
+              <dt className="text-secondary-label">Name</dt>
+              <dd className="truncate">{skill.name}</dd>
+            </>
+          ) : null}
+          {provider ? (
+            <>
+              <dt className="text-secondary-label">Provider</dt>
+              <dd className="truncate">{PROVIDER_DISPLAY_NAMES[provider] ?? provider}</dd>
+            </>
+          ) : null}
+          {skill?.scope ? (
+            <>
+              <dt className="text-secondary-label">Scope</dt>
+              <dd className="truncate">{skill.scope}</dd>
+            </>
+          ) : null}
+          {skill ? (
+            <>
+              <dt className="text-secondary-label">Path</dt>
+              <dd className="flex min-w-0 items-start gap-1">
+                <span className="min-w-0 break-all">{skill.path}</span>
+                <RevealSkillFileButton environmentId={props.environmentId} path={skill.path} />
+              </dd>
+            </>
+          ) : null}
+        </dl>
+      ) : null}
+      <p className="text-secondary-label text-xs">
+        <Kbd>Enter</Kbd> to use · <Kbd>←</Kbd> or <Kbd>Esc</Kbd> to go back
+      </p>
+    </div>
+  );
+}
+
+function RevealSkillFileButton(props: { environmentId: EnvironmentId; path: string }) {
+  const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
+  const canOperateHost = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
+  const remoteOpen = useRemoteOpenResolution(props.environmentId);
+  const revealInFileManager = useAtomCommand(shellEnvironment.openInEditor, {
+    reportFailure: false,
+  });
+  if (
+    !config?.shellRevealInFileManager ||
+    !config.availableEditors.includes("file-manager") ||
+    !canOperateHost ||
+    !remoteOpen.isResolved ||
+    remoteOpen.state.mode !== "local-exec"
+  ) {
+    return null;
+  }
+  const label =
+    config.shellRevealInFileManagerKind === undefined
+      ? revealInFileExplorerLabelForOs(config.environment.platform.os)
+      : revealInFileExplorerLabelForKind(config.shellRevealInFileManagerKind);
+  return (
+    <Button
+      size="icon-micro"
+      variant="ghost-muted"
+      className="shrink-0"
+      aria-label={label}
+      onMouseDown={(event) => {
+        event.preventDefault();
+      }}
+      onClick={async () => {
+        const result = await revealInFileManager({
+          environmentId: props.environmentId,
+          input: { cwd: props.path, editor: "file-manager", reveal: true },
+        });
+        if (result._tag === "Success") return;
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to reveal skill file",
+            description: error instanceof Error ? error.message : "Unknown error revealing file.",
+          }),
+        );
+      }}
+    >
+      <FolderOpenIcon />
+    </Button>
+  );
+}
 
 export function composerSuggestionOptionId(listId: string, itemId: string): string {
   // JSON escapes lone UTF-16 surrogates before URI encoding without losing identity.
