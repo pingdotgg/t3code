@@ -1,9 +1,10 @@
 # Voice input
 
 Voice input is available in supported browsers, in the desktop app, and on iOS
-26 or newer. Select the microphone button beside Send to record, then select the
-checkmark button to transcribe. Select the X button to cancel. The transcript is inserted
-into the composer for editing and is never sent automatically.
+26 or newer. Select the microphone button beside Send to record, then finish recording
+to transcribe. On web and desktop, select the microphone again to finish, or select
+the X button to cancel. The transcript is inserted into the composer for editing
+and is never sent automatically.
 
 On web and desktop, the first microphone click opens voice setup if the selected
 environment has no transcription model. Download the recommended English model,
