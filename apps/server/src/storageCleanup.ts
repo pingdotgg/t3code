@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFSP from "node:fs/promises";
 import {
   GitCommandError,
   OrchestrationV2AppThreadJson,
@@ -280,15 +282,38 @@ const make = Effect.gen(function* () {
   );
 
   const measureWorktree = Effect.fn("storageCleanup.measureWorktree")(
-    function* (worktreePath: string) {
+    function* (worktreePath: string, inspectRepositories = false) {
       const root = yield* fs.realPath(worktreePath);
       const skipped = yield* sharedPnpmVirtualStore(root);
+      const incomplete = { bytes: null, reason: "worktree could not be fully inspected" };
+      const repositories = new Set([pathKey(root)]);
+      const moduleStores: string[] = [];
+      if (inspectRepositories && (yield* fs.exists(path.join(root, ".gitmodules")))) {
+        const submodules = yield* git.execute({
+          operation: "StorageCleanup.nestedRepositories",
+          cwd: root,
+          args: [
+            "submodule",
+            "foreach",
+            "--recursive",
+            "--quiet",
+            'printf "%s\\0" "$toplevel/$sm_path"',
+          ],
+          maxOutputBytes: 64 * 1024,
+        });
+        if (submodules.stdoutTruncated || submodules.stderrTruncated) return incomplete;
+        for (const submodule of submodules.stdout.split("\0").filter(Boolean)) {
+          repositories.add(pathKey(path.resolve(submodule)));
+          repositories.add(pathKey(path.resolve(submodule, ".git")));
+          moduleStores.push(pathKey(path.resolve(submodule, ".git", "modules")));
+        }
+      }
       const pending = [root];
       let entries = 1;
       let bytes = 0;
       while (pending.length > 0) {
         const target = pending.pop()!;
-        if (target === skipped) continue;
+        if (target === skipped && !inspectRepositories) continue;
         // Effect's stat follows links. Probe with readLink first to get lstat
         // semantics, including skipping dangling links and directory links.
         const isLink = yield* fs.readLink(target).pipe(
@@ -302,9 +327,10 @@ const make = Effect.gen(function* () {
           ),
         );
         if (isLink) continue;
-        if ((yield* fs.realPath(target)) !== target) return null;
+        if ((yield* fs.realPath(target)) !== target) return incomplete;
         const stat = yield* fs.stat(target);
         if (stat.type === "File") {
+          if (skipped !== null && inside(skipped, target)) continue;
           // Removing a shared hardlink leaves its blocks allocated.
           if (Option.getOrElse(stat.nlink, () => 1n) !== 1n) continue;
           bytes += Option.match(stat.blocks, {
@@ -312,20 +338,38 @@ const make = Effect.gen(function* () {
             onSome: (blocks) => Number(blocks * 512n),
           });
         } else if (stat.type === "Directory") {
-          const names = yield* fs.readDirectory(target);
+          const dirents =
+            skipped !== null && (target === skipped || inside(skipped, target))
+              ? yield* Effect.tryPromise(() => NodeFSP.readdir(target, { withFileTypes: true }))
+              : null;
+          const names = dirents?.map((entry) => entry.name) ?? (yield* fs.readDirectory(target));
+          const markers = inspectRepositories ? names.map((name) => name.toLowerCase()) : [];
+          // Git status omits ignored repositories, and worktree remove deletes them.
+          // Registered submodules have their own recursive safety checks below.
+          if (
+            inspectRepositories &&
+            !repositories.has(pathKey(target)) &&
+            !moduleStores.some((store) => pathKey(target) === store || inside(store, target)) &&
+            (markers.includes(".git") ||
+              (markers.includes("head") && markers.includes("objects") && markers.includes("refs")))
+          )
+            return { bytes: null, reason: "contains a nested Git repository" };
           entries += names.length;
-          if (entries > 2_000_000) return null;
-          for (const name of names) {
+          if (entries > 2_000_000) return incomplete;
+          const directories = dirents
+            ?.filter((entry) => entry.isDirectory())
+            .map((entry) => entry.name);
+          for (const name of directories ?? names) {
             const child = path.join(target, name);
-            if (!inside(root, child)) return null;
+            if (!inside(root, child)) return incomplete;
             pending.push(child);
           }
         }
       }
-      return bytes;
+      return { bytes, reason: null };
     },
     Effect.timeout("30 seconds"),
-    Effect.orElseSucceed(() => null),
+    Effect.orElseSucceed(() => ({ bytes: null, reason: "worktree could not be fully inspected" })),
   );
 
   // Large snapshots take seconds; use the reader worker instead of blocking the event loop.
@@ -434,7 +478,7 @@ const make = Effect.gen(function* () {
             firstMeasurement ? Effect.asSome : Effect.timeoutOption(remaining),
           );
           firstMeasurement = false;
-          if (Option.isSome(measured)) orphanSizes.set(key, measured.value);
+          if (Option.isSome(measured)) orphanSizes.set(key, measured.value.bytes);
         }
         const bytes = orphanSizes.get(key) ?? null;
         entries.push({
@@ -997,7 +1041,9 @@ const make = Effect.gen(function* () {
         });
         const blocked = yield* blockedSinceCheck();
         if (blocked !== null) return keep(blocked);
-        const bytes = yield* measureWorktree(worktreePath);
+        const inspection = yield* measureWorktree(worktreePath, true);
+        if (inspection.reason !== null) return keep(inspection.reason);
+        const bytes = inspection.bytes;
         const blockedWhileMeasuring = yield* blockedSinceCheck();
         if (blockedWhileMeasuring !== null) return keep(blockedWhileMeasuring);
         if (yield* branchChanged(worktreePath, thread.branch))
