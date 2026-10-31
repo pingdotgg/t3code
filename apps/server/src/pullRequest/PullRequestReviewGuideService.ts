@@ -393,6 +393,7 @@ const make = Effect.gen(function* () {
               ...reviewGuideInputFromPullRequest(detail, activity, checkout.baseCommit),
               cwd: checkout.path,
               modelSelection,
+              projectId: input.projectId,
               instructions: projectSettings.reviewGuideInstructions,
               stack: checkout.stack,
             }),
