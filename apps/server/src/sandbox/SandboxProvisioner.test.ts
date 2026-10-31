@@ -184,6 +184,83 @@ describe("daytonaDriver", () => {
   );
 });
 
+describe("boat credential environments", () => {
+  it.effect("lists only credential flags and never returns environment secrets", () => {
+    const client = HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          Response.json({
+            environments: [
+              {
+                name: "base",
+                isDefault: true,
+                safeForThirdParties: false,
+                passGithub: true,
+                passSecrets: true,
+                passSandboxCredentials: true,
+                passAgentsCredentials: true,
+                proxyAiCredentials: false,
+                envContents: "OPENAI_API_KEY=sk-live-secret",
+                secretFiles: [{ path: ".env", contents: "TOKEN=secret" }],
+              },
+            ],
+          }),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const environments = yield* boatDriver.listEnvironments!({
+        config: { apiKey: "boat_test" },
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+
+      expect(environments).toEqual([
+        {
+          name: "base",
+          isDefault: true,
+          safeForThirdParties: false,
+          passGithub: true,
+          passSecrets: true,
+          passSandboxCredentials: true,
+          passAgentsCredentials: true,
+          proxyAiCredentials: false,
+        },
+      ]);
+      expect(JSON.stringify(environments)).not.toContain("sk-live-secret");
+      expect(JSON.stringify(environments)).not.toContain("TOKEN=secret");
+    });
+  });
+
+  it.effect("refuses a credential environment until the caller confirms it", () => {
+    const requests: Array<string> = [];
+    const client = HttpClient.make((request) => {
+      requests.push(`${request.method} ${request.url}`);
+      return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({})));
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* SandboxProvisioner.SandboxProvisioner.pipe(
+        Effect.flatMap((provisioner) =>
+          provisioner.create({
+            provider: "boat",
+            apiKey: "boat_test",
+            environment: "base",
+          }),
+        ),
+        Effect.provide(SandboxProvisioner.layer.pipe(Layer.provide(ServerSettings.layerTest()))),
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.flip,
+      );
+
+      expect(error._tag).toBe("SandboxProviderError");
+      if (error._tag !== "SandboxProviderError") return;
+      expect(error.stage).toBe("config");
+      expect(requests).toEqual([]);
+    });
+  });
+});
+
 describe("SandboxProvisioner", () => {
   it.effect("pairs a freshly created Boat sandbox and saves the API key", () => {
     let commandCall = 0;

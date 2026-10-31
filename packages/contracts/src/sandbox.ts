@@ -36,6 +36,33 @@ export const SandboxProvidersResult = Schema.Struct({
 });
 export type SandboxProvidersResult = typeof SandboxProvidersResult.Type;
 
+/**
+ * A provider-side environment is the only supported way to give a sandbox credentials. It
+ * decides whether the provider passes its GitHub token, secrets, and agent logins; T3 never
+ * reads or forwards those values itself.
+ */
+export const SandboxCredentialEnvironment = Schema.Struct({
+  name: TrimmedString,
+  isDefault: Schema.Boolean,
+  safeForThirdParties: Schema.Boolean,
+  passGithub: Schema.Boolean,
+  passSecrets: Schema.Boolean,
+  passSandboxCredentials: Schema.Boolean,
+  passAgentsCredentials: Schema.Boolean,
+  proxyAiCredentials: Schema.Boolean,
+});
+export type SandboxCredentialEnvironment = typeof SandboxCredentialEnvironment.Type;
+
+export const SandboxCredentialEnvironmentsInput = Schema.Struct({
+  provider: SandboxProviderKind,
+});
+export type SandboxCredentialEnvironmentsInput = typeof SandboxCredentialEnvironmentsInput.Type;
+
+export const SandboxCredentialEnvironmentsResult = Schema.Struct({
+  environments: Schema.Array(SandboxCredentialEnvironment),
+});
+export type SandboxCredentialEnvironmentsResult = typeof SandboxCredentialEnvironmentsResult.Type;
+
 export const SandboxCreateInput = Schema.Struct({
   provider: SandboxProviderKind,
   /** Saved on this server when present; when omitted the saved key is used. */
@@ -46,6 +73,10 @@ export const SandboxCreateInput = Schema.Struct({
   size: Schema.optional(TrimmedString),
   /** Cloned into the sandbox before the environment is connected. */
   repositoryUrl: Schema.optional(TrimmedString),
+  /** Provider environment whose credentials the sandbox receives. Omit for no credentials. */
+  environment: Schema.optional(TrimmedString),
+  /** Required with `environment`: the user confirmed that this environment passes credentials. */
+  allowCredentials: Schema.optional(Schema.Boolean),
   /** Stop the machine after this many minutes. Omit to leave the provider default. */
   ttlMinutes: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 43200 }))),
 });

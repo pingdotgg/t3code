@@ -37,6 +37,23 @@ const BoatCommand = Schema.Struct({
 
 const BoatHostedPort = Schema.Struct({ url: Schema.String });
 
+// Only flags, never `envContents` or `secretFiles`: those hold real credential values and must
+// not leave the server that owns the provider key.
+const BoatEnvironment = Schema.Struct({
+  name: Schema.String,
+  isDefault: Schema.Boolean,
+  safeForThirdParties: Schema.Boolean,
+  passGithub: Schema.Boolean,
+  passSecrets: Schema.Boolean,
+  passSandboxCredentials: Schema.Boolean,
+  passAgentsCredentials: Schema.Boolean,
+  proxyAiCredentials: Schema.Boolean,
+});
+
+const BoatEnvironments = Schema.Struct({
+  environments: Schema.Array(BoatEnvironment),
+});
+
 const info = {
   kind: "boat",
   label: "Boat",
@@ -68,7 +85,9 @@ export const boatDriver: SandboxProviderDriver = {
           type: input.size,
           // A sandbox created by T3 must never inherit the account's GitHub token,
           // secrets, or agent logins by default. Credentials are opt-in per environment.
-          noEnv: true,
+          ...(input.environment === undefined
+            ? { noEnv: true }
+            : { environment: input.environment }),
           // A paired environment is meant to outlive the setup session, so the provider's auto-stop
           // must never fire before T3's own lifetime limit (eight hours by default).
           ttlSeconds: (input.ttlMinutes ?? 480) * 60,
@@ -82,6 +101,18 @@ export const boatDriver: SandboxProviderDriver = {
       name: created.sandbox.name ?? input.name,
       ...(url === undefined ? {} : { publicUrl: url }),
     } satisfies CreatedSandbox;
+  }),
+  listEnvironments: Effect.fn("Boat.listEnvironments")(function* (input) {
+    const listed = yield* requestJson({
+      provider: "boat",
+      stage: "config",
+      schema: BoatEnvironments,
+      request: authorize(
+        HttpClientRequest.get(`${BOAT_API_BASE}/environments`),
+        input.config.apiKey,
+      ),
+    });
+    return listed.environments;
   }),
   execute: (input) =>
     requestJson({

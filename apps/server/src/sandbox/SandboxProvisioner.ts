@@ -1,6 +1,9 @@
 import {
   type SandboxCreateInput,
   type SandboxCreateResult,
+  type SandboxCredentialEnvironment,
+  type SandboxCredentialEnvironmentsInput,
+  type SandboxCredentialEnvironmentsResult,
   type SandboxDeleteInput,
   SandboxProviderError,
   type SandboxProviderInfo,
@@ -85,6 +88,9 @@ export class SandboxProvisioner extends Context.Service<
       input: SandboxCreateInput,
     ) => Effect.Effect<SandboxCreateResult, SandboxProviderError>;
     readonly delete: (input: SandboxDeleteInput) => Effect.Effect<void, SandboxProviderError>;
+    readonly environments: (
+      input: SandboxCredentialEnvironmentsInput,
+    ) => Effect.Effect<SandboxCredentialEnvironmentsResult, SandboxProviderError>;
   }
 >()("t3/sandbox/SandboxProvisioner") {}
 
@@ -153,6 +159,14 @@ const make = Effect.gen(function* () {
     const config = { apiKey };
     const label = input.label?.trim() || `${driver.info.label} sandbox`;
     const size = input.size?.trim() || driver.defaultSize;
+    if (input.environment !== undefined && input.allowCredentials !== true) {
+      return yield* new SandboxProviderError({
+        provider: input.provider,
+        stage: "config",
+        detail:
+          "This sandbox would receive the credential environment's secrets. Confirm that explicitly first.",
+      });
+    }
 
     const sandbox = yield* onHttp(
       driver.create({
@@ -160,6 +174,7 @@ const make = Effect.gen(function* () {
         name: label,
         size,
         ttlMinutes: input.ttlMinutes,
+        environment: input.environment,
       }),
     );
 
@@ -239,10 +254,23 @@ const make = Effect.gen(function* () {
     yield* onHttp(driver.destroy({ config: { apiKey }, sandboxId: input.sandboxId }));
   });
 
+  const environments = Effect.fn("SandboxProvisioner.environments")(function* (
+    input: SandboxCredentialEnvironmentsInput,
+  ) {
+    const driver = findDriver(input.provider);
+    if (driver.listEnvironments === undefined) {
+      return { environments: [] as ReadonlyArray<SandboxCredentialEnvironment> };
+    }
+    const apiKey = yield* resolveApiKey(input.provider, undefined);
+    const listed = yield* onHttp(driver.listEnvironments({ config: { apiKey } }));
+    return { environments: listed };
+  });
+
   return SandboxProvisioner.of({
     providers,
     create,
     delete: remove,
+    environments,
   });
 });
 

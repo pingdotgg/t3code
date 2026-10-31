@@ -89,6 +89,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
   // Creating or deleting a sandbox spends the saved provider key and changes billable machines.
   [WS_METHODS.sandboxesProviders]: AuthOrchestrationReadScope,
+  [WS_METHODS.sandboxesEnvironments]: AuthOrchestrationReadScope,
   [WS_METHODS.sandboxesCreate]: AuthSettingsWriteScope,
   [WS_METHODS.sandboxesDelete]: AuthSettingsWriteScope,
   [WS_METHODS.serverSearchAcpRegistry]: AuthOrchestrationReadScope,
