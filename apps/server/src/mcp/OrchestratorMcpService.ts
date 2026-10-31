@@ -59,11 +59,13 @@ import {
   type ScheduledTask,
   type ScheduledTaskUpsertInput,
   type ServerProvider,
+  type ServerSettings as ServerSettingsValue,
   type ServerProviderModel,
   ThreadId,
   isOrchestrationV2WorkActive,
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
+import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import {
@@ -371,6 +373,39 @@ function providerConstraints(
     constraints.push("Provider is not authenticated.");
   }
   return constraints;
+}
+
+/** The fallback a target without provider, driver, or model takes while the inherited model is out of usage. */
+function activeFallback(input: {
+  readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly orchestrationCapableInstanceIds: ReadonlySet<string>;
+  readonly settings: ServerSettingsValue;
+  readonly now: number;
+}): ModelSelection | undefined {
+  const { selection, fallback } = resolveNewThreadModelSelection({
+    defaultSelection: input.parent.thread.modelSelection,
+    fallbackSelection: input.settings.fallbackModelSelection,
+    providers: input.providers,
+    now: input.now,
+    settings: input.settings,
+    projectId: input.parent.thread.projectId,
+  });
+  if (fallback === null || selection === null) return undefined;
+  const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
+  if (
+    provider === undefined ||
+    providerConstraints(provider, input.orchestrationCapableInstanceIds.has(provider.instanceId))
+      .length > 0
+  ) {
+    return undefined;
+  }
+  const model = provider.models.find((entry) => entry.slug === selection.model);
+  return (provider.models.length === 0 || model !== undefined) &&
+    invalidOptionSelections(selection.options ?? [], model?.capabilities?.optionDescriptors)
+      .length === 0
+    ? selection
+    : undefined;
 }
 
 /** Skip checks without descriptors; reject duplicate IDs because consumers disagree on precedence. */
@@ -1296,10 +1331,30 @@ const make = Effect.gen(function* () {
     readonly providers: ReadonlyArray<ServerProvider>;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
     readonly skipProjectEnablementFilter?: boolean;
+    /** Use the configured fallback when the target leaves provider, driver, and model to inheritance. */
+    readonly applyFallback?: boolean;
   }): Effect.fn.Return<ResolvedTarget, OrchestratorMcpFailure> {
     const requestedInstanceId = input.target?.providerInstanceId;
     const requestedDriver = input.target?.driverKind;
+    const requestedModel = input.target?.model;
     const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
+    const inheritedSelection =
+      (requestedInstanceId === undefined &&
+      requestedDriver === undefined &&
+      requestedModel === undefined &&
+      input.applyFallback === true
+        ? activeFallback({
+            parent: input.parent,
+            providers: input.providers,
+            orchestrationCapableInstanceIds,
+            settings: yield* serverSettings.getSettings.pipe(
+              Effect.mapError(() =>
+                failure("orchestration_error", "Unable to read server settings."),
+              ),
+            ),
+            now: yield* Clock.currentTimeMillis,
+          })
+        : undefined) ?? input.parent.thread.modelSelection;
     let instanceId = requestedInstanceId;
 
     if (instanceId === undefined && requestedDriver !== undefined) {
@@ -1345,7 +1400,7 @@ const make = Effect.gen(function* () {
         );
       }
     }
-    instanceId ??= input.parent.thread.modelSelection.instanceId;
+    instanceId ??= inheritedSelection.instanceId;
 
     const provider = input.providers.find((candidate) => candidate.instanceId === instanceId);
     if (provider === undefined) {
@@ -1371,8 +1426,6 @@ const make = Effect.gen(function* () {
       );
     }
 
-    const inheritedSelection = input.parent.thread.modelSelection;
-    const requestedModel = input.target?.model;
     const model =
       requestedModel ??
       (instanceId === inheritedSelection.instanceId
@@ -2156,12 +2209,34 @@ const make = Effect.gen(function* () {
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
       );
       const inherited = parent?.thread.modelSelection;
+      const configuredFallback = settings.fallbackModelSelection;
+      const now = yield* Clock.currentTimeMillis;
       const searchTerms = input.search?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
       return {
         parentThreadId: parent?.thread.id ?? null,
         inheritedProviderInstanceId: inherited?.instanceId ?? null,
         inheritedModel: inherited?.model ?? null,
         inheritedOptions: inherited?.options ?? [],
+        ...(configuredFallback === null
+          ? {}
+          : {
+              fallback: {
+                providerInstanceId: configuredFallback.instanceId,
+                model: configuredFallback.model,
+                ...(configuredFallback.options === undefined
+                  ? {}
+                  : { options: configuredFallback.options }),
+                active:
+                  parent !== undefined &&
+                  activeFallback({
+                    parent,
+                    providers,
+                    orchestrationCapableInstanceIds,
+                    settings,
+                    now,
+                  }) !== undefined,
+              },
+            }),
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
         providers: providers.map((provider) => {
@@ -2265,21 +2340,30 @@ const make = Effect.gen(function* () {
         operation: "delegate-task",
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
-      const target = yield* resolveTargetRechecking({
-        parent,
-        target: input.target,
-        providers,
-        skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
-      });
-      const runtimeMode = yield* resolveRuntimeMode(
-        parent.thread.runtimeMode,
-        input.runtimeMode,
-        target,
-      );
-      const interactionMode = yield* resolveInteractionMode(
-        parent.thread.interactionMode,
-        input.interactionMode,
-      );
+      // The receipt replays the committed task and ignores this payload, so a retry
+      // skips checks that changed settings or provider metadata could now fail.
+      const { modelSelection, runtimeMode, interactionMode } = isRetryOfAcceptedDelegation
+        ? parent.thread
+        : yield* Effect.gen(function* () {
+            const target = yield* resolveTargetRechecking({
+              parent,
+              target: input.target,
+              providers,
+              applyFallback: true,
+            });
+            return {
+              modelSelection: target.modelSelection,
+              runtimeMode: yield* resolveRuntimeMode(
+                parent.thread.runtimeMode,
+                input.runtimeMode,
+                target,
+              ),
+              interactionMode: yield* resolveInteractionMode(
+                parent.thread.interactionMode,
+                input.interactionMode,
+              ),
+            };
+          });
       let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
       if (input.isolation === "worktree" && !isRetryOfAcceptedDelegation) {
         const project = yield* requireProject(parent.thread.projectId);
@@ -2324,7 +2408,7 @@ const make = Effect.gen(function* () {
           parentNodeId: parentRun.rootNodeId,
           task: taskPrompt(input),
           ...(input.title === undefined ? {} : { title: input.title }),
-          modelSelection: target.modelSelection,
+          modelSelection,
           runtimeMode,
           interactionMode,
           ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
