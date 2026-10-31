@@ -212,6 +212,7 @@ export type ProjectionSettlementCandidate = Pick<
   | "latestRunCompletedAt"
   | "latestUserMessageAt"
   | "status"
+  | "lastErrorClass"
   | "activityRunStartedAt"
   | "activityRunStatus"
   | "pendingRuntimeRequest"
@@ -6292,6 +6293,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE link.thread_id = t.thread_id
                   AND link.type = 'link_request' AND link.status = 'waiting'
               )
+              AND NOT (
+                r.status IS 'failed' AND EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_turn_items failure
+                  WHERE failure.thread_id = t.thread_id AND failure.run_id = r.run_id
+                    AND failure.type = 'error' AND failure.status = 'failed'
+                    AND failure.node_id IS json_extract(r.payload_json, '$.rootNodeId')
+                    AND json_extract(failure.payload_json, '$.failure.class') = 'usage_limit'
+                )
+              )
             ORDER BY t.updated_at ASC, t.thread_id ASC
           `;
             if (rows.length === 0) return [];
@@ -6339,6 +6349,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   activityRunStatus: null,
                   activityRunStartedAt: null,
                   pendingRuntimeRequest: null,
+                  // The query above drops usage-limited threads.
+                  lastErrorClass: null,
                   pendingGuestMessageCount: pendingGuestMessageCount(thread.guestShare),
                   pendingBackgroundTasks: derivePendingBackgroundWork({
                     latestRun:

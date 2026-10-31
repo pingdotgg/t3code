@@ -158,6 +158,17 @@ describe("isAutoSettlementCandidate", () => {
     expect(ThreadSettlementService.isSnoozed(snoozed, NOW_MS)).toBe(false);
   });
 
+  it("never settles a thread stopped by a usage limit", () => {
+    const limited = shell({ status: "failed", lastErrorClass: "usage_limit" });
+    expect(ThreadSettlementService.isAutoSettlementCandidate(limited, NOW_MS)).toBe(false);
+    expect(
+      ThreadSettlementService.isAutoSettlementCandidate(
+        { ...limited, lastErrorClass: "provider_error" },
+        NOW_MS,
+      ),
+    ).toBe(true);
+  });
+
   it("keeps snoozed threads parked until a fresh failure or timer wake", () => {
     const snoozed = shell({
       snoozedUntil: at(60 * 60 * 1_000),

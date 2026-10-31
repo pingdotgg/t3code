@@ -136,6 +136,44 @@ const createItem = Effect.fn(function* (
   });
 });
 
+const createFailure = Effect.fn(function* (
+  threadId: ThreadId,
+  runId: RunId,
+  failureClass: "usage_limit" | "provider_error",
+) {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  yield* store.apply({
+    id: EventId.make(`event:failure:${runId}`),
+    type: "turn-item.updated",
+    threadId,
+    occurredAt: old,
+    payload: {
+      id: TurnItemId.make(`failure:${runId}`),
+      threadId,
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      type: "error",
+      status: "failed",
+      title: failureClass,
+      startedAt: old,
+      completedAt: old,
+      updatedAt: old,
+      failure: {
+        class: failureClass,
+        message: failureClass,
+        code: null,
+        retryable: true,
+        resetAt: DateTime.formatIso(DateTime.add(now, { hours: 1 })),
+      },
+    },
+  });
+});
+
 it.effect(
   "sql: discovers settlement work with the same activity and background semantics as the shell",
   () =>
@@ -210,6 +248,14 @@ it.effect(
         snoozedAt: DateTime.subtract(old, { days: 1 }),
       });
       yield* createRun(woke, "failed");
+      const limited = yield* createThread("usage-limited");
+      yield* createFailure(limited, yield* createRun(limited, "failed"), "usage_limit");
+      const providerFailed = yield* createThread("provider-failed");
+      yield* createFailure(
+        providerFailed,
+        yield* createRun(providerFailed, "failed"),
+        "provider_error",
+      );
       const background = yield* createThread("idle-background");
       yield* createItem(background, yield* createRun(background), "idle");
       const persistent = yield* createThread("persistent-monitor");
@@ -250,7 +296,16 @@ it.effect(
       );
       assert.deepEqual(
         new Set(eligible.map((thread) => thread.id)),
-        new Set([idle, completed, queued, woke, background, persistent, rolledBack]),
+        new Set([
+          idle,
+          completed,
+          queued,
+          woke,
+          providerFailed,
+          background,
+          persistent,
+          rolledBack,
+        ]),
       );
       assert.deepEqual(
         new Set(eligible.map((thread) => thread.id)),
