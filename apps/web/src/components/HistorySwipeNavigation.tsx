@@ -11,7 +11,7 @@ const MOMENTUM_SAMPLE_SIZE = 5;
 
 type SwipeBounds = { left: number; top: number; width: number; height: number };
 type SwipeGesture =
-  | { kind: "pending"; target: EventTarget | null; y: number; sumX: number; sumY: number }
+  | { kind: "pending"; path: EventTarget[]; y: number; sumX: number; sumY: number }
   | {
       kind: "tracking";
       direction: HistoryDirection;
@@ -37,31 +37,27 @@ function readMainContentBounds(): SwipeBounds {
   return { left, top, width, height };
 }
 
-function canScrollHorizontally(target: EventTarget | null, deltaX: number): boolean {
-  for (
-    let element = target instanceof Element ? target : null;
-    element;
-    element = element.parentElement
-  ) {
-    if (element.scrollWidth <= element.clientWidth) continue;
+// The composed path reaches scrollers inside shadow roots, such as the diff viewer's.
+// A scroller at its edge still owns the gesture, so history never takes a content scroll.
+function isInHorizontalScroller(path: readonly EventTarget[]): boolean {
+  return path.some((element) => {
+    if (!(element instanceof Element) || element.scrollWidth - element.clientWidth <= 1) {
+      return false;
+    }
     const { overflowX } = getComputedStyle(element);
-    if (overflowX !== "auto" && overflowX !== "scroll") continue;
-    const canScroll =
-      deltaX < 0
-        ? element.scrollLeft > 0
-        : element.scrollLeft + element.clientWidth < element.scrollWidth - 1;
-    if (canScroll) return true;
-  }
-  return false;
+    return overflowX === "auto" || overflowX === "scroll";
+  });
 }
 
 function lockSwipeAxis(
   pending: Extract<SwipeGesture, { kind: "pending" }>,
 ): Exclude<SwipeGesture, { kind: "pending" }> {
-  const { target, sumX, sumY } = pending;
+  const { path, sumX, sumY } = pending;
   if (Math.abs(sumX) <= Math.abs(sumY)) return { kind: "ignored" };
-  if (target instanceof Element && target.closest('[role="dialog"]')) return { kind: "ignored" };
-  if (canScrollHorizontally(target, sumX)) return { kind: "ignored" };
+  if (path.some((node) => node instanceof Element && node.matches('[role="dialog"]'))) {
+    return { kind: "ignored" };
+  }
+  if (isInHorizontalScroller(path)) return { kind: "ignored" };
   const direction = sumX < 0 ? "back" : "forward";
   if (!canNavigateHistory(direction)) return { kind: "ignored" };
   return {
@@ -119,7 +115,7 @@ export function HistorySwipeNavigation() {
         gesture =
           event.ctrlKey || event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL
             ? { kind: "ignored" }
-            : { kind: "pending", target: event.target, y: event.clientY, sumX: 0, sumY: 0 };
+            : { kind: "pending", path: event.composedPath(), y: event.clientY, sumX: 0, sumY: 0 };
       }
       if (gesture.kind === "ignored") return;
       if (gesture.kind === "pending") {
