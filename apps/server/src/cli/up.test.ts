@@ -252,6 +252,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
     },
     {
       label: "no service manager still records the choice",
+      // Every choice is explicit, so the shell's environment cannot change it.
+      prints: "--lan --no-tailscale-sign-in --no-tailscale-serve",
       installed: false,
       status: { supported: false },
       env: "",

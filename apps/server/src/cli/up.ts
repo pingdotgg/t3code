@@ -698,9 +698,9 @@ const setUp = Effect.fn("cli.up")(function* (
       ...(routes.tailscale && planned.T3CODE_TAILSCALE_OWNER !== undefined
         ? ["--tailscale-owner", planned.T3CODE_TAILSCALE_OWNER]
         : []),
-      ...(routes.tailscale && parseBoolean(planned.T3CODE_TAILSCALE_SERVE) === true
-        ? ["--tailscale-serve"]
-        : []),
+      routes.tailscale && parseBoolean(planned.T3CODE_TAILSCALE_SERVE) === true
+        ? "--tailscale-serve"
+        : "--no-tailscale-serve",
     ]);
     yield* Console.log(`${reason} Keep this command running:\n  ${command}`);
     // A host wins over these flags, as it does in service.env.
