@@ -91,6 +91,62 @@ it("builds the tree rehype-raw builds for markdown without HTML", () => {
   }
 });
 
+it("keeps local editor file links but not other schemes through the shared Markdown sanitizer", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  const tree = processor.runSync(
+    processor.parse(
+      [
+        "[cursor](cursor://file/Users/me/repo/file.md:3)",
+        "[code](vscode://file/Users/me/repo/file.md:3:7)",
+        "[insiders](vscode-insiders://file/Users/me/repo/file.md)",
+        "[unknown](foo://file/Users/me/repo/file.md)",
+        "[zed](zed://file/Users/me/repo/file.md)",
+      ].join(" "),
+    ),
+  );
+  type Node = { tagName?: string; properties?: { href?: string }; children?: Node[] };
+  const hrefs = ((tree.children[0] as Node).children ?? [])
+    .filter((node) => node.tagName === "a")
+    .map((node) => node.properties?.href);
+  expect(hrefs).toEqual([
+    "cursor://file/Users/me/repo/file.md:3",
+    "vscode://file/Users/me/repo/file.md:3:7",
+    "vscode-insiders://file/Users/me/repo/file.md",
+    undefined,
+    undefined,
+  ]);
+});
+
+it("keeps mixed-case local editor file links by lowercasing the scheme before sanitizing", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  const tree = processor.runSync(
+    processor.parse(
+      [
+        "[upper](VSCODE://file/Users/me/repo/file.md:3:7)",
+        "[mixed](Cursor://file/Users/me/repo/file.md:3)",
+        "[other](FOO://file/Users/me/repo/file.md)",
+      ].join(" "),
+    ),
+  );
+  type Node = { tagName?: string; properties?: { href?: string }; children?: Node[] };
+  const hrefs = ((tree.children[0] as Node).children ?? [])
+    .filter((node) => node.tagName === "a")
+    .map((node) => node.properties?.href);
+  expect(hrefs).toEqual([
+    "vscode://file/Users/me/repo/file.md:3:7",
+    "cursor://file/Users/me/repo/file.md:3",
+    undefined,
+  ]);
+});
+
 it("keeps backslashes that CommonMark would read as escapes in prose Windows paths", () => {
   const processor = unified()
     .use(remarkParse)
