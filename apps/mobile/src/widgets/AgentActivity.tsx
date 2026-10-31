@@ -86,6 +86,7 @@ function AgentActivity(
       readonly need: string | null;
       readonly rank: number;
       readonly index: number;
+      readonly finished: boolean;
     }
   > = {
     waiting_for_approval: {
@@ -96,6 +97,7 @@ function AgentActivity(
       need: "Needs approval",
       rank: 0,
       index: 3,
+      finished: false,
     },
     waiting_for_input: {
       mark: { text: "›?" },
@@ -105,6 +107,7 @@ function AgentActivity(
       need: "Needs your input",
       rank: 0,
       index: 4,
+      finished: false,
     },
     failed: {
       mark: { symbol: "xmark.octagon.fill" },
@@ -114,6 +117,7 @@ function AgentActivity(
       need: null,
       rank: 1,
       index: 6,
+      finished: true,
     },
     starting: {
       mark: { text: "›" },
@@ -123,6 +127,7 @@ function AgentActivity(
       need: null,
       rank: 2,
       index: 1,
+      finished: false,
     },
     running: {
       mark: { text: "›_" },
@@ -132,6 +137,7 @@ function AgentActivity(
       need: null,
       rank: 2,
       index: 2,
+      finished: false,
     },
     completed: {
       mark: { symbol: "checkmark" },
@@ -141,6 +147,7 @@ function AgentActivity(
       need: null,
       rank: 3,
       index: 5,
+      finished: true,
     },
     stale: {
       mark: { symbol: "clock.arrow.circlepath" },
@@ -150,6 +157,7 @@ function AgentActivity(
       need: null,
       rank: 3,
       index: 7,
+      finished: false,
     },
   };
   // A phase from a newer relay reads as stale: it claims neither work nor a need,
@@ -170,8 +178,18 @@ function AgentActivity(
       ? { ...row, phase: "stale", status: "Out of date" }
       : row,
   );
+  // Nothing starting, working, waiting, or out of date: the card becomes a summary.
+  const allFinished =
+    props.activeCount === 0 &&
+    activities.length > 0 &&
+    activities.every((row) => signalFor(row.phase).finished);
   // Stable sort: the thread that needs the user leads, then failures, work, and outcomes.
-  const ordered = [...activities].sort((a, b) => signalFor(a.phase).rank - signalFor(b.phase).rank);
+  // Once everything finished, the newest outcome leads within each rank.
+  const ordered = [...activities].sort(
+    (a, b) =>
+      signalFor(a.phase).rank - signalFor(b.phase).rank ||
+      (allFinished ? b.updatedAt.localeCompare(a.updatedAt) : 0),
+  );
   const hero = ordered[0];
   const others = ordered.slice(1);
   const other0 = others[0];
@@ -185,13 +203,18 @@ function AgentActivity(
   const staleCount = activities.filter((row) => row.phase === "stale").length;
   const failedCount = activities.filter((row) => row.phase === "failed").length;
   const doneCount = activities.filter((row) => row.phase === "completed").length;
-  const summaryParts = [
-    needsYouCount > 0 ? `${needsYouCount} need${needsYouCount === 1 ? "s" : ""} you` : null,
-    workingCount > 0 ? `${workingCount} working` : null,
-    staleCount > 0 ? "Out of date" : null,
-    failedCount > 0 ? `${failedCount} failed` : null,
-    doneCount > 0 ? `${doneCount} done` : null,
-  ].filter((part): part is string => part !== null);
+  const summaryParts = (
+    allFinished && failedCount === 0
+      ? ["All done"]
+      : [
+          allFinished ? "Finished" : null,
+          needsYouCount > 0 ? `${needsYouCount} need${needsYouCount === 1 ? "s" : ""} you` : null,
+          workingCount > 0 ? `${workingCount} working` : null,
+          staleCount > 0 ? "Out of date" : null,
+          failedCount > 0 ? `${failedCount} failed` : null,
+          doneCount > 0 ? `${doneCount} done` : null,
+        ]
+  ).filter((part): part is string => part !== null);
   const summary = summaryParts.join(" · ");
   // Count threads, not rows: the relay sends only the rows that fit.
   const threadCount = Math.max(props.activeCount + failedCount + doneCount, ordered.length);
@@ -200,12 +223,15 @@ function AgentActivity(
   const describe = (row: AgentActivityRowProps) =>
     `${row.threadTitle.trim() || "A thread"} ${signalFor(row.phase).spoken}`;
   const glanceLabel = hero
-    ? ordered.length > 1
-      ? `${describe(hero)}. ${summaryParts.join(", ")}`
-      : describe(hero)
+    ? allFinished
+      ? `All agents finished. ${ordered.map(describe).join(", ")}`
+      : ordered.length > 1
+        ? `${describe(hero)}. ${summaryParts.join(", ")}`
+        : describe(hero)
     : "T3 Code";
   const cardLabel = [
     "T3 Code",
+    ...(allFinished ? ["All agents finished"] : []),
     ...ordered.map((row) => `${describe(row)}, ${row.projectTitle}`),
     ...(unsentCount > 0 ? [`${unsentCount} more`] : []),
   ].join(". ");
@@ -348,8 +374,8 @@ function AgentActivity(
     ) : null;
 
   // While agents only work, the compact island stays a quiet prompt; words appear
-  // only when a thread needs the user or failed.
-  const heroSpeaks = hero ? signalFor(hero.phase).rank <= 1 : false;
+  // only when a thread needs the user or failed. Once all finished, the mark alone answers.
+  const heroSpeaks = hero && !allFinished ? signalFor(hero.phase).rank <= 1 : false;
 
   return {
     banner: (
@@ -455,6 +481,7 @@ function AgentActivity(
           ...linkModifiers,
         ]}
       >
+        {allFinished ? renderSummary(12) : null}
         {hero ? renderHero(hero, 24, 15) : null}
         {other0 || other1 ? (
           <VStack alignment="leading" spacing={5}>

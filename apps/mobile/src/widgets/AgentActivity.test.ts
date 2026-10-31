@@ -80,6 +80,7 @@ function text(node: unknown): string {
 }
 
 const dark = { colorScheme: "dark" };
+const LATER = "2026-10-31T17:44:00.000Z";
 
 function row(threadId: string, threadTitle: string, phase: AgentActivityPhase, status: string) {
   return {
@@ -137,6 +138,53 @@ describe("AgentActivity", () => {
       expect(modifierArgs(sections.banner, "accessibilityLabel")[0]).toBe(
         `T3 Code. ${spoken}, T3 Code. Update snapshots is done, T3 Code`,
       );
+    },
+  );
+
+  it.each([
+    [
+      "the failure, even when a completion is newer",
+      [
+        { ...row("update-snapshots", "Update snapshots", "completed", "Done"), updatedAt: LATER },
+        row("fix-login-redirect", "Fix login redirect", "failed", "Failed"),
+      ],
+      "Fix login redirect",
+      "Finished · 1 failed · 1 done",
+      "xmark.octagon.fill",
+      "All agents finished. Fix login redirect failed, Update snapshots is done",
+    ],
+    [
+      "the newest completion",
+      [
+        row("fix-login-redirect", "Fix login redirect", "completed", "Done"),
+        { ...row("update-snapshots", "Update snapshots", "completed", "Done"), updatedAt: LATER },
+      ],
+      "Update snapshots",
+      "All done",
+      "checkmark",
+      "All agents finished. Update snapshots is done, Fix login redirect is done",
+    ],
+  ] as const)(
+    "sums up finished work and leads with %s",
+    (_name, rows, leadingTitle, header, mark, spoken) => {
+      const leading = rows.find((candidate) => candidate.threadTitle === leadingTitle);
+      const sections = layout(activity(0, rows), dark);
+
+      for (const section of [...SECTIONS, "expandedBottom"]) {
+        expect(modifierArgs(sections[section], "widgetURL"), section).toEqual([
+          `t3code://threads/moonbase-terminal/${leading?.threadId}`,
+        ]);
+      }
+      expect(text(sections.banner).startsWith(`${header} ${leadingTitle} `), header).toBe(true);
+      expect(text(sections.expandedBottom).startsWith(`${header} ${leadingTitle} `)).toBe(true);
+      for (const section of ["compactTrailing", "minimal"]) {
+        const marks = [...walk(sections[section])].flatMap((element) =>
+          element.props.systemName ? [element.props.systemName] : [],
+        );
+        expect(marks, section).toEqual([mark]);
+        expect(text(sections[section]), section).toBe("");
+      }
+      expect(modifierArgs(sections.minimal, "accessibilityLabel")).toEqual([spoken]);
     },
   );
 
@@ -281,5 +329,25 @@ describe("AgentActivity", () => {
     const sections = layout(activity(1, [row("a", "  ", "running", "Working")]), dark);
 
     expect(modifierArgs(sections.minimal, "accessibilityLabel")).toEqual(["A thread is working"]);
+  });
+
+  it("does not sum up as finished while a phase from a newer relay is listed", () => {
+    const sections = layout(
+      activity(0, [
+        row("update-snapshots", "Update snapshots", "completed", "Done"),
+        row(
+          "fix-login-redirect",
+          "Fix login redirect",
+          "cancelled" as AgentActivityPhase,
+          "Cancelled",
+        ),
+      ]),
+      dark,
+    );
+
+    expect(text(sections.banner)).not.toMatch(/All done|Finished/);
+    expect(modifierArgs(sections.minimal, "accessibilityLabel")[0]).not.toContain(
+      "All agents finished",
+    );
   });
 });

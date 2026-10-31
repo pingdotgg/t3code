@@ -27,6 +27,7 @@ const updateSnapshots = (phase: AgentActivityPhase): ShowcaseAgentActivityRow =>
 });
 
 // Rows follow the relay's order: threads that need the user, failures, work, then outcomes.
+// With nothing in flight the relay lists the newest outcome first, so the widget must lead with failures.
 const SHOWCASE_AGENT_ACTIVITY_FIXTURES = {
   store: [
     { threadId: "pocket-command-center", phase: "waiting_for_approval", minutesAgo: 1 },
@@ -37,6 +38,11 @@ const SHOWCASE_AGENT_ACTIVITY_FIXTURES = {
   "handoff-working": [fixLoginRedirect("running"), updateSnapshots("running")],
   "handoff-approval": [fixLoginRedirect("waiting_for_approval"), updateSnapshots("completed")],
   "handoff-input": [fixLoginRedirect("waiting_for_input"), updateSnapshots("completed")],
+  "all-done": [updateSnapshots("completed"), { ...fixLoginRedirect("completed"), minutesAgo: 4 }],
+  "done-with-failure": [
+    updateSnapshots("completed"),
+    { ...fixLoginRedirect("failed"), minutesAgo: 4 },
+  ],
   "phase-starting": [fixLoginRedirect("starting")],
   "phase-running": [fixLoginRedirect("running")],
   "phase-waiting_for_approval": [fixLoginRedirect("waiting_for_approval")],
