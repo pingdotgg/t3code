@@ -1,4 +1,8 @@
-import { type ConfirmDialogOptions, type ContextMenuItem } from "@t3tools/contracts";
+import {
+  type ConfirmDialogOptions,
+  type ContextMenuItem,
+  type DesktopBridge,
+} from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const showContextMenuFallbackMock =
@@ -20,6 +24,14 @@ vi.mock("./contextMenuFallback", () => ({
 
 vi.mock("./confirmDialog", () => ({
   requestConfirmDialog: requestConfirmDialogMock,
+}));
+
+const styledContextMenuState = vi.hoisted(() => ({ enabled: false }));
+const ensureClientSettingsHydratedMock = vi.hoisted(() => vi.fn<() => Promise<void>>());
+
+vi.mock("~/hooks/useSettings", () => ({
+  ensureClientSettingsHydrated: ensureClientSettingsHydratedMock,
+  getClientSettings: () => ({ styledContextMenuEnabled: styledContextMenuState.enabled }),
 }));
 
 function createLocalStorageStub(): Storage {
@@ -47,6 +59,8 @@ function testWindow(): Window & typeof globalThis {
 beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
+  styledContextMenuState.enabled = false;
+  ensureClientSettingsHydratedMock.mockResolvedValue(undefined);
   if (globalThis.window === undefined) {
     Object.defineProperty(globalThis, "window", {
       configurable: true,
@@ -65,6 +79,70 @@ afterEach(() => {
 });
 
 describe("LocalApi", () => {
+  it("uses the native context menu on desktop when Styled Context Menu is disabled", async () => {
+    const showContextMenu = vi.fn().mockResolvedValue("delete");
+    testWindow().desktopBridge = { showContextMenu } as unknown as DesktopBridge;
+    const { createLocalApi } = await import("./localApi");
+    const items = [{ id: "delete", label: "Delete" }] as const;
+    const position = { x: 1, y: 2 };
+
+    await expect(createLocalApi().contextMenu.show(items, position)).resolves.toBe("delete");
+    expect(showContextMenu).toHaveBeenCalledWith(items, position);
+    expect(showContextMenuFallbackMock).not.toHaveBeenCalled();
+  });
+
+  it("uses the styled fallback on desktop when Styled Context Menu is enabled", async () => {
+    styledContextMenuState.enabled = true;
+    showContextMenuFallbackMock.mockResolvedValue("rename");
+    const showContextMenu = vi.fn().mockResolvedValue("delete");
+    testWindow().desktopBridge = { showContextMenu } as unknown as DesktopBridge;
+    const { createLocalApi } = await import("./localApi");
+    const items = [{ id: "rename", label: "Rename" }] as const;
+
+    await expect(createLocalApi().contextMenu.show(items, { x: 1, y: 2 })).resolves.toBe("rename");
+    expect(showContextMenuFallbackMock).toHaveBeenCalledWith(items, { x: 1, y: 2 });
+    expect(showContextMenu).not.toHaveBeenCalled();
+  });
+
+  it("dismisses the styled fallback on desktop when Styled Context Menu is enabled", async () => {
+    styledContextMenuState.enabled = true;
+    testWindow().desktopBridge = { showContextMenu: vi.fn() } as unknown as DesktopBridge;
+    const { createLocalApi } = await import("./localApi");
+
+    await createLocalApi().contextMenu.close();
+
+    expect(dismissContextMenuMock).toHaveBeenCalledOnce();
+  });
+
+  it("abandons a desktop show that close invalidates while the preference read is pending", async () => {
+    styledContextMenuState.enabled = true;
+    let resolveHydration!: () => void;
+    let notifyHydrationStarted!: () => void;
+    const hydrationStarted = new Promise<void>((resolve) => {
+      notifyHydrationStarted = resolve;
+    });
+    ensureClientSettingsHydratedMock.mockImplementation(() => {
+      notifyHydrationStarted();
+      return new Promise<void>((resolve) => {
+        resolveHydration = resolve;
+      });
+    });
+    const showContextMenu = vi.fn().mockResolvedValue("delete");
+    testWindow().desktopBridge = { showContextMenu } as unknown as DesktopBridge;
+    const { createLocalApi } = await import("./localApi");
+    const api = createLocalApi();
+    const items = [{ id: "delete", label: "Delete" }] as const;
+
+    const pendingShow = api.contextMenu.show(items);
+    await hydrationStarted;
+    await api.contextMenu.close();
+    resolveHydration();
+
+    await expect(pendingShow).resolves.toBeNull();
+    expect(showContextMenuFallbackMock).not.toHaveBeenCalled();
+    expect(showContextMenu).not.toHaveBeenCalled();
+  });
+
   it("fails closed in a browser when no themed host is available", async () => {
     requestConfirmDialogMock.mockReturnValue(undefined);
     const { createLocalApi } = await import("./localApi");
