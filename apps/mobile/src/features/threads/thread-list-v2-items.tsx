@@ -14,17 +14,14 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { threadArrangementOpenAtom } from "../../state/thread-order";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { useVisibleSecondClock } from "./use-visible-second-clock";
+import { useVisibleWorkingDurationLabel } from "./use-visible-working-duration-label";
 import type { ThreadMoveDestination } from "./threadOrder";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
-import {
-  formatWorkingDurationLabel,
-  resolveThreadWorkingStartedAt,
-} from "@t3tools/client-runtime/state/models";
+import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
@@ -140,10 +137,7 @@ const DONE_STATUS_LABEL: StatusLabel = {
 };
 
 function ThreadListV2Duration(props: { readonly startedAt: string | null }) {
-  const startedAtMs = Date.parse(props.startedAt ?? "");
-  const nowMs = useVisibleSecondClock(Number.isFinite(startedAtMs));
-  if (!Number.isFinite(startedAtMs)) return null;
-  return ` ${formatWorkingDurationLabel(nowMs - startedAtMs)}`;
+  return useVisibleWorkingDurationLabel(props.startedAt);
 }
 
 const CARD_MENU_ACTIONS: MenuAction[] = [
