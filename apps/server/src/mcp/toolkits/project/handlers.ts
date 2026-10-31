@@ -241,8 +241,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           createdBy: "agent",
           creationSource: "mcp",
           ...(linkOrigin === undefined ? {} : { linkOrigin }),
-          // Kept only alongside linkOrigin: thread.create drops it otherwise.
-          ...(input.delegatedFrom === undefined ? {} : { delegatedFrom: input.delegatedFrom }),
+          // Only the link's own session may claim a parent there, not an agent in a thread it started.
+          // thread.create also drops it without linkOrigin.
+          ...(input.delegatedFrom === undefined || caller !== undefined
+            ? {}
+            : { delegatedFrom: input.delegatedFrom }),
         }).pipe(
           Effect.mapError((error) => {
             if (error._tag === "AttachmentClaimError") {

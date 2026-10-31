@@ -535,6 +535,38 @@ it.effect("launches in a linked environment with the caller's modes, retry-safe"
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("an agent's launch in a linked environment is top-level, whatever it claims", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const seen = yield* Ref.make<Seen>(nothingSeen);
+      const linkSession = yield* Ref.make("");
+      const b = yield* serveBox(seen, linkSession);
+      const a = yield* makeLaptop;
+      yield* linkTo(a.links, b, "full-access");
+      yield* Ref.set(linkSession, (yield* b.linkedSessions)[0]!.sessionId);
+
+      // Only delegate_task records the parent's side of a delegation, so a
+      // child claimed here would be hidden there with no parent listing it.
+      const launched = yield* a.call("thread:laptop-full", "t3_thread_launch", {
+        environmentId: box.environmentId,
+        projectId: boxProject,
+        title: "Run the suite there",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+        message: "Run the suite.",
+        clientRequestId: "launch-claimed-child",
+        delegatedFrom: {
+          environmentId: laptop.environmentId,
+          threadId: "thread:laptop-full",
+          title: "Laptop thread",
+        },
+      });
+      expect(failureOf(launched)).toBeUndefined();
+      const [received] = (yield* Ref.get(seen)).launches;
+      expect(received?.delegatedFrom).toBeUndefined();
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("brings a repository to a linked environment, only through full access", () =>
   Effect.scoped(
     Effect.gen(function* () {
