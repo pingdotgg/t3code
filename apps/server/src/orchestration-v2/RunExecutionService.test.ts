@@ -4058,6 +4058,7 @@ it.effect.each([
     const subagentIngested = yield* Deferred.make<void>();
     const rootFinalized = yield* Deferred.make<void>();
     const firstWriteFailed = yield* Deferred.make<void>();
+    const failureHandled = yield* Deferred.make<void>();
     const retried = yield* Deferred.make<void>();
     const attempts = yield* Ref.make(0);
     const childWrites = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -4066,7 +4067,9 @@ it.effect.each([
       onIngest: (event) =>
         Effect.gen(function* () {
           if (event.type === "subagent.updated") {
-            return yield* Deferred.succeed(subagentIngested, undefined);
+            yield* Deferred.succeed(subagentIngested, undefined);
+            if ((yield* Ref.get(attempts)) > 0) yield* Deferred.succeed(failureHandled, undefined);
+            return;
           }
           if (event.type !== "turn_item.updated" || event.turnItem.type !== "assistant_message")
             return;
@@ -4075,6 +4078,7 @@ it.effect.each([
             (yield* Ref.getAndUpdate(attempts, (n) => n + 1)) === 0
           ) {
             yield* Deferred.succeed(firstWriteFailed, undefined);
+            yield* Effect.sleep("2 seconds");
             return yield* Effect.die(new Error("disk I/O error"));
           }
           const { text, streaming } = event.turnItem;
@@ -4095,6 +4099,11 @@ it.effect.each([
     }
     yield* TestClock.adjust("1 second");
     yield* Deferred.await(firstWriteFailed);
+    yield* TestClock.adjust("2 seconds");
+    yield* Queue.offer(events, linkedSubagentEvent(ids, "running"));
+    yield* Deferred.await(failureHandled);
+    assert.equal(yield* Ref.get(attempts), 1);
+    assert.deepEqual(yield* Ref.get(childWrites), []);
     yield* TestClock.adjust("1 second");
     yield* Deferred.await(retried);
     const childText = (text: string, streaming: boolean) => {

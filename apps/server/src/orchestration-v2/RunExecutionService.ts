@@ -1371,7 +1371,9 @@ export const layer: Layer.Layer<
                     failures: idleFlushFailures,
                     cause: written.cause,
                   });
-                  const retryAt = now + Math.min(1_000 * 2 ** (idleFlushFailures - 1), 30_000);
+                  const retryAt =
+                    DateTime.toEpochMillis(yield* DateTime.now) +
+                    Math.min(1_000 * 2 ** (idleFlushFailures - 1), 30_000);
                   for (const pending of due.slice(index)) pending.retryAt(retryAt);
                   break;
                 }
