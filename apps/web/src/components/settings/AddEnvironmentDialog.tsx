@@ -276,27 +276,15 @@ export function AddEnvironmentDialog({
   const handleSelectSshHostSuggestion = async (target: DesktopDiscoveredSshHost) => {
     if (isAddingSavedBackend || !desktopBridge) return;
 
-    const session = savedBackendSessionRef.current;
-    setIsAddingSavedBackend(true);
-    onErrorChange(null);
     setSavedBackendSshHost(target.alias);
-    let resolved: DesktopSshEnvironmentTarget;
-    try {
-      resolved = await desktopBridge.resolveSshHost(target.alias);
-    } catch (error) {
-      if (session === savedBackendSessionRef.current) {
-        onErrorChange(formatDesktopSshConnectionError(error));
-      }
-      setIsAddingSavedBackend(false);
-      return;
-    }
-    if (session !== savedBackendSessionRef.current) {
-      setIsAddingSavedBackend(false);
-      return;
-    }
-    setSavedBackendSshUsername(resolved.username ?? "");
-    setSavedBackendSshPort(resolved.port === null ? "" : String(resolved.port));
-    await connectSavedBackendSshTarget(resolved);
+    setSavedBackendSshUsername("");
+    setSavedBackendSshPort("");
+    await connectSavedBackendSshTarget({
+      alias: target.alias,
+      hostname: target.hostname,
+      username: null,
+      port: null,
+    });
   };
 
   const handleSavedBackendSshHostKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {

@@ -16,7 +16,6 @@ import {
   type PlatformConnectionRegistration,
   PrimaryConnectionRegistration,
   PrimaryConnectionTarget,
-  sshTargetKey,
   Wakeups,
 } from "@t3tools/client-runtime/connection";
 import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
@@ -25,6 +24,7 @@ import { managedRelayAccountChanges, managedRelaySessionAtom } from "@t3tools/cl
 import { EnvironmentRpcRequestObserver } from "@t3tools/client-runtime/rpc";
 import {
   AuthStandardClientScopes,
+  getDesktopSshRequestKey,
   type DesktopBridge,
   type DesktopEnvironmentBootstrap,
   type DesktopSshEnvironmentBootstrap,
@@ -188,7 +188,7 @@ const pendingSshSetups = new Map<
 const ensureDesktopSshEnvironment = (bridge: DesktopBridge, target: DesktopSshEnvironmentTarget) =>
   Effect.tryPromise({
     try: (signal) => {
-      const key = sshTargetKey(target);
+      const key = getDesktopSshRequestKey(target);
       const pending = pendingSshSetups.get(key);
       if (pending?.signal.aborted) {
         pending.signal = signal;
@@ -398,7 +398,7 @@ const layerCapabilities = Layer.effectContext(
         if (bridge === undefined) {
           return;
         }
-        pendingSshSetups.delete(sshTargetKey(target));
+        pendingSshSetups.delete(getDesktopSshRequestKey(target));
         yield* Effect.tryPromise({
           try: () => bridge.disconnectSshEnvironment(target),
           catch: (cause) =>
