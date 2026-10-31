@@ -25,6 +25,8 @@ export const ReviewCommentContextSchema = Schema.Struct({
   fenceLanguage: Schema.optional(Schema.String),
   selection: Schema.optional(ReviewCommentSelectionSchema),
   pullRequest: Schema.optional(PullRequestContextMetadata),
+  /** ISO time the comment was saved, for its card's relative time. */
+  createdAt: Schema.optional(Schema.String),
 });
 
 export interface ReviewCommentContext {
@@ -40,6 +42,7 @@ export interface ReviewCommentContext {
   readonly fenceLanguage?: string | undefined;
   readonly selection?: ReviewCommentSelection | undefined;
   readonly pullRequest?: PullRequestContextMetadata | undefined;
+  readonly createdAt?: string | undefined;
 }
 
 interface DiffReviewLine {

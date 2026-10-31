@@ -1,6 +1,10 @@
 import { useAtomCommand } from "~/state/use-atom-command";
+/**
+ * Putting labels on, and taking them off, from the row that says which it already wears. Presses
+ * only tick the boxes; the changes are sent together when the menu closes.
+ */
 import type { EnvironmentId, PullRequestLabelCandidate, PullRequestRef } from "@t3tools/contracts";
-import { CheckIcon, TagIcon } from "lucide-react";
+import { TagIcon } from "lucide-react";
 import { useState } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -14,6 +18,7 @@ import {
   toggleSelection,
 } from "@t3tools/client-runtime/pull-request-selection";
 
+import { Checkbox } from "../ui/checkbox";
 import { toastManager } from "../ui/toast";
 import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
 import { readableFailure } from "./pullRequestDetail.logic";
@@ -48,9 +53,11 @@ export function PullRequestLabelPicker({
     reportFailure: false,
   });
 
-  const candidates = (candidatesQuery.data?.candidates ?? []).filter((entry) =>
-    matches(entry, query),
-  );
+  const all = candidatesQuery.data?.candidates ?? [];
+  const candidates = all.filter((entry) => matches(entry, query));
+  const isChecked = (candidate: PullRequestLabelCandidate) =>
+    isSelected(draft, candidate.name, candidate.isApplied);
+  const appliedCount = all.filter(isChecked).length;
 
   const send = async (labels: ReadonlyArray<PullRequestLabelCandidate>, applied: boolean) => {
     for (const batch of changeBatches(labels)) await sendBatch(batch, applied);
@@ -83,6 +90,7 @@ export function PullRequestLabelPicker({
       (name, label) => latest.find((entry) => entry.name === name)?.isApplied ?? label.isApplied,
     );
     setDraft(emptySelection());
+    setQuery("");
     // Adding first keeps the Labels row from showing empty between the two writes.
     void send(add, true).then(() => send(remove, false));
   };
@@ -112,11 +120,23 @@ export function PullRequestLabelPicker({
           toggleSelection(current, candidate.name, candidate, candidate.isApplied),
         )
       }
+      footer={
+        candidatesQuery.data ? (
+          <span className="flex flex-col gap-0.5">
+            <span>{appliedCount.toLocaleString()} applied</span>
+            <span>Changes save when you close</span>
+          </span>
+        ) : null
+      }
     >
       {(candidate) => {
         const dot = pullRequestLabelColor(candidate.color);
         return (
           <>
+            {/* The row is the control; the box only shows its state. */}
+            <span aria-hidden className="pointer-events-none flex shrink-0">
+              <Checkbox checked={isChecked(candidate)} tabIndex={-1} />
+            </span>
             <span
               aria-hidden
               className="size-2 shrink-0 rounded-full bg-muted-foreground"
@@ -130,9 +150,7 @@ export function PullRequestLabelPicker({
                 </span>
               ) : null}
             </span>
-            {isSelected(draft, candidate.name, candidate.isApplied) ? (
-              <CheckIcon aria-label="Applied" className="size-3.5 shrink-0" />
-            ) : null}
+            <span className="sr-only">{isChecked(candidate) ? "Applied" : "Not applied"}</span>
           </>
         );
       }}
