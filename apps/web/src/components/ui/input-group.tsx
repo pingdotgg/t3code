@@ -3,9 +3,13 @@ import type * as React from "react";
 
 import { cn } from "~/lib/utils";
 import { Input, type InputProps } from "~/components/ui/input";
+import { createPartPresence } from "~/components/ui/part-presence";
+
+type InputGroupPart = "control" | "inline-start" | "inline-end" | "block-start" | "block-end";
+const { PartPresenceContext, useParts, usePart } = createPartPresence<InputGroupPart>();
 
 const inputGroupVariants = cva(
-  "kbd-in-control relative inline-flex w-full min-w-0 items-center rounded-[var(--control-radius)] border text-prompt text-foreground has-[textarea]:h-auto has-data-[align=block-end]:h-auto has-data-[align=block-start]:h-auto has-data-[align=block-end]:flex-col has-data-[align=block-start]:flex-col has-[input:disabled,textarea:disabled]:opacity-64 has-data-[align=inline-start]:**:[[data-size=sm]_input]:ps-1.5 has-data-[align=inline-end]:**:[[data-size=sm]_input]:pe-1.5 *:[[data-slot=input-control],[data-slot=textarea-control]]:contents *:[[data-slot=input-control],[data-slot=textarea-control]]:before:hidden has-[[data-align=block-start],[data-align=block-end]]:**:[input]:h-auto has-data-[align=inline-start]:**:[input]:ps-2 has-data-[align=inline-end]:**:[input]:pe-2 has-data-[align=block-end]:**:[input]:pt-1.5 has-data-[align=block-start]:**:[input]:pb-1.5 **:[textarea]:min-h-20.5 **:[textarea]:resize-none **:[textarea]:py-[calc(--spacing(3)-1px)] **:[textarea]:max-sm:min-h-23.5 **:[textarea_button]:rounded-[calc(var(--control-radius)-1px)]",
+  "kbd-in-control relative inline-flex w-full min-w-0 items-center rounded-[var(--control-radius)] border text-prompt text-foreground has-[textarea]:h-auto data-[parts~=block-end]:h-auto data-[parts~=block-start]:h-auto data-[parts~=block-end]:flex-col data-[parts~=block-start]:flex-col has-[input:disabled,textarea:disabled]:opacity-64 data-[parts~=inline-start]:**:[[data-size=sm]_input]:ps-1.5 data-[parts~=inline-end]:**:[[data-size=sm]_input]:pe-1.5 *:[[data-slot=input-control],[data-slot=textarea-control]]:contents *:[[data-slot=input-control],[data-slot=textarea-control]]:before:hidden data-[parts~=block-start]:**:[input]:h-auto data-[parts~=block-end]:**:[input]:h-auto data-[parts~=inline-start]:**:[input]:ps-2 data-[parts~=inline-end]:**:[input]:pe-2 data-[parts~=block-end]:**:[input]:pt-1.5 data-[parts~=block-start]:**:[input]:pb-1.5 **:[textarea]:min-h-20.5 **:[textarea]:resize-none **:[textarea]:py-[calc(--spacing(3)-1px)] **:[textarea]:max-sm:min-h-23.5 **:[textarea_button]:rounded-[calc(var(--control-radius)-1px)]",
   {
     defaultVariants: {
       variant: "default",
@@ -39,18 +43,23 @@ function InputGroup({
   size,
   ...props
 }: React.ComponentProps<"div"> & VariantProps<typeof inputGroupVariants>) {
+  // The addons and the control inside, for the styles that depend on them.
+  const [parts, registerPart] = useParts();
   return (
-    <div
-      className={cn(inputGroupVariants({ variant, size }), className)}
-      data-slot="input-group"
-      role="group"
-      {...props}
-    />
+    <PartPresenceContext value={registerPart}>
+      <div
+        className={cn(inputGroupVariants({ variant, size }), className)}
+        data-parts={parts.length > 0 ? parts.join(" ") : undefined}
+        data-slot="input-group"
+        role="group"
+        {...props}
+      />
+    </PartPresenceContext>
   );
 }
 
 const inputGroupAddonVariants = cva(
-  "[&_svg]:-mx-0.5 flex h-auto cursor-text select-none items-center justify-center gap-2 leading-none in-[[data-slot=input-group]:has([data-slot=input-control],[data-slot=textarea-control])]:[&_svg:not([class*='size-'])]:size-4.5 sm:in-[[data-slot=input-group]:has([data-slot=input-control],[data-slot=textarea-control])]:[&_svg:not([class*='size-'])]:size-4 not-has-[button]:**:[svg:not([class*='text-'])]:text-muted-foreground",
+  "[&_svg]:-mx-0.5 flex h-auto cursor-text select-none items-center justify-center gap-2 leading-none in-[[data-slot=input-group][data-parts~=control]]:[&_svg:not([class*='size-'])]:size-4.5 sm:in-[[data-slot=input-group][data-parts~=control]]:[&_svg:not([class*='size-'])]:size-4 **:[svg:not([class*='text-']):not(button_*)]:text-muted-foreground",
   {
     defaultVariants: {
       align: "inline-start",
@@ -92,6 +101,7 @@ function InputGroupAddon({
   inset,
   ...props
 }: React.ComponentProps<"div"> & VariantProps<typeof inputGroupAddonVariants>) {
+  usePart(align);
   return (
     <div
       className={cn(inputGroupAddonVariants({ align, inset }), className)}
@@ -118,6 +128,7 @@ function InputGroupAddon({
 }
 
 function InputGroupInput({ className, ...props }: InputProps) {
+  usePart("control");
   return <Input className={className} unstyled {...props} />;
 }
 

@@ -2,7 +2,7 @@ import { ChevronDownIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -16,19 +16,19 @@ export function PullRequestCompactFilterMenu<Value extends string>({
   triggerLabel,
   outlined = false,
   iconOnly = false,
+  inline = false,
   value,
   options,
   onChange,
   className,
-  labelClassName,
 }: {
   label: string;
   triggerIcon?: ReactNode;
   triggerLabel?: string;
-  /** Hides the words and chevron in a narrow column, leaving the icon. */
-  labelClassName?: string;
   outlined?: boolean;
   iconOnly?: boolean;
+  /** Plain text in a notch tab, like the Settings scope picker. */
+  inline?: boolean;
   value: Value;
   options: ReadonlyArray<PullRequestFilterOption<Value>>;
   onChange: (value: Value) => void;
@@ -42,7 +42,9 @@ export function PullRequestCompactFilterMenu<Value extends string>({
         aria-label={triggerLabel || iconOnly ? `${label}: ${current.label}` : label}
         title={iconOnly ? `${label}: ${current.label}` : undefined}
         render={
-          outlined ? (
+          inline ? (
+            <InlineButton />
+          ) : outlined ? (
             <Button variant="secondary" size={iconOnly ? "icon" : "default"} />
           ) : (
             <Button variant="ghost-muted" size="sm" />
@@ -54,12 +56,14 @@ export function PullRequestCompactFilterMenu<Value extends string>({
           <current.Icon aria-hidden className="size-4" />
         ) : (
           <>
-            {triggerIcon ?? <current.Icon aria-hidden className="size-3.5 shrink-0" />}
-            <span className={cn("truncate", labelClassName)}>{triggerLabel ?? current.label}</span>
-            <ChevronDownIcon
-              aria-hidden
-              className={cn("size-3 shrink-0 text-dim-foreground", labelClassName)}
-            />
+            {triggerIcon ?? (
+              <current.Icon aria-hidden className={cn("size-3.5 shrink-0", inline && "me-1.5")} />
+            )}
+            {/* Inline in a narrow list's notch, where it would shrink to nothing, only the icon shows. */}
+            <span className={cn("truncate", inline && "me-1.5 hidden @md/pr-list:block")}>
+              {triggerLabel ?? current.label}
+            </span>
+            <ChevronDownIcon aria-hidden className="size-3 shrink-0 text-dim-foreground" />
           </>
         )}
       </MenuTrigger>

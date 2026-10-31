@@ -10,6 +10,7 @@ import {
 import { type ThreadFindPositionReader } from "./threadFind";
 import { attachThreadFindTimeline } from "./threadFindStore";
 import { readThreadFindPosition } from "./threadFindPosition";
+import { useLayoutPane } from "../../layout/layoutPaneContext";
 
 /** Hands thread find how to read the find position of this timeline's viewport. */
 export function useThreadFindPositionReader({
@@ -37,10 +38,11 @@ export function useThreadFindPositionReader({
   readonly rows: MessagesTimelineRow[];
   readonly contentInsetEndAdjustment: number;
 }) {
+  const { focused } = useLayoutPane();
   // Layout effect so a find opened right after a thread switch reads this viewport.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches the timeline viewport's position reader to the thread find registry
   useLayoutEffect(() => {
-    if (!timelineViewportElement) return;
+    if (!focused || !timelineViewportElement) return;
     const read: ThreadFindPositionReader = (query) => {
       const foldRunIds =
         findFoldRunIds ??
@@ -90,6 +92,7 @@ export function useThreadFindPositionReader({
     return attachThreadFindTimeline({ threadKey, readPosition: read, navigate });
   }, [
     contentInsetEndAdjustment,
+    focused,
     findFoldRunIds,
     isWorking,
     navigate,

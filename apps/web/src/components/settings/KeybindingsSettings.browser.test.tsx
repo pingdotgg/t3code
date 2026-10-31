@@ -119,7 +119,9 @@ it("re-enables Save when a When editor closes on an expression it could not pars
     screen.getByRole("searchbox", { name: "Search keybindings" }),
     "Toggle terminal",
   );
-  const whenTrigger = screen.getByRole("button", { name: "Edit when clause for Toggle terminal" });
+  const whenTrigger = screen
+    .getByRole("button", { name: "Edit when clause for Toggle terminal" })
+    .first();
   const expression = screen.getByRole("textbox", { name: "When expression" });
 
   await whenTrigger.click();
