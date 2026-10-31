@@ -3,10 +3,8 @@ import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { type PendingUserInput } from "../../session-logic";
-import {
-  derivePendingUserInputProgress,
-  type PendingUserInputDraftAnswer,
-} from "../../pendingUserInput";
+import type { PendingUserInputDraftAnswer } from "@t3tools/client-runtime/state/pending-user-input";
+import { derivePendingUserInputProgress } from "../../pendingUserInput";
 import { CheckboxMark } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Kbd } from "../ui/kbd";
@@ -195,7 +193,11 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         className="px-4 pt-1.5"
       >
         <ComposerBanner.Content>
-          <span className="shrink-0 text-muted-foreground">{activeQuestion.header}</span>
+          <span
+            className={cn("min-w-0 truncate text-muted-foreground", isCollapsed && "max-w-1/2")}
+          >
+            {activeQuestion.header}
+          </span>
           {isCollapsed ? (
             <>
               <ComposerBanner.Separator />

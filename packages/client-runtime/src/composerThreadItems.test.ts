@@ -46,11 +46,36 @@ it("ranks thread mentions like the palette and leaves out subagent threads", () 
       shell("other-environment", "Model docs", { environmentId: EnvironmentId.make("env-other") }),
     ],
     environmentId,
+    linkedEnvironments: new Map(),
     excludeThreadId: null,
     query: "model",
     now: Date.parse("2026-10-23T00:00:00.000Z"),
   });
   expect(items.map((item) => item.thread.threadId)).toEqual(["word", "newer-mid-word"]);
+});
+
+it("also offers threads on linked machines, naming the machine, but no other machine's", () => {
+  const vps = EnvironmentId.make("env-vps");
+  const items = matchComposerThreadItems({
+    shells: [
+      shell("here", "Deploy script"),
+      shell("there", "Deploy script", { environmentId: vps }),
+      shell("unlinked", "Deploy notes", { environmentId: EnvironmentId.make("env-unlinked") }),
+    ],
+    environmentId,
+    linkedEnvironments: new Map([[vps, "Hetzner VPS"]]),
+    excludeThreadId: null,
+    query: "deploy",
+    now: Date.parse("2026-10-23T00:00:00.000Z"),
+  });
+  expect(items.map(({ thread, label, description }) => ({ thread, label, description }))).toEqual([
+    { thread: { environmentId, threadId: "here" }, label: "Deploy script", description: "Thread" },
+    {
+      thread: { environmentId: vps, threadId: "there" },
+      label: "Deploy script",
+      description: "Thread on Hetzner VPS",
+    },
+  ]);
 });
 
 describe("matchComposerEnvironmentItems", () => {

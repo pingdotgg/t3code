@@ -121,7 +121,7 @@
     "react-dom": "catalog:",
     "react-native": "0.88.0",
     "react-native-blob-util": "0.25.1",
-    "react-native-enriched-markdown": "file:deps/react-native-enriched-markdown-1.2.0-t3.16-558767d9.tgz",
+    "react-native-enriched-markdown": "file:deps/react-native-enriched-markdown-1.2.0-t3.16-29ddd424.tgz",
     "react-native-gesture-handler": "~3.3.0",
     "react-native-image-viewing": "^0.2.2",
     "react-native-keyboard-controller": "1.22.8",
