@@ -411,6 +411,11 @@ export interface AcpAdapterV2Flavor {
   readonly terminateRuntimeProcessGroupOnInterrupt?: boolean;
   readonly preserveRuntimeOnSettledInterrupt?: boolean;
   readonly enablePostSettleContinuation?: boolean;
+  /**
+   * The agent keeps a native turn running after `session/prompt` resolves: any post-settle
+   * output offers a continuation, and a continuation stays open while a foreground tool runs.
+   */
+  readonly ownsNativeTurnAfterPrompt?: boolean;
   /** Settle on native idle after the accepted user echo, only on negotiated ACP v2. */
   readonly followAgentWorkState?: boolean;
   /**
@@ -3415,12 +3420,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             acpSubagentStatusBlocksTurnSettlement(subagent.task.status),
           );
 
+        // Only consulted once the prompt settled, so a prompt response still ends its turn.
+        const holdsDeferredFinalize = (context: ActiveAcpTurn): boolean => {
+          if (hasDeferredBackgroundWork(context)) return true;
+          if (flavor.ownsNativeTurnAfterPrompt !== true) return false;
+          for (const tool of context.tools.values()) {
+            if (acpCompletedTurnShouldTerminalizeTool(tool, { ...flavor, extractSubagentUpdate })) {
+              return true;
+            }
+          }
+          return false;
+        };
+
         const rearmDeferredFinalize =
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(function* (context: ActiveAcpTurn) {
             if (!flavor.deferFinalizeForBackgroundWork) return;
             if (!context.promptSettled || context.finalized) return;
-            if (hasDeferredBackgroundWork(context)) return;
+            if (holdsDeferredFinalize(context)) return;
             yield* scheduleDeferredFinalize(context);
           });
 
@@ -4413,7 +4430,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* Ref.update(wakeBuffer, (current) => [...current, notification]);
             buffered = true;
           }
-          if (!acpPostSettleContinuationOfferEvidence(notification, flavor)) {
+          if (
+            flavor.ownsNativeTurnAfterPrompt !== true &&
+            !acpPostSettleContinuationOfferEvidence(notification, flavor)
+          ) {
             return {
               buffered,
               offerContinuation: false,
@@ -7295,7 +7315,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         scheduleDeferredFinalize = Effect.fn("scheduleDeferredFinalize")(function* (context) {
           if (!flavor.deferFinalizeForBackgroundWork) return;
           if (!context.promptSettled || context.finalized || context.interrupted) return;
-          if (hasDeferredBackgroundWork(context)) return;
+          if (holdsDeferredFinalize(context)) return;
           context.backgroundFinalizeGeneration += 1;
           const generation = context.backgroundFinalizeGeneration;
           yield* Effect.gen(function* () {
@@ -7307,7 +7327,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ) {
               return;
             }
-            if (hasDeferredBackgroundWork(context)) return;
+            if (holdsDeferredFinalize(context)) return;
             const status = context.promptSettledStatus ?? "completed";
             yield* finalizeTurn(context, status);
           }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);

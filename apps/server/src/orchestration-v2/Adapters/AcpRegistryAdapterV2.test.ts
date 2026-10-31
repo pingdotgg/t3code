@@ -19,6 +19,7 @@ import * as Fiber from "effect/Fiber";
 import * as DateTime from "effect/DateTime";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -199,6 +200,34 @@ const claudeFrames = {
     frame: { kind: "response", method: "session/close", result: {} },
   },
 };
+
+const MINIMAX_ROOT_SESSION = "minimax-session";
+
+/** MiniMax Code (@minimax-ai/code 0.2.7, ACP v1) resolves its prompt and keeps a native turn running. */
+const minimaxResolvedPrompt = [
+  { type: "expect_outbound", frame: { kind: "request", method: "initialize", params: "<any>" } },
+  {
+    type: "emit_inbound",
+    frame: {
+      kind: "response",
+      method: "initialize",
+      result: { protocolVersion: 1, agentCapabilities: { loadSession: false }, authMethods: [] },
+    },
+  },
+  { type: "expect_outbound", frame: { kind: "request", method: "session/new", params: "<any>" } },
+  {
+    type: "emit_inbound",
+    frame: { kind: "response", method: "session/new", result: { sessionId: MINIMAX_ROOT_SESSION } },
+  },
+  {
+    type: "expect_outbound",
+    frame: { kind: "request", method: "session/prompt", params: "<any>" },
+  },
+  {
+    type: "emit_inbound",
+    frame: { kind: "response", method: "session/prompt", result: { stopReason: "end_turn" } },
+  },
+];
 
 const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   entries: ReadonlyArray<unknown>,
@@ -1988,48 +2017,12 @@ describe("AcpRegistryAdapterV2", () => {
     "offers a continuation for MiniMax Code work that streams after its prompt resolves",
     () =>
       Effect.gen(function* () {
-        const session = "minimax-session";
+        const session = MINIMAX_ROOT_SESSION;
         const { update } = claudeFrames;
         const gate = makeProviderReplayGate(["late"]);
         const minimax = yield* openClaudeReplaySession(
           [
-            {
-              type: "expect_outbound",
-              frame: { kind: "request", method: "initialize", params: "<any>" },
-            },
-            {
-              type: "emit_inbound",
-              frame: {
-                kind: "response",
-                method: "initialize",
-                result: {
-                  protocolVersion: 1,
-                  agentCapabilities: { loadSession: false },
-                  authMethods: [],
-                },
-              },
-            },
-            {
-              type: "expect_outbound",
-              frame: { kind: "request", method: "session/new", params: "<any>" },
-            },
-            {
-              type: "emit_inbound",
-              frame: { kind: "response", method: "session/new", result: { sessionId: session } },
-            },
-            {
-              type: "expect_outbound",
-              frame: { kind: "request", method: "session/prompt", params: "<any>" },
-            },
-            {
-              type: "emit_inbound",
-              frame: {
-                kind: "response",
-                method: "session/prompt",
-                result: { stopReason: "end_turn" },
-              },
-            },
-            // MiniMax keeps working in a native turn of its own after resolving the prompt.
+            ...minimaxResolvedPrompt,
             {
               ...update(session, {
                 sessionUpdate: "agent_thought_chunk",
@@ -2075,6 +2068,188 @@ describe("AcpRegistryAdapterV2", () => {
         if (reply.type !== "message.updated") throw new Error("Missing late reply");
         assert.equal(reply.message.runId, minimax.turnInput(2).runId);
       }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("offers a continuation for MiniMax Code thoughts and running tools alone", () =>
+    Effect.gen(function* () {
+      const { update } = claudeFrames;
+      const gate = makeProviderReplayGate(["late"]);
+      const minimax = yield* openClaudeReplaySession(
+        [
+          ...minimaxResolvedPrompt,
+          {
+            ...update(MINIMAX_ROOT_SESSION, {
+              sessionUpdate: "agent_thought_chunk",
+              content: { type: "text", text: "Running the checks." },
+            }),
+            label: "late",
+          },
+          update(MINIMAX_ROOT_SESSION, {
+            sessionUpdate: "tool_call",
+            toolCallId: "late-check",
+            title: "Run tests",
+            kind: "execute",
+            status: "in_progress",
+          }),
+          update(MINIMAX_ROOT_SESSION, {
+            sessionUpdate: "session_info_update",
+            title: "late output sent",
+          }),
+        ],
+        gate,
+        true,
+        "minimax-code",
+      );
+      yield* minimax.runtime.startTurn(minimax.turnInput(1));
+      assert.equal((yield* minimax.terminal).status, "completed");
+      gate.release("late");
+      yield* minimax.throughMarker("late output sent");
+      assert.lengthOf(minimax.offers, 1, "a busy MiniMax turn must not look idle");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  const openMiniMaxContinuationWithRunningTool = Effect.fn(
+    "openMiniMaxContinuationWithRunningTool",
+  )(function* (afterToolStarts: ReadonlyArray<unknown>, labels: ReadonlyArray<string>) {
+    const { update } = claudeFrames;
+    const gate = makeProviderReplayGate(["late", "tool", ...labels]);
+    const minimax = yield* openClaudeReplaySession(
+      [
+        ...minimaxResolvedPrompt,
+        {
+          ...update(MINIMAX_ROOT_SESSION, {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Running the checks." },
+          }),
+          label: "late",
+        },
+        update(MINIMAX_ROOT_SESSION, {
+          sessionUpdate: "session_info_update",
+          title: "late output sent",
+        }),
+        {
+          ...update(MINIMAX_ROOT_SESSION, {
+            sessionUpdate: "tool_call",
+            toolCallId: "check",
+            title: "Run tests",
+            kind: "execute",
+            status: "in_progress",
+          }),
+          label: "tool",
+        },
+        update(MINIMAX_ROOT_SESSION, {
+          sessionUpdate: "session_info_update",
+          title: "tool running",
+        }),
+        ...afterToolStarts,
+      ],
+      gate,
+      true,
+      "minimax-code",
+    );
+    yield* minimax.runtime.startTurn(minimax.turnInput(1));
+    assert.equal((yield* minimax.terminal).status, "completed");
+    gate.release("late");
+    yield* minimax.throughMarker("late output sent");
+    assert.lengthOf(minimax.offers, 1);
+    yield* minimax.offers[0]!.dispatchIfCurrent!(Effect.void);
+    yield* minimax.runtime.startTurn(minimax.turnInput(2, { continuation: true }));
+    const started = yield* minimax.until(
+      (event) =>
+        event.type === "message.updated" &&
+        event.message.runId === minimax.turnInput(2).runId &&
+        event.message.text.includes("Running the checks."),
+    );
+    gate.release("tool");
+    const running = [...started, ...(yield* minimax.throughMarker("tool running"))];
+    const providerTurn = running.findLast((event) => event.type === "provider_turn.updated");
+    if (providerTurn?.type !== "provider_turn.updated") throw new Error("Missing continuation");
+    return { minimax, gate, running, providerTurnId: providerTurn.providerTurn.id };
+  });
+
+  const isCheckTool = (event: ProviderAdapter.ProviderAdapterV2Event, status: string) =>
+    event.type === "turn_item.updated" &&
+    event.turnItem.nativeItemRef?.nativeId === "check" &&
+    event.turnItem.status === status;
+
+  it.effect(
+    "keeps a MiniMax Code continuation open while its tool runs past the quiet window",
+    () =>
+      Effect.gen(function* () {
+        const { update } = claudeFrames;
+        const { minimax, gate, running } = yield* openMiniMaxContinuationWithRunningTool(
+          [
+            {
+              ...update(MINIMAX_ROOT_SESSION, {
+                sessionUpdate: "session_info_update",
+                title: "before completion",
+              }),
+              label: "done",
+            },
+            update(MINIMAX_ROOT_SESSION, {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "check",
+              status: "completed",
+            }),
+            update(MINIMAX_ROOT_SESSION, {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "Checks passed." },
+            }),
+            update(MINIMAX_ROOT_SESSION, {
+              sessionUpdate: "session_info_update",
+              title: "tool done",
+            }),
+          ],
+          ["done"],
+        );
+        assert.isTrue(running.some((event) => isCheckTool(event, "running")));
+        yield* TestClock.adjust("10 seconds");
+        gate.release("done");
+        const quiet = [...running, ...(yield* minimax.throughMarker("before completion"))];
+        assert.isFalse(
+          quiet.some((event) => event.type === "turn.terminal"),
+          "a running tool keeps the continuation run open",
+        );
+        assert.isFalse(
+          quiet.some((event) => isCheckTool(event, "completed")),
+          "a running tool must not be shown completed",
+        );
+        const done = yield* minimax.throughMarker("tool done");
+        assert.isTrue(done.some((event) => isCheckTool(event, "completed")));
+        assert.isFalse(done.some((event) => event.type === "turn.terminal"));
+        yield* TestClock.adjust("3 seconds");
+        const terminal = yield* minimax.terminal;
+        assert.equal(terminal.status, "completed");
+        assert.equal(terminal.runOrdinal, 2);
+        assert.lengthOf(minimax.offers, 1, "the tool's completion must not start another run");
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("stops a MiniMax Code continuation whose tool never finishes", () =>
+    Effect.gen(function* () {
+      const { update } = claudeFrames;
+      const { minimax, providerTurnId } = yield* openMiniMaxContinuationWithRunningTool(
+        [
+          {
+            type: "expect_outbound",
+            frame: { kind: "notification", method: "session/cancel", params: "<any>" },
+          },
+          update(MINIMAX_ROOT_SESSION, {
+            sessionUpdate: "session_info_update",
+            title: "cancel received",
+          }),
+        ],
+        [],
+      );
+      yield* minimax.runtime.interruptTurn({
+        providerThread: minimax.providerThread,
+        providerTurnId,
+      });
+      const stopped = yield* minimax.terminal;
+      assert.equal(stopped.status, "interrupted");
+      assert.equal(stopped.runOrdinal, 2);
+      yield* minimax.throughMarker("cancel received");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("fails active Claude work and releases its children when the process exits", () =>

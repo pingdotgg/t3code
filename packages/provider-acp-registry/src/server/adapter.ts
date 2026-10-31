@@ -229,7 +229,11 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
       : {}),
     // MiniMax Code keeps working in a native turn after it resolves `session/prompt`.
     ...(registryAgentId === "minimax-code"
-      ? { deferFinalizeForBackgroundWork: true, enablePostSettleContinuation: true }
+      ? {
+          deferFinalizeForBackgroundWork: true,
+          enablePostSettleContinuation: true,
+          ownsNativeTurnAfterPrompt: true,
+        }
       : {}),
     ...(isClaude
       ? {
