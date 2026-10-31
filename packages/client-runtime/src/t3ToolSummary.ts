@@ -392,12 +392,16 @@ export function summarizeT3ToolCalls(
       label = phrase("Linked", "link", quantity(selected.length, "pull request"));
       break;
     case "unlink-pr": {
-      const count = selected.reduce(
-        (sum, call) =>
-          sum + (typeof call.output?.unlinkedCount === "number" ? call.output.unlinkedCount : 1),
-        0,
-      );
-      label = phrase("Unlinked", "unlink", quantity(count, "pull request"));
+      let count = 0;
+      let countKnown = true;
+      for (const call of selected) {
+        if (typeof call.output?.unlinkedCount === "number") count += call.output.unlinkedCount;
+        // A batch result too large to compact loses its count, so the label drops the number.
+        else if (Array.isArray(call.input?.states)) countKnown = false;
+        else count += 1;
+      }
+      const object = countKnown ? quantity(count, "pull request") : "pull requests";
+      label = phrase("Unlinked", "unlink", object);
       break;
     }
     case "watch-pr":
