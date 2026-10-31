@@ -135,6 +135,7 @@ export function PullRequestChecksPopover({
   reference,
   threadRef = null,
   variant = "icon",
+  label,
   className,
   render,
 }: {
@@ -145,6 +146,8 @@ export function PullRequestChecksPopover({
   reference?: PullRequestRef;
   threadRef?: ScopedThreadRef | null;
   variant?: "icon" | "count";
+  /** Words beside the icon, for a listing row that states its status rather than only showing it. */
+  label?: React.ReactNode;
   className?: string;
   render?: React.ReactElement;
 }) {
@@ -172,13 +175,25 @@ export function PullRequestChecksPopover({
             <span
               role="button"
               tabIndex={0}
-              className={cn("inline-flex shrink-0 cursor-pointer items-center", className)}
+              className={cn(
+                "inline-flex shrink-0 cursor-pointer items-center",
+                // A labelled trigger truncates before the row time beside it is cut off.
+                label !== undefined && "min-w-0 shrink gap-1.25",
+                className,
+              )}
             />
           )
         }
         onClick={(event) => event.stopPropagation()}
       >
-        <presentation.Icon aria-hidden className={cn("size-3.5", presentation.toneClassName)} />
+        <presentation.Icon
+          aria-hidden
+          className={cn(
+            label === undefined ? "size-3.5" : "size-3 shrink-0",
+            presentation.toneClassName,
+          )}
+        />
+        {label !== undefined && variant === "icon" ? label : null}
         {variant === "count" ? (
           <>
             {checks !== undefined && incompleteCount > 0 ? (

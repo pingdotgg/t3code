@@ -5,7 +5,14 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
-import { FolderGit2Icon, FolderGitIcon, FolderIcon, PlusIcon, ScaleIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  FolderGit2Icon,
+  FolderGitIcon,
+  FolderIcon,
+  PlusIcon,
+  ScaleIcon,
+} from "lucide-react";
 import {
   type Ref,
   type MouseEvent as ReactMouseEvent,
@@ -45,7 +52,6 @@ import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
   THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
-  THREAD_DETAILS_PANEL_META_CLASS,
 } from "./chat/threadDetailsPanelStyles";
 import { ComposerControl } from "./chat/ComposerControl";
 import {
@@ -196,7 +202,7 @@ const RunContextSelector = memo(function RunContextSelector({
         ? resolveEnvModeLabel("worktree")
         : resolveCurrentWorkspaceLabel(activeWorktreePath);
   const isPanel = displayMode === "panel";
-  const isLocked = envLocked || (envModeLocked && (!isPanel || !showEnvironmentPicker));
+  const isLocked = !isPanel && (envLocked || envModeLocked);
   const workspacePath =
     forceNewWorktree || (effectiveEnvMode === "worktree" && !activeWorktreePath)
       ? null
@@ -262,22 +268,6 @@ const RunContextSelector = memo(function RunContextSelector({
             ? (activeEnvironment?.label ?? "Run on")
             : workspaceLabel)}
       </ComposerContextLabel>
-      {isPanel ? (
-        <Tooltip>
-          <TooltipTrigger render={<span className={THREAD_DETAILS_PANEL_META_CLASS} />}>
-            {forceNewWorktree || effectiveEnvMode === "worktree"
-              ? "New worktree"
-              : activeWorktreePath
-                ? "Worktree"
-                : "Local"}
-          </TooltipTrigger>
-          <TooltipPopup>
-            {forceNewWorktree
-              ? "Each model starts in its own worktree."
-              : (workspacePath ?? workspaceLabel)}
-          </TooltipPopup>
-        </Tooltip>
-      ) : null}
     </>
   );
 
@@ -305,7 +295,7 @@ const RunContextSelector = memo(function RunContextSelector({
   return (
     <Menu>
       <MenuTrigger
-        render={isPanel ? <ThreadDetailsControl part="choice" /> : <ComposerControl size="xs" />}
+        render={isPanel ? <ThreadDetailsControl /> : <ComposerControl size="xs" />}
         className={isPanel ? undefined : "min-w-0 max-w-[48%] flex-initial justify-start"}
         onContextMenu={handleContextMenu}
         onMouseDownCapture={
@@ -327,6 +317,9 @@ const RunContextSelector = memo(function RunContextSelector({
         ].join(" ")}
       >
         {triggerContent}
+        {isPanel ? (
+          <ChevronDownIcon className="ms-auto size-3.5 shrink-0 text-muted-foreground" />
+        ) : null}
       </MenuTrigger>
       <MenuPopup
         align="start"
@@ -340,6 +333,14 @@ const RunContextSelector = memo(function RunContextSelector({
         }
         {...(!isPanel ? composerFloatingLayerProps : {})}
       >
+        {isPanel && workspacePath ? (
+          <MenuGroup>
+            <MenuGroupLabel>{activeEnvironment?.label ?? "Environment"}</MenuGroupLabel>
+            <div className="px-2 py-1 text-caption text-muted-foreground break-all">
+              {workspacePath}
+            </div>
+          </MenuGroup>
+        ) : null}
         {availableEnvironments &&
         ((showEnvironmentPicker && onEnvironmentChange) || addTargets.length > 0) ? (
           <>
