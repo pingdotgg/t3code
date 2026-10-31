@@ -244,9 +244,24 @@ const advanceIdleClock = Effect.gen(function* () {
 });
 
 it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
-  it.effect("cancels an in-flight session creation before prompting", () =>
+  it.effect("cancels or times out an in-flight session creation before prompting", () =>
     withOpenCodeTextGeneration(EXISTING_SERVER_OPENCODE_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
+        const timedOut = yield* Deferred.make<AbortSignal | undefined>();
+        runtimeMock.state.onSessionCreate = (signal) => {
+          Deferred.doneUnsafe(timedOut, Effect.succeed(signal));
+          return new Promise<never>(() => {});
+        };
+        const timedOutFiber = yield* textGeneration
+          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+          .pipe(Effect.forkChild);
+        const timedOutSignal = yield* Deferred.await(timedOut);
+        yield* TestClock.adjust(Duration.minutes(3));
+        const timeoutError = yield* Fiber.join(timedOutFiber).pipe(Effect.flip);
+        expect(timeoutError).toBeInstanceOf(TextGenerationError);
+        expect(timeoutError.detail).toBe("OpenCode did not finish generating in time.");
+        expect(timedOutSignal?.aborted).toBe(true);
+
         const started = yield* Deferred.make<AbortSignal | undefined>();
         runtimeMock.state.onSessionCreate = (signal) => {
           Deferred.doneUnsafe(started, Effect.succeed(signal));
@@ -381,29 +396,6 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
         expect(error.detail).toBe("OpenCode did not finish generating in time.");
         expect(signal?.aborted).toBe(true);
         expect(sessionAborts).toBe(1);
-      }),
-    ),
-  );
-
-  it.effect("gives up when session creation never settles", () =>
-    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
-      Effect.gen(function* () {
-        const started = yield* Deferred.make<AbortSignal | undefined>();
-        runtimeMock.state.onSessionCreate = (signal) => {
-          Deferred.doneUnsafe(started, Effect.succeed(signal));
-          return new Promise<never>(() => {});
-        };
-        const fiber = yield* textGeneration
-          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
-          .pipe(Effect.forkChild);
-        const signal = yield* Deferred.await(started);
-        yield* TestClock.adjust(Duration.minutes(3));
-
-        const error = yield* Fiber.join(fiber).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(TextGenerationError);
-        expect(error.detail).toBe("OpenCode did not finish generating in time.");
-        expect(signal?.aborted).toBe(true);
-        expect(runtimeMock.state.promptUrls).toEqual([]);
       }),
     ),
   );
