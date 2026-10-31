@@ -44,6 +44,10 @@ vi.mock(import("../../state/environments"), async (original) => ({
   ...(await original()),
   useEnvironmentProviders: () => new Map(),
 }));
+vi.mock(import("./SettingsModelPicker"), async (original) => ({
+  ...(await original()),
+  SettingsModelPicker: (() => null) as never,
+}));
 vi.mock(import("./settingsLayout"), async (original) => ({
   ...(await original()),
   SettingsRow: ({ title, control, resetAction, children }) => (

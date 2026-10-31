@@ -2274,6 +2274,11 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   ),
   lastTitleRegeneration: Schema.optional(Schema.NullOr(OrchestrationV2LastTitleRegeneration)),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
+  /**
+   * Settled user and assistant messages. Only the archived shell snapshot
+   * fills it (Settings › Archive); live shells omit it.
+   */
+  messageCount: Schema.optional(NonNegativeInt),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
 
