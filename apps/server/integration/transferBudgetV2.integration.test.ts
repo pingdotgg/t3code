@@ -377,7 +377,7 @@ it.live("reports V2 thread HTTP and WebSocket transfer budgets", () =>
           const reconnectThread = { ...resumedThread.recorder.totals(), mode: threadMode };
           const reconnectShell = { ...resumedShell.recorder.totals(), mode: shellMode };
           const reconnectSqlStatements = counter.count() - reconnectSqlStart;
-          assert.equal(threadMode, "snapshot");
+          assert.equal(threadMode, "replay");
 
           for (const events of longTurnThreadBatches(provider)) yield* sink.write({ events });
           const get = (path: string) =>
