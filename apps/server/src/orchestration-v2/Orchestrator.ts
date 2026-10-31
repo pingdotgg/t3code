@@ -4233,8 +4233,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (threadHasUnfinishedWork(projection)) return yield* reject("still has work in progress.");
       if (thread.projectId === command.projectId) return;
       const target = yield* projects.get(command.projectId).pipe(mapDispatchError(command));
-      if (Option.isNone(target) || target.value.deletedAt !== null || target.value.archivedAt !== null) {
-        return yield* reject(`cannot move to missing project ${command.projectId}.`);
+      if (
+        Option.isNone(target) ||
+        target.value.deletedAt !== null ||
+        target.value.archivedAt !== null
+      ) {
+        return yield* reject(`cannot move to missing or archived project ${command.projectId}.`);
+      }
+      const current = yield* projects.get(thread.projectId).pipe(mapDispatchError(command));
+      if (
+        thread.worktreePath === null &&
+        (Option.isNone(current) || current.value.workspaceRoot !== target.value.workspaceRoot)
+      ) {
+        return yield* reject(`uses a different workspace root from project ${command.projectId}.`);
       }
       const now = yield* DateTime.now;
       yield* emit(
@@ -13370,6 +13381,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "thread.interrupt.unresponsive" ||
           command.type === "thread.stop" ||
           command.type === "subagent.stop" ||
+          command.type === "thread.project.move" ||
           // Closing a share again, or after it ended, is not an error.
           command.type === "thread.guest-share.close" ||
           (command.type === "thread.delete" && command.onlyIfUnused === true),
