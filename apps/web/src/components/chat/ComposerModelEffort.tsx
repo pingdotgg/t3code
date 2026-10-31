@@ -111,7 +111,13 @@ export function describeComposerEffort(
   return {
     detail: display.label,
     suffix: (
-      <span className="-ms-0.5 flex shrink-0 items-center gap-1.5 text-muted-foreground group-hover/model-trigger:text-foreground group-data-pressed/model-trigger:text-foreground group-data-popup-open/model-trigger:text-foreground">
+      <span
+        className={cn(
+          "flex shrink-0 items-center gap-1.5 text-muted-foreground group-hover/model-trigger:text-foreground group-data-pressed/model-trigger:text-foreground group-data-popup-open/model-trigger:text-foreground",
+          // A word space after the model name: the regular trigger's gap is wider than one.
+          size === "sm" && "-ms-0.5",
+        )}
+      >
         {word !== null ? (
           <span data-composer-control-label>{word}</span>
         ) : glyph ? (
