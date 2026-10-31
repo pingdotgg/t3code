@@ -38,14 +38,8 @@ export function canRunPluginActionsNow(environmentId: EnvironmentId): boolean {
   return readEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
 }
 
-/**
- * Runs a plugin action in the environment that listed it and reports the
- * outcome in a toast. The environment and target are fixed when the user
- * picks the action, so a later navigation cannot redirect it. The grant is
- * read when the action runs, not when it was offered, so a palette entry
- * picked after the grant changed is refused. Resolves `true` only when the
- * plugin ran the action.
- */
+// Execution fixes the picked environment and target, then checks the live grant before running.
+// Only a completed action returns true; interruptions do not show an error toast.
 export async function runPluginAction(input: {
   readonly environmentId: EnvironmentId;
   readonly action: PluginAction;
