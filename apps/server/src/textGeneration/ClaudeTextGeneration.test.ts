@@ -468,6 +468,14 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
       apiError,
     ],
     ["stderr when stdout has no error", "not json", wrapperNotice],
+    [
+      "a stdout error naming --no-session-persistence without retrying",
+      JSON.stringify({
+        is_error: true,
+        result: "error: unknown option '--no-session-persistence'",
+      }),
+      "error: unknown option '--no-session-persistence'",
+    ],
   ] as const)("reports %s when the Claude CLI fails", ([, output, expected]) =>
     withFakeClaudeEnv({ output, stderr: wrapperNotice, exitCode: 1 }, (textGeneration) =>
       Effect.gen(function* () {
