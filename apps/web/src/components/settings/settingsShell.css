@@ -9,3 +9,7 @@
 :root[data-theme-id] [data-settings-nav] {
   --sidebar: var(--background);
 }
+
+:root[data-theme-id] [data-app-modal] {
+  --app-panel-fill: var(--popover);
+}
