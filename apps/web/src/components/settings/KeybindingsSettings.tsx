@@ -938,12 +938,12 @@ function KeybindingHoverRowMenu(props: {
 }
 
 /**
- * Fixed subgrid tracks prevent column shifts while editing. Extra row actions share the tail;
+ * Fixed row tracks prevent column shifts while editing. Extra row actions share the tail;
  * narrow containers move Command above Keys and When and hide the header visually.
  */
 const KEYBINDING_TABLE_GRID =
   "grid grid-cols-[minmax(0,1fr)_150px_140px] items-center gap-x-4 @max-lg/keybindings:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]";
-const KEYBINDING_TABLE_ROW = "col-span-full grid grid-cols-subgrid items-center gap-y-1 px-4";
+const KEYBINDING_TABLE_ROW = `${KEYBINDING_TABLE_GRID} gap-y-1 px-4`;
 const KEYBINDING_TABLE_COMMAND = "min-w-0 @max-lg/keybindings:col-span-full";
 const KEYBINDING_TABLE_TAIL = "flex min-w-0 items-center gap-1";
 
@@ -984,7 +984,10 @@ function KeybindingSettingsRow(props: KeybindingRowProps & { activate: boolean }
       role="row"
       data-keybinding-row={row.id}
       onFocusCapture={() => setFocused(true)}
-      className={cn(KEYBINDING_TABLE_ROW, "group/row min-h-9.5 py-1 outline-none")}
+      className={cn(
+        KEYBINDING_TABLE_ROW,
+        "group/row min-h-9.5 py-1 outline-none [content-visibility:auto] [contain-intrinsic-size:auto_38px]",
+      )}
     >
       <span role="cell" tabIndex={active ? undefined : 0} className={KEYBINDING_TABLE_COMMAND}>
         {title}
@@ -1063,7 +1066,10 @@ function EditableKeybindingSettingsRow(
     <SettingsSearchTarget
       id={anchorId}
       role="row"
-      className={cn(KEYBINDING_TABLE_ROW, "group/row min-h-9.5 py-1 outline-none")}
+      className={cn(
+        KEYBINDING_TABLE_ROW,
+        "group/row min-h-9.5 py-1 outline-none [content-visibility:auto] [contain-intrinsic-size:auto_38px]",
+      )}
     >
       <span role="cell" className={KEYBINDING_TABLE_COMMAND}>
         <KeybindingRowTitle row={row} />
@@ -1399,10 +1405,7 @@ function KeybindingsList(props: KeybindingsListProps) {
             ref={tableRef}
             role="table"
             aria-label="Shortcuts"
-            className={cn(
-              KEYBINDING_TABLE_GRID,
-              "[&>*+*]:border-t [&>*+*]:border-divider dark:[&>*+*]:border-divider/60",
-            )}
+            className={cn("[&>*+*]:border-t [&>*+*]:border-divider dark:[&>*+*]:border-divider/60")}
           >
             <KeybindingTableHead />
             {isAddingBinding ? <NewKeybindingSettingsRow {...newProps} /> : null}
