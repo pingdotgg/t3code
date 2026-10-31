@@ -88,6 +88,19 @@ export function resolveEnvironmentProjectMatch(
   );
 }
 
+/** Both projects have a known repository identity, and it is the same one. */
+export function isSameRepository(
+  left: EnvironmentProject | null,
+  right: EnvironmentProject | null,
+): boolean {
+  return (
+    left?.repositoryIdentity != null &&
+    right?.repositoryIdentity != null &&
+    repositoryGroupingKeyOf(left.repositoryIdentity) ===
+      repositoryGroupingKeyOf(right.repositoryIdentity)
+  );
+}
+
 export function resolveDraftProjectSelection(
   selectedProjectKey: string | null,
   projects: ReadonlyArray<EnvironmentProject>,

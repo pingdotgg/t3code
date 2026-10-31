@@ -93,7 +93,7 @@ import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
-import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
+import { isSameRepository, resolveEnvironmentProjectMatch } from "./new-task-project-selection";
 import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 import {
@@ -561,11 +561,14 @@ export function NewTaskFlowProvider(
     replaceComposerDraftAttachments(selectedProjectDraftKey, []);
   };
 
-  const carryDraftContentTo = (project: EnvironmentProject): string => {
+  const carryDraftContentTo = (
+    project: EnvironmentProject,
+    options?: Parameters<typeof retargetNewTaskDraft>[2],
+  ): string => {
     const target = { environmentId: project.environmentId, projectId: project.id };
     const current = readFlow().draftKey;
     if (current !== null && isNewTaskDraftKey(current)) {
-      retargetNewTaskDraft(current, target);
+      retargetNewTaskDraft(current, target, options);
       return current;
     }
     return createNewTaskDraft(target);
@@ -585,7 +588,12 @@ export function NewTaskFlowProvider(
       selectedProject,
     );
     updateFlow({
-      draftKey: match ? carryDraftContentTo(match) : readFlow().draftKey,
+      // A name or title match may be another repository, which must not receive the PR checkout.
+      draftKey: match
+        ? carryDraftContentTo(match, {
+            keepPullRequestWorkspace: isSameRepository(match, selectedProject),
+          })
+        : readFlow().draftKey,
       environmentId,
       projectKey: match ? scopedProjectKey(match.environmentId, match.id) : null,
     });

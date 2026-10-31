@@ -1890,7 +1890,7 @@ describe("mobile composer drafts", () => {
     expect(getComposerDraftSnapshot(second).text).toBe("second idea");
   });
 
-  it("retargets a new-task draft to another project without losing its text", () => {
+  it("retargets a new-task draft to another project, keeping only a pull request workspace", () => {
     const from = {
       environmentId: EnvironmentId.make("environment-1"),
       projectId: ProjectId.make("project-1"),
@@ -1911,7 +1911,7 @@ describe("mobile composer drafts", () => {
     });
     const createdAt = getComposerDraftSnapshot(key).project?.createdAt;
 
-    retargetNewTaskDraft(key, to);
+    retargetNewTaskDraft(key, to, { keepPullRequestWorkspace: true });
 
     const moved = getComposerDraftSnapshot(key);
     expect(moved.text).toBe("moving house");
@@ -1921,6 +1921,21 @@ describe("mobile composer drafts", () => {
     expect(moved.project).toEqual({ ...to, createdAt });
     expect(findNewTaskDraftKeys(appAtomRegistry.get(composerDraftsAtom), from)).toEqual([]);
     expect(findNewTaskDraftKeys(appAtomRegistry.get(composerDraftsAtom), to)).toEqual([key]);
+
+    const pullRequestSelection = {
+      mode: "worktree" as const,
+      branch: "feature/pr-head",
+      worktreePath: null,
+      startFromOrigin: false,
+      pullRequestReference: "https://github.com/acme/repo/pull/42",
+    };
+    updateComposerDraftSettings(key, { workspaceSelection: pullRequestSelection });
+    retargetNewTaskDraft(key, from, { keepPullRequestWorkspace: true });
+    expect(getComposerDraftSnapshot(key).workspaceSelection).toEqual(pullRequestSelection);
+    retargetNewTaskDraft(key, to, { keepPullRequestWorkspace: true });
+    expect(getComposerDraftSnapshot(key).workspaceSelection).toEqual(pullRequestSelection);
+    retargetNewTaskDraft(key, from);
+    expect(getComposerDraftSnapshot(key).workspaceSelection).toBeUndefined();
   });
 
   it("merges persisted option memory without replacing newer choices", async () => {

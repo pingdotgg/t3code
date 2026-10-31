@@ -1878,6 +1878,7 @@ export function createNewTaskDraft(project: {
 export function retargetNewTaskDraft(
   draftKey: string,
   project: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
+  options?: { readonly keepPullRequestWorkspace?: boolean },
 ): void {
   updateComposerDrafts((current) => {
     const existing = current[draftKey];
@@ -1889,7 +1890,12 @@ export function retargetNewTaskDraft(
     ) {
       return current;
     }
-    const { workspaceSelection: _workspaceSelection, ...retained } = normalizeDraft(existing);
+    const { workspaceSelection, ...retained } = normalizeDraft(existing);
+    // A PR worktree names no local path, so it carries to the same repository on another machine.
+    const keptWorkspaceSelection =
+      options?.keepPullRequestWorkspace && workspaceSelection?.pullRequestReference !== undefined
+        ? { ...workspaceSelection, worktreePath: null }
+        : undefined;
     // Keep bytes across environment moves but drop server-specific upload stamps.
     const attachments = retained.attachments.map((attachment) =>
       attachment.uploadEnvironmentId !== undefined &&
@@ -1901,6 +1907,7 @@ export function retargetNewTaskDraft(
       ...current,
       [draftKey]: {
         ...retained,
+        ...(keptWorkspaceSelection ? { workspaceSelection: keptWorkspaceSelection } : {}),
         attachments,
         project: {
           environmentId: project.environmentId,
