@@ -2039,4 +2039,66 @@ describe("AcpRegistryAdapterV2", () => {
       assert.isFalse(yield* queued.runtime.hasPendingBackgroundWork!);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
+
+  it.effect("gives the minimax-code agent a busy retry policy, local installs included", () =>
+    Effect.gen(function* () {
+      const captureRuntimeInput = Effect.fn("captureRuntimeInput")(function* (
+        settings: Record<string, unknown>,
+      ) {
+        const captured: Array<{ readonly promptBusyRetry?: unknown }> = [];
+        const instanceId = ProviderInstanceId.make("acp-registry-minimax-busy-retry");
+        const adapter = yield* makeAcpRegistryAdapterV2({
+          selfInvocation: yield* resolveSelfInvocation(),
+          instanceId,
+          settings: yield* decodeAcpRegistryAdapterSettings(settings),
+          environment: {},
+          makeRuntime: (input) =>
+            Effect.suspend(() => {
+              captured.push({ promptBusyRetry: input.promptBusyRetry });
+              return Effect.fail(
+                new EffectAcpErrors.AcpTransportError({
+                  operation: "call-rpc",
+                  detail: "The runtime input was recorded.",
+                  cause: undefined,
+                }),
+              );
+            }),
+        }).pipe(Effect.provide(layerInjectedRuntimeCatalog));
+        yield* adapter
+          .openSession({
+            threadId: ThreadId.make("thread-minimax-busy-retry"),
+            providerSessionId: ProviderSessionId.make("session-minimax-busy-retry"),
+            modelSelection: { instanceId, model: "default" },
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              cwd: process.cwd(),
+            }),
+          })
+          .pipe(Effect.ignore);
+        return captured;
+      });
+
+      const registry = yield* captureRuntimeInput({ agentId: "minimax-code" });
+      assert.lengthOf(registry, 1);
+      assert.isDefined(registry[0]?.promptBusyRetry, "the registry agent needs the busy retry");
+
+      const local = yield* captureRuntimeInput({
+        source: "local",
+        commandPath: "/opt/homebrew/bin/mcode",
+      });
+      assert.lengthOf(local, 1);
+      assert.isDefined(local[0]?.promptBusyRetry, "a local install needs the busy retry");
+
+      const other = yield* captureRuntimeInput({
+        source: "local",
+        commandPath: "/opt/homebrew/bin/other-agent",
+      });
+      assert.lengthOf(other, 1);
+      assert.isUndefined(
+        other[0]?.promptBusyRetry,
+        "another agent must not get the minimax-code busy retry",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
 });

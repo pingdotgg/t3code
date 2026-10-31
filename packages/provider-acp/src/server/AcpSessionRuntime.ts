@@ -34,6 +34,11 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./stderr.ts";
 import {
+  makeAcpPromptBusyRetryGate,
+  retryPromptOnBusy,
+  type AcpPromptBusyRetryPolicy,
+} from "./promptBusyRetry.ts";
+import {
   collectSessionConfigOptionValues,
   decideToolCallUpdateEmission,
   extractModelConfigId,
@@ -114,6 +119,7 @@ export interface AcpSessionRuntimeOptions {
   readonly linuxCgroupController?: AcpLinuxCgroupController | null;
   readonly cancelBehavior?: "interrupt" | "wait-for-prompt";
   readonly cancelTimeout?: Duration.Input;
+  readonly promptBusyRetry?: AcpPromptBusyRetryPolicy;
   readonly clientCapabilities?: EffectAcpSchema.InitializeRequest["clientCapabilities"];
   readonly clientInfo: {
     readonly name: string;
@@ -1222,6 +1228,7 @@ interface EnsureActiveAssistantSegmentResult {
 interface AcpActivePrompt {
   readonly fiber: Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
   readonly completed: Deferred.Deferred<void>;
+  readonly attemptState: Ref.Ref<"pending" | "initial" | "retry">;
 }
 
 export const make = Effect.fn("AcpSessionRuntime.make")(function* (
@@ -1268,6 +1275,15 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   const sessionLoadSemaphore = yield* Semaphore.make(1);
   const promptDispatchSemaphore = yield* Semaphore.make(1);
   const activePromptRef = yield* Ref.make<Option.Option<AcpActivePrompt>>(Option.none());
+  // Tracks which dispatched prompts may still reach the agent, so a prompt
+  // that is waiting to be re-sent is dropped when the turn is cancelled.
+  const promptBusyRetryGate = yield* makeAcpPromptBusyRetryGate();
+  // A busy retry keeps the prompt alive while the agent releases its turn
+  // lease. The `wait-for-prompt` cancel behavior waits for the prompt to
+  // finish, so a retrying prompt would hold that wait open. No provider
+  // combines the two today.
+  const promptBusyRetry =
+    options.cancelBehavior === "wait-for-prompt" ? undefined : options.promptBusyRetry;
   const assistantUpdatesOpenRef = yield* Ref.make(true);
   const sessionLoadGateRef = yield* Ref.make<Option.Option<SessionLoadGate>>(Option.none());
 
@@ -2312,6 +2328,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   });
 
   const cancel = Effect.gen(function* () {
+    yield* promptBusyRetryGate.cancel;
     const started = yield* getStartedState;
     const activePrompt = yield* Ref.get(activePromptRef);
     const cancelPayload = {
@@ -2320,6 +2337,12 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     } satisfies EffectAcpSchema.CancelNotification;
     if (options.cancelBehavior !== "wait-for-prompt") {
       if (options.interruptPromptOnCancel === false) {
+        // Interrupt retries before queueing cancel, so no resend can follow Stop.
+        if (promptBusyRetry !== undefined && Option.isSome(activePrompt)) {
+          if ((yield* Ref.get(activePrompt.value.attemptState)) !== "initial") {
+            yield* Fiber.interrupt(activePrompt.value.fiber).pipe(Effect.ignore);
+          }
+        }
         return yield* acp.agent.cancel(cancelPayload);
       }
       if (Option.isSome(activePrompt)) {
@@ -2558,12 +2581,27 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
                 ...payload,
               } satisfies EffectAcpSchema.PromptRequest;
               const completed = yield* Deferred.make<void>();
+              yield* promptBusyRetryGate.issue;
+              const attemptState = yield* Ref.make<"pending" | "initial" | "retry">("pending");
+              const sendPrompt = Ref.update(attemptState, (state) =>
+                state === "pending" ? "initial" : "retry",
+              ).pipe(
+                Effect.andThen(acp.agent.prompt(requestPayload)),
+                Effect.ensuring(Ref.set(attemptState, "retry")),
+              );
+              // Keep backoff inside the active prompt fiber so Stop can interrupt it.
               const fiber = yield* runLoggedRequest(
                 "session/prompt",
                 requestPayload,
-                acp.agent.prompt(requestPayload),
+                retryPromptOnBusy(promptBusyRetry, sendPrompt, {
+                  cancelled: promptBusyRetryGate.cancelled,
+                }),
               ).pipe(Effect.forkIn(runtimeScope));
-              const active = { fiber, completed } satisfies AcpActivePrompt;
+              const active = {
+                fiber,
+                completed,
+                attemptState,
+              } satisfies AcpActivePrompt;
               yield* Ref.set(activePromptRef, Option.some(active));
               if (promptOptions?.dispatched) {
                 yield* Deferred.succeed(promptOptions.dispatched, undefined);
