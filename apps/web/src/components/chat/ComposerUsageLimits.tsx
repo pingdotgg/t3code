@@ -18,10 +18,9 @@ function accountLabel(account: UsageLimitsReport["accounts"][number]): string {
   const instance =
     account.displayName?.trim() ||
     (String(account.instanceId) !== String(account.driver) ? account.instanceId : "");
-  if (instance && instance.toLowerCase() !== driver.toLowerCase()) {
-    return `${driver} · ${instance}`;
-  }
-  return account.email ? `${driver} · ${account.email}` : driver;
+  return instance && instance.toLowerCase() !== driver.toLowerCase()
+    ? `${driver} · ${instance}`
+    : driver;
 }
 
 function AccountSummary({ account }: { readonly account: UsageLimitsReport["accounts"][number] }) {

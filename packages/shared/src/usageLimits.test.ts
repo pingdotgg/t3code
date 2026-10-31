@@ -632,12 +632,19 @@ describe("pools", () => {
     expect(accounts[0]?.displayName).toBe("claude-team-seat");
   });
 
-  it("labels an unnamed instance merged with a hub account like a hub-only account", () => {
+  it("labels a default-named instance merged with a hub account by e-mail, keeping a chosen name", () => {
     const native = provider({
       driver: claude,
       instanceId: ProviderInstanceId.make("claudeAgent"),
       displayName: "Claude",
       auth: { status: "authenticated", email: "a@example.com" },
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const named = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude-work"),
+      displayName: "Work",
+      auth: { status: "authenticated", email: "b@example.com" },
       usageLimits: { checkedAt, windows: [window] },
     });
     const hubAccount = (email: string) => ({
@@ -652,11 +659,15 @@ describe("pools", () => {
         {
           ...laptop,
           serverConfig: {
-            providers: [native],
+            providers: [native, named],
             usageLimitSources: [
               {
                 ...source,
-                accounts: [hubAccount("a@example.com"), hubAccount("b@example.com")],
+                accounts: [
+                  hubAccount("a@example.com"),
+                  hubAccount("b@example.com"),
+                  hubAccount("c@example.com"),
+                ],
               },
             ],
           },
@@ -667,7 +678,8 @@ describe("pools", () => {
       collectLimitAccounts(input).map(({ displayName, email }) => ({ displayName, email })),
     ).toEqual([
       { displayName: null, email: "a@example.com" },
-      { displayName: null, email: "b@example.com" },
+      { displayName: "Work", email: "b@example.com" },
+      { displayName: null, email: "c@example.com" },
     ]);
   });
 
@@ -1137,7 +1149,7 @@ describe("/usage-limits", () => {
     expect(report?.accounts[0]?.limits.resetCredits?.availableCount).toBe(3);
   });
 
-  it("labels hub rows by email, else by account id without .json", () => {
+  it("labels hub rows by account id without .json", () => {
     const hub = [
       {
         ...sources[0]!,
@@ -1156,7 +1168,7 @@ describe("/usage-limits", () => {
     const report = collectProviderUsageLimits(selected.instanceId, [selected], hub, now);
     expect(
       report?.accounts.filter((account) => account.sourceLabel).map((account) => account.label),
-    ).toEqual(["CLIProxyAPI · b@example.com", "CLIProxyAPI · team-seat"]);
+    ).toEqual(["CLIProxyAPI · claude-b@example.com", "CLIProxyAPI · team-seat"]);
   });
 
   it("keeps unidentified custom instances separate, filtering by driver", () => {

@@ -9,6 +9,7 @@ import {
   type ProviderConsumeResetCreditInput,
   type ServerProviderSlashCommand,
   isProviderAvailable,
+  PROVIDER_DISPLAY_NAMES,
   type ServerProvider,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
@@ -290,13 +291,18 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     ];
     const winner = fresher ? next : previous;
     const creditSource = creditSources.get(key);
-    // Through a proxy the instance name does not identify the account, so a hub e-mail wins.
+    // A hub e-mail names the account better than the driver's default instance name.
     const hubEmail = [previous, next].some(
       (account) => account.environments.length === 0 && account.email,
     );
+    const displayName = previous.displayName ?? next.displayName;
     accounts.set(key, {
       ...previous,
-      displayName: hubEmail ? null : (previous.displayName ?? next.displayName),
+      displayName:
+        hubEmail &&
+        displayName?.toLowerCase() === PROVIDER_DISPLAY_NAMES[previous.driver]?.toLowerCase()
+          ? null
+          : displayName,
       plan: previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
       environments,
@@ -840,7 +846,7 @@ export function collectProviderUsageLimits(
       accounts.push({
         id: `${source.id}:${account.id}`,
         driver: account.driver,
-        label: `${source.label} · ${account.email || hubAccountName(account)}`,
+        label: `${source.label} · ${hubAccountName(account)}`,
         sourceLabel: "CLI Proxy",
         ...(account.usageLimits.resetCredits?.nextCreditId
           ? {
