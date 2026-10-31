@@ -3668,7 +3668,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
-  it.effect.each(["gitlab", "bitbucket"] as const)(
+  it.effect.each(["github", "gitlab", "bitbucket"] as const)(
     "creates fork requests with provider-specific source identity (%s)",
     (kind) =>
       Effect.gen(function* () {
