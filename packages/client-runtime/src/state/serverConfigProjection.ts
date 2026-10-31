@@ -8,14 +8,23 @@ export interface ServerConfigProjection {
 }
 
 /**
- * Published themes and usage-limit sources are current machine state, so a
- * cache could restore a set the machine no longer reports.
+ * Published themes, usage-limit sources and memory pressure are current machine
+ * state, so a cache could restore a set the machine no longer reports.
  */
 export function withoutEnvironmentThemes(config: ServerConfig): ServerConfig {
-  if (config.environmentThemes === undefined && config.usageLimitSources === undefined) {
+  if (
+    config.environmentThemes === undefined &&
+    config.usageLimitSources === undefined &&
+    config.memoryPressure === undefined
+  ) {
     return config;
   }
-  const { environmentThemes: _themes, usageLimitSources: _sources, ...rest } = config;
+  const {
+    environmentThemes: _themes,
+    usageLimitSources: _sources,
+    memoryPressure: _pressure,
+    ...rest
+  } = config;
   return rest;
 }
 
@@ -72,10 +81,16 @@ export function applyServerConfigProjection(
       const carriedSources = Option.isSome(current)
         ? current.value.config.usageLimitSources
         : undefined;
+      // A server without the event would never clear carried pressure.
+      const carriedPressure =
+        Option.isSome(current) && event.config.environment.capabilities.memoryPressure === true
+          ? current.value.config.memoryPressure
+          : undefined;
       const config: ServerConfig = {
         ...event.config,
         ...(carriedThemes === undefined ? {} : { environmentThemes: carriedThemes }),
         ...(carriedSources === undefined ? {} : { usageLimitSources: carriedSources }),
+        ...(carriedPressure === undefined ? {} : { memoryPressure: carriedPressure }),
       };
       return Option.some({
         // Every reconnect re-sends the whole config, usually unchanged apart from timestamps.
@@ -121,6 +136,24 @@ export function applyServerConfigProjection(
         latestEvent: event,
         source: "live",
       }));
+    case "memoryPressureUpdated":
+      return Option.flatMap(current, (projection) => {
+        const { memoryPressure: _previous, ...config } = projection.config;
+        // Keeps config identity, so screens reading it do not re-render.
+        if (event.payload.level === "none" && projection.config.memoryPressure === undefined)
+          return Option.none();
+        return Option.some({
+          config:
+            event.payload.level === "none"
+              ? config
+              : {
+                  ...config,
+                  memoryPressure: reuseUnchanged(projection.config.memoryPressure, event.payload),
+                },
+          latestEvent: event,
+          source: "live",
+        });
+      });
     case "usageLimitSourcesUpdated":
       return Option.map(current, (projection) => ({
         config: {
