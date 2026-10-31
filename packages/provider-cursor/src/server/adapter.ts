@@ -6,6 +6,7 @@ import type {
   RunResult,
   SDKUserMessage,
   SettingSource,
+  TokenUsage,
   ToolCall,
 } from "@cursor/sdk";
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
@@ -56,6 +57,7 @@ import { t3OrchestrationPrompt } from "@t3tools/provider-core/server/orchestrati
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import { tokenCount } from "@t3tools/provider-core/server/usage";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import {
   isProviderNativeImageAttachment,
@@ -935,6 +937,8 @@ interface ActiveCursorTurn {
   readonly assistant: ActiveCursorTextStream;
   assistantReply: CursorTransportFailure;
   readonly reasoning: ActiveCursorTextStream;
+  usage: Omit<TokenUsage, "totalTokens"> | null;
+  usageMissed: boolean;
   interrupted: boolean;
   finalized: boolean;
   /** The agent's latest turn ended and no new work has started since. */
@@ -2041,10 +2045,39 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               yield* handleToolUpdate(context, update);
               return;
             case "step-completed":
-            case "turn-ended":
               yield* completeAssistant(context);
               yield* completeReasoning(context);
               return;
+            case "turn-ended": {
+              yield* completeAssistant(context);
+              yield* completeReasoning(context);
+              const added = update.usage;
+              const usage = context.usage;
+              if (added === undefined) {
+                context.usageMissed = true;
+                return;
+              }
+              if (
+                Object.values(added).some(
+                  (tokens) => tokens !== undefined && (!Number.isFinite(tokens) || tokens < 0),
+                )
+              ) {
+                context.usageMissed = true;
+              }
+              const reasoningTokens =
+                added.reasoningTokens === undefined && usage?.reasoningTokens === undefined
+                  ? undefined
+                  : (usage?.reasoningTokens ?? 0) + tokenCount(added.reasoningTokens);
+              context.usage = {
+                inputTokens: (usage?.inputTokens ?? 0) + tokenCount(added.inputTokens),
+                outputTokens: (usage?.outputTokens ?? 0) + tokenCount(added.outputTokens),
+                cacheReadTokens: (usage?.cacheReadTokens ?? 0) + tokenCount(added.cacheReadTokens),
+                cacheWriteTokens:
+                  (usage?.cacheWriteTokens ?? 0) + tokenCount(added.cacheWriteTokens),
+                ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
+              };
+              return;
+            }
             case "shell-output-delta": {
               const shell = Array.from(context.tools.values())
                 .toReversed()
@@ -2095,6 +2128,45 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           completedAt: input.completedAt,
         });
 
+        const turnTokenUsage = (
+          context: ActiveCursorTurn,
+          status: OrchestrationV2ProviderTurn["status"],
+        ) => {
+          const hasSubagents = context.subagents.size > 0;
+          if (context.usage === null) {
+            return {
+              usageScope: "main_agent" as const,
+              usageStatus: "unavailable" as const,
+              hasSubagents,
+            };
+          }
+          // Cursor input tokens already include cache reads and writes.
+          const inputTokens = tokenCount(context.usage.inputTokens);
+          const cachedInputTokens = Math.min(
+            tokenCount(context.usage.cacheReadTokens),
+            inputTokens,
+          );
+          const reasoningTokens = context.usage.reasoningTokens;
+          return {
+            usageScope: "main_agent" as const,
+            usageStatus:
+              status === "completed" && !context.usageMissed
+                ? ("complete" as const)
+                : ("partial" as const),
+            inputTokens,
+            cachedInputTokens,
+            cacheCreationTokens: Math.min(
+              tokenCount(context.usage.cacheWriteTokens),
+              inputTokens - cachedInputTokens,
+            ),
+            outputTokens: tokenCount(context.usage.outputTokens),
+            ...(reasoningTokens === undefined
+              ? {}
+              : { reasoningTokens: tokenCount(reasoningTokens) }),
+            hasSubagents,
+          };
+        };
+
         const finalizeTurn = Effect.fnUntraced(function* (input: {
           readonly context: ActiveCursorTurn;
           readonly status: Extract<
@@ -2132,11 +2204,14 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           yield* emitProviderEvent({
             type: "provider_turn.updated",
             driver: CursorAgentSdk.CURSOR_PROVIDER,
-            providerTurn: providerTurnPayload({
-              context: input.context,
-              status: input.status,
-              completedAt,
-            }),
+            providerTurn: {
+              ...providerTurnPayload({
+                context: input.context,
+                status: input.status,
+                completedAt,
+              }),
+              turnTokenUsage: turnTokenUsage(input.context, input.status),
+            },
           });
           yield* emitProviderEvent({
             type: "provider_thread.updated",
@@ -2434,6 +2509,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 current: null,
                 nextSegment: 0,
               },
+              usage: null,
+              usageMissed: false,
               interrupted: false,
               finalized: false,
               turnEnded: false,
