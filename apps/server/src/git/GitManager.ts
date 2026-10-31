@@ -170,6 +170,9 @@ const PR_LOOKUP_NO_OPEN_PR_CACHE_TTL = Duration.minutes(5);
 const PR_LOOKUP_FAILURE_BASE_TTL = Duration.seconds(20);
 const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
+const AllowCachedPrLookup = Context.Reference<boolean>("t3/git/GitManager/AllowCachedPrLookup", {
+  defaultValue: () => true,
+});
 const PR_LOOKUP_GIT_STATE_TTL = Duration.minutes(5);
 const PR_THREAD_CONTEXT_BYTES = 16_000;
 const PR_THREAD_COMMAND_OUTPUT_CHARS = 2_000;
@@ -1248,7 +1251,10 @@ export const make = Effect.gen(function* () {
       },
     },
   );
-  const getPrLookup = (key: string) => detachStackFrame(Cache.get(prLookupCache, key));
+  const getPrLookup = (key: string, allowCached = true) =>
+    detachStackFrame(Cache.get(prLookupCache, key)).pipe(
+      Effect.provideService(AllowCachedPrLookup, allowCached),
+    );
   interface LastKnownPr {
     readonly pr: ReturnType<typeof toStatusPr> | null;
     readonly upstreamRef: string | null;
@@ -1315,7 +1321,7 @@ export const make = Effect.gen(function* () {
         yield* Cache.invalidate(prLookupCache, cacheKey);
       }
     }
-    return yield* getPrLookup(cacheKey).pipe(
+    return yield* getPrLookup(cacheKey, !refreshMissingPullRequest).pipe(
       Effect.map(({ latest, headContext }) => {
         if (!latest) return { pr: null, headContext };
         // Merged/closed matches are usually reverse-merge history, not the thread's PR context.
@@ -1856,6 +1862,7 @@ export const make = Effect.gen(function* () {
     headContext: BranchHeadContext,
   ) {
     const parsedByNumber = new Map<number, PullRequestInfo>();
+    const allowCached = yield* AllowCachedPrLookup;
 
     const provider = yield* sourceControlProvider(cwd);
     const probe = headBranchProbe(provider, headContext.headSelectors, "all");
@@ -1865,6 +1872,7 @@ export const make = Effect.gen(function* () {
         headSelector,
         state: "all",
         limit: probe.limit,
+        allowCached,
       });
 
       for (const pr of pullRequests.map(toPullRequestInfo)) {
@@ -2568,7 +2576,7 @@ export const make = Effect.gen(function* () {
       );
       if (Option.isSome(cached)) yield* Cache.invalidate(prLookupCache, cacheKey);
     }
-    let cached = yield* getPrLookup(cacheKey);
+    let cached = yield* getPrLookup(cacheKey, !options.refresh);
     // Lookup may use a fork instead of the saved upstream; verify the remote actually queried.
     const identityRemoteName = (headContext: BranchHeadContext) =>
       headContext.remoteName ?? remoteName ?? undefined;
@@ -2595,7 +2603,7 @@ export const make = Effect.gen(function* () {
     }
     if (!hasSameIdentity(cached.headContext, currentIdentity)) {
       yield* Cache.invalidate(prLookupCache, cacheKey);
-      cached = yield* getPrLookup(cacheKey);
+      cached = yield* getPrLookup(cacheKey, false);
       const refreshedIdentity = yield* resolvePrLookupRepositoryIdentity(
         cacheCwd,
         branch,

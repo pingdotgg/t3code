@@ -63,6 +63,10 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitManager from "./GitManager.ts";
+import { driver as forgejoDriver } from "@t3tools/source-control-forgejo/server/driver";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+import * as HttpClient from "effect/http/HttpClient";
 
 /** A change request the fake host reports. Omitted fields read as an open, undated request. */
 type FakeChangeRequest = Omit<ChangeRequest, "provider" | "state" | "updatedAt"> & {
@@ -2345,6 +2349,110 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ).toBe(false);
         expect(listedSelectors(providerCalls).includes("main")).toBe(false);
       }),
+  );
+
+  it.effect("shares Gitea branch scans while preferring the latest open PR across bases", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      for (const branch of ["missing", "feature"]) {
+        yield* runGit(repoDir, ["checkout", "-b", branch]);
+        yield* runGit(repoDir, ["push", "-u", "origin", branch]);
+      }
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://gitea.test/acme/web.git",
+        remoteDir,
+      );
+      const repo = { full_name: "acme/web", owner: { login: "acme" } };
+      const pulls = Array.from({ length: 75 }, (_, index) => ({
+        number: index + 1,
+        title: `PR ${index + 1}`,
+        html_url: `https://gitea.test/acme/web/pulls/${index + 1}`,
+        state: index === 1 ? "closed" : "open",
+        merged: index === 1,
+        updated_at: index < 2 ? "2026-10-25T00:00:00Z" : "2026-10-24T00:00:00Z",
+        head: {
+          ref: [1, 70, 71].includes(index) ? "feature" : `other-${index}`,
+          sha: "head",
+          repo,
+        },
+        base: { ref: index === 1 ? "main" : "release/arbitrary", sha: "base", repo },
+      }));
+      const paths: string[] = [];
+      const { sourceControl } = yield* forgejoDriver.make.pipe(
+        Effect.provideService(
+          FileSystem.FileSystem,
+          FileSystem.makeNoop({ exists: () => Effect.succeed(false) }),
+        ),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("tea owns HTTP in this fixture")),
+        ),
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            Layer.mock(SourceControlRateLimit.SourceControlRateLimit)({}),
+            TestSourceControlHost.layer({
+              process: {
+                run: (input) =>
+                  Effect.sync(() => {
+                    const output = TestSourceControlHost.processOutput;
+                    if (input.command === "git") return output("https://gitea.test/acme/web.git");
+                    if (input.args[0] === "login")
+                      return output(
+                        JSON.stringify([
+                          {
+                            name: "fixture",
+                            url: "https://gitea.test",
+                            user: "acme",
+                            default: "true",
+                          },
+                        ]),
+                      );
+                    expect(input.args[0]).toBe("api");
+                    const url = new URL(input.args.at(-1)!);
+                    if (url.pathname === "/api/v1/repos/acme/web")
+                      return output(
+                        JSON.stringify({
+                          ...repo,
+                          clone_url: "https://gitea.test/acme/web.git",
+                          ssh_url: "git@gitea.test:acme/web.git",
+                          default_branch: "main",
+                        }),
+                        { stderr: "HTTP/1.1 200 OK" },
+                      );
+                    expect(url.pathname).toBe("/api/v1/repos/acme/web/pulls");
+                    paths.push(url.pathname + url.search);
+                    const page = Number(url.searchParams.get("page"));
+                    return output(JSON.stringify(pulls.slice((page - 1) * 50, page * 50)), {
+                      stderr: "HTTP/1.1 200 OK",
+                    });
+                  }),
+              },
+            }),
+          ),
+        ),
+      );
+      const { manager } = yield* makeManager({ sourceControlProvider: sourceControl });
+      expect(yield* manager.branchPullRequest({ cwd: repoDir, branch: "missing" })).toBeNull();
+      expect(yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature" })).toMatchObject({
+        number: 71,
+        state: "open",
+        baseRef: "release/arbitrary",
+      });
+      expect(paths).toHaveLength(4);
+      pulls[70] = { ...pulls[70]!, state: "closed", merged: true };
+      pulls[71] = { ...pulls[71]!, state: "closed", merged: true };
+      pulls.push({ ...pulls[70]!, number: 76, state: "open", merged: false });
+      expect(
+        yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature" }, { refresh: true }),
+      ).toMatchObject({ number: 76, state: "open" });
+    }),
   );
 
   it.effect("status prefers open PR when merged PR has newer updatedAt", () =>

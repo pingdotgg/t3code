@@ -1,6 +1,9 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -32,6 +35,299 @@ const requestJson = (request: HttpClientRequest.HttpClientRequest): unknown => {
     : undefined;
 };
 const encodeJsonEffect = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const branchPull = (number: number, head = `unrelated-${number}`, state = "open") => ({
+  number,
+  title: `Pull request ${number}`,
+  html_url: `https://gitea.test/acme/web/pulls/${number}`,
+  state: state === "merged" ? "closed" : state,
+  merged: state === "merged",
+  head: {
+    ref: head,
+    sha: `head-${number}`,
+    repo: { full_name: "acme/web", owner: { login: "acme" } },
+  },
+  base: {
+    ref: "release/arbitrary",
+    sha: "base",
+    repo: { full_name: "acme/web", owner: { login: "acme" } },
+  },
+  updated_at: "2026-10-25T00:00:00Z",
+});
+
+const branchLookupFixture = (
+  pulls: ReadonlyArray<ReturnType<typeof branchPull>>,
+  honorsHead = false,
+) => {
+  const paths: string[] = [];
+  const repository: ForgejoCli.ForgejoRepository = {
+    command: "tea",
+    login: "work",
+    repository: "acme/web",
+    baseUrl: "https://gitea.test",
+  };
+  let beforeRequest: (
+    input: ForgejoCli.ForgejoApiInput,
+  ) => Effect.Effect<void, ForgejoCli.ForgejoCliError> = () => Effect.void;
+  const provider = ForgejoSourceControlProvider.make.pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        resolveRepository: () => Effect.succeed(repository),
+        api: (input) =>
+          Effect.gen(function* () {
+            paths.push(input.path);
+            yield* beforeRequest(input);
+            const [path, query] = input.path.split("?");
+            assert.strictEqual(path, `repos/${repository.repository}/pulls`);
+            const params = new URLSearchParams(query);
+            const page = Number(params.get("page"));
+            const rows = pulls.filter(
+              (pull) =>
+                (params.get("state") === "all" || pull.state === params.get("state")) &&
+                (!honorsHead || !params.has("head") || pull.head.ref === params.get("head")),
+            );
+            return processOutput(encodeJson(rows.slice((page - 1) * 50, page * 50)));
+          }),
+      }),
+    ),
+    Effect.provideService(FileSystem.FileSystem, FileSystem.makeNoop({})),
+    Effect.provide(TestSourceControlHost.layer()),
+  );
+  return {
+    provider,
+    paths,
+    repository,
+    setBeforeRequest: (hook: typeof beforeRequest) => {
+      beforeRequest = hook;
+    },
+  };
+};
+
+it.effect("shares a complete ignored-head scan across background branch lookups", () =>
+  Effect.gen(function* () {
+    const pulls = Array.from({ length: 75 }, (_, index) => branchPull(index + 1));
+    pulls[70] = branchPull(71, "old-feature", "merged");
+    const fixture = branchLookupFixture(pulls);
+    const provider = yield* fixture.provider;
+    const input = {
+      cwd: "/repo",
+      headSelector: "no-such-branch",
+      state: "all" as const,
+      allowCached: true,
+    };
+    assert.deepStrictEqual(yield* provider.listChangeRequests(input), []);
+    assert.deepStrictEqual(
+      (yield* provider.listChangeRequests({
+        ...input,
+        cwd: "/another-worktree",
+        headSelector: "old-feature",
+      })).map((pr) => [pr.number, pr.state, pr.baseRefName]),
+      [[71, "merged", "release/arbitrary"]],
+    );
+    assert.strictEqual(fixture.paths.length, 4);
+  }),
+);
+
+it.effect("keeps source identities, arbitrary bases and PR states in a shared scan", () =>
+  Effect.gen(function* () {
+    const foreign = branchPull(2, "feature");
+    const pulls = [
+      branchPull(1),
+      {
+        ...foreign,
+        head: {
+          ...foreign.head,
+          repo: { full_name: "other/renamed-fork", owner: { login: "other" } },
+        },
+      },
+      branchPull(3, "feature", "closed"),
+      branchPull(4, "feature", "open"),
+      branchPull(5, "feature", "merged"),
+    ];
+    const fixture = branchLookupFixture(pulls);
+    const provider = yield* fixture.provider;
+    const input = {
+      cwd: "/repo",
+      headSelector: "acme:feature",
+      state: "all" as const,
+      allowCached: true,
+    };
+    assert.deepStrictEqual(
+      (yield* provider.listChangeRequests(input)).map((pr) => [pr.number, pr.state]),
+      [
+        [3, "closed"],
+        [4, "open"],
+        [5, "merged"],
+      ],
+    );
+    for (const [state, number] of [
+      ["open", 4],
+      ["closed", 3],
+      ["merged", 5],
+    ] as const) {
+      assert.deepStrictEqual(
+        (yield* provider.listChangeRequests({ ...input, state, limit: 1 })).map((pr) => pr.number),
+        [number],
+      );
+    }
+    assert.deepStrictEqual(
+      (yield* provider.listChangeRequests({
+        ...input,
+        source: { refName: "feature", repository: "other/renamed-fork" },
+      })).map((pr) => [pr.number, pr.isCrossRepository]),
+      [[2, true]],
+    );
+    assert.strictEqual(fixture.paths.length, 3);
+  }),
+);
+
+it.effect("keeps filtered Forgejo lookups on their existing path", () =>
+  Effect.gen(function* () {
+    const fixture = branchLookupFixture([branchPull(1), branchPull(2, "feature")], true);
+    const provider = yield* fixture.provider;
+    const input = {
+      cwd: "/repo",
+      headSelector: "feature",
+      state: "all" as const,
+      allowCached: true,
+    };
+    assert.deepStrictEqual(
+      (yield* provider.listChangeRequests(input)).map((pr) => pr.number),
+      [2],
+    );
+    assert.deepStrictEqual(
+      yield* provider.listChangeRequests({ ...input, headSelector: "missing" }),
+      [],
+    );
+    assert.strictEqual(fixture.paths.length, 3);
+    assert.isTrue(
+      fixture.paths.every((path) => new URLSearchParams(path.split("?")[1]).has("head")),
+    );
+  }),
+);
+
+it.effect("expires complete scans and bypasses them for authoritative reads", () =>
+  Effect.gen(function* () {
+    const pulls = [branchPull(1), branchPull(2, "feature", "closed")];
+    const fixture = branchLookupFixture(pulls);
+    const provider = yield* fixture.provider;
+    const input = {
+      cwd: "/repo",
+      headSelector: "feature",
+      state: "all" as const,
+      allowCached: true,
+    };
+    assert.strictEqual((yield* provider.listChangeRequests(input))[0]?.state, "closed");
+    pulls[1] = branchPull(2, "feature");
+    assert.strictEqual((yield* provider.listChangeRequests(input))[0]?.state, "closed");
+    assert.strictEqual(fixture.paths.length, 3);
+    assert.strictEqual(
+      (yield* provider.listChangeRequests({ ...input, allowCached: false }))[0]?.state,
+      "open",
+    );
+    assert.strictEqual(fixture.paths.length, 5);
+    assert.strictEqual((yield* provider.listChangeRequests(input))[0]?.state, "open");
+    assert.strictEqual(fixture.paths.length, 8);
+    pulls[1] = branchPull(2, "feature", "merged");
+    yield* TestClock.adjust("1 minute");
+    assert.strictEqual((yield* provider.listChangeRequests(input))[0]?.state, "merged");
+    assert.strictEqual(fixture.paths.length, 11);
+  }),
+);
+
+it.effect("isolates complete scans by resolved server, login, CLI and repository", () =>
+  Effect.gen(function* () {
+    const fixture = branchLookupFixture([branchPull(1)]);
+    const provider = yield* fixture.provider;
+    const input = {
+      cwd: "/repo",
+      headSelector: "missing",
+      state: "all" as const,
+      allowCached: true,
+    };
+    for (const repository of [
+      {},
+      { baseUrl: "https://gitea.test/mount" },
+      { login: "another-account" },
+      { command: "fj" as const },
+      { repository: "acme/another-repo" },
+    ]) {
+      Object.assign(fixture.repository, repository);
+      const before = fixture.paths.length;
+      assert.deepStrictEqual(yield* provider.listChangeRequests(input), []);
+      assert.strictEqual(fixture.paths.length - before, 3);
+    }
+  }),
+);
+
+it.effect("never caches a partial scan after an API failure", () =>
+  Effect.gen(function* () {
+    const pulls = Array.from({ length: 75 }, (_, index) => branchPull(index + 1));
+    pulls[70] = branchPull(71, "feature");
+    const fixture = branchLookupFixture(pulls);
+    const provider = yield* fixture.provider;
+    fixture.setBeforeRequest((input) =>
+      input.path.endsWith("page=2")
+        ? Effect.fail(
+            new ForgejoCli.ForgejoCliError({
+              command: "tea",
+              cwd: input.cwd,
+              detail: "Synthetic API failure.",
+            }),
+          )
+        : Effect.void,
+    );
+    const input = {
+      cwd: "/repo",
+      headSelector: "feature",
+      state: "all" as const,
+      allowCached: true,
+    };
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(provider.listChangeRequests(input))));
+    assert.strictEqual(fixture.paths.length, 3);
+    fixture.setBeforeRequest(() => Effect.void);
+    assert.deepStrictEqual(
+      (yield* provider.listChangeRequests(input)).map((pr) => pr.number),
+      [71],
+    );
+    assert.strictEqual(fixture.paths.length, 7);
+  }),
+);
+
+it.effect("joins an in-flight complete scan for another branch", () =>
+  Effect.gen(function* () {
+    const fixture = branchLookupFixture([branchPull(1), branchPull(2, "feature")]);
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    fixture.setBeforeRequest((input) =>
+      input.path.includes("&head=")
+        ? Effect.void
+        : Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release))),
+    );
+    const provider = yield* fixture.provider;
+    const input = {
+      cwd: "/repo",
+      headSelector: "missing",
+      state: "all" as const,
+      allowCached: true,
+    };
+    const first = yield* provider
+      .listChangeRequests(input)
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(started);
+    const second = yield* provider
+      .listChangeRequests({ ...input, headSelector: "feature", cwd: "/another-worktree" })
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    assert.strictEqual(fixture.paths.length, 2);
+    yield* Deferred.succeed(release, undefined);
+    assert.deepStrictEqual(yield* Fiber.join(first), []);
+    assert.deepStrictEqual(
+      (yield* Fiber.join(second)).map((pr) => pr.number),
+      [2],
+    );
+    assert.strictEqual(fixture.paths.length, 3);
+  }),
+);
 
 const requiredChecksPullRequest = {
   number: 7,
