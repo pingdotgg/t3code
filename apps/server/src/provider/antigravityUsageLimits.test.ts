@@ -52,6 +52,8 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     summary?: unknown;
     /** Per-host quota summaries; hosts not listed fall back to `summary`. */
     summaryByHost?: Record<string, unknown>;
+    /** Mirrors the daily endpoint, which leaves out the Gemini group for the legacy hub/1.0.0 client. */
+    legacyClientOmitsGemini?: boolean;
     models?: unknown;
     summaryStatus?: number;
     /** Per-host summary statuses; hosts not listed fall back to `summaryStatus`. */
@@ -107,12 +109,21 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
         );
       }
       expect(JSON.parse(body)).toEqual({ project: "project-id" });
+      const omitGemini =
+        options.legacyClientOmitsGemini &&
+        url.host === "daily-cloudcode-pa.googleapis.com" &&
+        request.headers["user-agent"]?.startsWith("antigravity/hub/1.0.0 ");
       return HttpClientResponse.fromWeb(
         request,
         request.url.endsWith(":retrieveUserQuotaSummary")
-          ? Response.json(options.summaryByHost?.[url.host] ?? options.summary ?? summary, {
-              status: options.summaryStatusByHost?.[url.host] ?? options.summaryStatus ?? 200,
-            })
+          ? Response.json(
+              omitGemini
+                ? {
+                    groups: summary.groups.filter((group) => group.displayName !== "Gemini Models"),
+                  }
+                : (options.summaryByHost?.[url.host] ?? options.summary ?? summary),
+              { status: options.summaryStatusByHost?.[url.host] ?? options.summaryStatus ?? 200 },
+            )
           : Response.json(options.models ?? { models: {} }),
       );
     }),
@@ -181,6 +192,63 @@ describe("Antigravity subscription limits", () => {
       expect(byId.get("gemini-weekly")?.label).toBe("Gemini · Weekly");
       expect(byId.get("3p-5h")?.usedPercent).toBeCloseTo(70);
       expect(byId.get("3p-weekly")?.usedPercent).toBe(100);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reads consumed Gemini quota that the daily endpoint gates on client version", () =>
+    Effect.gen(function* () {
+      const { probe } = yield* fixture({
+        legacyClientOmitsGemini: true,
+        summaryByHost: {
+          // Production reports every bucket as unused for consumer accounts,
+          // so only the daily endpoint carries the real Gemini readings.
+          "cloudcode-pa.googleapis.com": {
+            groups: summary.groups.map((group) => ({
+              ...group,
+              buckets: group.buckets.map((bucket) => ({ ...bucket, remainingFraction: 1 })),
+            })),
+          },
+        },
+      });
+      const limits = yield* probe;
+      const byId = new Map(limits.windows.map((window) => [window.id, window]));
+      expect(byId.get("gemini-5h")?.usedPercent).toBeCloseTo(9);
+      expect(byId.get("gemini-weekly")?.usedPercent).toBeCloseTo(4);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("labels Argon's weekly quota apart from the default Gemini weekly quota", () =>
+    Effect.gen(function* () {
+      const { probe } = yield* fixture({
+        summary: {
+          groups: [
+            ...summary.groups,
+            {
+              displayName: "Gemini 4 Argon",
+              buckets: [
+                {
+                  bucketId: "gemini-argon-wtu-weekly",
+                  window: "weekly",
+                  remainingFraction: 0.6,
+                  resetTime: "2026-10-25T00:25:01Z",
+                },
+              ],
+            },
+          ],
+        },
+      });
+      const limits = yield* probe;
+      const labels = limits.windows.map((window) => window.label);
+      expect(new Set(labels).size).toBe(labels.length);
+      const byId = new Map(limits.windows.map((window) => [window.id, window]));
+      expect(byId.get("gemini-weekly")?.label).toBe("Gemini · Weekly");
+      expect(byId.get("gemini-argon-wtu-weekly")).toMatchObject({
+        label: "Gemini 4 Argon · Weekly",
+        kind: "weekly",
+        windowDurationMins: 10080,
+        resetsAt: "2026-10-25T00:25:01.000Z",
+      });
+      expect(byId.get("gemini-argon-wtu-weekly")?.usedPercent).toBeCloseTo(40);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

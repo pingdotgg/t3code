@@ -104,11 +104,15 @@ function summaryWindows(summary: typeof Summary.Type) {
   for (const group of groups ?? []) {
     for (const bucket of group.buckets ?? []) {
       if (bucket.disabled) continue;
-      const family = bucket.bucketId.startsWith("gemini-")
-        ? "Gemini"
-        : bucket.bucketId.startsWith("3p-")
-          ? "Claude & GPT (shared)"
-          : group.displayName?.trim() || bucket.bucketId;
+      // Argon's weekly allowance is metered apart from the default Gemini
+      // buckets, so it keeps its own name instead of a second "Gemini · Weekly".
+      const family = bucket.bucketId.startsWith("gemini-argon-")
+        ? group.displayName?.trim() || "Gemini 4 Argon"
+        : bucket.bucketId.startsWith("gemini-")
+          ? "Gemini"
+          : bucket.bucketId.startsWith("3p-")
+            ? "Claude & GPT (shared)"
+            : group.displayName?.trim() || bucket.bucketId;
       const weekly = bucket.window === "weekly";
       const session = bucket.window === "5h";
       const window = quotaWindow(
@@ -257,7 +261,11 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
             HttpClientRequest.post(`${endpoint}/v1internal:${operation}`).pipe(
               HttpClientRequest.setHeaders({
                 Authorization: `Bearer ${accessToken}`,
-                "User-Agent": `antigravity/hub/1.0.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`,
+                // Neither endpoint reports consumed Gemini quota to the legacy
+                // hub/1.0.0 client: daily leaves the Gemini group out, and
+                // production omits it or reports it unused. 2.24.0 is the
+                // Antigravity app's version.
+                "User-Agent": `antigravity/hub/2.24.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`,
               }),
               HttpClientRequest.bodyJsonUnsafe(
                 token.project_id ? { project: token.project_id } : {},
