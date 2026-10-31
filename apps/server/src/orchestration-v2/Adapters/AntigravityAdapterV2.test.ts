@@ -24,6 +24,7 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpSchema from "effect-acp/compat";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -32,6 +33,7 @@ import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSession
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { normalizeAntigravitySessionUpdate } from "../../provider/acp/AntigravityProtocol.ts";
+import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../../provider/antigravityAuthSupport.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
@@ -125,6 +127,106 @@ const layerSession = Layer.mergeAll(
   McpProviderSessions.layer,
   TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
 );
+
+describe("AntigravityAdapterV2 compaction", () => {
+  it.effect("does not expose unsupported manual compaction on the provider session", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const crypto = yield* Crypto.Crypto;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("antigravity-compaction-test");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          makeAntigravityAcpRuntime({
+            ...input,
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: { T3_ACP_ANTIGRAVITY: "1" },
+            },
+          }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+        withProcess: (_stop, task) => task,
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
+        defaultModel: Effect.succeed(undefined),
+      });
+      const session = yield* adapter.openSession({
+        threadId: ThreadId.make("thread-antigravity-compaction"),
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-compaction"),
+        modelSelection: { instanceId, model: "gemini-test-low" },
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        }),
+      });
+      assert.isUndefined(session.compactThread);
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+});
+
+describe("AntigravityAdapterV2 session open", () => {
+  it.effect.each([
+    {
+      name: "browser sign-in",
+      cause: new EffectAcpErrors.AcpTransportError({
+        detail: ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE,
+        cause: undefined,
+      }),
+      requiresSignIn: true,
+    },
+    {
+      name: "ACP authentication required",
+      cause: EffectAcpErrors.AcpRequestError.authRequired(),
+      requiresSignIn: true,
+    },
+    {
+      name: "transport failure",
+      cause: new EffectAcpErrors.AcpTransportError({
+        detail: "Connection closed",
+        cause: undefined,
+      }),
+      requiresSignIn: undefined,
+    },
+  ] as const)("classifies $name during session open", ({ cause, requiresSignIn }) =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("antigravity-sign-in-test");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: () => Effect.fail(cause),
+        withProcess: (_stop, task) => task,
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
+        defaultModel: Effect.succeed(undefined),
+      });
+      const threadId = ThreadId.make("thread-antigravity-sign-in");
+      const error = yield* adapter
+        .openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-sign-in"),
+          modelSelection: { instanceId, model: "gemini-test-low" },
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+          }),
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "ProviderAdapterOpenSessionError");
+      assert.equal(
+        error._tag === "ProviderAdapterOpenSessionError" && error.requiresSignIn,
+        requiresSignIn,
+      );
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+});
 
 describe("AntigravityAdapterV2 client file system", () => {
   it.effect("serves confined reads and leaves edits to the agent's diff tools", () =>
@@ -230,6 +332,25 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/read_text_file"),
       );
       assert.equal(pasted.content, "pasted");
+      yield* fileSystem.writeFileString(insidePath, "\uFEFFfirst\né中🙂\nlast");
+      const sliced = yield* readTextFile(
+        { sessionId: "mock-session-1", path: insidePath, line: 2, limit: 1 },
+        context("fs/read_text_file"),
+      );
+      assert.equal(sliced.content, "é中🙂");
+      yield* fileSystem.writeFileString(insidePath, "inside");
+      for (const [name, bytes] of [
+        ["image.png", new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
+        ["data.bin", new Uint8Array([0x61, 0, 0x62])],
+      ] as const) {
+        const binaryPath = path.join(workspace, name);
+        yield* fileSystem.writeFile(binaryPath, bytes);
+        const binaryRead = yield* readTextFile(
+          { sessionId: "mock-session-1", path: binaryPath },
+          context("fs/read_text_file"),
+        ).pipe(Effect.flip);
+        assert.propertyVal(binaryRead, "code", -32602, `${name} is refused as binary`);
+      }
 
       const outsideRead = yield* readTextFile(
         { sessionId: "mock-session-1", path: outsideFile },

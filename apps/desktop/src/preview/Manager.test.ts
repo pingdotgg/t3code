@@ -86,6 +86,12 @@ describe("previewWindowOpenAction", () => {
     ).toBe("popup");
   });
 
+  it("opens HTTP links in preview tabs", () => {
+    for (const disposition of ["foreground-tab", "background-tab"] as const) {
+      expect(PreviewManager.previewWindowOpenAction(details({ disposition }))).toBe("new-tab");
+    }
+  });
+
   it("keeps a form POST with a body on the in-place path", () => {
     const postBody = { data: [], contentType: "application/x-www-form-urlencoded" };
     expect(
@@ -98,12 +104,29 @@ describe("previewWindowOpenAction", () => {
 
   it("does not hand a window to schemes that cannot be hardened", () => {
     for (const url of [
-      "javascript:alert(1)",
-      "file:///etc/passwd",
       "vscode://vscode-remote/ssh-remote+box/tmp",
-      "not a url",
+      "blob:https://example.com/0b6c6a5e-55d4-4b4c-9d47-8f1b0c1d2e3f",
     ]) {
       expect(PreviewManager.previewWindowOpenAction(details({ url }))).toBe("navigate");
+    }
+  });
+
+  it("denies local and inline schemes that no page could open in place itself", () => {
+    for (const url of [
+      "data:text/html,<h1>hi</h1>",
+      "DaTa:text/html,<h1>hi</h1>",
+      "file:///etc/passwd",
+      "javascript:alert(1)",
+      "view-source:https://example.com",
+      "chrome://gpu",
+      "about:srcdoc",
+      "devtools://devtools/bundled/inspector.html",
+      "filesystem:https://example.com/temporary/page.html",
+      "not a url",
+    ]) {
+      for (const disposition of ["new-window", "foreground-tab", "background-tab"] as const) {
+        expect(PreviewManager.previewWindowOpenAction(details({ url, disposition }))).toBe("deny");
+      }
     }
   });
 
@@ -2197,6 +2220,48 @@ describe("PreviewManager", () => {
         const capturesAfterClose = capturePage.mock.calls.length;
         yield* TestClock.adjust(200);
         expect(capturePage).toHaveBeenCalledTimes(capturesAfterClose);
+      }),
+    ),
+  );
+
+  effectIt.effect("shows picture-in-picture and keeps capturing after stalled captures", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const image = {
+          toJPEG: () => Buffer.from("preview-frame"),
+          getSize: () => ({ width: 1280, height: 720 }),
+        };
+        const stalledInitial = Promise.withResolvers<typeof image>();
+        const stalledLoop = Promise.withResolvers<typeof image>();
+        const capturePage = vi
+          .fn<() => Promise<typeof image>>()
+          .mockImplementationOnce(() => stalledInitial.promise)
+          .mockImplementationOnce(() => stalledLoop.promise)
+          .mockResolvedValue(image);
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        const { pictureInPictureWindow, send } = makeTestPictureInPictureWindow();
+        browserWindowConstructor.mockImplementation(function () {
+          return pictureInPictureWindow;
+        });
+        yield* manager.createTab("tab_pip_stalled_capture");
+        yield* manager.registerWebview("tab_pip_stalled_capture", 42);
+
+        try {
+          const open = yield* manager
+            .openPictureInPicture("tab_pip_stalled_capture")
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* TestClock.adjust(1_000);
+          expect(pictureInPictureWindow.showInactive).toHaveBeenCalledOnce();
+          yield* Fiber.join(open);
+
+          expect(send).not.toHaveBeenCalled();
+          yield* TestClock.adjust(500);
+          expect(send).toHaveBeenCalled();
+        } finally {
+          // Release stalled native calls after a failing assertion against unchanged base.
+          stalledInitial.resolve(image);
+          stalledLoop.resolve(image);
+        }
       }),
     ),
   );
