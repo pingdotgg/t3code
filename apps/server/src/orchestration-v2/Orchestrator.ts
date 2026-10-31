@@ -626,11 +626,6 @@ function cancelledAppOwnedTask(
   };
 }
 
-/**
- * Whether an open link card asked for the machine a later card just linked.
- * A card that named a machine matches only that machine; one that named
- * nothing matches when its hint is the linked machine's label.
- */
 function askedForLinkedMachine(
   card: Extract<OrchestrationV2TurnItem, { readonly type: "link_request" }>,
   linked: Extract<OrchestrationV2InternalCommand, { readonly type: "link_request.record" }>,

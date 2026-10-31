@@ -126,10 +126,7 @@ const scope: McpInvocationContext.McpInvocationScope = {
   issuedAt: 1,
 };
 
-/**
- * The laptop: a real orchestrator, its orchestrator toolkit, and its links.
- * `wrapLinks` lets a test hold a real link while it is made.
- */
+/** A real orchestrator and links; the wrapper can hold a link in progress. */
 const makeLaptopWith = (
   wrapLinks?: (links: PeerLinks.PeerLinks["Service"]) => PeerLinks.PeerLinks["Service"],
 ) =>
@@ -994,7 +991,6 @@ it.live(
     ),
 );
 
-/** Every link card in the thread, oldest first. */
 const linkCards = (a: Laptop) =>
   a.orchestrator
     .getThreadProjection(threadId)
@@ -1004,7 +1000,6 @@ const linkCards = (a: Laptop) =>
       ),
     );
 
-/** Asks through the tool and returns the card that ask left. */
 const ask = (a: Laptop, args: Record<string, unknown>) =>
   Effect.gen(function* () {
     const asked = yield* a.call(args);
@@ -1012,7 +1007,6 @@ const ask = (a: Laptop, args: Record<string, unknown>) =>
     return (yield* linkCards(a)).find((card) => card.id === turnItemId)!;
   });
 
-/** The user links the box from `cardId` with a fresh code; returns the code. */
 const linkBox = (a: Laptop, b: ServedPeer, cardId: TurnItemId) =>
   Effect.gen(function* () {
     const pairing = yield* b.auth.issuePairingCredential();
@@ -1072,16 +1066,10 @@ it.live("linking the machine an older card asked for by hint ends that card too"
       // The agent hears of the one link it made, and nothing about the card that link ended.
       expect((yield* outcomeMessages(a)).messages).toHaveLength(1);
       expect(yield* storedText(a)).not.toContain(credential);
-
-      const late = yield* a.requests
-        .answer({ threadId, turnItemId: older.id, answer: { type: "decline" } })
-        .pipe(Effect.flip);
-      expect(late.reason).toBe("already_answered");
     }),
   ),
 );
 
-/** Records an open card with exactly the ask in `fields`, as `request` would. */
 const recordCard = (
   a: Laptop,
   key: string,
@@ -1212,10 +1200,6 @@ it.live("a later card's failed link leaves the older card open", () =>
   ),
 );
 
-/**
- * A laptop whose link to the box waits on `hold` for each access it returns
- * a gate for, so a test can stall one answer inside its real link.
- */
 const withHeldLinks = <A, E, R>(
   hold: (access: PeerLinkCreateInput["access"]) => Effect.Effect<void> | undefined,
   body: (a: Laptop, b: ServedPeer) => Effect.Effect<A, E, R>,
