@@ -80,7 +80,7 @@ export function readHtmlSelection(data: unknown): HtmlSelection | null {
 
 export function htmlSelectionCommand(
   frame: HTMLIFrameElement,
-  action: "clear" | "dismiss" | "mark" | "unmark" | "target",
+  action: "clear" | "dismiss" | "mark" | "unmark" | "target" | "untarget",
   selector?: AssistantTextSelector,
 ) {
   frame.contentWindow?.postMessage(

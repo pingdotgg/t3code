@@ -46,7 +46,7 @@ export function observeHtmlRenderCitationSource({
     responseTimeout ??= setTimeout(() => {
       if (stopped || activation.dismissed) return;
       activation.dismissed = true;
-      if (frame) htmlSelectionCommand(frame, "unmark");
+      if (frame) htmlSelectionCommand(frame, "untarget");
       request.onComplete();
       toastManager.add({
         type: "warning",
@@ -129,7 +129,7 @@ export function observeHtmlRenderCitationSource({
       expiry = setTimeout(
         () => {
           activation.dismissed = true;
-          if (frame) htmlSelectionCommand(frame, "unmark");
+          if (frame) htmlSelectionCommand(frame, "untarget");
         },
         Math.max(0, 3000 - (performance.now() - pulse.startedAt)),
       );
@@ -165,6 +165,6 @@ export function observeHtmlRenderCitationSource({
     root.removeEventListener("t3-html-selection-ready", resolve);
     window.removeEventListener("message", receive);
     if (activation.cancelScroll === cancelScroll) delete activation.cancelScroll;
-    if (frame) htmlSelectionCommand(frame, "unmark");
+    if (frame) htmlSelectionCommand(frame, "untarget");
   };
 }

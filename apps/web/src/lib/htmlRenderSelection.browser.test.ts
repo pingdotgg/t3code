@@ -290,6 +290,9 @@ describe("HTML render selection bridge", () => {
       suffix: " after. Second paragraph",
     };
     p.command("mark", quote);
+    p.command("untarget");
+    expect(highlights.has("t3-html-citation")).toBe(true);
+    p.command("target", { ...quote, text: "missing" });
     expect(highlights.has("t3-html-citation")).toBe(true);
     p.view.document.querySelector("strong")!.textContent = "different text";
     await p.finish();
@@ -300,6 +303,7 @@ describe("HTML render selection bridge", () => {
       selector: quote,
       action: "mark",
     });
+    p.command("unmark");
     p.command("target", { ...quote, text: "different text" });
     expect(highlights.has("t3-html-citation")).toBe(true);
     p.command("target", { ...quote, text: "missing" });
@@ -390,7 +394,7 @@ describe("HTML render selection bridge", () => {
     await using p = await page();
     const paragraph = p.view.document.querySelector("p")!;
     Object.assign(p.view.Range.prototype, {
-      getClientRects: () => [p.rect, { ...p.rect, left: 90, width: 0 }],
+      getClientRects: () => [p.rect, { ...p.rect, top: 1200 }, { ...p.rect, left: 90, width: 0 }],
     });
     p.pointer("pointerdown", paragraph);
     p.select(paragraph.firstChild!, 0, paragraph.lastChild!);

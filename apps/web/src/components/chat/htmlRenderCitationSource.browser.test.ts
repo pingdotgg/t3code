@@ -198,7 +198,7 @@ describe("HTML citation source navigation", () => {
     p.dispose();
     expect(p.stopPosition).toHaveBeenCalledOnce();
     expect(p.post).toHaveBeenLastCalledWith(
-      { method: "t3/selection-command", params: { action: "unmark", selector: undefined } },
+      { method: "t3/selection-command", params: { action: "untarget", selector: undefined } },
       "*",
     );
     disposers.pop();

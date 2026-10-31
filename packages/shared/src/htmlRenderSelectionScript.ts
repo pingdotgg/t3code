@@ -45,11 +45,11 @@ export const HTML_RENDER_SELECTION_SCRIPT = String.raw`// Loaded as raw source i
     if (document.body) visit(document.body);
     return { text, chunks };
   };
-  const rect = (range) => {
+  const rect = (range, entire = false) => {
     // Paragraph selection may include a trailing newline with an empty rect.
     const rects = Array.from(range.getClientRects());
     const r =
-      rects.findLast((rect) => rect.width > 0 && rect.height > 0) || range.getBoundingClientRect();
+      (!entire && rects.findLast((rect) => rect.width > 0 && rect.height > 0)) || range.getBoundingClientRect();
     return { left: r.left, top: r.top, width: r.width, height: r.height };
   };
   const selector = (text, start, end) => {
@@ -113,8 +113,8 @@ export const HTML_RENDER_SELECTION_SCRIPT = String.raw`// Loaded as raw source i
     }
     if (start === null || !text.slice(start, end).trim()) return null;
     // Keep oversized quotes local; the parent can display its normal shorten action.
-    if (end - start > 8000) return { tooLong: true, rect: rect(range), pointer };
-    return { selector: selector(text, start, end), rect: rect(range), pointer };
+    if (end - start > 8000) return { tooLong: true, rect: rect(range, true), pointer };
+    return { selector: selector(text, start, end), rect: rect(range, true), pointer };
   };
   const schedule = (delay = 0) => {
     clearTimeout(timer);
@@ -188,7 +188,8 @@ export const HTML_RENDER_SELECTION_SCRIPT = String.raw`// Loaded as raw source i
     marked = null;
   };
   const markQuote = (quote, action, changesOnly = false) => {
-    clearMark();
+    const ownsMark = action === "mark" || !commentQuote;
+    if (ownsMark) clearMark();
     const reply = (target) => {
       if (changesOnly && (
         target === commentTarget ||
@@ -296,7 +297,7 @@ export const HTML_RENDER_SELECTION_SCRIPT = String.raw`// Loaded as raw source i
       // Page CSS can request smooth scrolling; return geometry only after positioning.
       if (dx || dy) window.scrollBy({ left: dx, top: dy, behavior: "instant" });
     }
-    if (window.CSS?.highlights && window.Highlight)
+    if (ownsMark && window.CSS?.highlights && window.Highlight)
       CSS.highlights.set("t3-html-citation", new Highlight(marked));
     reply(rect(marked));
   };
@@ -321,6 +322,11 @@ export const HTML_RENDER_SELECTION_SCRIPT = String.raw`// Loaded as raw source i
       window.getSelection()?.removeAllRanges();
     }
     if (action === "dismiss") cancel();
+    if (action === "untarget" && !commentQuote) clearMark();
+    if (action === "target") {
+      markQuote(quote, action);
+      return;
+    }
     if (action === "unmark") {
       commentQuote = null;
       commentTarget = null;
