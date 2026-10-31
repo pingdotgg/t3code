@@ -646,6 +646,16 @@ function isBlockingRun(run: OrchestrationV2Run): boolean {
   );
 }
 
+/** The run a follow-up to a finished child binds to: the latest active one, else the last that ran. */
+export function followUpOwnerRun(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+): OrchestrationV2Run | null {
+  return (
+    runs.filter(isBlockingRun).toSorted((a, b) => b.ordinal - a.ordinal)[0] ??
+    latestExecutedRun(runs)
+  );
+}
+
 /** Waiting runs only drain post-terminal output; their agent turn is over and still needs a wake. */
 function isLiveRun(run: OrchestrationV2Run): boolean {
   return run.status === "preparing" || run.status === "starting" || run.status === "running";
@@ -7657,9 +7667,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         task.id === (child.forkedFrom?.type === "node" ? child.forkedFrom.nodeId : undefined),
     );
     if (original === undefined || original.result === null) return;
-    const owner =
-      parent.runs.filter(isBlockingRun).toSorted((a, b) => b.ordinal - a.ordinal)[0] ??
-      latestExecutedRun(parent.runs);
+    const owner = followUpOwnerRun(parent.runs);
     if (owner === null || owner.rootNodeId === null) return;
     const now = message.createdAt;
     const adapter = yield* providerAdapters.get(run.providerInstanceId);
@@ -7785,7 +7793,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const parentRun = parentProjection.runs.find(
       (candidate) => candidate.id === command.parentRunId,
     );
-    if (parentRun === undefined || !isBlockingRun(parentRun) || parentRun.rootNodeId === null) {
+    // A follow-up to a finished task there binds as one to a child here does.
+    const followsUp = parentProjection.subagents.some(
+      (task) =>
+        task.result !== null &&
+        task.remoteChild?.environmentId === command.remoteChild.environmentId &&
+        task.remoteChild.threadId === command.remoteChild.threadId,
+    );
+    if (
+      parentRun === undefined ||
+      (followsUp
+        ? parentRun.id !== followUpOwnerRun(parentProjection.runs)?.id
+        : !isBlockingRun(parentRun)) ||
+      parentRun.rootNodeId === null
+    ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
