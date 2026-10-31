@@ -1312,12 +1312,18 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect.each(["connecting", "connected"] as const)(
+  it.effect.each(["connecting", "connected", "probing"] as const)(
     "acknowledges a dequeued %s control before a racing interruption and shutdown",
     (phase) =>
       Effect.gen(function* () {
+        const probeStarted = yield* Deferred.make<void>();
+        const probeCompleted = yield* Deferred.make<void>();
         const harness = yield* makeHarness({
           ready: () => (phase === "connecting" ? Effect.never : Effect.void),
+          probe: () =>
+            Deferred.succeed(probeStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(probeCompleted)),
+            ),
         });
         const supervisorScope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(supervisorScope, Exit.void));
@@ -1330,8 +1336,13 @@ describe("EnvironmentSupervisor", () => {
         const before = yield* awaitState(
           supervisor.state,
           (state) =>
-            state.phase === phase && (phase === "connected" || state.stage === "synchronizing"),
+            state.phase === (phase === "probing" ? "connected" : phase) &&
+            (phase !== "connecting" || state.stage === "synchronizing"),
         );
+        if (phase === "probing") {
+          yield* harness.wake("application-active");
+          yield* Deferred.await(probeStarted);
+        }
         const dequeued = yield* Deferred.make<void>();
         let value = before;
         let armed = true;
@@ -1342,6 +1353,7 @@ describe("EnvironmentSupervisor", () => {
               armed = false;
               // The next state read is in acknowledgement, after the request was dequeued.
               Deferred.doneUnsafe(dequeued, Exit.void);
+              if (phase === "probing") Deferred.doneUnsafe(probeCompleted, Exit.void);
               const fiber = Fiber.getCurrent();
               if (!fiber) throw new Error("Expected the acknowledgement fiber");
               fiber.interruptUnsafe(fiber.id);
@@ -1365,6 +1377,9 @@ describe("EnvironmentSupervisor", () => {
           .control("disconnect")
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(dequeued);
+        if (phase === "probing") {
+          yield* awaitState(supervisor.state, (state) => state.phase === "available");
+        }
         yield* Scope.close(supervisorScope, Exit.void);
         const completed = waiting.pollUnsafe();
         expect(completed).toBeDefined();

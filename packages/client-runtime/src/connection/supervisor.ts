@@ -844,6 +844,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
             yield* Ref.set(probeUnanswered, false);
           }
           yield* probeEvent.exit;
+          // A losing signal arm can acknowledge a disconnect before the probe wins the race.
+          if (!(yield* Ref.get(intent)).desired) return false;
           break;
         }
         const endDuringProbe = yield* connectedLeaseEnd(probeEvent.signal, lease);
