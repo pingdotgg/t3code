@@ -20,10 +20,15 @@ function notice(title: string, group?: ComposerBannerStackItem["group"]): Compos
 
 it("puts machine notices first, whatever order the notices arrive in", async () => {
   await using screen = await render(
-    <ComposerBannerStack items={[notice("Branch changed"), notice("Offline", "environment")]} />,
+    <ComposerBannerStack
+      items={[{ ...notice("Branch changed"), variant: "error" }, notice("Offline", "environment")]}
+    />,
   );
 
-  expect(screen.container.textContent).toBe("OfflineBranch changed");
+  await expect.element(screen.getByText("Offline", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("Branch changed", { exact: true })).not.toBeInTheDocument();
+  await screen.getByRole("button", { name: "1 more notices" }).click();
+  await expect.element(screen.getByText("Branch changed", { exact: true })).toBeVisible();
 });
 
 it("keeps the tray's top edge without leaving an empty notice region", async () => {
