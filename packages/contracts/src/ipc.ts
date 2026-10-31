@@ -1316,6 +1316,10 @@ export type ConfirmDialogVariant = "default" | "destructive";
 
 export interface ConfirmDialogOptions {
   readonly variant?: ConfirmDialogVariant;
+  /** Replaces the title parsed from the message; the whole message becomes the description. */
+  readonly title?: string;
+  /** The confirm button's label. Defaults to "Confirm". */
+  readonly confirmLabel?: string;
 }
 
 export interface LocalApi {

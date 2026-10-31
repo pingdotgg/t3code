@@ -18,6 +18,7 @@ import { readLocalApi } from "~/localApi";
 import { cn } from "~/lib/utils";
 import { RelativeTime } from "~/components/RelativeTime";
 
+import { PAGE_EMPTY_GHOST_OPACITY } from "../PageEmptyState";
 import { Button, InlineButton } from "../ui/button";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { MiddleTruncate } from "../ui/middle-truncate";
@@ -40,17 +41,40 @@ const DEFAULT_DETAIL_TABS = [
   { value: "code", label: "Code" },
 ] as const;
 
-export function PullRequestListGhost({ rows = 7, caption }: { rows?: number; caption?: string }) {
+export function PullRequestListGhost({
+  rows = 7,
+  caption,
+  idle = false,
+}: {
+  rows?: number;
+  caption?: string;
+  /**
+   * The list's shape under an empty page rather than a load: still, silent, and fading out
+   * toward the title so it never reads as rows on their way.
+   */
+  idle?: boolean;
+}) {
   return (
-    <div role="status" aria-label={caption ?? "Loading pull requests"} className="space-y-px">
+    <div
+      {...(idle
+        ? { "aria-hidden": true }
+        : { role: "status", "aria-label": caption ?? "Loading pull requests" })}
+      className="space-y-px"
+    >
       {caption ? (
         <p className="ps-10 pe-3 pb-1 text-meta text-muted-foreground/70">{caption}</p>
       ) : null}
       {/* A row's own lines: glyph on the title line, title and meta 20 and 16 tall with the
           diff stat and time at their ends, 61px rows with the list's 1px separators. */}
-      <div className="motion-safe:animate-skeleton space-y-px">
+      <div className={cn("space-y-px", !idle && "motion-safe:animate-skeleton")}>
         {Array.from({ length: rows }, (_, index) => (
-          <div key={index} className="flex items-start gap-3 rounded-lg px-3 py-2.5">
+          <div
+            key={index}
+            className={cn(
+              "flex items-start gap-3 rounded-lg px-3 py-2.5",
+              idle && (PAGE_EMPTY_GHOST_OPACITY[index] ?? "opacity-25"),
+            )}
+          >
             <GhostBar className="mt-0.5 size-4 shrink-0 rounded-full" />
             <div className="flex min-w-0 flex-1 flex-col gap-1.25">
               <div className="flex h-5 items-center gap-2">
