@@ -34,17 +34,8 @@ function supportsPluginNotifications(config: ServerConfig | null): boolean {
   return config?.environment.capabilities.pluginNotifications === true;
 }
 
-/**
- * What a renderer does with the latest frame: toast each `show` entry, close
- * every visible toast whose key is not in `keep`, and remember `mark`. That
- * mark and the visible toasts are all a renderer keeps.
- *
- * Without a mark (the first frame a renderer sees, such as on app launch)
- * nothing is shown: what the server already held is history. After that,
- * only notifications above the mark are shown, so a reconnect's frame
- * repeats nothing; a new epoch (the server restarted) shows what it holds.
- * A `null` frame (no supporting server) closes everything and keeps the mark.
- */
+// Suppress the first retained frame as history, then show only entries above the saved watermark.
+// A new epoch starts fresh; absent support closes visible toasts while preserving the watermark.
 export function pluginNotificationChanges(
   mark: PluginNotificationMark | undefined,
   frame: PluginNotificationFrame | null,
@@ -76,13 +67,8 @@ export function pluginNotificationDescription(entry: ReceivedPluginNotification)
   return body === undefined ? `From ${pluginName}` : `${body} · ${pluginName}`;
 }
 
-/**
- * Follows the environment's sessions and subscribes only on a session whose
- * own server advertises the capability, so an older server never receives the
- * call even while a cached config still says otherwise. Emits each frame, or
- * `null` for a session without the capability. A lost connection keeps the
- * last frame until the next session sends the current one.
- */
+// Subscribe only when the session advertises support; cached configuration cannot authorize a call.
+// Retain the last frame through disconnect until the next session supplies current state.
 const pluginNotificationsStream = Stream.unwrap(
   EnvironmentSupervisor.EnvironmentSupervisor.pipe(
     Effect.map((supervisor) =>

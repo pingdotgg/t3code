@@ -1,18 +1,5 @@
-/**
- * Notifications sent by plugins with the `notifications` capability, shown by
- * clients as toasts.
- *
- * Delivery is best-effort and in memory only. The server retains the last
- * `PLUGIN_NOTIFICATION_MAX_RETAINED` notifications for `retentionMillis`, and
- * that retained set is the whole state: every frame carries it, so a client
- * that reconnects sees what it missed and drops what was removed meanwhile.
- * A notification leaves the set when it expires, when newer ones evict it, or
- * when its plugin's process stops (disable, remove, crash). A server restart
- * starts a new epoch with nothing retained.
- *
- * Every notification fits `PLUGIN_NOTIFICATION_MAX_ENCODED_BYTES`, so a whole
- * frame stays within `PLUGIN_NOTIFICATION_FRAME_MAX_BYTES` whatever plugins send.
- */
+// Best-effort notifications retain bounded, expiring state in memory; each frame carries the complete set.
+// Process exit withdraws its notifications; a restart creates an empty epoch.
 import {
   PLUGIN_NOTIFICATION_BODY_MAX_LENGTH,
   PLUGIN_NOTIFICATION_MAX_ENCODED_BYTES,
@@ -41,12 +28,8 @@ import { subscribeBeforeSnapshot } from "../utils/subscribeBeforeSnapshot.ts";
 import * as PluginSupervisor from "./PluginSupervisor.ts";
 import { makeTokenBucket } from "./pluginTokenBucket.ts";
 
-/**
- * Retention covers a short disconnect, not history; it is elapsed time, so a
- * wall clock change neither shortens nor extends it. Per plugin process,
- * `burst` notifications at once, then one per `refillMillis`. `threadIdMaxLength`
- * bounds the one identifier a plugin chooses.
- */
+// Use elapsed time for retention; wall-clock changes must not affect expiry.
+// Per-process bursts refill at the configured rate; plugin-chosen thread identifiers are bounded.
 const PLUGIN_NOTIFICATION_LIMITS = {
   retained: PLUGIN_NOTIFICATION_MAX_RETAINED,
   retentionMillis: 2 * 60_000,
