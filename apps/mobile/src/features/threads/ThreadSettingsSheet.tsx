@@ -292,6 +292,12 @@ export type ExistingThreadSettingsRouteParams = {
   readonly draftKey: string;
 };
 
+type HiddenModelOverride = {
+  readonly hidden: boolean;
+  /** Server settings when the save succeeded; `null` while it is in flight. */
+  readonly settledSettings: ServerSettings | null;
+};
+
 type ThreadSettingsSessionValue = {
   readonly environmentId: EnvironmentId | null;
   readonly providerInstanceId?: ProviderInstanceId;
@@ -300,7 +306,6 @@ type ThreadSettingsSessionValue = {
   readonly favoritesLoaded: boolean;
   readonly toggleFavorite: (option: ModelOption) => void;
   readonly toggleHidden: (option: ModelOption) => void;
-  readonly pendingHiddenKeys: ReadonlySet<string>;
   readonly manageHidden: boolean;
   readonly setManageHidden: (value: boolean) => void;
   readonly runtimeMode: RuntimeMode;
@@ -342,11 +347,12 @@ function ThreadSettingsSessionProvider(
   ).data;
   const connectionGeneration = connection?.phase === "connected" ? connection.generation : null;
   const [manageHidden, setManageHidden] = useState(false);
-  const pendingHidden = useRef(new Set<string>());
   const pendingFavorites = useRef(
     new Map<string, { favorite: boolean; settings: ServerSettings; pending: boolean }>(),
   );
-  const [pendingHiddenKeys, setPendingHiddenKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const [hiddenOverrides, setHiddenOverrides] = useState<ReadonlyMap<string, HiddenModelOverride>>(
+    () => new Map(),
+  );
   const providerGroups =
     manageHidden && config
       ? groupByProvider(
@@ -356,7 +362,14 @@ function ThreadSettingsSessionProvider(
             props.lockedProviderInstanceId,
             props.projectId,
             true,
-          ),
+          ).map((option) => {
+            const override = hiddenOverrides.get(option.key);
+            // A save's settings push can land after its response; hold the tapped value until the next push.
+            return override &&
+              (override.settledSettings === null || override.settledSettings === settings)
+              ? { ...option, isHidden: override.hidden }
+              : option;
+          }),
         )
       : props.providerGroups;
   const legacyFavorites = AsyncResult.isSuccess(preferences)
@@ -454,32 +467,38 @@ function ThreadSettingsSessionProvider(
     }
   };
   const toggleHidden = (option: ModelOption) => {
-    if (
-      !settings ||
-      !props.environmentId ||
-      !option.canHide ||
-      pendingHidden.current.has(option.key)
-    )
-      return;
-    pendingHidden.current.add(option.key);
-    setPendingHiddenKeys(new Set(pendingHidden.current));
+    const environmentId = props.environmentId;
+    if (!settings || !environmentId || !option.canHide) return;
+    const override: HiddenModelOverride = { hidden: !option.isHidden, settledSettings: null };
+    setHiddenOverrides((current) => new Map(current).set(option.key, override));
     void Haptics.selectionAsync();
     void saveSettings({
-      environmentId: props.environmentId,
+      environmentId,
       input: {
         patch: {
           setModelsHidden: [
             {
               provider: option.selection.instanceId,
               model: option.selection.model,
-              hidden: !option.isHidden,
+              hidden: override.hidden,
             },
           ],
         },
       },
-    }).then(() => {
-      pendingHidden.current.delete(option.key);
-      setPendingHiddenKeys(new Set(pendingHidden.current));
+    }).then((result) => {
+      const settledSettings = registry
+        .get(environmentServerConfigsAtom)
+        .get(environmentId)?.settings;
+      setHiddenOverrides((current) => {
+        if (current.get(option.key) !== override) return current;
+        const next = new Map(current);
+        if (AsyncResult.isSuccess(result) && settledSettings) {
+          next.set(option.key, { ...override, settledSettings });
+        } else {
+          next.delete(option.key);
+        }
+        return next;
+      });
     });
   };
   const [showLegacyToggle, setShowLegacyToggle] = useState(false);
@@ -610,7 +629,6 @@ function ThreadSettingsSessionProvider(
     manageHidden,
     setManageHidden,
     toggleHidden,
-    pendingHiddenKeys,
     runtimeMode: compatibleRuntimeMode,
     runtimeModeChoices,
     onUpdateRuntimeMode: props.onUpdateRuntimeMode,
@@ -712,7 +730,6 @@ function ThreadSettingsModelListRow(props: {
           ? () => session.toggleHidden(props.option)
           : undefined
       }
-      hiddenUpdatePending={session.pendingHiddenKeys.has(props.option.key)}
       option={props.option}
       selected={session.isDisplayed(props.option)}
     />

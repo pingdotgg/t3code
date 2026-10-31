@@ -6,6 +6,7 @@ import {
   ProviderInstanceId,
   type ServerConfig,
 } from "@t3tools/contracts";
+import { Cause } from "effect";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import type { ReactNode } from "react";
 import { act } from "react";
@@ -173,24 +174,18 @@ const config = {
   ],
 } as unknown as ServerConfig;
 
-it("shows a tapped model as hidden while its hide request is still saving", async () => {
+function mountSheet() {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  const save = Promise.withResolvers<unknown>();
-  mocks.updateSettings.mockReturnValue(save.promise);
   const registry = AtomRegistry.make();
-  registry.set(
-    environmentServerConfigsAtom as Atom.Writable<Map<EnvironmentId, ServerConfig>>,
-    new Map([[environmentId, config]]),
-  );
+  const pushConfig = (next: ServerConfig) =>
+    registry.set(
+      environmentServerConfigsAtom as Atom.Writable<Map<EnvironmentId, ServerConfig>>,
+      new Map([[environmentId, next]]),
+    );
+  pushConfig(config);
 
   const container = document.createElement("div");
   const root = createRoot(container);
-  using _root = {
-    [Symbol.dispose]: () => {
-      save.resolve(AsyncResult.success(undefined));
-      act(() => root.unmount());
-    },
-  };
   act(() =>
     root.render(
       <RegistryContext.Provider value={registry}>
@@ -214,9 +209,21 @@ it("shows a tapped model as hidden while its hide request is still saving", asyn
   );
   const button = (label: string) =>
     container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
-
   act(() => button("Manage hidden models")!.click());
-  act(() => button("Hide model: Codex, GPT-6.1-Sol")!.click());
+  return {
+    button,
+    pushConfig,
+    [Symbol.dispose]: () => act(() => root.unmount()),
+  };
+}
+
+it("shows a tapped model as hidden while its hide request is still saving", async () => {
+  const save = Promise.withResolvers<unknown>();
+  mocks.updateSettings.mockReturnValue(save.promise);
+  using _resolve = { [Symbol.dispose]: () => save.resolve(AsyncResult.success(undefined)) };
+  using sheet = mountSheet();
+
+  act(() => sheet.button("Hide model: Codex, GPT-6.1-Sol")!.click());
 
   expect(mocks.updateSettings).toHaveBeenCalledWith({
     environmentId,
@@ -226,7 +233,42 @@ it("shows a tapped model as hidden while its hide request is still saving", asyn
   });
   // The save has not settled and no settings push has arrived yet.
   expect(
-    button("Show model: Codex, GPT-6.1-Sol"),
+    sheet.button("Show model: Codex, GPT-6.1-Sol"),
     "the tapped row still shows the model as visible until the server responds",
+  ).not.toBeNull();
+});
+
+it("holds a saved hidden state until the settings push and reverts a failed save", async () => {
+  const hide = Promise.withResolvers<unknown>();
+  mocks.updateSettings.mockReturnValueOnce(hide.promise);
+  using sheet = mountSheet();
+  act(() => sheet.button("Hide model: Codex, GPT-6.1-Sol")!.click());
+
+  await act(async () => hide.resolve(AsyncResult.success(undefined)));
+  expect(
+    sheet.button("Show model: Codex, GPT-6.1-Sol"),
+    "a response that lands before the push keeps the tapped state",
+  ).not.toBeNull();
+
+  act(() =>
+    sheet.pushConfig({
+      ...config,
+      settings: {
+        ...config.settings,
+        providerModelPreferences: { [codex]: { hiddenModels: ["gpt-6.1-sol"], modelOrder: [] } },
+      },
+    }),
+  );
+  expect(sheet.button("Show model: Codex, GPT-6.1-Sol")).not.toBeNull();
+
+  const show = Promise.withResolvers<unknown>();
+  mocks.updateSettings.mockReturnValueOnce(show.promise);
+  act(() => sheet.button("Show model: Codex, GPT-6.1-Sol")!.click());
+  expect(sheet.button("Hide model: Codex, GPT-6.1-Sol")).not.toBeNull();
+
+  await act(async () => show.resolve(AsyncResult.failure(Cause.fail("rejected"))));
+  expect(
+    sheet.button("Show model: Codex, GPT-6.1-Sol"),
+    "a failed save returns the row to the server's state",
   ).not.toBeNull();
 });
