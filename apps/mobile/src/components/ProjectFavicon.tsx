@@ -163,12 +163,13 @@ function ProjectFaviconImage(props: {
   );
 
   const { themeAppearance } = useAppearancePreferences();
+  const requestFaviconUrl = faviconRequest?.faviconUrl;
   const inlineFaviconUrl = useMemo(
     () =>
-      faviconRequest?.faviconUrl.startsWith("data:")
-        ? resolveProjectFaviconColorScheme(faviconRequest.faviconUrl, themeAppearance)
+      requestFaviconUrl?.startsWith("data:")
+        ? resolveProjectFaviconColorScheme(requestFaviconUrl, themeAppearance)
         : null,
-    [faviconRequest?.faviconUrl, themeAppearance],
+    [requestFaviconUrl, themeAppearance],
   );
 
   const showImage = faviconRequest !== null && status === "loaded";
