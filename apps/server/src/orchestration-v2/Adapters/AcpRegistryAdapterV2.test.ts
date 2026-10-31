@@ -487,6 +487,7 @@ describe("AcpRegistryAdapterV2", () => {
       readonly customModels?: ReadonlyArray<string>;
       readonly storedModel?: string;
       readonly storedModePick?: string;
+      readonly storedOptions?: ReadonlyArray<ProviderOptionSelection>;
       readonly turnModels?: ReadonlyArray<string>;
       readonly rejectedModel?: string;
     }) {
@@ -573,6 +574,7 @@ describe("AcpRegistryAdapterV2", () => {
       const stored: ModelSelection = {
         instanceId,
         model: input.storedModel ?? "default",
+        ...(input.storedOptions === undefined ? {} : { options: input.storedOptions }),
         ...(input.storedModePick === undefined
           ? {}
           : { options: [{ id: ACP_SESSION_MODE_OPTION_ID, value: input.storedModePick }] }),
@@ -672,6 +674,33 @@ describe("AcpRegistryAdapterV2", () => {
           answer("session/set_config_option", { configOptions: [permissionModeOption("auto")] }),
         ],
         storedModePick: "auto",
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+
+    it.effect("keeps the session open when a model-category boolean is rejected", () =>
+      openWithStoredPicks({
+        setup: {
+          configOptions: [
+            { id: "fast", name: "Fast", category: "model", type: "boolean", currentValue: false },
+          ],
+        },
+        storedOptions: [{ id: "fast", value: true }],
+        pickFrames: [
+          outbound("session/set_config_option", {
+            sessionId: "agent-session",
+            configId: "fast",
+            value: true,
+            type: "boolean",
+          }),
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/set_config_option",
+              error: { code: -32602, message: "Fast is unavailable" },
+            },
+          },
+        ],
       }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
 

@@ -155,6 +155,24 @@ describe("getComposerProviderState", () => {
     expect(state.modelOptionsForDispatch).toEqual(selections(["agent", "build"]));
   });
 
+  it.each([false, true])(
+    "respects plan mode %s with unknown model capabilities",
+    (planModeEnabled) => {
+      const state = getComposerProviderState({
+        provider: PROVIDER,
+        model: MODEL,
+        models: [{ slug: MODEL, name: MODEL, isCustom: false, capabilities: null }],
+        modelOptions: selections(["agent", "plan"], ["effort", "high"]),
+        planModeEnabled,
+      });
+      expect(state.modelOptionsForDispatch).toEqual(
+        planModeEnabled
+          ? selections(["agent", "plan"], ["effort", "high"])
+          : selections(["effort", "high"]),
+      );
+    },
+  );
+
   it("preserves explicit options when the selected model is absent from the catalog", () => {
     const state = getComposerProviderState({
       provider: ProviderDriverKind.make("opencode"),

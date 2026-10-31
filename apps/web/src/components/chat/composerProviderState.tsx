@@ -118,14 +118,18 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
     }
   }
   // Nothing describes this model's options yet, so its saved options go out
-  // unchanged and the provider session checks them against its own list.
+  // with legacy plan choices filtered, and the session validates the remaining values.
   // Callers pass only options saved for this model (see
   // `deriveEffectiveComposerModelState`).
   if (getListedModelCapabilities(models, model, provider) === null) {
+    const preservedOptions = modelOptions?.filter(
+      (option) => planModeEnabled || option.id !== "agent" || option.value !== "plan",
+    );
     return {
       provider,
       promptEffort: null,
-      modelOptionsForDispatch: modelOptions && modelOptions.length > 0 ? modelOptions : undefined,
+      modelOptionsForDispatch:
+        preservedOptions && preservedOptions.length > 0 ? preservedOptions : undefined,
     };
   }
   const { caps, selections } = resolveComposerOptionSelections(

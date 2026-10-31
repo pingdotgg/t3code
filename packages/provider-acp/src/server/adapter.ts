@@ -6900,7 +6900,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (!availableConfigIds.has(selection.id) || selection.id === modelOptionId) continue;
             const option = configOptions.find((candidate) => candidate.id === selection.id);
             // Secondary model choices fail on rejection rather than silently using another model.
-            if (option?.category === "model") {
+            if (option?.category === "model" && option.type === "select") {
               yield* runtime.setConfigOption(selection.id, selection.value);
               continue;
             }
