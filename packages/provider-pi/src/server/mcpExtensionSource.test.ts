@@ -229,6 +229,147 @@ describe("Pi MCP tool exposure", () => {
     assert.include(bridge.getActiveTools(), "mcp__t3-code__preview_snapshot");
   });
 
+  it("keeps orchestration and called tools declared for gateways that opt out of eager schemas", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      toolSearchAvailable: true,
+      gatewayTools: "called",
+    });
+    const messages: Array<{
+      role: string;
+      content: Array<{ type: string; name?: string }>;
+    }> = [];
+    const event = { systemPrompt: "" };
+    const gatewayContext = {
+      model: { api: "openai-completions" },
+      sessionManager: { buildSessionProjection: () => ({ messages }) },
+      ui: { notify: assert.fail },
+    };
+    await bridge.handlers.get("session_start")!(event, gatewayContext);
+    await bridge.handlers.get("before_agent_start")!(event, gatewayContext);
+    const required = [
+      "read",
+      "tool_search",
+      "mcp__t3-code__orchestrator_capabilities",
+      "mcp__t3-code__delegate_task",
+      "mcp__t3-code__task_status",
+    ];
+    assert.deepEqual(bridge.getActiveTools(), required);
+
+    bridge.restoreActiveTools(["read"]);
+    await bridge.handlers.get("session_tree")!(event, gatewayContext);
+    assert.deepEqual(bridge.getActiveTools(), required);
+
+    messages.push(
+      { role: "user", content: [{ type: "text" }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "text" },
+          { type: "toolCall", name: "mcp__t3-code__preview_snapshot" },
+          { type: "toolCall", name: "bash" },
+        ],
+      },
+    );
+    for (const hookName of ["model_select", "session_tree", "before_agent_start"]) {
+      bridge.restoreActiveTools(["read"]);
+      await bridge.handlers.get(hookName)!(event, gatewayContext);
+      assert.deepEqual(bridge.getActiveTools(), [...required, "mcp__t3-code__preview_snapshot"]);
+    }
+
+    messages.length = 0;
+    bridge.restoreActiveTools(["read"]);
+    await bridge.handlers.get("session_tree")!(event, gatewayContext);
+    assert.deepEqual(bridge.getActiveTools(), required);
+  });
+
+  it("keeps native tool exclusions when restoring a called-tool gateway loadout", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      toolSearchAvailable: true,
+      gatewayTools: "called",
+      allowsTool: (name) =>
+        name !== "mcp__t3-code__delegate_task" && name !== "mcp__t3-code__preview_snapshot",
+    });
+    await bridge.handlers.get("session_tree")!(
+      { systemPrompt: "" },
+      {
+        model: { api: "openai-completions" },
+        sessionManager: {
+          buildSessionProjection: () => ({
+            messages: [
+              {
+                role: "assistant",
+                content: [{ type: "toolCall", name: "mcp__t3-code__preview_snapshot" }],
+              },
+            ],
+          }),
+        },
+        ui: { notify: assert.fail },
+      },
+    );
+    assert.deepEqual(bridge.getActiveTools(), [
+      "read",
+      "tool_search",
+      "mcp__t3-code__orchestrator_capabilities",
+      "mcp__t3-code__task_status",
+    ]);
+  });
+
+  it("keeps every gateway tool declared when the opt-out has no native tool search", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      toolSearchAvailable: true,
+      toolSearchDisabled: true,
+      gatewayTools: "called",
+    });
+    const ctx = {
+      model: { api: "openai-completions" },
+      sessionManager: { buildSessionProjection: () => ({ messages: [] }) },
+      ui: { notify: assert.fail },
+    };
+    await bridge.handlers.get("session_start")!({ systemPrompt: "" }, ctx);
+    bridge.restoreActiveTools(["read"]);
+    await bridge.handlers.get("session_tree")!({ systemPrompt: "" }, ctx);
+    assert.deepEqual(bridge.getActiveTools(), [
+      "read",
+      "mcp__t3-code__orchestrator_capabilities",
+      "mcp__t3-code__delegate_task",
+      "mcp__t3-code__task_status",
+      "mcp__t3-code__preview_snapshot",
+    ]);
+  });
+
+  it("keeps an existing thread's eager loadout after the gateway opts out", async () => {
+    const event = { systemPrompt: "" };
+    const gatewayContext = {
+      model: { api: "openai-completions" },
+      sessionManager: { buildSessionProjection: () => ({ messages: [] }) },
+      ui: { notify: assert.fail },
+    };
+    const eager = await loadMcpBridge({ modern: true, toolSearchAvailable: true });
+    await eager.handlers.get("session_start")!(event, gatewayContext);
+    const eagerLoadout = [...eager.getActiveTools()];
+    assert.include(eagerLoadout, "mcp__t3-code__preview_snapshot");
+
+    // Pi restores the thread's saved loadout when it resumes under the opt-out.
+    const bridge = await loadMcpBridge({
+      modern: true,
+      toolSearchAvailable: true,
+      gatewayTools: "called",
+    });
+    bridge.restoreActiveTools(eagerLoadout);
+    for (const hookName of [
+      "session_start",
+      "model_select",
+      "session_tree",
+      "before_agent_start",
+    ]) {
+      await bridge.handlers.get(hookName)!(event, gatewayContext);
+      assert.deepEqual(bridge.getActiveTools(), eagerLoadout);
+    }
+  });
+
   it.each(["legacy Pi", "disabled tool search"])(
     "keeps tool execution available with %s",
     async (mode) => {
@@ -236,6 +377,7 @@ describe("Pi MCP tool exposure", () => {
         modern: mode !== "legacy Pi",
         toolSearchAvailable: mode === "disabled tool search",
         toolSearchDisabled: mode === "disabled tool search",
+        gatewayTools: "called",
       });
       if (mode !== "legacy Pi") {
         const start = bridge.handlers.get("session_start");
