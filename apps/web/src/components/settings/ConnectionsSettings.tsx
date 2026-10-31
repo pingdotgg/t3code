@@ -1516,7 +1516,6 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
           savedEnvironments={savedEnvironments}
         />
       </SettingsSection>
-      {desktopBridge ? <GatewayHeadersSettings /> : null}
       {hasCloudPublicConfig() ? (
         <RemoveT3ConnectEnvironmentDialog
           environmentLabel={pendingT3ConnectRemoval?.label ?? null}
@@ -1539,6 +1538,7 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
       ))}
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
       <PullRequestRoutingSettings environments={loadBalancingEnvironments} />
+      {desktopBridge ? <GatewayHeadersSettings /> : null}
     </SettingsPageContainer>
   );
 }

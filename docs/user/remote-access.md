@@ -194,19 +194,18 @@ Create a service token for the proxy. In Cloudflare Zero Trust, that is
 policy that allows that token to the application. Cloudflare Access rejects
 CORS preflight requests even when they carry the token, so also turn on
 **Bypass options requests to origin** in the application's CORS settings. Your
-T3 Code server answers those itself. Then either paste the token's headers into
-**Access gateway headers** when you add the environment, or add them first in
-**Settings → Environments → Access gateways**:
+T3 Code server answers those itself.
 
-```text
-CF-Access-Client-Id: <client id>
-CF-Access-Client-Secret: <client secret>
-```
+When you add the environment, open **Behind an access proxy?** below the
+pairing code and enter the token's client ID and client secret. For a proxy
+other than Cloudflare Access, choose **Custom headers** and enter the header
+names and values it expects. To add headers for an environment you already
+added, or to replace or remove them, use **Settings → Environments → Access
+proxy headers**.
 
-The desktop app sends those headers with every request to that address,
-including the WebSocket, and keeps them encrypted on the device. Remove or
-replace them in **Access gateways**. The web and mobile apps cannot send
-gateway headers yet.
+The desktop app sends those headers with every request to that host, including
+the WebSocket, and keeps them encrypted on the device. The web and mobile apps
+cannot send access proxy headers yet.
 
 ## Desktop-managed SSH
 

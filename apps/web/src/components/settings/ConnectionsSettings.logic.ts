@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
 import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "@t3tools/shared/remote";
 import { readHostedPairingRequest } from "../../hostedPairing";
+import { randomUUID } from "~/lib/utils";
 import {
   type ServerClientSessionRecord,
   type ServerPairingLinkRecord,
@@ -290,36 +291,111 @@ export function resolveGatewayOrigin(host: string): string {
   return url.origin;
 }
 
-/** Reads one `Name: value` header per line. Errors never echo a line, since it may be a secret. */
-export function parseGatewayHeaders(text: string): ReadonlyArray<DesktopGatewayHeader> {
-  const headers: Array<DesktopGatewayHeader> = [];
-  for (const line of text.split(/\r?\n/u)) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) continue;
-    const colon = trimmed.indexOf(":");
-    if (colon <= 0) throw new Error('Write each gateway header as "Name: value".');
-    const name = trimmed.slice(0, colon).trim();
-    const header = { name, value: trimmed.slice(colon + 1).trim() };
-    if (isReservedGatewayHeaderName(name)) {
-      throw new Error(`T3 Code sets ${name} itself, so it cannot be a gateway header.`);
+const CLOUDFLARE_ACCESS_HEADER_NAMES = ["CF-Access-Client-Id", "CF-Access-Client-Secret"] as const;
+
+export interface GatewayHeaderRow {
+  readonly id: string;
+  readonly name: string;
+  readonly value: string;
+}
+
+export interface GatewayHeadersDraft {
+  readonly kind: "cloudflare" | "custom";
+  readonly clientId: string;
+  readonly clientSecret: string;
+  readonly rows: ReadonlyArray<GatewayHeaderRow>;
+}
+
+export function makeGatewayHeaderRow(name = ""): GatewayHeaderRow {
+  return { id: randomUUID(), name, value: "" };
+}
+
+export function isCloudflareAccessHeaderNames(names: ReadonlyArray<string>): boolean {
+  return (
+    names.length === CLOUDFLARE_ACCESS_HEADER_NAMES.length &&
+    CLOUDFLARE_ACCESS_HEADER_NAMES.every((expected) =>
+      names.some((name) => name.toLowerCase() === expected.toLowerCase()),
+    )
+  );
+}
+
+/** Saved values never come back from the desktop app, so a replacement keeps only the names. */
+export function makeGatewayHeadersDraft(
+  savedHeaderNames: ReadonlyArray<string> = [],
+): GatewayHeadersDraft {
+  const cloudflare =
+    savedHeaderNames.length === 0 || isCloudflareAccessHeaderNames(savedHeaderNames);
+  return {
+    kind: cloudflare ? "cloudflare" : "custom",
+    clientId: "",
+    clientSecret: "",
+    rows: cloudflare ? [makeGatewayHeaderRow()] : savedHeaderNames.map(makeGatewayHeaderRow),
+  };
+}
+
+function validateGatewayHeaders(
+  headers: ReadonlyArray<DesktopGatewayHeader>,
+): ReadonlyArray<DesktopGatewayHeader> {
+  const seen = new Set<string>();
+  for (const header of headers) {
+    const { name, value } = header;
+    if (name.length === 0) throw new Error("Enter a name for each header.");
+    if (value.length === 0) throw new Error(`Enter a value for ${name}.`);
+    if (isReservedGatewayHeaderName(name)) throw new Error(`T3 Code sets ${name} itself.`);
+    if (!isGatewayHeader({ name, value: "x" })) {
+      throw new Error(`${name} is not a valid header name.`);
     }
-    if (!isGatewayHeader(header)) {
-      throw new Error(`Gateway header ${name} needs a valid name and a value.`);
-    }
-    headers.push(header);
+    if (!isGatewayHeader(header)) throw new Error(`The value of ${name} has invalid characters.`);
+    if (seen.has(name.toLowerCase())) throw new Error(`${name} is listed twice.`);
+    seen.add(name.toLowerCase());
   }
   return headers;
+}
+
+/** Empty when nothing is filled in. Errors name a header but never echo a value. */
+export function gatewayHeadersFromDraft(
+  draft: GatewayHeadersDraft,
+): ReadonlyArray<DesktopGatewayHeader> {
+  if (draft.kind === "custom") {
+    return validateGatewayHeaders(
+      draft.rows
+        .map((row) => ({ name: row.name.trim(), value: row.value.trim() }))
+        .filter((row) => row.name.length > 0 || row.value.length > 0),
+    );
+  }
+  const clientId = draft.clientId.trim();
+  const clientSecret = draft.clientSecret.trim();
+  if (clientId.length === 0 && clientSecret.length === 0) return [];
+  if (clientId.length === 0) throw new Error("Enter the service token's client ID.");
+  if (clientSecret.length === 0) throw new Error("Enter the service token's client secret.");
+  return validateGatewayHeaders([
+    { name: CLOUDFLARE_ACCESS_HEADER_NAMES[0], value: clientId },
+    { name: CLOUDFLARE_ACCESS_HEADER_NAMES[1], value: clientSecret },
+  ]);
 }
 
 /** `origin` is set when replacing a saved origin's headers; otherwise `host` names it. */
 export function resolveGatewayHeadersInput(input: {
   readonly origin: string | null;
   readonly host: string;
-  readonly headersText: string;
+  readonly draft: GatewayHeadersDraft;
 }): DesktopGatewayHeadersInput {
-  const headers = parseGatewayHeaders(input.headersText);
-  if (headers.length === 0) throw new Error("Enter at least one gateway header.");
-  return { origin: input.origin ?? resolveGatewayOrigin(input.host), headers };
+  const origin = input.origin ?? resolveGatewayOrigin(input.host);
+  const headers = gatewayHeadersFromDraft(input.draft);
+  if (headers.length === 0) {
+    throw new Error(
+      input.draft.kind === "cloudflare"
+        ? "Enter the service token's client ID and client secret."
+        : "Add at least one header.",
+    );
+  }
+  return { origin, headers };
+}
+
+/** An https origin on its default port reads as its host. */
+export function formatGatewayOrigin(origin: string): string {
+  const url = new URL(origin);
+  return url.protocol === "https:" ? url.host : origin;
 }
 
 export function formatDesktopBridgeError(error: unknown, fallback: string): string {

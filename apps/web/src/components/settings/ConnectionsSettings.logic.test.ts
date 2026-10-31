@@ -2,7 +2,10 @@ import type { DesktopWslState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
-  parseGatewayHeaders,
+  formatGatewayOrigin,
+  gatewayHeadersFromDraft,
+  type GatewayHeadersDraft,
+  makeGatewayHeadersDraft,
   resolveGatewayOrigin,
   selectQrEndpointOption,
   togglePairingScopeSelection,
@@ -126,26 +129,49 @@ describe("selectQrEndpointOption", () => {
   });
 });
 
-describe("parseGatewayHeaders", () => {
-  it("reads one header per line and keeps colons inside values", () => {
+describe("gatewayHeadersFromDraft", () => {
+  const custom = (...rows: Array<[string, string]>): GatewayHeadersDraft => ({
+    ...makeGatewayHeadersDraft(["X"]),
+    rows: rows.map(([name, value], index) => ({ id: String(index), name, value })),
+  });
+
+  it("sends a Cloudflare service token as its two headers", () => {
     expect(
-      parseGatewayHeaders(
-        "\n CF-Access-Client-Id: id.access \r\nCF-Access-Client-Secret: a:b:c\n\n",
-      ),
+      gatewayHeadersFromDraft({
+        ...makeGatewayHeadersDraft(),
+        clientId: " id.access ",
+        clientSecret: "a:b",
+      }),
     ).toEqual([
       { name: "CF-Access-Client-Id", value: "id.access" },
-      { name: "CF-Access-Client-Secret", value: "a:b:c" },
+      { name: "CF-Access-Client-Secret", value: "a:b" },
     ]);
   });
 
+  it("sends nothing when no field is filled in", () => {
+    expect(gatewayHeadersFromDraft(makeGatewayHeadersDraft())).toEqual([]);
+    expect(gatewayHeadersFromDraft(custom(["", " "]))).toEqual([]);
+  });
+
   it.each([
-    ["a line without a name", "just-a-secret", 'Write each gateway header as "Name: value".'],
-    ["a header T3 Code sets", "Authorization: Bearer x", "T3 Code sets Authorization itself"],
-    ["a browser-owned header", "Sec-WebSocket-Key: x", "T3 Code sets Sec-WebSocket-Key itself"],
-    ["an empty value", "P-Access-Token:", "Gateway header P-Access-Token needs"],
-    ["an invalid name", "Bad Name: x", "Gateway header Bad Name needs"],
-  ])("rejects %s without echoing the line", (_label, text, message) => {
-    expect(() => parseGatewayHeaders(text)).toThrow(message);
+    ["half a service token", { ...makeGatewayHeadersDraft(), clientId: "id" }, "client secret"],
+    ["a value without a name", custom(["", "secret"]), "Enter a name for each header."],
+    ["a name without a value", custom(["P-Token", ""]), "Enter a value for P-Token."],
+    ["a header T3 Code sets", custom(["Authorization", "x"]), "T3 Code sets Authorization"],
+    ["a browser-owned header", custom(["Sec-WebSocket-Key", "x"]), "T3 Code sets Sec-WebSocket"],
+    ["an invalid name", custom(["Bad Name", "x"]), "Bad Name is not a valid header name."],
+    ["a repeated name", custom(["X-Token", "a"], ["x-token", "b"]), "x-token is listed twice."],
+  ])("rejects %s without echoing a value", (_label, draft, message) => {
+    expect(() => gatewayHeadersFromDraft(draft)).toThrow(message);
+  });
+
+  it("opens a replacement on the kind of headers already saved", () => {
+    expect(makeGatewayHeadersDraft(["cf-access-client-secret", "CF-Access-Client-Id"]).kind).toBe(
+      "cloudflare",
+    );
+    expect(makeGatewayHeadersDraft(["P-Access-Token"]).rows.map((row) => row.name)).toEqual([
+      "P-Access-Token",
+    ]);
   });
 });
 
@@ -161,5 +187,10 @@ describe("resolveGatewayOrigin", () => {
 
   it("rejects non-http addresses", () => {
     expect(() => resolveGatewayOrigin("ftp://code.example.com")).toThrow("http or https");
+  });
+
+  it("formats an https origin as its host", () => {
+    expect(formatGatewayOrigin("https://code.example.com")).toBe("code.example.com");
+    expect(formatGatewayOrigin("http://192.168.1.4:3773")).toBe("http://192.168.1.4:3773");
   });
 });

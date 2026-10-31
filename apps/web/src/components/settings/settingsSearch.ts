@@ -1138,9 +1138,9 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "access-gateways",
-    title: "Access gateways",
+    title: "Access proxy headers",
     to: "/settings/connections",
-    searchTerms: ["cloudflare access zero trust service token proxy headers pangolin"],
+    searchTerms: ["cloudflare access zero trust service token gateway custom headers pangolin"],
     desktopOnly: true,
   },
   {

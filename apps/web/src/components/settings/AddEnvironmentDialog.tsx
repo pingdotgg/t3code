@@ -1,5 +1,10 @@
 import { pipe } from "effect/Function";
-import { ChevronsLeftRightEllipsisIcon, PlusIcon, TerminalIcon } from "lucide-react";
+import {
+  ChevronRightIcon,
+  ChevronsLeftRightEllipsisIcon,
+  PlusIcon,
+  TerminalIcon,
+} from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import {
@@ -19,7 +24,7 @@ import * as Option from "effect/Option";
 import { cn } from "../../lib/utils";
 import { formatDesktopSshTarget } from "./EnvironmentRow";
 import { Input } from "../ui/input";
-import { Textarea } from "../ui/textarea";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { CommandShortcut } from "../ui/command";
 import {
   Autocomplete,
@@ -61,14 +66,15 @@ import {
 } from "../../keybindings";
 import {
   formatDesktopBridgeError,
-  parseGatewayHeaders,
+  gatewayHeadersFromDraft,
+  makeGatewayHeadersDraft,
   parseManualDesktopSshTarget,
   parsePairingUrlFields,
   parseRemotePairingFields,
   formatDesktopSshConnectionError,
   resolveGatewayOrigin,
 } from "./ConnectionsSettings.logic";
-import { GATEWAY_HEADERS_PLACEHOLDER } from "./GatewayHeadersSettings";
+import { GatewayHeadersFields } from "./GatewayHeadersSettings";
 import { refreshDesktopGatewayHeadersState } from "~/state/desktopGatewayHeaders";
 
 const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
@@ -118,7 +124,8 @@ export function AddEnvironmentDialog({
   const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
   const [savedBackendHost, setSavedBackendHost] = useState("");
   const [savedBackendPairingCode, setSavedBackendPairingCode] = useState("");
-  const [savedBackendGatewayHeaders, setSavedBackendGatewayHeaders] = useState("");
+  const [gatewayHeadersOpen, setGatewayHeadersOpen] = useState(false);
+  const [gatewayHeadersDraft, setGatewayHeadersDraft] = useState(makeGatewayHeadersDraft);
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
   const [savedBackendSshUsername, setSavedBackendSshUsername] = useState("");
   const [savedBackendSshPort, setSavedBackendSshPort] = useState("");
@@ -160,7 +167,8 @@ export function AddEnvironmentDialog({
       setSavedBackendMode("remote");
       setSavedBackendHost("");
       setSavedBackendPairingCode("");
-      setSavedBackendGatewayHeaders("");
+      setGatewayHeadersOpen(false);
+      setGatewayHeadersDraft(makeGatewayHeadersDraft());
       setSavedBackendSshHost("");
       setSavedBackendSshUsername("");
       setSavedBackendSshPort("");
@@ -217,13 +225,15 @@ export function AddEnvironmentDialog({
     setIsAddingSavedBackend(true);
     onErrorChange(null);
     let remotePairingInput: ReturnType<typeof parseRemotePairingFields>;
-    let gatewayHeaders: ReturnType<typeof parseGatewayHeaders> = [];
+    let gatewayHeaders: ReturnType<typeof gatewayHeadersFromDraft> = [];
     try {
       remotePairingInput = parseRemotePairingFields({
         host: savedBackendHost,
         pairingCode: savedBackendPairingCode,
       });
-      if (desktopBridge) gatewayHeaders = parseGatewayHeaders(savedBackendGatewayHeaders);
+      if (desktopBridge && gatewayHeadersOpen) {
+        gatewayHeaders = gatewayHeadersFromDraft(gatewayHeadersDraft);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to add backend.";
       onErrorChange(message);
@@ -450,24 +460,35 @@ export function AddEnvironmentDialog({
         </span>
       </div>
       {desktopBridge ? (
-        <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-foreground">
-            Access gateway headers (optional)
-          </span>
-          <Textarea
-            size="sm"
-            value={savedBackendGatewayHeaders}
-            onChange={(event) => setSavedBackendGatewayHeaders(event.target.value)}
-            placeholder={GATEWAY_HEADERS_PLACEHOLDER}
-            disabled={isAddingSavedBackend}
-            spellCheck={false}
-            autoComplete="off"
-          />
-          <span className="mt-1 block text-2xs text-muted-foreground">
-            For a host behind Cloudflare Access or another access proxy. Saved encrypted on this
-            device and sent with every request to the host.
-          </span>
-        </label>
+        <Collapsible open={gatewayHeadersOpen} onOpenChange={setGatewayHeadersOpen}>
+          <div className="-ml-2">
+            <CollapsibleTrigger
+              disabled={isAddingSavedBackend}
+              render={<Button size="xs" variant="ghost-muted" />}
+            >
+              <ChevronRightIcon
+                aria-hidden
+                className={cn(
+                  "transition-transform duration-150 motion-reduce:transition-none",
+                  gatewayHeadersOpen && "rotate-90",
+                )}
+              />
+              Behind an access proxy?
+            </CollapsibleTrigger>
+          </div>
+          <CollapsiblePanel>
+            <div className="flex flex-col gap-2 pt-2">
+              <GatewayHeadersFields
+                draft={gatewayHeadersDraft}
+                disabled={isAddingSavedBackend}
+                onChange={setGatewayHeadersDraft}
+              />
+              <p className="text-2xs text-muted-foreground">
+                Stored encrypted on this device and sent with every request to this host.
+              </p>
+            </div>
+          </CollapsiblePanel>
+        </Collapsible>
       ) : null}
     </div>
   );

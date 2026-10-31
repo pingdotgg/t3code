@@ -156,23 +156,30 @@ describe("AddEnvironmentDialog", () => {
     await userEvent.click(page.getByRole("button", { name: "Add environment" }));
     await userEvent.type(page.getByPlaceholder("backend.example.com"), "gw.example.com");
     await userEvent.type(page.getByPlaceholder("PAIRCODE"), "PAIRCODE");
-    const headersField = () => page.getByRole("textbox", { name: /Access gateway headers/ });
-    await userEvent.type(headersField(), "X-Test: secret");
+    const proxyDisclosure = () => page.getByRole("button", { name: "Behind an access proxy?" });
+    await userEvent.click(proxyDisclosure());
+    await userEvent.type(page.getByLabelText("Client ID"), "id.access");
+    await userEvent.type(page.getByLabelText("Client secret"), "secret");
     await userEvent.click(
       page.getByRole("dialog").getByRole("button", { name: "Add environment" }),
     );
     expect(setGatewayHeaders).toHaveBeenCalledWith({
       origin: "https://gw.example.com",
-      headers: [{ name: "X-Test", value: "secret" }],
+      headers: [
+        { name: "CF-Access-Client-Id", value: "id.access" },
+        { name: "CF-Access-Client-Secret", value: "secret" },
+      ],
     });
     await userEvent.keyboard("{Escape}");
     await expectDefaultModeAfterReopen();
-    await expect.element(headersField()).toHaveValue("");
+    await expect.element(proxyDisclosure()).toHaveAttribute("aria-expanded", "false");
 
     finishSave();
     await expect
       .element(page.getByRole("dialog").getByRole("button", { name: "Add environment" }))
       .toBeEnabled();
     expect(mocks.connectPairing).not.toHaveBeenCalled();
+    await userEvent.click(proxyDisclosure());
+    await expect.element(page.getByLabelText("Client secret")).toHaveValue("");
   });
 });
