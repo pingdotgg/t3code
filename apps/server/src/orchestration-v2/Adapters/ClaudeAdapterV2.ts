@@ -172,6 +172,7 @@ import {
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   claudeRateLimitEventToUpdate,
+  recordClaudeRateLimitEvent,
   type ClaudeScopedLimitNames,
 } from "../../provider/claudeUsageLimits.ts";
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
@@ -8183,10 +8184,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (message.type === "rate_limit_event") {
             const rateLimitInfo = message.rate_limit_info;
             if (!rateLimitInfo) return;
+            const update = adapterOptions.scopedLimitNames
+              ? yield* recordClaudeRateLimitEvent(adapterOptions.scopedLimitNames, rateLimitInfo)
+              : claudeRateLimitEventToUpdate(rateLimitInfo, { overageIncluded: undefined });
             const names = adapterOptions.scopedLimitNames
               ? yield* Ref.get(adapterOptions.scopedLimitNames)
               : { overageIncluded: undefined };
-            const update = claudeRateLimitEventToUpdate(rateLimitInfo, names);
             const now = yield* DateTime.now;
             if (update && adapterOptions.onUsageLimits) {
               yield* adapterOptions.onUsageLimits({

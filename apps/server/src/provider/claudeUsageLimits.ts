@@ -41,11 +41,54 @@ const decodeSpendBudget = Schema.decodeUnknownOption(
 
 export interface ClaudeScopedLimitNames {
   readonly overageIncluded: string | undefined;
+  /**
+   * Windows the last turn response listed in its rate-limit headers. Claude enforces only those:
+   * a verified Ultra account streams `seven_day` alone while `get_usage` keeps reporting an idle
+   * `five_hour`. Undefined until a turn has streamed headers.
+   */
+  readonly enforcedWindows?: ReadonlySet<string>;
 }
 
 export const makeClaudeScopedLimitNames = Ref.make<ClaudeScopedLimitNames>({
   overageIncluded: undefined,
 });
+
+/**
+ * The CLI omits a window whose reset just passed until the next response renews it, while the
+ * representative claim still names it, so the claim counts as listed too.
+ */
+function listedWindows(info: SDKRateLimitInfo): ReadonlySet<string> | undefined {
+  const unified = (info as { readonly unifiedWindows?: unknown }).unifiedWindows;
+  if (typeof unified !== "object" || unified === null || Array.isArray(unified)) return undefined;
+  const listed = new Set<string>();
+  for (const id of Object.keys(WINDOWS)) {
+    const entry = (unified as Record<string, unknown>)[id];
+    if (
+      typeof entry === "object" &&
+      entry !== null &&
+      typeof (entry as { readonly utilization?: unknown }).utilization === "number"
+    ) {
+      listed.add(id);
+    }
+  }
+  if (listed.size === 0) return undefined;
+  if (info.rateLimitType && info.rateLimitType in WINDOWS) listed.add(info.rateLimitType);
+  return listed;
+}
+
+/** Response headers list every window Claude enforces; `get_usage` cannot tell a dropped one from an idle one. */
+export function rememberClaudeListedWindows(
+  names: ClaudeScopedLimitNames,
+  info: SDKRateLimitInfo,
+): ClaudeScopedLimitNames {
+  const listed = listedWindows(info);
+  return listed ? { ...names, enforcedWindows: listed } : names;
+}
+
+function retiredWindowIds(names: ClaudeScopedLimitNames): ReadonlyArray<string> {
+  const enforced = names.enforcedWindows;
+  return enforced ? Object.keys(WINDOWS).filter((id) => !enforced.has(id)) : [];
+}
 
 function scopedWindowId(displayName: string): string {
   return `seven_day_${displayName.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`;
@@ -156,27 +199,39 @@ export function claudeRateLimitEventToUpdate(
   info: SDKRateLimitInfo,
   names: ClaudeScopedLimitNames,
 ): ProviderUsageLimitsUpdate | undefined {
+  const removeWindowIds = retiredWindowIds(names);
+  const windows: ServerProviderUsageWindow[] = [];
   const type: string | undefined = info.rateLimitType;
-  if (!type || typeof info.utilization !== "number") {
-    return undefined;
+  if (type && typeof info.utilization === "number") {
+    const usedPercent = info.utilization * 100;
+    const resetsAt = isoFromEpochSeconds(info.resetsAt);
+    if (type in WINDOWS && !removeWindowIds.includes(type)) {
+      windows.push(makeWindow(type, usedPercent, resetsAt));
+    } else if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
+      windows.push(scopedWindow(names.overageIncluded, usedPercent, resetsAt));
+    }
   }
-  const usedPercent = info.utilization * 100;
-  const resetsAt = isoFromEpochSeconds(info.resetsAt);
-  if (type in WINDOWS) {
-    return { windows: [makeWindow(type, usedPercent, resetsAt)] };
-  }
-  if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
-    return { windows: [scopedWindow(names.overageIncluded, usedPercent, resetsAt)] };
-  }
-  return undefined;
+  if (windows.length === 0 && removeWindowIds.length === 0) return undefined;
+  return { windows, ...(removeWindowIds.length > 0 ? { removeWindowIds } : {}) };
 }
 
-/** get_usage percentages are already 0-100. */
+/** Learn the enforced windows from this event, then map it against them. */
+export const recordClaudeRateLimitEvent = (
+  namesRef: Ref.Ref<ClaudeScopedLimitNames>,
+  info: SDKRateLimitInfo,
+): Effect.Effect<ProviderUsageLimitsUpdate | undefined> =>
+  Ref.modify(namesRef, (names) => {
+    const next = rememberClaudeListedWindows(names, info);
+    return [claudeRateLimitEventToUpdate(info, next), next] as const;
+  });
+
+/** get_usage percentages are already 0-100. `enforcedWindows` drops windows streamed headers retired. */
 export function claudeUsageResponseToLimits(input: {
   readonly response: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
   readonly checkedAt: string;
+  readonly enforcedWindows?: ReadonlySet<string> | undefined;
 }): { readonly limits: ServerProviderUsageLimits; readonly names: ClaudeScopedLimitNames } {
-  const { response, checkedAt } = input;
+  const { response, checkedAt, enforcedWindows } = input;
   if (!response.rate_limits_available || !response.rate_limits) {
     return {
       limits: makeUnavailableUsageLimits({
@@ -190,6 +245,7 @@ export function claudeUsageResponseToLimits(input: {
   for (const id of Object.keys(WINDOWS)) {
     const window = response.rate_limits[id as "five_hour" | "seven_day"];
     if (!window || typeof window.utilization !== "number") continue;
+    if (enforcedWindows && !enforcedWindows.has(id)) continue;
     windows.push(makeWindow(id, window.utilization, isoFromString(window.resets_at)));
   }
   // The CLI's overage allowlist currently has one model; events refer to its first entry.
@@ -218,8 +274,12 @@ export function claudeUsageResponseToLimits(input: {
 
 export const recordClaudeUsageResponse = (
   namesRef: Ref.Ref<ClaudeScopedLimitNames>,
-  input: Parameters<typeof claudeUsageResponseToLimits>[0],
-): Effect.Effect<ServerProviderUsageLimits> => {
-  const { limits, names } = claudeUsageResponseToLimits(input);
-  return Ref.set(namesRef, names).pipe(Effect.as(limits));
-};
+  input: Omit<Parameters<typeof claudeUsageResponseToLimits>[0], "enforcedWindows">,
+): Effect.Effect<ServerProviderUsageLimits> =>
+  Ref.modify(namesRef, (names) => {
+    const { limits, names: probed } = claudeUsageResponseToLimits({
+      ...input,
+      enforcedWindows: names.enforcedWindows,
+    });
+    return [limits, { ...names, overageIncluded: probed.overageIncluded }] as const;
+  });
