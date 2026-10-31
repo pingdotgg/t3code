@@ -174,7 +174,7 @@ function CardHeader({
   const text = headerLabel(snapshot);
   const stageLabel = runningStageLabel(snapshot);
   return (
-    <div className="flex h-10 min-w-0 items-center gap-2.5 border-b border-hairline px-3.5 text-body tabular-nums">
+    <div className="flex min-h-10 min-w-0 items-center gap-2 border-b border-hairline px-3.5 py-2.5 text-label tabular-nums">
       <HeaderIcon snapshot={snapshot} />
       <span
         ref={running ? observeVisibleAnimation : undefined}
@@ -208,7 +208,7 @@ function DetailRow({
   trailing?: ReactNode;
 }) {
   return (
-    <div className="flex min-h-6 min-w-0 items-center gap-3 text-body">
+    <div className="flex min-h-4.5 min-w-0 items-center gap-2.5 text-meta">
       <dt className="w-14 shrink-0 text-dim-foreground">{label}</dt>
       <dd className="flex min-w-0 flex-1 items-center gap-2.5">
         <span aria-hidden className="shrink-0 text-muted-foreground [&>svg]:size-3.5">
@@ -366,8 +366,8 @@ export function WorktreeSetupCard({
       className="overflow-hidden rounded-card surface-card"
     >
       <CardHeader snapshot={snapshot} totalElapsed={totalElapsed} />
-      <div className="flex flex-col gap-2.5 px-3.5 py-3">
-        <dl className="flex flex-col gap-0.5">
+      <div className="flex flex-col gap-2.5 px-3.5 py-2.5">
+        <dl className="flex flex-col gap-1.5">
           {snapshot.baseRef ? (
             <DetailRow label="Base" icon={<GitBranchIcon />}>
               <MiddleTruncate value={snapshot.baseRef} className="flex" />
