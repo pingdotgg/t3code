@@ -24,6 +24,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -126,6 +127,7 @@ const make = Effect.gen(function* () {
   const entries = new Map<EnvironmentId, Entry>();
   const listeners = new Set<(status: DesktopRemotePreviewProxyStatus) => void>();
   const scope = yield* Effect.scope;
+  const entryCreation = yield* Semaphore.make(1);
 
   const toStatus = (entry: Entry): DesktopRemotePreviewProxyStatus => ({
     environmentId: entry.environmentId,
@@ -205,7 +207,7 @@ const make = Effect.gen(function* () {
     };
     entries.set(environmentId, entry);
     return entry;
-  });
+  }, entryCreation.withPermits(1));
 
   const postGrant = (entry: Entry, path: string, grant: string) =>
     httpClient.execute(

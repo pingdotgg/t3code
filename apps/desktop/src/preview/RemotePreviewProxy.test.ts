@@ -25,6 +25,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
+import type { ProxyConfig, Session } from "electron";
 
 import * as RemotePreviewProxy from "./RemotePreviewProxy.ts";
 
@@ -364,6 +365,44 @@ const webSocketMessage = (socket: NodeNet.Socket, url: string, message: string) 
         client.once("error", reject);
       }),
   );
+
+it.effect("concurrent first use attaches sessions to the configured environment listener", () =>
+  Effect.gen(function* () {
+    const { proxy } = yield* makeProxy;
+    const environment = yield* fakeEnvironment;
+    const app = appServer("remote-app");
+    const appPort = yield* listen(app.server);
+    environment.loopback.set(appPort, appPort);
+    const sessionPorts: number[] = [];
+    const session = () =>
+      ({
+        setProxy: async (config: ProxyConfig) => {
+          sessionPorts.push(Number(new URL(config.proxyRules!).port));
+        },
+        closeAllConnections: async () => {},
+      }) as Session;
+    const [, , endpoint] = yield* Effect.all(
+      [
+        proxy.attachSession(ENV_A, session()),
+        proxy.attachSession(ENV_A, session()),
+        configure(proxy, environment, ENV_A, "grant-a", [appPort]),
+      ],
+      { concurrency: "unbounded" },
+    );
+
+    expect(sessionPorts).toEqual([endpoint.port, endpoint.port]);
+    for (const port of sessionPorts) {
+      const credential = proxy.embeddedCredentialForPort(port);
+      assert(credential !== null);
+      const page = yield* proxiedRequest(
+        { port, authorization: `Basic ${Buffer.from(credential).toString("base64")}` },
+        `http://localhost:${appPort}/`,
+      );
+      expect(page.status).toBe(200);
+      expect(page.body.toString()).toBe(`remote-app host=localhost:${appPort} cookie= proxyauth=`);
+    }
+  }).pipe(Effect.scoped),
+);
 
 it.effect(
   "serves HTTP, redirects, cookies, uploads, downloads and streams from the environment",
