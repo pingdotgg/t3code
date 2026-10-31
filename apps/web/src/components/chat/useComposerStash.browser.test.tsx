@@ -12,6 +12,7 @@ import {
 } from "../../promptStashStore";
 import {
   addPreparingComposerImages,
+  countPreparingComposerImages,
   removePreparingComposerImages,
 } from "./preparingComposerImages";
 import { useComposerStash } from "./useComposerStash";
@@ -79,4 +80,5 @@ it("keeps the draft when stashing while a pasted image is still compressing", as
 
   expect(usePromptStashStore.getState().entries).toEqual([]);
   expect(promptRef.current).toBe("Describe this screenshot");
+  expect(countPreparingComposerImages(target)).toBe(1);
 });
