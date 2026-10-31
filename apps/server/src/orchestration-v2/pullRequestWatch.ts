@@ -17,6 +17,7 @@ const SNIPPET_LENGTH = 200;
 export type PullRequestWatchChange =
   | { readonly kind: "checks-failed"; readonly failed: ReadonlyArray<PullRequestCheck> }
   | { readonly kind: "checks-passed"; readonly count: number; readonly required: boolean }
+  | { readonly kind: "checks-finished"; readonly failing: ReadonlyArray<PullRequestCheck> }
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
   | { readonly kind: "no-checks"; readonly minutes: number }
   | { readonly kind: "conflicting" };
@@ -50,6 +51,7 @@ export function evaluatePullRequestWatch(
   let passedChecks = headMoved ? [] : watch.passedChecks;
   let owedChecks = headMoved ? [] : (watch.owedChecks ?? []);
   if (detail.checks.length > 0) {
+    const owedBefore = owedChecks;
     const failed = detail.checks.filter(isFailedCheck);
     const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
     if (newlyFailed.length > 0) changes.push({ kind: "checks-failed", failed: newlyFailed });
@@ -84,6 +86,18 @@ export function evaluatePullRequestWatch(
     } else if (settled && owed.length > 0) {
       changes.push({ kind: "checks-passed", count: detail.checks.length, required: false });
       owedChecks = [];
+    } else if (!passedNow && failed.length > 0) {
+      // Gate checks still running when one failed are owed one wake when they finish, since
+      // the gate can no longer pass and so never sends the checks-passed wake.
+      const running = gate.filter((check) => check.status === "pending").map((check) => check.name);
+      owedChecks =
+        newlyFailed.length > 0 ? running : owedBefore.filter((name) => running.includes(name));
+      if (newlyFailed.length === 0 && owedBefore.length > 0 && owedChecks.length === 0) {
+        changes.push({
+          kind: "checks-finished",
+          failing: failed.filter((check) => gateNames.includes(check.name)),
+        });
+      }
     }
     passed = passedNow;
     passedChecks = passedNow ? gateNames : [];
@@ -197,6 +211,14 @@ function changeLines(
           return `  - ${remark.author?.login ?? "someone"}${where}: ${said}${remark.url ? ` ${remark.url}` : ""}`;
         }),
       ];
+    case "checks-finished":
+      return [
+        `- The checks still running when one failed have finished${context.commit}. Still failing:`,
+        ...listed(
+          change.failing,
+          (check) => `  - ${check.name}${check.url ? ` ${check.url}` : ""}`,
+        ),
+      ];
     case "no-checks":
       return [
         `- No checks have reported${context.commit} after ${change.minutes} minutes. None may be configured to run on this change.`,
@@ -209,6 +231,7 @@ function changeLines(
 const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
   "checks-failed": "checks failed",
   "checks-passed": "checks passed",
+  "checks-finished": "checks finished",
   remarks: "new comments",
   "no-checks": "no checks reported",
   conflicting: "merge conflict",
@@ -235,7 +258,10 @@ export function pullRequestWatchMessage(input: {
       : "Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.",
   ].join("\n");
   const failed = changes.some(
-    (change) => change.kind === "checks-failed" || change.kind === "conflicting",
+    (change) =>
+      change.kind === "checks-failed" ||
+      change.kind === "checks-finished" ||
+      change.kind === "conflicting",
   );
   const summary = changes.map((change) => SUMMARY[change.kind]);
   if (exhausted) summary.push("stopped watching");

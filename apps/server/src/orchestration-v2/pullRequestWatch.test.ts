@@ -204,6 +204,30 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(final.next, recovered, noRemarks).changes, []);
   });
 
+  it("wakes once when the other checks finish after one failed where none is required", () => {
+    const sonar = check("sonar", "cancelled");
+    const early = detail({ checks: [sonar, check("unit", "pending"), check("e2e", "pending")] });
+    const first = evaluatePullRequestWatch(watch(), early, noRemarks);
+    assert.deepEqual(first.changes, [{ kind: "checks-failed", failed: [sonar] }]);
+
+    const partway = detail({ checks: [sonar, check("unit", "success"), check("e2e", "pending")] });
+    const waiting = evaluatePullRequestWatch(first.next, partway, noRemarks);
+    assert.deepEqual(waiting.changes, []);
+
+    const done = detail({ checks: [sonar, check("unit", "success"), check("e2e", "success")] });
+    const final = evaluatePullRequestWatch(waiting.next, done, noRemarks);
+    assert.deepEqual(final.changes, [{ kind: "checks-finished", failing: [sonar] }]);
+    assert.deepEqual(evaluatePullRequestWatch(final.next, done, noRemarks).changes, []);
+
+    // A later failure is its own wake and leaves nothing more owed.
+    const broke = detail({ checks: [sonar, check("unit", "success"), check("e2e", "failure")] });
+    const failure = evaluatePullRequestWatch(waiting.next, broke, noRemarks);
+    assert.deepEqual(failure.changes, [
+      { kind: "checks-failed", failed: [check("e2e", "failure")] },
+    ]);
+    assert.deepEqual(evaluatePullRequestWatch(failure.next, broke, noRemarks).changes, []);
+  });
+
   it("clears old-head owed checks when a new head is pushed", () => {
     const required = { ...check("test", "success"), required: true };
     const early = detail({ checks: [required, check("e2e", "pending")] });
