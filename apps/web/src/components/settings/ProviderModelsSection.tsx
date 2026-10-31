@@ -5,6 +5,7 @@ import {
   type ProviderInstanceId,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import { REASONING_SELECT_DESCRIPTOR_IDS } from "@t3tools/client-runtime/model-traits";
 import { type CustomModelDefinition, normalizeCustomModelSlug } from "@t3tools/shared/model";
 
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -27,19 +28,16 @@ const CUSTOM_MODEL_PLACEHOLDER_BY_KIND: Partial<Record<ProviderDriverKind, strin
 
 const FILTER_THRESHOLD = 8;
 
-const REASONING_SELECT_IDS = new Set(["reasoningEffort", "effort", "reasoning", "variant"]);
 const PROVIDER_ALIAS_SLUGS = new Set(["default", "auto"]);
 
 function hasReasoningControl(model: ServerProviderModel): boolean {
-  return (model.capabilities?.optionDescriptors ?? []).some(
-    (descriptor) =>
-      descriptor.id === "thinking" ||
-      (descriptor.type === "select" && REASONING_SELECT_IDS.has(descriptor.id)),
+  return (model.capabilities?.optionDescriptors ?? []).some((descriptor) =>
+    REASONING_SELECT_DESCRIPTOR_IDS.has(descriptor.id),
   );
 }
 
 // Reasoning is the norm, so only its absence is labeled, and only when other models have it.
-// Null capabilities mean unknown (e.g. a custom model the server has not resolved yet), not absent.
+// Custom and null capabilities are fallbacks or user-written, not discovered, so they prove nothing.
 // Alias slugs ("default", Cursor's "auto") defer to the provider's own model choice, so reasoning is unknown.
 function describeModelCapabilities(
   model: ServerProviderModel,
@@ -57,6 +55,7 @@ function describeModelCapabilities(
   if (hasFastMode) labels.push("Fast mode");
   if (
     flagMissingReasoning &&
+    !model.isCustom &&
     model.capabilities &&
     !PROVIDER_ALIAS_SLUGS.has(model.slug) &&
     !hasReasoningControl(model)
