@@ -107,12 +107,12 @@ public struct PullRequestReviewGuideResult: Codable, Equatable, Sendable {
 
 extension T3Client {
     // Decode only this setting so older hosts remain gated without changing shared settings models.
-    private struct ReviewGuideSettings: Decodable {
+    private struct ReviewGuideSettings: Decodable, Sendable {
         let reviewGuidesEnabled: Bool?
     }
 
     public func reviewGuidesEnabled() async throws -> Bool {
-        let settings = try await rpc.request("server.getSettings", as: ReviewGuideSettings.self)
+        let settings = try await serverSettings(as: ReviewGuideSettings.self)
         return settings.reviewGuidesEnabled == true
     }
 

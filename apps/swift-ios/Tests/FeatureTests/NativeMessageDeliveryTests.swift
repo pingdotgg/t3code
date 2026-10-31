@@ -440,6 +440,7 @@ private actor DeliveryWebSocketConnection: WebSocketConnection {
         let request = try JSONDecoder.t3.decode(JSONValue.self, from: data)
         guard let id = request["id"], let tag = request["tag"]?.stringValue else { return }
         let config: JSONValue = .object([
+            "settings": .object([:]),
             "providers": .array([.object([
                 "instanceId": .string("codex"), "driver": .string("codex"),
                 "enabled": .bool(true), "installed": .bool(true), "status": .string("ready"),
@@ -463,8 +464,6 @@ private actor DeliveryWebSocketConnection: WebSocketConnection {
             value = .object(["sequence": .number(101)])
         case RPCMethod.serverGetConfig.rawValue:
             value = config
-        case "server.getSettings":
-            value = .object([:])
         case RPCMethod.subscribeServerConfig.rawValue:
             try enqueue(.object([
                 "_tag": .string("Chunk"), "requestId": id,
