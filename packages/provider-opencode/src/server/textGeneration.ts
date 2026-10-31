@@ -190,7 +190,11 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
             client.session.create(
               {
                 title: `T3 Code ${input.operation}`,
-                permission: [{ permission: "*", pattern: "*", action: "deny" }],
+                // OpenCode Zen refuses free-model requests that carry no tools, so keep read.
+                permission: [
+                  { permission: "*", pattern: "*", action: "deny" },
+                  { permission: "read", pattern: "*", action: "allow" },
+                ],
               },
               { signal },
             ),
