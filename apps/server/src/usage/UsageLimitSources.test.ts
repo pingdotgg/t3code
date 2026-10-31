@@ -111,7 +111,6 @@ it("reports the routing proxy's accounts unless a hub already points at it or ow
       enabled: true,
     },
   });
-  // A keyless or disabled hub at the same URL can't report accounts, so the proxy's key applies.
   for (const unusable of [
     { ...hub, managementKey: "" },
     { ...hub, enabled: false },
