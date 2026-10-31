@@ -379,7 +379,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   }).pipe(
     Effect.scoped,
     Effect.timeoutOrElse({
-      duration: "5 seconds",
+      duration: "30 seconds",
       orElse: () =>
         Effect.fail(authSupportError("Antigravity browser suppression verification timed out.")),
     }),
