@@ -15,7 +15,7 @@ import * as Schema from "effect/Schema";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { resolveServerInstallation } from "../cli/invocation.ts";
+import { resolveServerInstallation, resolveSystemdUnit } from "../cli/invocation.ts";
 import { readAgentActivityPublishingActive } from "../cloud/config.ts";
 import { resolveServerSelfUpdateCapability } from "../cloud/selfUpdate.ts";
 import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
@@ -198,7 +198,21 @@ export const make = Effect.gen(function* () {
     desktopManaged: serverConfig.mode === "desktop",
     launcherManaged: launcher.managed,
   });
-  const serverInstallation = serverSelfUpdate === null ? yield* resolveServerInstallation : null;
+  const installation =
+    serverSelfUpdate === null
+      ? ((yield* resolveServerInstallation) ?? { kind: "unknown" as const })
+      : null;
+  const systemdUnit = installation === null ? null : yield* resolveSystemdUnit;
+  const serverInstallation =
+    installation === null
+      ? null
+      : {
+          ...installation,
+          ...(serverConfig.startupPresentation === "headless"
+            ? { subcommand: "serve" as const }
+            : {}),
+          ...(systemdUnit === null ? {} : { systemdUnit }),
+        };
   // Desktop and server ship together; a control fd guarantees requestDesktopUpdate support.
 
   const desktopAppUpdate =
