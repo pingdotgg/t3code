@@ -2,10 +2,8 @@ import type { NativeReviewDiffRow, NativeReviewDiffTheme } from "../diffs/native
 import type { NativeReviewDiffFile } from "../diffs/nativeReviewDiffTypes";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
-import {
-  DEFAULT_CODE_FONT_SIZE,
-  type ResolvedMobileCodeSurface,
-} from "../../lib/appearancePreferences";
+import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences";
+import { MOBILE_CODE_SURFACE } from "../../lib/typography";
 import { resolveHighlightLanguage } from "../../lib/highlightLanguage";
 import { type MobileThemeId, type MobileThemeVariables } from "../../lib/mobileTheme";
 import { getMobileTerminalTheme, type TerminalAppearanceScheme } from "../terminal/terminalTheme";
@@ -72,7 +70,7 @@ export function createNativeReviewDiffStyle(
   codeSurface: ResolvedMobileCodeSurface,
   wordWrap: boolean,
 ) {
-  const scale = codeSurface.fontSize / DEFAULT_CODE_FONT_SIZE;
+  const scale = codeSurface.fontSize / MOBILE_CODE_SURFACE.fontSize;
   const scaled = (size: number) => Math.max(8, Math.round(size * scale));
   return {
     wordWrap,

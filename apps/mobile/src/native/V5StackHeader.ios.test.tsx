@@ -6,6 +6,11 @@ import { expect, it, vi } from "vite-plus/test";
 
 const bridge = vi.hoisted(() => ({ ios: undefined as StackHeaderConfigProps["ios"] }));
 
+vi.mock("../lib/useSystemFontScale", () => ({ useSystemFontScale: () => (size: number) => size }));
+vi.mock("../features/settings/appearance/AppearancePreferencesProvider", () => ({
+  useAppearancePreferences: () => ({ appearance: { baseFontSize: 15 } }),
+}));
+
 vi.mock("react-native", () => ({ StyleSheet: { flatten: (style: unknown) => style } }));
 vi.mock("react-native-keyboard-controller", () => ({
   KeyboardController: { dismiss: vi.fn() },
