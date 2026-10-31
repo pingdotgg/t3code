@@ -687,6 +687,9 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     }),
   );
 
+  const managed = <A, E>(effect: Effect.Effect<A, E>) =>
+    lock.withPermit(tidy.pipe(Effect.andThen(effect)));
+
   const add = Effect.fn("PluginNpm.add")(function* (input: PluginNpmAddInput) {
     const registry = yield* normalizeRegistry(input.registry ?? defaultRegistry);
     const existing = [...installed.values()].find(
@@ -733,7 +736,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       }).pipe(Effect.uninterruptible);
       // Nothing in the catalogue points here; deleted now, or by a later collection.
     }).pipe(Effect.onError(() => collect));
-  });
+  }, managed);
 
   const discardStaged = (entry: Installed) =>
     Effect.suspend(() => {
@@ -785,119 +788,122 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     entry.staged = { update, directory: staging };
     doomed.delete(staging);
     return { package: toPackage(entry) };
-  });
+  }, managed);
 
-  const applyUpdate = Effect.fn("PluginNpm.applyUpdate")(function* (
-    input: PluginNpmApplyUpdateInput,
-  ) {
-    const entry = yield* findInstalled(input.installationId);
-    const staged = entry.staged;
-    if (staged === undefined)
-      return yield* new PluginCatalogError({
-        reason: "npm-no-update",
-        message: "There is no downloaded update to apply. Download it again.",
-        installationId: input.installationId,
-      });
-    if (staged.update.source.digest !== input.digest)
-      return yield* new PluginCatalogError({
-        reason: "source-changed",
-        message: "The downloaded update is not the one you reviewed. Review the current one.",
-        installationId: input.installationId,
-      });
-    const onDisk = yield* digestPluginSource(staged.directory, limits).pipe(Effect.option);
-    if (Option.isNone(onDisk) || onDisk.value.digest !== input.digest) {
-      yield* discardStaged(entry);
-      return yield* new PluginCatalogError({
-        reason: "source-changed",
-        message: "The downloaded update changed on disk after it was checked, so it was discarded.",
-        installationId: input.installationId,
-      });
-    }
-    // Consent records approval, not the bytes currently installed on disk.
-    const row = yield* catalogRow(input.installationId);
-    if (row.source?.digest === input.digest) {
-      yield* discardStaged(entry);
-      return yield* new PluginCatalogError({
-        reason: "npm-no-update",
-        message: "The downloaded update has the files already installed, so it was discarded.",
-        installationId: input.installationId,
-      });
-    }
-    const next: PluginNpmSource = {
-      ...entry.source,
-      version: staged.update.version,
-      integrity: staged.update.integrity,
-      installedAt: yield* now,
-    };
-    const previous = path.join(entry.home, ".previous");
+  const applyUpdate = Effect.fn("PluginNpm.applyUpdate")(
+    function* (input: PluginNpmApplyUpdateInput) {
+      const entry = yield* findInstalled(input.installationId);
+      const staged = entry.staged;
+      if (staged === undefined)
+        return yield* new PluginCatalogError({
+          reason: "npm-no-update",
+          message: "There is no downloaded update to apply. Download it again.",
+          installationId: input.installationId,
+        });
+      if (staged.update.source.digest !== input.digest)
+        return yield* new PluginCatalogError({
+          reason: "source-changed",
+          message: "The downloaded update is not the one you reviewed. Review the current one.",
+          installationId: input.installationId,
+        });
+      const onDisk = yield* digestPluginSource(staged.directory, limits).pipe(Effect.option);
+      if (Option.isNone(onDisk) || onDisk.value.digest !== input.digest) {
+        yield* discardStaged(entry);
+        return yield* new PluginCatalogError({
+          reason: "source-changed",
+          message:
+            "The downloaded update changed on disk after it was checked, so it was discarded.",
+          installationId: input.installationId,
+        });
+      }
+      // Consent records approval, not the bytes currently installed on disk.
+      const row = yield* catalogRow(input.installationId);
+      if (row.source?.digest === input.digest) {
+        yield* discardStaged(entry);
+        return yield* new PluginCatalogError({
+          reason: "npm-no-update",
+          message: "The downloaded update has the files already installed, so it was discarded.",
+          installationId: input.installationId,
+        });
+      }
+      const next: PluginNpmSource = {
+        ...entry.source,
+        version: staged.update.version,
+        integrity: staged.update.integrity,
+        installedAt: yield* now,
+      };
+      const previous = path.join(entry.home, ".previous");
 
-    // Nothing is stopped or moved before the journal is written, so a failure up to here
-    // leaves the installed version running and the staged one ready to apply again.
-    if (!(yield* release(previous)))
-      return yield* new PluginCatalogError({
-        reason: "storage",
-        message: "Could not delete the files an earlier update left behind.",
-        installationId: input.installationId,
+      // Nothing is stopped or moved before the journal is written, so a failure up to here
+      // leaves the installed version running and the staged one ready to apply again.
+      if (!(yield* release(previous)))
+        return yield* new PluginCatalogError({
+          reason: "storage",
+          message: "Could not delete the files an earlier update left behind.",
+          installationId: input.installationId,
+        });
+      const attemptId = NodeCrypto.randomUUID();
+      yield* writeRecord(entry.home, {
+        source: entry.source,
+        swap: { source: next, digest: input.digest, attemptId },
       });
-    const attemptId = NodeCrypto.randomUUID();
-    yield* writeRecord(entry.home, {
-      source: entry.source,
-      swap: { source: next, digest: input.digest, attemptId },
-    });
-    entry.swap = { previous: entry.source, next, digest: input.digest, attemptId };
+      entry.swap = { previous: entry.source, next, digest: input.digest, attemptId };
 
-    let movedOld = false;
-    let movedNew = false;
-    const replaced = yield* catalog
-      .replace(
-        { installationId: input.installationId, digest: input.digest, attemptId },
-        {
-          paths: [entry.home],
-          swap: fs.rename(entry.directory, previous).pipe(
-            Effect.andThen(
-              Effect.sync(() => {
-                movedOld = true;
-              }),
+      let movedOld = false;
+      let movedNew = false;
+      const replaced = yield* catalog
+        .replace(
+          { installationId: input.installationId, digest: input.digest, attemptId },
+          {
+            paths: [entry.home],
+            swap: fs.rename(entry.directory, previous).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  movedOld = true;
+                }),
+              ),
+              Effect.andThen(fs.rename(staged.directory, entry.directory)),
+              Effect.andThen(
+                Effect.sync(() => {
+                  movedNew = true;
+                }),
+              ),
+              Effect.catch(storageError),
             ),
-            Effect.andThen(fs.rename(staged.directory, entry.directory)),
-            Effect.andThen(
-              Effect.sync(() => {
-                movedNew = true;
-              }),
-            ),
-            Effect.catch(storageError),
-          ),
-          restore: Effect.suspend(() =>
-            movedOld
-              ? fs
-                  .remove(entry.directory, { recursive: true, force: true })
-                  .pipe(Effect.andThen(fs.rename(previous, entry.directory)))
-              : Effect.void,
-          ).pipe(Effect.catch(storageError)),
-        },
-      )
-      .pipe(Effect.exit);
-    // The commit point: the new version is the installed one from here, whatever
-    // the cleanup below does.
-    if (Exit.isSuccess(replaced)) entry.source = next;
-    // Staged files that never moved can be applied again.
-    if (movedNew || Exit.isSuccess(replaced)) entry.staged = undefined;
-    // After the commit a failure here is cleanup only: the apply still succeeds and
-    // reports the new version, and npm steps fail `storage` until the journal settles.
-    yield* settle(entry).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("Could not settle a plugin update; retrying later", {
-          installationId: entry.installationId,
-          detail: error.message,
-        }),
-      ),
-    );
-    // A step after the commit, such as enabling the plugin again, failed: the update still applied.
-    if (Exit.isFailure(replaced) && entry.source === next)
-      return { installation: yield* catalogRow(input.installationId), package: toPackage(entry) };
-    const { installation } = yield* replaced;
-    return { installation, package: toPackage(entry) };
-  });
+            restore: Effect.suspend(() =>
+              movedOld
+                ? fs
+                    .remove(entry.directory, { recursive: true, force: true })
+                    .pipe(Effect.andThen(fs.rename(previous, entry.directory)))
+                : Effect.void,
+            ).pipe(Effect.catch(storageError)),
+          },
+        )
+        .pipe(Effect.exit);
+      // The commit point: the new version is the installed one from here, whatever
+      // the cleanup below does.
+      if (Exit.isSuccess(replaced)) entry.source = next;
+      // Staged files that never moved can be applied again.
+      if (movedNew || Exit.isSuccess(replaced)) entry.staged = undefined;
+      // After the commit a failure here is cleanup only: the apply still succeeds and
+      // reports the new version, and npm steps fail `storage` until the journal settles.
+      yield* settle(entry).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not settle a plugin update; retrying later", {
+            installationId: entry.installationId,
+            detail: error.message,
+          }),
+        ),
+      );
+      // A step after the commit, such as enabling the plugin again, failed: the update still applied.
+      if (Exit.isFailure(replaced) && entry.source === next)
+        return { installation: yield* catalogRow(input.installationId), package: toPackage(entry) };
+      const { installation } = yield* replaced;
+      return { installation, package: toPackage(entry) };
+    },
+    Effect.uninterruptible,
+    managed,
+  );
 
   const discardUpdate = Effect.fn("PluginNpm.discardUpdate")(function* (
     input: PluginInstallationInput,
@@ -905,7 +911,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     const entry = yield* findInstalled(input.installationId);
     yield* discardStaged(entry);
     return { package: toPackage(entry) };
-  });
+  }, managed);
 
   /**
    * Reads what was installed before this start: staging directories are
@@ -972,15 +978,12 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     Effect.forkIn(scope, { startImmediately: true }),
   );
 
-  const managed = <A, E>(effect: Effect.Effect<A, E>) =>
-    lock.withPermit(tidy.pipe(Effect.andThen(effect)));
-
   return PluginNpm.of({
     list,
-    add: (input) => managed(add(input)),
-    stageUpdate: (input) => managed(stageUpdate(input)),
-    applyUpdate: (input) => managed(applyUpdate(input).pipe(Effect.uninterruptible)),
-    discardUpdate: (input) => managed(discardUpdate(input)),
+    add,
+    stageUpdate,
+    applyUpdate,
+    discardUpdate,
   });
 });
 
