@@ -98,6 +98,9 @@ describe("evaluatePullRequestWatch", () => {
     const reviews = evaluatePullRequestWatch(watch({ events: ["review"] }), green, remarks);
     assert.deepEqual(reviews.changes, [{ kind: "remarks", remarks: [review] }]);
     assert.equal(reviews.next.remarksThrough, review.createdAt);
+
+    const conversation = evaluatePullRequestWatch(watch({ events: ["comment"] }), green, remarks);
+    assert.deepEqual(conversation.changes, [{ kind: "remarks", remarks: [comment] }]);
   });
 
   it("reports each failure at once, even while another check never finishes", () => {
