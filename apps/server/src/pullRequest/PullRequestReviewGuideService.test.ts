@@ -1157,6 +1157,13 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
       selector: "https://code.example.com/acme/app",
     },
     {
+      provider: "forgejo",
+      host: "code.example.com:3000",
+      repository: "acme/app",
+      selector: "http://code.example.com:3000/acme/app",
+      url: "http://code.example.com:3000/acme/app/pulls/7",
+    },
+    {
       provider: "gitcafe",
       host: "staging.git.cafe",
       repository: "acme/app",
@@ -1192,6 +1199,7 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
             detail: {
               provider: SourceControlProviderKind.make(target.provider),
               repository: target.selector,
+              ...("url" in target ? { url: target.url } : {}),
             },
             lookup: (input) =>
               Deferred.succeed(lookup, input).pipe(

@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
@@ -36,6 +37,7 @@ import * as SourceControlRepositoryService from "../sourceControl/SourceControlR
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { PATCH_RENDER_PREFIX_ARGS } from "../vcs/GitVcsDriverCore.ts";
+import { removeLinkedWorktree } from "../vcs/worktreeRemoval.ts";
 import * as PullRequestService from "./PullRequestService.ts";
 import { pullRequestSyncKey } from "./pullRequestSyncKey.ts";
 import { reviewGuideInputFromPullRequest } from "./pullRequestReviewGuideInput.ts";
@@ -74,6 +76,7 @@ const make = Effect.gen(function* () {
   const repositories = yield* SourceControlRepositoryService.SourceControlRepositoryService;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const fileSystem = yield* FileSystem.FileSystem;
+  const pathService = yield* Path.Path;
   const config = yield* ServerConfig.ServerConfig;
   // A server launched by a git hook may inherit a different repository or index. Guide checkout
   // commands must discover their repository from cwd, including reads and cleanup of private refs.
@@ -225,7 +228,7 @@ const make = Effect.gen(function* () {
           detail.provider === "github" ||
           detail.provider === "forgejo" ||
           detail.provider === "gitcafe"
-            ? `https://${key.host}/${key.repository}`
+            ? `${detail.provider === "forgejo" && detail.url ? new URL(detail.url).origin : `https://${key.host}`}/${key.repository}`
             : detail.repository,
         cwd: detail.workspaceRoot,
       });
@@ -370,19 +373,24 @@ const make = Effect.gen(function* () {
       });
       const worktreePath = path;
       yield* Effect.addFinalizer(() =>
-        execute({
+        removeLinkedWorktree({
           operation: "PullRequestReviewGuideService.removeWorktree",
           cwd: workspaceRoot,
-          args: [
-            "-c",
-            "status.showUntrackedFiles=normal",
-            "worktree",
-            "remove",
-            "--force",
-            worktreePath,
-          ],
-          timeoutMs: 5 * 60_000,
-        }).pipe(Effect.ignore({ log: true })),
+          worktreePath,
+          force: true,
+          execute,
+          run: (args) =>
+            execute({
+              operation: "PullRequestReviewGuideService.removeWorktree",
+              cwd: workspaceRoot,
+              args,
+              timeoutMs: 5 * 60_000,
+            }),
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, pathService),
+          Effect.ignore({ log: true }),
+        ),
       );
     } else {
       yield* execute({
