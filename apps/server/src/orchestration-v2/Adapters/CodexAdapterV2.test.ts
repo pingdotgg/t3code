@@ -6134,6 +6134,89 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ],
   });
 
+  it.effect.each(["gpt-6-sol", null, " \t "])(
+    "recovers missing effort for a known spawn model with metadata model %s",
+    (metadataModel) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const model = "gpt-6-sol";
+          const modelReported = yield* Deferred.make<void>();
+          let metadataRequests = 0;
+          const transcript = {
+            ...resumeSubagentTranscript,
+            entries: resumeSubagentTranscript.entries.map((entry) =>
+              entry.type === "emit_inbound" &&
+              entry.label === "item/completed/subAgentActivity-started"
+                ? {
+                    ...entry,
+                    frame: {
+                      method: "item/completed",
+                      params: {
+                        threadId: RESUME_NATIVE_THREAD,
+                        turnId: RESUME_NATIVE_TURN,
+                        item: {
+                          type: "collabAgentToolCall",
+                          id: "call-codex-resume-spawn",
+                          tool: "spawnAgent",
+                          status: "completed",
+                          senderThreadId: RESUME_NATIVE_THREAD,
+                          receiverThreadIds: [RESUME_CHILD_THREAD],
+                          model,
+                          agentsStates: {},
+                        },
+                      },
+                    },
+                  }
+                : entry,
+            ),
+          };
+          const harness = yield* makeCodexReplayHarness(
+            transcript,
+            (event) =>
+              event.type === "subagent.updated" &&
+              event.subagent.modelSelection?.options?.some(
+                (option) => option.id === "reasoningEffort" && option.value === "high",
+              )
+                ? Deferred.succeed(modelReported, undefined)
+                : Effect.void,
+            undefined,
+            (threadId) => {
+              metadataRequests++;
+              assert.equal(threadId, RESUME_CHILD_THREAD);
+              return Effect.succeed({
+                thread: { id: threadId },
+                model: metadataModel,
+                reasoningEffort: "high",
+                serviceTier: "priority",
+              });
+            },
+          );
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-child-model"),
+              text: RESUME_PROMPT,
+            }),
+          );
+          yield* TestClock.adjust("100 millis");
+          yield* harness.awaitTerminal(1);
+          assert.equal(metadataRequests, 2);
+          yield* Deferred.await(modelReported);
+          assert.equal(harness.subagentUpdates().at(-1)?.subagent.model, model);
+          assert.deepEqual(harness.subagentUpdates().at(-1)?.subagent.modelSelection?.options, [
+            { id: "reasoningEffort", value: "high" },
+            { id: "serviceTier", value: "priority" },
+          ]);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
   it.effect("wakes the parent when a native child finishes after the parent's turn", () =>
     Effect.scoped(
       Effect.gen(function* () {
