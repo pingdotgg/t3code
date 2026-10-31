@@ -11,13 +11,32 @@ export const ForgejoBranchStatusChecks = Schema.Struct({
 // run of characters, `/` included, and `?` matches one character. Classes, alternation and escapes
 // are not handled.
 const UNSUPPORTED_GLOB = /[[\]{}\\]/;
-const contextPattern = (glob: string) =>
-  new RegExp(
-    `^${Array.from(glob, (char) =>
-      char === "*" ? ".*" : char === "?" ? "." : char.replace(/[.+^$()|]/g, "\\$&"),
-    ).join("")}$`,
-    "su",
-  );
+// Linear two-pointer match: a regex built from the glob backtracks polynomially per `*`.
+const matchesContext = (glob: string, name: string) => {
+  const pattern = Array.from(glob);
+  const text = Array.from(name);
+  let p = 0;
+  let t = 0;
+  let star = -1;
+  let resume = 0;
+  while (t < text.length) {
+    // Wildcard first, so a literal `*` in the name never consumes the pattern's `*`.
+    if (pattern[p] === "*") {
+      star = p++;
+      resume = t;
+    } else if (p < pattern.length && (pattern[p] === "?" || pattern[p] === text[t])) {
+      p++;
+      t++;
+    } else if (star >= 0) {
+      p = star + 1;
+      t = ++resume;
+    } else {
+      return false;
+    }
+  }
+  while (pattern[p] === "*") p++;
+  return p === pattern.length;
+};
 
 export function markRequiredForgejoChecks(
   checks: ReadonlyArray<PullRequestCheck>,
@@ -38,13 +57,15 @@ export function markRequiredForgejoChecks(
       })),
     ];
   }
-  const patterns = [...new Set(contexts)].map((name) => ({ name, pattern: contextPattern(name) }));
+  const patterns = [...new Set(contexts)];
   const marked = checks.map((check) =>
-    patterns.some(({ pattern }) => pattern.test(check.name)) ? { ...check, required: true } : check,
+    patterns.some((pattern) => matchesContext(pattern, check.name))
+      ? { ...check, required: true }
+      : check,
   );
   // Forgejo keeps an unmatched required pattern pending, including wildcards.
-  const missing = patterns.flatMap(({ name, pattern }) =>
-    !name.trim() || checks.some((check) => pattern.test(check.name))
+  const missing = patterns.flatMap((name) =>
+    !name.trim() || checks.some((check) => matchesContext(name, check.name))
       ? []
       : [{ name, status: "pending", description: null, url: null, required: true } as const],
   );

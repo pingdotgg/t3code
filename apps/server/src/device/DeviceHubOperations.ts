@@ -7,7 +7,7 @@ import {
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import type { DeviceHostReady, DeviceOperations, HostDevice } from "./DeviceHost.ts";
 
@@ -97,8 +97,11 @@ export const makeDeviceHubOperations = (options: {
       "list",
     );
     const devices: Array<HostDevice> = [...hubList.simulators, ...hubList.emulators];
+    const androidAvailable = yield* options.androidAvailable;
     const warnings = hubList.errors?.filter(
       (error) =>
+        // The host summary already explains a missing Android SDK; the hub's failed probes are noise.
+        !(!androidAvailable && error.message.startsWith("[android-utils] ")) &&
         // CoreSimulator can retain deleted devices; their optional usage timestamps are absent.
         !(
           error.message.startsWith("[apple-utils] Failed to read CoreSimulator plist at ") &&
@@ -108,7 +111,7 @@ export const makeDeviceHubOperations = (options: {
     );
     const details = warnings?.map((error) => error.message) ?? [];
     let androidDiscoveryIncomplete = false;
-    if (yield* options.androidAvailable) {
+    if (androidAvailable) {
       const avds = yield* run("emulator", ["-list-avds"]);
       // Discovered devices stay listed; the AVDs that could not be listed are a warning.
       if (avds.code !== 0) {
@@ -236,7 +239,10 @@ export const makeDeviceHubOperations = (options: {
           (cause) =>
             new DeviceOperationError({
               operation: "screenshot",
-              reason: "request_failed",
+              reason:
+                HttpClientError.isHttpClientError(cause) && cause.reason._tag === "StatusCodeError"
+                  ? "hub_rejected"
+                  : "request_failed",
               cause,
             }),
         ),

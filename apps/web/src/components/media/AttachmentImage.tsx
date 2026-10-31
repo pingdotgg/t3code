@@ -1,10 +1,4 @@
-import {
-  useEffect,
-  useEffectEvent,
-  useState,
-  type ComponentProps,
-  type SyntheticEvent,
-} from "react";
+import { useEffect, useRef, useState, type ComponentProps, type SyntheticEvent } from "react";
 import { isHeicImageFile } from "../../lib/imageCompression";
 
 type AttachmentImageProps = ComponentProps<"img"> & { name: string; mimeType?: string | undefined };
@@ -24,35 +18,46 @@ export function AttachmentImage({ name, mimeType, ...props }: AttachmentImagePro
   );
 }
 
+type DecodeAttempt = { readonly controller: AbortController; objectUrl?: string };
+
 function DecodedImage({ name, mimeType, src, onError, ...props }: AttachmentImageProps) {
-  const [decodeError, setDecodeError] = useState<SyntheticEvent<HTMLImageElement> | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string>();
-  const reportError = useEffectEvent((event: SyntheticEvent<HTMLImageElement>) => onError?.(event));
-  useEffect(() => {
-    if (!decodeError || !src) return;
-    const controller = new AbortController();
-    let objectUrl: string | undefined;
+  // One decode per mount; the parent keys this component by src.
+  const decodeRef = useRef<DecodeAttempt | null>(null);
+
+  // The browser cannot show HEIC or TIFF itself, so its load error starts the decode.
+  const decode = (event: SyntheticEvent<HTMLImageElement>) => {
+    if (decodeRef.current !== null || !src) return onError?.(event);
+    const attempt: DecodeAttempt = { controller: new AbortController() };
+    decodeRef.current = attempt;
+    const { signal } = attempt.controller;
     void loadImageDecoder()
       .then(async ({ decodeImagePreview }) => {
-        if (controller.signal.aborted) return;
+        if (signal.aborted) return;
         const blob = await decodeImagePreview(
           src,
           /\.hei[cf]$/i.test(name) || /^image\/hei[cf]$/i.test(mimeType ?? ""),
-          controller.signal,
+          signal,
         );
-        if (controller.signal.aborted) return;
-        objectUrl = URL.createObjectURL(blob);
-        setPreviewUrl(objectUrl);
+        if (signal.aborted) return;
+        attempt.objectUrl = URL.createObjectURL(blob);
+        setPreviewUrl(attempt.objectUrl);
       })
       .catch(() => {
-        if (!controller.signal.aborted) reportError(decodeError);
+        if (!signal.aborted) onError?.(event);
       });
-    return () => {
-      controller.abort();
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [decodeError, name, src, mimeType]);
-  return (
-    <img {...props} src={previewUrl ?? src} onError={decodeError ? onError : setDecodeError} />
+  };
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the async decode and its blob URL live as long as this component
+  useEffect(
+    () => () => {
+      const attempt = decodeRef.current;
+      if (attempt === null) return;
+      attempt.controller.abort();
+      if (attempt.objectUrl) URL.revokeObjectURL(attempt.objectUrl);
+    },
+    [],
   );
+
+  return <img {...props} src={previewUrl ?? src} onError={decode} />;
 }
