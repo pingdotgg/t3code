@@ -4,6 +4,7 @@ import {
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
+  EventId,
   MessageId,
   GitCommandError,
   type ModelSelection,
@@ -22,22 +23,26 @@ import {
   RunAttemptId,
   RunId,
   RuntimeRequestId,
+  ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 import * as Stream from "effect/Stream";
 
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
-import { resolveAttachmentPathById } from "../attachmentStore.ts";
+import { createDeterministicAttachmentId, resolveAttachmentPathById } from "../attachmentStore.ts";
+import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -239,6 +244,102 @@ function threadCreatedEvent(
 }
 
 const layer = it.layer(layerTest);
+
+it.effect("does not leave image attachments after rejected or failed writes", () =>
+  Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const crypto = yield* Crypto.Crypto;
+    const config = yield* ServerConfig.ServerConfig;
+    const now = yield* DateTime.now;
+    const threadEvent = yield* threadCreatedEvent(now);
+    yield* eventSink.write({ events: [threadEvent] });
+
+    const makeImageEvent = (id: string, eventId: string, bytes: Uint8Array) => ({
+      id: EventId.make(eventId),
+      type: "turn-item.updated" as const,
+      threadId: threadEvent.threadId,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make(id),
+        threadId: threadEvent.threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed" as const,
+        title: "Search result",
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "dynamic_tool" as const,
+        toolName: "search",
+        input: {},
+        output: {
+          content: [
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/png",
+                data: Buffer.from(bytes).toString("base64"),
+              },
+            },
+          ],
+        },
+      },
+    });
+    const attachmentPathFor = (bytes: Uint8Array) =>
+      Effect.gen(function* () {
+        const digest = yield* crypto.digest("SHA-256", bytes);
+        const attachmentId = createDeterministicAttachmentId(
+          threadEvent.threadId,
+          Hex.encode(digest),
+        );
+        if (attachmentId === null) throw new Error("Expected a safe thread id");
+        return resolveAttachmentRelativePath({
+          attachmentsDir: config.attachmentsDir,
+          relativePath: `${attachmentId}.bin`,
+        });
+      });
+
+    const rejectedBytes = Buffer.alloc(30_000, 31);
+    const rejectedPath = yield* attachmentPathFor(rejectedBytes);
+    const rejectedEvent = makeImageEvent(
+      "turn-item:rejected-image",
+      "event:rejected-image",
+      rejectedBytes,
+    );
+    yield* eventSink.writeIfRunCurrent({
+      threadId: threadEvent.threadId,
+      runId: RunId.make("run:missing-image-owner"),
+      activeAttemptId: RunAttemptId.make("attempt:missing-image-owner"),
+      expectedStatus: "running",
+      events: [rejectedEvent],
+    });
+    assert.isNotNull(rejectedPath);
+    assert.isFalse(yield* fileSystem.exists(rejectedPath!));
+
+    const failedBytes = Buffer.alloc(30_000, 32);
+    const failedPath = yield* attachmentPathFor(failedBytes);
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TEMP TRIGGER reject_turn_item_event
+      BEFORE INSERT ON orchestration_events
+      WHEN NEW.event_type = 'turn-item.updated'
+      BEGIN SELECT RAISE(ABORT, 'injected event failure'); END`;
+    const failed = yield* Effect.exit(
+      eventSink.write({
+        events: [makeImageEvent("turn-item:failed-image", "event:failed-image", failedBytes)],
+      }),
+    );
+    assert.equal(failed._tag, "Failure");
+    assert.isNotNull(failedPath);
+    assert.isFalse(yield* fileSystem.exists(failedPath!));
+  }).pipe(Effect.provide(layerTest)),
+);
 
 it.effect("refreshes the failing instance snapshot after a committed usage_limit terminal", () =>
   Effect.scoped(
@@ -452,6 +553,9 @@ layer("ProviderEventIngestorV2", (it) => {
       const eventSink = yield* EventSink.EventSinkV2;
       const eventStore = yield* EventStore.EventStoreV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const crypto = yield* Crypto.Crypto;
+      const config = yield* ServerConfig.ServerConfig;
       const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const threadEvent = yield* threadCreatedEvent(now);
@@ -495,6 +599,68 @@ layer("ProviderEventIngestorV2", (it) => {
           providerThread,
         },
       });
+
+      const importedImageBytes = Buffer.alloc(30_000, 41);
+      const importedImageDigest = yield* crypto.digest("SHA-256", importedImageBytes);
+      const importedImageAttachmentId = createDeterministicAttachmentId(
+        threadEvent.threadId,
+        Hex.encode(importedImageDigest),
+      );
+      assert.isNotNull(importedImageAttachmentId);
+      const importedImagePath = resolveAttachmentRelativePath({
+        attachmentsDir: config.attachmentsDir,
+        relativePath: `${importedImageAttachmentId}.bin`,
+      });
+      assert.isNotNull(importedImagePath);
+      const rejectedImport = yield* eventSink.write({
+        unlessNativeThreadOwned: {
+          driver: providerThread.driver,
+          providerInstanceId: providerThread.providerInstanceId,
+          appThreadId: ThreadId.make("thread:another-import"),
+          nativeThreadRef: providerThread.nativeThreadRef!,
+        },
+        events: [
+          {
+            id: EventId.make("event:rejected-native-import-image"),
+            type: "turn-item.updated",
+            threadId: threadEvent.threadId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make("turn-item:rejected-native-import-image"),
+              threadId: threadEvent.threadId,
+              runId: null,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 3,
+              status: "completed",
+              title: "Imported image",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "dynamic_tool",
+              toolName: "search",
+              input: {},
+              output: {
+                content: [
+                  {
+                    type: "image",
+                    source: {
+                      type: "base64",
+                      media_type: "image/png",
+                      data: importedImageBytes.toString("base64"),
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      });
+      assert.isEmpty(rejectedImport);
+      assert.isFalse(yield* fileSystem.exists(importedImagePath!));
 
       const projection = yield* projectionStore.getThreadProjection(threadEvent.threadId);
       const storedDomainEvents = yield* eventStore.read({}).pipe(Stream.runCollect);
@@ -1675,6 +1841,40 @@ layer("ProviderEventIngestorV2", (it) => {
         )[0]?.data,
         screenshotBase64,
       );
+
+      let deepOutput: unknown = { type: "text", text: "preserved" };
+      for (let index = 0; index < 70; index += 1) deepOutput = { nested: deepOutput };
+      const deepItem = toolItem("turn-item:deep-tool-output", 3, "search", deepOutput);
+      const restoredDeepItem = yield* contentStore.read(deepItem, { includeImageData: true });
+      assert.deepEqual(
+        restoredDeepItem.type === "dynamic_tool" ? restoredDeepItem.output : null,
+        deepOutput,
+      );
+
+      const foreignAttachmentId = "other-thread-11111111-1111-1111-1111-111111111111";
+      const foreignPath = resolveAttachmentRelativePath({
+        attachmentsDir: serverConfig.attachmentsDir,
+        relativePath: `${foreignAttachmentId}.bin`,
+      });
+      assert.isNotNull(foreignPath);
+      yield* fileSystem.writeFile(foreignPath!, Buffer.alloc(24, 5));
+      const foreignImageItem = toolItem("turn-item:foreign-tool-image", 4, "search", {
+        content: [
+          {
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: "image/png",
+              attachmentId: foreignAttachmentId,
+              sizeBytes: 24,
+            },
+          },
+        ],
+      });
+      const foreignReadError = yield* contentStore
+        .read(foreignImageItem, { includeImageData: true })
+        .pipe(Effect.flip);
+      assert.equal(foreignReadError.reason, "invalid-reference");
     }),
   );
 

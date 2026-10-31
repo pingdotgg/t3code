@@ -1433,6 +1433,8 @@ export type OrchestrationV2TurnItemStatus = typeof OrchestrationV2TurnItemStatus
 export const OrchestrationV2TurnItemContentRef = Schema.Struct({
   attachmentId: TrimmedNonEmptyString,
   sizeBytes: NonNegativeInt,
+  attachmentIds: Schema.optional(Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(8))),
+  transcriptItemBytes: Schema.optional(NonNegativeInt),
 });
 export type OrchestrationV2TurnItemContentRef = typeof OrchestrationV2TurnItemContentRef.Type;
 

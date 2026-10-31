@@ -262,6 +262,7 @@ const layerBase: Layer.Layer<
     const commitThenPublish = <A, E, R>(
       transaction: Effect.Effect<A, E, R>,
       publish: (committed: A) => Effect.Effect<void>,
+      createdAttachmentIds: ReadonlyArray<string> = [],
     ) =>
       Effect.uninterruptibleMask((restore) => {
         let holdsLane = false;
@@ -276,14 +277,15 @@ const layerBase: Layer.Layer<
         // Cancellation may roll back the transaction's work. Once it commits,
         // every subscriber must hear about it before this writer can exit.
         // Otherwise a failed child run can leave its parent's task running.
-        return sql
-          .withTransaction(Effect.tap(restore(transaction), () => takeLane))
-          .pipe(
-            Effect.tap(publish),
-            Effect.ensuring(
-              Effect.suspend(() => (holdsLane ? publishLane.release(1) : Effect.void)),
-            ),
-          );
+        return sql.withTransaction(Effect.tap(restore(transaction), () => takeLane)).pipe(
+          Effect.catchCause((cause) =>
+            turnItemContentStore
+              .removeNewAttachments(createdAttachmentIds)
+              .pipe(Effect.andThen(Effect.failCause(cause))),
+          ),
+          Effect.tap(publish),
+          Effect.ensuring(Effect.suspend(() => (holdsLane ? publishLane.release(1) : Effect.void))),
+        );
       });
 
     // A user can answer after terminal normalization reads the pending request.
@@ -356,16 +358,21 @@ const layerBase: Layer.Layer<
     };
 
     const prepareEventsForStorage = Effect.fn("orchestrationV2.EventSink.prepareEventsForStorage")(
-      function* (events: ReadonlyArray<OrchestrationV2DomainEvent>) {
+      function* (
+        events: ReadonlyArray<OrchestrationV2DomainEvent>,
+        createdAttachmentIds: Array<string>,
+      ) {
         const prepared: Array<OrchestrationV2DomainEvent> = [];
         for (const event of events) {
           if (event.type !== "turn-item.updated") {
             prepared.push(event);
             continue;
           }
+          const stored = yield* turnItemContentStore.storeForCommit(event.payload);
+          createdAttachmentIds.push(...stored.createdAttachmentIds);
           prepared.push({
             ...event,
-            payload: yield* turnItemContentStore.store(event.payload),
+            payload: stored.item,
           });
         }
         return prepared;
@@ -435,7 +442,7 @@ const layerBase: Layer.Layer<
         "orchestration_v2.event_count": input.events.length,
         "orchestration_v2.thread_id": input.events[0]?.threadId ?? null,
       });
-      const eventsForStorage = yield* prepareEventsForStorage(input.events);
+      const createdAttachmentIds: Array<string> = [];
 
       const { committed } = yield* commitThenPublish(
         Effect.gen(function* () {
@@ -456,16 +463,17 @@ const layerBase: Layer.Layer<
           // Checkpoint capture can finish after a cohort writer reads its parent run.
           // Merge in this transaction so the event log and projection keep that completion.
           const events = input.updateDelegatedCompletionOnly
-            ? yield* updateDelegatedCompletionOnly(eventsForStorage, () => true)
-            : eventsForStorage;
-          const normalized = yield* normalizeEvents(
+            ? yield* updateDelegatedCompletionOnly(input.events, () => true)
+            : input.events;
+          const guarded =
             input.guardPendingUserInputCancellations === true
               ? yield* guardUserInputCancellations(events)
-              : events,
-          );
+              : events;
+          const normalized = yield* normalizeEvents(guarded);
+          const eventsForStorage = yield* prepareEventsForStorage(normalized, createdAttachmentIds);
           const committed = yield* eventStore.append({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-            events: normalized,
+            events: eventsForStorage,
           });
           const outcomes = yield* applyStoredEvents(committed);
           yield* effectOutbox.enqueue(input.effects);
@@ -478,6 +486,7 @@ const layerBase: Layer.Layer<
             }
             yield* publishStoredEvents(committed, outcomes);
           }),
+        createdAttachmentIds,
       );
       return committed;
     });
@@ -490,7 +499,7 @@ const layerBase: Layer.Layer<
           "orchestration_v2.run_id": input.runId,
           "orchestration_v2.thread_id": input.threadId,
         });
-        const eventsForStorage = yield* prepareEventsForStorage(input.events);
+        const createdAttachmentIds: Array<string> = [];
 
         return yield* commitThenPublish(
           Effect.gen(function* () {
@@ -518,14 +527,18 @@ const layerBase: Layer.Layer<
               };
             }
 
-            const normalized = yield* normalizeEvents(
+            const guarded =
               input.guardPendingUserInputCancellations === true
-                ? yield* guardUserInputCancellations(eventsForStorage)
-                : eventsForStorage,
+                ? yield* guardUserInputCancellations(input.events)
+                : input.events;
+            const normalized = yield* normalizeEvents(guarded);
+            const eventsForStorage = yield* prepareEventsForStorage(
+              normalized,
+              createdAttachmentIds,
             );
             const storedEvents = yield* eventStore.append({
               ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-              events: normalized,
+              events: eventsForStorage,
             });
             const outcomes = yield* applyStoredEvents(storedEvents);
             yield* effectOutbox.enqueue(input.effects ?? []);
@@ -539,6 +552,7 @@ const layerBase: Layer.Layer<
               }
               yield* publishStoredEvents(result.storedEvents, result.outcomes);
             }),
+          createdAttachmentIds,
         );
       },
     );
@@ -554,7 +568,7 @@ const layerBase: Layer.Layer<
         "orchestration_v2.active_attempt_id": input.activeAttemptId,
         "orchestration_v2.expected_last_run_ordinal": input.expectedLastRunOrdinal,
       });
-      const eventsForStorage = yield* prepareEventsForStorage(input.events);
+      const createdAttachmentIds: Array<string> = [];
 
       return yield* commitThenPublish(
         Effect.gen(function* () {
@@ -584,14 +598,15 @@ const layerBase: Layer.Layer<
             };
           }
 
-          const normalized = yield* normalizeEvents(
+          const guarded =
             input.guardPendingUserInputCancellations === true
-              ? yield* guardUserInputCancellations(eventsForStorage)
-              : eventsForStorage,
-          );
+              ? yield* guardUserInputCancellations(input.events)
+              : input.events;
+          const normalized = yield* normalizeEvents(guarded);
+          const eventsForStorage = yield* prepareEventsForStorage(normalized, createdAttachmentIds);
           const storedEvents = yield* eventStore.append({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-            events: normalized,
+            events: eventsForStorage,
           });
           const outcomes = yield* applyStoredEvents(storedEvents);
           return { committed: true as const, storedEvents, outcomes };
@@ -600,6 +615,7 @@ const layerBase: Layer.Layer<
           result.committed
             ? publishStoredEvents(result.storedEvents, result.outcomes)
             : Effect.void,
+        createdAttachmentIds,
       );
     });
 
@@ -610,7 +626,7 @@ const layerBase: Layer.Layer<
         "orchestration_v2.event_count": input.events.length,
         "orchestration_v2.provider_thread_id": input.expected.id,
       });
-      const eventsForStorage = yield* prepareEventsForStorage(input.events);
+      const createdAttachmentIds: Array<string> = [];
       const expectedJson = yield* ProjectionStore.encodeProviderThreadPayload(input.expected);
 
       return yield* commitThenPublish(
@@ -628,8 +644,9 @@ const layerBase: Layer.Layer<
             };
           }
 
-          const normalized = yield* normalizeEvents(eventsForStorage);
-          const storedEvents = yield* eventStore.append({ events: normalized });
+          const normalized = yield* normalizeEvents(input.events);
+          const eventsForStorage = yield* prepareEventsForStorage(normalized, createdAttachmentIds);
+          const storedEvents = yield* eventStore.append({ events: eventsForStorage });
           const outcomes = yield* applyStoredEvents(storedEvents);
           return { committed: true as const, storedEvents, outcomes };
         }),
@@ -637,6 +654,7 @@ const layerBase: Layer.Layer<
           result.committed
             ? publishStoredEvents(result.storedEvents, result.outcomes)
             : Effect.void,
+        createdAttachmentIds,
       );
     });
 
@@ -659,7 +677,7 @@ const layerBase: Layer.Layer<
     const commitCommandEffect = Effect.fn("orchestrationV2.EventSink.commitCommand")(function* (
       input: Parameters<EventSinkV2Shape["commitCommand"]>[0],
     ) {
-      const eventsForStorage = yield* prepareEventsForStorage(input.events);
+      const createdAttachmentIds: Array<string> = [];
       const result = yield* commitThenPublish(
         Effect.gen(function* () {
           const reserved = yield* commandReceipts.insertIfAbsent({
@@ -677,14 +695,15 @@ const layerBase: Layer.Layer<
           }
 
           const runId = input.updateDelegatedCompletionOnlyRunId;
-          const normalized = yield* normalizeEvents(
+          const events =
             runId === undefined
-              ? eventsForStorage
-              : yield* updateDelegatedCompletionOnly(eventsForStorage, (id) => id === runId),
-          );
+              ? input.events
+              : yield* updateDelegatedCompletionOnly(input.events, (id) => id === runId);
+          const normalized = yield* normalizeEvents(events);
+          const eventsForStorage = yield* prepareEventsForStorage(normalized, createdAttachmentIds);
           const storedEvents = yield* eventStore.append({
             commandId: input.commandId,
-            events: normalized,
+            events: eventsForStorage,
           });
           // A Stop that changes nothing can still queue the stop of its delegated tasks.
           const sequence =
@@ -726,6 +745,7 @@ const layerBase: Layer.Layer<
             }
             if (result.committed) yield* publishStoredEvents(result.storedEvents, result.outcomes);
           }),
+        createdAttachmentIds,
       );
       return {
         receipt: result.receipt,

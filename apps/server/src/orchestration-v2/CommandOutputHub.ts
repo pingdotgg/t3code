@@ -4,6 +4,7 @@ import {
   type OrchestrationV2CommandOutputFrame,
   type OrchestrationV2SubscribeCommandOutputInput,
   type OrchestrationV2TurnItem,
+  type ThreadId,
 } from "@t3tools/contracts";
 import {
   appendTerminalOutput,
@@ -68,6 +69,23 @@ const isCommandOutputError = Schema.is(OrchestrationV2CommandOutputError);
 
 function commandKey(target: CommandOutputTarget): string {
   return `${target.threadId}\u0000${target.itemId}`;
+}
+
+export function wakeAfterReadFailure(input: {
+  readonly threadId: ThreadId;
+  readonly cause: TurnItemContentStore.TurnItemContentStoreError;
+  readonly wake: Queue.Queue<void>;
+  readonly setFailure: (error: OrchestrationV2CommandOutputError) => void;
+}): Effect.Effect<boolean> {
+  return Effect.sync(() =>
+    input.setFailure(
+      new OrchestrationV2CommandOutputError({
+        threadId: input.threadId,
+        message: "Failed to read command output.",
+        cause: input.cause,
+      }),
+    ),
+  ).pipe(Effect.andThen(Queue.offer(input.wake, undefined)));
 }
 
 const decodeLegacyClaudeBashResult = Schema.decodeUnknownOption(
@@ -215,12 +233,13 @@ export const make = Effect.gen(function* () {
           return turnItemContentStore.read(item).pipe(
             Effect.catchTags({
               TurnItemContentStoreError: (cause) =>
-                Effect.sync(() => {
-                  readFailure = new OrchestrationV2CommandOutputError({
-                    threadId: target.threadId,
-                    message: "Failed to read command output.",
-                    cause,
-                  });
+                wakeAfterReadFailure({
+                  threadId: target.threadId,
+                  cause,
+                  wake,
+                  setFailure: (error) => {
+                    readFailure = error;
+                  },
                 }).pipe(Effect.as(item)),
             }),
             Effect.flatMap(observe),

@@ -5364,6 +5364,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         AND json_extract(payload_json, '$.contentRef.attachmentId') IS NOT NULL
     `,
         sql<{ id: string }>`
+      SELECT DISTINCT attachment.value AS id
+      FROM orchestration_v2_projection_turn_items AS item,
+        json_each(item.payload_json, '$.contentRef.attachmentIds') AS attachment
+      WHERE item.thread_id = ${threadId}
+        AND attachment.type = 'text'
+    `,
+        sql<{ id: string }>`
       SELECT DISTINCT image.value AS id
       FROM orchestration_v2_projection_turn_items AS item,
         json_tree(item.payload_json, '$.output') AS image
@@ -5380,6 +5387,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         AND stream_id = ${threadId}
         AND event_type = 'turn-item.updated'
         AND json_extract(payload_json, '$.contentRef.attachmentId') IS NOT NULL
+    `,
+        sql<{ id: string }>`
+      SELECT DISTINCT attachment.value AS id
+      FROM orchestration_events AS event,
+        json_each(event.payload_json, '$.contentRef.attachmentIds') AS attachment
+      WHERE event.aggregate_kind = 'thread'
+        AND event.stream_id = ${threadId}
+        AND event.event_type = 'turn-item.updated'
+        AND attachment.type = 'text'
     `,
         sql<{ id: string }>`
       SELECT DISTINCT image.value AS id
@@ -5400,15 +5416,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             answerFiles,
             guestFiles,
             projectionRefs,
+            projectionContentAttachments,
             projectionImages,
             eventRefs,
+            eventContentAttachments,
             eventImages,
           ]) => [
             ...new Set([
               ...messages.map((row) => row.id),
               ...guestFiles.map((row) => row.id),
               ...answerFiles.map((row) => row.id),
-              ...[...projectionRefs, ...projectionImages, ...eventRefs, ...eventImages]
+              ...[
+                ...projectionRefs,
+                ...projectionContentAttachments,
+                ...projectionImages,
+                ...eventRefs,
+                ...eventContentAttachments,
+                ...eventImages,
+              ]
                 .map((row) => row.id)
                 .filter(
                   (id): id is string =>

@@ -15,7 +15,12 @@ import {
   toolOutputImageBlocks,
   toolOutputImages,
 } from "@t3tools/shared/toolOutput";
-import { createDeterministicAttachmentId, resolveAttachmentPathById } from "../attachmentStore.ts";
+import {
+  createDeterministicAttachmentId,
+  parseThreadSegmentFromAttachmentId,
+  resolveAttachmentPathById,
+  toSafeThreadAttachmentSegment,
+} from "../attachmentStore.ts";
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import * as ServerConfig from "../config.ts";
 import {
@@ -32,8 +37,8 @@ import {
 } from "./TurnItemContentCodec.ts";
 import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
 
-const IMAGE_DEPTH_LIMIT = 64;
 const encoder = new TextEncoder();
+const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 export class TurnItemContentStoreError extends Schema.TaggedError<TurnItemContentStoreError>()(
   "TurnItemContentStoreError",
@@ -56,19 +61,25 @@ export class TurnItemContentStoreError extends Schema.TaggedError<TurnItemConten
   }
 }
 
-export interface TurnItemContentStoreShape {
-  readonly store: (
-    item: OrchestrationV2TurnItem,
-  ) => Effect.Effect<OrchestrationV2TurnItem, TurnItemContentStoreError>;
-  readonly read: (
-    item: OrchestrationV2TurnItem,
-    options?: { readonly includeImageData?: boolean },
-  ) => Effect.Effect<OrchestrationV2TurnItem, TurnItemContentStoreError>;
-}
-
 export class TurnItemContentStore extends Context.Service<
   TurnItemContentStore,
-  TurnItemContentStoreShape
+  {
+    readonly store: (
+      item: OrchestrationV2TurnItem,
+    ) => Effect.Effect<OrchestrationV2TurnItem, TurnItemContentStoreError>;
+    readonly storeForCommit: (item: OrchestrationV2TurnItem) => Effect.Effect<
+      {
+        readonly item: OrchestrationV2TurnItem;
+        readonly createdAttachmentIds: ReadonlyArray<string>;
+      },
+      TurnItemContentStoreError
+    >;
+    readonly removeNewAttachments: (attachmentIds: ReadonlyArray<string>) => Effect.Effect<void>;
+    readonly read: (
+      item: OrchestrationV2TurnItem,
+      options?: { readonly includeImageData?: boolean },
+    ) => Effect.Effect<OrchestrationV2TurnItem, TurnItemContentStoreError>;
+  }
 >()("t3/orchestration-v2/TurnItemContentStore") {}
 
 export function needsTurnItemContentRead(item: OrchestrationV2TurnItem): boolean {
@@ -161,13 +172,24 @@ export const layer: Layer.Layer<
         relativePath: `${attachmentId}.bin`,
       });
 
+    const removeNewAttachments = Effect.fn("TurnItemContentStore.removeNewAttachments")(function* (
+      attachmentIds: ReadonlyArray<string>,
+    ) {
+      for (const attachmentId of new Set(attachmentIds)) {
+        const filePath = filePathForAttachment(attachmentId);
+        if (filePath !== null) {
+          yield* fileSystem.remove(filePath).pipe(Effect.ignore({ log: true }));
+        }
+      }
+    });
+
     const writeBytes = Effect.fn("TurnItemContentStore.writeBytes")(function* (input: {
       readonly filePath: string;
       readonly bytes: Uint8Array;
     }) {
       const directory = path.dirname(input.filePath);
       yield* fileSystem.makeDirectory(directory, { recursive: true });
-      if (yield* fileSystem.exists(input.filePath)) return;
+      if (yield* fileSystem.exists(input.filePath)) return false;
       const temporaryDirectory = yield* fileSystem.makeTempDirectory({
         directory,
         prefix: `${path.basename(input.filePath)}.`,
@@ -175,12 +197,14 @@ export const layer: Layer.Layer<
       const temporaryPath = path.join(temporaryDirectory, "contents.part");
       const write = fileSystem
         .writeFile(temporaryPath, input.bytes)
-        .pipe(Effect.andThen(fileSystem.rename(temporaryPath, input.filePath)));
-      yield* write.pipe(
+        .pipe(Effect.andThen(fileSystem.rename(temporaryPath, input.filePath)), Effect.as(true));
+      return yield* write.pipe(
         Effect.catch((cause) =>
           fileSystem
             .exists(input.filePath)
-            .pipe(Effect.flatMap((exists) => (exists ? Effect.void : Effect.fail(cause)))),
+            .pipe(
+              Effect.flatMap((exists) => (exists ? Effect.succeed(false) : Effect.fail(cause))),
+            ),
         ),
         Effect.ensuring(
           fileSystem
@@ -223,6 +247,7 @@ export const layer: Layer.Layer<
 
     const storeImageBlocks = Effect.fn("TurnItemContentStore.storeImageBlocks")(function* (
       item: DynamicToolItem,
+      createdAttachmentIds: Array<string>,
     ) {
       const blocks = toolOutputImageBlocks(item.output);
       const replacements = new Map<unknown, unknown>();
@@ -251,7 +276,7 @@ export const layer: Layer.Layer<
             reason: "invalid-reference",
           });
         }
-        yield* writeBytes({ filePath, bytes }).pipe(
+        const created = yield* writeBytes({ filePath, bytes }).pipe(
           Effect.mapError((cause) =>
             failure({
               threadId: item.threadId,
@@ -262,6 +287,7 @@ export const layer: Layer.Layer<
             }),
           ),
         );
+        if (created) createdAttachmentIds.push(attachmentId);
         replacements.set(block, replaceImageWithAttachment(block, attachmentId, bytes.byteLength));
       }
       if (replacements.size === 0 || item.output === undefined) return item;
@@ -269,89 +295,144 @@ export const layer: Layer.Layer<
       return output === item.output ? item : { ...item, output };
     });
 
-    const store: TurnItemContentStoreShape["store"] = Effect.fn("TurnItemContentStore.store")(
-      function* (original) {
-        if (original.type !== "command_execution" && original.type !== "dynamic_tool") {
-          return original;
-        }
-        const stripped = stripUnservedToolOutputImageBytes(original);
-        if (stripped.type !== "command_execution" && stripped.type !== "dynamic_tool") {
-          return stripped;
-        }
-        const prepared: ToolItem =
-          stripped.type === "dynamic_tool" ? yield* storeImageBlocks(stripped) : stripped;
-        if (serializedJsonBytesUpTo(prepared, MAX_STORED_ITEM_BYTES) <= MAX_STORED_ITEM_BYTES) {
-          return prepared;
-        }
-        if (prepared.contentRef !== undefined) {
-          return yield* failure({
-            threadId: prepared.threadId,
-            itemId: prepared.id,
-            operation: "store",
-            reason: "content-too-large",
-          });
-        }
-
-        const serialized = yield* encodeStoredContent(storedFields(prepared)).pipe(
-          Effect.mapError((cause) =>
-            failure({
-              threadId: prepared.threadId,
-              itemId: prepared.id,
-              operation: "store",
-              reason: "invalid-content",
-              cause,
-            }),
-          ),
-        );
-        const bytes = encoder.encode(serialized);
-        const attachmentId = yield* attachmentIdForBytes({
+    const storeContent = Effect.fn("TurnItemContentStore.storeContent")(function* (
+      original: OrchestrationV2TurnItem,
+      createdAttachmentIds: Array<string>,
+    ) {
+      if (original.type !== "command_execution" && original.type !== "dynamic_tool") {
+        return original;
+      }
+      const stripped = stripUnservedToolOutputImageBytes(original);
+      if (stripped.type !== "command_execution" && stripped.type !== "dynamic_tool") {
+        return stripped;
+      }
+      const prepared: ToolItem =
+        stripped.type === "dynamic_tool"
+          ? yield* storeImageBlocks(stripped, createdAttachmentIds)
+          : stripped;
+      if (serializedJsonBytesUpTo(prepared, MAX_STORED_ITEM_BYTES) <= MAX_STORED_ITEM_BYTES) {
+        return prepared;
+      }
+      if (prepared.contentRef !== undefined) {
+        return yield* failure({
           threadId: prepared.threadId,
           itemId: prepared.id,
           operation: "store",
-          bytes,
+          reason: "content-too-large",
         });
-        const filePath = filePathForAttachment(attachmentId);
-        if (filePath === null) {
-          return yield* failure({
-            threadId: prepared.threadId,
-            itemId: prepared.id,
-            operation: "store",
-            reason: "invalid-reference",
-          });
-        }
-        yield* writeBytes({ filePath, bytes }).pipe(
-          Effect.mapError((cause) =>
-            failure({
-              threadId: prepared.threadId,
-              itemId: prepared.id,
-              operation: "store",
-              reason: "file-access",
-              cause,
-            }),
-          ),
-        );
+      }
 
-        const bounded = previewContentFields(prepared, {
-          attachmentId,
-          sizeBytes: bytes.byteLength,
-        });
-        if (serializedJsonBytesUpTo(bounded, MAX_STORED_ITEM_BYTES) > MAX_STORED_ITEM_BYTES) {
-          return yield* failure({
+      const serialized = yield* encodeStoredContent(storedFields(prepared)).pipe(
+        Effect.mapError((cause) =>
+          failure({
             threadId: prepared.threadId,
             itemId: prepared.id,
             operation: "store",
-            reason: "content-too-large",
-          });
-        }
-        return bounded;
-      },
-    );
+            reason: "invalid-content",
+            cause,
+          }),
+        ),
+      );
+      const bytes = encoder.encode(serialized);
+      const attachmentId = yield* attachmentIdForBytes({
+        threadId: prepared.threadId,
+        itemId: prepared.id,
+        operation: "store",
+        bytes,
+      });
+      const filePath = filePathForAttachment(attachmentId);
+      if (filePath === null) {
+        return yield* failure({
+          threadId: prepared.threadId,
+          itemId: prepared.id,
+          operation: "store",
+          reason: "invalid-reference",
+        });
+      }
+      const created = yield* writeBytes({ filePath, bytes }).pipe(
+        Effect.mapError((cause) =>
+          failure({
+            threadId: prepared.threadId,
+            itemId: prepared.id,
+            operation: "store",
+            reason: "file-access",
+            cause,
+          }),
+        ),
+      );
+      if (created) createdAttachmentIds.push(attachmentId);
+
+      const attachmentIds =
+        prepared.type === "dynamic_tool"
+          ? Array.from(
+              new Set(
+                toolOutputImages(prepared.output).flatMap((image) =>
+                  image.attachmentId === undefined ? [] : [image.attachmentId],
+                ),
+              ),
+            )
+          : [];
+
+      const contentRef = {
+        attachmentId,
+        sizeBytes: bytes.byteLength,
+        ...(attachmentIds.length === 0 ? {} : { attachmentIds }),
+      };
+      const firstPreview = previewContentFields(prepared, contentRef);
+      const transcriptItem = {
+        ...stripped,
+        ...(firstPreview.outputIndicatesFailure === undefined
+          ? {}
+          : { outputIndicatesFailure: firstPreview.outputIndicatesFailure }),
+      };
+      const bounded = previewContentFields(prepared, {
+        ...contentRef,
+        transcriptItemBytes: Buffer.byteLength(encodeUnknownJson(transcriptItem), "utf8"),
+      });
+      if (serializedJsonBytesUpTo(bounded, MAX_STORED_ITEM_BYTES) > MAX_STORED_ITEM_BYTES) {
+        return yield* failure({
+          threadId: prepared.threadId,
+          itemId: prepared.id,
+          operation: "store",
+          reason: "content-too-large",
+        });
+      }
+      return bounded;
+    });
+
+    const storeForCommit: TurnItemContentStore["Service"]["storeForCommit"] = Effect.fn(
+      "TurnItemContentStore.storeForCommit",
+    )(function* (item) {
+      const createdAttachmentIds: Array<string> = [];
+      const stored = yield* storeContent(item, createdAttachmentIds).pipe(
+        Effect.map((storedItem) => ({ item: storedItem, createdAttachmentIds })),
+        Effect.catchCause((cause) =>
+          removeNewAttachments(createdAttachmentIds).pipe(Effect.andThen(Effect.failCause(cause))),
+        ),
+      );
+      return stored;
+    });
+
+    const store: TurnItemContentStore["Service"]["store"] = (item) =>
+      storeForCommit(item).pipe(Effect.map((stored) => stored.item));
 
     const readAttachment = Effect.fn("TurnItemContentStore.readAttachment")(function* (input: {
       readonly threadId: ThreadId;
       readonly itemId: TurnItemId;
       readonly attachmentId: string;
     }) {
+      const ownerSegment = toSafeThreadAttachmentSegment(input.threadId);
+      if (
+        ownerSegment === null ||
+        parseThreadSegmentFromAttachmentId(input.attachmentId) !== ownerSegment
+      ) {
+        return yield* failure({
+          threadId: input.threadId,
+          itemId: input.itemId,
+          operation: "read",
+          reason: "invalid-reference",
+        });
+      }
       const filePath = resolveAttachmentPathById({
         attachmentsDir: config.attachmentsDir,
         attachmentId: input.attachmentId,
@@ -380,25 +461,11 @@ export const layer: Layer.Layer<
     const restoreImages = Effect.fn("TurnItemContentStore.restoreImages")(function* (
       item: DynamicToolItem,
       value: unknown,
-      depth = 0,
     ): Effect.fn.Return<unknown, TurnItemContentStoreError> {
-      if (depth > IMAGE_DEPTH_LIMIT) {
-        return yield* failure({
-          threadId: item.threadId,
-          itemId: item.id,
-          operation: "read",
-          reason: "invalid-content",
-        });
-      }
-      if (Array.isArray(value)) {
-        const entries = yield* Effect.forEach(value, (entry) =>
-          restoreImages(item, entry, depth + 1),
-        );
-        return entries;
-      }
-      if (!Predicate.isObject(value)) return value;
-      const image = readToolOutputImage(value);
-      if (image?.attachmentId !== undefined) {
+      const replacements = new Map<unknown, unknown>();
+      for (const block of toolOutputImageBlocks(value)) {
+        const image = readToolOutputImage(block);
+        if (image?.attachmentId === undefined) continue;
         const bytes = yield* readAttachment({
           threadId: item.threadId,
           itemId: item.id,
@@ -412,19 +479,12 @@ export const layer: Layer.Layer<
             reason: "invalid-content",
           });
         }
-        return restoreImageData(value, Buffer.from(bytes).toString("base64"));
+        replacements.set(block, restoreImageData(block, Buffer.from(bytes).toString("base64")));
       }
-      const originalEntries = Object.entries(value);
-      const entries = yield* Effect.forEach(originalEntries, ([key, entry]) =>
-        restoreImages(item, entry, depth + 1).pipe(
-          Effect.map((restored) => [key, restored] as const),
-        ),
-      );
-      const changed = entries.some(([, entry], index) => entry !== originalEntries[index]?.[1]);
-      return changed ? Object.fromEntries(entries) : value;
+      return replaceImageBlocks(value, replacements);
     });
 
-    const read: TurnItemContentStoreShape["read"] = Effect.fn("TurnItemContentStore.read")(
+    const read: TurnItemContentStore["Service"]["read"] = Effect.fn("TurnItemContentStore.read")(
       function* (original, options) {
         let item: OrchestrationV2TurnItem = original;
         if (
@@ -512,6 +572,6 @@ export const layer: Layer.Layer<
       },
     );
 
-    return TurnItemContentStore.of({ store, read });
+    return TurnItemContentStore.of({ store, storeForCommit, removeNewAttachments, read });
   }),
 );
