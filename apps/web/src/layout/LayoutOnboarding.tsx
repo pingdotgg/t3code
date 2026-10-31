@@ -203,6 +203,7 @@ export function LayoutOnboarding() {
         side="bottom"
         align={step === 3 ? "end" : "start"}
         sideOffset={12}
+        collisionAvoidance={{ side: "shift", align: "shift" }}
         initialFocus={false}
       >
         <div className="flex flex-col gap-2" role="region" aria-label="Layout tour">
