@@ -17,6 +17,7 @@ import {
   buildLayoutTabMenuItems,
   isLayoutTabMenuId,
   LayoutPaneTab,
+  LayoutPaneTabStrip,
   runLayoutTabMenuAction,
   useLayoutPaneSiblingTabs,
   useLayoutTabLabel,
@@ -289,7 +290,7 @@ function PanelTabStrip({
       // so a narrow pane never squeezes its shown tab away.
       <div
         ref={ref}
-        className="flex min-w-0 flex-auto items-center gap-1 overflow-hidden"
+        className="flex min-w-0 flex-auto items-center gap-1"
         data-right-panel-tab-list
       >
         {children}
@@ -314,7 +315,7 @@ function PanelTabsNotch(props: { notched: boolean; addButton: ReactNode; childre
   if (!props.notched) return props.children;
   return (
     <PaneNotch>
-      {props.children}
+      <LayoutPaneTabStrip>{props.children}</LayoutPaneTabStrip>
       {props.addButton ? (
         <span data-pane-notch-add="" className="flex shrink-0">
           {props.addButton}
