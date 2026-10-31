@@ -244,6 +244,62 @@ it.effect(
     }),
 );
 
+it.effect("a launch steps an inherited mode down to the provider's, and refuses one it lacks", () =>
+  Effect.gen(function* () {
+    // Pi offers no Auto; a mode a provider lacks would run as Supervised.
+    const pi = ProviderInstanceId.make("pi");
+    const launchPi = Effect.fn("test.launchPi")(function* (runtimeMode?: RuntimeMode) {
+      const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+      const { projectId, dependencies } = clientLaunchHarness({
+        runtimeModeCeiling: "auto",
+        launched,
+        providers: [
+          {
+            instanceId: pi,
+            driver: ProviderDriverKind.make("pi"),
+            enabled: true,
+            installed: true,
+            status: "ready",
+            version: null,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-01-01T00:00:00Z",
+            models: [],
+            slashCommands: [],
+            skills: [],
+            supportedRuntimeModes: ["approval-required", "auto-accept-edits", "full-access"],
+          },
+        ],
+      });
+      const toolkit = yield* ProjectToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      const result = yield* toolkit
+        .handle("t3_thread_launch", {
+          projectId,
+          title: "Fix",
+          modelSelection: { instanceId: pi, model: "pi-model" },
+          ...(runtimeMode === undefined ? {} : { runtimeMode }),
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+      return { result: result.at(-1)?.result, launched };
+    });
+
+    const inherited = yield* launchPi();
+    expect(inherited.launched[0]?.runtimeMode).toBe("auto-accept-edits");
+
+    const requested = yield* launchPi("auto");
+    expect(requested.result).toMatchObject({ code: "invalid_request" });
+    expect(requested.launched).toHaveLength(0);
+
+    const offered = yield* launchPi("approval-required");
+    expect(offered.launched[0]?.runtimeMode).toBe("approval-required");
+  }),
+);
+
 it.effect("a launch retried with the same clientRequestId replays the first one", () =>
   Effect.gen(function* () {
     const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
