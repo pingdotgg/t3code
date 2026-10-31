@@ -4085,6 +4085,78 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("gives a slow submodule checkout as long as the worktree checkout", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+
+        const previousAllowedProtocol = process.env.GIT_ALLOW_PROTOCOL;
+        process.env.GIT_ALLOW_PROTOCOL = "file";
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            if (previousAllowedProtocol === undefined) {
+              delete process.env.GIT_ALLOW_PROTOCOL;
+            } else {
+              process.env.GIT_ALLOW_PROTOCOL = previousAllowedProtocol;
+            }
+          }),
+        );
+
+        const submoduleRepo = yield* makeTmpDir("git-submodule-");
+        yield* initRepoWithCommit(submoduleRepo);
+        yield* writeTextFile(submoduleRepo, "SHARED.md", "# shared\n");
+        yield* git(submoduleRepo, ["add", "."]);
+        yield* git(submoduleRepo, ["commit", "-m", "shared"]);
+
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["submodule", "add", submoduleRepo, "shared"]);
+        yield* git(cwd, ["commit", "-m", "add submodule"]);
+
+        // Holds the submodule clone, standing in for slow remotes, until the test releases it.
+        const updateStarted = yield* Deferred.make<void>();
+        const releaseUpdate = yield* Deferred.make<void>();
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            const args = ChildProcess.isStandardCommand(command) ? command.args : [];
+            if (args[0] === "submodule" && args[1] === "update") {
+              yield* Deferred.succeed(updateStarted, undefined);
+              yield* Deferred.await(releaseUpdate);
+            }
+            return yield* delegate.spawn(command);
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provide(layerServerConfig),
+        );
+
+        const worktreePath = pathService.join(
+          yield* makeTmpDir("git-worktrees-"),
+          "slow-submodule-worktree",
+        );
+        const creating = yield* driver
+          .createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/slow-submodules",
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(updateStarted);
+        yield* TestClock.adjust("1 minute");
+        yield* Deferred.succeed(releaseUpdate, undefined);
+        yield* Fiber.join(creating);
+
+        assert.equal(
+          yield* fileSystem.exists(pathService.join(worktreePath, "shared", "SHARED.md")),
+          true,
+          "submodule checkout timed out before the worktree checkout bound",
+        );
+      }),
+    );
+
     it.effect("still creates the worktree when submodule checkout fails", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
