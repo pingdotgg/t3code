@@ -1,6 +1,13 @@
 import { useAtomValue } from "@effect/atom-react";
 import { AuthSettingsWriteScope, type EnvironmentId, sessionGrantsScope } from "@t3tools/contracts";
-import { ChevronDownIcon, PlusIcon, RotateCcwIcon, XIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  PlusIcon,
+  RotateCcwIcon,
+  ServerIcon,
+  Undo2Icon,
+  XIcon,
+} from "lucide-react";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useRef, useState } from "react";
 
@@ -288,14 +295,20 @@ export function UsagePriceOverrides({
               </Label>
               <Menu>
                 <MenuTrigger
-                  render={<Button variant="secondary" size="sm" className="min-w-0" />}
+                  render={
+                    <Button variant="secondary" size="sm" className="w-50 max-w-full min-w-0" />
+                  }
                   aria-labelledby="usage-prices-apply-label usage-prices-selection"
                   disabled={pending || hasChanges}
                 >
-                  <span id="usage-prices-selection" className="truncate">
+                  <ServerIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                  <span id="usage-prices-selection" className="min-w-0 flex-1 truncate text-start">
                     {selectionLabel}
                   </span>
-                  <ChevronDownIcon className="size-3.5 shrink-0" aria-hidden />
+                  <ChevronDownIcon
+                    className="size-3.5 shrink-0 text-muted-foreground"
+                    aria-hidden
+                  />
                 </MenuTrigger>
                 <MenuPopup align="start">
                   <MenuCheckboxItem
@@ -419,8 +432,8 @@ export function UsagePriceOverrides({
                               ) : (
                                 <span
                                   className={cn(
-                                    "block break-all",
-                                    row.removed && "text-muted-foreground line-through",
+                                    "block font-mono break-all",
+                                    row.removed && "text-dim-foreground",
                                   )}
                                 >
                                   {row.model}
@@ -516,6 +529,8 @@ export function UsagePriceOverrides({
                                 >
                                   {row.isNew ? (
                                     <XIcon aria-hidden />
+                                  ) : row.removed ? (
+                                    <Undo2Icon aria-hidden />
                                   ) : (
                                     <RotateCcwIcon aria-hidden />
                                   )}
@@ -595,7 +610,7 @@ export function UsagePriceOverrides({
           </span>
           <div className="flex w-full flex-wrap justify-end gap-2 sm:w-auto">
             {hasChanges ? (
-              <Button variant="ghost" disabled={pending} onClick={discard}>
+              <Button variant="secondary" disabled={pending} onClick={discard}>
                 {failedDestinations.length > 0 ? "Discard pending changes" : "Discard changes"}
               </Button>
             ) : null}

@@ -64,7 +64,9 @@ export function PullRequestRowLines({
   signals,
   meta,
   metaClassName,
+  metaStatus,
   updatedAt,
+  layout = "panel",
 }: {
   number: ReactNode;
   title: ReactNode;
@@ -72,31 +74,61 @@ export function PullRequestRowLines({
   signals?: ReactNode;
   meta?: ReactNode;
   metaClassName?: string;
+  /** Right of the second line, before the time: what the pull request is waiting on. */
+  metaStatus?: ReactNode;
   updatedAt?: string | null | undefined;
+  /**
+   * The page reads title first with the number after it, on two looser lines; the panel's
+   * narrow column leads with the number.
+   */
+  layout?: "panel" | "page";
 }) {
+  const page = layout === "page";
+  const time = updatedAt ? (
+    <span className="shrink-0 whitespace-nowrap tabular-nums text-dim-foreground">
+      <RelativeTime timestamp={updatedAt} />
+    </span>
+  ) : null;
   return (
-    <span className="min-w-0 flex-1">
-      <span className="flex min-w-0 items-center gap-1.5">
-        {number}
-        <span className="min-w-0 truncate text-sm font-medium text-foreground">{title}</span>
+    <span className={cn("min-w-0 flex-1", page && "flex flex-col gap-1.25")}>
+      <span className={cn("flex min-w-0 items-center", page ? "gap-2" : "gap-1.5")}>
+        {page ? null : number}
+        <span
+          className={cn(
+            "min-w-0 truncate text-sm text-foreground",
+            page ? "font-normal" : "font-medium",
+          )}
+        >
+          {title}
+        </span>
+        {page ? number : null}
         {signals ? (
-          <span className="flex shrink-0 items-center gap-1 text-2xs">{signals}</span>
+          <span className="flex shrink-0 items-center gap-1 text-caption">{signals}</span>
         ) : null}
         {status ? (
-          <span className="ml-auto flex shrink-0 items-center gap-1.5 text-2xs">{status}</span>
+          <span className="ml-auto flex shrink-0 items-center gap-1.5 text-caption">{status}</span>
         ) : null}
       </span>
       <span
         className={cn(
-          "flex min-w-0 items-center gap-1.5 overflow-hidden text-2xs text-muted-foreground",
+          "flex min-w-0 items-center gap-1.5 overflow-hidden text-muted-foreground",
+          page ? "text-meta" : "text-caption",
           metaClassName,
         )}
       >
         {meta}
-        {updatedAt ? (
-          <span className="ml-auto shrink-0 whitespace-nowrap tabular-nums text-dim-foreground">
-            <RelativeTime timestamp={updatedAt} />
+        {page ? (
+          <span className="ml-auto flex min-w-0 max-w-3/5 shrink-0 items-center gap-1.5 pl-2">
+            {metaStatus}
+            {metaStatus && time ? (
+              <span aria-hidden className="text-dim-foreground">
+                ·
+              </span>
+            ) : null}
+            {time}
           </span>
+        ) : time ? (
+          <span className="ml-auto flex shrink-0">{time}</span>
         ) : null}
       </span>
     </span>

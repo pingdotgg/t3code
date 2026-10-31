@@ -26,7 +26,6 @@ import {
   buildFixFindingHandoff,
   canDeletePullRequestBranch,
   buildFixFindingsHandoff,
-  groupPullRequestTimelineConversations,
   filterPullRequestConversationItems,
   pagePullRequestConversationItems,
   pullRequestConversationItemComments,
@@ -52,7 +51,8 @@ import {
   allowsSinglePullRequestMerge,
   shouldRefreshPullRequestActivity,
   resolveBaseFreshness,
-  buildPullRequestTimeline,
+  buildPullRequestRail,
+  visibleBody,
   writePullRequestDetailSnapshot,
   readableFailure,
 } from "./pullRequestDetail.logic";
@@ -315,13 +315,21 @@ describe("review verdicts", () => {
   });
 });
 
-describe("pull request timeline", () => {
+describe("pull request timeline rail", () => {
   it("orders host timestamps by instant across offsets and fractional seconds", () => {
-    const events = buildPullRequestTimeline({
+    const events = buildPullRequestRail({
       ...TIMELINE_SOURCE,
+      reviewThreads: [],
       createdAt: "2026-07-05T01:00:00+02:00",
       commits: [{ oid: "commit", messageHeadline: "", committedDate: "2026-07-05T00:30:00Z" }],
-      comments: [{ ...TIMELINE_SOURCE.comments[0]!, createdAt: "2026-07-05T00:30:00.5Z" }],
+      comments: [
+        {
+          ...TIMELINE_SOURCE.comments[0]!,
+          kind: "review",
+          reviewState: "APPROVED",
+          createdAt: "2026-07-05T00:30:00.5Z",
+        },
+      ],
       mergedAt: null,
       closedAt: null,
     });
@@ -329,130 +337,21 @@ describe("pull request timeline", () => {
     expect(events.map((event) => event.id)).toEqual(["c1", "commit", "created"]);
   });
 
-  it("drops a body that is nothing but a bot's HTML comment, and keeps one that says more", () => {
-    const events = buildPullRequestTimeline({
-      ...TIMELINE_SOURCE,
-      comments: [
-        { ...TIMELINE_SOURCE.comments[0]!, body: "<!-- MURMUR_IGNORE -->" },
-        {
-          ...TIMELINE_SOURCE.comments[0]!,
-          id: "c2",
-          body: "<!-- summarize by coderabbit.ai -->\nNeeds a test.",
-          createdAt: "2026-07-04T00:00:00Z",
-        },
-      ],
-    });
-    expect(events.find((event) => event.id === "c1")?.body).toBeNull();
-    expect(events.find((event) => event.id === "c2")?.body).toBe(
-      "<!-- summarize by coderabbit.ai -->\nNeeds a test.",
-    );
+  it("drops marker-only bodies while retaining comments that say more", () => {
+    expect(visibleBody("<!-- MURMUR_IGNORE -->")).toBeNull();
+    expect(visibleBody("<!-- marker -->\nNeeds a test.")).toBe("<!-- marker -->\nNeeds a test.");
   });
 
   it("reports a merge rather than the close GitHub records alongside it", () => {
-    const events = buildPullRequestTimeline({
+    const events = buildPullRequestRail({
       ...TIMELINE_SOURCE,
+      reviewThreads: [],
       mergedAt: "2026-07-04T00:00:00Z",
       closedAt: "2026-07-04T00:00:00Z",
     });
     expect(events[0]?.id).toBe("merged");
-    expect(events.some((event) => event.id === "closed")).toBe(false);
-  });
-
-  it("names the change request in its host's own term", () => {
-    const titles = (provider: string) =>
-      buildPullRequestTimeline({
-        ...TIMELINE_SOURCE,
-        provider: SourceControlProviderKind.make(provider),
-        closedAt: "2026-07-04T00:00:00Z",
-      })
-        .filter((event) => event.kind === "opened" || event.kind === "closed")
-        .map((event) => event.title);
-    expect(titles("github")).toEqual(["Pull request closed", "opened this pull request"]);
-    expect(titles("gitlab")).toEqual(["Merge request closed", "opened this merge request"]);
-  });
-
-  it("groups conversation sections without crossing commits or PR updates", () => {
-    const events = buildPullRequestTimeline({
-      ...TIMELINE_SOURCE,
-      comments: [
-        {
-          ...TIMELINE_SOURCE.comments[0]!,
-          id: "new-comment-1",
-          createdAt: "2026-07-04T00:00:00Z",
-        },
-        {
-          ...TIMELINE_SOURCE.comments[0]!,
-          id: "new-comment-2",
-          createdAt: "2026-07-03T00:00:00Z",
-        },
-        {
-          ...TIMELINE_SOURCE.comments[0]!,
-          id: "old-comment-1",
-          createdAt: "2026-07-01T12:00:00Z",
-        },
-        {
-          ...TIMELINE_SOURCE.comments[0]!,
-          id: "old-comment-2",
-          createdAt: "2026-07-01T06:00:00Z",
-        },
-      ],
-      mergedAt: "2026-07-05T00:00:00Z",
-    });
-
-    const rows = groupPullRequestTimelineConversations(events);
-    expect(
-      rows.map((row) =>
-        row.kind === "comments"
-          ? [row.kind, ...row.events.map((event) => event.id)]
-          : [row.kind, row.event.id],
-      ),
-    ).toEqual([
-      ["event", "merged"],
-      ["comments", "new-comment-1", "new-comment-2"],
-      ["event", "1baf7bdcafe"],
-      ["comments", "old-comment-1", "old-comment-2"],
-      ["event", "created"],
-    ]);
-  });
-
-  it("keeps a verdict out of the collapsed conversation it was submitted in", () => {
-    const events = buildPullRequestTimeline({
-      ...TIMELINE_SOURCE,
-      comments: [
-        { ...TIMELINE_SOURCE.comments[0]!, id: "chatter-1", createdAt: "2026-07-05T00:00:00Z" },
-        {
-          ...TIMELINE_SOURCE.comments[0]!,
-          id: "approval",
-          kind: "review",
-          body: "",
-          reviewState: "APPROVED",
-          createdAt: "2026-07-04T00:00:00Z",
-        },
-        { ...TIMELINE_SOURCE.comments[0]!, id: "chatter-2", createdAt: "2026-07-03T00:00:00Z" },
-        {
-          ...TIMELINE_SOURCE.comments[0]!,
-          id: "remark",
-          kind: "review",
-          reviewState: "COMMENTED",
-          createdAt: "2026-07-02T12:00:00Z",
-        },
-      ],
-    });
-
-    const rows = groupPullRequestTimelineConversations(events);
-    expect(
-      rows.map((row) =>
-        row.kind === "comments"
-          ? [row.kind, ...row.events.map((event) => event.id)]
-          : [row.kind, row.event.id],
-      ),
-    ).toEqual([
-      ["comments", "chatter-1"],
-      ["event", "approval"],
-      ["comments", "chatter-2", "remark"],
-      ["event", "1baf7bdcafe"],
-      ["event", "created"],
-    ]);
+    expect(events.some((event) => event.kind === "closed")).toBe(false);
+    expect(events.map((event) => event.kind)).toEqual(["merged", "commit", "opened"]);
   });
 });
 
@@ -486,37 +385,6 @@ describe("review thread conversations", () => {
     isOutdated: true,
     comments: [lastReply, { ...finding, body: "Stale finding" }, reply],
   };
-
-  it("keeps a timeline finding and its replies in one row at the finding time", () => {
-    const events = buildPullRequestTimeline({
-      ...TIMELINE_SOURCE,
-      comments,
-      reviewThreads: [thread],
-    });
-    expect(events.map((event) => event.id)).toEqual(["c1", "finding", "1baf7bdcafe", "created"]);
-    expect(events[1]).toMatchObject({
-      id: finding.id,
-      at: finding.createdAt,
-      body: finding.body,
-      url: finding.url,
-      thread: {
-        path: thread.path,
-        line: 7,
-        isOutdated: true,
-        replies: [
-          { id: reply.id, body: reply.body, url: reply.url, reactions: reply.reactions },
-          { id: lastReply.id, body: lastReply.body, url: lastReply.url },
-        ],
-      },
-    });
-    expect(groupPullRequestTimelineConversations(events).map((row) => row.kind)).toEqual([
-      "comments",
-      "event",
-      "event",
-      "event",
-    ]);
-    expect(events[0]).toEqual(buildPullRequestTimeline(TIMELINE_SOURCE)[0]);
-  });
 
   it("orders and pages whole Summary conversations while retaining editable comment copies", () => {
     const earlier = { ...loose, id: "earlier", createdAt: "2026-07-01T00:00:00Z" };
@@ -596,23 +464,19 @@ describe("review thread conversations", () => {
   });
 
   it("distinguishes unloaded replies from complete threads, even when the host only supplies a cursor", () => {
-    const timeline = (reviewThread: PullRequestReviewThread) =>
-      buildPullRequestTimeline({
-        ...TIMELINE_SOURCE,
-        comments,
-        reviewThreads: [reviewThread],
-      }).find((event) => event.id === finding.id)?.thread;
-    expect(timeline({ ...thread, commentCount: 5 })).toMatchObject({
+    const conversation = (reviewThread: PullRequestReviewThread) =>
+      pullRequestConversationItems(comments, [reviewThread]).find((item) => item.id === thread.id);
+    expect(conversation({ ...thread, commentCount: 5 })).toMatchObject({
       moreReplies: 2,
       hasMoreReplies: true,
       url: finding.url,
     });
-    expect(timeline({ ...thread, nextCommentsCursor: "next" })).toMatchObject({
+    expect(conversation({ ...thread, nextCommentsCursor: "next" })).toMatchObject({
       moreReplies: 0,
       hasMoreReplies: true,
       url: finding.url,
     });
-    expect(timeline(thread)).toMatchObject({ moreReplies: 0, hasMoreReplies: false });
+    expect(conversation(thread)).toMatchObject({ moreReplies: 0, hasMoreReplies: false });
   });
 });
 

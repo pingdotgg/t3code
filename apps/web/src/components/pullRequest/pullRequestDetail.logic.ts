@@ -1,5 +1,4 @@
 import {
-  capitalizeTerm,
   sourceControlClients,
   type ChangeRequestTerminology,
 } from "@t3tools/client-runtime/source-control-clients";
@@ -18,7 +17,6 @@ import {
   type PullRequestContextMetadata,
   type PullRequestDetailView,
   type PullRequestMergeability,
-  type PullRequestReaction,
   type PullRequestMergeMethod,
   type PullRequestRef,
   type RepositoryIdentity,
@@ -451,23 +449,65 @@ export function latestPullRequestReviewOutcomes(
   return [...latest.values()].filter((entry) => entry.outcome !== "dismissed");
 }
 
-export interface PullRequestTimelineEvent {
-  readonly id: string;
-  readonly at: string;
-  readonly kind: "opened" | "commit" | "comment" | "review" | "merged" | "closed";
-  readonly title: string;
-  readonly body: string | null;
-  readonly markdown: boolean;
-  readonly url: string | null;
-  readonly actor: PullRequestActor | null;
-  readonly commitAuthors: ReadonlyArray<PullRequestActor>;
-  readonly additions: number | null;
-  readonly deletions: number | null;
-  readonly path: string | null;
-  readonly reviewState: string | null;
-  readonly reactions: ReadonlyArray<PullRequestReaction>;
-  readonly comment?: PullRequestComment;
-  readonly thread?: PullRequestTimelineThread;
+export interface PullRequestChangeRequestEntry {
+  /** The review that asked for changes, pinned at the top of the conversation. */
+  readonly comment: PullRequestComment;
+  /** Open threads on lines by the same reviewer, read below the pinned review. */
+  readonly openThreadCount: number;
+  /** When the author asked this reviewer again after the verdict, where the host says. */
+  readonly reRequestedAt: string | null;
+}
+
+export interface PullRequestConversationSummary {
+  readonly changeRequests: ReadonlyArray<PullRequestChangeRequestEntry>;
+  /** Unresolved threads on lines, oldest first, the order they were raised in. */
+  readonly openThreads: ReadonlyArray<PullRequestReviewThread>;
+}
+
+/**
+ * What the Summary conversation leads with: each reviewer's standing request for changes, and
+ * every thread still open on a line. A superseded request is not pinned, because the commits
+ * after it may already answer it; it stays in the conversation below like any other review.
+ */
+export function pullRequestConversationSummary(
+  detail: Pick<PullRequestDetailView, "comments" | "commits" | "reviewThreads" | "reviewRequests">,
+): PullRequestConversationSummary {
+  const openThreads = detail.reviewThreads
+    .filter((thread) => !thread.isResolved)
+    .toSorted(
+      (left, right) =>
+        instant(left.comments[0]?.createdAt ?? "") - instant(right.comments[0]?.createdAt ?? ""),
+    );
+  const standing = latestPullRequestReviewOutcomes(detail.comments, detail.commits).filter(
+    (entry) => entry.outcome === "changes-requested" && !entry.stale,
+  );
+  const changeRequests = standing.flatMap((entry): PullRequestChangeRequestEntry[] => {
+    const comment = detail.comments.find(
+      (candidate) =>
+        candidate.createdAt === entry.at &&
+        pullRequestReviewOutcome(candidate.reviewState) === "changes-requested" &&
+        (candidate.author?.login ?? `ghost:${candidate.id}`) === entry.key,
+    );
+    if (comment === undefined) return [];
+    const login = entry.actor?.login.toLowerCase() ?? null;
+    const reRequestedAt =
+      login === null
+        ? null
+        : ((detail.reviewRequests ?? [])
+            .filter(
+              (event) =>
+                event.reviewer.login.toLowerCase() === login &&
+                instant(event.createdAt) > instant(entry.at),
+            )
+            .at(-1)?.createdAt ?? null);
+    const openThreadCount =
+      login === null
+        ? 0
+        : openThreads.filter((thread) => thread.comments[0]?.author?.login.toLowerCase() === login)
+            .length;
+    return [{ comment, openThreadCount, reRequestedAt }];
+  });
+  return { changeRequests, openThreads };
 }
 
 export interface PullRequestReplyAvailability {
@@ -476,63 +516,9 @@ export interface PullRequestReplyAvailability {
   readonly url: string | null;
 }
 
-export interface PullRequestTimelineThread
-  extends
-    Pick<PullRequestReviewThread, "path" | "line" | "isResolved" | "isOutdated">,
-    PullRequestReplyAvailability {
-  readonly replies: ReadonlyArray<PullRequestTimelineEvent>;
-}
-
-export type PullRequestTimelineRow =
-  | { readonly kind: "event"; readonly event: PullRequestTimelineEvent }
-  | { readonly kind: "comments"; readonly events: ReadonlyArray<PullRequestTimelineEvent> };
-
-export function groupPullRequestTimelineConversations(
-  events: ReadonlyArray<PullRequestTimelineEvent>,
-): ReadonlyArray<PullRequestTimelineRow> {
-  const rows: PullRequestTimelineRow[] = [];
-  for (const event of events) {
-    if (
-      (event.kind === "comment" || event.kind === "review") &&
-      event.thread === undefined &&
-      pullRequestReviewOutcome(event.reviewState) === null
-    ) {
-      const last = rows.at(-1);
-      if (last?.kind === "comments") {
-        rows[rows.length - 1] = { kind: "comments", events: [...last.events, event] };
-      } else {
-        rows.push({ kind: "comments", events: [event] });
-      }
-    } else {
-      rows.push({ kind: "event", event });
-    }
-  }
-  return rows;
-}
-
 /** Marker-only bodies are empty; otherwise retain text, including fenced HTML comments. */
 export function visibleBody(body: string): string | null {
   return body.replace(/<!--[\s\S]*?-->/gu, "").trim().length === 0 ? null : body.trim();
-}
-
-function commentTimelineEvent(comment: PullRequestComment): PullRequestTimelineEvent {
-  return {
-    comment,
-    id: comment.id,
-    at: comment.createdAt,
-    kind: comment.kind === "review" ? "review" : "comment",
-    title: comment.kind === "review" ? "reviewed" : "commented",
-    body: visibleBody(comment.body),
-    markdown: true,
-    url: comment.url,
-    actor: comment.author,
-    commitAuthors: [],
-    additions: null,
-    deletions: null,
-    path: comment.path,
-    reviewState: comment.reviewState,
-    reactions: comment.reactions ?? [],
-  };
 }
 
 export type PullRequestConversationItem =
@@ -652,106 +638,131 @@ export function pagePullRequestConversationItems(
   return { shown, hidden: items.length - shown.length };
 }
 
+/** One entry on the timeline rail: pushes, checks and reviews, never the conversation. */
+export type PullRequestRailEntry =
+  | {
+      readonly kind: "opened" | "merged" | "closed";
+      readonly id: string;
+      readonly at: string;
+      readonly actor: PullRequestActor | null;
+    }
+  | {
+      readonly kind: "commit";
+      readonly id: string;
+      readonly at: string;
+      readonly commit: PullRequestCommit;
+    }
+  | {
+      readonly kind: "review-request";
+      readonly id: string;
+      readonly at: string;
+      readonly actor: PullRequestActor | null;
+      readonly reviewers: ReadonlyArray<PullRequestActor>;
+      /** Every reviewer named had already reviewed, so this asks them to look again. */
+      readonly again: boolean;
+    }
+  | {
+      readonly kind: "review";
+      readonly id: string;
+      readonly at: string;
+      readonly comment: PullRequestComment;
+      readonly outcome: PullRequestReviewOutcome;
+      /** The line threads this review opened, so the rail can point at them. */
+      readonly threads: ReadonlyArray<PullRequestReviewThread>;
+    };
+
+/** Line comments are drafted before the review is submitted, so they may predate it a little. */
+const REVIEW_THREAD_WINDOW_MS = 60_000;
+
 /**
- * Merged wins over closed: GitHub sets both timestamps on a merge, and reporting "closed" for a
- * merged pull request would misstate what happened.
+ * The Timeline tab's rail, newest first: the pull request's lifecycle, each push, each time a
+ * review was asked for, and each verdict. Plain comments are read in the Summary conversation.
  */
-export function buildPullRequestTimeline(
+export function buildPullRequestRail(
   detail: Pick<
     PullRequestDetailView,
-    "provider" | "createdAt" | "author" | "commits" | "comments" | "mergedAt" | "closedAt"
-  > &
-    Partial<Pick<PullRequestDetailView, "reviewThreads">>,
-): ReadonlyArray<PullRequestTimelineEvent> {
-  const term = sourceControlClients.get(detail.provider).changeRequest.singular;
+    | "createdAt"
+    | "author"
+    | "commits"
+    | "comments"
+    | "reviewThreads"
+    | "reviewRequests"
+    | "mergedAt"
+    | "closedAt"
+  >,
+): ReadonlyArray<PullRequestRailEntry> {
+  const verdicts = detail.comments
+    .flatMap((comment) => {
+      const outcome = pullRequestReviewOutcome(comment.reviewState);
+      return outcome === null ? [] : [{ comment, outcome }];
+    })
+    .toSorted((left, right) => instant(left.comment.createdAt) - instant(right.comment.createdAt));
+  const loginOf = (actor: PullRequestActor | null | undefined) =>
+    actor?.login.toLowerCase() ?? null;
+  const reviews = verdicts.map(({ comment, outcome }, index): PullRequestRailEntry => {
+    const login = loginOf(comment.author);
+    const previous = verdicts
+      .slice(0, index)
+      .findLast((entry) => loginOf(entry.comment.author) === login);
+    const from = previous ? instant(previous.comment.createdAt) : Number.NEGATIVE_INFINITY;
+    const to = instant(comment.createdAt) + REVIEW_THREAD_WINDOW_MS;
+    const threads =
+      login === null
+        ? []
+        : detail.reviewThreads.filter((thread) => {
+            const first = thread.comments[0];
+            if (first === undefined || loginOf(first.author) !== login) return false;
+            const at = instant(first.createdAt);
+            return at > from && at <= to;
+          });
+    return { kind: "review", id: comment.id, at: comment.createdAt, comment, outcome, threads };
+  });
+  // One row per press: a request for several reviewers at once lands as several events that share
+  // who asked and when.
+  const requests: PullRequestRailEntry[] = [];
+  for (const event of detail.reviewRequests ?? []) {
+    const last = requests.at(-1);
+    const reviewedBefore = verdicts.some(
+      (entry) =>
+        loginOf(entry.comment.author) === loginOf(event.reviewer) &&
+        instant(entry.comment.createdAt) < instant(event.createdAt),
+    );
+    if (
+      last?.kind === "review-request" &&
+      loginOf(last.actor) === loginOf(event.actor) &&
+      Math.abs(instant(last.at) - instant(event.createdAt)) < 5_000
+    ) {
+      requests[requests.length - 1] = {
+        ...last,
+        reviewers: [...last.reviewers, event.reviewer],
+        again: last.again && reviewedBefore,
+      };
+      continue;
+    }
+    requests.push({
+      kind: "review-request",
+      id: `request:${event.createdAt}:${event.reviewer.login}`,
+      at: event.createdAt,
+      actor: event.actor,
+      reviewers: [event.reviewer],
+      again: reviewedBefore,
+    });
+  }
   return [
-    {
-      id: "created",
-      at: detail.createdAt,
-      kind: "opened" as const,
-      title: `opened this ${term}`,
-      body: null,
-      markdown: false,
-      url: null,
-      actor: detail.author,
-      commitAuthors: [],
-      additions: null,
-      deletions: null,
-      path: null,
-      reviewState: null,
-      reactions: [],
-    },
-    ...detail.commits.map((commit) => ({
+    { kind: "opened" as const, id: "created", at: detail.createdAt, actor: detail.author },
+    ...detail.commits.map((commit): PullRequestRailEntry => ({
+      kind: "commit",
       id: commit.oid,
       at: commit.committedDate,
-      kind: "commit" as const,
-      title: `Commit ${commit.oid.slice(0, 7)}`,
-      body: commit.messageHeadline || null,
-      markdown: false,
-      url: null,
-      actor: commit.authors?.[0] ?? null,
-      commitAuthors: commit.authors ?? [],
-      additions: commit.additions ?? null,
-      deletions: commit.deletions ?? null,
-      path: null,
-      reviewState: null,
-      reactions: [],
+      commit,
     })),
-    ...pullRequestConversationItems(detail.comments, detail.reviewThreads ?? []).map((item) => {
-      if (item.kind === "comment") return commentTimelineEvent(item.comment);
-      return {
-        ...commentTimelineEvent(item.root),
-        thread: {
-          path: item.thread.path,
-          line: item.thread.line,
-          isResolved: item.thread.isResolved,
-          isOutdated: item.thread.isOutdated,
-          replies: item.replies.map(commentTimelineEvent),
-          moreReplies: item.moreReplies,
-          hasMoreReplies: item.hasMoreReplies,
-          url: item.url,
-        },
-      };
-    }),
+    ...requests,
+    ...reviews,
     ...(detail.mergedAt
-      ? [
-          {
-            id: "merged",
-            at: detail.mergedAt,
-            kind: "merged" as const,
-            title: `${capitalizeTerm(term)} merged`,
-            body: null,
-            markdown: false,
-            url: null,
-            actor: null,
-            commitAuthors: [],
-            additions: null,
-            deletions: null,
-            path: null,
-            reviewState: null,
-            reactions: [],
-          },
-        ]
+      ? [{ kind: "merged" as const, id: "merged", at: detail.mergedAt, actor: null }]
       : []),
     ...(detail.closedAt && !detail.mergedAt
-      ? [
-          {
-            id: "closed",
-            at: detail.closedAt,
-            kind: "closed" as const,
-            title: `${capitalizeTerm(term)} closed`,
-            body: null,
-            markdown: false,
-            url: null,
-            actor: null,
-            commitAuthors: [],
-            additions: null,
-            deletions: null,
-            path: null,
-            reviewState: null,
-            reactions: [],
-          },
-        ]
+      ? [{ kind: "closed" as const, id: "closed", at: detail.closedAt, actor: null }]
       : []),
   ].toSorted((left, right) => (instant(right.at) || 0) - (instant(left.at) || 0));
 }
