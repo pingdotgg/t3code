@@ -1101,7 +1101,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         aria-hidden
         data-settled-title={variantAction === "unsettle" || undefined}
         className={cn(
-          "min-w-0 flex-1 text-start text-sm transition-opacity motion-reduce:transition-none",
+          "min-w-0 flex-1 text-start text-control transition-opacity motion-reduce:transition-none",
           variantAction === "unsettle" ? "font-normal" : "font-medium",
           variant !== "slim"
             ? cn(
@@ -1224,7 +1224,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     runningTerminalIds.length === 0;
   const metaLine =
     inFolder && metaLineEmpty ? null : (
-      <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-dim-foreground text-xs">
+      <div className="mt-0.75 flex h-4 min-w-0 items-center gap-1.5 text-dim-foreground text-caption font-normal">
         {thread.branch ? (
           <>
             <ThreadWorktreeIndicator thread={thread} />
@@ -1310,7 +1310,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   rowSurfaceClassName,
                   multiline
                     ? "flex flex-col justify-center px-2.5 py-1.5"
-                    : "flex h-9 items-center gap-1.5 px-2.5",
+                    : "flex h-8.5 items-center gap-2.25 px-2.5",
                   // Lines titles up with the folder name, past its chevron and icon.
                   inFolder && "ps-9",
                 )}
@@ -1470,7 +1470,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       {...sortableRootProps}
       {...(fileDropHandlers ?? {})}
       className={cn(
-        "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
+        "list-none [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
         sortable?.isDragging && "relative z-20",
       )}
     >
@@ -1506,11 +1506,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 label for the wider row controls. */}
               {pinIndicator}
               {props.projectDisplayName ? (
-                <span
-                  className={cn(
-                    "min-w-0 flex-1 truncate text-muted-foreground text-xs font-medium",
-                  )}
-                >
+                <span className={cn("min-w-0 flex-1 truncate text-muted-foreground text-caption")}>
                   {props.projectDisplayName}
                 </span>
               ) : (
@@ -1634,7 +1630,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               )}
               {props.sweepAction !== null ? dragDestination : null}
             </div>
-            <div className="mt-1 flex min-w-0 items-center gap-1.5">
+            <div className="mt-0.75 flex min-w-0 items-center gap-1.5">
               {title}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">

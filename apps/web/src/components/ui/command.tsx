@@ -71,7 +71,7 @@ function CommandDialogPopup({
           className={cn(
             COMMAND_DIALOG_POPUP_CLASS,
             surface === "dialog" && "[--surface-shadow:var(--dialog-shadow)]!",
-            "pointer-events-auto max-h-105 max-w-140 text-foreground",
+            "pointer-events-auto max-h-[min(36rem,calc(100dvh-8rem))] max-w-140 text-foreground",
             className,
           )}
           data-slot="command-dialog-popup"
@@ -116,11 +116,11 @@ function CommandInput({
   // 1px sooner) and the text starts on their label line: content inset, then a
   // 14px icon and 8px gap, less the field's 1px border.
   return (
-    <div className="relative [box-shadow:inset_0_-1px_var(--divider)] px-[var(--command-shell-inset)] py-1.5 [&_[data-slot=autocomplete-start-addon]]:ps-[calc(var(--command-content-inset)-var(--command-shell-inset)-1px)] sm:[&_[data-slot=autocomplete-start-addon]]:ps-[calc(var(--command-content-inset)-var(--command-shell-inset))]">
+    <div className="relative [box-shadow:inset_0_-1px_var(--divider)] px-[var(--command-shell-inset)] py-2 [&_[data-slot=autocomplete-start-addon]]:ps-[calc(var(--command-content-inset)-var(--command-shell-inset)-1px)] sm:[&_[data-slot=autocomplete-start-addon]]:ps-[calc(var(--command-content-inset)-var(--command-shell-inset))]">
       <AutocompleteInput
         autoFocus
         className={cn(
-          "border-transparent! bg-transparent! bg-none! shadow-none! before:hidden has-focus-visible:ring-0 placeholder:text-placeholder *:data-[slot=autocomplete-input]:ps-[calc(var(--command-content-inset)-var(--command-shell-inset)+1.3125rem)]!",
+          "border-transparent! bg-transparent! bg-none! shadow-none! before:hidden has-focus-visible:ring-0 text-[0.9375rem] placeholder:text-placeholder *:data-[slot=autocomplete-input]:ps-[calc(var(--command-content-inset)-var(--command-shell-inset)+1.3125rem)]!",
           endAddon && "*:data-[slot=autocomplete-input]:pe-14!",
           className,
         )}
@@ -150,7 +150,7 @@ function CommandList({
       className={cn(
         inset === "compact"
           ? "not-empty:scroll-py-1 not-empty:p-1"
-          : "not-empty:scroll-py-2 not-empty:p-2",
+          : "not-empty:scroll-py-1.5 not-empty:p-1.5",
         className,
       )}
       data-slot="command-list"
@@ -177,7 +177,11 @@ function CommandListHeading({
   ...props
 }: React.ComponentProps<typeof AutocompleteListHeading>) {
   return (
-    <AutocompleteListHeading className={className} data-slot="command-group-label" {...props} />
+    <AutocompleteListHeading
+      className={cn("px-2.5 pt-2 pb-1 text-caption", className)}
+      data-slot="command-group-label"
+      {...props}
+    />
   );
 }
 
@@ -202,7 +206,11 @@ function CommandGroupLabel({
   ...props
 }: React.ComponentProps<typeof AutocompleteGroupLabel>) {
   return (
-    <AutocompleteGroupLabel className={className} data-slot="command-group-label" {...props} />
+    <AutocompleteGroupLabel
+      className={cn("px-2.5 pt-2 pb-1 text-caption", className)}
+      data-slot="command-group-label"
+      {...props}
+    />
   );
 }
 
@@ -224,7 +232,7 @@ function CommandItem({
     <AutocompleteItem
       automaticHighlight={false}
       className={cn(
-        "py-1.5",
+        "min-h-8.5 px-2.5 py-1.5 text-control sm:min-h-8.5",
         spacing === "composer" && "px-2.5 gap-2.5",
         active === undefined
           ? "hover:surface-selected data-highlighted:surface-selected data-highlighted:text-strong-foreground data-selected:surface-selected data-selected:text-strong-foreground"
@@ -255,7 +263,7 @@ function CommandFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "relative flex items-center justify-between gap-2 rounded-b-[calc(var(--radius-pane)-1px)] [box-shadow:inset_0_1px_var(--divider)] bg-transparent px-[var(--command-content-inset)] py-2.5 text-label text-muted-foreground [&_[data-slot=kbd-group]]:font-sans",
+        "relative flex items-center justify-between gap-2 rounded-b-[calc(var(--radius-pane)-1px)] [box-shadow:inset_0_1px_var(--divider)] bg-transparent px-[var(--command-content-inset)] py-1.5 text-caption text-muted-foreground [&_[data-slot=kbd-group]]:font-sans",
         "in-[[data-slot=command-dialog-popup][data-surface=dialog]]:[--kbd-background:var(--kbd-fill)] in-[[data-slot=command-dialog-popup][data-surface=dialog]]:[--kbd-radius:var(--radius-badge)] in-[[data-slot=command-dialog-popup][data-surface=dialog]]:font-normal in-[[data-slot=command-dialog-popup][data-surface=dialog]]:text-dim-foreground",
         className,
       )}
