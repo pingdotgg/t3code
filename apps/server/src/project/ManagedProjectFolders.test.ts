@@ -53,7 +53,11 @@ const layerRealGit = GitVcsDriver.layer.pipe(Layer.provide(VcsProcess.layer));
 
 interface HarnessOptions {
   readonly vcsProcess?: Layer.Layer<VcsProcess.VcsProcess>;
-  readonly git?: Layer.Layer<GitVcsDriver.GitVcsDriver>;
+  readonly git?: Layer.Layer<
+    GitVcsDriver.GitVcsDriver,
+    never,
+    ServerConfig.ServerConfig | NodeServices.NodeServices
+  >;
   readonly projects?: (
     real: ProjectService.ProjectService["Service"],
   ) => ProjectService.ProjectService["Service"];
