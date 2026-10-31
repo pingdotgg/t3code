@@ -1,10 +1,11 @@
-import type {
-  EnvironmentId,
-  OrchestrationV2DomainEvent,
-  OrchestrationV2ThreadShell,
-  OrchestrationV2TurnItem,
-  Project,
-  ThreadId,
+import {
+  isListedThreadLineage,
+  type EnvironmentId,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2ThreadShell,
+  type OrchestrationV2TurnItem,
+  type Project,
+  type ThreadId,
 } from "@t3tools/contracts";
 import {
   RelayApi,
@@ -514,10 +515,11 @@ export const make = Effect.gen(function* () {
     // Read only this thread; full shell reads would make each activity event scale with all threads.
     const threadShell = yield* threads.getThreadShell(threadId);
     if (
-      threadShell?.lineage.relationshipToParent === "subagent" &&
+      threadShell !== null &&
+      !isListedThreadLineage(threadShell.lineage) &&
       !(yield* Ref.get(publishedStateByThreadRef)).has(threadId)
     ) {
-      // Subagents have no relay rows to clear; per-event tombstones would needlessly redeliver user aggregates.
+      // Subagents and side chats have no relay rows to clear; per-event tombstones would needlessly redeliver user aggregates.
       return;
     }
     const thread =
@@ -727,9 +729,9 @@ export const make = Effect.gen(function* () {
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
     const projectSnapshot = yield* projects.snapshot;
-    // Subagents never publish awareness, and they are most threads.
+    // Subagents and side chats never publish awareness, and subagents are most threads.
     const topLevelThreadIds = (yield* threads.listActiveShellIndex()).flatMap((thread) =>
-      thread.lineage.relationshipToParent === "subagent" ? [] : [thread.id],
+      isListedThreadLineage(thread.lineage) ? [thread.id] : [],
     );
     const shellSnapshot = yield* threads.getShellSnapshot({
       location: "active",
