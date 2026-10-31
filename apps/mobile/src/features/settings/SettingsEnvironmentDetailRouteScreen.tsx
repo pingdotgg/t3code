@@ -26,6 +26,7 @@ import { environmentSession, useEnvironmentScope, readEnvironmentScope } from ".
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { ConnectionEnvironmentRow } from "../connection/ConnectionEnvironmentRow";
+import { TailnetDevicesSection } from "../connection/TailnetDevicesSection";
 import { EnvironmentRoutesSection } from "./EnvironmentRoutesSection";
 import { OutdatedServerUpdateSection } from "./OutdatedServerUpdateSection";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
@@ -225,6 +226,13 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
               </Text>
             ) : null}
             {notice ? <Text className="px-2 text-sm text-foreground-muted">{notice}</Text> : null}
+            {connected ? (
+              <TailnetDevicesSection
+                environmentId={environmentId}
+                environmentLabel={environment.environmentLabel}
+                className="gap-3"
+              />
+            ) : null}
             {config && !outdated ? (
               <>
                 <SettingsSection title="T3 Code">

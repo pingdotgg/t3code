@@ -231,6 +231,10 @@
       "types": "./src/state/peerLinks.ts",
       "default": "./src/state/peerLinks.ts"
     },
+    "./state/tailnet": {
+      "types": "./src/state/tailnet.ts",
+      "default": "./src/state/tailnet.ts"
+    },
     "./state/peerPairingCode": {
       "types": "./src/state/peerPairingCode.ts",
       "default": "./src/state/peerPairingCode.ts"

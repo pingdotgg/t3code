@@ -45,13 +45,14 @@ under T3 home. Pass `--yes` from a script.
 ## Local network access
 
 A new service answers only on this machine. Other devices reach it through
-T3 Connect, or directly once you choose the local network in `t3 up` (or run
-`t3 up --lan`, which sets `T3CODE_LAN=true` in `service.env`). It then listens on
-your local network and Tailscale addresses, so the desktop and mobile apps on
-the same network connect directly instead of through T3 Connect. It still does
-not answer on public addresses. Anyone on the same network can reach the port,
-so a pairing code is all that keeps them out. The hosted web app at app.t3.codes
-stays on T3 Connect, because browsers block plain HTTP from an HTTPS page.
+Tailscale or T3 Connect, or directly once you choose the local network in
+`t3 up` (or run `t3 up --lan`, which sets `T3CODE_LAN=true` in `service.env`).
+It then listens on your local network and Tailscale addresses, so the desktop
+and mobile apps on the same network connect directly instead of through
+T3 Connect. It still does not answer on public addresses. Anyone on the same
+network can reach the port, so a pairing code or Tailscale sign-in is all that
+keeps them out. The hosted web app at app.t3.codes stays on T3 Connect, because
+browsers block plain HTTP from an HTTPS page.
 
 A service installed before `T3CODE_LAN` existed keeps listening on the local
 network. `t3 status` says so, and `t3 up --no-lan` turns it off. Any

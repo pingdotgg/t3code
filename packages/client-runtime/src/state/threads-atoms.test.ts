@@ -126,6 +126,7 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
       new Map(),
     ),
     networkStatus: yield* SubscriptionRef.make<NetworkStatus>("online"),
+    dismissedEnvironmentIds: yield* SubscriptionRef.make<ReadonlySet<EnvironmentId>>(new Set()),
     start: Effect.void,
     register: () => Effect.die("Unexpected environment registration"),
     assertKnownAddress: () => Effect.die("Unexpected address check"),

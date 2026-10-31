@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { EnvironmentId } from "@t3tools/contracts";
 import { it as effectIt } from "@effect/vitest";
 import type * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
@@ -13,6 +14,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as ServerConfig from "../config.ts";
 import * as DirectEndpoints from "./DirectEndpoints.ts";
 import { resolveBoundEndpoints } from "./DirectEndpoints.ts";
+import * as ServerEnvironment from "./ServerEnvironment.ts";
 
 const INTERFACES: ReturnType<typeof NodeOS.networkInterfaces> = {
   lo0: [
@@ -198,17 +200,20 @@ describe("resolveBoundEndpoints", () => {
     ).toEqual([]);
   });
 
-  it("reports only the tailnet address on a cloud VM, whose private network no client shares", () => {
-    expect(
-      resolveBoundEndpoints({
-        platform: "linux",
-        host: "0.0.0.0",
-        port: 3773,
-        interfaces: INTERFACES,
-        onCloudVm: true,
-      }),
-    ).toEqual([{ kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" }]);
-  });
+  it.each([{ onCloudVm: true }, { tailscaleOnly: true }])(
+    "reports only the tailnet address with %o, where no LAN client can connect",
+    (mode) => {
+      expect(
+        resolveBoundEndpoints({
+          platform: "linux",
+          host: "0.0.0.0",
+          port: 3773,
+          interfaces: INTERFACES,
+          ...mode,
+        }),
+      ).toEqual([{ kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" }]);
+    },
+  );
 
   it("never reports an IPv4-mapped host, which can name the client's own loopback", () => {
     expect(
@@ -247,13 +252,22 @@ const layerTailscaleUp = Layer.succeed(
   ),
 );
 
-const layerServeProbe = (status: number) =>
+const layerServeProbe = (status: number, servedEnvironmentId: string) =>
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
-      Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, { status }))),
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(JSON.stringify({ environmentId: servedEnvironmentId }), { status }),
+        ),
+      ),
     ),
   );
+
+const layerThisServer = Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
+  getEnvironmentId: Effect.succeed(EnvironmentId.make("this-server")),
+});
 
 const layerServeConfig = Layer.effect(
   ServerConfig.ServerConfig,
@@ -268,12 +282,17 @@ const layerServeConfig = Layer.effect(
   Layer.provide(NodeServices.layer),
 );
 
-const resolveWithServe = (probeStatus: number) =>
+const resolveWithServe = (probeStatus: number, servedEnvironmentId = "this-server") =>
   Effect.flatMap(DirectEndpoints.DirectEndpoints, (service) => service.resolve()).pipe(
     Effect.provide(
       DirectEndpoints.layer.pipe(
         Layer.provide(
-          Layer.mergeAll(layerServeConfig, layerTailscaleUp, layerServeProbe(probeStatus)),
+          Layer.mergeAll(
+            layerServeConfig,
+            layerTailscaleUp,
+            layerServeProbe(probeStatus, servedEnvironmentId),
+            layerThisServer,
+          ),
         ),
       ),
     ),
@@ -288,9 +307,10 @@ describe("DirectEndpoints Tailscale Serve", () => {
     }),
   );
 
-  effectIt.effect("leaves the tailnet name out when Serve is not forwarding", () =>
+  effectIt.effect("leaves the tailnet name out when Serve does not reach this server", () =>
     Effect.gen(function* () {
       expect(yield* resolveWithServe(502)).toEqual([]);
+      expect(yield* resolveWithServe(200, "other-server")).toEqual([]);
     }),
   );
 });

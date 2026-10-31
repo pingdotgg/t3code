@@ -50,6 +50,7 @@ import {
   entryWithRoutes,
   findRouteToSameAddress,
   hasSavedBearerRoute,
+  isLearned,
   mergeLearnedRoutes,
   routesAfterRemoving,
   upsertRoute,
@@ -98,6 +99,8 @@ export class EnvironmentRegistry extends Context.Service<
       ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>
     >;
     readonly networkStatus: SubscriptionRef.SubscriptionRef<NetworkStatus>;
+    /** Environments the user removed. Discovery does not add them again until the user does. */
+    readonly dismissedEnvironmentIds: SubscriptionRef.SubscriptionRef<ReadonlySet<EnvironmentId>>;
     readonly start: Effect.Effect<void>;
     /**
      * Succeeds with `false` and changes nothing when the environment is
@@ -206,6 +209,13 @@ interface EnvironmentServiceScope {
   readonly scope: Scope.Closeable;
 }
 
+const authorizationOf = (route: ConnectionRoute) =>
+  Option.match(route.profile, {
+    onNone: () => undefined,
+    onSome: (profile) =>
+      profile._tag === "BearerConnectionProfile" ? profile.authorization : undefined,
+  });
+
 /** @public */
 export const make = Effect.gen(function* () {
   const registryScope = yield* Scope.Scope;
@@ -222,6 +232,17 @@ export const make = Effect.gen(function* () {
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
   const persistedTargets = yield* storage.list;
   const disabledEnvironmentIds = new Set(yield* storage.listDisabled);
+  const dismissedEnvironmentIds = yield* SubscriptionRef.make<ReadonlySet<EnvironmentId>>(
+    new Set(yield* storage.listDismissed),
+  );
+  const setDismissed = (environmentId: EnvironmentId, dismissed: boolean) =>
+    SubscriptionRef.update(dismissedEnvironmentIds, (current) => {
+      if (current.has(environmentId) === dismissed) return current;
+      const next = new Set(current);
+      if (dismissed) next.add(environmentId);
+      else next.delete(environmentId);
+      return next;
+    });
   const loadRoute = Effect.fn("EnvironmentRegistry.loadRoute")(function* (
     target: ConnectionTarget,
   ) {
@@ -579,10 +600,30 @@ export const make = Effect.gen(function* () {
         if (previous !== undefined) {
           const existing = connectionRoutes(previous);
           const sameAddress = findRouteToSameAddress(existing, route);
+          const id = connectionRouteId(route.target);
+          const replacedId =
+            sameAddress !== undefined && connectionRouteId(sameAddress.target) !== id
+              ? connectionRouteId(sameAddress.target)
+              : undefined;
+          // Learned routes borrow a credential. Drop them when it is deleted, or
+          // when its kind changes (a pairing replacing a Tailscale sign-in); the
+          // saved credential decides, since an upgraded LAN route keeps a LAN profile.
+          const registeredAuthorization =
+            registration._tag === "TailnetConnectionRegistration"
+              ? "tailnet"
+              : authorizationOf(route);
+          const dropsLearned = (candidate: ConnectionRoute) => {
+            if (!isLearned(candidate)) return false;
+            const borrowed = credentialConnectionId(connectionRouteId(candidate.target));
+            return (
+              borrowed === replacedId ||
+              (borrowed === id && authorizationOf(candidate) !== registeredAuthorization)
+            );
+          };
           const routes = existing.filter(
             (existing) =>
-              existing !== sameAddress ||
-              connectionRouteId(existing.target) === connectionRouteId(route.target),
+              (existing !== sameAddress || connectionRouteId(existing.target) === id) &&
+              !dropsLearned(existing),
           );
           const next = withRoutes(previous, upsertRoute(routes, route));
           if (next.addressesChanged) {
@@ -591,6 +632,7 @@ export const make = Effect.gen(function* () {
           entry = next.entry;
         }
         yield* registrations.register(registration, persistedRoutes(entry));
+        yield* setDismissed(environmentId, false);
         yield* Ref.update(persistedEnvironmentIds, (current) =>
           new Set(current).add(environmentId),
         );
@@ -852,6 +894,7 @@ export const make = Effect.gen(function* () {
   /** Callers hold its lease lock. */
   const removeLocked = Effect.fn("EnvironmentRegistry.removeLocked")(function* (
     environmentId: EnvironmentId,
+    dismiss: boolean,
   ) {
     if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
       return yield* new PlatformEnvironmentRemovalError({
@@ -861,7 +904,8 @@ export const make = Effect.gen(function* () {
     const entry = yield* getEntry(environmentId);
 
     yield* pullRequestRoutingPermissions.forget(environmentId);
-    yield* registrations.remove(environmentId);
+    yield* registrations.remove(environmentId, { dismiss });
+    yield* setDismissed(environmentId, dismiss);
     yield* Ref.update(persistedEnvironmentIds, (current) => {
       const next = new Set(current);
       next.delete(environmentId);
@@ -897,7 +941,7 @@ export const make = Effect.gen(function* () {
   });
 
   const remove = Effect.fn("EnvironmentRegistry.remove")(function* (environmentId: EnvironmentId) {
-    return yield* withLeaseLock(environmentId, removeLocked(environmentId));
+    return yield* withLeaseLock(environmentId, removeLocked(environmentId, true));
   });
 
   const disconnectSsh = (environmentId: EnvironmentId, profile: SshConnectionProfile) =>
@@ -910,6 +954,20 @@ export const make = Effect.gen(function* () {
       ),
       Effect.ignore,
     );
+
+  /** The resolver saves a new profile when a paired route switches to Tailscale sign-in. */
+  const upgradedRoute = Effect.fn("EnvironmentRegistry.upgradedRoute")(function* (
+    route: ConnectionRoute,
+  ) {
+    const current = Option.getOrNull(route.profile);
+    if (current?._tag !== "BearerConnectionProfile" || current.authorization !== undefined) {
+      return route;
+    }
+    const stored = Option.getOrNull(yield* profiles.get(current.connectionId));
+    return stored?._tag === "BearerConnectionProfile" && stored.authorization === "tailnet"
+      ? { target: route.target, profile: Option.some<ConnectionProfile>(stored) }
+      : route;
+  });
 
   // Plain HTTP routes are unusable from an HTTPS page, which blocks mixed content.
   const allowInsecureRoutes =
@@ -930,14 +988,27 @@ export const make = Effect.gen(function* () {
         if ((yield* Ref.get(platformEnvironmentIds)).has(input.environmentId)) {
           return Option.none<ConnectionCatalogEntry>();
         }
-        const entry = (yield* SubscriptionRef.get(entries)).get(input.environmentId);
-        if (entry === undefined) return Option.none<ConnectionCatalogEntry>();
-        const routes = mergeLearnedRoutes({
-          entry,
-          activeRoute: input.activeRoute,
-          reported: input.reported,
-          allowInsecure: allowInsecureRoutes,
-        });
+        const saved = (yield* SubscriptionRef.get(entries)).get(input.environmentId);
+        if (saved === undefined) return Option.none<ConnectionCatalogEntry>();
+        const activeRoute = yield* upgradedRoute(input.activeRoute);
+        const entry =
+          activeRoute === input.activeRoute
+            ? saved
+            : entryWithRoutes(
+                saved,
+                connectionRoutes(saved).map((route) =>
+                  connectionRouteId(route.target) === connectionRouteId(activeRoute.target)
+                    ? activeRoute
+                    : route,
+                ),
+              );
+        const routes =
+          mergeLearnedRoutes({
+            entry,
+            activeRoute,
+            reported: input.reported,
+            allowInsecure: allowInsecureRoutes,
+          }) ?? (entry === saved ? null : connectionRoutes(entry));
         if (routes === null) return Option.none<ConnectionCatalogEntry>();
         const next = entryWithRoutes(entry, routes);
         const previousProfiles = new Map(
@@ -978,9 +1049,11 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const removeRoute = Effect.fn("EnvironmentRegistry.removeRoute")(function* (
+  /** `dismiss` when the user removes the last route, not when T3 Connect signs out. */
+  const removeRouteWith = Effect.fn("EnvironmentRegistry.removeRoute")(function* (
     environmentId: EnvironmentId,
     routeId: string,
+    dismiss: boolean,
   ) {
     // One lock for the whole decision: a route registered between "this was
     // the last route" and the removal must not be deleted with it.
@@ -992,7 +1065,7 @@ export const make = Effect.gen(function* () {
         const route = routes.find((candidate) => connectionRouteId(candidate.target) === routeId);
         if (route === undefined) return;
         const remaining = routesAfterRemoving(routes, routeId);
-        if (remaining.length === 0) return yield* removeLocked(environmentId);
+        if (remaining.length === 0) return yield* removeLocked(environmentId, dismiss);
         yield* replaceRoutesLocked(entry, remaining);
         const profile = Option.getOrNull(route.profile);
         if (profile !== null && isSshConnectionProfile(profile)) {
@@ -1001,6 +1074,9 @@ export const make = Effect.gen(function* () {
       }),
     );
   });
+
+  const removeRoute = (environmentId: EnvironmentId, routeId: string) =>
+    removeRouteWith(environmentId, routeId, true);
 
   const reorderRoutes = Effect.fn("EnvironmentRegistry.reorderRoutes")(function* (
     environmentId: EnvironmentId,
@@ -1036,7 +1112,7 @@ export const make = Effect.gen(function* () {
       yield* Effect.forEach(
         relayEnvironmentIds,
         (environmentId) =>
-          removeRoute(environmentId, RELAY_ROUTE_ID).pipe(
+          removeRouteWith(environmentId, RELAY_ROUTE_ID, false).pipe(
             Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
           ),
         {
@@ -1186,6 +1262,7 @@ export const make = Effect.gen(function* () {
   return EnvironmentRegistry.of({
     entries,
     networkStatus,
+    dismissedEnvironmentIds,
     start,
     register,
     assertKnownAddress,

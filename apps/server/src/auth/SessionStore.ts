@@ -351,6 +351,17 @@ export class OtherSessionsRevocationError extends Schema.TaggedError<OtherSessio
   }
 }
 
+export class SubjectSessionsRevocationError extends Schema.TaggedError<SubjectSessionsRevocationError>()(
+  "SubjectSessionsRevocationError",
+  {
+    ...sessionCredentialInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to revoke the subject's sessions.";
+  }
+}
+
 export const SessionCredentialInternalError = Schema.Union([
   SessionClaimsEncodingError,
   SessionCredentialIssueError,
@@ -360,6 +371,7 @@ export const SessionCredentialInternalError = Schema.Union([
   ActiveSessionsListError,
   SessionRevocationError,
   OtherSessionsRevocationError,
+  SubjectSessionsRevocationError,
 ]);
 export type SessionCredentialInternalError = typeof SessionCredentialInternalError.Type;
 
@@ -419,6 +431,10 @@ export class SessionStore extends Context.Service<
     ) => Effect.Effect<boolean, SessionCredentialInternalError>;
     readonly revokeAllExcept: (
       sessionId: AuthSessionId,
+    ) => Effect.Effect<number, SessionCredentialInternalError>;
+    /** Ends every session for `subject` and closes its sockets. Returns how many it ended. */
+    readonly revokeBySubject: (
+      subject: string,
     ) => Effect.Effect<number, SessionCredentialInternalError>;
     readonly markConnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
@@ -1006,20 +1022,10 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const revokeAllExcept: SessionStore["Service"]["revokeAllExcept"] = Effect.fn(
-    "SessionStore.revokeAllExcept",
-  )(function* (sessionId) {
-    const revokedAt = yield* DateTime.now;
-    const revokedSessionIds = yield* authSessions
-      .revokeAllExcept({
-        currentSessionId: sessionId,
-        revokedAt,
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) => new OtherSessionsRevocationError({ currentSessionId: sessionId, cause }),
-        ),
-      );
+  // Untraced: it runs inside the revokeAllExcept and revokeBySubject spans.
+  const forgetRevokedSessions = Effect.fnUntraced(function* (
+    revokedSessionIds: ReadonlyArray<AuthSessionId>,
+  ) {
     if (revokedSessionIds.length > 0) {
       yield* Ref.update(connectedSessionsRef, (current) => {
         const next = new Map(current);
@@ -1038,6 +1044,33 @@ const make = Effect.gen(function* () {
       );
     }
     return revokedSessionIds.length;
+  });
+
+  const revokeAllExcept: SessionStore["Service"]["revokeAllExcept"] = Effect.fn(
+    "SessionStore.revokeAllExcept",
+  )(function* (sessionId) {
+    const revokedAt = yield* DateTime.now;
+    const revokedSessionIds = yield* authSessions
+      .revokeAllExcept({
+        currentSessionId: sessionId,
+        revokedAt,
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) => new OtherSessionsRevocationError({ currentSessionId: sessionId, cause }),
+        ),
+      );
+    return yield* forgetRevokedSessions(revokedSessionIds);
+  });
+
+  const revokeBySubject: SessionStore["Service"]["revokeBySubject"] = Effect.fn(
+    "SessionStore.revokeBySubject",
+  )(function* (subject) {
+    const revokedAt = yield* DateTime.now;
+    const revokedSessionIds = yield* authSessions
+      .revokeBySubject({ subject, revokedAt })
+      .pipe(Effect.mapError((cause) => new SubjectSessionsRevocationError({ cause })));
+    return yield* forgetRevokedSessions(revokedSessionIds);
   });
 
   const awaitInvalidation = Effect.fn(function* (
@@ -1113,6 +1146,7 @@ const make = Effect.gen(function* () {
     },
     revoke,
     revokeAllExcept,
+    revokeBySubject,
     markConnected,
     markDisconnected,
   });

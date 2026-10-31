@@ -9,11 +9,12 @@ import {
   type DesktopServerExposureMode,
   type DesktopServerExposureState,
 } from "@t3tools/contracts";
-import { isTailscaleIpv4Address, readTailscaleStatus } from "@t3tools/tailscale";
+import { isTailscaleIpv4Address, readT3EnvironmentId } from "@t3tools/tailscale";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -25,9 +26,8 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopNetworkInterfaces from "./DesktopNetworkInterfaces.ts";
+import * as DesktopTailscaleStatus from "./DesktopTailscaleStatus.ts";
 import { resolveTailscaleAdvertisedEndpoints } from "./tailscaleEndpointProvider.ts";
-
-const TAILSCALE_STATUS_CACHE_TTL = Duration.seconds(60);
 
 const DESKTOP_LOOPBACK_HOST = "127.0.0.1";
 const DESKTOP_LAN_BIND_HOST = "0.0.0.0";
@@ -244,6 +244,18 @@ export class DesktopTailscaleServePersistenceError extends Schema.TaggedError<De
   }
 }
 
+export class DesktopTailscaleSignInPersistenceError extends Schema.TaggedError<DesktopTailscaleSignInPersistenceError>()(
+  "DesktopTailscaleSignInPersistenceError",
+  {
+    enabled: Schema.Boolean,
+    cause: Schema.instanceOf(DesktopAppSettings.DesktopSettingsWriteError),
+  },
+) {
+  override get message(): string {
+    return `Failed to persist desktop Tailscale sign-in (enabled: ${this.enabled}).`;
+  }
+}
+
 export const DesktopServerExposureSetModeError = Schema.Union([
   DesktopServerExposureNoNetworkAddressError,
   DesktopServerExposureModePersistenceError,
@@ -254,6 +266,7 @@ export const DesktopServerExposureError = Schema.Union([
   DesktopServerExposureNoNetworkAddressError,
   DesktopServerExposureModePersistenceError,
   DesktopTailscaleServePersistenceError,
+  DesktopTailscaleSignInPersistenceError,
 ]);
 export type DesktopServerExposureError = typeof DesktopServerExposureError.Type;
 
@@ -263,6 +276,9 @@ export interface DesktopServerExposureBackendConfig {
   readonly httpBaseUrl: URL;
   readonly tailscaleServeEnabled: boolean;
   readonly tailscaleServePort: number;
+  readonly tailscaleSignInEnabled: boolean;
+  /** Sign-in on with Network access off: listen on every interface, accept only tailnet peers. */
+  readonly tailscaleOnly: boolean;
 }
 
 export interface DesktopServerExposureChange {
@@ -285,6 +301,9 @@ export class DesktopServerExposure extends Context.Service<
       readonly enabled: boolean;
       readonly port?: number;
     }) => Effect.Effect<DesktopServerExposureChange, DesktopTailscaleServePersistenceError>;
+    readonly setTailscaleSignInEnabled: (
+      enabled: boolean,
+    ) => Effect.Effect<DesktopServerExposureChange, DesktopTailscaleSignInPersistenceError>;
     readonly getAdvertisedEndpoints: Effect.Effect<readonly AdvertisedEndpoint[]>;
   }
 >()("@t3tools/desktop/backend/DesktopServerExposure") {}
@@ -301,6 +320,8 @@ interface RuntimeState {
   readonly advertisedHost: Option.Option<string>;
   readonly tailscaleServeEnabled: boolean;
   readonly tailscaleServePort: number;
+  readonly tailscaleSignInEnabled: boolean;
+  readonly tailscaleOnly: boolean;
 }
 
 interface ResolvedRuntimeState {
@@ -326,6 +347,8 @@ const toContractState = (state: RuntimeState): DesktopServerExposureState => ({
   advertisedHost: Option.getOrNull(state.advertisedHost),
   tailscaleServeEnabled: state.tailscaleServeEnabled,
   tailscaleServePort: state.tailscaleServePort,
+  tailscaleSignInEnabled: state.tailscaleSignInEnabled,
+  port: state.port,
 });
 
 const toBackendConfig = (state: RuntimeState): DesktopServerExposureBackendConfig => ({
@@ -334,6 +357,8 @@ const toBackendConfig = (state: RuntimeState): DesktopServerExposureBackendConfi
   httpBaseUrl: state.httpBaseUrl,
   tailscaleServeEnabled: state.tailscaleServeEnabled,
   tailscaleServePort: state.tailscaleServePort,
+  tailscaleSignInEnabled: state.tailscaleSignInEnabled,
+  tailscaleOnly: state.tailscaleOnly,
 });
 
 const toResolvedExposure = (state: RuntimeState): ResolvedDesktopServerExposure => ({
@@ -351,11 +376,15 @@ function runtimeStateFromResolvedExposure(input: {
   readonly exposure: ResolvedDesktopServerExposure;
   readonly port: number;
 }): RuntimeState {
+  // Other tailnet devices sign in at the tailnet address, so a local-only backend
+  // listens on every interface and the server accepts only loopback and tailnet peers.
+  const tailscaleOnly =
+    input.settings.tailscaleSignInEnabled && input.exposure.mode === "local-only";
   return {
     requestedMode: input.requestedMode,
     mode: input.exposure.mode,
     port: input.port,
-    bindHost: input.exposure.bindHost,
+    bindHost: tailscaleOnly ? DESKTOP_LAN_BIND_HOST : input.exposure.bindHost,
     localHttpUrl: input.exposure.localHttpUrl,
     localWsUrl: input.exposure.localWsUrl,
     httpBaseUrl: new URL(input.exposure.localHttpUrl),
@@ -363,6 +392,8 @@ function runtimeStateFromResolvedExposure(input: {
     advertisedHost: Option.fromNullishOr(input.exposure.advertisedHost),
     tailscaleServeEnabled: input.settings.tailscaleServeEnabled,
     tailscaleServePort: input.settings.tailscaleServePort,
+    tailscaleSignInEnabled: input.settings.tailscaleSignInEnabled,
+    tailscaleOnly,
   };
 }
 
@@ -433,29 +464,11 @@ const withCurrentAdvertisedHost = (
   };
 };
 
-const tailscaleIpv4AddressKey = (
-  networkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces,
-): string =>
-  [
-    ...new Set(
-      Object.values(networkInterfaces)
-        .flatMap((addresses) => addresses ?? [])
-        .filter(
-          (address) =>
-            !address.internal &&
-            address.family === "IPv4" &&
-            isTailscaleIpv4Address(address.address),
-        )
-        .map((address) => address.address),
-    ),
-  ]
-    .toSorted()
-    .join(",");
-
 const requiresBackendRelaunch = (previous: RuntimeState, next: RuntimeState): boolean =>
   previous.port !== next.port ||
   previous.bindHost !== next.bindHost ||
-  previous.localHttpUrl !== next.localHttpUrl;
+  previous.localHttpUrl !== next.localHttpUrl ||
+  previous.tailscaleOnly !== next.tailscaleOnly;
 
 /** @public */
 export const make = Effect.gen(function* () {
@@ -463,22 +476,24 @@ export const make = Effect.gen(function* () {
   const networkInterfaces = yield* DesktopNetworkInterfaces.DesktopNetworkInterfaces;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
+  const tailscaleStatus = yield* DesktopTailscaleStatus.DesktopTailscaleStatus;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const stateRef = yield* Ref.make(initialRuntimeState());
   // Serialize read-persist-write changes so stale runtime state cannot overwrite another update.
   const changePermit = yield* Semaphore.make(1);
 
-  // Key status by interface addresses so network changes bypass stale DNS and
-  // identity. Cache unchanged addresses to avoid repeated macOS TCC prompts.
-  const tailscaleStatusCache = yield* Cache.make({
-    capacity: 1,
-    timeToLive: TAILSCALE_STATUS_CACHE_TTL,
-    lookup: (_addresses: string) =>
-      readTailscaleStatus.pipe(
-        Effect.orElseSucceed(() => null),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+  // A backend keeps its environment ID for its run. Nothing answering yet is not kept.
+  const localEnvironmentIds = yield* Cache.makeWith(
+    (localHttpUrl: string) =>
+      readT3EnvironmentId({ baseUrl: localHttpUrl }).pipe(
+        Effect.provideService(HttpClient.HttpClient, httpClient),
       ),
-  });
+    {
+      capacity: 1,
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit) && Option.isSome(exit.value) ? Duration.infinity : Duration.zero,
+    },
+  );
 
   const readNetworkInterfaces = networkInterfaces.read;
 
@@ -588,6 +603,33 @@ export const make = Effect.gen(function* () {
     changePermit.withPermit,
   );
 
+  const setTailscaleSignInEnabled = Effect.fn("desktop.serverExposure.setTailscaleSignInEnabled")(
+    function* (enabled: boolean) {
+      yield* Effect.annotateCurrentSpan({ enabled });
+      const previous = yield* Ref.get(stateRef);
+      const result = yield* desktopSettings
+        .setTailscaleSignIn(enabled)
+        .pipe(
+          Effect.mapError(
+            (cause) => new DesktopTailscaleSignInPersistenceError({ enabled, cause }),
+          ),
+        );
+      const resolved = resolveRuntimeState({
+        requestedMode: result.settings.serverExposureMode,
+        settings: result.settings,
+        port: previous.port,
+        networkInterfaces: yield* readNetworkInterfaces,
+        advertisedHostOverride: config.desktopLanHostOverride,
+      });
+      yield* Ref.set(stateRef, resolved.state);
+      return {
+        state: toContractState(resolved.state),
+        requiresRelaunch: result.changed,
+      };
+    },
+    changePermit.withPermit,
+  );
+
   const getAdvertisedEndpoints = Effect.gen(function* () {
     const currentNetworkInterfaces = yield* readNetworkInterfaces;
     const state = yield* readCurrentState(currentNetworkInterfaces);
@@ -598,7 +640,11 @@ export const make = Effect.gen(function* () {
     });
 
     // Spawning Mac App Store Tailscale can prompt for TCC access even when exposure is disabled.
-    if (state.mode !== "network-accessible" && !state.tailscaleServeEnabled) {
+    if (
+      state.mode !== "network-accessible" &&
+      !state.tailscaleOnly &&
+      !state.tailscaleServeEnabled
+    ) {
       return coreEndpoints;
     }
 
@@ -606,11 +652,10 @@ export const make = Effect.gen(function* () {
       port: state.port,
       serveEnabled: state.tailscaleServeEnabled,
       servePort: state.tailscaleServePort,
+      localHttpUrl: state.localHttpUrl,
+      localEnvironmentId: Cache.get(localEnvironmentIds, state.localHttpUrl),
       networkInterfaces: currentNetworkInterfaces,
-      readStatus: Cache.get(
-        tailscaleStatusCache,
-        tailscaleIpv4AddressKey(currentNetworkInterfaces),
-      ),
+      readStatus: tailscaleStatus.status,
     }).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
       Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -624,6 +669,7 @@ export const make = Effect.gen(function* () {
     configureFromSettings,
     setMode,
     setTailscaleServeEnabled,
+    setTailscaleSignInEnabled,
     getAdvertisedEndpoints,
   });
 });

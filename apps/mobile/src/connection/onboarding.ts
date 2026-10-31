@@ -3,7 +3,8 @@ import {
   createAtomCommandScheduler,
   createRuntimeCommand,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { discoverTailnetMachines as discoverTailnetMachinesEffect } from "@t3tools/client-runtime/state/tailnet";
+import type { EnvironmentId, TailnetPeerEnvironment } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { connectionAtomRuntime } from "./runtime";
@@ -26,6 +27,27 @@ export const connectPairingUrl = createRuntimeCommand(connectionAtomRuntime, {
     ConnectionOnboarding.ConnectionOnboarding.pipe(
       Effect.flatMap((onboarding) => onboarding.registerPairing(input)),
     ),
+});
+
+/** Signs in through Tailscale with no code; None when the machine needs a pairing code. */
+export const connectTailnet = createRuntimeCommand(connectionAtomRuntime, {
+  label: "mobile:connection:connect-tailnet",
+  scheduler: onboardingScheduler,
+  concurrency: {
+    mode: "singleFlight",
+    key: (input: ConnectionOnboarding.TailnetConnectionInput) => JSON.stringify(input),
+  },
+  execute: (input: ConnectionOnboarding.TailnetConnectionInput) =>
+    ConnectionOnboarding.ConnectionOnboarding.pipe(
+      Effect.flatMap((onboarding) => onboarding.registerTailnet(input)),
+    ),
+});
+
+export const discoverTailnetMachines = createRuntimeCommand(connectionAtomRuntime, {
+  label: "mobile:connection:discover-tailnet",
+  scheduler: onboardingScheduler,
+  concurrency: { mode: "singleFlight", key: () => "discover-tailnet" },
+  execute: (found: ReadonlyArray<TailnetPeerEnvironment>) => discoverTailnetMachinesEffect(found),
 });
 
 export const updateBearerConnection = createRuntimeCommand(connectionAtomRuntime, {
