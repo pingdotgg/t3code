@@ -631,4 +631,58 @@ describe("DesktopBackendManager", () => {
       }).pipe(Effect.provide(TestClock.layer())),
     ),
   );
+
+  it.effect("the quit stop deadline waits for a backend that only exits at the force kill", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const spawned = yield* Deferred.make<void>();
+        const teardownStarted = yield* Deferred.make<void>();
+        const teardownFinished = yield* Deferred.make<void>();
+        // The real spawner sends SIGTERM, waits the grace, then SIGKILLs. A backend that
+        // ignores SIGTERM therefore finishes tearing down just after the grace.
+        const instance = yield* makeTestInstance({
+          spawnerLayer: Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.gen(function* () {
+                const scope = yield* Scope.Scope;
+                yield* Deferred.succeed(spawned, undefined);
+                yield* Scope.addFinalizer(
+                  scope,
+                  Deferred.succeed(teardownStarted, undefined).pipe(
+                    Effect.andThen(Effect.sleep(Duration.seconds(6))),
+                    Effect.andThen(Deferred.succeed(teardownFinished, undefined)),
+                    Effect.asVoid,
+                  ),
+                );
+                return makeProcess({
+                  exitCode: Deferred.await(teardownFinished).pipe(
+                    Effect.as(ChildProcessSpawner.ExitCode(0)),
+                  ),
+                });
+              }),
+            ),
+          ),
+          httpClientLayer: layerHttpClient(() => Effect.never),
+        });
+        yield* instance.start;
+        yield* Deferred.await(spawned);
+
+        // App quit and the updater stop every backend with this deadline.
+        const quitDone = yield* Deferred.make<void>();
+        const quitFiber = yield* instance
+          .stop({ timeout: DesktopBackendManager.BACKEND_QUIT_STOP_TIMEOUT })
+          .pipe(Effect.andThen(Deferred.succeed(quitDone, undefined)), Effect.forkChild);
+
+        yield* Deferred.await(teardownStarted);
+        // Past the SIGTERM grace but before the force kill lands: quit must still be waiting.
+        yield* TestClock.adjust(Duration.millis(5_500));
+        assert.isFalse(yield* Deferred.isDone(quitDone));
+
+        yield* TestClock.adjust(Duration.millis(500));
+        yield* Fiber.join(quitFiber);
+        assert.isTrue(yield* Deferred.isDone(teardownFinished));
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
 });
