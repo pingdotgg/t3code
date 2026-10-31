@@ -27,6 +27,7 @@ import {
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
   MOUSE_NAVIGATE_CHANNEL,
+  POINTER_DOWN_HOST_CHANNEL,
   RECORDING_CURSOR_CHANNEL,
   RECORDING_POINTER_CHANNEL,
   RECORDING_KEY_CHANNEL,
@@ -168,6 +169,9 @@ const applyAnnotationTheme = (
 
 const reportHumanPointerInput = (event: PointerEvent): void => {
   if (!event.isTrusted) return;
+  // The guest does not always take focus on a click, so the host's webview
+  // `focus` event can't be relied on to dismiss open menus and popovers.
+  ipcRenderer.sendToHost(POINTER_DOWN_HOST_CHANNEL);
   ipcRenderer.send(HUMAN_INPUT_CHANNEL, {
     kind: "pointer",
     x: event.clientX,
