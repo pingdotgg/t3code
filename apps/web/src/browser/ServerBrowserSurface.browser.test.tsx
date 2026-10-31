@@ -37,6 +37,7 @@ function setup() {
   mocks.painted = null;
   mocks.createClient.mockReset().mockImplementation(() => ({
     send: (input: PreviewStreamInput) => mocks.sent.push(input),
+    accessibility: () => undefined,
     stop: () => undefined,
   }));
 }
