@@ -911,6 +911,11 @@ function timelineEntryEnd(entry: TimelineEntry): string {
   return entry.kind === "message" ? entry.message.updatedAt : entry.createdAt;
 }
 
+// A card dates from its task's latest start, so a resumed task's card lands after its run ended.
+function timelineEntryIsSubagentCard(entry: TimelineEntry): boolean {
+  return entry.kind === "event" && entry.projectedItem.item.type === "subagent";
+}
+
 function timelineEntryIsCompaction(entry: TimelineEntry): boolean {
   return entry.kind === "work" && entry.entry.sourceActivityKind === "context-compaction";
 }
@@ -1126,9 +1131,10 @@ function deriveTurnFolds(input: {
       }
       const isCompaction = timelineEntryIsCompaction(entry);
       const isFoldableTrailingActivity =
-        entry.kind === "work" &&
-        entry.entry.toolLifecycleStatus !== "inProgress" &&
-        !workEntryDisplayIndicatesToolFailure(entry.entry);
+        timelineEntryIsSubagentCard(entry) ||
+        (entry.kind === "work" &&
+          entry.entry.toolLifecycleStatus !== "inProgress" &&
+          !workEntryDisplayIndicatesToolFailure(entry.entry));
       if (!isCompaction && index > terminalEntryIndex && !isFoldableTrailingActivity) {
         continue;
       }
@@ -1163,7 +1169,9 @@ function deriveTurnFolds(input: {
       input.latestRun?.runId === runId && input.latestRun.status === "interrupted";
     // A turn cut short by a steer leaves trailing work entries behind its
     // terminal message — take whichever ended last.
-    const lastEntryEnd = timelineEntryEnd(lastEntry);
+    const lastEntryEnd = timelineEntryEnd(
+      group.entries.findLast((entry) => !timelineEntryIsSubagentCard(entry)) ?? lastEntry,
+    );
     const elapsedMs =
       input.latestRun?.runId === runId && input.latestRun.startedAt && input.latestRun.completedAt
         ? computeElapsedMs(input.latestRun.startedAt, input.latestRun.completedAt)
@@ -1201,8 +1209,10 @@ function deriveTurnFolds(input: {
       if (anchorEntry === undefined || !hidesNonCompactionWork(entries)) continue;
       const segmentMs = computeElapsedMs(
         steer.createdAt,
-        entries.map(timelineEntryEnd).reduce<string | null>(maxIsoTimestamp, null) ??
-          steer.createdAt,
+        entries
+          .filter((entry) => !timelineEntryIsSubagentCard(entry))
+          .map(timelineEntryEnd)
+          .reduce<string | null>(maxIsoTimestamp, null) ?? steer.createdAt,
       );
       foldsByAnchorEntryId.set(anchorEntry.id, {
         runId: RunId.make(`${runId}:steer:${steer.id}`),

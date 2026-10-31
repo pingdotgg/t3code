@@ -1186,8 +1186,17 @@ function deriveThreadFeedRunFolds(
       ? group.entries.find((entry) => entry.id === terminalAssistantId)
       : null;
     const latestRunMatches = latestRun?.runId === runId;
+    // A card dates from its task's latest start, so a resumed task's card lands after its run ended.
+    const lastTimedEntry =
+      group.entries.findLast(
+        (entry) =>
+          entry.type !== "activity-group" ||
+          entry.activities[0]?.projectedItem.item.type !== "subagent",
+      ) ?? lastEntry;
     const lastEntryEnd =
-      lastEntry.type === "message" ? lastEntry.message.updatedAt : lastEntry.createdAt;
+      lastTimedEntry.type === "message"
+        ? lastTimedEntry.message.updatedAt
+        : lastTimedEntry.createdAt;
     const elapsedMs =
       latestRunMatches && latestRun.startedAt && latestRun.completedAt
         ? computeElapsedMs(latestRun.startedAt, latestRun.completedAt)
