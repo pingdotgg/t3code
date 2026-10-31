@@ -26,13 +26,19 @@ const boatResponse = (request: HttpClientRequest.HttpClientRequest) =>
 describe("boatDriver", () => {
   it.effect("creates a sandbox with a public T3 port and reads its URL", () =>
     Effect.gen(function* () {
-      const requests: Array<{ method: string; url: string; authorization: string | undefined }> =
-        [];
+      const requests: Array<{
+        method: string;
+        url: string;
+        authorization: string | undefined;
+        body: string;
+      }> = [];
       const client = HttpClient.make((request) => {
         requests.push({
           method: request.method,
           url: request.url,
           authorization: request.headers.authorization,
+          body:
+            request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "",
         });
         return Effect.succeed(boatResponse(request));
       });
@@ -50,41 +56,52 @@ describe("boatDriver", () => {
         name: "Boat sandbox",
         publicUrl: "https://boat.example/t3",
       });
-      expect(requests).toEqual([
-        {
-          method: "POST",
-          url: "https://boat.dev/api/v1/sandboxes",
-          authorization: "Bearer boat_test",
-        },
-      ]);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toMatchObject({
+        method: "POST",
+        url: "https://boat.dev/api/v1/sandboxes",
+        authorization: "Bearer boat_test",
+      });
+      // The environment is reachable only if the T3 port is published, and the provider's own TTL
+      // must cover T3's default lifetime instead of stopping a paired environment after an hour.
+      expect(JSON.parse(requests[0]!.body)).toMatchObject({
+        hostedPorts: [{ port: 3773, public: true }],
+        ttlSeconds: 480 * 60,
+      });
     }),
   );
 
-  it.effect("turns a failed command into a provider error that keeps stderr", () => {
-    const client = HttpClient.make((request) =>
-      Effect.succeed(
-        HttpClientResponse.fromWeb(
-          request,
-          Response.json({ exitCode: 2, stdout: "", stderr: "t3 CLI did not install" }),
+  it.effect(
+    "turns a failed command into a bounded error that keeps output only in the cause",
+    () => {
+      const client = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({ exitCode: 2, stdout: "", stderr: "t3 CLI did not install" }),
+          ),
         ),
-      ),
-    );
+      );
 
-    return Effect.gen(function* () {
-      const error = yield* boatDriver
-        .execute({
-          config: { apiKey: "boat_test" },
-          sandboxId: boatSandboxId,
-          command: "install",
-          timeoutSeconds: 60,
-        })
-        .pipe(Effect.provideService(HttpClient.HttpClient, client), Effect.flip);
+      return Effect.gen(function* () {
+        const error = yield* boatDriver
+          .execute({
+            config: { apiKey: "boat_test" },
+            sandboxId: boatSandboxId,
+            command: "install",
+            timeoutSeconds: 60,
+          })
+          .pipe(Effect.provideService(HttpClient.HttpClient, client), Effect.flip);
 
-      expect(error).toBeInstanceOf(SandboxProviderError);
-      expect(error.stage).toBe("install");
-      expect(error.detail).toContain("t3 CLI did not install");
-    });
-  });
+        expect(error).toBeInstanceOf(SandboxProviderError);
+        expect(error.stage).toBe("install");
+        // Raw output can carry credentials, so it never becomes an attribute or part of the message.
+        expect(error.detail).toBe("The command exited with 2.");
+        expect(error.message).not.toContain("t3 CLI did not install");
+        expect(String(error.cause)).toContain("t3 CLI did not install");
+      });
+    },
+  );
 });
 
 describe("daytonaDriver", () => {
@@ -221,10 +238,55 @@ describe("SandboxProvisioner", () => {
     });
   });
 
-  it.effect("deletes the sandbox when pairing fails", () => {
+  it.effect("deletes the sandbox when the public port cannot be exposed", () => {
     const requests: Array<string> = [];
     const client = HttpClient.make((request) => {
       requests.push(`${request.method} ${request.url}`);
+      if (request.method === "POST" && request.url.endsWith("/sandboxes")) {
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({ ok: true, sandbox: { id: boatSandboxId, name: "Boat sandbox" } }),
+          ),
+        );
+      }
+      if (request.url.endsWith("/host")) {
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({ error: "no ports left" }, { status: 503 }),
+          ),
+        );
+      }
+      return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({})));
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* SandboxProvisioner.SandboxProvisioner.pipe(
+        Effect.flatMap((provisioner) =>
+          provisioner.create({ provider: "boat", apiKey: "boat_test" }),
+        ),
+        Effect.provide(SandboxProvisioner.layer.pipe(Layer.provide(ServerSettings.layerTest()))),
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.flip,
+      );
+
+      expect(error._tag).toBe("SandboxProviderError");
+      if (error._tag !== "SandboxProviderError") return;
+      expect(error.stage).toBe("expose");
+      // A machine that could not be reached must not keep billing.
+      expect(requests.at(-1)).toBe(`DELETE https://boat.dev/api/v1/sandboxes/${boatSandboxId}`);
+    });
+  });
+
+  it.effect("deletes the sandbox when pairing fails", () => {
+    const requests: Array<string> = [];
+    const deleteHeaders: Array<string | undefined> = [];
+    const client = HttpClient.make((request) => {
+      requests.push(`${request.method} ${request.url}`);
+      if (request.method === "DELETE") {
+        deleteHeaders.push(request.headers["x-ascii-confirm-delete"]);
+      }
       if (request.method === "POST" && request.url.endsWith("/sandboxes")) {
         return Effect.succeed(boatResponse(request));
       }
@@ -253,6 +315,8 @@ describe("SandboxProvisioner", () => {
       if (error._tag !== "SandboxProviderError") return;
       expect(error.stage).toBe("pair");
       expect(requests.at(-1)).toBe(`DELETE https://boat.dev/api/v1/sandboxes/${boatSandboxId}`);
+      // Boat refuses to delete without this confirmation header.
+      expect(deleteHeaders).toEqual([boatSandboxId]);
     });
   });
 });

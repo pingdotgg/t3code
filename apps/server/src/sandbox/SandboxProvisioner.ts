@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import { HttpClient } from "effect/http";
 
@@ -20,11 +21,20 @@ const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
 const installScript = (label: string) => `set -eu
 export PATH="$HOME/.local/bin:$PATH"
+# The label file is read by \`t3 serve\` itself, so it works on providers without sudo, systemd,
+# or a writable /etc/machine-info. The hostname is only a convenience for the machine's UI.
+mkdir -p "$HOME/.t3"
+printf '%s\n' ${shellQuote(label)} >"$HOME/.t3/environment-label"
 if command -v hostnamectl >/dev/null 2>&1; then
   sudo -n hostnamectl set-hostname --pretty ${shellQuote(label)} 2>/dev/null || true
 fi
 if ! command -v t3 >/dev/null 2>&1; then
-  curl -fsSL https://t3.codes/install.sh | sh
+  installer="$(mktemp)"
+  trap 'rm -f "$installer"' EXIT
+  curl -fsSL -o "$installer" https://t3.codes/install.sh
+  sh "$installer"
+  rm -f "$installer"
+  trap - EXIT
 fi
 export PATH="$HOME/.local/bin:$PATH"
 if ! command -v t3 >/dev/null 2>&1; then
@@ -101,7 +111,8 @@ const make = Effect.gen(function* () {
               new SandboxProviderError({
                 provider,
                 stage: "config",
-                detail: cause.message,
+                detail: "Could not save the provider API key on this server.",
+                cause,
               }),
           ),
         );
@@ -109,7 +120,13 @@ const make = Effect.gen(function* () {
     }
     const saved = (yield* settings.getSettings.pipe(
       Effect.mapError(
-        (cause) => new SandboxProviderError({ provider, stage: "config", detail: cause.message }),
+        (cause) =>
+          new SandboxProviderError({
+            provider,
+            stage: "config",
+            detail: "Could not read the provider API key from this server's settings.",
+            cause,
+          }),
       ),
     )).sandboxProviders[provider]?.apiKey.trim();
     if (saved === undefined || saved === "") {
@@ -148,14 +165,18 @@ const make = Effect.gen(function* () {
       }),
     );
 
+    // A machine that costs money must not survive a failure or an interruption (a client
+    // disconnecting mid-install interrupts this fiber), so cleanup runs on every non-success exit.
     const stopOnFailure = <A, E>(effect: Effect.Effect<A, E, HttpClient.HttpClient>) =>
       onHttp(effect).pipe(
-        Effect.tapError(() =>
-          onHttp(driver.destroy({ config, sandboxId: sandbox.id })).pipe(Effect.ignore),
+        Effect.onExit((exit) =>
+          Exit.isSuccess(exit)
+            ? Effect.void
+            : onHttp(driver.destroy({ config, sandboxId: sandbox.id })).pipe(Effect.ignore),
         ),
       );
 
-    const httpBaseUrl = yield* onHttp(
+    const httpBaseUrl = yield* stopOnFailure(
       sandbox.publicUrl === undefined
         ? driver.exposePort({ config, sandboxId: sandbox.id, port: driver.serverPort })
         : Effect.succeed(sandbox.publicUrl),

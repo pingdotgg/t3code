@@ -71,16 +71,27 @@ export const requestJson = Effect.fn("SandboxProvider.requestJson")(function* <
         new SandboxProviderError({
           provider: input.provider,
           stage: input.stage,
-          detail: cause.message,
+          // The transport message is bounded and does not include the request headers or body.
+          detail: "The sandbox provider could not be reached.",
+          cause,
         }),
     ),
   );
   if (response.status < 200 || response.status >= 300) {
+    // Provider bodies can echo request values, so the reason stays structured and the body only
+    // ever travels as the cause, never as an attribute or in the message shown to the client.
     const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
     return yield* new SandboxProviderError({
       provider: input.provider,
       stage: input.stage,
-      detail: `HTTP ${response.status}${body === "" ? "" : `: ${body.slice(0, 400)}`}`,
+      status: response.status,
+      detail:
+        response.status === 401 || response.status === 403
+          ? "The provider rejected the API key."
+          : response.status === 404
+            ? "The provider could not find this resource."
+            : `The provider responded with HTTP ${response.status}.`,
+      cause: new Error(body.slice(0, 2000)),
     });
   }
   return yield* HttpClientResponse.schemaBodyJson(input.schema)(response).pipe(

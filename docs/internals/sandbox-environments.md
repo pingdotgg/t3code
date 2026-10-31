@@ -19,9 +19,53 @@ Drivers must keep two invariants:
 - **Reachability.** The exposed origin must serve the T3 server without a provider-specific header
   or cookie, because the browser client only knows how to send T3's bearer credential. Providers
   that gate URLs with their own token use the provider's public or ungated mode.
-- **Cleanup.** `SandboxProvisioner` destroys the machine when any step after `create` fails, so a
-  provisioned machine never bills without an environment pointing at it. Drivers must make
-  `destroy` safe on a machine that never started.
+- **Cleanup.** `SandboxProvisioner` destroys the machine when any step after `create` fails or is
+  interrupted (including exposing the port), so a provisioned machine never bills without an
+  environment pointing at it. Drivers must make `destroy` safe on a machine that never started,
+  and a driver that creates a machine before its own start polling must clean up that path itself,
+  because the provisioner never receives the id.
+
+## Adding a provider
+
+Boat and Daytona are two implementations of the same contract; a third provider is one file plus
+one registry entry.
+
+1. **Write the driver.** Add `apps/server/src/sandbox/providers/<provider>.ts` exporting a
+   `SandboxProviderDriver`. Start from
+   [`boat.ts`](../../apps/server/src/sandbox/providers/boat.ts) when the provider returns the public
+   URL at create time, or from
+   [`daytona.ts`](../../apps/server/src/sandbox/providers/daytona.ts) when it needs a separate
+   preview-URL call. Reuse `requestJson`, `jsonBody`, and `authorize` from
+   `SandboxProvider.ts` so status handling and error mapping stay consistent.
+2. **Fill in `info`.** `kind`, `label`, `detail`, `apiKeyLabel`, `apiKeyPlaceholder`, `docsUrl`,
+   and `sizes`. The settings UI, the API-key field, and the machine picker are generated from it;
+   nothing else needs to know the provider exists.
+3. **Declare the provider kind.** Add it to `SandboxProviderKind` in
+   `packages/contracts/src/sandbox.ts`. This is what persists on records and settings, so changing
+   it later needs a migration.
+4. **Register the driver.** Add the import and the array entry in
+   `providers/index.ts`. Scopes, RPCs, and UI need no changes.
+5. **Decide the optional capabilities.**
+   - `stop`/`resume` only if the provider can stop and start the same machine. The record's hard
+     deadline still rules; do not extend the provider's own TTL beyond it.
+   - `listEnvironments` only if the provider has named credential environments. Return **flags
+     only** (`passGithub`, `passSecrets`, …). Never map `envContents`, `secretFiles`, or any other
+     value that carries a real secret into `SandboxCredentialEnvironment`.
+6. **Add a size default and the server port.** `defaultSize` must be one of the `info.sizes` ids,
+   and `serverPort` is `3773` unless the provider reserves it.
+7. **Test it without the network.** Follow `SandboxProvisioner.test.ts`: `HttpClient.make`
+   records the request method, URL, and body, and returns canned provider responses. Cover create
+   (including the published port and the TTL), execute failure, expose, destroy, and any cleanup
+   path the driver owns. `check:changed` runs them.
+
+Two details apply to every provider:
+
+- **The first successful create must be usable.** Publish port `3773` with a public, ungated
+  origin, and make sure the provider's own auto-stop or auto-delete is not shorter than T3's
+  eight-hour lifetime.
+- **The sandbox labels itself.** Provisioning writes `<baseDir>/environment-label` (default
+  `~/.t3/environment-label`) before starting the server, so the environment picks up the requested
+  name without sudo or a writable `/etc`.
 
 ## Verification
 

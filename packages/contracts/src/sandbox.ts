@@ -84,7 +84,15 @@ export class SandboxProviderError extends Schema.TaggedError<SandboxProviderErro
   {
     provider: SandboxProviderKind,
     stage: SandboxStage,
+    /**
+     * Bounded, human-readable reason shown to the user. Never a raw provider response body or
+     * remote command output: those can carry credentials.
+     */
     detail: Schema.String,
+    /** The provider's HTTP status when the failure came from a response. */
+    status: Schema.optional(Schema.Number),
+    /** The exact underlying error or output, kept out of `message` and out of logs. */
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {

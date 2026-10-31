@@ -1,4 +1,4 @@
-import { BoxIcon, ExternalLinkIcon, PlusIcon } from "lucide-react";
+import { ExternalLinkIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 import type { EnvironmentId, SandboxCreateResult, SandboxProviderInfo } from "@t3tools/contracts";
 import {
@@ -6,13 +6,14 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 
-import { cn } from "../../lib/utils";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Spinner } from "../ui/spinner";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { EnvironmentModeCard } from "./EnvironmentModeCard";
+import { SandboxProviderLogo } from "./SandboxProviderLogo";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
@@ -36,11 +37,14 @@ export function SandboxEnvironmentFields({
   environmentId,
   error,
   onErrorChange,
+  onProvisioningChange,
   onDone,
 }: {
   readonly environmentId: EnvironmentId;
   readonly error: string | null;
   readonly onErrorChange: (error: string | null) => void;
+  /** Lets the dialog lock its mode cards and refuse to close while a machine is being created. */
+  readonly onProvisioningChange?: (provisioning: boolean) => void;
   readonly onDone: () => void;
 }) {
   const providersQuery = useEnvironmentQuery(
@@ -65,6 +69,7 @@ export function SandboxEnvironmentFields({
   const handleCreate = async () => {
     if (provider === undefined) return;
     setIsProvisioning(true);
+    onProvisioningChange?.(true);
     onErrorChange(null);
     const created = await createSandbox({
       environmentId,
@@ -89,6 +94,7 @@ export function SandboxEnvironmentFields({
         );
       }
       setIsProvisioning(false);
+      onProvisioningChange?.(false);
       return;
     }
 
@@ -98,11 +104,12 @@ export function SandboxEnvironmentFields({
       pairingCode: sandbox.pairingCode,
     });
     setIsProvisioning(false);
+    onProvisioningChange?.(false);
     if (connected._tag === "Failure") {
       if (!isAtomCommandInterrupted(connected)) {
         const message = formatFailure(squashAtomCommandFailure(connected));
         onErrorChange(
-          `The sandbox is running, but pairing failed: ${message}. Add ${sandbox.httpBaseUrl} manually with the code from the sandbox.`,
+          `The sandbox is running, but pairing failed: ${message}. Add ${sandbox.httpBaseUrl} manually with pairing code ${sandbox.pairingCode}.`,
         );
       }
       return;
@@ -133,46 +140,27 @@ export function SandboxEnvironmentFields({
           {providers.map((candidate) => {
             const selected = candidate.kind === provider?.kind;
             return (
-              <button
+              <EnvironmentModeCard
                 key={candidate.kind}
-                type="button"
-                aria-pressed={selected}
-                className={cn(
-                  "group flex min-h-24 items-start gap-3 rounded-lg border p-4 text-left",
-                  selected
-                    ? "border-primary/50 bg-primary/5"
-                    : "border-border/60 hover:bg-muted/40",
-                )}
+                selected={selected}
                 disabled={isProvisioning}
+                title={candidate.label}
+                description={candidate.detail}
+                icon={<SandboxProviderLogo kind={candidate.kind} />}
+                badge={
+                  candidate.configured ? (
+                    <span className="rounded-full border border-border/70 px-1.5 py-0.5 text-2xs text-muted-foreground">
+                      Key saved
+                    </span>
+                  ) : null
+                }
                 onClick={() => {
                   setSelectedKind(candidate.kind);
                   setSize("");
+                  // Never carry one provider's key into another provider's replacement field.
+                  setApiKey("");
                 }}
-              >
-                <span
-                  className={cn(
-                    "mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border",
-                    selected
-                      ? "border-primary/30 bg-primary/10 text-primary"
-                      : "border-border/70 bg-background text-muted-foreground group-hover:text-foreground",
-                  )}
-                >
-                  <BoxIcon aria-hidden className="size-4" />
-                </span>
-                <span className="min-w-0">
-                  <span className="flex items-center gap-2 text-sm font-medium text-foreground">
-                    {candidate.label}
-                    {candidate.configured ? (
-                      <span className="rounded-full border border-border/70 px-1.5 py-0.5 text-2xs text-muted-foreground">
-                        Key saved
-                      </span>
-                    ) : null}
-                  </span>
-                  <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
-                    {candidate.detail}
-                  </span>
-                </span>
-              </button>
+              />
             );
           })}
         </div>
@@ -261,7 +249,7 @@ export function SandboxEnvironmentFields({
           </div>
 
           <p className="text-2xs leading-relaxed text-muted-foreground">
-            The sandbox starts without your Boat account's secrets, GitHub token, or agent logins.
+            {`The sandbox starts without your ${provider.label} account's secrets, GitHub token, or agent logins.`}
             The server creates the machine, installs T3 Code, and pairs it. This usually takes one
             to three minutes and bills the provider account that owns the key.
           </p>

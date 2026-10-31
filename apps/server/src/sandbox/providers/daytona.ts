@@ -1,5 +1,6 @@
 import { type SandboxProviderInfo, SandboxProviderError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import { HttpClientRequest } from "effect/http";
 import * as Schema from "effect/Schema";
 
@@ -67,7 +68,10 @@ const waitUntilStarted = Effect.fn("Daytona.waitUntilStarted")(function* (
       return yield* new SandboxProviderError({
         provider: "daytona",
         stage: "start",
-        detail: sandbox.errorReason?.trim() || `The sandbox entered ${sandbox.state}.`,
+        detail: `The sandbox entered the ${sandbox.state} state while starting.`,
+        ...(sandbox.errorReason === undefined || sandbox.errorReason === null
+          ? {}
+          : { cause: new Error(sandbox.errorReason) }),
       });
     }
     if (attempt < POLL_ATTEMPTS - 1) yield* Effect.sleep(POLL_INTERVAL);
@@ -114,7 +118,19 @@ export const daytonaDriver: SandboxProviderDriver = {
         },
       ),
     }).pipe(
-      Effect.flatMap((sandbox) => waitUntilStarted(input.config.apiKey, sandbox.id)),
+      Effect.flatMap((sandbox) =>
+        // Daytona is created with auto-stop and auto-delete disabled, so a machine that never
+        // finishes starting would bill forever if the provisioner never learned its id.
+        waitUntilStarted(input.config.apiKey, sandbox.id).pipe(
+          Effect.onExit((exit) =>
+            Exit.isSuccess(exit)
+              ? Effect.void
+              : daytonaDriver
+                  .destroy({ config: input.config, sandboxId: sandbox.id })
+                  .pipe(Effect.ignore),
+          ),
+        ),
+      ),
       Effect.map((sandbox): CreatedSandbox => ({
         id: sandbox.id,
         name: sandbox.name ?? input.name,
@@ -139,7 +155,9 @@ export const daytonaDriver: SandboxProviderDriver = {
       return yield* new SandboxProviderError({
         provider: "daytona",
         stage: "install",
-        detail: result.result.trim().slice(-1200) || `The command exited with ${exitCode}.`,
+        // Only the exit status is an attribute; command output can contain secrets.
+        detail: `The command exited with ${exitCode}.`,
+        cause: new Error(result.result.trim().slice(-4000)),
       });
     }
     return { exitCode, stdout: result.result, stderr: "" };

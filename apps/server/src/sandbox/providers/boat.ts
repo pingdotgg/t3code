@@ -68,7 +68,9 @@ export const boatDriver: SandboxProviderDriver = {
           // A sandbox created by T3 must never inherit the account's GitHub token,
           // secrets, or agent logins by default. Credentials are opt-in per environment.
           noEnv: true,
-          ttlSeconds: input.ttlMinutes === undefined ? 3600 : input.ttlMinutes * 60,
+          // A paired environment is meant to outlive the setup session, so the provider's auto-stop
+          // must never fire before T3's own lifetime limit (eight hours by default).
+          ttlSeconds: (input.ttlMinutes ?? 480) * 60,
           hostedPorts: [{ port: 3773, public: true, title: "T3 Code" }],
         },
       ),
@@ -104,12 +106,16 @@ export const boatDriver: SandboxProviderDriver = {
           new SandboxProviderError({
             provider: "boat",
             stage: "install",
-            detail:
+            // Only the exit status is an attribute. The raw output can contain secrets, so it is
+            // kept in the cause for diagnostics and never shown to the client or logged.
+            detail: `The command exited with ${result.exitCode ?? "an unknown status"}.`,
+            cause: new Error(
               [result.stderr, result.stdout]
                 .map((part) => part.trim())
                 .filter((part) => part !== "")
                 .join("\n")
-                .slice(-1200) || `The command exited with ${result.exitCode}.`,
+                .slice(-4000),
+            ),
           }),
       ),
       Effect.map((result) => ({ ...result, exitCode: result.exitCode ?? 0 })),

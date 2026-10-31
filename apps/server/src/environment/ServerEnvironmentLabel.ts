@@ -2,12 +2,15 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as ProcessRunner from "../processRunner.ts";
 
 interface ResolveServerEnvironmentLabelInput {
   readonly cwdBaseName: string;
+  /** Explicit label file directory. Provisioned sandboxes write `environment-label` here. */
+  readonly baseDir?: string;
 }
 
 const ServerEnvironmentLabelCommandProbe = Schema.Literals([
@@ -179,9 +182,37 @@ const resolveFriendlyHostLabel = Effect.fn("resolveFriendlyHostLabel")(function*
   return null;
 });
 
+/**
+ * A label file is the only mechanism that works on every provider without sudo, a systemd user
+ * session, or a writable `/etc/machine-info`, so provisioning writes it before starting the
+ * sandbox server.
+ */
+const readConfiguredLabel = Effect.fn("readConfiguredLabel")(function* (baseDir: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const labelPath = path.join(baseDir, "environment-label");
+  const exists = yield* fileSystem.exists(labelPath).pipe(Effect.orElseSucceed(() => false));
+  if (!exists) return null;
+  return yield* fileSystem.readFileString(labelPath).pipe(
+    Effect.map(normalizeLabel),
+    Effect.catch((error) =>
+      Effect.logDebug("Failed to read the configured environment label.", error).pipe(
+        Effect.as(null),
+      ),
+    ),
+  );
+});
+
 export const resolveServerEnvironmentLabel = Effect.fn("resolveServerEnvironmentLabel")(function* (
   input: ResolveServerEnvironmentLabelInput,
 ) {
+  if (input.baseDir !== undefined) {
+    const configuredLabel = yield* readConfiguredLabel(input.baseDir);
+    if (configuredLabel) {
+      return configuredLabel;
+    }
+  }
+
   const friendlyHostLabel = yield* resolveFriendlyHostLabel();
   if (friendlyHostLabel) {
     return friendlyHostLabel;

@@ -1,7 +1,7 @@
 import { pipe } from "effect/Function";
 import { BoxIcon, ChevronsLeftRightEllipsisIcon, PlusIcon, TerminalIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import {
   type DesktopDiscoveredSshHost,
   type DesktopSshEnvironmentTarget,
@@ -16,8 +16,8 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import * as Option from "effect/Option";
 
-import { cn } from "../../lib/utils";
 import { formatDesktopSshTarget } from "./EnvironmentRow";
+import { EnvironmentModeCard } from "./EnvironmentModeCard";
 import { SandboxEnvironmentFields } from "./SandboxEnvironmentFields";
 import { Input } from "../ui/input";
 import { CommandShortcut } from "../ui/command";
@@ -98,6 +98,13 @@ export function AddEnvironmentDialog({
   });
   const relayDiscoveryState = useRelayEnvironmentDiscovery();
   const primaryEnvironment = usePrimaryEnvironment();
+  // Hosted web registers no primary environment, so fall back to a saved connected one; the
+  // sandbox RPCs run on whichever server the client is paired with.
+  const provisionerEnvironment =
+    primaryEnvironment ??
+    savedEnvironments.find((environment) => environment.connection.phase === "connected") ??
+    savedEnvironments[0] ??
+    null;
   const savedDesktopSshEnvironmentKeys = (() => {
     const keys = new Set<string>();
     for (const environment of savedEnvironments) {
@@ -124,6 +131,14 @@ export function AddEnvironmentDialog({
   const [sshHostSuggestionsOpen, setSshHostSuggestionsOpen] = useState(false);
   const highlightedSshHostRef = useRef<DesktopDiscoveredSshHost | undefined>(undefined);
   const [isAddingSavedBackend, setIsAddingSavedBackend] = useState(false);
+  const [isProvisioningSandbox, setIsProvisioningSandbox] = useState(false);
+  // The dialog's close handler runs in the same tick as the completion callback, before React
+  // re-renders, so the lock has to be readable synchronously.
+  const provisioningSandboxRef = useRef(false);
+  const handleSandboxProvisioningChange = (provisioning: boolean) => {
+    provisioningSandboxRef.current = provisioning;
+    setIsProvisioningSandbox(provisioning);
+  };
   const savedBackendSessionRef = useRef(0);
   const isSshDiscoveryActive = desktopBridge !== undefined && open && savedBackendMode === "ssh";
   const desktopSshHosts = useEnvironmentQuery(
@@ -154,6 +169,9 @@ export function AddEnvironmentDialog({
     desktopBridge !== undefined &&
     (isLoadingDiscoveredSshHosts || unsavedDiscoveredSshHosts.length > 0);
   const handleOpenChange = (nextOpen: boolean) => {
+    // Provisioning a machine cannot be cancelled from here, so the dialog stays open until the
+    // create call settles instead of leaving an orphaned sandbox and a lost pairing step.
+    if (!nextOpen && provisioningSandboxRef.current) return;
     if (!nextOpen) {
       savedBackendSessionRef.current += 1;
       setSavedBackendMode("remote");
@@ -353,48 +371,6 @@ export function AddEnvironmentDialog({
     }
     setSavedBackendHost(value);
   };
-  const renderConnectionModeCard = (input: {
-    readonly mode: "remote" | "sandbox" | "ssh";
-    readonly title: string;
-    readonly description: string;
-    readonly icon?: ReactNode;
-  }) => {
-    const selected = savedBackendMode === input.mode;
-    return (
-      <button
-        type="button"
-        aria-pressed={selected}
-        className={cn(
-          "group flex min-h-24 items-start gap-3 rounded-lg border p-4 text-left",
-          selected ? "border-primary/50 bg-primary/5" : "border-border/60 hover:bg-muted/40",
-        )}
-        disabled={isAddingSavedBackend}
-        onClick={() => {
-          setSavedBackendMode(input.mode);
-        }}
-      >
-        {input.icon ? (
-          <span
-            className={cn(
-              "mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border",
-              selected
-                ? "border-primary/30 bg-primary/10 text-primary"
-                : "border-border/70 bg-background text-muted-foreground group-hover:text-foreground",
-            )}
-          >
-            {input.icon}
-          </span>
-        ) : null}
-        <span className="min-w-0">
-          <span className="block text-sm font-medium text-foreground">{input.title}</span>
-          <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
-            {input.description}
-          </span>
-        </span>
-      </button>
-    );
-  };
-
   const renderRemoteFields = () => (
     <div className="space-y-3">
       <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem]">
@@ -642,36 +618,45 @@ export function AddEnvironmentDialog({
         <DialogPanel>
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
-              {renderConnectionModeCard({
-                mode: "remote",
-                title: "Remote link",
-                description: "Enter a backend host and pairing code.",
-                icon: <ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />,
-              })}
-              {primaryEnvironment !== null && routeTarget === null
-                ? renderConnectionModeCard({
-                    mode: "sandbox",
-                    title: "Sandbox",
-                    description: "Provision a cloud machine with a provider API key.",
-                    icon: <BoxIcon aria-hidden className="size-4" />,
-                  })
-                : null}
-              {desktopBridge
-                ? renderConnectionModeCard({
-                    mode: "ssh",
-                    title: "SSH",
-                    description: "Use local SSH config, agent, and tunnels for the backend.",
-                    icon: <TerminalIcon aria-hidden className="size-4" />,
-                  })
-                : null}
+              <EnvironmentModeCard
+                selected={savedBackendMode === "remote"}
+                disabled={isAddingSavedBackend || isProvisioningSandbox}
+                title="Remote link"
+                description="Enter a backend host and pairing code."
+                icon={<ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />}
+                onClick={() => setSavedBackendMode("remote")}
+              />
+              {provisionerEnvironment !== null && routeTarget === null ? (
+                <EnvironmentModeCard
+                  selected={savedBackendMode === "sandbox"}
+                  disabled={isAddingSavedBackend || isProvisioningSandbox}
+                  title="Sandbox"
+                  description="Provision a cloud machine with a provider API key."
+                  icon={<BoxIcon aria-hidden className="size-4" />}
+                  onClick={() => setSavedBackendMode("sandbox")}
+                />
+              ) : null}
+              {desktopBridge ? (
+                <EnvironmentModeCard
+                  selected={savedBackendMode === "ssh"}
+                  disabled={isAddingSavedBackend || isProvisioningSandbox}
+                  title="SSH"
+                  description="Use local SSH config, agent, and tunnels for the backend."
+                  icon={<TerminalIcon aria-hidden className="size-4" />}
+                  onClick={() => setSavedBackendMode("ssh")}
+                />
+              ) : null}
             </div>
             <AnimatedHeight>
-              {savedBackendMode === "sandbox" && primaryEnvironment !== null ? (
+              {savedBackendMode === "sandbox" &&
+              provisionerEnvironment !== null &&
+              routeTarget === null ? (
                 <SandboxEnvironmentFields
-                  environmentId={primaryEnvironment.environmentId}
+                  environmentId={provisionerEnvironment.environmentId}
                   error={error}
                   onErrorChange={onErrorChange}
-                  onDone={() => onOpenChange(false)}
+                  onProvisioningChange={handleSandboxProvisioningChange}
+                  onDone={() => handleOpenChange(false)}
                 />
               ) : savedBackendMode === "ssh" ? (
                 renderSshFields()
