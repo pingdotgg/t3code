@@ -50,6 +50,7 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
       ) : null}
       <ComposerRequestCard.Footer>
         <ComposerPendingApprovalActions
+          designLabels
           alwaysAllow={alwaysAllow}
           onAlwaysAllowChange={setAlwaysAllow}
           requestId={approval.requestId}
