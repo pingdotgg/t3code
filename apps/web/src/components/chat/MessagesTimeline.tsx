@@ -1212,7 +1212,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const chapterReveal = useChatChapterStore((state) => state.revealRequest);
   const handledChapterRevealRef = useRef<number | null>(null);
-  const historyRequestedForChapterRef = useRef<{ nonce: number; rowCount: number } | null>(null);
+  const historyRequestedForChapterRef = useRef<{
+    nonce: number;
+    cursor: string | null;
+  } | null>(null);
   // A chapter's message can be loaded but hidden inside a collapsed turn fold
   // or a superseded attempt. Expand its fold here, during render like the
   // citation reveal above, so the next render's `rows` includes its row
@@ -1271,9 +1274,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
       if (isAlreadyInHistory) {
         return;
       }
+      const cursor = timelineEntries[0]?.id ?? null;
       const requested = historyRequestedForChapterRef.current;
       const alreadyRequested =
-        requested?.nonce === chapterReveal.nonce && requested.rowCount === rows.length;
+        requested?.nonce === chapterReveal.nonce && requested.cursor === cursor;
       if (
         historyControls?.hasMoreHistory &&
         !historyControls.loading &&
@@ -1282,7 +1286,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       ) {
         historyRequestedForChapterRef.current = {
           nonce: chapterReveal.nonce,
-          rowCount: rows.length,
+          cursor,
         };
         historyControls.onLoadEarlier(chapterReveal.messageId);
       }
@@ -1290,7 +1294,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
     }
     handledChapterRevealRef.current = chapterReveal.nonce;
     navigateTimeline();
-    void listRef.current?.scrollToIndex({ index: rowIndex, animated: true, viewOffset: 96 });
+    void listRef.current?.scrollToIndex({
+      index: rowIndex,
+      animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+      viewOffset: 96,
+    });
   }, [
     chapterReveal,
     historyControls,

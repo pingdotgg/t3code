@@ -690,7 +690,47 @@ describe("MessagesTimeline chapters", () => {
     using scrollToIndex = vi.spyOn(list, "scrollToIndex");
 
     act(() => useChatChapterStore.getState().requestReveal(threadRef, MessageId.make("chapter")));
-    await vi.waitFor(() => expect(scrollToIndex).toHaveBeenCalled());
+    await vi.waitFor(() =>
+      expect(scrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ index: 2 })),
+    );
+  });
+
+  it("requests earlier history to reveal a chapter outside the current page", async () => {
+    const props = baseProps();
+    const threadRef = parseScopedThreadKey(props.routeThreadKey);
+    if (!threadRef) throw new Error("routeThreadKey must be a scoped thread key");
+    const onLoadEarlier = vi.fn();
+    const historyControls = {
+      hasMoreHistory: true,
+      loading: false,
+      error: null,
+      onLoadEarlier,
+    };
+    const entries = [message("Recent entry", {}, "recent")];
+    await using screen = await renderElement(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={entries}
+        historyControls={historyControls}
+      />,
+    );
+
+    act(() => useChatChapterStore.getState().requestReveal(threadRef, MessageId.make("chapter-earlier")));
+    await vi.waitFor(() =>
+      expect(onLoadEarlier).toHaveBeenCalledWith("chapter-earlier"),
+    );
+
+    const earlierHiddenEntry = message("Earlier note", {}, "earlier");
+    await screen.rerender(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[earlierHiddenEntry, ...entries]}
+        historyControls={historyControls}
+      />,
+    );
+    await vi.waitFor(() =>
+      expect(onLoadEarlier).toHaveBeenCalledTimes(2),
+    );
   });
 });
 
