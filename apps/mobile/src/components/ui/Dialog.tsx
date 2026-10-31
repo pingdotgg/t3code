@@ -18,19 +18,18 @@ export function confirm(request: ConfirmDialogRequest): void {
   ]);
 }
 
+// The most recently mounted host presents, so a sheet's host wins while the sheet is open.
+const promptPresenters: Array<(request: TextInputDialogRequest) => void> = [];
+
+// UIAlertController's text field lays out past the alert's edge on iOS 26 (Liquid Glass),
+// so prompts render in-app through DialogHost instead of through Alert.prompt.
 export function prompt(request: TextInputDialogRequest): void {
-  Alert.prompt(
-    request.title,
-    request.message,
-    [
-      { text: request.cancelText ?? "Cancel", style: "cancel", onPress: request.onCancel },
-      { text: request.confirmText, onPress: (value) => request.onConfirm(value ?? "") },
-    ],
-    "plain-text",
-    request.initialValue,
-  );
+  promptPresenters.at(-1)?.(request);
 }
 
-export function Host() {
-  return null;
+export function registerPromptPresenter(present: (request: TextInputDialogRequest) => void) {
+  promptPresenters.push(present);
+  return () => {
+    promptPresenters.splice(promptPresenters.indexOf(present), 1);
+  };
 }

@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidSheetHeader } from "../../components/ui/AndroidScreenHeader";
 import { AppText as Text } from "../../components/ui/AppText";
+import { DialogSheetHost } from "../../components/ui/DialogHost";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { Toolbar } from "../../components/ui/Toolbar";
@@ -104,6 +105,7 @@ export function ThreadPullRequestsSheet(
           </Toolbar>
         ) : null}
         {content}
+        <DialogSheetHost />
       </View>
     );
   }
