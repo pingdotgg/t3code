@@ -212,7 +212,6 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   ) {
     const initial = yield* SubscriptionRef.get(state);
     let waiting = yield* Ref.get(awaitingCompletion);
-    /* oxlint-disable oxc/no-accumulating-spread -- This copies a fixed-shape state record, not a growing collection. */
     let next = initial;
     let receivedSnapshot = false;
     let deltas: Array<ShellStreamEvent> = [];
@@ -278,7 +277,6 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       };
     }
     flushDeltas();
-    /* oxlint-enable oxc/no-accumulating-spread */
     yield* Ref.set(awaitingCompletion, waiting);
     if (next === initial) return;
     if (pendingLinkIds !== undefined && Option.isSome(next.snapshot)) {
