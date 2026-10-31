@@ -113,8 +113,23 @@ const fetchDescriptor = Effect.fn("clientRuntime.connection.remote.fetchDescript
 
 export const make = Effect.gen(function* () {
   const serviceScope = yield* Scope.Scope;
-  const signer = yield* ManagedRelay.ManagedRelayDpopSigner;
-  const relay = yield* ManagedRelay.ManagedRelayClient;
+  // Direct-only clients provide neither; only T3 Connect (DPoP) authorization uses them.
+  const relayUnavailable = Effect.fail(
+    new ConnectionBlockedError({
+      reason: "unsupported",
+      detail: "This client does not connect through T3 Connect.",
+    }),
+  );
+  const signerOption = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+  const relayOption = yield* Effect.serviceOption(ManagedRelay.ManagedRelayClient);
+  const requireSigner = Option.match(signerOption, {
+    onNone: () => relayUnavailable,
+    onSome: Effect.succeed,
+  });
+  const requireRelay = Option.match(relayOption, {
+    onNone: () => relayUnavailable,
+    onSome: Effect.succeed,
+  });
   const cloudSession = yield* ClientCapabilities.CloudSession;
   const deviceIdentity = yield* ClientCapabilities.RelayDeviceIdentity;
   const presentation = yield* ClientCapabilities.ClientPresentation;
@@ -198,6 +213,7 @@ export const make = Effect.gen(function* () {
       timeoutMs?: number,
       endpoint: { readonly httpBaseUrl: string; readonly wsBaseUrl: string } = token.endpoint,
     ) {
+      const signer = yield* requireSigner;
       return yield* resolveRemoteDpopWebSocketConnectionUrl({
         wsBaseUrl: endpoint.wsBaseUrl,
         httpBaseUrl: endpoint.httpBaseUrl,
@@ -268,6 +284,7 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("relay.connection.deviceIdentity.resolve"),
     );
     yield* assertSession(identity);
+    const relay = yield* requireRelay;
     const connected = yield* relay
       .connectEnvironment({
         clerkToken,
@@ -303,6 +320,7 @@ export const make = Effect.gen(function* () {
           actual: descriptor.environmentId,
         });
       }
+      const signer = yield* requireSigner;
       const bootstrapProof = yield* signer
         .createProof({
           method: "POST",
@@ -344,6 +362,7 @@ export const make = Effect.gen(function* () {
   const getDpopToken = Effect.fn("clientRuntime.connection.remote.getDpopToken")(function* (
     input: Parameters<RemoteEnvironmentAuthorization["Service"]["authorizeDpopHttp"]>[0],
   ) {
+    const signer = yield* requireSigner;
     const session = yield* cloudSession.identity;
     if (Option.isNone(session)) {
       return yield* sessionPending();
