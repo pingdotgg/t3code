@@ -975,6 +975,59 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect(
+      "refreshes a partial scan with a larger record budget and keeps recovered projects",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const workspace = yield* makeTempDir("t3code-workspace-");
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
+            contents: '{"type":"summary"}\n'.repeat(1_001) + claudeSessionLine(workspace),
+            mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+          });
+
+          yield* Effect.gen(function* () {
+            const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+            const initial = yield* scanner.scan;
+            expect(initial.truncated).toBe(true);
+            expect(initial.candidates).toEqual([]);
+            const recovered = yield* scanner.scan;
+            expect(recovered.truncated).not.toBe(true);
+            expect(recovered.candidates.map((candidate) => candidate.path)).toEqual([workspace]);
+            const refreshed = yield* scanner.scan;
+            expect(refreshed.candidates.map((candidate) => candidate.path)).toEqual([workspace]);
+          }).pipe(Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath })));
+        }),
+    );
+
+    it.effect("refreshes a partial scan with a larger total byte budget", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        const record = claudeSessionLine(workspace);
+        const contents = " ".repeat(1024 * 1024 - record.length) + record;
+        for (let index = 0; index < 65; index += 1) {
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "-slug", `${index}.jsonl`),
+            contents,
+            mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+          });
+        }
+        yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          expect((yield* scanner.scan).truncated).toBe(true);
+          const recovered = yield* scanner.scan;
+          expect(recovered.truncated).not.toBe(true);
+          expect(recovered.candidates.map((candidate) => candidate.path)).toEqual([workspace]);
+        }).pipe(Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath })));
+      }),
+    );
+
     it.effect("reads a complete transcript record at the exact chunk boundary", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
