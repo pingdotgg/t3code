@@ -436,6 +436,7 @@ export class GitVcsDriver extends Context.Service<
 >()("t3/vcs/GitVcsDriver") {}
 
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+const FLAGGED_INDEX_ENTRIES_MAX_BYTES = 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
@@ -959,43 +960,60 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             });
             // read-tree can rewrite the index, so restore its racy timestamp afterward.
             yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
-            let specialFlags = false;
+            // Manually flagged entries hide edits from add -A, so they are re-added below
+            // with no stat cache. Every other entry keeps its stat data and is not rehashed.
+            let fallback = false;
+            let flaggedBytes = 0;
             let recordStart = true;
-            let skipped = false;
-            let skippedRecord: Uint8Array[] = [];
-            const skippedPaths: string[] = [];
+            let collect: "flagged" | "skipped" | undefined;
+            let record: Uint8Array[] = [];
+            const flagged: string[] = [];
+            const skipped: string[] = [];
             yield* vcsProcess.run({
               operation,
               command: "git",
               cwd: input.cwd,
-              args: [...indexConfig, "ls-files", "--full-name", "--sparse", "-v", "-z"],
+              args: [...indexConfig, "ls-files", "--full-name", "--sparse", "--stage", "-v", "-z"],
               env: commitEnv,
               maxOutputBytes: 4_096,
               outputMode: "truncate",
-              // Only tags and sparse skip-worktree paths matter; scan NUL-delimited records.
+              // Only tags and flagged or skip-worktree records matter; scan NUL-delimited records.
               onStdoutChunk: (chunk) => {
                 let start = 0;
-                while (start < chunk.length) {
+                while (start < chunk.length && !fallback) {
                   const end = chunk.indexOf(0, start);
                   if (recordStart) {
                     const tag = chunk[start]!;
-                    skipped = tag === 83;
-                    if ((tag >= 97 && tag <= 122) || (!sparseCheckout && tag === 83)) {
-                      specialFlags = true;
-                    }
+                    record = [];
+                    // Sparse skip-worktree bits are expected; only in-cone ones are manual.
+                    collect =
+                      tag === 83 && sparseCheckout
+                        ? "skipped"
+                        : (tag >= 97 && tag <= 122) || tag === 83
+                          ? "flagged"
+                          : undefined;
+                    // index-info cannot keep skip-worktree while dropping assume-unchanged.
+                    if (tag === 115 && sparseCheckout) fallback = true;
                   }
-                  if (skipped && sparseCheckout) {
-                    skippedRecord.push(
-                      Buffer.from(chunk.subarray(start, end === -1 ? undefined : end)),
-                    );
-                    if (end !== -1) {
-                      const record = Buffer.concat(skippedRecord);
-                      if (record.at(-1) !== 47) {
-                        const name = record.subarray(2);
-                        if (!NodeBuffer.isUtf8(name)) specialFlags = true;
-                        else skippedPaths.push(name.toString("utf8"));
+                  if (collect !== undefined && !fallback) {
+                    const piece = chunk.subarray(start, end === -1 ? undefined : end);
+                    record.push(Buffer.from(piece));
+                    if (
+                      collect === "flagged" &&
+                      (flaggedBytes += piece.length) > FLAGGED_INDEX_ENTRIES_MAX_BYTES
+                    )
+                      fallback = true;
+                    if (end !== -1 && !fallback) {
+                      const full = Buffer.concat(record);
+                      record = [];
+                      // Sparse directory entries stay collapsed.
+                      if (collect === "flagged" || full.at(-1) !== 47) {
+                        // Drop the "<tag> " prefix, leaving index-info's "<mode> <oid> <stage>\t<path>".
+                        const entry = full.subarray(2);
+                        if (!NodeBuffer.isUtf8(entry)) fallback = true;
+                        else
+                          (collect === "flagged" ? flagged : skipped).push(entry.toString("utf8"));
                       }
-                      skippedRecord = [];
                     }
                   }
                   recordStart = end !== -1;
@@ -1004,20 +1022,46 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 }
               },
             });
-            if (skippedPaths.length > 0 && !specialFlags) {
-              const selected = yield* execute({
+            if (fallback) return false;
+            if (skipped.length > 0) {
+              const paths = skipped.map((entry) => entry.slice(entry.indexOf("\t") + 1));
+              const stdin = paths.join("\0") + "\0";
+              // check-rules echoes a subset of its input, so the input size bounds its output.
+              const rules = yield* execute({
                 operation,
                 cwd: input.cwd,
                 args: [...indexConfig, "sparse-checkout", "check-rules", "-z"],
-                stdin: skippedPaths.join("\0") + "\0",
+                stdin,
                 env: commitEnv,
-                maxOutputBytes: 1,
-                outputMode: "truncate",
+                maxOutputBytes: Buffer.byteLength(stdin),
+                outputMode: "error",
               });
-              specialFlags = selected.stdout.length > 0 || selected.stdoutTruncated;
+              const selected = new Set(rules.stdout.split("\0"));
+              skipped.forEach((entry, index) => {
+                if (selected.has(paths[index]!)) flagged.push(entry);
+              });
             }
-            // Sparse Git clears skip-worktree for present files. Manual flags still need a reset.
-            return !specialFlags;
+            if (flagged.length > 0) {
+              // Flagged gitlinks keep the fresh-index behaviour rather than a guessed one.
+              if (flagged.some((entry) => entry.startsWith("160000 "))) return false;
+              yield* execute({
+                operation,
+                cwd: input.cwd,
+                // core.ignorestat would mark these assume-unchanged, hiding edits from add -A.
+                args: [
+                  ...indexConfig,
+                  "-c",
+                  "core.ignorestat=false",
+                  "update-index",
+                  "-z",
+                  "--index-info",
+                ],
+                stdin: flagged.join("\0") + "\0",
+                env: commitEnv,
+              });
+              yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
+            }
+            return true;
           }).pipe(Effect.orElseSucceed(() => false));
           if (!reusedIndex) {
             if (sparseCheckout) {
