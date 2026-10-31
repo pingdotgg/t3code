@@ -30,7 +30,7 @@ export default function VirtualTablePreview(props: {
   const widthRef = useRef(0);
   const measureRef = useRef<HTMLTableElement>(null);
   const [measured, setMeasured] = useState<number[] | null>(null);
-  const sampleRows = props.getRows(0);
+  const sampleRows = props.getRows(0)?.slice(0, 20);
   const measuredRows = useRef(sampleRows);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure the viewport before paint and observe container resizes to invalidate column measurements.
   useLayoutEffect(() => {
@@ -50,7 +50,15 @@ export default function VirtualTablePreview(props: {
   }, []);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Read the browser's laid-out table column widths before displaying the virtual table.
   useLayoutEffect(() => {
-    if (measuredRows.current !== sampleRows) {
+    const previous = measuredRows.current;
+    if (
+      previous?.length !== sampleRows?.length ||
+      sampleRows?.some(
+        (row, index) =>
+          row.length !== previous?.[index]?.length ||
+          row.some((cell, column) => cell !== previous?.[index]?.[column]),
+      )
+    ) {
       measuredRows.current = sampleRows;
       setMeasured(null);
       return;
