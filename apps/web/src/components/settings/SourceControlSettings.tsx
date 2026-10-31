@@ -1,10 +1,10 @@
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { ChevronDownIcon, GitBranchIcon, RefreshCwIcon } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
@@ -697,6 +697,7 @@ function WorktreeEnvironmentGroup({
   const worktrees = visibleWorktrees(inventory.data, removals);
   const lastRefreshKey = useRef<string | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reconciles the inventory query with the server change stream while mounted
   useEffect(() => {
     const refreshKey = worktreeInventoryRefreshKey({
       listedRevision,
@@ -709,21 +710,17 @@ function WorktreeEnvironmentGroup({
     refreshInventory();
   }, [refreshInventory, inventoryPending, listedRevision, streamRevision]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes this mounted environment query when the section refresh control requests it
   useEffect(() => {
     if (refreshToken === 0) return;
     refreshInventory();
   }, [refreshInventory, refreshToken]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this mounted query activity with the shared refresh control
   useEffect(() => {
     onPendingChange(environmentId, inventoryPending);
+    return () => onPendingChange(environmentId, false);
   }, [environmentId, inventoryPending, onPendingChange]);
-
-  useEffect(
-    () => () => {
-      onPendingChange(environmentId, false);
-    },
-    [environmentId, onPendingChange],
-  );
 
   const handlePrune = (worktree: WorktreeInfo) => {
     if (!canPrune || !worktree.safeToPrune || pendingPath !== null) return;
@@ -828,16 +825,18 @@ export function WorktreeManagementSection() {
   const [pendingEnvironmentIds, setPendingEnvironmentIds] = useState<ReadonlySet<EnvironmentId>>(
     () => new Set(),
   );
-  const handlePendingChange = useCallback((environmentId: EnvironmentId, pending: boolean) => {
-    setPendingEnvironmentIds((current) => {
-      const alreadyPending = current.has(environmentId);
-      if (alreadyPending === pending) return current;
-      const next = new Set(current);
-      if (pending) next.add(environmentId);
-      else next.delete(environmentId);
-      return next;
-    });
-  }, []);
+  const handlePendingChange = useStableCallback(
+    (environmentId: EnvironmentId, pending: boolean) => {
+      setPendingEnvironmentIds((current) => {
+        const alreadyPending = current.has(environmentId);
+        if (alreadyPending === pending) return current;
+        const next = new Set(current);
+        if (pending) next.add(environmentId);
+        else next.delete(environmentId);
+        return next;
+      });
+    },
+  );
   const isPending = pendingEnvironmentIds.size > 0;
   const targets: WorktreeEnvironmentTarget[] = environments
     .filter(

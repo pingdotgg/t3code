@@ -612,13 +612,7 @@ const make = Effect.gen(function* () {
     if (!setup.async) yield* permitStartup;
   });
 
-  /**
-   * Waits until project setup in a recreated worktree lets the agent start.
-   * Concurrent turn starts share one run per worktree generation. The run is
-   * forked into the service scope because a cancelled turn start must not
-   * stop observing the script, or the next turn would wait on it forever. A
-   * failed run is forgotten so the next turn tries setup again.
-   */
+  // Service-scoped setup survives a cancelled startup; failed setup is retried on the next turn.
   const ensureSetup = Effect.fn("WorktreeRevivalService.ensureSetup")(function* (
     input: WorktreeRevivalForThreadInput,
     worktreePath: string,
@@ -673,14 +667,7 @@ const make = Effect.gen(function* () {
     yield* Deferred.await(outcome);
   });
 
-  /**
-   * The existence check and the recreation both run under the checkout's
-   * workspace lease, the one a removal holds for its final checks. A turn that
-   * finds a removal in progress waits for it and then recreates the checkout
-   * from its branch. An existing directory is used as is. Setup for a
-   * recreated worktree runs outside the lease: a slow script must not hold it,
-   * and the script's own terminal takes the same lease to start.
-   */
+  // Setup runs outside the revival lease because its terminal acquires the same lease.
   const reviveForThread: WorktreeRevivalService["Service"]["reviveForThread"] = Effect.fn(
     "WorktreeRevivalService.reviveForThread",
   )(function* (input) {

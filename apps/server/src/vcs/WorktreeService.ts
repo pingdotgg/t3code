@@ -73,6 +73,10 @@ const SKIP_REASON_MESSAGE: Record<WorktreePruneSkipReason, string> = {
 };
 
 /** A removal request that left the worktree in place, with the reason. */
+const decodeProviderSession = Schema.decodeEffect(
+  Schema.fromJsonString(OrchestrationV2ProviderSessionJson),
+);
+
 export class WorktreeRemovalSkippedError extends Schema.TaggedError<WorktreeRemovalSkippedError>()(
   "WorktreeRemovalSkippedError",
   {
@@ -446,14 +450,7 @@ const make = Effect.gen(function* () {
     return Number.isInteger(count) && count >= 0 ? count : null;
   });
 
-  /**
-   * Git's own reason to refuse an unforced `worktree remove`: this checkout's
-   * Git directory keeps submodule repositories, as `submodule update` and
-   * `deinit` leave them, or a submodule path at `commit` is checked out.
-   * Forcing it could delete their unpublished commits. A staged submodule
-   * change already shows as a changed file, so the commit's gitlinks suffice.
-   * null when the listing is incomplete.
-   */
+  // Retained submodule repositories can contain unpublished commits, so unforced removal must refuse them.
   const readHasSubmodules = Effect.fn("WorktreeService.readHasSubmodules")(function* (
     worktreePath: string,
     commit: string,
@@ -544,11 +541,7 @@ const make = Effect.gen(function* () {
   `.pipe(
     NodeSqliteClient.readOnly,
     Effect.flatMap((rows) =>
-      Effect.forEach(rows, (row) =>
-        Schema.decodeEffect(Schema.fromJsonString(OrchestrationV2ProviderSessionJson))(
-          row.payload_json,
-        ),
-      ),
+      Effect.forEach(rows, (row) => decodeProviderSession(row.payload_json)),
     ),
     Effect.flatMap((sessions) =>
       Effect.filter(sessions, (session) => providerSessions.isLive(session.id)),
@@ -823,14 +816,7 @@ const make = Effect.gen(function* () {
     ...(detail === undefined ? {} : { detail }),
   });
 
-  /**
-   * Runs under the checkout's lease. Git state is read first, then threads,
-   * sessions and terminals in one fresh read, then the policy recheck. The
-   * checkout is inspected once more and the removal follows at once.
-   * A turn that committed before the usage read is seen here.
-   * One that commits after it waits on this lease in revival and recreates
-   * the checkout from its branch.
-   */
+  // Hold the checkout lease across fresh usage, policy and Git checks through removal.
   const removeUnderLease = Effect.fn("WorktreeService.removeUnderLease")(function* (
     input: WorktreeRemovalInput,
     worktreePath: string,
@@ -904,11 +890,7 @@ const make = Effect.gen(function* () {
       return skipped("ignored_files", inspection?.ignoredFiles[0]);
     }
     if (input.intent === "policy" && !(yield* input.recheck)) return skipped("policy_changed");
-    // Every check above judged the first inspection, and the reads since then
-    // took time. Another process may have switched the checkout, committed,
-    // or written an ignored file meanwhile, and Git would delete that file
-    // without complaint. So the checkout is inspected once more as the last
-    // thing read before removal, and anything unreadable keeps it.
+    // Recheck Git last: a concurrent checkout, commit or ignored-file write must keep the directory.
     if (inspection !== null) {
       const latest = yield* inspect(worktreePath);
       if (latest === null) return skipped("status_unavailable");

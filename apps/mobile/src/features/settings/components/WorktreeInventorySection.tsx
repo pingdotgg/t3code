@@ -132,6 +132,7 @@ export function WorktreeInventorySection(props: {
   const lastRefreshKey = useRef<string | null>(null);
   const groups = groupWorktreesByProject(visibleWorktrees(inventory.data, removals));
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reconciles the inventory query with the server change stream while mounted
   useEffect(() => {
     const refreshKey = worktreeInventoryRefreshKey({
       listedRevision,

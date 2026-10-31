@@ -1,10 +1,10 @@
-import { platform } from "node:process";
+import * as NodeProcess from "node:process";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Semaphore from "effect/Semaphore";
 
-const leaseKey = (cwd: string) => (platform === "win32" ? cwd.toLowerCase() : cwd);
+const leaseKey = (cwd: string) => (NodeProcess.platform === "win32" ? cwd.toLowerCase() : cwd);
 
 const leases = new Map<string, { semaphore: Semaphore.Semaphore; users: number }>();
 

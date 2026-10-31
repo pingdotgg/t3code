@@ -10,7 +10,6 @@ import {
   CheckpointScopeId,
   ContextHandoffId,
   ContextTransferId,
-  GitCommandError,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -35,18 +34,13 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
-import * as ServerConfig from "../config.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
-import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import * as WorktreeRevivalServiceTestkit from "../vcs/WorktreeRevivalService.testkit.ts";
 import * as WorktreeRevivalService from "../vcs/WorktreeRevivalService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
-import * as ServerSettings from "../serverSettings.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { withInlineContext } from "./ContextHandoffDelivery.ts";
 import * as EventSink from "./EventSink.ts";

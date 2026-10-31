@@ -557,9 +557,6 @@ const layerWorktreeManagement = WorktreeService.layer.pipe(
   Layer.provideMerge(WorktreeLifecycle.layer),
 );
 
-// Automatic thread settlement (#8600): a server-owned sweep evaluates
-// inactivity and merged pull requests, then settles through the orchestrator
-// so every client sees the same shelf.
 const layerThreadSettlementWorker = Layer.effectDiscard(
   ThreadSettlementService.make.pipe(Effect.flatMap((service) => service.start())),
 ).pipe(Layer.provide(layerPullRequestService), Layer.provide(ProjectionStoreV2.layer));

@@ -24,18 +24,7 @@ export const WorktreeProjectRef = Schema.Struct({
 });
 export type WorktreeProjectRef = typeof WorktreeProjectRef.Type;
 
-/**
- * Reasons the inventory will not remove a managed worktree by hand. `running`,
- * `session`, `terminal` and `status_unavailable` also stop configured
- * Storage cleanup. Its local-file policy determines whether untracked and
- * ignored files keep a checkout; tracked edits always do. `submodules` stops
- * both: Git refuses an unforced removal of a checkout with initialized
- * submodules, and forcing it could lose their unpublished commits.
- * `open_thread`, a named branch's `unpushed` commits and
- * `unrestorable_thread` only stop manual removal, since cleanup keeps the branch.
- * `unrestorable_thread` is a linked thread that revival could not bring back:
- * the checkout is detached, or the thread recorded a different branch or none.
- */
+// Manual removal requires a restorable thread and no unpublished work; policy cleanup retains the branch.
 export const WorktreePruneBlocker = Schema.Literals([
   "running",
   "session",
@@ -90,13 +79,7 @@ export const WorktreeInfo = Schema.Struct({
 });
 export type WorktreeInfo = typeof WorktreeInfo.Type;
 
-/**
- * Why a removal request left a worktree in place. Beyond the inventory
- * blockers: `ignored_files` needs the caller's opt-in, `protected_path` is a
- * project root, main checkout or path outside the managed directory,
- * `changed` means HEAD or the branch moved during the check, and
- * `policy_changed` means a cleanup rule no longer applies.
- */
+// Ignored files need consent; protected paths and changed Git or policy state are never removed.
 export const WorktreePruneSkipReason = Schema.Literals([
   ...WorktreePruneBlocker.literals,
   "ignored_files",

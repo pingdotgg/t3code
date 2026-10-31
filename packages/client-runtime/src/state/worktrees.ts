@@ -39,17 +39,7 @@ export function createWorktreeEnvironmentAtoms<R, E>(
   };
 }
 
-/**
- * Decides whether the inventory list must be read again. The list carries the
- * revision it was read at and the change stream carries the latest one, so a
- * change that lands between the two requests, during a read, while the view
- * was closed, or across a server restart all show up as a difference.
- *
- * Returns the key of the read to start, which the caller stores and passes
- * back as `lastRefreshKey`, or null. One read per distinct pair of revisions
- * means a failing read cannot loop, and nothing is decided while a read is in
- * flight: its result may already carry the latest revision.
- */
+// Reconcile list and stream revisions once per pair so failed reads cannot loop.
 export function worktreeInventoryRefreshKey(input: {
   readonly listedRevision: number | undefined;
   readonly streamRevision: number | undefined;
