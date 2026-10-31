@@ -199,9 +199,14 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
     compareExactServiceVersions(installedVersion, packageJson.version) > 0;
   // Asked before anything changes, so a declined restart leaves service.env
   // matching what the running service read when it started.
+  // A stopped service of this version is not current, so reconcile starts it;
+  // a newer one is left alone and needs this restart to start.
+  const stopped = before.service.problems?.includes("service-stopped") === true;
   const restart =
-    before.service.installed && (before.service.current || newer) && needsRestart(current, routes);
-  if (restart && interactive) {
+    before.service.installed &&
+    (before.service.current || newer) &&
+    (needsRestart(current, routes) || stopped);
+  if (restart && interactive && !stopped) {
     const confirmed = yield* Prompt.run(
       Prompt.Confirm({
         message: "Restart T3 Code to apply this? Running agent turns stop.",
@@ -223,6 +228,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   if (!routes.connect && current.connect) {
     yield* disconnectCloud({ clearAuthorization: false });
   }
+  const previousLan = (yield* CliService.readServiceEnv(baseDir)).entries.T3CODE_LAN;
   yield* CliService.writeServiceEnv(baseDir, { T3CODE_LAN: String(routes.lan) });
   if (before.host !== undefined) {
     yield* Console.warn(
@@ -255,6 +261,10 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
           }),
         );
     if ("failed" in result) {
+      // An installed service may still run with the old value, so keep the file matching it.
+      if (before.service.installed) {
+        yield* CliService.writeServiceEnv(baseDir, { T3CODE_LAN: previousLan });
+      }
       yield* printServeCommand(`Background setup did not finish: ${result.failed}`);
     } else if (result.changed) {
       yield* Console.log(CliService.formatServiceChange(result));

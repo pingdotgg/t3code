@@ -64,7 +64,17 @@ const SERVICE = {
 it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => {
   afterEach(() => vi.restoreAllMocks());
 
-  it.effect.each([
+  it.effect.each<{
+    readonly label: string;
+    readonly installed: boolean;
+    readonly status?: Partial<BootService.BootServiceStatus>;
+    readonly installFails?: boolean;
+    readonly env: string;
+    readonly args: ReadonlyArray<string>;
+    readonly installs: number;
+    readonly restarts: number;
+    readonly envAfter: string;
+  }>([
     {
       label: "nothing changed",
       installed: true,
@@ -72,7 +82,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       args: ["--no-lan"],
       installs: 0,
       restarts: 0,
-      lan: "false",
+      envAfter: "T3CODE_LAN=false\n",
     },
     {
       label: "the local network opens",
@@ -81,7 +91,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       args: ["--lan"],
       installs: 0,
       restarts: 1,
-      lan: "true",
+      envAfter: "T3CODE_LAN=true\n",
     },
     {
       label: "a new service starts with its settings",
@@ -90,7 +100,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       args: ["--lan"],
       installs: 1,
       restarts: 0,
-      lan: "true",
+      envAfter: "T3CODE_LAN=true\n",
     },
     {
       label: "a route turns off with no service to run",
@@ -99,7 +109,28 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       args: ["--no-lan"],
       installs: 0,
       restarts: 0,
-      lan: "false",
+      envAfter: "T3CODE_LAN=false\n",
+    },
+    {
+      label: "a stopped newer service starts as it is",
+      installed: true,
+      status: { current: false, installedVersion: "999.0.0", problems: ["service-stopped"] },
+      env: "T3CODE_LAN=false\n",
+      args: ["--yes"],
+      installs: 0,
+      restarts: 1,
+      envAfter: "T3CODE_LAN=false\n",
+    },
+    {
+      label: "a failed update keeps service.env matching the old service",
+      installed: true,
+      status: { current: false },
+      installFails: true,
+      env: "",
+      args: ["--no-lan"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "",
     },
     {
       label: "the old default is kept",
@@ -108,7 +139,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       args: ["--yes"],
       installs: 0,
       restarts: 0,
-      lan: "true",
+      envAfter: "T3CODE_LAN=true\n",
     },
   ])("restarts the service only when it must: $label", (input) =>
     Effect.gen(function* () {
@@ -117,7 +148,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       yield* fs.writeFileString(`${baseDir}/service.env`, input.env);
       let installs = 0;
       let restarts = 0;
-      const status = { ...SERVICE, installed: input.installed, current: input.installed };
+      const status = {
+        ...SERVICE,
+        installed: input.installed,
+        current: input.installed,
+        ...input.status,
+      };
       vi.spyOn(BootService, "layer").mockReturnValue(
         Layer.succeed(
           BootService.BootService,
@@ -129,15 +165,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
               return "restarted" as const;
             }),
             install: () =>
-              Effect.sync(() => {
-                installs++;
-                return {
-                  program: ["t3"],
-                  baseDir,
-                  unitPath: status.unitPath,
-                  logPath: status.logPath,
-                };
-              }),
+              input.installFails === true
+                ? Effect.fail(
+                    new BootService.BootServicePrerequisiteError({ problem: "linger-disabled" }),
+                  )
+                : Effect.sync(() => {
+                    installs++;
+                    return {
+                      program: ["t3"],
+                      baseDir,
+                      unitPath: status.unitPath,
+                      logPath: status.logPath,
+                    };
+                  }),
             uninstall: Effect.succeed(false),
           }),
         ),
@@ -160,7 +200,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
         installs: input.installs,
         restarts: input.restarts,
       });
-      expect(yield* fs.readFileString(`${baseDir}/service.env`)).toBe(`T3CODE_LAN=${input.lan}\n`);
+      expect(yield* fs.readFileString(`${baseDir}/service.env`)).toBe(input.envAfter);
     }),
   );
 });
