@@ -1291,16 +1291,17 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
     return yield* result(input.runId);
   });
 
-  /** The wait never settles while these run, so a handoff has to wait for them to end. */
+  /** The driver's delegated-work wait on a step thread never settles while this work runs. */
   const requireNoBackgroundWork = Effect.fn("PipelineRunner.requireNoBackgroundWork")(function* (
     run: PipelineRun,
     threadId: ThreadId,
   ) {
     const records = yield* threads
-      .getProjectThreadRecords({ projectId: run.projectId, threadId }, [
-        "subagents",
-        "providerThreads",
-      ])
+      .getProjectThreadRecords(
+        { projectId: run.projectId, threadId },
+        ["subagents", "providerThreads"],
+        { omitSettledSubagents: true },
+      )
       .pipe(
         Effect.catchTags({
           ThreadManagementThreadNotFoundError: () => Effect.succeed(null),
@@ -1317,15 +1318,27 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
     );
     const tasks = records.providerThreads.flatMap((thread) => thread.pendingBackgroundTasks ?? []);
     if (subagents.length === 0 && tasks.length === 0) return;
-    const named = tasks
-      .map((task) => task.description ?? task.taskId)
-      .map((text) => (text.length > 80 ? `${text.slice(0, 80)}…` : text))
-      .slice(0, 3);
+    const clip = (text: string) => (text.length > 80 ? `${text.slice(0, 80)}…` : text);
+    const list = (labels: ReadonlyArray<string>) => ` (${labels.slice(0, 3).join("; ")})`;
     const parts = [
       ...(tasks.length === 0
         ? []
-        : [`${tasks.length} background task(s) still running (${named.join("; ")})`]),
-      ...(subagents.length === 0 ? [] : [`${subagents.length} subagent(s) still running`]),
+        : [
+            `${tasks.length} background task(s) still running` +
+              list(
+                tasks.map((task) =>
+                  task.description === undefined
+                    ? task.taskId
+                    : `${clip(task.description)} [${task.taskId}]`,
+                ),
+              ),
+          ]),
+      ...(subagents.length === 0
+        ? []
+        : [
+            `${subagents.length} subagent(s) still running` +
+              list(subagents.map((subagent) => clip(subagent.title ?? subagent.prompt))),
+          ]),
     ];
     return yield* pipelineError(
       `Stop or finish your background work before handing off: ${parts.join(", ")}`,
@@ -1356,18 +1369,21 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
         const now = yield* nowIso;
         const handedOff = { output: input.output, handedOff: true } as const;
         const current = step.index === run.currentStepIndex && step.status === "running";
-        const accepted =
-          (current &&
-            (run.status === "running" ||
-              (run.status === "paused" && run.pauseReason === "awaiting_handoff"))) ||
+        const resume = current && run.status === "paused" && run.pauseReason === "awaiting_handoff";
+        const record =
+          (current && run.status === "running") ||
           (step.status === "completed" &&
             run.status === "paused" &&
             run.pauseReason === "awaiting_continue" &&
             run.currentStepIndex === step.index + 1);
-        if (accepted) yield* requireNoBackgroundWork(run, input.threadId);
-        if (current && run.status === "running") {
-          yield* store.updateStep(run.id, step.index, handedOff);
-        } else if (current && run.status === "paused" && run.pauseReason === "awaiting_handoff") {
+        if (!resume && !record) {
+          return yield* pipelineError(
+            `Step ${step.index + 1} cannot hand off now: the run is ${run.status} at step ${run.currentStepIndex + 1}.`,
+            { runId: run.id },
+          );
+        }
+        yield* requireNoBackgroundWork(run, input.threadId);
+        if (resume) {
           yield* store.updateRunWithSteps(
             run.id,
             { updatedAt: now, status: "running", pauseReason: null, error: null },
@@ -1375,18 +1391,8 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
             [{ index: step.index, patch: { ...handedOff, revising: false } }],
           );
           yield* wake(run.id);
-        } else if (
-          step.status === "completed" &&
-          run.status === "paused" &&
-          run.pauseReason === "awaiting_continue" &&
-          run.currentStepIndex === step.index + 1
-        ) {
-          yield* store.updateStep(run.id, step.index, handedOff);
         } else {
-          return yield* pipelineError(
-            `Step ${step.index + 1} cannot hand off now: the run is ${run.status} at step ${run.currentStepIndex + 1}.`,
-            { runId: run.id },
-          );
+          yield* store.updateStep(run.id, step.index, handedOff);
         }
         yield* store.updateRun(run.id, { updatedAt: now });
         yield* notifyRunChanged(run.id);

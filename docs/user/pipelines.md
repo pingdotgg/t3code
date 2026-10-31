@@ -47,10 +47,11 @@ The starting prompt is text only. Attachments are not supported.
 ## Work with a run
 
 A step is done when its agent hands off its result and has finished, including any subagents it
-launched and any queued follow-ups. T3 Code adds a short instruction to every step's prompt: hand
-off with the `handoff_pipeline_step` tool when the work is done, and ask you when something it
-builds on is missing, such as an earlier step's work or the branch it stacks on. Open a step's
-thread to steer it like any other chat.
+launched and any queued follow-ups. An agent can't hand off while its subagents or background
+commands still run, so a step whose agent leaves a dev server running cannot finish. T3 Code adds
+a short instruction to every step's prompt: hand off with the `handoff_pipeline_step` tool when
+the work is done, and ask you when something it builds on is missing, such as an earlier step's
+work or the branch it stacks on. Open a step's thread to steer it like any other chat.
 
 If a step's agent ends its turn without handing off, for example with a question, the run pauses
 and the step shows **No handoff**. Answer in the step's thread; when the agent then hands off, the

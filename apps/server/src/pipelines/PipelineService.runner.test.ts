@@ -11,6 +11,7 @@ import {
   ThreadId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
+  type OrchestrationV2Subagent,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadShell,
   type PipelineRunId,
@@ -176,7 +177,10 @@ const makeHarness = Effect.gen(function* () {
     ThreadId,
     {
       backgroundTasks: ReadonlyArray<{ taskId: string; description?: string }>;
-      subagents: ReadonlyArray<{ status: string; completionDelivery?: string }>;
+      subagents: ReadonlyArray<
+        Pick<OrchestrationV2Subagent, "status"> &
+          Partial<Pick<OrchestrationV2Subagent, "title" | "completionDelivery">>
+      >;
     }
   >();
 
@@ -204,7 +208,11 @@ const makeHarness = Effect.gen(function* () {
       runs: [],
       messages,
       turnItems,
-      subagents: work?.subagents ?? [],
+      subagents: (work?.subagents ?? []).map((subagent) => ({
+        title: null,
+        prompt: "Look into it",
+        ...subagent,
+      })),
       providerThreads: [{ pendingBackgroundTasks: work?.backgroundTasks ?? [] }],
     };
   };
@@ -552,6 +560,15 @@ it.effect("pauseBefore pauses the run and Continue re-captures the feeding outpu
       assert.strictEqual(paused.pauseReason, "awaiting_continue");
       assert.strictEqual(paused.currentStepIndex, 1);
       assert.strictEqual(yield* Queue.size(harness.launches), 0);
+      harness.delegatedWork.set(first.threadId, {
+        backgroundTasks: [{ taskId: "bg-1" }],
+        subagents: [],
+      });
+      const refused = yield* Effect.flip(
+        service.handoffStep({ runId: run.id, threadId: first.threadId, output: "refined draft" }),
+      );
+      assert.include(refused.message, "1 background task(s) still running (bg-1)");
+      harness.delegatedWork.delete(first.threadId);
 
       // The user refines step 0 in its thread, then continues.
       harness.outputs.set(first.threadId, { reply: "refined draft" });
@@ -1213,6 +1230,16 @@ it.effect("a handoff after the pause resumes the run once the agent's turn ends"
       harness.outputs.set(first.threadId, { reply: "Which base should I use?" });
       yield* harness.settle(first.threadId, "completed");
       yield* awaitRun(service, run.id, (current) => current.pauseReason === "awaiting_handoff");
+      harness.delegatedWork.set(first.threadId, {
+        backgroundTasks: [],
+        subagents: [{ status: "running" }],
+      });
+      const refused = yield* Effect.flip(
+        service.handoffStep({ runId: run.id, threadId: first.threadId, output: "plan on main" }),
+      );
+      assert.include(refused.message, "1 subagent(s) still running");
+      assert.strictEqual((yield* service.getRun(run.id)).pauseReason, "awaiting_handoff");
+      harness.delegatedWork.delete(first.threadId);
 
       // The user answered in the thread; the agent finishes and hands off in its next turn.
       const resumed = yield* service.handoffStep({
@@ -1236,7 +1263,13 @@ it.effect("a handoff is refused while the step's thread has background work", ()
       harness.behavior.autoHandoff = false;
       const { run } = yield* service.start(startInput("cmd-handoff-background"));
       const first = yield* Queue.take(harness.launches);
-      const before = yield* service.getRun(run.id);
+      const before = yield* awaitRun(
+        service,
+        run.id,
+        (current) => current.steps[0]?.childThreadId === first.threadId,
+      );
+      // An accepted handoff would stamp a later updatedAt.
+      yield* TestClock.adjust("1 second");
 
       const refuse = Effect.fn(function* (work: Parameters<typeof harness.delegatedWork.set>[1]) {
         harness.delegatedWork.set(first.threadId, work);
@@ -1256,14 +1289,19 @@ it.effect("a handoff is refused while the step's thread has background work", ()
         backgroundTasks: [{ taskId: "bg-1", description: "pnpm run test" }],
         subagents: [],
       });
-      assert.include(task.message, "1 background task(s) still running (pnpm run test)");
-      const subagent = yield* refuse({ backgroundTasks: [], subagents: [{ status: "running" }] });
-      assert.include(subagent.message, "1 subagent(s) still running");
+      assert.include(task.message, "1 background task(s) still running (pnpm run test [bg-1])");
+      const subagent = yield* refuse({
+        backgroundTasks: [],
+        subagents: [{ status: "running", title: "Explore the API" }],
+      });
+      assert.include(subagent.message, "1 subagent(s) still running (Explore the API)");
 
       // A finished subagent whose result delivery is still settling does not block.
       harness.delegatedWork.set(first.threadId, {
         backgroundTasks: [],
-        subagents: [{ status: "completed", completionDelivery: "pending" }],
+        subagents: [
+          { status: "completed", completionDelivery: { state: "pending", observedByRunId: null } },
+        ],
       });
       yield* service.handoffStep({ runId: run.id, threadId: first.threadId, output: "the plan" });
       yield* harness.settle(first.threadId, "completed");
