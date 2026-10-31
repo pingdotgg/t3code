@@ -34,7 +34,9 @@ function ToggleGroup({
         orientation === "horizontal"
           ? "*:pointer-coarse:after:min-w-auto"
           : "*:pointer-coarse:after:min-h-auto",
-        variant === "segmented-flat"
+        size === "segmented-wide"
+          ? "surface-well h-8 gap-0.5 rounded-[10px] p-[3px]"
+          : variant === "segmented-flat"
           ? "surface-well gap-0.5 rounded-control p-px"
           : variant === "segmented"
             ? "surface-well gap-0.5 rounded-[9px] p-px"

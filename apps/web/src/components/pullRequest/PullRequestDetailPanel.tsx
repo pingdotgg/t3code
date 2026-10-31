@@ -1480,13 +1480,13 @@ export function PullRequestDetailPanel({
 
         {detail ? (
           <nav
-            className="col-span-2 flex min-h-12 min-w-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2"
+            className="col-span-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 pt-1.5 pb-3"
             aria-label={`${capitalizeTerm(terminology.singular)} tabs`}
           >
             <ToggleGroup
-              className="shrink-0"
-              size="segmented"
-              variant="default"
+              className="w-full"
+              size="segmented-wide"
+              variant="segmented"
               value={[tab]}
               onValueChange={(next) => {
                 const nextTab = visibleTabs.find((item) => item.value === next[0])?.value;
@@ -1497,6 +1497,7 @@ export function PullRequestDetailPanel({
                 <Toggle
                   key={item.value}
                   value={item.value}
+                  className="flex-1"
                   onPointerEnter={item.value === "code" ? () => void loadCodeTab() : undefined}
                   onFocus={item.value === "code" ? () => void loadCodeTab() : undefined}
                 >
