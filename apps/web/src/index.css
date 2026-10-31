@@ -1179,6 +1179,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --sidebar-stage-fade: var(--sidebar);
   --code-background: color-mix(in srgb, var(--card) 90%, var(--background));
   --code-foreground: var(--foreground);
+  --inline-code-foreground: var(--foreground);
   --terminal-background: var(--background);
   --terminal-foreground: var(--foreground);
   --terminal-cursor: rgb(38 56 78);
@@ -1382,6 +1383,7 @@ html[data-theme-id]:not([data-theme-id=""]) {
   --sidebar-stage-fade: var(--app-theme-sidebar);
   --code-background: var(--app-theme-code-background);
   --code-foreground: var(--app-theme-code-foreground);
+  --inline-code-foreground: var(--app-theme-inline-code-foreground);
   --terminal-background: var(--app-theme-terminal-background);
   --terminal-foreground: var(--app-theme-terminal-foreground);
   --terminal-cursor: var(--app-theme-terminal-cursor);
@@ -1543,6 +1545,17 @@ html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblo
    secondary tokens are substantially darker than those visible pixels. */
 html[data-theme-id="t3-chat"] {
   @variant light {
+    /* Inline code sits on the message surface here, so contrast it against that. */
+    --contrast-inline-code-foreground: color-mix(
+      in oklab,
+      color-mix(
+        in oklab,
+        var(--inline-code-foreground) var(--appearance-contrast-base),
+        var(--message-surface)
+      ),
+      var(--appearance-contrast-target) var(--appearance-contrast-boost)
+    );
+
     & .chat-markdown :not(pre) > code,
     & [data-changed-files-state],
     & [data-changed-files-header] {
@@ -1552,10 +1565,6 @@ html[data-theme-id="t3-chat"] {
     & .chat-markdown :not(pre) > code,
     & [data-changed-files-state] {
       border-color: transparent;
-    }
-
-    & .chat-markdown :not(pre) > code {
-      color: var(--contrast-message-foreground);
     }
   }
 }
@@ -1634,6 +1643,15 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
   --contrast-foreground: color-mix(
     in oklab,
     color-mix(in oklab, var(--foreground) var(--appearance-contrast-base), var(--background)),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
+  --contrast-inline-code-foreground: color-mix(
+    in oklab,
+    color-mix(
+      in oklab,
+      var(--inline-code-foreground) var(--appearance-contrast-base),
+      var(--background)
+    ),
     var(--appearance-contrast-target) var(--appearance-contrast-boost)
   );
   --contrast-muted-foreground: color-mix(
@@ -2131,7 +2149,7 @@ code {
   -webkit-box-decoration-break: clone;
   background: color-mix(in srgb, var(--contrast-foreground) 10%, transparent);
   padding: 0.1em 0.35em;
-  color: var(--contrast-foreground);
+  color: var(--contrast-inline-code-foreground);
   font-size: 0.85em;
 }
 

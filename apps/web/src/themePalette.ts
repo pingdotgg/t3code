@@ -142,9 +142,22 @@ function lenientThemeColorOverrides(
   return overrides;
 }
 
+// Inline code follows the theme's text unless the theme sets its own color, so
+// themes saved before that role existed keep their look.
+export function withThemeColorOverrides(
+  base: ThemeColors,
+  overrides: Partial<Record<ThemeColorRole, string>>,
+): ThemeColors {
+  const colors = { ...base, ...overrides };
+  return { ...colors, inlineCodeForeground: overrides.inlineCodeForeground ?? colors.text };
+}
+
 function parseStoredThemeColors(value: unknown, appearance: ThemeAppearance): ThemeColors | null {
   if (!isRecord(value)) return null;
-  return { ...getDefaultThemeColors(appearance), ...lenientThemeColorOverrides(value) };
+  return withThemeColorOverrides(
+    getDefaultThemeColors(appearance),
+    lenientThemeColorOverrides(value),
+  );
 }
 
 function parseStoredThemeVariants(
@@ -257,7 +270,7 @@ function publishedThemeColors(
     appearance === theme.appearance && theme.canvas !== undefined && theme.accent !== undefined
       ? createVividThemeColors(appearance, theme.canvas, theme.accent)
       : getDefaultThemeColors(appearance);
-  return { ...base, ...lenientThemeColorOverrides(colors ?? {}) };
+  return withThemeColorOverrides(base, lenientThemeColorOverrides(colors ?? {}));
 }
 
 function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefinition {
@@ -890,6 +903,7 @@ export function createVividThemeColors(
     messageActionHover: themeColor(actionHover),
     codeBackground: themeColor(codeBackground),
     codeForeground: themeRgbToThemeColor(textRgb),
+    inlineCodeForeground: themeRgbToThemeColor(textRgb),
     searchMatchBackground: themeRgbToThemeColor(searchMatch),
     searchMatchForeground: themeRgbToThemeColor(readableThemeForeground(searchMatch)),
     searchMatchActiveBackground: themeRgbToThemeColor(searchMatchActive),
@@ -1030,6 +1044,8 @@ export function updateThemeColorFamily(
         text: normalized,
         toolbarForeground: normalized,
         toolbarControlForeground: normalized,
+        inlineCodeForeground:
+          colors.inlineCodeForeground === colors.text ? normalized : colors.inlineCodeForeground,
       };
     case "mutedForeground":
       return {
@@ -1490,10 +1506,10 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
         throw new Error(`Theme variants must not repeat the base appearance "${appearance}".`);
       }
       const variantFallback = getDefaultThemeColors(variantAppearance);
-      variants[variantAppearance] = {
-        ...variantFallback,
-        ...parseThemeColorOverrides(variantColors),
-      };
+      variants[variantAppearance] = withThemeColorOverrides(
+        variantFallback,
+        parseThemeColorOverrides(variantColors),
+      );
     }
   }
 
@@ -1501,7 +1517,7 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
     id,
     label: name.trim(),
     appearance,
-    colors: { ...fallback, ...overrides },
+    colors: withThemeColorOverrides(fallback, overrides),
     ...(Object.keys(variants).length > 0 ? { variants } : {}),
     ...(collection ? { collection } : {}),
     ...(value.managed === true ? { managed: true } : {}),
@@ -1567,6 +1583,7 @@ const APP_THEME_VARIABLES: Readonly<Record<ThemeColorRole, string>> = {
   messageActionHover: "--app-theme-message-action-hover",
   codeBackground: "--app-theme-code-background",
   codeForeground: "--app-theme-code-foreground",
+  inlineCodeForeground: "--app-theme-inline-code-foreground",
   searchMatchBackground: "--app-theme-search-match-background",
   searchMatchForeground: "--app-theme-search-match-foreground",
   searchMatchActiveBackground: "--app-theme-search-match-active-background",

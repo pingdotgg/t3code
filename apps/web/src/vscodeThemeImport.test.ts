@@ -89,6 +89,17 @@ describe("VS Code theme import", () => {
     expect(asHex(theme.colors.terminalBackground)).toBe("#101010");
   });
 
+  it("takes inline code from textPreformat.foreground when it reads on the canvas", () => {
+    const withColor = (textPreformat: string) =>
+      parseVsCodeThemeFile({
+        ...VSCODE_DARK,
+        colors: { ...VSCODE_DARK.colors, "textPreformat.foreground": textPreformat },
+      }).colors;
+    expect(asHex(withColor("#e09956").inlineCodeForeground)).toBe("#e09956");
+    expect(asHex(withColor("#202020").inlineCodeForeground)).toBe("#d4d4d4");
+    expect(asHex(parseVsCodeThemeFile(VSCODE_DARK).colors.inlineCodeForeground)).toBe("#d4d4d4");
+  });
+
   it("keeps a fallback placeholder dimmer than entered text", () => {
     const theme = parseVsCodeThemeFile({
       name: "Dark placeholder fallback",
