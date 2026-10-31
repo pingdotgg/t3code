@@ -63,17 +63,8 @@ function sameEntries(
   );
 }
 
-/**
- * Live thread statuses per environment for the web and mobile renderers.
- * Nothing subscribes until a renderer reads an atom, and only against servers
- * that advertise the capability. Each server frame is a full replacement, so a
- * reconnect's first frame drops statuses that ended while disconnected.
- *
- * `threadStatus` keeps each entry's source: renderers key an entry by
- * `contributionStatusSourceKey(entry.source)` and an item by that plus its
- * key, so a provider session taking over a thread re-keys its rows even when
- * the text is unchanged.
- */
+// Subscribe on demand only to capable servers; reconnect snapshots retire old statuses.
+// Keep source identity so a replacement provider session re-keys even identical status text.
 export function createContributionStatusEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
   options: {

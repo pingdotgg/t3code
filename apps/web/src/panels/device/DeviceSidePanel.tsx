@@ -27,7 +27,11 @@ import {
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DeviceLoadingView } from "~/components/device/DeviceLoadingView";
-import { DeviceSetup, deviceHubReadiness, isAndroidDiscoveryUncertain } from "~/components/device/DeviceSetup";
+import {
+  DeviceSetup,
+  deviceHubReadiness,
+  isAndroidDiscoveryUncertain,
+} from "~/components/device/DeviceSetup";
 import { DeviceWorkspace } from "~/components/device/DeviceWorkspace";
 import { PreviewPanelShell } from "~/components/preview/PreviewPanelShell";
 
@@ -62,9 +66,7 @@ export default function DeviceSidePanel(props: {
   const hostDisabled = state.hostStatus === "disabled";
 
   useAtomMount(
-    visible && loaded && !hostDisabled
-      ? deviceHostProbeAtom(environmentId)
-      : NO_DEVICE_PROBE_ATOM,
+    visible && loaded && !hostDisabled ? deviceHostProbeAtom(environmentId) : NO_DEVICE_PROBE_ATOM,
   );
 
   const sessions = state.sessions.filter((session) => session.threadId === threadId);
