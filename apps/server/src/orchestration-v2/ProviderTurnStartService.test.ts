@@ -788,7 +788,7 @@ function makeLocalCommandHarness(input: {
 }
 
 effectIt.effect(
-  "recovers the thread branch tip, falls back to the current project branch, and rejects detached HEAD",
+  "recovers the local or pushed thread tip, else the current branch, remote default, or detached HEAD",
   () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -797,6 +797,7 @@ effectIt.effect(
       const driver = yield* GitVcsDriver.GitVcsDriver;
       const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-recreate-repo-" });
       const workspaceRoot = path.join(root, "project");
+      const originRoot = path.join(root, "origin.git");
       const worktreesDir = path.join(root, "worktrees");
       const worktreePath = path.join(worktreesDir, "project", "restore");
       yield* fileSystem.makeDirectory(workspaceRoot);
@@ -804,10 +805,19 @@ effectIt.effect(
         driver
           .execute({ operation: "test.worktreeRecovery", cwd, args })
           .pipe(Effect.map((result) => result.stdout.trim()));
+      const branchConfig = (key: string) =>
+        git(workspaceRoot, ["config", "--get", `branch.feature/restore.${key}`]).pipe(
+          Effect.orElseSucceed(() => ""),
+        );
+      yield* git(root, ["init", "--bare", "-b", "main", originRoot]);
       yield* git(workspaceRoot, ["init", "-b", "main"]);
       yield* git(workspaceRoot, ["config", "user.name", "Test"]);
       yield* git(workspaceRoot, ["config", "user.email", "test@example.com"]);
       yield* git(workspaceRoot, ["commit", "--allow-empty", "-m", "base"]);
+      const baseTip = yield* git(workspaceRoot, ["rev-parse", "HEAD"]);
+      yield* git(workspaceRoot, ["remote", "add", "origin", originRoot]);
+      yield* git(workspaceRoot, ["push", "origin", "main"]);
+      yield* git(workspaceRoot, ["remote", "set-head", "origin", "main"]);
       yield* git(workspaceRoot, ["worktree", "add", "-b", "feature/restore", worktreePath]);
       yield* fileSystem.writeFileString(path.join(worktreePath, "thread.txt"), "thread work");
       yield* git(worktreePath, ["add", "."]);
@@ -825,17 +835,47 @@ effectIt.effect(
       // Tags must neither hide the thread branch nor select a different recovery tip.
       yield* git(workspaceRoot, ["tag", "feature/restore", projectTip]);
       yield* git(workspaceRoot, ["tag", "project-current", threadTip]);
+      yield* git(workspaceRoot, ["tag", "origin/feature/restore", threadTip]);
 
+      const expectedTips = {
+        retained: { tip: threadTip, file: "thread.txt", upstream: null, base: "" },
+        deleted: { tip: projectTip, file: "project.txt", upstream: null, base: "project-current" },
+        pushed: {
+          tip: threadTip,
+          file: "thread.txt",
+          upstream: "refs/remotes/origin/feature/restore",
+          base: "",
+        },
+        "pushed-detached": {
+          tip: threadTip,
+          file: "thread.txt",
+          upstream: "refs/remotes/origin/feature/restore",
+          base: "",
+        },
+        detached: { tip: baseTip, file: null, upstream: null, base: "main" },
+        "detached-no-remote": { tip: projectTip, file: "project.txt", upstream: null, base: "" },
+      } as const;
       // Reuse the workflow across turns so recovery cannot select a cached project branch.
-      for (const scenario of ["retained", "deleted", "detached"] as const) {
+      for (const scenario of Object.keys(expectedTips) as Array<keyof typeof expectedTips>) {
+        const expected = expectedTips[scenario];
+        if (scenario === "pushed") {
+          yield* git(workspaceRoot, ["push", "origin", `${threadTip}:refs/heads/feature/restore`]);
+          yield* git(workspaceRoot, ["fetch", "origin"]);
+        }
+        if (scenario === "pushed-detached") {
+          yield* git(workspaceRoot, ["switch", "--detach"]);
+          expect(yield* git(workspaceRoot, ["branch", "--show-current"])).toBe("");
+        }
+        if (scenario === "detached") {
+          yield* git(workspaceRoot, ["push", "origin", "--delete", "feature/restore"]);
+        }
+        if (scenario === "detached-no-remote") {
+          yield* git(workspaceRoot, ["remote", "remove", "origin"]);
+        }
         yield* fileSystem.remove(worktreePath, { recursive: true });
         if (scenario !== "retained") {
           yield* git(workspaceRoot, ["worktree", "prune"]);
           yield* git(workspaceRoot, ["branch", "-D", "feature/restore"]);
-        }
-        if (scenario === "detached") {
-          yield* git(workspaceRoot, ["switch", "--detach"]);
-          expect(yield* git(workspaceRoot, ["branch", "--show-current"])).toBe("");
         }
         const harness = makeLocalCommandHarness({
           text: "Continue",
@@ -850,38 +890,34 @@ effectIt.effect(
         harness.open.mockImplementation(() =>
           Effect.gen(function* () {
             expect(yield* git(worktreePath, ["branch", "--show-current"])).toBe("feature/restore");
-            expect(yield* git(worktreePath, ["rev-parse", "HEAD"])).toBe(
-              scenario === "retained" ? threadTip : projectTip,
+            expect(yield* git(worktreePath, ["rev-parse", "HEAD"])).toBe(expected.tip);
+            for (const file of ["thread.txt", "project.txt"]) {
+              expect(yield* fileSystem.exists(path.join(worktreePath, file))).toBe(
+                file === expected.file,
+              );
+            }
+            expect(yield* branchConfig("merge")).toBe(
+              expected.upstream === null ? "" : "refs/heads/feature/restore",
             );
-            expect(
-              yield* fileSystem.readFileString(
-                path.join(worktreePath, scenario === "retained" ? "thread.txt" : "project.txt"),
-              ),
-            ).toBe(scenario === "retained" ? "thread work" : "new project code");
+            if (expected.upstream !== null) {
+              expect(
+                yield* git(worktreePath, ["rev-parse", "--symbolic-full-name", "@{upstream}"]),
+              ).toBe(expected.upstream);
+            }
+            expect(yield* branchConfig("t3-merge-base")).toBe(expected.base);
             return yield* open();
           }).pipe(Effect.orDie),
         );
 
         yield* harness.start;
 
-        if (scenario === "detached") {
-          expect(harness.open).not.toHaveBeenCalled();
-          expect(harness.startRootRun).not.toHaveBeenCalled();
-          expect(harness.projection().runs.at(-1)?.status).toBe("failed");
-          expect(harness.projection().turnItems).toMatchObject([
-            { type: "error", failure: { message: expect.stringContaining("no current branch") } },
-          ]);
-          expect(yield* fileSystem.exists(worktreePath)).toBe(false);
-          expect(yield* git(workspaceRoot, ["branch", "--list", "feature/restore"])).toBe("");
-        } else {
-          expect(harness.open).toHaveBeenCalledOnce();
-          expect(harness.startRootRun).toHaveBeenCalledWith(
-            expect.objectContaining({
-              runtimePolicy: expect.objectContaining({ cwd: worktreePath }),
-            }),
-          );
-          expect(harness.projection().runs.at(-1)?.status).toBe("running");
-        }
+        expect(harness.open).toHaveBeenCalledOnce();
+        expect(harness.startRootRun).toHaveBeenCalledWith(
+          expect.objectContaining({
+            runtimePolicy: expect.objectContaining({ cwd: worktreePath }),
+          }),
+        );
+        expect(harness.projection().runs.at(-1)?.status).toBe("running");
       }
     }).pipe(Effect.scoped, Effect.provide(layerRealGit)),
 );
