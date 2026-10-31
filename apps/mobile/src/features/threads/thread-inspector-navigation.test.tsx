@@ -1,4 +1,6 @@
+import * as NodePath from "node:path";
 import * as NodeModule from "node:module";
+import * as React from "react";
 import { act, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
@@ -166,4 +168,121 @@ it("keeps the parent when the maximized child's Agents sheet opens another child
   const originalState = screen.state;
   expect(screen.open({ type: "thread", ...child, threadId: "grandchild" }, child)).toBe(false);
   expect(screen.state).toEqual(originalState);
+});
+
+it("keeps a focused inspector registered across renders and updates its content", () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const requireMobile = NodeModule.createRequire(import.meta.url);
+  const listeners = { focus: new Set<() => void>(), blur: new Set<() => void>() };
+  let focused = true;
+  let activeRender: (() => React.ReactNode) | undefined;
+  const deactivate = vi.fn(() => {
+    activeRender = undefined;
+  });
+  const registerWorkspaceInspector = vi.fn((render: () => React.ReactNode) => {
+    activeRender = render;
+    return deactivate;
+  });
+  const navigation = {
+    isFocused: () => focused,
+    addListener(event: "focus" | "blur", listener: () => void) {
+      listeners[event].add(listener);
+      return () => {
+        listeners[event].delete(listener);
+      };
+    },
+  };
+  const navigationContext = React.createContext(navigation);
+  const routeContext = React.createContext({ key: "file" });
+  const babel = requireMobile("@babel/core") as {
+    transformFileSync(file: string, options: Record<string, unknown>): { code: string };
+  };
+  const compiled = babel.transformFileSync(
+    NodePath.resolve(__dirname, "../layout/AdaptiveWorkspaceLayout.tsx"),
+    {
+      babelrc: false,
+      configFile: false,
+      presets: [
+        [
+          requireMobile.resolve("babel-preset-expo"),
+          { unstable_transformImportMeta: true, enableBabelRuntime: false },
+        ],
+      ],
+      caller: {
+        name: "metro",
+        bundler: "metro",
+        platform: "ios",
+        isDev: false,
+        isServer: false,
+        isNodeModule: false,
+        supportsStaticESM: false,
+        supportsReactCompiler: true,
+      },
+    },
+  );
+  const exports: {
+    useRegisterWorkspaceInspector?: (render: (() => React.ReactNode) | undefined) => void;
+  } = {};
+  const load = (name: string) => {
+    if (name === "react" || name.startsWith("react/")) return requireMobile(name);
+    if (name === "./adaptive-workspace-context")
+      return {
+        useAdaptiveWorkspaceLayout: () => ({ registerWorkspaceInspector }),
+      };
+    if (name === "@react-navigation/native")
+      return {
+        NavigationContext: navigationContext,
+        NavigationRouteContext: routeContext,
+        useFocusEffect: (callback: () => (() => void) | undefined) =>
+          React.useEffect(callback, [callback]),
+      };
+    return {};
+  };
+  new Function("require", "exports", compiled.code)(load, exports);
+  const useRegisterWorkspaceInspector = exports.useRegisterWorkspaceInspector!;
+  function Screen({ render }: { render: (() => React.ReactNode) | undefined }) {
+    useRegisterWorkspaceInspector(render);
+    return null;
+  }
+  const root = createRoot(document.createElement("div"));
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+  const render = (content: (() => React.ReactNode) | undefined) =>
+    act(() => root.render(<Screen render={content} />));
+  const first = () => "first";
+  render(first);
+  registerWorkspaceInspector.mockClear();
+  deactivate.mockClear();
+  render(first);
+  render(first);
+  expect(registerWorkspaceInspector).not.toHaveBeenCalled();
+  expect(deactivate).not.toHaveBeenCalled();
+  const second = () => "second";
+  render(second);
+  expect(registerWorkspaceInspector).toHaveBeenCalledTimes(1);
+  const paneContainer = document.createElement("div");
+  const paneRoot = createRoot(paneContainer);
+  using _pane = { [Symbol.dispose]: () => act(() => paneRoot.unmount()) };
+  act(() => paneRoot.render(activeRender?.()));
+  expect(paneContainer.textContent).toBe("second");
+  const emit = (event: "focus" | "blur") =>
+    act(() => {
+      focused = event === "focus";
+      for (const listener of listeners[event]) listener();
+    });
+  emit("blur");
+  expect(deactivate).toHaveBeenCalledTimes(1);
+  registerWorkspaceInspector.mockClear();
+  render(first);
+  expect(registerWorkspaceInspector).not.toHaveBeenCalled();
+  emit("focus");
+  expect(registerWorkspaceInspector).toHaveBeenCalledTimes(1);
+  emit("focus");
+  expect(registerWorkspaceInspector).toHaveBeenCalledTimes(1);
+  render(undefined);
+  expect(activeRender).toBeUndefined();
+  render(second);
+  expect(activeRender).toBeDefined();
+  act(() => root.unmount());
+  expect(activeRender).toBeUndefined();
+  expect(listeners.focus.size + listeners.blur.size).toBe(0);
 });
