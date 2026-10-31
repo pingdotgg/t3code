@@ -23,13 +23,7 @@ import type * as SqlError from "effect/sql/SqlError";
 export class PluginEventDelivery extends Context.Service<
   PluginEventDelivery,
   {
-    /**
-     * Gives an installation that declares `events` its starting cursor, the
-     * current end of the event log, unless it already has one. The catalogue
-     * runs this in the transaction that saves the installation as enabled, so
-     * every event committed after the enable is delivered and none from
-     * before it. Re-enables and restarts keep the stored cursor.
-     */
+    // Starts at the event-log end in the enabling transaction; re-enables and restarts retain the cursor.
     readonly begin: (
       installationId: PluginInstallationId,
       capabilities: ReadonlyArray<string>,
@@ -66,7 +60,7 @@ export const make = Effect.gen(function* () {
   let resume: ((installationId: PluginInstallationId) => Effect.Effect<void>) | undefined;
 
   return PluginEventDelivery.of({
-    begin: (installationId, capabilities) =>
+    begin: Effect.fn("PluginEventDelivery.begin")((installationId, capabilities) =>
       capabilities.includes(PLUGIN_EVENTS_CAPABILITY)
         ? Effect.gen(function* () {
             // One statement, so the end it reads is the end when the row is written.
@@ -80,12 +74,14 @@ export const make = Effect.gen(function* () {
             `;
           })
         : Effect.void,
-    state: (installationId, generation) =>
+    ),
+    state: Effect.fn("PluginEventDelivery.state")((installationId, generation) =>
       Effect.sync(() => {
         const current = states.get(installationId);
         return current?.generation === generation ? Option.some(current.state) : Option.none();
       }),
-    report: (installationId, generation, state) =>
+    ),
+    report: Effect.fn("PluginEventDelivery.report")((installationId, generation, state) =>
       Effect.suspend(() => {
         const current = states.get(installationId);
         if (state === undefined) {
@@ -98,9 +94,12 @@ export const make = Effect.gen(function* () {
         }
         return PubSub.publish(changes, undefined).pipe(Effect.asVoid);
       }),
+    ),
     changes: PubSub.subscribe(changes),
-    resume: (installationId) => Effect.suspend(() => resume?.(installationId) ?? Effect.void),
-    handleResume: (handler) =>
+    resume: Effect.fn("PluginEventDelivery.resume")((installationId) =>
+      Effect.suspend(() => resume?.(installationId) ?? Effect.void),
+    ),
+    handleResume: Effect.fn("PluginEventDelivery.handleResume")((handler) =>
       Effect.acquireRelease(
         Effect.sync(() => {
           resume = handler;
@@ -110,6 +109,7 @@ export const make = Effect.gen(function* () {
             if (resume === handler) resume = undefined;
           }),
       ),
+    ),
   });
 });
 
