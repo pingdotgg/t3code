@@ -4,7 +4,7 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
 
@@ -27,26 +27,34 @@ const openNumberContextMenu = (event: ReactMouseEvent, detail: CrumbsPullRequest
 };
 
 const ROW_CLASS_NAME =
-  "col-start-1 row-start-1 flex min-w-0 items-center gap-1 text-sm text-muted-foreground transition-[opacity,transform] ease-out motion-reduce:transform-none motion-reduce:transition-none sm:text-xs";
+  "col-start-1 row-start-1 flex min-w-0 items-center text-muted-foreground transition-[opacity,transform] ease-out motion-reduce:transform-none motion-reduce:transition-none";
 
-function BackButton({ onBack, focusable }: { onBack: () => void; focusable: boolean }) {
+function BackButton({
+  onBack,
+  focusable,
+  plural,
+}: {
+  onBack: () => void;
+  focusable: boolean;
+  plural: string;
+}) {
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <Button
-            size="icon-micro"
+            size="icon-xs"
             variant="ghost-muted"
             {...(focusable ? {} : { tabIndex: -1 })}
             onClick={onBack}
-            className="-ml-1.5"
-            aria-label="Back to this thread's pull requests"
+            className="-ms-1.25"
+            aria-label={`Back to this thread's ${plural}`}
           >
             <ArrowLeftIcon aria-hidden className="size-3.5" />
           </Button>
         }
       />
-      <TooltipPopup side="top">Back to pull requests</TooltipPopup>
+      <TooltipPopup side="top">Back to {plural}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -63,36 +71,33 @@ function NumberLink({
   focusable: boolean;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            {...(focusable ? {} : { tabIndex: -1 })}
-            onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}
-            onAuxClick={(event) => {
-              if (event.button === 1) void readLocalApi()?.shell.openExternal(detail.url);
-            }}
-            onContextMenu={(event) => openNumberContextMenu(event, detail)}
-            className={cn(
-              "inline-flex shrink-0 cursor-pointer items-center gap-0.5 font-medium underline-offset-2 hover:underline",
-              toneClassName,
-            )}
-            aria-label={`Open ${sourceControlClients.get(detail.provider).changeRequest.singular} #${detail.number} on host`}
-          >
-            #{detail.number}
-            <ExternalLinkIcon aria-hidden className="size-2.5" />
-          </button>
-        }
-      />
-      <TooltipPopup side="top">{openOnHostText}</TooltipPopup>
-    </Tooltip>
+    <span className={cn("inline-flex shrink-0", toneClassName)}>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <InlineButton
+              tone={null}
+              {...(focusable ? {} : { tabIndex: -1 })}
+              onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}
+              onAuxClick={(event) => {
+                if (event.button === 1) void readLocalApi()?.shell.openExternal(detail.url);
+              }}
+              onContextMenu={(event) => openNumberContextMenu(event, detail)}
+              aria-label={`Open ${sourceControlClients.get(detail.provider).changeRequest.singular} #${detail.number} on host`}
+            >
+              #{detail.number}
+              <ExternalLinkIcon aria-hidden className="size-2.5" />
+            </InlineButton>
+          }
+        />
+        <TooltipPopup side="top">{openOnHostText}</TooltipPopup>
+      </Tooltip>
+    </span>
   );
 }
 
 /**
- * The repository and number above the title, swapped for the number and title once the reader has
- * scrolled the title away.
+ * The number and title by default, swapped for repository crumbs while the title is being edited.
  */
 export function PullRequestDetailCrumbs({
   detail,
@@ -111,12 +116,13 @@ export function PullRequestDetailCrumbs({
 }) {
   const ready = detail !== null && toneClassName !== null;
   return (
-    <div className="pl-4 grid h-7 min-w-0 items-center overflow-hidden">
+    <div className="mt-3 grid h-8 min-w-0 items-center overflow-hidden pl-4">
       <div
         aria-hidden={condensed}
         inert={condensed}
         className={cn(
           ROW_CLASS_NAME,
+          "gap-1 text-body sm:text-meta",
           condensed
             ? "pointer-events-none -translate-y-1 opacity-0 duration-100"
             : "translate-y-0 opacity-100 delay-50 duration-150",
@@ -124,20 +130,26 @@ export function PullRequestDetailCrumbs({
       >
         {ready ? (
           <>
-            {onBack ? <BackButton onBack={onBack} focusable /> : null}
+            {onBack ? (
+              <BackButton
+                onBack={onBack}
+                focusable
+                plural={sourceControlClients.get(detail.provider).changeRequest.plural}
+              />
+            ) : null}
             <Tooltip>
               <TooltipTrigger
                 render={
                   repositoryUrl ? (
-                    <button
-                      type="button"
+                    <InlineButton
+                      tone="muted"
                       onClick={() => void readLocalApi()?.shell.openExternal(repositoryUrl)}
-                      className="min-w-0 cursor-pointer truncate text-left font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                      className="min-w-0 shrink"
                     >
-                      {detail.repository}
-                    </button>
+                      <span className="min-w-0 truncate">{detail.repository}</span>
+                    </InlineButton>
                   ) : (
-                    <span className="min-w-0 truncate font-medium text-muted-foreground">
+                    <span className="min-w-0 truncate text-label text-muted-foreground sm:text-meta">
                       {detail.repository}
                     </span>
                   )
@@ -161,6 +173,7 @@ export function PullRequestDetailCrumbs({
         inert={!condensed}
         className={cn(
           ROW_CLASS_NAME,
+          "gap-1.5 text-meta",
           condensed
             ? "translate-y-0 opacity-100 delay-50 duration-150"
             : "pointer-events-none translate-y-1 opacity-0 duration-100",
@@ -168,7 +181,13 @@ export function PullRequestDetailCrumbs({
       >
         {ready ? (
           <>
-            {onBack ? <BackButton onBack={onBack} focusable={condensed} /> : null}
+            {onBack ? (
+              <BackButton
+                onBack={onBack}
+                focusable={condensed}
+                plural={sourceControlClients.get(detail.provider).changeRequest.plural}
+              />
+            ) : null}
             <NumberLink
               detail={detail}
               toneClassName={toneClassName}
@@ -178,7 +197,7 @@ export function PullRequestDetailCrumbs({
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <span className="min-w-0 truncate font-medium text-foreground">
+                  <span className="min-w-0 truncate text-label text-foreground">
                     {detail.title}
                   </span>
                 }
