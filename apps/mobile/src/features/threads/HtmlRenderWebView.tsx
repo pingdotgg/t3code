@@ -2,6 +2,7 @@ import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
+  HTML_RENDER_WEBVIEW_APP_NAME,
   htmlRenderFileName,
   htmlRenderFrameHeight,
   htmlRenderThemeFragment,
@@ -122,6 +123,7 @@ export function HtmlRenderWebView(props: {
         key={generation}
         ref={webView}
         source={source}
+        applicationNameForUserAgent={HTML_RENDER_WEBVIEW_APP_NAME}
         accessibilityLabel={props.title}
         style={{ flex: 1, backgroundColor: "transparent" }}
         allowsInlineMediaPlayback
