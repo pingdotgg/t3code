@@ -7,7 +7,7 @@ import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import { Input, type InputProps } from "~/components/ui/input";
 import { MorphIcon } from "~/components/MorphIcon";
-import { ScrollArea } from "~/components/ui/scroll-area";
+import { ScrollArea, ScrollAreaContent } from "~/components/ui/scroll-area";
 import {
   Sheet,
   SheetDescription,
@@ -545,7 +545,8 @@ function SidebarRail({
             aria-label={railLabel}
             className={cn(
               /* A collapsed offcanvas rail overlaps the native scrollbar on Windows and Linux. */
-              "-translate-x-1/2 group-data-[side=left]:-right-4 absolute inset-y-0 z-20 hidden w-4 after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border group-data-[side=right]:left-0 sm:flex [[data-collapsible=offcanvas][data-state=collapsed]_&]:pointer-events-none",
+              // The left resize target must stay outside the scrollbar's hit area.
+              "-translate-x-1/2 group-data-[side=left]:-right-4 group-data-[side=left]:translate-x-0 absolute inset-y-0 z-20 hidden w-4 after:absolute after:inset-y-0 after:left-1/2 group-data-[side=left]:after:left-0 after:w-[2px] hover:after:bg-sidebar-border group-data-[side=right]:left-0 sm:flex [[data-collapsible=offcanvas][data-state=collapsed]_&]:pointer-events-none",
               "[[data-panel-animations=true]_&]:transition-all [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
               "in-data-[side=left]:cursor-w-resize in-data-[side=right]:cursor-e-resize",
               "[[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize",
@@ -652,7 +653,7 @@ function SidebarContent({
     <>
       {fixedHeader ? <div className="w-full shrink-0">{fixedHeader}</div> : null}
       <ScrollArea
-        hideScrollbars
+        scrollbarVariant="persistent"
         scrollFade
         scrollFadePadding={false}
         // Rows provide keyboard access; exclude the viewport from tab order to flatten VoiceOver's WebKit
@@ -660,9 +661,10 @@ function SidebarContent({
         viewportTabIndex={-1}
         className="h-auto min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:[--fade-size:0.75rem]"
       >
-        <div
+        {/* Track rows that arrive after the viewport's first measurement. */}
+        <ScrollAreaContent
           className={cn(
-            "flex w-full min-w-0 flex-col [overflow-anchor:none] group-data-[collapsible=icon]:overflow-hidden [&>[data-sidebar=group]+[data-sidebar=group]]:pt-0",
+            "flex w-full min-w-0! flex-col [overflow-anchor:none] group-data-[collapsible=icon]:overflow-hidden [&>[data-sidebar=group]+[data-sidebar=group]]:pt-0",
             fixedHeader && "[&>[data-sidebar=group]:first-child]:pt-0",
             className,
           )}
