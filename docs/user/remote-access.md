@@ -36,6 +36,14 @@ connection. Pull request diffs and provider settings keep working after the
 previous credential expires. A failed renewal affects that request; it does not
 disconnect an otherwise healthy conversation.
 
+To turn T3 Connect off on a machine, set `T3CODE_CONNECT_ENABLED=false` in the
+server's environment before starting it. In the desktop app, T3 Connect sign-in and
+settings are hidden. On the server, `t3 connect` is unavailable, and linking and
+agent-activity publishing stop. A saved link is kept and resumes when you remove the
+variable, so unlink first if you want it gone. Pairing over a LAN, Tailscale, or SSH
+keeps working. The desktop app reads the variable from your shell profile, like
+[`T3CODE_TELEMETRY_ENABLED`](./telemetry.md).
+
 ### More machines with T3 Chat
 
 Each T3 Connect account can link up to 3 machines. Phones and browsers do not

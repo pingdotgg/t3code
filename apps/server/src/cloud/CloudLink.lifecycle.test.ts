@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -8,10 +9,21 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse, HttpServer, type HttpClientRequest } from "effect/http";
+import {
+  HttpClient,
+  HttpClientResponse,
+  HttpServer,
+  HttpServerRequest,
+  type HttpClientRequest,
+} from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 
-import { EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthSessionId,
+  AuthStandardClientScopes,
+  EnvironmentAuthenticatedPrincipal,
+  EnvironmentId,
+} from "@t3tools/contracts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfigModule from "../config.ts";
@@ -624,6 +636,63 @@ describe("releaseManagedTunnelOnShutdown", () => {
       });
       expect(yield* link.linkState()).toMatchObject({ linked: true, linkRevoked: false });
     }).pipe(provideReleaseHarness({ store, applyConfigCalls: [], requests: [] }));
+  });
+
+  it.effect("refuses to link or answer the relay while T3 Connect is off", () => {
+    const { store, values } = makeMemorySecretStore([]);
+
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      const error = yield* Effect.flip(
+        link.applyRelayConfig({
+          relayUrl: "https://relay.example.test",
+          cloudUserId: "user-123",
+          environmentCredential: "credential",
+          cloudMintPublicKey:
+            "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqZ2u2LjMoAyG2QTHXmITJ9w6RzZtVUAv394XCcPV0zE=\n-----END PUBLIC KEY-----",
+          endpointRuntime: null,
+        }),
+      );
+      expect(error).toMatchObject({
+        _tag: "CloudLinkInternalError",
+        operation: "connect-disabled",
+      });
+      expect(values.size).toBe(0);
+      expect(yield* Effect.flip(link.answerHealthRequest({ proof: "proof" }))).toMatchObject({
+        operation: "connect-disabled",
+      });
+      expect(yield* Effect.flip(link.mintCredential({ proof: "proof" }))).toMatchObject({
+        operation: "connect-disabled",
+      });
+      const linkProof = link.linkProof(
+        {
+          challenge: "challenge",
+          relayIssuer: "https://relay.example.test",
+          endpoint: {
+            providerKind: "cloudflare_tunnel",
+            httpBaseUrl: "https://environment.example.test",
+            wsBaseUrl: "wss://environment.example.test",
+          },
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        },
+        HttpServerRequest.fromWeb(new Request("http://127.0.0.1:3773/api/connect/link-proof")),
+      );
+      expect(
+        yield* Effect.flip(linkProof).pipe(
+          Effect.provideService(EnvironmentAuthenticatedPrincipal, {
+            sessionId: AuthSessionId.make("session"),
+            subject: "test",
+            method: "bearer-access-token",
+            scopes: new Set(AuthStandardClientScopes),
+          }),
+        ),
+      ).toMatchObject({ operation: "connect-disabled" });
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_CONNECT_ENABLED: "false" } })),
+      ),
+      provideReleaseHarness({ store, applyConfigCalls: [], requests: [] }),
+    );
   });
 
   it.effect(

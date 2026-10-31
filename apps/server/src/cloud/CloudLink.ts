@@ -98,7 +98,7 @@ import {
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
-import { relayUrlConfig } from "./publicConfig.ts";
+import { readConnectEnabled, relayUrlConfig } from "./publicConfig.ts";
 import {
   filterRelayResponse,
   relayRequestError,
@@ -238,6 +238,8 @@ export class CloudLinkEndpointUnavailableError extends Schema.TaggedError<CloudL
 const INTERNAL_OPERATION_MESSAGES = {
   "relay-url-unconfigured":
     "T3CODE_RELAY_URL must be configured as a secure absolute HTTPS origin.",
+  "connect-disabled":
+    "T3 Connect is turned off for this environment (T3CODE_CONNECT_ENABLED=false).",
   "generate-link-proof": "Could not generate environment link proof.",
   "persist-relay-config": "Could not persist environment relay configuration.",
   "register-endpoint-origin": "Could not register the managed endpoint origin.",
@@ -302,6 +304,13 @@ const rollbackFailed = (cause: unknown) =>
 const requireRelayUrl = relayUrlConfig.pipe(
   Effect.mapError(
     (cause) => new CloudLinkInternalError({ operation: "relay-url-unconfigured", cause }),
+  ),
+);
+
+const requireConnectEnabled = readConnectEnabled.pipe(
+  Effect.filterOrFail(
+    (enabled) => enabled,
+    () => new CloudLinkInternalError({ operation: "connect-disabled" }),
   ),
 );
 
@@ -627,6 +636,7 @@ const make = Effect.gen(function* () {
 
   const linkProof = Effect.fn("environment.cloud.linkProof")(
     function* (request: RelayLinkProofRequest, httpRequest: HttpServerRequest.HttpServerRequest) {
+      yield* requireConnectEnabled;
       const requestUrl = requestAbsoluteUrl(httpRequest);
       if (requestUrl === null || hasForwardedAuthorityHeaders(httpRequest)) {
         return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
@@ -1162,6 +1172,7 @@ const make = Effect.gen(function* () {
 
   const applyRelayConfig = Effect.fn("environment.cloud.relayConfig")(
     function* (payload: RelayEnvironmentConfigRequest) {
+      yield* requireConnectEnabled;
       const result = yield* applyCloudRelayConfig(payload);
       if (payload.endpointRuntime?.providerKind === "cloudflare_tunnel") {
         const address = httpServer.address;
@@ -1409,6 +1420,7 @@ const make = Effect.gen(function* () {
 
   const answerHealthRequest = Effect.fn("environment.cloud.health")(
     function* (request: RelayCloudEnvironmentHealthRequest) {
+      yield* requireConnectEnabled;
       const cloudMintPublicKey = yield* secrets
         .get(CLOUD_MINT_PUBLIC_KEY)
         .pipe(
@@ -1513,6 +1525,7 @@ const make = Effect.gen(function* () {
 
   const mintCredential = Effect.fn("environment.cloud.mintCredential")(
     function* (request: RelayCloudMintCredentialRequest) {
+      yield* requireConnectEnabled;
       const cloudMintPublicKey = yield* secrets
         .get(CLOUD_MINT_PUBLIC_KEY)
         .pipe(

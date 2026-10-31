@@ -4,7 +4,7 @@ import {
   DEFAULT_HOSTED_APP_URL,
 } from "@t3tools/shared/connectAuth";
 import { clerkFrontendApiUrlFromPublishableKey } from "@t3tools/shared/relayAuth";
-import { isRelayTracingEnabled } from "@t3tools/shared/otelEnvironment";
+import { isConnectEnabled, isRelayTracingEnabled } from "@t3tools/shared/otelEnvironment";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -204,7 +204,14 @@ export function makeCloudCliOAuthConfig({
 
 export const cloudCliOAuthConfig = makeCloudCliOAuthConfig();
 
+export const readConnectEnabled = Config.String("T3CODE_CONNECT_ENABLED").pipe(
+  Config.withDefault(""),
+  Config.map(isConnectEnabled),
+  Effect.orDie,
+);
+
 export const hasCloudPublicConfig = Boolean(
+  isConnectEnabled(process.env.T3CODE_CONNECT_ENABLED) &&
   (normalizeSecureRelayUrl(process.env.T3CODE_RELAY_URL ?? "") ?? buildTimeRelayUrl) &&
   (process.env.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() || buildTimeClerkPublishableKey) &&
   (process.env.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID?.trim() || buildTimeClerkCliOAuthClientId),

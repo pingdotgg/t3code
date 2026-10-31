@@ -428,3 +428,18 @@ describe("isRelayTracingEnabled", () => {
     }),
   );
 });
+
+describe("isConnectEnabled", () => {
+  it.each([
+    [undefined, true],
+    ["", true],
+    ["true", true],
+    ["maybe", true],
+    ["false", false],
+    [" FALSE ", false],
+    ["0", false],
+    ["off", false],
+  ] as const)("isConnectEnabled(%j) is %s", (value, expected) => {
+    assert.equal(OtelEnvironment.isConnectEnabled(value), expected);
+  });
+});

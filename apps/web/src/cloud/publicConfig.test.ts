@@ -69,10 +69,16 @@ describe("hasCloudPublicConfig", () => {
       expect(hasCloudPublicConfig()).toBe(expected);
     });
 
-    it("keeps production keys available in the Electron auth shell", () => {
-      vi.stubGlobal("window", { location: new URL("file:///app/index.html"), desktopBridge: {} });
+    it.each([true, false])(
+      "follows the desktop T3 Connect switch in the Electron auth shell: %s",
+      (connectEnabled) => {
+        vi.stubGlobal("window", {
+          location: new URL("file:///app/index.html"),
+          desktopBridge: { getConnectEnabled: () => connectEnabled },
+        });
 
-      expect(hasCloudPublicConfig()).toBe(true);
-    });
+        expect(hasCloudPublicConfig()).toBe(connectEnabled);
+      },
+    );
   });
 });

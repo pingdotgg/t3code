@@ -81,6 +81,9 @@ export function hasCloudPublicConfig(): boolean {
   if (!config.clerkPublishableKey || !config.clerkJwtTemplate || !config.relayUrl) {
     return false;
   }
+  if (typeof window !== "undefined" && window.desktopBridge?.getConnectEnabled() === false) {
+    return false;
+  }
 
   // Electron has its own auth runtime; development keys also support private browser origins.
   if (

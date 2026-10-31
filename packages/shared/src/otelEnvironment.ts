@@ -331,6 +331,10 @@ export const isRelayTracingEnabled = (env: Readonly<Record<string, string | unde
     Effect.runSync,
   );
 
+/** Reads `T3CODE_CONNECT_ENABLED` like `T3CODE_TELEMETRY_ENABLED`; other values keep T3 Connect on. */
+export const isConnectEnabled = (value: string | undefined) =>
+  !T3CODE_FALSE.includes(value?.trim().toLowerCase() ?? "");
+
 export type SignalName = "traces" | "metrics" | "logs";
 
 export interface SignalEndpoint {
