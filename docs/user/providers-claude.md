@@ -128,3 +128,18 @@ config directory and put the router's endpoint and credential variables in that
 instance's **Environment variables**. The router must run where the environment
 can reach it. Follow the [Claude Code Router instructions](https://github.com/musistudio/claude-code-router)
 for its installation and routing configuration.
+
+For CLIProxyAPI cooldown recovery, open **Settings > Providers > Environment > Variables**
+for the Claude instance. Set `ANTHROPIC_BASE_URL` to the hub's root endpoint
+(for example, `http://localhost:8317`) and `ANTHROPIC_AUTH_TOKEN` to its client API key,
+marked **Sensitive**. Add a matching enabled [CLIProxyAPI Usage Limits source](./usage.md#connect-a-cliproxyapi-hub)
+with its separate management key. The client key must be registered in that hub's API keys.
+When the hub can identify the requested model's eligible accounts and their cooldowns,
+T3 can schedule a retry after the earliest eligible cooldown ends.
+
+Values supplied only by a wrapper or Claude settings are not discovered for recovery.
+If you use a wrapper, the provider variables must match the values it actually uses,
+including any `ANTHROPIC_API_KEY` override. A wrapper that unconditionally overwrites
+`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, or `ANTHROPIC_API_KEY` still takes precedence
+inside its process. The configured association does not verify the wrapper's runtime
+values; keep them in sync. Unsupported or incomplete cooldown information leaves manual retry.

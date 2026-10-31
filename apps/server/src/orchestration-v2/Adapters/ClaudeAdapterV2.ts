@@ -4485,6 +4485,8 @@ export interface ClaudeAdapterV2Options {
   readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
+  /** Management fallback only when native reset evidence is absent. */
+  readonly usageLimitResetFallback?: (model: string) => Effect.Effect<string | null>;
   readonly continuationRequests?: {
     readonly offer: (
       request: ProviderContinuationRequests.ProviderContinuationRequest,
@@ -9383,13 +9385,45 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     code: "compaction_failed",
                   })
                 : providerFailureFromResult(message, completedAt, failureHint, usageLimited);
-            const terminalFailure =
-              resultFailure?.class === "usage_limit"
-                ? { ...resultFailure, resetAt: resetAt ?? resultFailure.resetAt ?? null }
+            const hasUnknownNativeReset = resetTimes.some((time) => time === null);
+            const usesResetFallback =
+              resultFailure?.class === "usage_limit" &&
+              !hasUnknownNativeReset &&
+              resetAt === null &&
+              resultFailure.resetAt == null &&
+              adapterOptions.usageLimitResetFallback !== undefined;
+            const resolvedResetAt =
+              resultFailure?.class === "usage_limit" && !hasUnknownNativeReset
+                ? (resetAt ??
+                  resultFailure.resetAt ??
+                  (adapterOptions.usageLimitResetFallback
+                    ? yield* adapterOptions
+                        .usageLimitResetFallback(
+                          compileClaudeModelSelection(context.input.modelSelection).apiModelId,
+                        )
+                        .pipe(
+                          Effect.timeout("5 seconds"),
+                          Effect.orElseSucceed(() => null),
+                        )
+                    : null))
+                : null;
+            // Management can yield while a user stop/restart replaces this turn.
+            if (
+              usesResetFallback &&
+              ((yield* Ref.get(activeTurn)) !== context ||
+                (yield* Ref.get(queryContext))?.query !== input.query)
+            )
+              return;
+            const interruptedAfterReset =
+              interrupted || (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
+            const terminalFailure = interruptedAfterReset
+              ? null
+              : resultFailure?.class === "usage_limit"
+                ? { ...resultFailure, resetAt: resolvedResetAt }
                 : resultFailure;
             yield* finalizeActiveTurn({
               context,
-              status: interrupted
+              status: interruptedAfterReset
                 ? "interrupted"
                 : limitedCompaction !== null
                   ? "failed"
@@ -11504,7 +11538,10 @@ export type ClaudeAdapterV2DriverEnv =
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
   function* (
     input: ProviderAdapterDriverCreateInput<ClaudeSettings>,
-    hooks: Pick<ClaudeAdapterV2Options, "scopedLimitNames" | "onUsageLimits"> = {},
+    hooks: Pick<
+      ClaudeAdapterV2Options,
+      "scopedLimitNames" | "onUsageLimits" | "usageLimitResetFallback"
+    > = {},
   ) {
     const { instanceId, environment, enabled, config } = input;
     const fileSystem = yield* FileSystem.FileSystem;

@@ -30,6 +30,11 @@ export class UsageLimitSources extends Context.Service<
     readonly current: Effect.Effect<ReadonlyArray<UsageLimitSourceSnapshot>>;
     readonly streamChanges: Stream.Stream<ReadonlyArray<UsageLimitSourceSnapshot>>;
     readonly refresh: Effect.Effect<void>;
+    readonly poolResetAt: (input: {
+      readonly baseUrl: string;
+      readonly apiKey: string;
+      readonly model: string;
+    }) => Effect.Effect<string | null>;
     readonly consumeResetCredit: (
       input: UsageLimitSourceConsumeResetCreditInput,
     ) => Effect.Effect<ProviderConsumeResetCreditResult, UsageLimitSourceError>;
@@ -100,6 +105,46 @@ export const make = Effect.gen(function* () {
     yield* publish(snapshots);
   }).pipe(refreshLock.withPermits(1), Effect.ignoreCause({ log: true }));
 
+  // Read management directly: a failed/slow read must never reuse a cached deadline.
+  const poolResetAt = Effect.fn("UsageLimitSources.poolResetAt")(
+    function* (input: {
+      readonly baseUrl: string;
+      readonly apiKey: string;
+      readonly model: string;
+    }) {
+      const base = URL.parse(input.baseUrl);
+      if (
+        !base ||
+        !["http:", "https:"].includes(base.protocol) ||
+        base.username ||
+        base.password ||
+        !["", "/"].includes(base.pathname) ||
+        base.search ||
+        base.hash
+      )
+        return null;
+      const settings = yield* settingsService.getSettings;
+      const sources = Object.values(settings.usageLimitSources).filter((config) => {
+        const url = URL.parse(config.url);
+        return (
+          config.enabled &&
+          config.managementKey &&
+          url?.origin === base.origin &&
+          url.pathname === "/" &&
+          !url.search &&
+          !url.hash
+        );
+      });
+      if (sources.length !== 1) return null;
+      return yield* api.poolResetAt(sources[0]!, input);
+    },
+    (effect) =>
+      effect.pipe(
+        Effect.timeout("5 seconds"),
+        Effect.orElseSucceed(() => null),
+      ),
+  );
+
   // Shares the refresh lock so a stale in-flight read cannot overwrite a redemption.
   const consumeResetCredit = Effect.fn("UsageLimitSources.consumeResetCredit")(function* (
     input: UsageLimitSourceConsumeResetCreditInput,
@@ -150,6 +195,7 @@ export const make = Effect.gen(function* () {
   yield* refresh.pipe(Effect.forkScoped);
 
   return {
+    poolResetAt,
     current: Ref.get(stateRef),
     consumeResetCredit,
     refresh,
