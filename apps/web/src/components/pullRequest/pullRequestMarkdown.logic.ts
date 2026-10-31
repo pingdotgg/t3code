@@ -7,6 +7,8 @@ import {
   type ReferenceAutolink,
 } from "@t3tools/client-runtime/source-control-clients";
 import type { PluggableList } from "unified";
+import { chatMarkdownImageSources } from "@t3tools/shared/markdownPipeline";
+import { splitPullRequestBody } from "@t3tools/client-runtime/pull-request-markdown";
 
 export {
   splitPullRequestBody,
@@ -94,4 +96,26 @@ export function pullRequestMarkdownPlugins(
     markdownPlugins.set(key, plugins);
   }
   return plugins;
+}
+
+export function pullRequestAttachments(body: string) {
+  const attachments: Array<{ url: string; media: "image" | "video"; caption: string }> = [];
+  const seen = new Set<string>();
+  const add = (url: string, media: "image" | "video", caption: string) => {
+    if (seen.has(url) || !/^https?:\/\//iu.test(url)) return;
+    seen.add(url);
+    attachments.push({
+      url,
+      media,
+      caption: caption || `${media === "image" ? "Image" : "Video"} ${attachments.length + 1}`,
+    });
+  };
+  for (const segment of splitPullRequestBody(body)) {
+    if (segment.kind === "attachment") {
+      if (segment.media !== "unknown") add(segment.url, segment.media, "");
+      continue;
+    }
+    for (const url of chatMarkdownImageSources(segment.text)) add(url, "image", "");
+  }
+  return attachments;
 }
