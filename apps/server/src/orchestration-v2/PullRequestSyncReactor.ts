@@ -214,12 +214,7 @@ function snapshotFieldsOf(summary: PullRequestSummary): SnapshotFields {
   };
 }
 
-/**
- * GitHub answers `unknown` while it recomputes mergeability, which it does for every open pull
- * request whenever the base branch moves. Keep the last known answer for an unchanged GitHub
- * pull request through that window so a busy base branch does not rewrite every linked thread
- * twice per push. Other hosts can use `unknown` for a lasting condition.
- */
+// GitHub briefly returns unknown after base pushes; other hosts may mean a lasting condition.
 function withKnownMergeability(
   previous: ThreadPullRequestSnapshot | null,
   fields: SnapshotFields,
