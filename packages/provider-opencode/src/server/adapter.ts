@@ -2819,18 +2819,48 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         const applyPermissionRules = Effect.fnUntraced(function* (
           state: OpenCodeThreadState,
           policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+          modelSelection: ModelSelection,
         ) {
           const parentRules = openCodePermissionRules(policy);
+          let rootRules = parentRules;
+          const agent =
+            getModelSelectionStringOptionValue(modelSelection, "agent") ??
+            (policy.interactionMode === "plan" ? "plan" : undefined);
+          if (
+            state.parentSubagent === null &&
+            agent !== undefined &&
+            parentRules.every((rule) => rule.action === "allow")
+          ) {
+            const agents = unwrapData(
+              "app.agents",
+              yield* sdkCall("app.agents", {}, (signal) =>
+                client.app.agents(undefined, { signal }),
+              ),
+            );
+            const selected = agents.find((entry) => entry.name === agent);
+            if (selected === undefined) {
+              return yield* protocolError(`OpenCode agent '${agent}' is not available`);
+            }
+            // OpenCode takes the last matching rule; full access must not shadow agent denies.
+            rootRules = [
+              ...parentRules,
+              ...selected.permission.map((rule) =>
+                rule.action === "ask" ? { ...rule, action: "allow" as const } : rule,
+              ),
+            ];
+          }
           const pending = [state];
           for (let target = pending.pop(); target !== undefined; target = pending.pop()) {
             const previous = target.permission;
             const permission =
               target.parentSubagent === null
-                ? parentRules
+                ? rootRules
                 : openCodeChildPermissionRules(policy, previous, target.inheritedPermission);
             if (
-              permission.length !== previous.length ||
-              !permission.every((rule, index) => permissionRuleEquals(rule, previous[index]!))
+              permission.length > previous.length ||
+              !permission.every((rule, index) =>
+                permissionRuleEquals(rule, previous[previous.length - permission.length + index]!),
+              )
             ) {
               const sessionID = target.nativeSessionId;
               yield* sdkCall("session.update", { sessionID, permission }, () =>
@@ -3097,7 +3127,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               };
               const state = registerThread(nativeSession, providerThread, null);
               if (threadInput.runtimePolicy !== undefined) {
-                yield* applyPermissionRules(state, threadInput.runtimePolicy);
+                yield* applyPermissionRules(
+                  state,
+                  threadInput.runtimePolicy,
+                  threadInput.modelSelection ?? input.modelSelection,
+                );
               }
               return providerThread;
             },
@@ -3146,7 +3180,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   `OpenCode model '${turnInput.modelSelection.model}' must use provider/model format`,
                 );
               }
-              yield* applyPermissionRules(state, turnInput.runtimePolicy);
+              yield* applyPermissionRules(state, turnInput.runtimePolicy, turnInput.modelSelection);
               const isCompaction =
                 turnInput.message.text.trim() === "/compact" &&
                 turnInput.message.attachments.length === 0;

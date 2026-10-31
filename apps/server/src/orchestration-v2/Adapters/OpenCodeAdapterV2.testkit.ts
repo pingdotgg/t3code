@@ -364,6 +364,9 @@ function makeReplayClient(controller: OpenCodeReplayController): OpencodeClient 
       status: () => request("mcp.status", {}),
       add: (input: unknown) => request("mcp.add", input),
     },
+    app: {
+      agents: () => request("app.agents", {}),
+    },
   } as unknown as OpencodeClient;
 }
 
