@@ -156,7 +156,7 @@ function useThreadActionExecutor(
     onStarted?: () => void,
     // Sends the dialog's retry or Unarchive through the caller's full handler, so Undo
     // bookkeeping such as settle's still runs; without it the bare executor runs them.
-    // null offers no retry: an Undo step retried alone would skip the rest of its plan.
+    // null offers no retry: retrying one compound step would skip the rest of its plan.
     rerun?: ThreadActionRerun | null,
   ) => {
     if (!checkThreadOperationPermission(thread, actionFailureTitle(action))) return false;
@@ -742,7 +742,8 @@ export function useThreadListActions(): {
           }
         } else {
           if (lifecycle.unpin && !(await unpinThread(thread))) return false;
-          if (lifecycle.unsettle && !(await unsettleThread(thread))) return false;
+          if (lifecycle.unsettle && !(await executeAction("unsettle", thread, undefined, null)))
+            return false;
           if (lifecycle.unsnooze && !(await unsnoozeThread(thread))) return false;
         }
       }

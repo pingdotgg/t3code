@@ -603,6 +603,25 @@ describe("thread action failure dialog", () => {
   });
 
   it.each(["Server rejected action", "Thread thread is deleted."])(
+    "offers no partial retry when a move step fails: %s",
+    async (message) => {
+      const thread = makeThread({ settledOverride: "settled" });
+      state.shells = [thread];
+      state.failedAction = "unsettle";
+      state.failureMessage = message;
+      expect(
+        await useThreadListActions().moveThread(thread, {
+          targetId: null,
+          section: "active",
+          placement: "before",
+        }),
+      ).toBe(false);
+      expect(state.requests.map(({ action }) => action)).toEqual(["unsettle"]);
+      expect(state.alerts.at(-1)?.buttons?.map(({ text }) => text)).toEqual(["OK"]);
+    },
+  );
+
+  it.each(["Server rejected action", "Thread thread is deleted."])(
     "offers no partial retry when an Undo step fails: %s",
     async (message) => {
       await useThreadListActions().settleThread(
