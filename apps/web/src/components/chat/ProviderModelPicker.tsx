@@ -68,11 +68,8 @@ function lockBackgroundScroll(popup: HTMLElement | null) {
   };
 }
 
-/** What a docked effort column needs from its picker: the model it serves, and a way to close. */
-export const DockedPickerContext = createContext<{ modelLabel: string; close: () => void }>({
-  modelLabel: "",
-  close: () => {},
-});
+/** What a docked effort column needs from its picker: the model it serves. */
+export const DockedPickerContext = createContext<{ modelLabel: string }>({ modelLabel: "" });
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   environmentId: EnvironmentId | null;
@@ -107,8 +104,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   /** Composer shortcuts this trigger answers besides the picker's own. */
   triggerShortcuts?: string;
   /**
-   * Docks an effort column beside the list and a footer under both. Picking a model then keeps
-   * the popup open and moves focus to the new model's levels.
+   * Docks an effort column beside the list and a footer under both. The popup then stays open
+   * until Escape or an outside press, and picking a model moves focus to its levels.
    */
   effortColumn?: ReactNode;
   footer?: ReactNode;
@@ -185,13 +182,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       setIsMenuOpen(false);
       return;
     }
-    // The column renders the new model's levels on commit; a model with none closes the popup.
-    // Levels an Ultrathink prompt locks still count, so the note explaining them stays visible.
-    window.requestAnimationFrame(() => {
-      const hasLevels = popupRef.current?.querySelector("[data-effort-level]") != null;
-      if (hasLevels) focusEffort("levels");
-      else setIsMenuOpen(false);
-    });
+    // The column renders the new model's levels on commit.
+    window.requestAnimationFrame(() => focusEffort("levels"));
   };
 
   const shortcutLabel = props.keybindings
@@ -234,6 +226,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   ]
     .filter(Boolean)
     .join(" · ");
+
+  const triggerText = props.triggerLabel ?? multipleLabel ?? triggerTitle;
+  const triggerTextProps = {
+    className: "min-w-0 flex-1 overflow-hidden truncate",
+    "data-chat-provider-model-picker-label": "true",
+  } as const;
 
   const picker = (
     <ModelPickerContent
@@ -367,19 +365,14 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               />
             </span>
           ) : null}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <span
-                  className="min-w-0 flex-1 overflow-hidden truncate"
-                  data-chat-provider-model-picker-label="true"
-                />
-              }
-            >
-              {props.triggerLabel ?? multipleLabel ?? triggerTitle}
-            </TooltipTrigger>
-            <TooltipPopup side="top">{triggerTooltipContent}</TooltipPopup>
-          </Tooltip>
+          {props.isComposerOwned ? (
+            <span {...triggerTextProps}>{triggerText}</span>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger render={<span {...triggerTextProps} />}>{triggerText}</TooltipTrigger>
+              <TooltipPopup side="top">{triggerTooltipContent}</TooltipPopup>
+            </Tooltip>
+          )}
           {props.triggerSuffix}
           {selectedModel?.isUnavailable && !selectedEntries && props.triggerLabel === undefined ? (
             <Badge variant="outline" size="sm">
@@ -405,9 +398,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         touchBackdrop
       >
         {props.effortColumn ? (
-          <DockedPickerContext
-            value={{ modelLabel: triggerTitle, close: () => setIsMenuOpen(false) }}
-          >
+          <DockedPickerContext value={{ modelLabel: triggerTitle }}>
             <div className="flex flex-col">
               <div className="flex max-h-86.5 max-sm:max-h-none max-sm:flex-col">
                 {picker}
