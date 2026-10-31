@@ -142,7 +142,7 @@ export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServ
   // A Service is shared across the tailnet, and a foreground route lives as long as its command.
   const removable = (route: TailscaleServeRoute) =>
     route.owner === undefined &&
-    route.ambiguous !== true &&
+    route.ambiguous === undefined &&
     (route.mount === undefined || (currentName !== null && !formerName(route)));
   for (const route of found.filter(removable)) {
     yield* (
@@ -165,8 +165,8 @@ export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServ
         return `${where} under ${route.host}, a former name of this machine, which "tailscale serve ... off" cannot reach; run "tailscale serve reset" and set up your other routes again`;
       }
       const command = `"tailscale ${off.join(" ")}"`;
-      return route.ambiguous === true
-        ? `${where}, and its target localhost can also reach another service on this port; check it, then turn it off with ${command}`
+      return route.ambiguous !== undefined
+        ? `${where}, and its target ${route.ambiguous} can also reach another service on this port; check it, then turn it off with ${command}`
         : `${where}; turn it off with ${command}`;
     };
     return yield* refuseRemoteClients(
