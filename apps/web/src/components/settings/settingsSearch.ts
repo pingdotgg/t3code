@@ -438,6 +438,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["usage quota rate limit reset recover continue"],
   },
   {
+    id: "agent-usage-limits",
+    title: "Agents see usage limits",
+    to: "/settings/threads",
+    searchTerms: ["usage quota rate limit remaining delegate subagent mcp"],
+  },
+  {
     id: "working-shelf",
     title: "Working section",
     to: "/settings/general",

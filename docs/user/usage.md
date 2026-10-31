@@ -157,6 +157,12 @@ This connection supplies usage information; configure
 the provider separately to send agent requests through the hub. Remove the hub from the same
 settings section when you no longer need it.
 
+## Let agents see limits
+
+Agents cannot see your limits by default. Turn on **Agents see usage limits** in
+**Settings → Threads** to let them read how much usage each provider has left before they
+delegate work. A task delegated to an account that has run out then comes with a warning.
+
 ## Subscription usage widget
 
 Add **Subscription usage** from your iOS or Android widget gallery to see remaining Codex and

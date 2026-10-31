@@ -473,6 +473,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.snoozeLimitedThreads !== DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads
       ? ["Snooze until limits reset"]
       : []),
+    ...(settings.agentUsageLimitsVisible !== DEFAULT_UNIFIED_SETTINGS.agentUsageLimitsVisible
+      ? ["Agents see usage limits"]
+      : []),
     ...(!Equal.equals(settings.snoozePresets, DEFAULT_UNIFIED_SETTINGS.snoozePresets)
       ? ["Snooze options"]
       : []),
@@ -628,6 +631,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
+      agentUsageLimitsVisible: DEFAULT_UNIFIED_SETTINGS.agentUsageLimitsVisible,
       snoozePresets: DEFAULT_UNIFIED_SETTINGS.snoozePresets,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
@@ -1598,6 +1602,22 @@ export function ThreadsSettingsPanel() {
                 updateSettings({ snoozeLimitedThreads: Boolean(checked) })
               }
               aria-label="Snooze until limits reset"
+            />
+          }
+        />
+        <SettingsRow
+          serverScoped
+          {...searchableSetting("agent-usage-limits")}
+          description="Agents can read usage left and are warned when they delegate to a used-up account."
+          settingKeys={["agentUsageLimitsVisible"]}
+          control={
+            <ScopedSwitch
+              settingKeys={["agentUsageLimitsVisible"]}
+              checked={settings.agentUsageLimitsVisible}
+              onCheckedChange={(checked) =>
+                updateSettings({ agentUsageLimitsVisible: Boolean(checked) })
+              }
+              aria-label="Agents see usage limits"
             />
           }
         />

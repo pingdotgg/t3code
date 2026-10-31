@@ -201,7 +201,9 @@ Returns:
 - the inherited provider instance and model;
 - the parent runtime and interaction modes;
 - registered provider instances and advertised models;
-- whether each provider can run a child task; and
+- whether each provider can run a child task;
+- each provider's subscription usage left, when it reports limits and the
+  environment's `agentUsageLimitsVisible` setting is on; and
 - feature flags for polling, cancellation, and batch thread creation.
 
 Unavailable providers include model-visible constraints such as missing V2
@@ -244,6 +246,12 @@ when it can run child tasks, and otherwise selects an available instance of
 that driver; an explicit `providerInstanceId` is honored exactly and fails
 when unavailable. Selecting a different provider without a model uses that
 provider's first advertised model.
+
+With `agentUsageLimitsVisible` on, a child started on a provider with a used-up
+window returns `usageWarning`. Off, the default, keeps usage out of agent
+context. Delegation is never refused or rerouted by usage, because a window can
+cover only some models (Cursor's pools, Claude's per-model weekly limit) and
+readings can lag behind a reset. The agent picks the account.
 
 A provider runs a runtime mode it does not offer as `approval-required`, so a
 child would ask for approval on every command. `orchestrator_capabilities`

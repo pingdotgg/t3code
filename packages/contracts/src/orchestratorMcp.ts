@@ -237,6 +237,7 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
     description: "True only on the timed-out wait call. The child keeps running.",
   }),
   next: Schema.optional(OrchestratorMcpRunningTaskNext),
+  usageWarning: Schema.optional(Schema.String),
 });
 export type OrchestratorMcpDelegateTaskResult = typeof OrchestratorMcpDelegateTaskResult.Type;
 
@@ -601,6 +602,20 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
   /** Models left out of `models`: unlisted visible models, or matches past the cap with `search`. */
   omittedModels: Schema.optional(NonNegativeInt),
   runtimeModes: Schema.optional(Schema.Array(RuntimeMode)),
+  usage: Schema.optional(
+    Schema.Struct({
+      checkedAt: IsoDateTime,
+      windows: Schema.Array(
+        Schema.Struct({
+          label: Schema.String,
+          leftPercent: NonNegativeInt,
+          resetsAt: Schema.optional(IsoDateTime),
+        }),
+      ),
+    }).annotate({
+      description: "Subscription usage left. 0 means used up until `resetsAt`.",
+    }),
+  ),
   canRunChildTask: Schema.Boolean,
   canRunCrossProviderChildTask: Schema.Boolean,
   constraints: Schema.Array(Schema.String),
