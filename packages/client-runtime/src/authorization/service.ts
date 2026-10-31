@@ -541,17 +541,19 @@ export const make = Effect.gen(function* () {
     // Untraced: a span here would stay open for the socket's lifetime. Each renewal has its own.
     renewDpopBeforeExpiry: Effect.fnUntraced(function* (input) {
       let expiresAtEpochMs = input.expiresAtEpochMs;
-      while (true) {
-        const now = yield* Clock.currentTimeMillis;
+      let now = yield* Clock.currentTimeMillis;
+      // Past expiry the server has closed the socket.
+      while (now < expiresAtEpochMs) {
         // getDpopToken reuses a cached token until it is within the skew of expiry.
+        // The floor keeps a wall-clock jump from turning this into a tight loop.
         yield* Effect.sleep(
-          Math.max(0, expiresAtEpochMs - DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS - now),
+          Math.max(1_000, expiresAtEpochMs - DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS - now),
         );
         const { token } = yield* getDpopToken({
           expectedEnvironmentId: input.expectedEnvironmentId,
         }).pipe(Effect.withSpan("environment.authorization.renewSocket"), withRelayClientTracing);
-        if (token.expiresAtEpochMs <= expiresAtEpochMs) return;
-        expiresAtEpochMs = token.expiresAtEpochMs;
+        expiresAtEpochMs = Math.max(expiresAtEpochMs, token.expiresAtEpochMs);
+        now = yield* Clock.currentTimeMillis;
       }
     }),
   });
