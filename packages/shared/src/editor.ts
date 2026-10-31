@@ -67,8 +67,8 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   const command = editor.commands[0];
   const jetbrains = editor.launchStyle === "line-column";
   // A Toolbox script launches its IDE by absolute path or a HOME-based path. Keep a numbered script
-  // only while that path exists, so a script left behind by a
-  // removed IDE is skipped. The script is read, never run.
+  // only while that path exists, so a script left behind by a removed IDE is skipped. The script is
+  // read, never run.
   const hasLaunchTarget = Effect.fn("editor.hasLaunchTarget")(function* (script: string) {
     const text = yield* fs.readFileString(script).pipe(Effect.orElseSucceed(() => ""));
     const targets = text
