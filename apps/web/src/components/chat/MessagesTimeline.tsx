@@ -1190,6 +1190,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     latestRun?.startedAt != null
       ? worktreeSetup
       : null;
+  const worktreeSetupCardOwnsHeader =
+    isPreparingWorktree && worktreeSetup?.phase === "running" && backgroundWorktreeSetup === null;
   const activityState: TimelineRowActivityState = {
     isWorking,
     isCompacting: compactionAwaitingRow,
@@ -1199,6 +1201,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     activeTurnStartedAt,
     awaitingUser: awaitingUser !== null,
     isPreparingWorktree,
+    worktreeSetupCardOwnsHeader,
     latestRunId: latestRun?.runId ?? null,
     pendingRequest: isWorking ? pendingRequest : null,
     usageLimit,

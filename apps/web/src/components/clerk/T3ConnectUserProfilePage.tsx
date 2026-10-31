@@ -84,13 +84,11 @@ function T3ConnectEnvironmentRow(props: {
               role="group"
               aria-label={`Confirm deregistration of ${environment.label}`}
             >
-              <h4 className="text-sm leading-4.5 font-semibold text-strong-foreground">
-                Deregister server
-              </h4>
-              <p className="mt-1 text-xs leading-4.5 text-muted-foreground">
+              <h4 className="text-label text-strong-foreground">Deregister server</h4>
+              <p className="mt-1 text-meta text-muted-foreground">
                 “{environment.label}” will be removed from this account.
               </p>
-              <p className="mt-4 max-w-xl text-xs leading-4.5 text-muted-foreground">
+              <p className="mt-4 max-w-xl text-meta text-muted-foreground">
                 T3 Connect access will be revoked, any managed tunnel will be removed, and a host
                 space will become available. Local connections on your devices are not changed.
               </p>
@@ -271,11 +269,11 @@ export function T3ConnectUserProfilePage() {
       <div>
         <T3ConnectTunnelUsage />
         {environmentsState.error ? (
-          <div className="mb-4 border-t border-destructive/35 py-3 text-xs" role="alert">
-            <p className="font-medium text-destructive-foreground">
+          <div className="mb-4 border-t border-destructive/35 py-3" role="alert">
+            <p className="text-label text-destructive-foreground">
               Could not load T3 Connect environments
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">{environmentsState.error}</p>
+            <p className="mt-1 text-meta text-muted-foreground">{environmentsState.error}</p>
           </div>
         ) : null}
 
