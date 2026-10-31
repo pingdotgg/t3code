@@ -177,8 +177,13 @@ const make = Effect.gen(function* () {
   const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const ceiling = settingsService.managedPolicy?.limits?.maxRuntimeMode;
+  /**
+   * `onProgress` hears the running imported + skipped count after each
+   * conversation; callers throttle it.
+   */
   const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
     input: AgentSessionImportInput,
+    onProgress?: (processedCount: number) => Effect.Effect<void>,
   ) {
     const project = yield* projects.getById(input.projectId).pipe(
       Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-projects", cause })),
@@ -446,7 +451,11 @@ const make = Effect.gen(function* () {
         } else if (imported === false) {
           skippedCount += 1;
         }
-      }),
+      }).pipe(
+        Effect.andThen(() =>
+          onProgress === undefined ? Effect.void : onProgress(importedCount + skippedCount),
+        ),
+      ),
     );
 
     return { importedCount, skippedCount } satisfies AgentSessionImportResult;

@@ -242,10 +242,11 @@ describe("EnvironmentProviderSettings routing", () => {
   it("does not substitute another account when the requested instance was removed", async () => {
     await setup();
     await setProviders([provider()]);
-    await using _screen = await render(panel({ targetInstanceId: customId }));
-    await expect
-      .element(page.getByText("This provider instance is no longer available on this device."))
-      .toBeVisible();
+    await using screen = await render(panel({ targetInstanceId: customId }));
+    await expect.element(page.getByRole("heading", { name: "Provider unavailable" })).toBeVisible();
+    expect(screen.container.textContent).toContain(
+      "This provider instance is no longer available on this device.",
+    );
     expect(state.updateSettings).not.toHaveBeenCalled();
   });
 
@@ -261,7 +262,7 @@ describe("EnvironmentProviderSettings routing", () => {
         },
       },
     };
-    await using _screen = await render(panel());
+    await using _screen = await render(panel({ targetInstanceId: customId }));
     await userEvent.click(page.getByRole("switch", { name: "Enable Work" }).first());
 
     expect(state.mutateProviderInstance).toHaveBeenCalledWith(

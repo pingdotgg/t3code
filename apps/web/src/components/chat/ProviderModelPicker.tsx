@@ -99,6 +99,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   triggerVariant?: "toolbar" | "settings";
   triggerLabel?: string;
   triggerAriaLabel?: string;
+  /** Extra controls under the model list, such as the model's traits in settings. */
+  popupFooter?: ReactNode;
   onOpenChange?: (open: boolean) => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
@@ -241,7 +243,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     .filter(Boolean)
     .join(" · ");
 
-  const triggerText = props.triggerLabel ?? multipleLabel ?? triggerTitle;
+  const triggerText =
+    props.triggerLabel ??
+    multipleLabel ??
+    (props.triggerDetail && props.triggerSuffix === undefined
+      ? `${triggerTitle} · ${props.triggerDetail}`
+      : triggerTitle);
   const triggerTextProps = {
     className: cn(
       "min-w-0 flex-1 overflow-hidden truncate",
@@ -466,6 +473,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         {props.selectedModels === undefined && !docked ? (
           <ChatGptSharingControl provider={activeEntry?.snapshot ?? null} />
         ) : null}
+        {props.popupFooter}
       </PopoverPopup>
     </Popover>
   );

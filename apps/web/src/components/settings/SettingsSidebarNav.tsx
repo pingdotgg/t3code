@@ -36,6 +36,7 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Kbd } from "../ui/kbd";
 import {
   SidebarContent,
@@ -44,7 +45,6 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarInput,
 } from "../ui/sidebar";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
@@ -254,57 +254,62 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       <SidebarContent className="overflow-x-hidden">
         <SidebarGroup>
           <div className="flex flex-col gap-2">
-            <div
-              className={cn(
-                "relative isolate flex h-8 items-center gap-2 rounded-control px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground before:absolute before:inset-0 before:-z-10 before:rounded-[inherit] before:surface-well",
-                !compactSearchOpen && "max-md:hidden",
-              )}
-            >
-              <SearchIcon className="size-4 shrink-0 text-sidebar-muted-foreground" />
-              <SidebarInput
-                ref={searchInputRef}
-                nativeInput
-                type="search"
-                value={query}
-                onChange={(event) => {
-                  setQuery(event.currentTarget.value);
-                  setActiveResultIndex(0);
-                }}
-                onKeyDown={handleSearchKeyDown}
-                onFocus={() => setCompactSearchOpen(true)}
-                onBlur={() => {
-                  if (!isSearching) setCompactSearchOpen(false);
-                }}
-                placeholder="Search"
-                aria-label="Search settings"
-                role="combobox"
-                aria-autocomplete="list"
-                aria-expanded={isSearching && hasResults}
-                aria-controls={isSearching && hasResults ? "settings-search-results" : undefined}
-                aria-activedescendant={
-                  isSearching && results[activeResultIndex]
-                    ? `settings-search-result-${results[activeResultIndex].id}`
-                    : undefined
-                }
-                className="min-w-0 flex-1"
-              />
-              {isSearching ? (
-                <Button
-                  type="button"
-                  size="icon-micro"
-                  variant="ghost-muted"
-                  className="shrink-0"
-                  aria-label="Clear settings search"
-                  onClick={() => {
-                    clearSearch();
-                    searchInputRef.current?.focus();
+            {/* Pen mb644: a bare field led by the "/" key cap that focuses it. The
+                cap sits in the main search's 16px glyph slot, so it centers on the
+                icon column and the text starts on the label line, and it stays while
+                typing so the text never jumps. */}
+            <div className={compactSearchOpen ? undefined : "max-md:hidden"}>
+              <InputGroup variant="ghost">
+                <InputGroupAddon>
+                  <span className="-mx-0.5 flex size-4 shrink-0 items-center justify-center">
+                    <Kbd>/</Kbd>
+                  </span>
+                </InputGroupAddon>
+                <InputGroupInput
+                  ref={searchInputRef}
+                  nativeInput
+                  type="search"
+                  value={query}
+                  onChange={(event) => {
+                    setQuery(event.currentTarget.value);
+                    setActiveResultIndex(0);
                   }}
-                >
-                  <XIcon className="size-3" />
-                </Button>
-              ) : (
-                <Kbd>/</Kbd>
-              )}
+                  onKeyDown={handleSearchKeyDown}
+                  onFocus={() => setCompactSearchOpen(true)}
+                  onBlur={() => {
+                    if (!isSearching) setCompactSearchOpen(false);
+                  }}
+                  aria-label="Search settings"
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded={isSearching && hasResults}
+                  aria-controls={isSearching && hasResults ? "settings-search-results" : undefined}
+                  aria-activedescendant={
+                    isSearching && results[activeResultIndex]
+                      ? `settings-search-result-${results[activeResultIndex].id}`
+                      : undefined
+                  }
+                />
+                {isSearching ? (
+                  <InputGroupAddon align="inline-end">
+                    {/* Same as the thread search: 2px in from the addon, so the 12px glyph
+                        centers 16px inside the field like a row trailing glyph. */}
+                    <Button
+                      type="button"
+                      size="icon-micro"
+                      variant="ghost-muted"
+                      className="me-0.5"
+                      aria-label="Clear settings search"
+                      onClick={() => {
+                        clearSearch();
+                        searchInputRef.current?.focus();
+                      }}
+                    >
+                      <XIcon className="size-3" />
+                    </Button>
+                  </InputGroupAddon>
+                ) : null}
+              </InputGroup>
             </div>
             {isSearching && results.length === 0 ? (
               <p
@@ -331,7 +336,6 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       role="option"
                       aria-selected={index === activeResultIndex}
                       tabIndex={-1}
-                      size="sm"
                       isActive={index === activeResultIndex}
                       className="h-auto min-h-10 items-start"
                       onMouseMove={() => setActiveResultIndex(index)}
@@ -404,7 +408,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                                 isActive={isActive}
                                 onClick={() => handleSectionClick(to)}
                               >
-                                <Icon />
+                                <Icon className="size-3.5" />
                                 <span
                                   className={cn("truncate", !compactSearchOpen && "max-md:sr-only")}
                                 >

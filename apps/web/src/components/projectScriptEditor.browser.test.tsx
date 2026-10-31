@@ -63,6 +63,27 @@ function setup() {
 }
 
 describe("project action editor save lifecycle", () => {
+  it("records the submit shortcut without submitting the action", async () => {
+    setup();
+    await using screen = await render(null);
+    await open(screen, request("build"));
+    const keybinding = document.querySelector<HTMLInputElement>("#script-keybinding")!;
+    await act(async () => {
+      keybinding.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          code: "Enter",
+          ctrlKey: true,
+          metaKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    expect(keybinding.value).toContain("enter");
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
   it("does not close a replacement request or release its in-flight save", async () => {
     setup();
     await using screen = await render(null);

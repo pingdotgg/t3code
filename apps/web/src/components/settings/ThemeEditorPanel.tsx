@@ -1,6 +1,20 @@
-import { MousePointer2Icon, PaintbrushIcon, PlusIcon, XIcon } from "lucide-react";
-import { ChevronDown, ChevronUp } from "lucide";
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  CrosshairIcon,
+  PaintbrushIcon,
+  PaletteIcon,
+  PipetteIcon,
+  PlusIcon,
+  SearchIcon,
+  XIcon,
+} from "lucide-react";
+import { Maximize2, Minimize2 } from "lucide";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import {
   applyThemeColorPreview,
   THEME_COLOR_ROLES,
@@ -27,10 +41,16 @@ import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { Input } from "../ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Switch } from "../ui/switch";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { getThemeRoleLabel, ThemeColorField } from "./ThemeColorPicker";
+import {
+  getThemeRoleLabel,
+  ThemeColorField,
+  ThemeColorHexInput,
+  ThemeColorPopover,
+} from "./ThemeColorPicker";
 import {
   clearThemeInspectorHover,
   clearThemeInspectorHighlights,
@@ -43,6 +63,20 @@ import {
 } from "./themeInspector";
 
 const THEME_EDITOR_SIMPLE_ROLES: ReadonlyArray<ThemeColorRole> = ["canvas", "accent"];
+
+// The strip under the two guided picks previews the palette they derive.
+const THEME_EDITOR_DERIVED_STRIP_ROLES: ReadonlyArray<ThemeColorRole> = [
+  "canvas",
+  "surface",
+  "surfaceRaised",
+  "input",
+  "border",
+  "mutedForeground",
+  "text",
+  "accent",
+  "warning",
+  "error",
+];
 
 type ThemeEditorColorFamily = Readonly<{
   id: string;
@@ -108,76 +142,8 @@ const THEME_EDITOR_ROLE_GROUPS: ReadonlyArray<{
     ],
   },
   {
-    id: "brand-content",
-    title: "Brand & content",
-    families: [
-      {
-        id: "subtle-surface",
-        label: "Subtle surface",
-        role: "secondary",
-        roles: ["secondary", "secondaryForeground", "muted", "toolbarControl"],
-      },
-      {
-        id: "highlight-surface",
-        label: "Highlight surface",
-        role: "accentSurface",
-        roles: ["accentSurface", "accentSurfaceForeground", "toolbarControlHover"],
-      },
-      {
-        id: "accent",
-        label: "Accent",
-        role: "accent",
-        roles: [
-          "accent",
-          "accentForeground",
-          "focus",
-          "update",
-          "updateForeground",
-          "updateSurface",
-          "terminalCursor",
-        ],
-      },
-      {
-        id: "action",
-        label: "Action",
-        role: "messageAction",
-        roles: ["messageAction", "messageActionForeground", "messageActionHover"],
-      },
-      {
-        id: "message-surface",
-        label: "Message surface",
-        role: "messageSurface",
-        roles: ["messageSurface", "messageForeground"],
-      },
-      {
-        id: "code-surface",
-        label: "Code surface",
-        role: "codeBackground",
-        roles: ["codeBackground", "codeForeground"],
-      },
-    ],
-  },
-  {
-    id: "search",
-    title: "Search",
-    families: [
-      {
-        id: "search-matches",
-        label: "Search matches",
-        role: "searchMatchBackground",
-        roles: ["searchMatchBackground", "searchMatchForeground"],
-      },
-      {
-        id: "current-match",
-        label: "Current match",
-        role: "searchMatchActiveBackground",
-        roles: ["searchMatchActiveBackground", "searchMatchActiveForeground"],
-      },
-    ],
-  },
-  {
-    id: "context",
-    title: "Context",
+    id: "sidebar",
+    title: "Sidebar",
     families: [
       {
         id: "sidebar-background",
@@ -197,6 +163,56 @@ const THEME_EDITOR_ROLE_GROUPS: ReadonlyArray<{
         role: "sidebarRowSelected",
         roles: ["sidebarRowHover", "sidebarRowActive", "sidebarRowSelected"],
       },
+    ],
+  },
+  {
+    id: "brand-content",
+    title: "Brand & content",
+    families: [
+      {
+        id: "accent",
+        label: "Accent",
+        role: "accent",
+        roles: [
+          "accent",
+          "accentForeground",
+          "focus",
+          "update",
+          "updateForeground",
+          "updateSurface",
+          "terminalCursor",
+        ],
+      },
+      {
+        id: "subtle-surface",
+        label: "Subtle surface",
+        role: "secondary",
+        roles: ["secondary", "secondaryForeground", "muted", "toolbarControl"],
+      },
+      {
+        id: "highlight-surface",
+        label: "Highlight surface",
+        role: "accentSurface",
+        roles: ["accentSurface", "accentSurfaceForeground", "toolbarControlHover"],
+      },
+      {
+        id: "action",
+        label: "Action",
+        role: "messageAction",
+        roles: ["messageAction", "messageActionForeground", "messageActionHover"],
+      },
+      {
+        id: "message-surface",
+        label: "Message surface",
+        role: "messageSurface",
+        roles: ["messageSurface", "messageForeground"],
+      },
+      {
+        id: "code-surface",
+        label: "Code surface",
+        role: "codeBackground",
+        roles: ["codeBackground", "codeForeground"],
+      },
       {
         id: "terminal-background",
         label: "Terminal background",
@@ -208,6 +224,24 @@ const THEME_EDITOR_ROLE_GROUPS: ReadonlyArray<{
           "terminalScrollbar",
           "terminalScrollbarHover",
         ],
+      },
+    ],
+  },
+  {
+    id: "search",
+    title: "Search",
+    families: [
+      {
+        id: "search-matches",
+        label: "Search matches",
+        role: "searchMatchBackground",
+        roles: ["searchMatchBackground", "searchMatchForeground"],
+      },
+      {
+        id: "current-match",
+        label: "Current match",
+        role: "searchMatchActiveBackground",
+        roles: ["searchMatchActiveBackground", "searchMatchActiveForeground"],
       },
     ],
   },
@@ -359,6 +393,18 @@ export function ThemeEditorPanel({
     simpleColorsDirtyByAppearance: Record<ThemeAppearance, boolean>;
     shouldRegenerateGuidedColors: boolean;
   } | null>(null);
+  // Read while rendering, before the name field's autofocus moves focus in: what opened the
+  // editor (Create theme, Edit). Closing hands focus back to it while it is still on the page.
+  const [opener] = useState(() =>
+    document.activeElement instanceof HTMLElement ? document.activeElement : null,
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Return focus before unmount removes the focused editor control.
+  useLayoutEffect(() => {
+    const panel = panelRef.current;
+    return () => {
+      if (opener?.isConnected && panel?.contains(document.activeElement)) opener.focus();
+    };
+  }, [opener]);
   const dragOffsetRef = useRef<{ dx: number; dy: number; width: number } | null>(null);
   const resizeStartRef = useRef<{
     pointerX: number;
@@ -679,7 +725,14 @@ export function ThemeEditorPanel({
     };
     const cancelInspection = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      if (
+        event.target instanceof Element &&
+        event.target.closest("[data-theme-editor-panel][data-slot=popover-popup]")
+      ) {
+        return;
+      }
       event.preventDefault();
+      event.stopPropagation();
       clearHover();
       clearInspectorSelection();
     };
@@ -875,8 +928,8 @@ export function ThemeEditorPanel({
   };
 
   const renderNameField = () => (
-    <label className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-center gap-3">
-      <span className="text-sm font-medium text-strong-foreground">Theme name</span>
+    <label className="flex flex-col gap-1.5">
+      <span className="text-xs font-medium text-dim-foreground">Theme name</span>
       <Input
         autoFocus
         size="sm"
@@ -908,8 +961,8 @@ export function ThemeEditorPanel({
   };
 
   const renderAppearanceButtons = () => (
-    <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-center gap-3">
-      <span className="text-sm font-medium text-strong-foreground">Appearance</span>
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-xs font-medium text-dim-foreground">Appearance</span>
       <ToggleGroup
         aria-label="Theme appearance"
         variant="segmented"
@@ -930,60 +983,108 @@ export function ThemeEditorPanel({
     </div>
   );
 
-  const renderColorsHeader = () => (
-    <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-start gap-3">
-      <div>
-        <h3 className="text-sm font-medium text-strong-foreground">Colors</h3>
-        {isAdvanced ? null : (
-          <p className="text-xs text-muted-foreground">Two colors, rest derived</p>
-        )}
+  const renderAdvancedSwitch = () => (
+    <label className="flex cursor-pointer items-center justify-between gap-3 text-body text-foreground">
+      <span>Use advanced theme colors</span>
+      <Switch
+        aria-label="Use advanced theme colors"
+        checked={isAdvanced}
+        onCheckedChange={(checked) => handleAdvancedChange(Boolean(checked))}
+      />
+    </label>
+  );
+
+  const activeColors = colorsByAppearance[activeAppearance];
+
+  // A half-typed or mistyped value blocks saving until it is fixed. The active
+  // palette is reported first since that is the one on screen.
+  const invalidColor = (
+    [activeAppearance, activeAppearance === "light" ? "dark" : "light"] as const
+  ).flatMap((appearance) =>
+    THEME_COLOR_ROLES.filter(
+      (role) => !isThemeEditorColor(colorsByAppearance[appearance][role]),
+    ).map((role) => ({ appearance, role })),
+  )[0];
+
+  const renderSimpleColors = () => (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between gap-3 text-xs text-dim-foreground">
+        <span className="font-medium">Colors</span>
+        <span>Two colors, rest derived</span>
       </div>
-      <div className="flex min-w-0 items-start gap-3">
-        {isAdvanced ? (
-          <Input
-            aria-label="Filter colors"
-            className="min-w-0 flex-1"
-            onChange={(event) => setRoleQuery(event.currentTarget.value)}
-            placeholder="Filter colors"
-            size="sm"
-            value={roleQuery}
-          />
-        ) : null}
-        <label className="ml-auto flex shrink-0 cursor-pointer items-center gap-2 pt-0.5 text-sm font-medium text-strong-foreground">
-          <span>Advanced</span>
-          <Switch
-            aria-label="Use advanced theme colors"
-            checked={isAdvanced}
-            onCheckedChange={(checked) => handleAdvancedChange(Boolean(checked))}
-          />
-        </label>
+      <div className="grid grid-cols-2 gap-2">
+        {THEME_EDITOR_SIMPLE_ROLES.map((role) => {
+          const label = role === "canvas" ? "Background" : "Accent";
+          const value = activeColors[role];
+          const swatchValue = isThemeColor(value) ? value : "#000000";
+          return (
+            <div
+              className={cn(
+                "surface-well flex min-w-0 flex-col gap-2 rounded-lg p-2.5",
+                selectedRole === role && "ring-1 ring-ring",
+              )}
+              data-theme-color-role={role}
+              key={role}
+            >
+              <ThemeColorPopover
+                onEditCancel={cancelColorEdit}
+                onEditStart={startColorEdit}
+                label={label}
+                onChange={(nextValue) => updateColor(role, nextValue)}
+                value={swatchValue}
+                trigger={
+                  <button
+                    aria-label={`Choose ${label} color`}
+                    className="group flex h-11 w-full cursor-pointer outline-none"
+                    onFocus={() => selectThemeRole(role)}
+                    onPointerDown={() => selectThemeRole(role)}
+                    type="button"
+                  >
+                    <span
+                      className={cn(
+                        "size-full rounded-item border group-focus-visible:ring-2 group-focus-visible:ring-inset group-focus-visible:ring-ring",
+                        isThemeColor(value)
+                          ? "border-foreground/12"
+                          : "border-dashed border-destructive/70",
+                      )}
+                      style={isThemeColor(value) ? { backgroundColor: swatchValue } : undefined}
+                    />
+                  </button>
+                }
+              />
+              <div className="flex min-w-0 flex-col gap-0.5">
+                <button
+                  aria-label={`${selectedRole === role ? "Hide" : "Show"} ${label} usage`}
+                  aria-pressed={selectedRole === role}
+                  className="group cursor-pointer self-start text-left outline-none"
+                  onClick={() => toggleThemeRole(role)}
+                  type="button"
+                >
+                  <span className="rounded-sm text-meta text-foreground group-focus-visible:ring-2 group-focus-visible:ring-inset group-focus-visible:ring-ring">
+                    {label}
+                  </span>
+                </button>
+                <ThemeColorHexInput
+                  label={label}
+                  onChange={(nextValue) => updateColor(role, nextValue)}
+                  onFocus={() => selectThemeRole(role)}
+                  value={value}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {/* What the two picks derive: the guided engine fills every other role. */}
+      <div aria-hidden className="flex h-3.5 gap-0.5 overflow-hidden rounded-kbd">
+        {THEME_EDITOR_DERIVED_STRIP_ROLES.map((role) => (
+          <span className="flex-1" key={role} style={{ backgroundColor: activeColors[role] }} />
+        ))}
       </div>
     </div>
   );
 
-  const renderRoleFields = (
-    families: ReadonlyArray<ThemeEditorColorFamily>,
-    gridClassName = "grid gap-2 sm:grid-cols-2",
-  ) => (
-    <div className={gridClassName}>
-      {families.map((family) => (
-        <ThemeColorField
-          key={family.id}
-          label={family.label}
-          onChange={updateColor}
-          onEditCancel={cancelColorEdit}
-          onEditStart={startColorEdit}
-          onSelect={selectThemeRole}
-          onToggleSelected={toggleThemeRole}
-          role={family.role}
-          selected={selectedRole === family.role}
-          value={colorsByAppearance[activeAppearance][family.role]}
-        />
-      ))}
-    </div>
-  );
-
-  const renderColorFields = () => {
+  const renderAdvancedColors = () => {
     const query = roleQuery.trim().toLowerCase();
     const groups = THEME_EDITOR_ROLE_GROUPS.map((group) => ({
       ...group,
@@ -996,33 +1097,41 @@ export function ThemeEditorPanel({
             .includes(query),
       ),
     })).filter((group) => group.families.length > 0);
-    return isAdvanced ? (
-      <div className="space-y-5">
+    return (
+      <>
+        <InputGroup>
+          <InputGroupAddon>
+            <SearchIcon aria-hidden className="size-3.5" />
+          </InputGroupAddon>
+          <InputGroupInput
+            aria-label="Filter colors"
+            onChange={(event) => setRoleQuery(event.currentTarget.value)}
+            placeholder="Filter colors"
+            type="search"
+            value={roleQuery}
+          />
+        </InputGroup>
         {groups.map((group) => (
-          <section className="space-y-2" key={group.id}>
-            <h4 className="text-sm font-medium text-strong-foreground">{group.title}</h4>
-            {renderRoleFields(group.families, "grid gap-1")}
+          <section className="flex flex-col gap-0.5" key={group.id}>
+            <h4 className="pb-0.5 text-caption text-dim-foreground">{group.title}</h4>
+            {group.families.map((family) => (
+              <ThemeColorField
+                key={family.id}
+                label={family.label}
+                onChange={updateColor}
+                onEditCancel={cancelColorEdit}
+                onEditStart={startColorEdit}
+                onSelect={selectThemeRole}
+                onToggleSelected={toggleThemeRole}
+                role={family.role}
+                selected={selectedRole === family.role}
+                value={activeColors[family.role]}
+              />
+            ))}
           </section>
         ))}
         {groups.length === 0 ? <p className="text-xs text-muted-foreground">No matches.</p> : null}
-      </div>
-    ) : (
-      <div className="grid gap-1">
-        {THEME_EDITOR_SIMPLE_ROLES.map((role) => (
-          <ThemeColorField
-            key={role}
-            onChange={updateColor}
-            onEditCancel={cancelColorEdit}
-            onEditStart={startColorEdit}
-            onSelect={selectThemeRole}
-            onToggleSelected={toggleThemeRole}
-            role={role}
-            label={role === "canvas" ? "Background" : "Accent"}
-            selected={selectedRole === role}
-            value={colorsByAppearance[activeAppearance][role]}
-          />
-        ))}
-      </div>
+      </>
     );
   };
 
@@ -1105,149 +1214,185 @@ export function ThemeEditorPanel({
     resizeStartRef.current = null;
   };
 
+  const selectedLabel = selectedRole
+    ? isAdvanced
+      ? (getThemeEditorColorFamily(selectedRole)?.label ?? getThemeRoleLabel(selectedRole))
+      : getThemeRoleLabel(selectedRole)
+    : null;
+  const pillText = isInspecting
+    ? "Select an element · Esc to cancel"
+    : selectedLabel
+      ? `${selectedLabel} · ${usageCount ?? 0} ${usageCount === 1 ? "use" : "uses"}`
+      : null;
+
   return (
-    <div
-      aria-label={isEditing ? "Edit theme" : "Create theme"}
-      className={cn(
-        "surface-dialog fixed z-[110] flex max-h-[min(42rem,calc(100dvh-6rem))] w-[min(26rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-card border text-popover-foreground",
-        position === null && "bottom-4 right-4",
-        isMinimized && "max-h-none",
-      )}
-      data-theme-editor-panel
-      ref={panelRef}
-      role="dialog"
-      style={{
-        ...(shownPosition ? { left: shownPosition.x, top: shownPosition.y } : {}),
-        ...(shownSize ? { width: shownSize.width } : {}),
-        ...(shownSize && !isMinimized
-          ? { height: shownSize.height, maxHeight: "calc(100dvh - 1rem)" }
-          : {}),
-      }}
-    >
+    <>
+      {pillText ? (
+        <div
+          aria-live="polite"
+          className="surface-popover pointer-events-none fixed left-1/2 top-3.5 z-[110] flex h-7.5 -translate-x-1/2 items-center gap-2 rounded-full border px-3 text-xs text-foreground"
+          data-theme-editor-panel
+        >
+          <CrosshairIcon aria-hidden className="size-3.5" />
+          {pillText}
+        </div>
+      ) : null}
       <div
-        className="flex cursor-grab touch-none select-none items-center gap-1 border-b border-border/50 px-3 py-2 active:cursor-grabbing"
-        onPointerCancel={endDrag}
-        onPointerDown={handleDragPointerDown}
-        onPointerMove={handleDragPointerMove}
-        onPointerUp={endDrag}
+        aria-label={isEditing ? "Edit theme" : "Create theme"}
+        className={cn(
+          "surface-dialog fixed z-[110] flex max-h-[min(42rem,calc(100dvh-4.5rem))] w-[min(21.5rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border text-popover-foreground",
+          position === null && "right-5 top-13",
+          isMinimized && "max-h-none",
+        )}
+        data-docked={position === null ? "" : undefined}
+        data-theme-editor-panel
+        ref={panelRef}
+        role="dialog"
+        onKeyDown={(event) => {
+          // Escape a popover or the inspector consumed, or one from a portaled popup, stays theirs.
+          if (event.key !== "Escape" || event.defaultPrevented) return;
+          if (!(event.target instanceof Node && event.currentTarget.contains(event.target))) return;
+          event.preventDefault();
+          event.stopPropagation();
+          onOpenChange(false);
+        }}
+        style={{
+          ...(shownPosition ? { left: shownPosition.x, top: shownPosition.y } : {}),
+          ...(shownSize ? { width: shownSize.width } : {}),
+          ...(shownSize && !isMinimized
+            ? { height: shownSize.height, maxHeight: "calc(100dvh - 1rem)" }
+            : {}),
+        }}
       >
-        <div className="flex min-w-0 flex-1 items-baseline gap-2">
-          <h2 className="shrink-0 truncate text-sm font-medium text-strong-foreground">
+        <div
+          className={cn(
+            // pe-2: the ghost icon buttons hang 8px so the close glyph ends on the content line.
+            "flex cursor-grab touch-none select-none items-center gap-2 ps-4 pe-2 pt-4 active:cursor-grabbing",
+            isMinimized && "pb-3.5",
+          )}
+          onPointerCancel={endDrag}
+          onPointerDown={handleDragPointerDown}
+          onPointerMove={handleDragPointerMove}
+          onPointerUp={endDrag}
+        >
+          <PaletteIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+          <h2 className="min-w-0 flex-1 truncate text-label text-foreground">
             {isEditing ? "Edit theme" : "Create theme"}
           </h2>
-          {isMinimized ? null : (
-            <p className="truncate text-xs text-muted-foreground">
-              {isInspecting
-                ? "Select an element · Esc to cancel"
-                : selectedRole
-                  ? `${isAdvanced ? (getThemeEditorColorFamily(selectedRole)?.label ?? getThemeRoleLabel(selectedRole)) : getThemeRoleLabel(selectedRole)} · ${usageCount ?? 0} ${usageCount === 1 ? "use" : "uses"}`
-                  : "Select a color below"}
-            </p>
-          )}
-        </div>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label={isInspecting ? "Cancel inspecting app colors" : "Inspect app colors"}
-                aria-pressed={isInspecting}
-                size="xs"
-                variant={isInspecting ? "secondary" : "ghost"}
-                onClick={() => {
-                  if (isInspecting) {
-                    clearInspectorSelection();
-                    return;
-                  }
-                  setIsInspecting(true);
-                }}
-              >
-                <MousePointer2Icon />
-                {isInspecting ? "Cancel" : "Inspect"}
-              </Button>
-            }
-          />
-          <TooltipPopup data-theme-editor-panel="">
-            {isInspecting ? "Cancel and clear the selection" : "Pick a color from the app"}
-          </TooltipPopup>
-        </Tooltip>
-        <Button
-          aria-label={isMinimized ? "Expand the theme editor" : "Minimize the theme editor"}
-          size="icon-xs"
-          variant="ghost"
-          onClick={() => setIsMinimized(!isMinimized)}
-        >
-          <MorphIcon icon={isMinimized ? ChevronUp : ChevronDown} />
-        </Button>
-        <Button
-          aria-label="Close the theme editor"
-          size="icon-xs"
-          variant="ghost"
-          onClick={() => onOpenChange(false)}
-        >
-          <XIcon />
-        </Button>
-      </div>
-
-      {isMinimized ? null : (
-        <>
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto py-3 pl-3 pr-1.5">
-            {renderNameField()}
-            {error ? (
-              <p aria-live="polite" className="text-sm text-destructive">
-                {error}
-              </p>
-            ) : null}
-            {renderAppearanceButtons()}
-            <div className="space-y-3">
-              {renderColorsHeader()}
-              {renderColorFields()}
-            </div>
-          </div>
-          <div className="flex items-center justify-end gap-2 border-t border-border/50 px-3 py-2">
-            <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button disabled={!name.trim()} size="sm" onClick={handleSubmit}>
-              {isEditing ? (
-                mergeTarget ? (
-                  `Merge into “${mergeTarget.label}”`
-                ) : (
-                  "Save changes"
-                )
-              ) : mergeTarget ? (
-                <>
-                  <PlusIcon />
-                  {`Add ${activeAppearance} palette`}
-                </>
-              ) : (
-                <>
-                  <PaintbrushIcon />
-                  Create theme
-                </>
-              )}
-            </Button>
-          </div>
-          <div
-            aria-hidden
-            className="absolute bottom-0 right-0 z-10 flex size-5 cursor-se-resize touch-none select-none items-end justify-end p-1 text-dim-foreground"
-            onPointerCancel={endResize}
-            onPointerDown={handleResizePointerDown}
-            onPointerMove={handleResizePointerMove}
-            onPointerUp={endResize}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  aria-label={isInspecting ? "Cancel inspecting app colors" : "Inspect app colors"}
+                  aria-pressed={isInspecting}
+                  size="icon-xs"
+                  variant={isInspecting ? "secondary" : "ghost"}
+                  onClick={() => {
+                    if (isInspecting) {
+                      clearInspectorSelection();
+                      return;
+                    }
+                    setIsInspecting(true);
+                  }}
+                >
+                  <PipetteIcon />
+                </Button>
+              }
+            />
+            <TooltipPopup data-theme-editor-panel="">
+              {isInspecting ? "Cancel and clear the selection" : "Pick a color from the app"}
+            </TooltipPopup>
+          </Tooltip>
+          <Button
+            aria-label={isMinimized ? "Expand the theme editor" : "Minimize the theme editor"}
+            size="icon-xs"
+            variant="ghost"
+            onClick={() => setIsMinimized(!isMinimized)}
           >
-            <svg
-              className="size-2.5"
-              fill="none"
-              stroke="currentColor"
-              strokeLinecap="round"
-              strokeWidth="1.2"
-              viewBox="0 0 8 8"
+            <MorphIcon icon={isMinimized ? Maximize2 : Minimize2} />
+          </Button>
+          <Button
+            aria-label="Close the theme editor"
+            size="icon-xs"
+            variant="ghost"
+            onClick={() => onOpenChange(false)}
+          >
+            <XIcon />
+          </Button>
+        </div>
+
+        {isMinimized ? null : (
+          <>
+            <div
+              className={cn(
+                "flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-4 pb-1",
+                isAdvanced ? "gap-3" : "gap-4",
+              )}
             >
-              <path d="M7 1 1 7M7 4.5 4.5 7" />
-            </svg>
-          </div>
-        </>
-      )}
-    </div>
+              {renderNameField()}
+              {error ? (
+                <p aria-live="polite" className="text-body text-destructive">
+                  {error}
+                </p>
+              ) : invalidColor ? (
+                <p aria-live="polite" className="text-body text-destructive">
+                  {`“${invalidColor.role === "canvas" && !isAdvanced ? "Background" : getThemeRoleLabel(invalidColor.role)}” isn’t a valid color${invalidColor.appearance === activeAppearance ? "" : ` in the ${invalidColor.appearance} palette`}. Use a hex like #1A1B26.`}
+                </p>
+              ) : null}
+              {renderAppearanceButtons()}
+              {isAdvanced ? renderAdvancedColors() : renderSimpleColors()}
+              {renderAdvancedSwitch()}
+            </div>
+            <div className="flex items-center justify-end gap-2 px-4 pt-3 pb-3.5">
+              <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button
+                disabled={!name.trim() || invalidColor !== undefined}
+                size="sm"
+                onClick={handleSubmit}
+              >
+                {isEditing ? (
+                  mergeTarget ? (
+                    `Merge into “${mergeTarget.label}”`
+                  ) : (
+                    "Save changes"
+                  )
+                ) : mergeTarget ? (
+                  <>
+                    <PlusIcon />
+                    {`Add ${activeAppearance} palette`}
+                  </>
+                ) : (
+                  <>
+                    <PaintbrushIcon />
+                    Create theme
+                  </>
+                )}
+              </Button>
+            </div>
+            <div
+              aria-hidden
+              className="absolute bottom-0 right-0 z-10 flex size-5 cursor-se-resize touch-none select-none items-end justify-end p-1 text-dim-foreground"
+              onPointerCancel={endResize}
+              onPointerDown={handleResizePointerDown}
+              onPointerMove={handleResizePointerMove}
+              onPointerUp={endResize}
+            >
+              <svg
+                className="size-2.5"
+                fill="none"
+                stroke="currentColor"
+                strokeLinecap="round"
+                strokeWidth="1.2"
+                viewBox="0 0 8 8"
+              >
+                <path d="M7 1 1 7M7 4.5 4.5 7" />
+              </svg>
+            </div>
+          </>
+        )}
+      </div>
+    </>
   );
 }

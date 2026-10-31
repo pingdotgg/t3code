@@ -64,9 +64,14 @@ export class PrimaryEnvironmentRequestError extends Schema.TaggedError<PrimaryEn
   override get message(): string {
     return `Primary environment request failed during ${this.operation} (HTTP ${this.status}).`;
   }
+
+  /** Whether the server answered at all; without a response `status` is a stand-in 500. */
+  get responded(): boolean {
+    return readHttpApiStatus(this.cause) !== null;
+  }
 }
 
-const isPrimaryEnvironmentRequestError = Schema.is(PrimaryEnvironmentRequestError);
+export const isPrimaryEnvironmentRequestError = Schema.is(PrimaryEnvironmentRequestError);
 
 export class PrimaryEnvironmentPairingCredentialRejectedError extends Schema.TaggedError<PrimaryEnvironmentPairingCredentialRejectedError>()(
   "PrimaryEnvironmentPairingCredentialRejectedError",

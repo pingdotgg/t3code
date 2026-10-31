@@ -72,7 +72,7 @@ function DeviceCode(props: { readonly code: string }) {
           <span
             key={index}
             aria-hidden
-            className="grid h-10 w-8 place-items-center rounded-md border border-border bg-background shadow-xs"
+            className="grid h-10 w-8 place-items-center rounded-control surface-well"
           >
             {char}
           </span>
@@ -209,21 +209,21 @@ export function SourceControlAppSignInSettings({
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-xl border bg-card",
-        state.status === "failed" && !signedIn ? "border-destructive/40" : "border-border",
+        "overflow-hidden rounded-card border surface-card-settings",
+        state.status === "failed" && !signedIn ? "border-destructive/40" : "border-hairline",
       )}
     >
       <div className="flex items-center gap-3 p-3">
         <AppMark signedIn={signedIn} />
         <div className="min-w-0 flex-1 space-y-0.5">
-          <p className="text-label text-foreground">{appSignIn.appName}</p>
+          <p className="text-label text-strong-foreground">{appSignIn.appName}</p>
           <div className="text-meta text-muted-foreground">{subtitle}</div>
         </div>
         <div className="shrink-0">{action}</div>
       </div>
 
       {waiting !== null ? (
-        <div className="grid gap-4 border-t border-border bg-muted/40 px-3 py-4 sm:grid-cols-[auto_1fr] sm:items-center sm:gap-6">
+        <div className="grid gap-4 border-t border-hairline px-3 py-4 sm:grid-cols-[auto_1fr] sm:items-center sm:gap-6">
           <div className="flex items-center gap-2">
             <DeviceCode code={waiting.userCode} />
             <Button
@@ -255,7 +255,7 @@ export function SourceControlAppSignInSettings({
       ) : null}
 
       {signedIn ? (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border bg-muted/40 px-3 py-2 text-meta text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-hairline px-3 py-2 text-meta text-muted-foreground">
           <span className="min-w-0 flex-1">
             Reaches repositories in accounts and organizations that installed the app.
           </span>

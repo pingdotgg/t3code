@@ -380,8 +380,8 @@ export function AddEnvironmentDialog({
           </span>
         ) : null}
         <span className="min-w-0">
-          <span className="block text-sm font-medium text-strong-foreground">{input.title}</span>
-          <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
+          <span className="block text-label text-strong-foreground">{input.title}</span>
+          <span className="mt-1 block text-meta leading-relaxed text-muted-foreground">
             {input.description}
           </span>
         </span>
@@ -393,7 +393,7 @@ export function AddEnvironmentDialog({
     <div className="space-y-3">
       <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem]">
         <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-strong-foreground">Host</span>
+          <span className="mb-1.5 block text-meta text-strong-foreground">Host</span>
           <Input
             value={savedBackendHost}
             onChange={(event) => handleSavedBackendHostChange(event.target.value)}
@@ -403,9 +403,7 @@ export function AddEnvironmentDialog({
           />
         </label>
         <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-strong-foreground">
-            Pairing code
-          </span>
+          <span className="mb-1.5 block text-meta text-strong-foreground">Pairing code</span>
           <Input
             value={savedBackendPairingCode}
             onChange={(event) => setSavedBackendPairingCode(event.target.value)}
@@ -416,7 +414,7 @@ export function AddEnvironmentDialog({
         </label>
       </div>
       <div>
-        <span className="mt-1 block text-2xs text-muted-foreground">
+        <span className="mt-1 block text-caption text-muted-foreground">
           Paste a full pairing URL here to fill both fields automatically.
         </span>
       </div>
@@ -472,7 +470,7 @@ export function AddEnvironmentDialog({
         </div>
       ) : null}
       {renderRemoteFields()}
-      {error ? <p className="text-xs text-destructive">{error}</p> : null}
+      {error ? <p className="text-meta text-destructive">{error}</p> : null}
       <Button
         variant="secondary"
         className="w-full"
@@ -490,7 +488,7 @@ export function AddEnvironmentDialog({
         <div className="block">
           <label
             htmlFor="saved-backend-ssh-host"
-            className="mb-1.5 block text-xs font-medium text-strong-foreground"
+            className="mb-1.5 block text-meta text-strong-foreground"
           >
             SSH host or alias
           </label>
@@ -523,7 +521,7 @@ export function AddEnvironmentDialog({
             {hasSshHostSuggestionContent ? (
               <AutocompletePopup>
                 {isLoadingDiscoveredSshHosts ? (
-                  <div className="px-3 py-2 text-xs text-muted-foreground">Loading hosts…</div>
+                  <div className="px-3 py-2 text-meta text-muted-foreground">Loading hosts…</div>
                 ) : filteredDiscoveredSshHosts.length > 0 ? (
                   <AutocompleteList className="max-h-72">
                     {filteredDiscoveredSshHosts.map((target, index) => {
@@ -538,11 +536,9 @@ export function AddEnvironmentDialog({
                           value={target}
                           className="h-8 min-h-8 whitespace-nowrap"
                         >
-                          <span className="min-w-0 truncate text-sm font-medium">
-                            {target.alias}
-                          </span>
+                          <span className="min-w-0 truncate text-label">{target.alias}</span>
                           {address !== target.alias ? (
-                            <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                            <span className="min-w-0 flex-1 truncate text-meta text-muted-foreground">
                               {address}
                             </span>
                           ) : (
@@ -566,9 +562,7 @@ export function AddEnvironmentDialog({
         </div>
         <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_7rem]">
           <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-strong-foreground">
-              Username
-            </span>
+            <span className="mb-1.5 block text-meta text-strong-foreground">Username</span>
             <Input
               value={savedBackendSshUsername}
               onChange={(event) => setSavedBackendSshUsername(event.target.value)}
@@ -579,7 +573,7 @@ export function AddEnvironmentDialog({
             />
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-strong-foreground">Port</span>
+            <span className="mb-1.5 block text-meta text-strong-foreground">Port</span>
             <Input
               value={savedBackendSshPort}
               onChange={(event) => setSavedBackendSshPort(event.target.value)}

@@ -1,8 +1,6 @@
-import {
-  WorkspaceBreadcrumb,
-  WorkspaceBreadcrumbItem,
-  WorkspaceBreadcrumbSeparator,
-} from "../WorkspaceBreadcrumb";
+import { ChevronRightIcon, SettingsIcon } from "lucide-react";
+
+import { SettingsScopePicker } from "./SettingsScopePicker";
 import { SETTINGS_SECTION_LABELS } from "./settingsSearch";
 
 const SETTINGS_BREADCRUMB_LABELS: Readonly<Record<string, string>> = {
@@ -16,20 +14,17 @@ function settingsBreadcrumbLabel(pathname: string): string | null {
   return SETTINGS_BREADCRUMB_LABELS[normalizedPathname] ?? null;
 }
 
+/** Keep the section heading accessible without repeating the visible navigation label. */
 export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
   const sectionLabel = settingsBreadcrumbLabel(pathname);
 
   return (
-    <WorkspaceBreadcrumb ariaLabel="Settings breadcrumb">
-      {sectionLabel ? (
-        <>
-          <WorkspaceBreadcrumbItem>Settings</WorkspaceBreadcrumbItem>
-          <WorkspaceBreadcrumbSeparator />
-        </>
-      ) : null}
-      <WorkspaceBreadcrumbItem current className="truncate">
-        {sectionLabel ?? "Settings"}
-      </WorkspaceBreadcrumbItem>
-    </WorkspaceBreadcrumb>
+    <nav aria-label="Settings breadcrumb" className="flex min-w-0 items-center gap-1.75">
+      <SettingsIcon aria-hidden className="size-3.5 shrink-0 text-foreground" />
+      <span className="shrink-0">Settings</span>
+      <ChevronRightIcon aria-hidden className="size-3 shrink-0 text-dim-foreground" />
+      <SettingsScopePicker pathname={pathname} />
+      {sectionLabel ? <h1 className="sr-only">{sectionLabel}</h1> : null}
+    </nav>
   );
 }

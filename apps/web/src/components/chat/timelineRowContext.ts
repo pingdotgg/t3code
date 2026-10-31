@@ -108,6 +108,8 @@ export interface TimelineRowActivityState {
   activeTurnStartedAt: string | null;
   awaitingUser: boolean;
   isPreparingWorktree: boolean;
+  /** The setup card is on screen with its own header, so the working row steps aside. */
+  worktreeSetupCardOwnsHeader: boolean;
   latestRunId: RunId | null;
   backgroundWorktreeSetup: WorktreeSetupSnapshot | null;
   /** The approval or question the running turn waits on; it pauses the clock. */

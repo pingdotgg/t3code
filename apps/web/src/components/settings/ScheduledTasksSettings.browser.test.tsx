@@ -212,7 +212,9 @@ describe("ScheduledTasksSettings", () => {
     state.tasksLoaded = true;
     await screen.rerender(<ScheduledTasksSettings taskId={task.id} />);
 
-    await expect.element(dialog.getByRole("heading", { name: "New task" })).toBeInTheDocument();
+    await expect
+      .element(dialog.getByRole("heading", { name: "New scheduled task" }))
+      .toBeInTheDocument();
     await expect.element(name).toHaveValue("My draft");
   });
 });

@@ -51,7 +51,11 @@ export function WizardFooter({
   readonly leading?: ReactNode;
 }) {
   return (
-    <DialogFooter variant="bare" className={leading ? "sm:justify-between" : undefined}>
+    <DialogFooter
+      variant="bare"
+      // The banded panel ends at its fill, so the footer brings its own top gap.
+      className={cn("[[data-surface=default]+&]:pt-4", leading && "sm:justify-between")}
+    >
       {leading}
       {leading ? (
         <div className="flex flex-col-reverse gap-2 sm:flex-row">{children}</div>
@@ -69,7 +73,10 @@ export function WizardSteps({
   showSummaries = false,
   onStepChange,
   isStepDisabled,
+  variant = "default",
 }: {
+  /** "pills" is the compact row that sits beside a header lockup. */
+  readonly variant?: "default" | "pills";
   readonly steps: readonly string[];
   readonly currentStep: number;
   readonly summaries?: readonly (string | null)[];
@@ -78,6 +85,48 @@ export function WizardSteps({
   readonly onStepChange?: (step: number) => void;
 }) {
   const Step = onStepChange ? "button" : "div";
+  if (variant === "pills") {
+    return (
+      <ol className="flex shrink-0 items-center gap-1.5" aria-label="Setup progress">
+        {steps.map((step, index) => (
+          <li key={step}>
+            <Step
+              {...(onStepChange
+                ? { type: "button" as const, disabled: isStepDisabled?.(index) }
+                : {})}
+              aria-current={index === currentStep ? "step" : undefined}
+              aria-label={`${step}, step ${index + 1}`}
+              onClick={onStepChange ? () => onStepChange(index) : undefined}
+              className={cn(
+                "flex h-6 items-center gap-1.5 rounded-full border border-transparent ps-1 pe-2.5 text-meta outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                index === currentStep
+                  ? "surface-card border-border text-strong-foreground"
+                  : "text-muted-foreground",
+                onStepChange &&
+                  index < currentStep &&
+                  "cursor-pointer hover:text-foreground disabled:cursor-default",
+              )}
+            >
+              <span
+                className={cn(
+                  "grid size-4 shrink-0 place-items-center rounded-full text-micro",
+                  index < currentStep
+                    ? "bg-success/15 text-success"
+                    : index === currentStep
+                      ? "bg-info/20 text-info-foreground"
+                      : "bg-foreground/5",
+                )}
+                aria-hidden
+              >
+                {index < currentStep ? <CheckIcon className="size-3" /> : index + 1}
+              </span>
+              <span className="max-sm:hidden">{step}</span>
+            </Step>
+          </li>
+        ))}
+      </ol>
+    );
+  }
   return (
     <ol
       className="grid auto-cols-fr grid-flow-col gap-1 rounded-xl bg-muted p-1 ring-1 ring-hairline"
@@ -145,6 +194,7 @@ export function WizardPanel({
   return (
     <div
       data-slot="dialog-panel"
+      data-surface={surface}
       className={cn(
         "min-w-0 space-y-4 px-6 py-5",
         surface === "default" && "bg-muted ring-1 ring-hairline",

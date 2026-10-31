@@ -1,10 +1,39 @@
 import type { ProjectScript, ResolvedKeybindingsConfig } from "@t3tools/contracts";
-import { SettingsIcon } from "lucide-react";
+import { EllipsisIcon } from "lucide-react";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { commandForProjectScript } from "../../projectScripts";
 import { ScriptIcon } from "../projectScriptEditor";
 import { Button } from "../ui/button";
+import { Kbd, KbdGroup } from "../ui/kbd";
 import { SettingsRow } from "./settingsLayout";
+
+const MAC_MODIFIER_GLYPHS = new Set(["\u2303", "\u2325", "\u21e7", "\u2318"]);
+
+/** Splits a formatted shortcut ("⌘⇧T" or "Ctrl+Shift+T") into one key cap per key. */
+function shortcutKeyCaps(label: string): Array<{ cap: string; key: string }> {
+  const seen = new Map<string, number>();
+  return splitShortcutLabel(label).map((cap) => {
+    const count = seen.get(cap) ?? 0;
+    seen.set(cap, count + 1);
+    return { cap, key: count === 0 ? cap : `${cap}-${count}` };
+  });
+}
+
+function splitShortcutLabel(label: string): string[] {
+  if (!MAC_MODIFIER_GLYPHS.has(label[0]!) && label.includes("+")) {
+    const caps = label.split("+").filter(Boolean);
+    if (label.endsWith("+")) caps.push("+");
+    return caps;
+  }
+  const caps: string[] = [];
+  let index = 0;
+  while (index < label.length && MAC_MODIFIER_GLYPHS.has(label[index]!)) {
+    caps.push(label[index]!);
+    index += 1;
+  }
+  if (index < label.length) caps.push(label.slice(index));
+  return caps;
+}
 
 export function ProjectActionsList({
   scripts,
@@ -29,12 +58,12 @@ export function ProjectActionsList({
       <SettingsRow
         key={script.id}
         className="group py-2"
+        leading={<ScriptIcon icon={script.icon} className="size-4 shrink-0" />}
         title={
           <span className="flex min-w-0 items-center gap-2">
-            <ScriptIcon icon={script.icon} className="size-4 shrink-0 text-muted-foreground" />
             <span className="min-w-0 truncate">{script.name}</span>
             {script.runOnWorktreeCreate ? (
-              <span className="shrink-0 rounded-badge border border-border/60 px-1.5 py-px text-2xs font-normal text-muted-foreground">
+              <span className="shrink-0 rounded-badge border border-border/60 px-1.5 py-px text-caption text-muted-foreground">
                 setup
               </span>
             ) : null}
@@ -44,7 +73,7 @@ export function ProjectActionsList({
               </span>
             ) : null}
             {script.previewUrl ? (
-              <span className="shrink-0 rounded-badge border border-border/60 px-1.5 py-px text-2xs font-normal text-muted-foreground max-sm:hidden">
+              <span className="shrink-0 rounded-badge border border-border/60 px-1.5 py-px text-caption text-muted-foreground max-sm:hidden">
                 preview · desktop only
               </span>
             ) : null}
@@ -54,19 +83,21 @@ export function ProjectActionsList({
         control={
           <>
             {shortcutLabel ? (
-              <span className="text-meta text-muted-foreground">{shortcutLabel}</span>
+              <KbdGroup aria-label={shortcutLabel}>
+                {shortcutKeyCaps(shortcutLabel).map(({ cap, key }) => (
+                  <Kbd key={key}>{cap}</Kbd>
+                ))}
+              </KbdGroup>
             ) : null}
-            <span className="flex shrink-0 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100">
-              <Button
-                size="icon-xs"
-                variant="ghost-muted"
-                aria-label={`Edit ${script.name}`}
-                disabled={disabled}
-                onClick={() => onEdit(script)}
-              >
-                <SettingsIcon className="size-3.5" />
-              </Button>
-            </span>
+            <Button
+              size="icon-sm"
+              variant="ghost-muted"
+              aria-label={`Edit ${script.name}`}
+              disabled={disabled}
+              onClick={() => onEdit(script)}
+            >
+              <EllipsisIcon />
+            </Button>
           </>
         }
       />

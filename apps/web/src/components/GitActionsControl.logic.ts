@@ -4,7 +4,10 @@ import type {
   VcsStatusResult,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
-import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
+import {
+  sourceControlClients,
+  type ChangeRequestTerminology,
+} from "@t3tools/client-runtime/source-control-clients";
 import {
   changeRequestTerminologyFor,
   type DefaultBranchActionDialogCopy,
@@ -449,4 +452,108 @@ export function resolveChangesTotals(
     return { insertions: branch.insertions, deletions: branch.deletions };
   }
   return { insertions: tree.insertions, deletions: tree.deletions };
+}
+
+/** Title of the running action's progress popover (pen F8fwH). */
+export function gitStackedActionTitle(
+  action: GitStackedAction,
+  terminology: ChangeRequestTerminology = sourceControlClients.get(undefined).changeRequest,
+): string {
+  switch (action) {
+    case "commit":
+      return "Commit";
+    case "push":
+      return "Push";
+    case "create_pr":
+      return `Create ${terminology.shortLabel}`;
+    case "commit_push":
+      return "Commit & push";
+    case "commit_push_pr":
+      return `Commit, push & ${terminology.shortLabel}`;
+  }
+}
+
+export interface GitSyncMenuItem {
+  readonly id: "commit_push" | "pull" | "sync";
+  readonly label: string;
+  readonly disabled: boolean;
+  /** Shown under the item while it is disabled. */
+  readonly disabledReason: string | null;
+}
+
+function syncMenuItem(
+  id: GitSyncMenuItem["id"],
+  label: string,
+  disabledReason: string | null,
+): GitSyncMenuItem {
+  return { id, label, disabled: disabledReason !== null, disabledReason };
+}
+
+/**
+ * The menu rows that move the branch against its upstream: commit & push, pull, and sync
+ * (pull, then push what is still ahead). Each is null when the repository cannot offer it at
+ * all, such as pull without an upstream.
+ */
+export function buildSyncMenuItems(
+  gitStatus: VcsStatusResult | null,
+  isBusy: boolean,
+  hasPrimaryRemote = true,
+): {
+  readonly commitPush: GitSyncMenuItem | null;
+  readonly pull: GitSyncMenuItem | null;
+  readonly sync: GitSyncMenuItem | null;
+} {
+  if (!gitStatus) return { commitPush: null, pull: null, sync: null };
+  const busyReason = isBusy ? "Git action in progress." : null;
+  const detachedReason =
+    gitStatus.refName === null ? "Detached HEAD: check out a branch first." : null;
+  const hasChanges = gitStatus.hasWorkingTreeChanges;
+  const isAhead = gitStatus.aheadCount > 0;
+  const isBehind = gitStatus.behindCount > 0;
+  const canPushWithoutUpstream = hasPrimaryRemote && !gitStatus.hasUpstream;
+
+  const commitPush =
+    hasPrimaryRemote || gitStatus.hasUpstream
+      ? syncMenuItem(
+          "commit_push",
+          "Commit & push",
+          busyReason ??
+            detachedReason ??
+            (!hasChanges
+              ? "Worktree is clean. Make changes before committing."
+              : isBehind
+                ? "Branch is behind upstream. Pull first."
+                : !gitStatus.hasUpstream && !canPushWithoutUpstream
+                  ? 'Add an "origin" remote before pushing.'
+                  : null),
+        )
+      : null;
+
+  if (!gitStatus.hasUpstream) return { commitPush, pull: null, sync: null };
+
+  const pull = syncMenuItem(
+    "pull",
+    "Pull",
+    busyReason ??
+      detachedReason ??
+      (!isBehind
+        ? "Already up to date with upstream."
+        : hasChanges
+          ? "Commit or stash local changes before pulling."
+          : null),
+  );
+  const sync = syncMenuItem(
+    "sync",
+    "Sync ref",
+    busyReason ??
+      detachedReason ??
+      (isAhead && isBehind
+        ? "Branch has diverged from upstream. Rebase/merge first."
+        : !isAhead && !isBehind
+          ? "Branch is up to date. No action needed."
+          : hasChanges
+            ? "Commit or stash local changes before syncing."
+            : null),
+  );
+  return { commitPush, pull, sync };
 }

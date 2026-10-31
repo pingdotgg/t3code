@@ -5,7 +5,6 @@ import { PanelLeft, PanelLeftClose } from "lucide";
 import * as React from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
-import { Input, type InputProps } from "~/components/ui/input";
 import { MorphIcon } from "~/components/MorphIcon";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import {
@@ -603,19 +602,6 @@ function SidebarRail({
   );
 }
 
-function SidebarInput({ className, ...props }: Omit<InputProps, "unstyled" | "variant">) {
-  return (
-    <Input
-      className={cn(
-        "[&_[data-slot=input]]:h-auto [&_[data-slot=input]]:p-0 [&_[data-slot=input]]:text-label [&_[data-slot=input]]:text-sidebar-foreground [&_[data-slot=input]]:leading-normal [&_[data-slot=input]]:placeholder:text-placeholder [&_[data-slot=input]]:placeholder:font-normal",
-        className,
-      )}
-      unstyled
-      {...props}
-    />
-  );
-}
-
 function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
   return (
     <main
@@ -873,7 +859,6 @@ function SidebarMenuSubButton({
 
 export {
   createSidebarOpenStore,
-  SidebarInput,
   Sidebar,
   SidebarContent,
   SidebarFooter,
