@@ -120,8 +120,8 @@ const bearerAuthorization = Effect.gen(function* () {
       },
       Effect.provideService(HttpClient.HttpClient, httpClient),
     ),
-    authorizeDpop: () => relayUnsupported,
-    authorizeDpopHttp: () => relayUnsupported,
+    authorizeDpop: Effect.fn("T3Client.authorizeDpop")(() => relayUnsupported),
+    authorizeDpopHttp: Effect.fn("T3Client.authorizeDpopHttp")(() => relayUnsupported),
   });
 });
 
@@ -186,10 +186,13 @@ const layerPlatform = (credential: T3Credential, options: ConnectOptions) => {
     Layer.succeed(
       ClientCapabilities.SshEnvironmentGateway,
       ClientCapabilities.SshEnvironmentGateway.of({
-        provision: () =>
+        provision: Effect.fn("T3Client.sshProvision")(() =>
           unsupportedRoute("SSH environments are only available in the desktop app."),
-        prepare: () => unsupportedRoute("SSH environments are only available in the desktop app."),
-        disconnect: () => Effect.void,
+        ),
+        prepare: Effect.fn("T3Client.sshPrepare")(() =>
+          unsupportedRoute("SSH environments are only available in the desktop app."),
+        ),
+        disconnect: Effect.fn("T3Client.sshDisconnect")(() => Effect.void),
       }),
     ),
   ).pipe(Layer.provideMerge(presentation));

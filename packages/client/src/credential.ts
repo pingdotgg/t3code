@@ -1,4 +1,10 @@
-import { ConnectionOnboarding } from "@t3tools/client-runtime/connection";
+import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
+import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
+import {
+  ConnectionOnboarding,
+  mapRemoteEnvironmentError,
+  orchestrationProtocolCompatibilityError,
+} from "@t3tools/client-runtime/connection";
 import { ClientCapabilities } from "@t3tools/client-runtime/platform";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -44,16 +50,23 @@ export const clientPresentation = (input: { readonly label?: string }) =>
  * the scopes the pairing link grants; create the link with `--scope` to narrow them.
  */
 export const pair = Effect.fn("T3Client.pair")(function* (input: PairInput) {
-  const registration = yield* ConnectionOnboarding.preparePairingRegistration({
-    ...(input.pairingUrl === undefined ? {} : { pairingUrl: input.pairingUrl }),
-    ...(input.host === undefined ? {} : { host: input.host }),
-    ...(input.pairingCode === undefined ? {} : { pairingCode: input.pairingCode }),
-  }).pipe(Effect.provideService(ClientCapabilities.ClientPresentation, clientPresentation(input)));
+  const target = yield* ConnectionOnboarding.resolvePairingTarget(input);
+  const descriptor = yield* fetchRemoteEnvironmentDescriptor({
+    httpBaseUrl: target.httpBaseUrl,
+  }).pipe(Effect.mapError(mapRemoteEnvironmentError));
+  const compatibilityError = orchestrationProtocolCompatibilityError(descriptor);
+  if (compatibilityError !== null && compatibilityError.serverUpdateRequired !== true)
+    return yield* compatibilityError;
+  const access = yield* bootstrapRemoteBearerSession({
+    httpBaseUrl: target.httpBaseUrl,
+    credential: target.credential,
+    clientMetadata: clientPresentation(input).metadata,
+  }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   return new T3Credential({
-    environmentId: registration.target.environmentId,
-    label: registration.target.label,
-    httpBaseUrl: registration.profile.httpBaseUrl,
-    wsBaseUrl: registration.profile.wsBaseUrl,
-    token: Redacted.make(registration.credential.token),
+    environmentId: descriptor.environmentId,
+    label: descriptor.label,
+    httpBaseUrl: target.httpBaseUrl,
+    wsBaseUrl: target.wsBaseUrl,
+    token: Redacted.make(access.access_token),
   });
 });

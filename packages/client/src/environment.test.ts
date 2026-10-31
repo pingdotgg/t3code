@@ -66,6 +66,7 @@ const fakeSession = (credential: T3Credential, server: FakeServer): RpcSession =
   subscribeServerConfig: () => Stream.empty,
   ready: Effect.void,
   probe: Effect.void,
+  inboundFrames: Effect.succeed(0),
   closed: server.closed ?? Effect.never,
 });
 
@@ -141,7 +142,7 @@ const environmentWith = Effect.fn("TestEnvironment.make")(function* (
       }),
     // The scripted credential has a single route, so route checks never run.
     checkRoute: () => Effect.succeed("unchecked"),
-    preflight: () => Effect.succeed(false),
+    preflight: () => Effect.succeed("unchecked"),
   });
   const environment = yield* makeEnvironment(credential).pipe(
     Effect.provide(
@@ -333,18 +334,14 @@ describe("external environment client", () => {
       const { environment } = yield* environmentWith(credentialFor("one"), [
         {
           client: {
-            [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: () =>
-              Stream.make({ kind: "archived" }),
-            [WS_METHODS.subscribeBackgroundPolicy]: () => Stream.make({ policy: "background" }),
+            [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () => Stream.make({ kind: "archived" }),
+            [WS_METHODS.subscribeServerLifecycle]: () => Stream.make({ policy: "background" }),
           },
         },
       ]);
 
-      const archived = environment.subscribe(
-        ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell,
-        {},
-      );
-      const policy = environment.subscribe(WS_METHODS.subscribeBackgroundPolicy, {});
+      const archived = environment.subscribe(ORCHESTRATION_V2_WS_METHODS.subscribeShell, {});
+      const policy = environment.subscribe(WS_METHODS.subscribeServerLifecycle, {});
       expect(yield* archived.pipe(Stream.runHead, Effect.map(Option.getOrThrow))).toEqual({
         kind: "archived",
       });
@@ -353,13 +350,13 @@ describe("external environment client", () => {
       });
 
       // @ts-expect-error streaming RPCs are not requests
-      void environment.request(ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell, {});
+      void environment.request(ORCHESTRATION_V2_WS_METHODS.subscribeShell, {});
       // @ts-expect-error streaming RPCs are not requests
-      void environment.request(WS_METHODS.subscribeBackgroundPolicy, {});
+      void environment.request(WS_METHODS.subscribeServerLifecycle, {});
     }).pipe(Effect.scoped),
   );
 
-  it.effect("resolves delivery from the projection on servers without server-side context", () =>
+  it.effect("sends delivery intent without fetching projections for negotiated servers", () =>
     Effect.gen(function* () {
       const commands: Array<OrchestrationV2Command> = [];
       const projections: Array<unknown> = [];
@@ -384,12 +381,13 @@ describe("external environment client", () => {
       yield* old.environment.sendMessage({ threadId, text: "from an old server" });
       yield* current.environment.sendMessage({ threadId, text: "from a new server" });
 
-      expect(projections).toEqual([{ threadId }]);
+      expect(projections).toEqual([]);
       expect(commands).toMatchObject([
         {
           type: "message.dispatch",
           threadId,
           text: "from an old server",
+          deliveryIntent: "auto",
           dispatchMode: { type: "start_immediately" },
         },
         {
@@ -400,7 +398,7 @@ describe("external environment client", () => {
           dispatchMode: { type: "start_immediately" },
         },
       ]);
-      expect(commands[0]).not.toHaveProperty("deliveryIntent");
+      expect(commands[0]).toHaveProperty("deliveryIntent", "auto");
     }).pipe(Effect.scoped),
   );
 

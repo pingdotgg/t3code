@@ -1239,13 +1239,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     Effect.withSpan("EnvironmentSupervisor.retryNow"),
   );
 
-  /**
-   * Like `connect`, `disconnect` and `retryNow`, but returns once the run loop
-   * has taken the request. The result is the state the request replaces:
-   * every state published after it reflects the request. It is none when a
-   * retry or connect leaves a live session current. Interrupted when the
-   * supervisor's scope closes first.
-   */
+  // Returns the state replaced when the run loop takes the request, or none if a live session stays current.
+  // Shutdown interrupts callers whose request has not been taken.
   const control = Effect.fn("EnvironmentSupervisor.control")(function* (
     request: SupervisorControl,
   ) {

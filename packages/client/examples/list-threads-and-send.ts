@@ -1,13 +1,7 @@
-/**
- * Pairs with T3 Code environments, lists their threads, and sends a message.
- *
- *   T3_PAIRING_URL=<link> node examples/list-threads-and-send.ts pair <credential-file>
- *   node examples/list-threads-and-send.ts list <credential-file>...
- *   node examples/list-threads-and-send.ts send <credential-file> <thread-id> <text>
- *
- * Credential files hold a bearer token: `pair` creates them with mode 0600,
- * refuses to overwrite an existing path, and never prints them. Revoke one from Settings > Connections.
- */
+// T3_PAIRING_URL=<link> node examples/list-threads-and-send.ts pair <credential-file>
+// node examples/list-threads-and-send.ts list <credential-file>...
+// node examples/list-threads-and-send.ts send <credential-file> <thread-id> <text>
+// Credential files contain a bearer token; pair creates them owner-only and refuses existing paths.
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
