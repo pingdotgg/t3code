@@ -335,6 +335,10 @@
       "types": "./src/HostProcess.ts",
       "import": "./src/HostProcess.ts"
     },
+    "./cloudPlaceholder": {
+      "types": "./src/cloudPlaceholder.ts",
+      "import": "./src/cloudPlaceholder.ts"
+    },
     "./testing/longTempDir": {
       "types": "./src/testing/longTempDir.ts",
       "import": "./src/testing/longTempDir.ts"

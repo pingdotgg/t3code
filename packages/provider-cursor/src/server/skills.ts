@@ -8,6 +8,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { parse as parseYamlDocument } from "yaml";
+import { isCloudPlaceholder } from "@t3tools/shared/cloudPlaceholder";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
@@ -126,6 +127,7 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
 }): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const platform = yield* HostProcess.Platform;
   const skills: ServerProviderSkill[] = [];
   if (input.budget.exhausted) return skills;
   const rootDirectory = yield* orUndefined(fileSystem.realPath(input.directory), input.budget);
@@ -157,7 +159,13 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
     const skillInfo = yield* orUndefined(fileSystem.stat(skillPath), input.budget);
     if (skillInfo?.type === "File") {
       let frontmatter: CursorSkillFrontmatter | undefined = { cliVisible: true };
-      if (skillInfo.size <= MAX_SKILL_BYTES && skillInfo.size <= input.budget.remainingBytes) {
+      // A cloud-only placeholder is listed like an oversized skill, without its
+      // frontmatter: reading it can block a libuv thread for good.
+      if (
+        skillInfo.size <= MAX_SKILL_BYTES &&
+        skillInfo.size <= input.budget.remainingBytes &&
+        !(yield* isCloudPlaceholder(skillInfo, platform, skillPath))
+      ) {
         const contents = yield* orUndefined(fileSystem.readFileString(skillPath));
         if (contents !== undefined) {
           input.budget.remainingBytes -= skillInfo.size;

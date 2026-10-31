@@ -5,6 +5,8 @@ import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { isCloudPlaceholder } from "@t3tools/shared/cloudPlaceholder";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { parse as parseYamlDocument } from "yaml";
 
 /** Match Python os.path.expanduser: USERPROFILE, then HOMEDRIVE+HOMEPATH on Windows; HOME elsewhere. */
@@ -111,8 +113,11 @@ const readSkill = Effect.fn("readAntigravitySkill")(function* (
   budget: ScanBudget,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
+  const platform = yield* HostProcess.Platform;
   const info = yield* readIfPresent(fileSystem.stat(skillPath), skillPath);
   if (info?.type !== "File") return undefined;
+  // Reading a cloud-only placeholder can block a libuv thread for good.
+  if (yield* isCloudPlaceholder(info, platform, skillPath)) return undefined;
 
   const byteLimit = Math.min(MAX_SKILL_BYTES, budget.remainingBytes);
   if (info.size > BigInt(byteLimit)) {
