@@ -37,3 +37,22 @@ it("focuses the reference input when the dialog opens", async () => {
 
   await expect.element(page.getByPlaceholder("Pull request URL or #42")).toHaveFocus();
 });
+
+it("opens one dialog when another thread's chat view is retained", async () => {
+  const threadRef = {
+    environmentId: EnvironmentId.make("environment"),
+    threadId: ThreadId.make("thread"),
+  };
+  await using _screen = await render(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <LinkPullRequestDialogHost hostThreadRef={threadRef} />
+      <LinkPullRequestDialogHost
+        hostThreadRef={{ ...threadRef, threadId: ThreadId.make("other") }}
+      />
+    </RegistryContext.Provider>,
+  );
+  await act(() => openLinkPullRequestDialog(threadRef));
+
+  await expect.element(page.getByRole("dialog")).toBeVisible();
+  await expect.element(page.getByPlaceholder("Pull request URL or #42")).toHaveFocus();
+});
