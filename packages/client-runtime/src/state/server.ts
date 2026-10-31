@@ -1182,10 +1182,19 @@ export function createServerEnvironmentAtoms<R, E>(
     tag: WS_METHODS.sandboxesEnvironments,
     idleTtlMs: 0,
   });
+  const sandboxesListRevisionAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make(0).pipe(
+      Atom.keepAlive,
+      Atom.withLabel(`environment-data:sandboxes:list-revision:${environmentId}`),
+    ),
+  );
   const sandboxesList = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:sandboxes:list",
     tag: WS_METHODS.sandboxesList,
     idleTtlMs: 0,
+    // The server's once-a-minute sweep changes records with no client action.
+    refreshIntervalMs: 60_000,
+    refreshTrigger: ({ environmentId }) => sandboxesListRevisionAtom(environmentId),
   });
 
   return {
@@ -1223,6 +1232,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:sandboxes:create",
       tag: WS_METHODS.sandboxesCreate,
       concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() =>
+          registry.update(sandboxesListRevisionAtom(environmentId), (revision) => revision + 1),
+        ),
     }),
     sandboxesDelete: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:sandboxes:delete",
