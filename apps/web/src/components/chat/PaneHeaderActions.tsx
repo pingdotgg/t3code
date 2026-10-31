@@ -6,14 +6,25 @@ import type { ThreadDetailsPanel } from "./ThreadDetailsPanel";
 import { ThreadLineageHeaderControl } from "./ThreadRelationshipsControl";
 
 /**
- * Keep a control-less git mount so commit/push shortcuts work with thread details closed.
+ * Git and project actions live in thread details; keep commit/push shortcuts mounted.
  * Narrow panes hide this cluster to reserve space for their tabs.
  */
 export function PaneHeaderActions(
   props: Pick<
     Parameters<typeof ThreadDetailsPanel>[0],
     "environmentId" | "threadId" | "draftId" | "activeProjectName" | "gitCwd" | "isGitRepo"
-  > & { readonly projectId: ProjectId | null },
+  > &
+    Partial<
+      Pick<
+        Parameters<typeof ThreadDetailsPanel>[0],
+        | "activeProjectScripts"
+        | "preferredScriptId"
+        | "onRunProjectScript"
+        | "onAddProjectScript"
+        | "onUpdateProjectScript"
+        | "onDeleteProjectScript"
+      >
+    > & { readonly projectId: ProjectId | null },
 ) {
   if (!props.activeProjectName) return null;
 

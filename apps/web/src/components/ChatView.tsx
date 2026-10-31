@@ -3415,6 +3415,14 @@ export default function ChatView(props: ChatViewProps) {
         gitCwd={gitCwd}
         isGitRepo={isGitRepo}
         projectId={activeProject?.id ?? null}
+        activeProjectScripts={activeProject ? activeProjectScripts : undefined}
+        preferredScriptId={
+          activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
+        }
+        onRunProjectScript={runProjectScriptStable}
+        onAddProjectScript={saveProjectScriptStable}
+        onUpdateProjectScript={updateProjectScriptStable}
+        onDeleteProjectScript={deleteProjectScriptStable}
       />
       {panelToggleControls}
     </ChatPaneHeaderControls>
