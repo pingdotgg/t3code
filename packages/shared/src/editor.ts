@@ -83,22 +83,22 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   });
   // Toolbox names a launch script `idea1`, `idea2`, ... when another installed
   // version already has `idea`.
-  const numberedScripts = (dir: string, suffix: string) =>
-    fs.readDirectory(dir).pipe(
-      Effect.orElseSucceed(() => []),
-      Effect.map((entries) =>
-        entries
-          .filter(
-            (entry) =>
-              entry.startsWith(command) &&
-              entry.endsWith(suffix) &&
-              /^\d+$/.test(entry.slice(command.length, entry.length - suffix.length)),
-          )
-          .sort((a, b) => a.length - b.length || a.localeCompare(b))
-          .map((entry) => path.join(dir, entry)),
-      ),
-      Effect.flatMap((scripts) => Effect.filter(scripts, hasLaunchTarget)),
-    );
+  const numberedScripts = Effect.fn("editor.numberedScripts")(function* (
+    dir: string,
+    suffix: string,
+  ) {
+    const entries = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => []));
+    const scripts = entries
+      .filter(
+        (entry) =>
+          entry.startsWith(command) &&
+          entry.endsWith(suffix) &&
+          /^\d+$/.test(entry.slice(command.length, entry.length - suffix.length)),
+      )
+      .sort((a, b) => a.length - b.length || a.localeCompare(b))
+      .map((entry) => path.join(dir, entry));
+    return yield* Effect.filter(scripts, hasLaunchTarget);
+  });
   const candidates: string[] = [];
 
   if (platform === "darwin") {
