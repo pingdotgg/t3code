@@ -28,6 +28,7 @@ import {
 import { type PendingUserInput } from "../../session-logic";
 import { type ReviewCommentContext } from "../../reviewCommentContext";
 import { collapseExpandedComposerCursor } from "../../composer-logic";
+import { collectComposerPromptInlineTokens } from "../../composer-editor-mentions";
 import { compressImageForStash } from "../../lib/imageCompression";
 import { formatInlineContextReference } from "~/lib/composerContextReferences";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
@@ -207,7 +208,7 @@ export function useComposerStash(input: {
     const rewrittenContextIds = entry.records
       ? importContextRecords(entry.records, null, composerDraftTarget)
       : new Map<string, string>();
-    const restoredPrompt = replaceComposerContextReferences(entry.prompt, (reference) => {
+    const rewrittenPrompt = replaceComposerContextReferences(entry.prompt, (reference) => {
       const contextId = rewrittenContextIds.get(reference.contextId);
       return contextId
         ? formatInlineContextReference({
@@ -217,6 +218,13 @@ export function useComposerStash(input: {
           })
         : reference.source;
     });
+    // Stash entries are stored trimmed, and a chip token only parses when whitespace follows it.
+    const lastToken = collectComposerPromptInlineTokens(`${rewrittenPrompt}\n`).at(-1);
+    const restoredPrompt =
+      (lastToken?.type === "mention" || lastToken?.type === "skill") &&
+      lastToken.end === rewrittenPrompt.length
+        ? `${rewrittenPrompt} `
+        : rewrittenPrompt;
     const currentPrompt = promptRef.current;
     const nextPrompt =
       restoredPrompt.length === 0
