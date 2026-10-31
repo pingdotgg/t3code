@@ -412,9 +412,24 @@ describe("GhosttyTerminalSurface visibility", () => {
 
     key(surface, "v", "KeyV", { metaKey: true });
     if (first === "native") paste(surface, "echo hi");
-    await read;
+    await vi.runAllTimersAsync();
     if (first === "clipboard") paste(surface, "echo hi");
 
+    expect(harness.onData.mock.calls).toEqual([["echo hi"]]);
+  });
+
+  it("does not read the clipboard when the shortcut's native paste arrives", async () => {
+    const harness = createHarness();
+    const readText = vi.fn(() => Promise.resolve("echo hi"));
+    vi.stubGlobal("navigator", { platform: "Linux x86_64", clipboard: { readText } });
+    const surface = await harness.create({ beforeKey: () => true });
+
+    key(surface, "V", "KeyV", { ctrlKey: true, shiftKey: true });
+    paste(surface, "echo hi");
+    await vi.runAllTimersAsync();
+
+    // Firefox and Safari open a paste prompt on readText for another origin's clipboard.
+    expect(readText).not.toHaveBeenCalled();
     expect(harness.onData.mock.calls).toEqual([["echo hi"]]);
   });
 
@@ -430,7 +445,7 @@ describe("GhosttyTerminalSurface visibility", () => {
       const surface = await harness.create({ beforeKey: () => true });
 
       key(surface, "v", "KeyV", { metaKey: true });
-      await read;
+      await vi.runAllTimersAsync();
       expect(harness.onData.mock.calls).toEqual([["echo hi"]]);
       if (end === "blur") surface.input.dispatchEvent(new Event("blur"));
       else if (end === "V keyup") key(surface, "v", "KeyV", { metaKey: true }, "keyup");

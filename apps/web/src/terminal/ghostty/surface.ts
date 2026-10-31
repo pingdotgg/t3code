@@ -1180,16 +1180,20 @@ export class GhosttyTerminalSurface {
         // Keep native paste available if the read is denied. The token drops
         // a late read; the gesture drops a native duplicate when the read wins.
         const token = ++this.pasteShortcutToken;
-        void clipboard.readText().then(
-          (text) => {
-            if (this.disposed || this.pasteShortcutToken !== token) return;
-            this.pasteShortcutToken += 1;
-            if (text.length === 0) return;
-            if (this.pasteShortcutGesture === gesture) gesture.readText = text;
-            this.options.onData(this.core.encodePaste(text));
-          },
-          () => {},
-        );
+        // Native paste usually fires in the keydown task; reading anyway opens Firefox's paste prompt.
+        setTimeout(() => {
+          if (this.disposed || this.pasteShortcutToken !== token) return;
+          void clipboard.readText().then(
+            (text) => {
+              if (this.disposed || this.pasteShortcutToken !== token) return;
+              this.pasteShortcutToken += 1;
+              if (text.length === 0) return;
+              if (this.pasteShortcutGesture === gesture) gesture.readText = text;
+              this.options.onData(this.core.encodePaste(text));
+            },
+            () => {},
+          );
+        }, 0);
       }
       return;
     }
