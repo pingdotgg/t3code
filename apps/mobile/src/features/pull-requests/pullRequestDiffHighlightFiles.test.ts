@@ -265,8 +265,12 @@ it.each(["permanent", "transient"])(
     fetch.mockRejectedValueOnce(error);
     if (failure === "transient") fetch.mockRejectedValueOnce(error);
     const first = createPullRequestDiffHighlightFiles({ target }, parsed, files, fetch, cache);
-    if (failure === "transient") await expect(first[1]!.loadContents!()).rejects.toThrow("Offline");
-    expect(await first[1]!.loadContents!()).toBeNull();
+    if (failure === "transient") {
+      await expect(first[1]!.loadContents!()).rejects.toThrow("Offline");
+      await expect(first[1]!.loadContents!()).rejects.toThrow("Offline");
+    } else {
+      expect(await first[1]!.loadContents!()).toBeNull();
+    }
     const second = createPullRequestDiffHighlightFiles(
       { target },
       { ...parsed, files: [parsed.files[0]!, { ...parsed.files[1]! }] },
@@ -275,8 +279,8 @@ it.each(["permanent", "transient"])(
       cache,
     );
     expect(await second[1]!.loadContents!()).toBe(contents);
-    expect(await first[1]!.loadContents!()).toBeNull();
-    expect(fetch).toHaveBeenCalledTimes(failure === "permanent" ? 2 : 3);
+    expect(await first[1]!.loadContents!()).toBe(failure === "permanent" ? null : contents);
+    expect(fetch).toHaveBeenCalledTimes(failure === "permanent" ? 2 : 4);
   },
 );
 

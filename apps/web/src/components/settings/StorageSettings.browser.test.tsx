@@ -82,7 +82,7 @@ vi.mock(import("../ui/toast"), async (original) => {
   return { ...actual, toastManager: { ...actual.toastManager, add: vi.fn() } };
 });
 
-import { StorageSettingsPanel } from "./StorageSettings";
+import { StorageCleanupSections } from "./StorageSettings";
 
 function setup() {
   state.settings = {
@@ -105,7 +105,7 @@ function setup() {
 
 const panel = () => (
   <RegistryProvider>
-    <StorageSettingsPanel />
+    <StorageCleanupSections />
   </RegistryProvider>
 );
 const deleteButton = (container: HTMLElement) =>

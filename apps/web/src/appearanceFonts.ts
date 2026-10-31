@@ -11,7 +11,7 @@ import {
 } from "@t3tools/contracts";
 
 export const DEFAULT_SANS_FONT_STACK =
-  '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+  '-apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif';
 
 // Some engines map `ui-monospace` to a proportional font, so prefer concrete names.
 export const DEFAULT_CODE_FONT_STACK =

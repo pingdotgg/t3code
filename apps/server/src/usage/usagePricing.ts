@@ -120,8 +120,8 @@ export function parseRateTable(document: unknown): RateTable {
     const held = aliasCandidates.get(alias);
     if (held === undefined) {
       aliasCandidates.set(alias, rate);
-    } else if (held !== null && !sameRate(held, rate)) {
-      aliasCandidates.set(alias, null);
+    } else if (held !== null) {
+      aliasCandidates.set(alias, mergeAliasRate(held, rate));
     }
   }
   for (const [alias, rate] of aliasCandidates) {
@@ -141,12 +141,18 @@ function sameTokenRates(a: TokenRates | null, b: TokenRates | null): boolean {
   );
 }
 
-function sameRate(a: ModelRate, b: ModelRate): boolean {
-  return (
-    sameTokenRates(a, b) &&
-    sameTokenRates(a.fast, b.fast) &&
-    sameTokenRates(a.ultrafast, b.ultrafast)
-  );
+// Resellers often omit speed tiers, so a missing tier fills from the other entry instead of conflicting.
+function mergeAliasRate(a: ModelRate, b: ModelRate): ModelRate | null {
+  const fast = a.fast ?? b.fast;
+  const ultrafast = a.ultrafast ?? b.ultrafast;
+  if (
+    !sameTokenRates(a, b) ||
+    !sameTokenRates(fast, b.fast ?? fast) ||
+    !sameTokenRates(ultrafast, b.ultrafast ?? ultrafast)
+  ) {
+    return null;
+  }
+  return { ...a, fast, ultrafast };
 }
 
 function ratesAt(rate: ModelRate, speed: UsageSpeed): TokenRates {

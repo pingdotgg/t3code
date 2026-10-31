@@ -20,7 +20,6 @@ import {
   type ConnectionRegistration,
   type ConnectionRoute,
   type PlatformConnectionRegistration,
-  type PrimaryConnectionRegistration,
   SshConnectionProfile,
   connectionRegistrationCatalogEntry,
 } from "./catalog.ts";
@@ -102,12 +101,20 @@ export class EnvironmentRegistry extends Context.Service<
     readonly start: Effect.Effect<void>;
     /**
      * Succeeds with `false` and changes nothing when the environment is
-     * platform-managed, since the host owns that entry.
+     * platform-managed, since the host owns that entry. With `knownAddressOnly`, it fails like
+     * `assertKnownAddress`, checked under the environment's lease.
      */
     readonly register: (
       registration: ConnectionRegistration,
-    ) => Effect.Effect<boolean, Persistence.ConnectionPersistenceError>;
-    readonly registerPlatform: (registration: PrimaryConnectionRegistration) => Effect.Effect<void>;
+      options?: { readonly knownAddressOnly?: boolean },
+    ) => Effect.Effect<boolean, Persistence.ConnectionPersistenceError | ConnectionBlockedError>;
+    /**
+     * Fails when the route would add a new address to a saved user environment. Pairing that does
+     * not target an environment checks this, because the server reports its own environment id.
+     */
+    readonly assertKnownAddress: (
+      route: ConnectionRoute,
+    ) => Effect.Effect<void, ConnectionBlockedError>;
     readonly reconcilePlatform: (
       registrations: ReadonlyArray<PlatformConnectionRegistration>,
     ) => Effect.Effect<void>;
@@ -534,21 +541,42 @@ export const make = Effect.gen(function* () {
     return { entry: rest, addressesChanged: true };
   };
 
+  const assertKnownAddress = Effect.fn("EnvironmentRegistry.assertKnownAddress")(function* (
+    route: ConnectionRoute,
+  ) {
+    const environmentId = route.target.environmentId;
+    if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) return;
+    const saved = (yield* SubscriptionRef.get(entries)).get(environmentId);
+    if (
+      saved !== undefined &&
+      findRouteToSameAddress(connectionRoutes(saved), route) === undefined
+    ) {
+      return yield* new ConnectionBlockedError({
+        reason: "configuration",
+        detail: `That address claims to be ${saved.target.label}, which is already saved. Add it as a route from that environment's settings instead.`,
+      });
+    }
+  });
+
   const register = Effect.fn("EnvironmentRegistry.register")(function* (
     registration: ConnectionRegistration,
+    options?: { readonly knownAddressOnly?: boolean },
   ) {
     const registered = connectionRegistrationCatalogEntry(registration);
     const environmentId = registered.target.environmentId;
+    const route: ConnectionRoute = { target: registered.target, profile: registered.profile };
     return yield* withLeaseLock(
       environmentId,
       Effect.gen(function* () {
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
           return false;
         }
+        if (options?.knownAddressOnly === true) {
+          yield* assertKnownAddress(route);
+        }
         const previous = (yield* SubscriptionRef.get(entries)).get(environmentId);
         let entry = registered;
         if (previous !== undefined) {
-          const route: ConnectionRoute = { target: registered.target, profile: registered.profile };
           const existing = connectionRoutes(previous);
           const sameAddress = findRouteToSameAddress(existing, route);
           const routes = existing.filter(
@@ -778,12 +806,6 @@ export const make = Effect.gen(function* () {
       );
     },
   );
-
-  const registerPlatform = Effect.fn("EnvironmentRegistry.registerPlatform")(function* (
-    registration: PrimaryConnectionRegistration,
-  ) {
-    yield* installPlatformRegistration(registration);
-  });
 
   const reconcilePlatform = Effect.fn("EnvironmentRegistry.reconcilePlatform")(function* (
     platformRegistrations: ReadonlyArray<PlatformConnectionRegistration>,
@@ -1140,7 +1162,7 @@ export const make = Effect.gen(function* () {
     networkStatus,
     start,
     register,
-    registerPlatform,
+    assertKnownAddress,
     reconcilePlatform,
     remove,
     removeRoute,

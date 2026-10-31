@@ -315,31 +315,31 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
   }).pipe(
     Effect.matchCauseEffect({
       onFailure: (cause) => failTransport(new PiRpcError({ operation: "read", cause })),
-      onSuccess: () =>
-        Effect.gen(function* () {
-          // Claim stdout-close diagnosis before waiting so broken stdin cannot replace the exit error.
-          diagnosingStdoutClose = true;
-          const polled = yield* Deferred.poll(exitDeferred);
-          const maybeExitCode = Option.isSome(polled)
-            ? yield* polled.value.pipe(
-                Effect.map(Option.some),
-                Effect.orElseSucceed(() => Option.none<number>()),
-              )
-            : yield* Deferred.await(exitDeferred).pipe(
-                Effect.timeoutOption(Duration.millis(250)),
-                // Stdout-close waits need wall time; TestClock would strand Stop-with-restart without an exit.
-                Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
-                Effect.orElseSucceed(() => Option.none<number>()),
-              );
-          return yield* failTransport(
-            new PiRpcError({
-              operation: "read",
-              detail: describePiStdoutClosure(
-                Option.isSome(maybeExitCode) ? maybeExitCode.value : undefined,
-              ),
-            }),
-          );
-        }),
+      // The enclosing operation owns the span for this inline handler.
+      onSuccess: Effect.fnUntraced(function* () {
+        // Claim stdout-close diagnosis before waiting so broken stdin cannot replace the exit error.
+        diagnosingStdoutClose = true;
+        const polled = yield* Deferred.poll(exitDeferred);
+        const maybeExitCode = Option.isSome(polled)
+          ? yield* polled.value.pipe(
+              Effect.asSome,
+              Effect.orElseSucceed(() => Option.none<number>()),
+            )
+          : yield* Deferred.await(exitDeferred).pipe(
+              Effect.timeoutOption(Duration.millis(250)),
+              // Stdout-close waits need wall time; TestClock would strand Stop-with-restart without an exit.
+              Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
+              Effect.orElseSucceed(() => Option.none<number>()),
+            );
+        return yield* failTransport(
+          new PiRpcError({
+            operation: "read",
+            detail: describePiStdoutClosure(
+              Option.isSome(maybeExitCode) ? maybeExitCode.value : undefined,
+            ),
+          }),
+        );
+      }),
     }),
     Effect.forkIn(scope),
   );

@@ -1,5 +1,6 @@
 // @effect-diagnostics globalTimers:off -- Capture timeouts and Electron overlay animation timers run at native callback boundaries outside Effect fibers.
 
+import { pipe } from "effect/Function";
 import {
   DEFAULT_CLIENT_SETTINGS,
   DesktopPendingSnapShot,
@@ -90,6 +91,7 @@ import {
   snapShotShortcutSystemConflict,
 } from "./snapShot.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { readImageDimensions } from "@t3tools/shared/imageDimensions";
 
 const MAX_CAPTURE_WIDTH = 2_560;
 const MAX_CAPTURE_HEIGHT = 1_600;
@@ -413,10 +415,10 @@ async function requestMacSnapShotPermissions(
 }
 
 function snapShotImageSize(png: Buffer, fallback: Electron.Rectangle): Electron.Size {
-  try {
-    const size = Electron.nativeImage.createFromBuffer(png).getSize();
-    if (size.width > 0 && size.height > 0) return size;
-  } catch {}
+  // Capture backends already validate or encode the PNG. Reading its header
+  // avoids decoding every pixel again just to size accessibility coordinates.
+  const size = readImageDimensions(png);
+  if (size) return size;
   return {
     width: Math.max(1, Math.round(fallback.width)),
     height: Math.max(1, Math.round(fallback.height)),
@@ -604,7 +606,7 @@ function createSnapShotFlashWindow(bounds: Electron.Rectangle): Electron.BaseWin
   return window;
 }
 
-export class SnapShotFlash {
+class SnapShotFlash {
   private flashWindow: Electron.BaseWindow | undefined;
   private animationTimer: ReturnType<typeof setInterval> | undefined;
   private closeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1287,10 +1289,10 @@ export const make = Effect.gen(function* () {
     if (isModifierPairShortcut(shortcut)) {
       registered = yield* Effect.tryPromise(() =>
         startPairShortcutProcess(snapShotShortcutModifierPair(shortcut), onCurrentShortcut, () => {
-          void runPromise(
-            setShortcutFailure(
-              snapShotShortcutRegistrationFailureMessage(shortcut, environment.platform),
-            ),
+          void pipe(
+            snapShotShortcutRegistrationFailureMessage(shortcut, environment.platform),
+            setShortcutFailure,
+            runPromise,
           ).catch(() => undefined);
         }),
       ).pipe(
@@ -1717,24 +1719,28 @@ export const make = Effect.gen(function* () {
           ),
         ),
     ),
-    setAnimationDestination: (id, destination) =>
-      Effect.promise(async () => {
-        if (linuxFeedback?.id === id && destination.relativeFrame) {
-          await linuxFeedback.feedback
-            .animateTo(destination.relativeFrame)
-            .catch(() => closeLinuxFeedback(id));
-          return;
-        }
-        transition.animateTo(id, destination);
-        await transition.waitForLanding(id);
-      }),
-    dismissAnimation: (id) =>
-      Effect.sync(() => {
+    setAnimationDestination: Effect.fn("DesktopSnapShot.setAnimationDestination")(
+      function (id, destination) {
+        return Effect.promise(async () => {
+          if (linuxFeedback?.id === id && destination.relativeFrame) {
+            await linuxFeedback.feedback
+              .animateTo(destination.relativeFrame)
+              .catch(() => closeLinuxFeedback(id));
+            return;
+          }
+          transition.animateTo(id, destination);
+          await transition.waitForLanding(id);
+        });
+      },
+    ),
+    dismissAnimation: Effect.fn("DesktopSnapShot.dismissAnimation")(function (id) {
+      return Effect.sync(() => {
         closeLinuxFeedback(id);
         transition.dismiss(id);
-      }),
-    acknowledge: (id) =>
-      Effect.promise(async () => {
+      });
+    }),
+    acknowledge: Effect.fn("DesktopSnapShot.acknowledge")(function (id) {
+      return Effect.promise(async () => {
         await completeLinuxFeedback(id);
         await transition.complete(id);
       }).pipe(
@@ -1750,7 +1756,8 @@ export const make = Effect.gen(function* () {
         Effect.mapError(
           (cause) => new DesktopSnapShotError({ operation: "acknowledge", captureId: id, cause }),
         ),
-      ),
+      );
+    }),
   });
 });
 

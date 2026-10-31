@@ -1,4 +1,7 @@
 import {
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   MessageId,
   ContextHandoffId,
   ProviderThreadId,
@@ -258,6 +261,21 @@ describe("orchestration V2 wire projection", () => {
     });
   });
 
+  it.each([
+    "logs/app.log:12: Error: ENOENT: no such file or directory",
+    "fixtures/ci.txt:3: Process exited with exit code 2",
+  ])("trusts a zero exit code over failure text in the output: %s", (output) => {
+    const projected = projectTurnItemForWire({
+      ...base,
+      type: "command_execution" as const,
+      input: "rg -n error logs fixtures",
+      output,
+      exitCode: 0,
+    });
+    expect(projected).not.toHaveProperty("outputIndicatesFailure");
+    expect(projected).toMatchObject({ exitCode: 0, outputOmitted: true });
+  });
+
   it("omits inline file bodies but preserves file identity and change counts", () => {
     const item = {
       ...base,
@@ -275,6 +293,15 @@ describe("orchestration V2 wire projection", () => {
     expect(projected).not.toHaveProperty("newStr");
     expect(projected).toMatchObject({ fileName: "src/main.ts", additions: 3, deletions: 1 });
     expect(item.diffStr).toBe("+new code");
+    expect(projectTurnItemForDetail(item)).toMatchObject({ diffStr: "+new code" });
+    expect(projectTurnItemForDetail(item)).not.toHaveProperty("oldStr");
+    expect(projectTurnItemForDetail(item)).not.toHaveProperty("newStr");
+    const { diffStr: _diff, ...contentOnly } = item;
+    expect(projectTurnItemForDetail(contentOnly)).toMatchObject({
+      oldStr: "old code",
+      newStr: "new code",
+    });
+    expect(projectTurnItemForWire(contentOnly)).not.toHaveProperty("newStr");
     const failed = projectTurnItemForWire({
       ...item,
       status: "failed",
@@ -370,6 +397,46 @@ describe("live body deduper", () => {
       [3, message(3, "ab").event.payload],
       [4, { ...reply(4, "ab").event.payload, text: "", textOmitted: true }],
     ]);
+  });
+
+  it("caps a large checkpoint's files for the wire and still dedupes its item", () => {
+    const files = Array.from({ length: 250 }, (_, index) => ({
+      path: `vendor/file-${index}.ts`,
+      kind: "modified",
+      additions: 2,
+      deletions: 1,
+    }));
+    const checkpointId = CheckpointId.make("checkpoint-large");
+    const scopeId = CheckpointScopeId.make("scope-large");
+    const captured = event(1, {
+      type: "checkpoint.captured",
+      payload: {
+        id: checkpointId,
+        threadId: base.threadId,
+        scopeId,
+        runId: null,
+        nodeId: NodeId.make("node-large"),
+        parentCheckpointId: null,
+        ordinalWithinScope: 1,
+        appRunOrdinal: null,
+        ref: CheckpointRef.make("refs/t3/checkpoints/large"),
+        status: "ready",
+        files,
+        capturedAt: at,
+      },
+    });
+    const item = event(2, {
+      type: "turn-item.updated",
+      payload: { ...base, type: "checkpoint", checkpointId, scopeId, files },
+    });
+    const dedupe = makeLiveBodyDeduper();
+    const [record, card] = [captured, item].map((streamed) =>
+      dedupe({ ...streamed, event: projectDomainEventForWire(streamed.event) }),
+    );
+
+    const filesTotal = { count: 250, additions: 500, deletions: 250 };
+    expect(payloadOf(record!)).toMatchObject({ files: files.slice(0, 200), filesTotal });
+    expect(payloadOf(card!)).toMatchObject({ files: [], filesOmitted: true, filesTotal });
   });
 
   it("ships a reply whole when its message arrives after it", () => {

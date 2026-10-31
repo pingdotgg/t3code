@@ -22,20 +22,33 @@ repository-root `.env` or `.env.local`, not an `apps/mobile/.env` file. See
 
 ## Development
 
-For simulator/emulator development, select and boot a device, then ensure its native client matches
-this checkout before starting Metro:
+For simulator, emulator, or Android phone development, boot or connect a device, then install the
+native client that matches this checkout before starting Metro:
 
 ```bash
-node ../../scripts/mobile-native-client.ts ensure ios <simulator-udid>
-# Or: node ../../scripts/mobile-native-client.ts ensure android <emulator-serial>
+vp run mobile:install ios [simulator-udid]
+# Or: vp run mobile:install android [emulator-or-phone-serial]
 vp run dev:client
 ```
 
-The helper compares a local Expo fingerprint and the installed binary with its last successful
-build record. It builds and installs missing, stale, or unverified clients and reuses matching ones.
-Use `check` instead of `ensure` for a read-only decision: exit 0 means compatible, 2 means a build is
-needed, and 1 means an operational error. Run it on the simulator host; no EAS login is required.
-An externally installed client is unverified until the helper builds it once.
+The device argument can be omitted when exactly one device is booted or connected. The helper
+compares this checkout's Expo fingerprint and the installed binary with its last install record,
+and reuses a matching client. Otherwise it installs the build for that fingerprint from
+`~/.cache/t3code/native-clients/artifacts`, then the shared task cache, and builds only when
+neither has it. One iOS simulator build serves every iPhone and iPad simulator, and one APK per
+ABI (x86_64 or arm64-v8a) serves every emulator and phone of that ABI. Build output goes to the
+log file it prints (`T3_NATIVE_CLIENT_VERBOSE=1` streams it instead). Builds are shared back when
+your task-cache login (`bash infra/task-cache/install.sh`) can write. `T3_NATIVE_CLIENT_CACHE=read`
+skips the upload and `off` skips the shared cache. Physical iPhones still use `vp run ios:dev`.
+
+`--session <name>` installs into an agent-device session opened elsewhere, such as a device pool
+or a cloud simulator, instead of a local device: `vp run mobile:install android --session pool-1
+--metro http://<this-machine>:8081`. It uses only the cached build (x86_64 by default; `--abi`
+for ARM) and fails with the next step when no machine has built this fingerprint yet.
+
+For a read-only decision, run `node ../../scripts/mobile-native-client.ts check <ios|android>
+[device]`: exit 0 means compatible, 2 means an install is needed, and 1 means an operational error.
+An externally installed client is unverified until the helper installs it once.
 
 Start Metro for an already verified dev client:
 

@@ -1,6 +1,36 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { applyReviewDiffMetadata, buildReviewParsedDiff } from "./reviewModel";
+import {
+  applyReviewDiffMetadata,
+  buildReviewParsedDiff,
+  resolveReviewSelectedSectionId,
+  type ReviewSectionItem,
+} from "./reviewModel";
+
+function makeSection(id: string): ReviewSectionItem {
+  return {
+    id,
+    kind: id.startsWith("turn:") ? "turn" : "branch-range",
+    title: id,
+    subtitle: null,
+    diff: null,
+    isLoading: false,
+  };
+}
+
+describe("resolveReviewSelectedSectionId", () => {
+  const turn = makeSection("turn:2");
+  const changes = makeSection("git:branch-range");
+
+  it("shows Changes before anything is picked, not the first section", () => {
+    expect(resolveReviewSelectedSectionId([turn, changes], null)).toBe("git:branch-range");
+  });
+
+  it("shows the default while the picked section loads and returns to the pick once it does", () => {
+    expect(resolveReviewSelectedSectionId([changes], "turn:2")).toBe("git:branch-range");
+    expect(resolveReviewSelectedSectionId([turn, changes], "turn:2")).toBe("turn:2");
+  });
+});
 
 describe("buildReviewParsedDiff", () => {
   it("keeps UI identities compact, stable, and isolated from parser cache keys", () => {

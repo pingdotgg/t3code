@@ -20,7 +20,6 @@ export type BrowserSessionPartitionNamespace = "profile";
 
 // Electron's clipboard API uses clipboard-sanitized-write and checks both permission handlers.
 const ALLOWED_PREVIEW_PERMISSIONS: ReadonlySet<string> = new Set([
-  "clipboard-read",
   "clipboard-sanitized-write",
   "geolocation",
   // DesktopWindow confines HTML fullscreen to the guest's webview.
@@ -54,6 +53,19 @@ const externalProtocolPromptUrl = (rawUrl: string | undefined): string | null =>
 };
 
 const MAX_PROMPT_URL_LENGTH = 300;
+
+const truncateForPrompt = (text: string): string =>
+  text.length > MAX_PROMPT_URL_LENGTH ? `${text.slice(0, MAX_PROMPT_URL_LENGTH)}…` : text;
+
+const permissionOrigin = (rawUrl: string | undefined): string | null => {
+  if (!rawUrl) return null;
+  try {
+    const { origin } = new URL(rawUrl);
+    return origin === "null" ? null : origin;
+  } catch {
+    return null;
+  }
+};
 
 export class BrowserSessionPartitionDerivationError extends Schema.TaggedError<BrowserSessionPartitionDerivationError>()(
   "BrowserSessionPartitionDerivationError",
@@ -175,7 +187,49 @@ export const make = Effect.gen(function* BrowserSessionMake() {
   const electronDialog = yield* ElectronDialog.ElectronDialog;
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   // One prompt at a time, so a page cannot stack dialogs by looping a deep link.
-  let externalPromptOpen = false;
+  let permissionPromptOpen = false;
+  /** Settles with `undefined` when the user gave no answer: another prompt was open or the dialog failed. */
+  const promptPermission = (
+    requester: WebContents | null,
+    prompt: {
+      readonly buttons: readonly [allow: string, deny: string];
+      readonly message: string;
+      readonly detail?: string;
+    },
+    callback: (answer: boolean | undefined) => void,
+  ): void => {
+    if (permissionPromptOpen) {
+      callback(undefined);
+      return;
+    }
+    permissionPromptOpen = true;
+    const settle = (answer: boolean | undefined) =>
+      Effect.sync(() => {
+        permissionPromptOpen = false;
+        callback(answer);
+      });
+    runFork(
+      electronDialog
+        .showMessageBox(
+          {
+            type: "question",
+            buttons: [...prompt.buttons],
+            // Default to deny so an Enter typed into the page cannot accept a prompt it raised.
+            defaultId: 1,
+            cancelId: 1,
+            message: prompt.message,
+            ...(prompt.detail === undefined ? {} : { detail: prompt.detail }),
+          },
+          previewHostWindow(requester),
+        )
+        .pipe(
+          Effect.map(({ response }): boolean | undefined => response === 0),
+          Effect.orElseSucceed(() => undefined),
+          Effect.flatMap(settle),
+          Effect.onInterrupt(() => settle(undefined)),
+        ),
+    );
+  };
   /** Electron launches external protocols after granting openExternal; untrusted pages require confirmation. */
   const confirmOpenExternal = (
     requester: WebContents | null,
@@ -183,37 +237,18 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     callback: (granted: boolean) => void,
   ): void => {
     const url = externalProtocolPromptUrl(rawUrl);
-    if (url === null || externalPromptOpen) {
+    if (url === null) {
       callback(false);
       return;
     }
-    externalPromptOpen = true;
-    const settle = (granted: boolean) =>
-      Effect.sync(() => {
-        externalPromptOpen = false;
-        callback(granted);
-      });
-    const shownUrl =
-      url.length > MAX_PROMPT_URL_LENGTH ? `${url.slice(0, MAX_PROMPT_URL_LENGTH)}…` : url;
-    runFork(
-      electronDialog
-        .showMessageBox(
-          {
-            type: "question",
-            buttons: ["Open", "Cancel"],
-            defaultId: 0,
-            cancelId: 1,
-            message: `Open this ${new URL(url).protocol.slice(0, -1)} link?`,
-            detail: `A page in the browser wants to open another application:\n\n${shownUrl}`,
-          },
-          previewHostWindow(requester),
-        )
-        .pipe(
-          Effect.map(({ response }) => response === 0),
-          Effect.orElseSucceed(() => false),
-          Effect.flatMap(settle),
-          Effect.onInterrupt(() => settle(false)),
-        ),
+    promptPermission(
+      requester,
+      {
+        buttons: ["Open", "Cancel"],
+        message: `Open this ${new URL(url).protocol.slice(0, -1)} link?`,
+        detail: `A page in the browser wants to open another application:\n\n${truncateForPrompt(url)}`,
+      },
+      (answer) => callback(answer === true),
     );
   };
   const sessionsRef = yield* SynchronizedRef.make<ReadonlyMap<string, Session>>(new Map());
@@ -248,6 +283,35 @@ export const make = Effect.gen(function* BrowserSessionMake() {
       return Effect.try({
         try: () => {
           const browserSession = session.fromPartition(partition);
+          // Like Chrome, clipboard reads ask once per origin; both answers last for the session.
+          const clipboardReadDecisions = new Map<string, boolean>();
+          const confirmClipboardRead = (
+            requester: WebContents,
+            rawUrl: string | undefined,
+            callback: (granted: boolean) => void,
+          ): void => {
+            const origin = permissionOrigin(rawUrl);
+            if (origin === null) {
+              callback(false);
+              return;
+            }
+            const remembered = clipboardReadDecisions.get(origin);
+            if (remembered !== undefined) {
+              callback(remembered);
+              return;
+            }
+            promptPermission(
+              requester,
+              {
+                buttons: ["Allow", "Block"],
+                message: `${truncateForPrompt(origin)} wants to see text and images copied to the clipboard`,
+              },
+              (answer) => {
+                if (answer !== undefined) clipboardReadDecisions.set(origin, answer);
+                callback(answer === true);
+              },
+            );
+          };
           // Rewriting Electron's native User-Agent makes Turnstile fail integrity checks with error 600010.
           browserSession.setPermissionRequestHandler(
             (webContents, permission, callback, details) => {
@@ -259,11 +323,21 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 );
                 return;
               }
+              if (permission === "clipboard-read") {
+                confirmClipboardRead(
+                  webContents,
+                  "requestingUrl" in details ? details.requestingUrl : undefined,
+                  callback,
+                );
+                return;
+              }
               callback(ALLOWED_PREVIEW_PERMISSIONS.has(permission));
             },
           );
-          browserSession.setPermissionCheckHandler((_webContents, permission) =>
-            ALLOWED_PREVIEW_PERMISSIONS.has(permission),
+          browserSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin) =>
+            permission === "clipboard-read"
+              ? clipboardReadDecisions.get(permissionOrigin(requestingOrigin) ?? "") === true
+              : ALLOWED_PREVIEW_PERMISSIONS.has(permission),
           );
           const next = new Map(sessions);
           next.set(partition, browserSession);
@@ -293,7 +367,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
           Effect.tryPromise({
             try: () =>
               browserSession.clearStorageData({
-                storages: ["cookies", "localstorage", "indexdb", "serviceworkers"],
+                storages: ["cookies", "localstorage", "indexdb", "serviceworkers", "cachestorage"],
               }),
             catch: (cause) =>
               new BrowserSessionStorageClearError({
