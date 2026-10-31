@@ -11,9 +11,10 @@ the machine, installs T3 Code, exposes it on a public HTTPS URL, and pairs it. T
 reconnects like any other remote environment.
 
 The key is saved on the T3 Code server that provisions the sandbox, not on the client. Creating a
-sandbox bills the provider account that owns the key, and the provider's dashboard remains the
-place to stop or delete machines. The default lifetime comes from the provider unless the driver
-sets one.
+sandbox bills the provider account that owns the key. Stop and resume sandboxes from **Settings →
+Environments → Sandboxes**. A sandbox stops eight hours after it was created and cannot be resumed
+after that; resuming does not reset the limit. Daytona deletes a sandbox, files included, a day
+after that limit, so copy out anything you need before then.
 
 ## T3 Connect
 

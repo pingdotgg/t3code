@@ -48,7 +48,8 @@ one registry entry.
    `providers/index.ts`. Scopes, RPCs, and UI need no changes.
 5. **Decide the optional capabilities.**
    - `stop`/`resume` only if the provider can stop and start the same machine. The record's hard
-     deadline still rules; do not extend the provider's own TTL beyond it.
+     deadline still rules: a provider TTL that stops ends at the deadline, and one that deletes ends
+     after it (see [Lifecycle and hard limits](#lifecycle-and-hard-limits)).
    - `listEnvironments` only if the provider has named credential environments. Return **flags
      only** (`passGithub`, `passSecrets`, …). Never map `envContents`, `secretFiles`, or any other
      value that carries a real secret into `SandboxCredentialEnvironment`.
@@ -80,7 +81,10 @@ size, credential environment, and the deadline.
 stopping and resuming can never hand back another eight hours, or the limit would never bind.
 `hardDeadlineAt` is fixed at create time, resume refuses a sandbox that is already past it, and the
 server sweeps deadlines once a minute and calls the driver's `stop` when one passes. A failed stop
-is logged and retried on the next sweep; the record stays so the machine is never forgotten.
+is logged and retried on the next sweep. The provider's own TTL is only a backstop for when T3 is
+offline at the deadline, and it must never destroy what T3's stop would keep. Boat's backstop
+stops the machine at the deadline. Daytona's TTL deletes the sandbox, disk included, so it is set
+24 hours past the deadline: a stopped Daytona sandbox keeps its disk for a day and is then gone.
 
 `stop` and `resume` are optional on the driver. A provider without them still provisions and
 connects; the settings UI hides the controls and the RPC returns a configuration error instead of

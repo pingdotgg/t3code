@@ -143,9 +143,14 @@ describe("boatDriver", () => {
 describe("daytonaDriver", () => {
   it.effect("starts a sandbox, runs through the toolbox proxy, and reads a preview URL", () =>
     Effect.gen(function* () {
-      const requests: Array<{ method: string; url: string }> = [];
+      const requests: Array<{ method: string; url: string; body: string }> = [];
       const client = HttpClient.make((request) => {
-        requests.push({ method: request.method, url: request.url });
+        requests.push({
+          method: request.method,
+          url: request.url,
+          body:
+            request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "",
+        });
         if (request.url.endsWith("/sandbox")) {
           return Effect.succeed(
             HttpClientResponse.fromWeb(
@@ -187,7 +192,12 @@ describe("daytonaDriver", () => {
       });
 
       const created = yield* daytonaDriver
-        .create({ config: { apiKey: "dtn_test" }, name: "Daytona sandbox", size: "daytona-medium" })
+        .create({
+          config: { apiKey: "dtn_test" },
+          name: "Daytona sandbox",
+          size: "daytona-medium",
+          ttlMinutes: 480,
+        })
         .pipe(Effect.provideService(HttpClient.HttpClient, client));
       const executed = yield* daytonaDriver
         .execute({
@@ -204,6 +214,8 @@ describe("daytonaDriver", () => {
       expect(created).toEqual({ id: "sandbox_1", name: "Daytona sandbox" });
       expect(executed.stdout).toContain("Token: pair_xyz");
       expect(preview).toBe("https://3773-sandbox_1.proxy.daytona.works");
+      // Daytona deletes at its TTL, so the backstop sits a day past T3's non-destructive stop.
+      expect(JSON.parse(requests[0]!.body)).toMatchObject({ ttlMinutes: 480 + 1440 });
       expect(requests.map((request) => request.url)).toContain(
         "https://toolbox.example/toolbox/sandbox_1/process/execute",
       );

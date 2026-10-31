@@ -113,7 +113,9 @@ export const daytonaDriver: SandboxProviderDriver = {
           public: true,
           autoStopInterval: 0,
           autoDeleteInterval: -1,
-          ...(input.ttlMinutes === undefined ? {} : { ttlMinutes: input.ttlMinutes }),
+          // Daytona's `ttlMinutes` destroys the sandbox, disk included, so it lands a day after
+          // T3's own deadline stop and only cleans up when T3 never got to act.
+          ...(input.ttlMinutes === undefined ? {} : { ttlMinutes: input.ttlMinutes + 1440 }),
           labels: { "t3.code/role": "environment" },
         },
       ),
