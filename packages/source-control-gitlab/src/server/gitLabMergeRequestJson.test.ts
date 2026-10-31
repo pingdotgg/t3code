@@ -210,6 +210,14 @@ describe("decodeMergeRequestDetailJson", () => {
     expect(behind({ diverged_commits_count: null })).toBeUndefined();
   });
 
+  it.each(["scheduled", " SCHEDULED "])("keeps a delayed pipeline pending: %s", (status) => {
+    const detail = expectSuccess(
+      decodeMergeRequestDetailJson(detailJson({ head_pipeline: { status } })),
+    );
+
+    expect(detail.checks[0]?.status).toBe("pending");
+  });
+
   it("maps a pipeline waiting on a person to neutral, not failure", () => {
     const detail = expectSuccess(
       decodeMergeRequestDetailJson(detailJson({ head_pipeline: { status: "manual" } })),

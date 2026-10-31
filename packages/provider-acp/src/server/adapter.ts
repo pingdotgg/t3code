@@ -1380,6 +1380,9 @@ interface SnapshotMessageState {
 const ACP_STOP_CONFIRM_TIMEOUT_MS = 10_000;
 const TOOL_UPDATE_PERSIST_EVERY = 10;
 
+// CommandOutputHub reads the last 256 KiB; retain more so its display cut stays unchanged.
+const MAX_AGENT_TERMINAL_OUTPUT_CHARS = 320 * 1024;
+
 // Agents can resend whole calls while streaming arguments.
 function shouldPersistToolUpdate(
   context: Pick<ActiveAcpTurn, "toolUpdatesSkipped">,
@@ -4458,6 +4461,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             embeddedToolCallIds === undefined || embeddedToolCallIds.size === 0
               ? [`acp-agent-terminal:${update.terminalId}`]
               : [...embeddedToolCallIds];
+          const output = next.output.slice(-MAX_AGENT_TERMINAL_OUTPUT_CHARS);
           for (const toolCallId of projectedToolCallIds) {
             const existing = context.tools.get(toolCallId);
             const seeded: AcpToolCallState =
@@ -4478,7 +4482,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   status,
                   ...(next.command === undefined ? {} : { command: next.command }),
                 },
-                next.output,
+                output,
               ),
             );
           }

@@ -8,6 +8,7 @@ import {
   newTaskDestination,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
+  resolveNewTaskScratchOption,
 } from "./new-task-project-selection";
 
 function makeProject(
@@ -248,5 +249,80 @@ describe("newTaskDestination", () => {
         last: { environmentId: "environment", projectId: "only" },
       }),
     ).toEqual(picker);
+  });
+});
+
+describe("resolveNewTaskScratchOption", () => {
+  const environmentId = EnvironmentId.make("environment");
+  const otherId = EnvironmentId.make("other");
+  const configs = new Map([[environmentId, { scratchWorkspaceRoot: "/scratch" }]]);
+
+  it("offers the option from the cached config while the environment is still connecting", () => {
+    expect(
+      resolveNewTaskScratchOption({
+        environments: [{ environmentId, connectionState: "connecting" }],
+        serverConfigs: configs,
+        selectedEnvironmentId: null,
+      }),
+    ).toEqual({ environmentId, ready: false });
+  });
+
+  it("becomes ready without changing environment once connected", () => {
+    expect(
+      resolveNewTaskScratchOption({
+        environments: [{ environmentId, connectionState: "connected" }],
+        serverConfigs: configs,
+        selectedEnvironmentId: null,
+      }),
+    ).toEqual({ environmentId, ready: true });
+  });
+
+  it("hides the option when no environment reports a scratch root", () => {
+    expect(
+      resolveNewTaskScratchOption({
+        environments: [{ environmentId, connectionState: "connected" }],
+        serverConfigs: new Map([[environmentId, {}]]),
+        selectedEnvironmentId: null,
+      }),
+    ).toBeNull();
+    expect(
+      resolveNewTaskScratchOption({
+        environments: [{ environmentId, connectionState: "connected" }],
+        serverConfigs: new Map(),
+        selectedEnvironmentId: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("prefers a connected environment over the selected one that is still reconnecting", () => {
+    expect(
+      resolveNewTaskScratchOption({
+        environments: [
+          { environmentId, connectionState: "reconnecting" },
+          { environmentId: otherId, connectionState: "connected" },
+        ],
+        serverConfigs: new Map([
+          [environmentId, { scratchWorkspaceRoot: "/scratch" }],
+          [otherId, { scratchWorkspaceRoot: "/other-scratch" }],
+        ]),
+        selectedEnvironmentId: environmentId,
+      }),
+    ).toEqual({ environmentId: otherId, ready: true });
+  });
+
+  it("keeps the selected environment when every offering environment is connected", () => {
+    expect(
+      resolveNewTaskScratchOption({
+        environments: [
+          { environmentId: otherId, connectionState: "connected" },
+          { environmentId, connectionState: "connected" },
+        ],
+        serverConfigs: new Map([
+          [environmentId, { scratchWorkspaceRoot: "/scratch" }],
+          [otherId, { scratchWorkspaceRoot: "/other-scratch" }],
+        ]),
+        selectedEnvironmentId: environmentId,
+      }),
+    ).toEqual({ environmentId, ready: true });
   });
 });

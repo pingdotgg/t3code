@@ -3755,6 +3755,113 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect.each([true, false])(
+    "reads a quiet head when its no-checks notice comes due (fingerprint: %s)",
+    (fingerprinted) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make(`runtime-pull-request-watch-due-${fingerprinted}`);
+        const projectId = ProjectId.make(`pr-watch-due-project-${fingerprinted}`);
+        yield* seedProject({
+          projectId,
+          title: "Watch no-checks deadline",
+          workspaceRoot: "/workspace/watch-due",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`pr-watch-due-create-${fingerprinted}`),
+          threadId,
+          projectId,
+          title: "Watch no-checks deadline",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        const key = { host: "github.com", repository: "pingdotgg/t3code", number: 14 };
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-due-start-${fingerprinted}`),
+          threadId,
+          ...key,
+          watching: true,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/14", source: "agent" },
+        });
+
+        let reads = 0;
+        const host = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(PullRequestService.PullRequestService)({
+            // The host reports the same fingerprint throughout, so only the deadline can prompt a read.
+            watchFingerprint: () =>
+              Effect.succeed(fingerprinted ? { status: "quiet", remarks: "none" } : null),
+            invalidate: () => Effect.void,
+            detail: () =>
+              Effect.sync(() => {
+                reads++;
+                return {
+                  ...watchedPullRequestDetail({
+                    projectId,
+                    number: 14,
+                    at: "2026-10-02T12:00:00.000Z",
+                  }),
+                  headSha: "6074dd48ff",
+                  checks: [],
+                };
+              }),
+            activity: () =>
+              Effect.succeed({
+                comments: [],
+                commentCount: 0,
+                commentsTruncated: false,
+                reviewThreads: [],
+                commits: [],
+              }),
+          }),
+        );
+        const wakes = Effect.map(
+          orchestrator.getThreadRecords(threadId, ["messages"]),
+          ({ messages }) =>
+            messages.filter((message) => message.text.includes("No checks have reported")),
+        );
+        const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const sweep = reactor.sweep.pipe(Effect.andThen(worker.drain()));
+
+        yield* sweep;
+        yield* TestClock.adjust("10 minutes");
+        yield* sweep;
+        assert.lengthOf(yield* wakes, 0);
+
+        yield* TestClock.adjust("6 minutes");
+        yield* sweep;
+        const told = yield* wakes;
+        assert.lengthOf(told, 1);
+        assert.include(told[0]!.text, "after 16 minutes");
+
+        // The notice clears the deadline, so the watch returns to its quiet cadence.
+        const readsAfterNotice = reads;
+        yield* TestClock.adjust("2 minutes");
+        yield* sweep;
+        assert.equal(reads, readsAfterNotice);
+        assert.lengthOf(yield* wakes, 1);
+
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-due-end-${fingerprinted}`),
+          threadId,
+          ...key,
+          watching: false,
+        });
+        yield* worker.drain();
+      }),
+  );
+
   // regression: #21155 watching a pull request again repeated news the thread already got
   it.effect("watching a dismissed stack layer again keeps what its last watch told", () =>
     Effect.gen(function* () {

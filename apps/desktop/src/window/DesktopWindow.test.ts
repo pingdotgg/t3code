@@ -82,6 +82,12 @@ function makeFakeBrowserWindow() {
       zoomLevel = level;
     }),
     isLoadingMainFrame: vi.fn(() => false),
+    navigationHistory: {
+      canGoBack: vi.fn(() => true),
+      canGoForward: vi.fn(() => true),
+      goBack: vi.fn(),
+      goForward: vi.fn(),
+    },
     on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
       webContentsListeners.set(eventName, listener);
     }),
@@ -140,6 +146,7 @@ function makeFakeBrowserWindow() {
     reload: webContents.reload,
     reloadIgnoringCache: webContents.reloadIgnoringCache,
     toggleDevTools: webContents.toggleDevTools,
+    navigationHistory: webContents.navigationHistory,
     send: webContents.send,
     setZoomLevel: webContents.setZoomLevel,
     setWindowButtonPosition: window.setWindowButtonPosition,
@@ -972,6 +979,39 @@ describe("DesktopWindow", () => {
         assert.deepEqual(mainWindowBoundsUpdates, [{ x: 180, y: 120, width: 1440, height: 960 }]);
         assert.equal(fakeWindow.getBounds.mock.calls.length, 0);
         assert.equal(fakeWindow.getNormalBounds.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("maps macOS horizontal swipes to available history navigation", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const swipe = fakeWindow.windowListeners.get("swipe");
+        assert.isDefined(swipe);
+        if (!swipe) return;
+        const history = fakeWindow.navigationHistory;
+
+        swipe({}, "left");
+        assert.equal(history.goBack.mock.calls.length, 1);
+        assert.equal(history.goForward.mock.calls.length, 0);
+        swipe({}, "right");
+        assert.equal(history.goForward.mock.calls.length, 1);
+
+        swipe({}, "up");
+        swipe({}, "down");
+        history.canGoBack.mockReturnValue(false);
+        history.canGoForward.mockReturnValue(false);
+        swipe({}, "left");
+        swipe({}, "right");
+        assert.equal(history.goBack.mock.calls.length, 1);
+        assert.equal(history.goForward.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
     }),
   );
