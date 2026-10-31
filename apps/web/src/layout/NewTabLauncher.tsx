@@ -49,6 +49,7 @@ import {
 import { toggleThreadTerminalPane } from "./openRules";
 import { requestLayoutSurfacePlacement } from "./surfaceSync";
 import { openLayoutNewTab } from "./layoutActions";
+import { LayoutLearningTips } from "./LayoutOnboarding";
 import { beginLayoutTabDrag } from "./layoutDrag";
 import { useLayoutPane } from "./layoutPaneContext";
 import type { LayoutPageContent } from "./layoutModel";
@@ -373,6 +374,7 @@ function NewTabLauncherBody({
           detail=""
           onSelect={() => openPage("pull-requests")}
         />
+        <LayoutLearningTips />
       </div>
     </div>
   );
