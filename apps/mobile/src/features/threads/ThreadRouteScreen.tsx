@@ -104,10 +104,7 @@ import {
   ThreadInspectorContentStack,
   type ThreadInspectorMode,
 } from "./thread-inspector-content-stack";
-import {
-  clearedPromptLinkParams,
-  promptLinkSearchFromParams,
-} from "../prompt-links/prompt-link-model";
+import { promptLinkSearchFromParams } from "../prompt-links/prompt-link-model";
 import {
   threadDetailErrorIsCurrent,
   threadRouteIsHydrating,
@@ -474,7 +471,7 @@ function ThreadRouteContent(
   );
   // The feed reports a message link handled once it reaches the message or gives up.
   const handleLinkedMessageHandled = useCallback(
-    () => navigation.setParams(clearedPromptLinkParams(MESSAGE_LINK_KEYS)),
+    () => navigation.setParams({ message: undefined }),
     [navigation],
   );
   const routeThreadIdentity =
