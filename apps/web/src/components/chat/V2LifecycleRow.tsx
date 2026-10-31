@@ -572,7 +572,9 @@ function SubagentTimelineTooltip(
   const environmentId = props.parentRef.environmentId;
   // Read providers only in the open popup to avoid per-row subscriptions.
   const providers =
-    useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
+    useAtomValue(
+      serverEnvironment.providersValueAtom(props.remote?.environmentId ?? environmentId),
+    ) ?? EMPTY_SERVER_PROVIDERS;
   const parent = useThreadShell(props.parentRef)?.source;
   const child = useThreadShell(
     props.threadId ? scopeThreadRef(environmentId, props.threadId) : null,
