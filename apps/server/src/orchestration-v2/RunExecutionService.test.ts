@@ -4157,7 +4157,8 @@ it.effect("reschedules idle text when a newer snapshot precedes a failed write's
             return;
           if ((yield* Ref.getAndUpdate(attempts, (n) => n + 1)) < 2)
             return yield* Effect.die(new Error("disk I/O error"));
-          yield* Ref.update(childWrites, (current) => [...current, event.turnItem.text]);
+          const { text } = event.turnItem;
+          yield* Ref.update(childWrites, (current) => [...current, text]);
         }),
     }).pipe(Effect.forkChild);
     const marker = streamedMessageEvent({
