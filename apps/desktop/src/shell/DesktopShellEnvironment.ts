@@ -1,6 +1,8 @@
 import {
   buildEnvironmentCaptureCommand,
+  buildWindowsEnvironmentCaptureCommand,
   listLoginShellCandidates,
+  resolveKnownWindowsCliDirs,
   setWindowsPath,
 } from "@t3tools/shared/shell";
 import * as Context from "effect/Context";
@@ -168,27 +170,6 @@ const mergePaths = (
   return entries.length > 0 ? Option.some(entries.join(delimiter)) : Option.none();
 };
 
-const knownWindowsCliDirs = (env: NodeJS.ProcessEnv): ReadonlyArray<string> => [
-  ...trimNonEmpty(env.APPDATA).pipe(
-    Option.match({
-      onNone: () => [],
-      onSome: (value) => [`${value}\\npm`],
-    }),
-  ),
-  ...trimNonEmpty(env.LOCALAPPDATA).pipe(
-    Option.match({
-      onNone: () => [],
-      onSome: (value) => [`${value}\\Programs\\nodejs`, `${value}\\Volta\\bin`, `${value}\\pnpm`],
-    }),
-  ),
-  ...trimNonEmpty(env.USERPROFILE).pipe(
-    Option.match({
-      onNone: () => [],
-      onSome: (value) => [`${value}\\.local\\bin`, `${value}\\.bun\\bin`, `${value}\\scoop\\shims`],
-    }),
-  ),
-];
-
 const startMarker = (name: string) => `__T3CODE_ENV_${name}_START__`;
 const endMarker = (name: string) => `__T3CODE_ENV_${name}_END__`;
 
@@ -203,19 +184,6 @@ const logShellEnvironmentCommandError = (
       error,
     }),
   );
-
-const captureWindowsEnvironmentCommand = (names: ReadonlyArray<string>) =>
-  [
-    "$ErrorActionPreference = 'Stop'",
-    ...names.flatMap((name) => {
-      return [
-        `Write-Output '${startMarker(name)}'`,
-        `$value = [Environment]::GetEnvironmentVariable('${name}')`,
-        "if ($null -ne $value -and $value.Length -gt 0) { Write-Output $value }",
-        `Write-Output '${endMarker(name)}'`,
-      ];
-    }),
-  ].join("; ");
 
 const extractEnvironment = (output: string, names: ReadonlyArray<string>): EnvironmentPatch => {
   const environment: EnvironmentPatch = {};
@@ -337,7 +305,7 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
       ...(options.loadProfile ? ([] as const) : (["-NoProfile"] as const)),
       "-NonInteractive",
       "-Command",
-      captureWindowsEnvironmentCommand(names),
+      buildWindowsEnvironmentCaptureCommand(names),
     ];
 
     for (const command of WINDOWS_SHELL_CANDIDATES) {
@@ -370,7 +338,7 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
     );
     const mergedPath = mergePaths("win32", [
       trimNonEmpty(profile.PATH),
-      trimNonEmpty(knownWindowsCliDirs(config.env).join(";")),
+      trimNonEmpty(resolveKnownWindowsCliDirs(config.env).join(";")),
       trimNonEmpty(noProfile.PATH),
       readEnvPath(config.env),
     ]);

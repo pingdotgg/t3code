@@ -245,9 +245,16 @@ export function buildEnvironmentCaptureCommand(
     .join("; ");
 }
 
-function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
+// Read both stores before writing: .NET expands registry values against Process.
+// Preserve inherited values, merge User over Machine, then expand missing references.
+// Three expansion rounds bound chains and cycles; PATH is captured separately.
+const WINDOWS_PERSISTED_ENVIRONMENT_HYDRATION =
+  "$inherited = @{}; foreach ($name in ([Environment]::GetEnvironmentVariables('Process')).Keys) { $inherited[$name] = $true }; $persisted = @{}; foreach ($target in @('Machine', 'User')) { try { foreach ($entry in ([Environment]::GetEnvironmentVariables($target)).GetEnumerator()) { if ($entry.Key -ne 'PATH' -and -not $inherited.ContainsKey($entry.Key)) { $persisted[$entry.Key] = $entry.Value } } } catch { } }; foreach ($entry in @($persisted.GetEnumerator())) { try { [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process') } catch { } }; for ($round = 0; $round -lt 3; $round++) { $changed = $false; foreach ($name in @($persisted.Keys)) { try { $value = [Environment]::GetEnvironmentVariable($name, 'Process'); if ($value -and $value.Contains('%')) { $expanded = [Environment]::ExpandEnvironmentVariables($value); if ($expanded -ne $value) { [Environment]::SetEnvironmentVariable($name, $expanded, 'Process'); $changed = $true } } } catch { } }; if (-not $changed) { break } }";
+
+export function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
   return [
     "$ErrorActionPreference = 'Stop'",
+    WINDOWS_PERSISTED_ENVIRONMENT_HYDRATION,
     ...names.flatMap((name) => {
       if (!SHELL_ENV_NAME_PATTERN.test(name)) {
         throw new Error(`Unsupported environment variable name: ${name}`);
@@ -255,7 +262,11 @@ function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): st
 
       return [
         `Write-Output '${envCaptureStart(name)}'`,
-        `$value = [Environment]::GetEnvironmentVariable('${name}')`,
+        `$candidates = @('Process', 'User', 'Machine') | ForEach-Object { try { [Environment]::GetEnvironmentVariable('${name}', $_) } catch { $null } } | Where-Object { $_ }`,
+        // Append persisted PATH entries after the process snapshot; callers dedupe.
+        name === "PATH"
+          ? `$value = $candidates -join '${WINDOWS_PATH_DELIMITER}'`
+          : "$value = @($candidates)[0]",
         "if ($null -ne $value -and $value.Length -gt 0) { Write-Output $value }",
         `Write-Output '${envCaptureEnd(name)}'`,
       ];
@@ -892,7 +903,7 @@ export const isCommandAvailable = Effect.fn("shell.isCommandAvailable")(function
   return (yield* resolveCommandPath(command, options)) !== null;
 });
 
-function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
+export function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
   const appData = env.APPDATA?.trim();
   const localAppData = env.LOCALAPPDATA?.trim();
   const userProfile = env.USERPROFILE?.trim();
@@ -900,7 +911,7 @@ function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<strin
   return [
     ...(appData ? [`${appData}\\npm`] : []),
     ...(localAppData ? [`${localAppData}\\Programs\\nodejs`, `${localAppData}\\Volta\\bin`] : []),
-    ...(localAppData ? [`${localAppData}\\pnpm`] : []),
+    ...(localAppData ? [`${localAppData}\\pnpm`, `${localAppData}\\Microsoft\\WinGet\\Links`] : []),
     ...(userProfile
       ? [`${userProfile}\\.local\\bin`, `${userProfile}\\.bun\\bin`, `${userProfile}\\scoop\\shims`]
       : []),
