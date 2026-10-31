@@ -229,6 +229,16 @@ describe("details folds in chat Markdown", () => {
     ]);
   });
 
+  it("carries a quoted definition that wraps onto a continuation line", () => {
+    const { segments, definitions } = splitMarkdownDetails(
+      'See [d].\n\n<details><summary>A</summary>a</details>\n\n> [d]:\n> https://example.com\n> "Title"',
+    );
+    const before = segments[0];
+    expect(
+      before?.kind === "markdown" && withReferenceDefinitions(before.markdown, definitions),
+    ).toBe('[d]: https://example.com "Title"\n\nSee [d].\n\n');
+  });
+
   it("finds definitions inside a compact HTML block and labels that wrap", () => {
     const markdown =
       "See [the\n  doc].\n\n<details><summary>A</summary>a</details>\n[The Doc]: https://example.com";

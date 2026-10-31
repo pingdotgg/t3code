@@ -354,7 +354,11 @@ function referenceDefinition(source: string): MarkdownReferenceDefinition | null
   let end = 1;
   while (end < source.length && source[end] !== "]") end += source[end] === "\\" ? 2 : 1;
   if (source[0] !== "[" || end >= source.length) return null;
-  return { label: source.slice(1, end).replace(/\s+/g, " ").toLowerCase(), source };
+  return {
+    label: source.slice(1, end).replace(/\s+/g, " ").toLowerCase(),
+    // A definition may sit on one line, so drop the quote markers and indent of its continuations.
+    source: source.replace(/\n[ \t>]*/g, " "),
+  };
 }
 
 /** Each fragment renders as its own document, so it carries the definitions it mentions. */
