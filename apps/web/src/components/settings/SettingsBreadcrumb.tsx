@@ -20,7 +20,7 @@ export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
 
   return (
     <nav aria-label="Settings breadcrumb" className="flex min-w-0 items-center gap-1.75">
-      <SettingsIcon aria-hidden className="size-3.5 shrink-0 text-foreground" />
+      <SettingsIcon aria-hidden className="size-3.5 shrink-0 text-foreground max-sm:hidden" />
       <span className="shrink-0">Settings</span>
       <ChevronRightIcon aria-hidden className="size-3 shrink-0 text-dim-foreground" />
       <SettingsScopePicker pathname={pathname} />
