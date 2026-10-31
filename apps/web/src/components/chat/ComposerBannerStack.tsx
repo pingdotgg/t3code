@@ -19,6 +19,7 @@ export interface ComposerBannerStackItem {
   readonly icon: ReactNode;
   readonly title: ReactNode;
   readonly description?: ReactNode;
+  readonly descriptionDetails?: ReactNode;
   readonly children?: ReactNode;
   readonly actions?: ReactNode;
   readonly dismissLabel?: string;
@@ -30,11 +31,7 @@ const GROUPS = ["environment", "attention"] as const;
 const FADE_IN =
   "transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none";
 
-/**
- * Notices about sending from this composer, each its own attached card. Consecutive cards join
- * edge to edge, and the last joins the composer or the drawer below it. Detached cards stand
- * apart instead, for layouts where the composer must not move when a notice appears.
- */
+/** Notices about sending from this composer, with machine notices before attention notices. */
 export function ComposerBannerStack({
   items,
   detached = false,
@@ -65,10 +62,12 @@ export function NoticeText({
   children,
   className,
   detailsLabel,
+  details,
 }: {
   readonly children: ReactNode;
   readonly className: string;
   readonly detailsLabel: string;
+  readonly details?: ReactNode;
 }) {
   const textRef = useRef<HTMLSpanElement>(null);
   const detailsRef = useRef<HTMLButtonElement>(null);
@@ -133,7 +132,7 @@ export function NoticeText({
       <span ref={textRef} className={className}>
         {children}
       </span>
-      {showDetails ? (
+      {showDetails || details !== undefined ? (
         <Popover>
           <PopoverTrigger
             openOnHover
@@ -155,7 +154,7 @@ export function NoticeText({
             side="top"
             className="max-w-[min(30rem,calc(100vw-2rem))] whitespace-normal wrap-anywhere [--inline-button-text-align:start] [--inline-button-white-space:normal] [&_[data-slot=inline-button]]:max-w-full"
           >
-            <ComposerBanner.Scroll>{children}</ComposerBanner.Scroll>
+            <ComposerBanner.Scroll>{details ?? children}</ComposerBanner.Scroll>
           </PopoverPopup>
         </Popover>
       ) : null}
@@ -179,9 +178,7 @@ function NoticeCard({
       data-chat-composer-collapsed-controls="true"
     >
       <ComposerBanner.Row layout="wrap-actions">
-        <ComposerBanner.Icon className="h-(--composer-banner-icon-column) self-start">
-          {item.icon}
-        </ComposerBanner.Icon>
+        <ComposerBanner.Icon>{item.icon}</ComposerBanner.Icon>
         <ComposerBanner.Content className="whitespace-nowrap">
           <NoticeText
             detailsLabel={
@@ -189,7 +186,7 @@ function NoticeCard({
                 ? `Show full title: ${item.title}`
                 : "Show title details"
             }
-            className="min-w-0 truncate font-medium text-foreground leading-7 sm:leading-6"
+            className="min-w-0 truncate text-foreground"
           >
             {item.title}
           </NoticeText>
@@ -200,6 +197,7 @@ function NoticeCard({
                   ? `Show details: ${item.title}`
                   : "Show notice details"
               }
+              details={item.descriptionDetails}
               className="w-0 min-w-0 grow truncate font-medium text-muted-foreground @max-[400px]:sr-only"
             >
               {item.description}
