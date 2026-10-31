@@ -37,21 +37,40 @@ const selectTriggerVariants = cva(
   },
 );
 
+/** A muted 14px icon before a select's value, such as a calendar before a duration. */
+function SelectLeadingIcon({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      aria-hidden
+      className="flex shrink-0 items-center [&_svg:not([class*='size-'])]:size-3.5 [&_svg:not([class*='text-'])]:text-muted-foreground"
+      data-slot="select-leading-icon"
+    >
+      {children}
+    </span>
+  );
+}
+
 function SelectTrigger({
   className,
   size = "default",
   variant = "default",
   children,
   icon,
+  leadingIcon,
   ...props
 }: SelectPrimitive.Trigger.Props &
-  VariantProps<typeof selectTriggerVariants> & { icon?: React.ReactNode }) {
+  VariantProps<typeof selectTriggerVariants> & {
+    icon?: React.ReactNode;
+    /** Icon slot before the value; the chevron slot is `icon`. */
+    leadingIcon?: React.ReactNode;
+  }) {
   return (
     <SelectPrimitive.Trigger
       className={cn(selectTriggerVariants({ size, variant }), className)}
       data-slot="select-trigger"
       {...props}
     >
+      {leadingIcon ? <SelectLeadingIcon>{leadingIcon}</SelectLeadingIcon> : null}
       {children}
       <SelectPrimitive.Icon data-slot="select-icon">
         {icon ?? (
@@ -66,9 +85,11 @@ function SelectButton({
   className,
   size = "default",
   children,
+  leadingIcon,
   render,
   ...props
-}: useRender.ComponentProps<"button"> & Pick<VariantProps<typeof selectTriggerVariants>, "size">) {
+}: useRender.ComponentProps<"button"> &
+  Pick<VariantProps<typeof selectTriggerVariants>, "size"> & { leadingIcon?: React.ReactNode }) {
   const defaultProps = {
     className: cn(selectTriggerVariants({ size }), className),
     "data-slot": "select-trigger",
@@ -80,6 +101,7 @@ function SelectButton({
       ...mergeProps<"button">(defaultProps, props),
       children: (
         <>
+          {leadingIcon ? <SelectLeadingIcon>{leadingIcon}</SelectLeadingIcon> : null}
           <span className="min-w-0 flex-1 truncate text-left">{children}</span>
           <ChevronDownIcon
             aria-hidden
