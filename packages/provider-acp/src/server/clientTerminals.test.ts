@@ -155,6 +155,8 @@ describe("AcpClientTerminals", () => {
         );
         expect(yield* child.isRunning).toBe(false);
         expect(outcome).toEqual({ exitCode: 0, signal: null });
+        // The background child keeps a reader, so it never sees a broken pipe.
+        yield* Deferred.await(orphanStillHoldsOutput);
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
