@@ -40,18 +40,14 @@ export function PullRequestSheetContent(props: {
           ...(android ? { sheetCornerRadius: 28, sheetAllowedDetents: "fitToContents" } : {}),
         }}
       />
-      <ScreenContent
-        fitToContents={android}
-        header={
-          <SheetHeader
-            presentation={android ? "inline" : "native"}
-            title={props.title}
-            subtitle={props.subtitle}
-            onCancel={() => navigation.goBack()}
-            dismissDisabled={props.busy}
-          />
-        }
-      >
+      <SheetHeader
+        presentation={android ? "inline" : "native"}
+        title={props.title}
+        subtitle={props.subtitle}
+        onCancel={() => navigation.goBack()}
+        dismissDisabled={props.busy}
+      />
+      <ScreenContent fitToContents={android}>
         <ScrollView
           nestedScrollEnabled
           className="android:shrink android:grow-0 ios:flex-1"
