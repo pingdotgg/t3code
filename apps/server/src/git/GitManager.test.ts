@@ -2253,6 +2253,63 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect(
+    "status does not inherit a fork's merged main PR when gh targets upstream from a default upstream",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const originDir = yield* createBareRemote();
+        const upstreamDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+        yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["push", "upstream", "main"]);
+        yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+        yield* runGit(repoDir, ["config", "remote.upstream.gh-resolved", "base"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/wt", "origin/main"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "https://github.com/juliusmarminge/t3code.git",
+          originDir,
+        );
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "upstream",
+          "https://github.com/pingdotgg/t3code.git",
+          upstreamDir,
+        );
+
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            prListByHeadSelector: {
+              main: JSON.stringify([
+                {
+                  number: 6100,
+                  title: "Sync fork main",
+                  url: "https://github.com/pingdotgg/t3code/pull/6100",
+                  baseRefName: "main",
+                  headRefName: "main",
+                  state: "MERGED",
+                  mergedAt: "2026-01-10T10:00:00Z",
+                  updatedAt: "2026-01-10T10:00:00Z",
+                  isCrossRepository: true,
+                  headRepository: { nameWithOwner: "juliusmarminge/t3code" },
+                  headRepositoryOwner: { login: "juliusmarminge" },
+                },
+              ]),
+            },
+          },
+        });
+
+        const status = yield* manager.status({ cwd: repoDir });
+        expect(status.refName).toBe("feature/wt");
+        expect(status.pr).toBeNull();
+        expect(ghCalls.some((call) => call.includes("--head main "))).toBe(false);
+      }),
+  );
+
   it.effect("status finds a PR pushed under the branch's own name despite a default upstream", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -3886,6 +3943,73 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ),
       ).toBe(false);
     }),
+  );
+
+  it.effect(
+    "creates fork PRs from origin with the fork owner selector when gh targets upstream",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const originDir = yield* createBareRemote();
+        const upstreamDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+        yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
+        yield* runGit(repoDir, ["push", "upstream", "main"]);
+        yield* runGit(repoDir, ["config", "remote.upstream.gh-resolved", "base"]);
+        yield* runGit(repoDir, ["checkout", "-b", "fix-7382-repro"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
+        yield* runGit(repoDir, ["add", "changes.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "fix-7382-repro"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "https://github.com/juliusmarminge/t3code.git",
+          originDir,
+        );
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "upstream",
+          "https://github.com/pingdotgg/t3code.git",
+          upstreamDir,
+        );
+
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            prListSequenceByHeadSelector: {
+              "fix-7382-repro": [
+                JSON.stringify([]),
+                JSON.stringify([
+                  {
+                    number: 7383,
+                    title: "Fix fork PR creation",
+                    url: "https://github.com/pingdotgg/t3code/pull/7383",
+                    baseRefName: "main",
+                    headRefName: "fix-7382-repro",
+                    state: "OPEN",
+                    isCrossRepository: true,
+                    headRepository: { nameWithOwner: "juliusmarminge/t3code" },
+                    headRepositoryOwner: { login: "juliusmarminge" },
+                  },
+                ]),
+              ],
+            },
+          },
+        });
+
+        const result = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" });
+
+        const createArgs = ghCalls
+          .filter((call) => call.startsWith("pr create "))
+          .map((call) => call.split(" "));
+        expect(createArgs).toHaveLength(1);
+        expect(createArgs[0]?.[createArgs[0].indexOf("--head") + 1]).toBe(
+          "juliusmarminge:fix-7382-repro",
+        );
+        expect(result.pr.status).toBe("created");
+        expect(result.pr.number).toBe(7383);
+      }),
   );
 
   it.effect("rejects push/pr actions from detached HEAD", () =>
