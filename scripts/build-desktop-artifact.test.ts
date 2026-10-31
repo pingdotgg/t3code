@@ -24,6 +24,11 @@ import {
   buildDesktopBundles,
   copyDesktopBuildArtifacts,
   DesktopBuildManifestRestoreError,
+  CuaDriverBundleMissingFileError,
+  CuaDriverChecksumMismatchError,
+  resolveCuaDriverAsset,
+  stageCuaDriverBundle,
+  stageCuaDriverExecutable,
   BundleNotSelfContainedError,
   BuildCommandFailedError,
   parseWslRuntimeArchiveMembers,
@@ -235,6 +240,133 @@ const makeMacPayloadFixture = Effect.fn("test.makeMacPayloadFixture")(function* 
 });
 
 it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
+  it.effect("rejects corrupt release downloads before extraction or staging", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cua-checksum-" });
+        const commands: string[] = [];
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            const child = command as unknown as { command: string; args: readonly string[] };
+            commands.push(child.command);
+            const output = child.args[child.args.indexOf("--output") + 1];
+            return child.command === "curl" && output !== undefined
+              ? Effect.as(fs.writeFileString(output, "corrupted archive"), mockProcess(0))
+              : Effect.succeed(mockProcess(0));
+          }),
+        );
+        const error = yield* Effect.flip(
+          stageCuaDriverExecutable({
+            platform: "linux",
+            arch: "x64",
+            repoRoot: root,
+            stageRoot: root,
+            stageResourcesDir: path.join(root, "resources"),
+            verbose: false,
+          }).pipe(Effect.provide(spawnerLayer)),
+        );
+        assert.instanceOf(error, CuaDriverChecksumMismatchError);
+        assert.deepStrictEqual(commands, ["curl"]);
+        assert.isFalse(yield* fs.exists(path.join(root, "resources", "cua-driver")));
+        const cache = path.join(root, "node_modules/.cache/t3code/cua-driver");
+        assert.deepStrictEqual(yield* fs.readDirectory(cache), []);
+      }),
+    ),
+  );
+
+  it("bundles the universal Cua Driver on every macOS arch", () => {
+    for (const arch of ["arm64", "x64", "universal"] as const) {
+      assert.include(resolveCuaDriverAsset("mac", arch).archiveName, "darwin-universal-binary");
+    }
+    for (const platform of ["linux", "win"] as const) {
+      assert.throws(() => resolveCuaDriverAsset(platform, "universal"), /no release asset/);
+    }
+  });
+
+  it.effect.each([
+    { platform: "mac", arch: "universal" },
+    { platform: "linux", arch: "x64" },
+    { platform: "linux", arch: "arm64" },
+    { platform: "win", arch: "x64" },
+    { platform: "win", arch: "arm64" },
+  ] as const)(
+    "stages the $platform/$arch release layout with its companions",
+    ({ platform, arch }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cua-bundle-" });
+          const extractDir = path.join(root, "extract");
+          const stageResourcesDir = path.join(root, "resources");
+          // The real `-binary` archive layouts: every file sits at the root.
+          const members =
+            platform === "win"
+              ? [
+                  "cua-driver.exe",
+                  "cua-driver-uia.exe",
+                  "cua-cursor-theme.exe",
+                  "cua_driver_sdk.dll",
+                  "cua_driver_node_runtime.node",
+                ]
+              : platform === "linux"
+                ? [
+                    "cua-driver",
+                    "cua-cursor-theme",
+                    "libcua_driver_sdk.so",
+                    "cua_driver_node_runtime.node",
+                    "wayland-helper/winrects@cua/extension.js",
+                  ]
+                : ["cua-driver", "cua-cursor-theme", "libcua_driver_sdk.dylib"];
+          for (const member of [...members, "cua_driver_abi.h"]) {
+            const target = path.join(extractDir, member);
+            yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+            yield* fs.writeFileString(target, member);
+          }
+          yield* stageCuaDriverBundle({ platform, arch, extractDir, stageResourcesDir });
+          const destination = path.join(stageResourcesDir, "cua-driver");
+          if (platform === "mac") {
+            assert.equal(yield* fs.readFileString(destination), "cua-driver");
+          } else {
+            for (const member of members) {
+              assert.equal(yield* fs.readFileString(path.join(destination, member)), member);
+            }
+          }
+          if ((yield* HostProcess.Platform) !== "win32" && platform !== "win") {
+            const binary = platform === "mac" ? destination : path.join(destination, "cua-driver");
+            assert.equal((yield* fs.stat(binary)).mode & 0o777, 0o755);
+          }
+        }),
+      ),
+  );
+
+  it.effect("rejects an incomplete Windows bundle before publishing a staged CLI", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cua-incomplete-" });
+        const extractDir = path.join(root, "extract");
+        const stageResourcesDir = path.join(root, "resources");
+        yield* fs.makeDirectory(extractDir);
+        yield* fs.writeFileString(path.join(extractDir, "cua-driver.exe"), "cli");
+        const error = yield* Effect.flip(
+          stageCuaDriverBundle({
+            platform: "win",
+            arch: "x64",
+            extractDir,
+            stageResourcesDir,
+          }),
+        );
+        assert.instanceOf(error, CuaDriverBundleMissingFileError);
+        assert.isFalse(yield* fs.exists(path.join(stageResourcesDir, "cua-driver")));
+      }),
+    ),
+  );
+
   it.effect("rejects overlapping builds from another process until restoration finishes", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

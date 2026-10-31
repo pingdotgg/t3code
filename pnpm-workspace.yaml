@@ -61,6 +61,8 @@ catalog:
   "@tailwindcss/node": 4.3.3
   "@tailwindcss/oxide": 4.3.3
   "@tailwindcss/vite": 4.3.3
+  "@trycua/cua-driver": 0.38.0
+  "@ubjs/node": 0.31.0-3
   "@types/node": 24.12.4
   "@types/plist": 3.0.5
   "@types/react": ~19.3.0
@@ -259,6 +261,7 @@ overrides:
   "@expo/fingerprint": 0.21.5
   app-builder-lib: 26.16.1
   expo-modules-core: 58.0.22
+  "@ubjs/node": "catalog:"
   # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.
   "@exodus/bytes>@noble/hashes": "1.8.0"
   # Earlier React Navigation declarations create a circular type alias in TypeScript 7.
@@ -398,6 +401,7 @@ patchedDependencies:
   # Observe the owned host exit independently of descendants retaining its stdio.
   "@muse-code/sdk@1.4.6": patches/@muse-code__sdk@1.4.6.patch
   app-builder-lib@26.16.1: patches/app-builder-lib@26.16.1.patch
+  "@ubjs/node@0.31.0-3": patches/@ubjs__node@0.31.0-3.patch
 
 peerDependencyRules:
   allowAny:

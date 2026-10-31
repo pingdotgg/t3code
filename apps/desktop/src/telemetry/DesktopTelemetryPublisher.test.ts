@@ -1,13 +1,17 @@
+import { DesktopHostTelemetryMessage } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import type * as Electron from "electron";
@@ -24,6 +28,10 @@ const layerHistory = Layer.succeed(DesktopRendererHistory.DesktopRendererHistory
   recordMetrics: () => Effect.void,
   shutdown: Effect.void,
 });
+
+const decodeMessage = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(DesktopHostTelemetryMessage),
+);
 
 function layerElectronApp(
   metrics: ReadonlyArray<Electron.ProcessMetric>,
@@ -89,6 +97,109 @@ describe("DesktopTelemetryPublisher", () => {
       yield* Effect.yieldNow;
 
       assert.isDefined(closeFiber.pollUnsafe());
+    }),
+  );
+
+  it.effect("routes Cua Driver requests and reports only through the primary backend", () =>
+    Effect.gen(function* () {
+      const layerPower = Layer.succeed(
+        ElectronPowerMonitor.ElectronPowerMonitor,
+        ElectronPowerMonitor.ElectronPowerMonitor.of({
+          isOnBatteryPower: Effect.succeed(false),
+          getSystemIdleTime: Effect.succeed(0),
+          getSystemIdleState: () => Effect.succeed("active"),
+          getCurrentThermalState: Effect.succeed("nominal"),
+          onSimpleEvent: () => Effect.void,
+          onThermalStateChange: () => Effect.void,
+          onSpeedLimitChange: () => Effect.void,
+        }),
+      );
+      const layer = DesktopTelemetryPublisher.layer.pipe(
+        Layer.provide(Layer.mergeAll(layerElectronApp([]), layerPower, layerHistory)),
+      );
+
+      yield* Effect.gen(function* () {
+        const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
+        const decoder = new TextDecoder();
+
+        yield* publisher.handleControlForSource("wsl:Ubuntu", {
+          version: 1,
+          type: "cuaDriverRequest",
+          requestId: "remote",
+          enabled: true,
+        });
+        yield* publisher.handleControlForSource("primary", {
+          version: 1,
+          type: "cuaDriverRequest",
+          requestId: "local",
+          enabled: true,
+        });
+        const cuaRequest = yield* Stream.runHead(publisher.cuaRequests);
+        assert.equal(Option.getOrThrow(cuaRequest).requestId, "local");
+        yield* publisher.removeControlSource("wsl:Ubuntu");
+        yield* publisher.removeControlSource("primary");
+        const detachRequest = Option.getOrThrow(yield* Stream.runHead(publisher.cuaRequests));
+        assert.equal(detachRequest.requestId, "desktop-primary-detached");
+        assert.equal(detachRequest.enabled, false);
+
+        const primaryAttached = yield* Deferred.make<void>();
+        const cuaReportFiber = yield* publisher.encodedForSource("primary").pipe(
+          Stream.mapEffect((bytes) => decodeMessage(decoder.decode(bytes).trim())),
+          Stream.tap((message) =>
+            message.type === "desktopTelemetryHello"
+              ? Deferred.succeed(primaryAttached, undefined)
+              : Effect.void,
+          ),
+          Stream.filter((message) => message.type === "cuaDriverReport"),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* Deferred.await(primaryAttached);
+        const cuaReport = {
+          version: 1,
+          type: "cuaDriverReport",
+          requestId: "local",
+          status: "ready",
+          mcp: {
+            command: "/driver",
+            args: ["mcp"],
+            environment: [{ name: "SESSION", value: "opaque" }],
+          },
+        } as const;
+        yield* publisher.publishCuaReport(cuaReport);
+        assert.deepEqual(Option.getOrThrow(yield* Fiber.join(cuaReportFiber)), cuaReport);
+
+        // The update report is replayed to every source; it marks the end of the WSL stream.
+        yield* publisher.publishUpdateReport({
+          version: 1,
+          type: "desktopUpdateStatus",
+          outcome: "up-to-date",
+          state: {
+            enabled: true,
+            status: "up-to-date",
+            channel: "latest",
+            currentVersion: "1.2.3",
+            hostArch: "arm64",
+            appArch: "arm64",
+            runningUnderArm64Translation: false,
+            availableVersion: null,
+            downloadedVersion: null,
+            releaseNotes: [],
+            downloadPercent: null,
+            checkedAt: null,
+            message: null,
+            errorContext: null,
+            canRetry: false,
+            omittedReleaseCount: 0,
+          },
+        });
+        const wslMessages = yield* publisher.encodedForSource("wsl:Ubuntu").pipe(
+          Stream.mapEffect((bytes) => decodeMessage(decoder.decode(bytes).trim())),
+          Stream.takeUntil((message) => message.type === "desktopUpdateStatus"),
+          Stream.runCollect,
+        );
+        assert.isFalse(wslMessages.some((message) => message.type === "cuaDriverReport"));
+      }).pipe(Effect.provide(layer));
     }),
   );
 });
