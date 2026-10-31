@@ -45,6 +45,10 @@ const SOURCE_NAMES: Record<AgentSessionSource, string> = {
 };
 
 export const Route = createFileRoute("/welcome")({
+  validateSearch: (raw: Record<string, unknown>) =>
+    typeof raw.resumeEnvironmentId === "string" && raw.resumeEnvironmentId.trim()
+      ? { resumeEnvironmentId: EnvironmentId.make(raw.resumeEnvironmentId) }
+      : {},
   beforeLoad: ({ context }) => {
     if (
       context.authGateState.status !== "authenticated" &&
@@ -62,6 +66,7 @@ function ImportConversationsPage() {
   const navigate = useNavigate();
   const openNewThread = useNewThreadHandler();
   const hash = useLocation({ select: (location) => location.hash });
+  const { resumeEnvironmentId } = Route.useSearch();
   const requestedEnvironmentId = hash.startsWith("agents:")
     ? Option.getOrUndefined(decodeEnvironmentId(hash.slice("agents:".length)))
     : primaryEnvironmentId;
@@ -79,6 +84,7 @@ function ImportConversationsPage() {
       {hash === "setup" ? (
         <WelcomeWizard
           localAvailable={primaryEnvironmentId !== null}
+          resumeEnvironmentId={resumeEnvironmentId}
           onDone={async (projectRef) => {
             if (projectRef !== undefined) {
               await openNewThread(projectRef, { replace: true }).catch(() =>
