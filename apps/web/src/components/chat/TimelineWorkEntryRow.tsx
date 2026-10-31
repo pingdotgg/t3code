@@ -54,7 +54,7 @@ import ChatMarkdown from "../ChatMarkdown";
 import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { workGroupImageGallery } from "./markdownImageGallery";
-import { ChevronRightIcon, CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-react";
+import { CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
 import { useAssetUrls } from "../../assets/assetUrls";
 import { useThreadShell } from "../../state/entities";
@@ -564,15 +564,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           !toolIconAcceptsTint(entryToolIcon) ? (
             <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
           ) : null}
-          {canExpandProjectedItem ? (
-            <ChevronRightIcon
-              aria-hidden
-              className={cn(
-                "size-3 shrink-0 text-dim-foreground transition-transform duration-200",
-                expanded && "rotate-90",
-              )}
-            />
-          ) : null}
+          {canExpandProjectedItem ? <span aria-hidden className="size-3 shrink-0" /> : null}
         </>
       }
     >
@@ -632,6 +624,8 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   );
 }
 
+const questionAnswerTextSizeClassName = "text-sm";
+
 function QuestionAnswerHistory({
   answer,
 }: {
@@ -655,12 +649,22 @@ function QuestionAnswerHistory({
       ].map((questionId) => (
         <div key={questionId} className="space-y-1">
           {answer.questionTextById?.[questionId] ? (
-            <p className="whitespace-pre-wrap text-sm text-muted-foreground">
+            <p
+              className={cn(
+                questionAnswerTextSizeClassName,
+                "whitespace-pre-wrap text-muted-foreground",
+              )}
+            >
               {answer.questionTextById[questionId]}
             </p>
           ) : null}
           {getQuestionAnswerText(answer.answers[questionId]) ? (
-            <p className="ms-3 whitespace-pre-wrap text-sm text-muted-foreground">
+            <p
+              className={cn(
+                questionAnswerTextSizeClassName,
+                "ms-3 whitespace-pre-wrap text-muted-foreground",
+              )}
+            >
               {getQuestionAnswerText(answer.answers[questionId])}
             </p>
           ) : null}
@@ -673,7 +677,7 @@ function QuestionAnswerHistory({
                   href={url ?? undefined}
                   target="_blank"
                   rel="noreferrer"
-                  className="text-sm underline"
+                  className={cn(questionAnswerTextSizeClassName, "underline")}
                 >
                   {attachment.type === "image" && url ? (
                     <img

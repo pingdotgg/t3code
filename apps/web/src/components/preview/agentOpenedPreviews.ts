@@ -29,6 +29,7 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { deviceEnvironment } from "../../state/device";
 import { readEnvironmentSupportsServerBrowser } from "../../state/entities";
 import { environmentSummaries } from "../../state/presentation";
+import { environmentServerConfigsAtom } from "../../state/server";
 
 /**
  * Shows browsers an agent or another client revealed for a thread: floating
@@ -62,17 +63,24 @@ export function revealServerTabs(
  * list has loaded; before that, a missing session is not a closed one.
  */
 export function followPreviewSessions(threadRef: ScopedThreadRef, state: ThreadPreviewState): void {
-  if (readEnvironmentSupportsServerBrowser(threadRef.environmentId) && !state.listLoaded) return;
+  if (!state.listLoaded) {
+    const config = appAtomRegistry.get(environmentServerConfigsAtom).get(threadRef.environmentId);
+    if (!config || config.environment.capabilities.serverBrowser) return;
+  }
   const sessions = Object.values(state.sessions);
-  useRightPanelStore.getState().reconcileBrowserSurfaces(
-    threadRef,
-    sessions.map((session) => session.tabId),
-    new Set(
-      sessions
-        .filter((session) => session.runtime === "server" && session.reveal === false)
-        .map((session) => session.tabId),
-    ),
-  );
+  const panel = useRightPanelStore.getState();
+  if ((panel.reopeningBrowserByThreadKey[scopedThreadKey(threadRef)] ?? 0) === 0) {
+    panel.reconcileBrowserSurfaces(
+      threadRef,
+      sessions.map((session) => session.tabId),
+      new Set(
+        sessions
+          .filter((session) => session.runtime === "server" && session.reveal === false)
+          .map((session) => session.tabId),
+      ),
+      state.serverEpoch,
+    );
+  }
   const miniPlayer = usePreviewMiniPlayerStore.getState();
   const source = miniPlayer.byThreadKey[scopedThreadKey(threadRef)]?.source;
   if (source?.kind === "browser" && !state.sessions[source.tabId]) miniPlayer.close(threadRef);
@@ -111,7 +119,11 @@ function followThread(threadKey: string, threadRef: ScopedThreadRef): () => void
         autoShowFloatingPreview: getClientSettings().browserAutoShowFloatingPreview,
       });
     }
-    if (before.sessions !== next.sessions || before.listLoaded !== next.listLoaded) {
+    if (
+      before.sessions !== next.sessions ||
+      before.listLoaded !== next.listLoaded ||
+      before.serverEpoch !== next.serverEpoch
+    ) {
       followPreviewSessions(threadRef, next);
     }
   });
@@ -244,6 +256,21 @@ export function startAgentOpenedPreviews(): () => void {
       if (!followed.has(threadKey)) followed.set(threadKey, followThread(threadKey, threadRef));
     }
   };
+  const stopReopening = useRightPanelStore.subscribe((next, previous) => {
+    if (next.reopeningBrowserByThreadKey === previous.reopeningBrowserByThreadKey) return;
+    for (const [key, count] of Object.entries(previous.reopeningBrowserByThreadKey)) {
+      if (count > 0 && !next.reopeningBrowserByThreadKey[key]) {
+        const ref = appAtomRegistry.get(previewThreadRefsAtom).get(key);
+        if (ref) followPreviewSessions(ref, appAtomRegistry.get(previewStateAtom(key)));
+      }
+    }
+  });
+  const stopConfigs = appAtomRegistry.subscribe(environmentServerConfigsAtom, () => {
+    for (const [key, ref] of appAtomRegistry.get(previewThreadRefsAtom)) {
+      const state = appAtomRegistry.get(previewStateAtom(key));
+      if (!state.listLoaded) followPreviewSessions(ref, state);
+    }
+  });
   const stopIndex = appAtomRegistry.subscribe(previewThreadRefsAtom, followNewThreads, {
     immediate: true,
   });
@@ -268,6 +295,8 @@ export function startAgentOpenedPreviews(): () => void {
   return () => {
     stopIndex();
     stopEnvironments();
+    stopReopening();
+    stopConfigs();
     for (const stop of followed.values()) stop();
     for (const stop of watchedEnvironments.values()) stop();
   };

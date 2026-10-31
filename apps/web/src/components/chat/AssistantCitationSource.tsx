@@ -6,6 +6,7 @@ import {
   type AssistantCitationSourceAnchor,
 } from "~/lib/assistantTextSelection";
 import { toastManager } from "../ui/toast";
+import { readTimelineTopInset } from "./timelineScrollAnchoring";
 import { observeResize } from "~/lib/observeResize";
 
 const CITATION_PULSE_DURATION_MS = 650;
@@ -176,7 +177,11 @@ function observeAssistantCitationSource({
         0,
         Math.min(
           scrollNode.scrollHeight - scrollNode.clientHeight,
-          state.scroll + rect.top - scrollRect.top - Math.min(120, scrollNode.clientHeight / 3),
+          state.scroll +
+            rect.top -
+            scrollRect.top -
+            readTimelineTopInset(scrollNode) -
+            Math.min(120, scrollNode.clientHeight / 3),
         ),
       );
       if (Math.abs(offset - state.scroll) > 1) {

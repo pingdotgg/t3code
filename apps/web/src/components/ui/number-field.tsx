@@ -2,6 +2,9 @@ import { NumberField as NumberFieldPrimitive } from "@base-ui/react/number-field
 import { MinusIcon, PlusIcon } from "lucide-react";
 import * as React from "react";
 import { cn } from "~/lib/utils";
+import { createPartPresence } from "~/components/ui/part-presence";
+
+const { PartPresenceContext, useParts, usePart } = createPartPresence<"unit">();
 
 export function NumberField({
   id,
@@ -28,15 +31,19 @@ export function NumberFieldGroup({
   className,
   ...props
 }: NumberFieldPrimitive.Group.Props): React.ReactElement {
+  const [parts, registerPart] = useParts();
   return (
-    <NumberFieldPrimitive.Group
-      className={cn(
-        "group/number-field surface-well relative flex w-full justify-between rounded-[var(--control-radius)] text-prompt text-foreground focus-within:surface-focus has-aria-invalid:surface-invalid focus-within:has-aria-invalid:surface-invalid-focus data-disabled:pointer-events-none data-disabled:opacity-64 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0",
-        className,
-      )}
-      data-slot="number-field-group"
-      {...props}
-    />
+    <PartPresenceContext value={registerPart}>
+      <NumberFieldPrimitive.Group
+        className={cn(
+          "group/number-field surface-well relative flex w-full justify-between rounded-[var(--control-radius)] text-prompt text-foreground focus-within:surface-focus has-aria-invalid:surface-invalid focus-within:has-aria-invalid:surface-invalid-focus data-disabled:pointer-events-none data-disabled:opacity-64 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0",
+          className,
+        )}
+        data-has-unit={parts.length > 0 ? "" : undefined}
+        data-slot="number-field-group"
+        {...props}
+      />
+    </PartPresenceContext>
   );
 }
 
@@ -84,7 +91,7 @@ export function NumberFieldInput({
     <NumberFieldPrimitive.Input
       className={cn(
         // With a unit the value hugs it and the pair centers between the steppers.
-        "group-has-[[data-slot=number-field-unit]]/number-field:ms-auto group-has-[[data-slot=number-field-unit]]/number-field:w-auto group-has-[[data-slot=number-field-unit]]/number-field:min-w-[2ch] group-has-[[data-slot=number-field-unit]]/number-field:max-w-[7ch] group-has-[[data-slot=number-field-unit]]/number-field:grow-0 group-has-[[data-slot=number-field-unit]]/number-field:pe-1 group-has-[[data-slot=number-field-unit]]/number-field:text-end group-has-[[data-slot=number-field-unit]]/number-field:field-sizing-content",
+        "group-data-has-unit/number-field:ms-auto group-data-has-unit/number-field:w-auto group-data-has-unit/number-field:min-w-[2ch] group-data-has-unit/number-field:max-w-[7ch] group-data-has-unit/number-field:grow-0 group-data-has-unit/number-field:pe-1 group-data-has-unit/number-field:text-end group-data-has-unit/number-field:field-sizing-content",
         "h-8.5 in-data-[size=sm]:h-7.5 w-full min-w-0 grow bg-transparent in-data-[size=sm]:px-[calc(--spacing(2.5)-1px)] px-[calc(--spacing(3)-1px)] text-center tabular-nums in-data-[size=sm]:leading-7.5 leading-8.5 outline-none [transition:background-color_5000000s_ease-in-out_0s] sm:h-7.5 sm:in-data-[size=sm]:h-6.5 sm:in-data-[size=sm]:leading-8.5 sm:leading-7.5",
         className,
       )}
@@ -99,6 +106,7 @@ export function NumberFieldUnit({
   className,
   ...props
 }: React.ComponentProps<"span">): React.ReactElement {
+  usePart("unit");
   return (
     <span
       aria-hidden
