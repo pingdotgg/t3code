@@ -24,6 +24,7 @@ import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
+import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import {
   findModelConfigOption,
@@ -209,8 +210,27 @@ const emptyAcpRegistryAvailableCommands = (): AcpRegistryAvailableCommands => ({
   skills: [],
 });
 
+const LEADING_SKILL_MENTION = new RegExp(`^\\s*${SKILL_MENTION_PATTERN.source}`, "u");
+
+export function rewriteAcpRegistrySkillMention(
+  text: string,
+  agentId: string,
+  skills: ReadonlyArray<ServerProviderSkill>,
+): string {
+  const prefix = agentId === "factory-droid" ? "/" : agentId === "kimi" ? "/skill:" : undefined;
+  if (prefix === undefined) return text;
+  const match = LEADING_SKILL_MENTION.exec(text);
+  if (match === null) return text;
+  const name = match[2];
+  if (name === undefined || !skills.some((skill) => skill.enabled && skill.name === name)) {
+    return text;
+  }
+  return prefix + name + text.slice(match[0].length);
+}
+
 export function normalizeAcpRegistryCommands(
   commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
+  agentId?: string,
 ): AcpRegistryAvailableCommands {
   const seen = new Set<string>();
   const slashCommands: Array<ServerProviderSlashCommand> = [];
@@ -224,13 +244,20 @@ export function normalizeAcpRegistryCommands(
     seen.add(key);
     const description = boundedText(command.description, MAX_DESCRIPTION_LENGTH);
     const hint = command.input ? boundedText(command.input.hint, MAX_DESCRIPTION_LENGTH) : "";
-    if (name.startsWith("$")) {
-      const skillName = boundedOpaqueValue(name.slice(1), MAX_ID_LENGTH);
-      if (skillName === undefined) continue;
+    const skillName = name.startsWith("$")
+      ? name.slice(1)
+      : agentId === "factory-droid"
+        ? name
+        : agentId === "kimi" && name.startsWith("skill:")
+          ? name.slice("skill:".length)
+          : undefined;
+    if (skillName !== undefined) {
+      const boundedSkillName = boundedOpaqueValue(skillName, MAX_ID_LENGTH);
+      if (boundedSkillName === undefined) continue;
       skills.push({
-        name: skillName,
+        name: boundedSkillName,
         ...(description ? { description } : {}),
-        path: `acp://skill/${encodeURIComponent(skillName)}`,
+        path: `acp://skill/${encodeURIComponent(boundedSkillName)}`,
         scope: "agent",
         enabled: true,
       });
@@ -406,10 +433,13 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       yield* runtime.handleSessionUpdate((notification) => {
         const update = notification.update;
         return update.sessionUpdate === "available_commands_update"
-          ? Ref.set(commandsRef, normalizeAcpRegistryCommands(update.availableCommands)).pipe(
-              Effect.andThen(Deferred.succeed(commandsAdvertised, undefined)),
-              Effect.asVoid,
-            )
+          ? Ref.set(
+              commandsRef,
+              normalizeAcpRegistryCommands(
+                update.availableCommands,
+                input.settings.source === "local" ? "" : input.settings.agentId,
+              ),
+            ).pipe(Effect.andThen(Deferred.succeed(commandsAdvertised, undefined)), Effect.asVoid)
           : Effect.void;
       });
       const startResult = yield* Effect.result(runtime.start());

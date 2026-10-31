@@ -18,6 +18,7 @@ import {
   logoutAcpRegistry,
   normalizeAcpRegistryAuthMethods,
   normalizeAcpRegistryCommands,
+  rewriteAcpRegistrySkillMention,
 } from "@t3tools/provider-acp-registry/testing";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 
@@ -316,6 +317,81 @@ describe("ACP Registry probe", () => {
         },
       ],
     });
+  });
+
+  it("routes unprefixed Droid commands to the provider skill menu", () => {
+    expect(
+      normalizeAcpRegistryCommands(
+        [
+          { name: "council", description: "Run the council" },
+          { name: "code-review", description: "Review the code" },
+        ],
+        "factory-droid",
+      ),
+    ).toEqual({
+      slashCommands: [],
+      skills: [
+        {
+          name: "council",
+          description: "Run the council",
+          path: "acp://skill/council",
+          scope: "agent",
+          enabled: true,
+        },
+        {
+          name: "code-review",
+          description: "Review the code",
+          path: "acp://skill/code-review",
+          scope: "agent",
+          enabled: true,
+        },
+      ],
+    });
+  });
+
+  it("routes Kimi skill-prefixed commands without reclassifying slash commands", () => {
+    expect(
+      normalizeAcpRegistryCommands(
+        [
+          { name: "skill:skills-army-hq", description: "Manage skills" },
+          { name: "compact", description: "Compact the session" },
+        ],
+        "kimi",
+      ),
+    ).toEqual({
+      slashCommands: [{ name: "compact", description: "Compact the session" }],
+      skills: [
+        {
+          name: "skills-army-hq",
+          description: "Manage skills",
+          path: "acp://skill/skills-army-hq",
+          scope: "agent",
+          enabled: true,
+        },
+      ],
+    });
+  });
+
+  it("rewrites only advertised leading skill mentions to native agent commands", () => {
+    const droidSkills = normalizeAcpRegistryCommands(
+      [{ name: "council", description: "Run the council" }],
+      "factory-droid",
+    ).skills;
+    const kimiSkills = normalizeAcpRegistryCommands(
+      [{ name: "skill:skills-army-hq", description: "Manage skills" }],
+      "kimi",
+    ).skills;
+
+    expect(rewriteAcpRegistrySkillMention("  $council ship it", "factory-droid", droidSkills)).toBe(
+      "/council ship it",
+    );
+    expect(rewriteAcpRegistrySkillMention("$skills-army-hq deploy", "kimi", kimiSkills)).toBe(
+      "/skill:skills-army-hq deploy",
+    );
+    expect(rewriteAcpRegistrySkillMention("$missing", "factory-droid", droidSkills)).toBe(
+      "$missing",
+    );
+    expect(rewriteAcpRegistrySkillMention("$council", "codex", droidSkills)).toBe("$council");
   });
 
   it.effect("lists native sessions and logs out through generic ACP lifecycle methods", () => {
