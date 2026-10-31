@@ -130,8 +130,8 @@ export const issueAttachmentUploadUrl = Effect.fn("AttachmentUpload.issueUrl")(f
 export const validateAttachmentUploadToken = Effect.fn("AttachmentUpload.validateToken")(function* (
   token: string,
 ) {
-  const [encodedPayload, signature, unexpectedSegment] = token.split(".");
-  if (!encodedPayload || !signature || unexpectedSegment) {
+  const [encodedPayload, signature, ...extraSegments] = token.split(".");
+  if (!encodedPayload || !signature || extraSegments.length > 0) {
     return null;
   }
 

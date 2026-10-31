@@ -390,6 +390,64 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       ),
     ),
   );
+  it.effect("rejects tokens carrying a trailing segment", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({ subject: "one-time-token" });
+      const ticket = yield* sessions.issueWebSocketToken(issued.sessionId);
+      expect((yield* Effect.flip(sessions.verify(`${issued.token}.extra`)))._tag).toBe(
+        "MalformedSessionTokenError",
+      );
+      expect((yield* Effect.flip(sessions.verify(`${issued.token}.`)))._tag).toBe(
+        "MalformedSessionTokenError",
+      );
+      expect((yield* Effect.flip(sessions.verify(`${issued.token}..extra`)))._tag).toBe(
+        "MalformedSessionTokenError",
+      );
+      expect(
+        (yield* Effect.flip(sessions.verifyWebSocketToken(`${ticket.token}.extra`)))._tag,
+      ).toBe("MalformedWebSocketTokenError");
+      expect((yield* Effect.flip(sessions.verifyWebSocketToken(`${ticket.token}.`)))._tag).toBe(
+        "MalformedWebSocketTokenError",
+      );
+      expect(
+        (yield* Effect.flip(sessions.verifyWebSocketToken(`${ticket.token}..extra`)))._tag,
+      ).toBe("MalformedWebSocketTokenError");
+    }).pipe(Effect.provide(layerSessionStore())),
+  );
+  it.effect("keeps recorded scopes unchanged for both token versions", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const secrets = yield* ServerSecretStore.ServerSecretStore;
+      const legacyScopes = ["orchestration:read", "terminal:operate", "review:write"] as const;
+      const issued = yield* sessions.issue({ subject: "one-time-token", scopes: legacyScopes });
+      const [encodedPayload] = issued.token.split(".");
+      const currentClaims = base64UrlDecodeUtf8(encodedPayload!);
+      expect(currentClaims).toContain('"v":1');
+      const secret = yield* secrets.getOrCreateRandom("server-signing-key", 32);
+      const resign = (claims: string) => {
+        const payload = base64UrlEncode(claims);
+        return `${payload}.${signPayload(payload, secret)}`;
+      };
+      const legacyToken = resign(currentClaims.replace('"v":1', '"v":2'));
+      const editedToken = resign(
+        currentClaims.replace(/"scopes":\[[^\]]*\]/, '"scopes":["access:write"]'),
+      );
+
+      expect((yield* sessions.verify(issued.token)).scopes).toEqual(legacyScopes);
+      expect((yield* sessions.verify(legacyToken)).scopes).toEqual(legacyScopes);
+      expect((yield* sessions.verify(editedToken)).scopes).toEqual(legacyScopes);
+    }).pipe(
+      Effect.provide(
+        SessionStore.layer.pipe(
+          Layer.provideMerge(ServerSecretStore.layer),
+          Layer.provide(SqlitePersistence.layerMemory),
+          Layer.provide(layerServerEnvironment(EnvironmentId.make("test-environment"))),
+          Layer.provide(layerServerConfig()),
+        ),
+      ),
+    ),
+  );
 
   it.effect("atomically replaces active sessions with the same subject and method", () =>
     Effect.gen(function* () {

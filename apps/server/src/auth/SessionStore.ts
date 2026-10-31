@@ -786,8 +786,8 @@ const make = Effect.gen(function* () {
           scopes: row.value.scopes,
         } satisfies VerifiedSession;
       }
-      const [encodedPayload, signature] = token.split(".");
-      if (!encodedPayload || !signature) {
+      const [encodedPayload, signature, ...extraSegments] = token.split(".");
+      if (!encodedPayload || !signature || extraSegments.length > 0) {
         return yield* new MalformedSessionTokenError({});
       }
 
@@ -889,8 +889,8 @@ const make = Effect.gen(function* () {
   const verifyWebSocketToken: SessionStore["Service"]["verifyWebSocketToken"] = Effect.fn(
     "SessionStore.verifyWebSocketToken",
   )(function* (token) {
-    const [encodedPayload, signature] = token.split(".");
-    if (!encodedPayload || !signature) {
+    const [encodedPayload, signature, ...extraSegments] = token.split(".");
+    if (!encodedPayload || !signature || extraSegments.length > 0) {
       return yield* new MalformedWebSocketTokenError({});
     }
 
