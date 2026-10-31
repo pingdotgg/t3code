@@ -1,7 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
-import * as Socket from "effect/socket/Socket";
 
 import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 
@@ -11,6 +10,7 @@ import { resolveCloudPublicConfig } from "../features/cloud/publicConfig";
 import * as Tracing from "../features/observability/tracing";
 import * as Persistence from "../persistence/layer";
 import { disposeOnFoundationReplace, type FoundationHotModule } from "./foundation-fast-refresh";
+import { layerWebSocketConstructor } from "./nativeWebSocket";
 import { whenProtectedDataAvailable } from "./protectedData";
 
 declare const module: { readonly hot?: FoundationHotModule } | undefined;
@@ -23,7 +23,7 @@ const layerHttpClient = layerRemoteHttpClient(fetch);
 
 type RuntimeLayerSource =
   | ReturnType<typeof ManagedRelayLayer.layer>
-  | typeof Socket.layerWebSocketConstructorGlobal
+  | typeof layerWebSocketConstructor
   | typeof Dpop.layer
   | typeof layerHttpClient
   | typeof Persistence.layer
@@ -31,7 +31,7 @@ type RuntimeLayerSource =
 
 const layerRuntime = Layer.merge(
   ManagedRelayLayer.layer(configuredRelayUrl()),
-  Socket.layerWebSocketConstructorGlobal,
+  layerWebSocketConstructor,
 ).pipe(
   Layer.provideMerge(Dpop.layer),
   Layer.provideMerge(layerHttpClient),
