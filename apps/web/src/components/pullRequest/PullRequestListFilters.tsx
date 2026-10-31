@@ -11,15 +11,20 @@ import type {
 import {
   CircleCheckIcon,
   CircleDashedIcon,
+  CircleDotIcon,
+  FolderIcon,
+  ServerIcon,
   CircleSlashIcon,
   CircleXIcon,
   EyeOffIcon,
   FolderGit2Icon,
   LayersIcon,
+  ChevronDownIcon,
   ListFilterIcon,
   SearchIcon,
   TagIcon,
   UserRoundIcon,
+  UsersRoundIcon,
 } from "lucide-react";
 import { type ElementType, useState } from "react";
 
@@ -106,11 +111,13 @@ export function PullRequestSearchInput({
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   return (
-    <InputGroup className="min-w-0 flex-1 **:[input]:h-9 sm:**:[input]:h-8">
+    <InputGroup className="min-w-0 flex-1">
       <InputGroupAddon>
         {busy ? <Spinner aria-hidden /> : <SearchIcon aria-hidden />}
       </InputGroupAddon>
       <InputGroupInput
+        // The header's control height: 28px beside the sm menus and icon-sm buttons.
+        size="sm"
         type="search"
         value={draft ?? value}
         onFocus={() => setDraft(value)}
@@ -135,8 +142,12 @@ export function PullRequestSearchInput({
   );
 }
 
+/**
+ * List narrowings live behind one filter control, separate from sorting, state and host, which
+ * sit beside it in the header. The trigger carries a count whenever any filter is off its
+ * default, so a narrowed list is never a mystery.
+ */
 const ALL_PROJECTS_VALUE = "all";
-const ALL_HOSTS_VALUE = "";
 const ALL_SERVERS_VALUE = "";
 const UNFILTERED_VALUE = "all";
 /** Project ids are unique only within an environment. */
@@ -214,11 +225,14 @@ function PullRequestFilterRadioGroup<Value extends string>({
 
 function PullRequestFilterRadioSubmenu<Value extends string>({
   label,
+  icon: Icon,
   value,
   options,
   onChange,
 }: {
   label: string;
+  /** The category's own glyph, so the menu reads the same whatever each filter is set to. */
+  icon: ElementType<{ className?: string }>;
   value: Value;
   options: ReadonlyArray<PullRequestFilterOption<Value>>;
   onChange: (value: Value) => void;
@@ -228,7 +242,7 @@ function PullRequestFilterRadioSubmenu<Value extends string>({
   return (
     <MenuSub>
       <MenuSubTrigger>
-        <PullRequestFilterOptionIcon option={current} />
+        <Icon aria-hidden className="size-3.5" />
         <span className="flex-1">{label}</span>
         <span className="min-w-0 max-w-32 truncate text-xs font-normal text-muted-foreground">
           {current.label}
@@ -305,7 +319,7 @@ function PullRequestAuthorChoices({
       <MenuRadioGroup value={selected?.actor.login ?? value ?? ""} onValueChange={select}>
         <MenuRadioItem value="">
           <span className="flex min-w-0 items-center gap-2">
-            <LayersIcon aria-hidden className="size-3.5" />
+            <UsersRoundIcon aria-hidden className="size-3.5" />
             Anyone
           </span>
         </MenuRadioItem>
@@ -469,9 +483,6 @@ function PullRequestLabelFilter({
 
 export function PullRequestFiltersMenu({
   onOpenChange,
-  state,
-  stateOptions,
-  onState,
   involvement,
   involvementOptions,
   onInvolvement,
@@ -480,9 +491,6 @@ export function PullRequestFiltersMenu({
   authorOptions = [],
   labelOptions = [],
   optionScope,
-  host,
-  hostOptions,
-  onHost,
   server,
   serverOptions,
   onServer,
@@ -493,9 +501,6 @@ export function PullRequestFiltersMenu({
   onProject,
 }: {
   onOpenChange?: (open: boolean) => void;
-  state: PullRequestListState;
-  stateOptions: ReadonlyArray<PullRequestFilterOption<PullRequestListState>>;
-  onState: (state: PullRequestListState) => void;
   involvement: PullRequestInvolvement;
   involvementOptions: ReadonlyArray<PullRequestFilterOption<PullRequestInvolvement>>;
   onInvolvement: (involvement: PullRequestInvolvement) => void;
@@ -504,9 +509,6 @@ export function PullRequestFiltersMenu({
   authorOptions?: ReadonlyArray<PullRequestAuthorFacet>;
   labelOptions?: ReadonlyArray<PullRequestLabelFacet>;
   optionScope: ReadonlyArray<PullRequestFilterOptionScope>;
-  host: string | undefined;
-  hostOptions: ReadonlyArray<PullRequestFilterOption<string>>;
-  onHost: (host: string | undefined) => void;
   server: EnvironmentId | undefined;
   serverOptions: ReadonlyArray<PullRequestFilterOption<string>>;
   onServer: (server: EnvironmentId | undefined) => void;
@@ -518,9 +520,7 @@ export function PullRequestFiltersMenu({
 }) {
   const selectedLabels = (filters.labels ?? []).flatMap((group) => group);
   const filterCount = [
-    state !== "open",
     involvement !== "all",
-    host,
     server,
     projectId,
     filters.draft,
@@ -563,24 +563,26 @@ export function PullRequestFiltersMenu({
   ];
   return (
     <Menu onOpenChange={onOpenChange}>
-      <MenuTrigger render={<Button variant="ghost-muted" />}>
-        <ListFilterIcon className="size-4" />
-        <span>Filters</span>
+      <MenuTrigger
+        aria-label={filterCount > 0 ? `Filters, ${filterCount} active` : "Filters"}
+        render={<Button variant="ghost-muted" size="sm" />}
+      >
+        <ListFilterIcon aria-hidden className="size-3.5" />
+        <span className="hidden @3xl/pr-list:inline">Filters</span>
         {filterCount > 0 ? (
           <span className="rounded-full surface-selected-soft px-1.5 text-xs text-muted-foreground tabular-nums">
             {filterCount}
           </span>
         ) : null}
+        <ChevronDownIcon
+          aria-hidden
+          className="hidden size-3 text-dim-foreground @3xl/pr-list:inline"
+        />
       </MenuTrigger>
       <MenuPopup align="end" side="bottom">
         <PullRequestFilterRadioSubmenu
-          label="State"
-          value={state}
-          options={stateOptions}
-          onChange={onState}
-        />
-        <PullRequestFilterRadioSubmenu
           label="Involvement"
+          icon={UsersRoundIcon}
           value={involvement}
           options={involvementOptions}
           onChange={onInvolvement}
@@ -604,38 +606,31 @@ export function PullRequestFiltersMenu({
         />
         <PullRequestFilterRadioSubmenu
           label="Draft"
+          icon={PullRequestGlyph.draft}
           value={filters.draft ?? UNFILTERED_VALUE}
           options={DRAFT_OPTIONS}
           onChange={(draft) => updateFilter("draft", draft)}
         />
         <PullRequestFilterRadioSubmenu
           label="Review"
+          icon={CircleCheckIcon}
           value={filters.review ?? UNFILTERED_VALUE}
           options={REVIEW_OPTIONS}
           onChange={(review) => updateFilter("review", review)}
         />
         <PullRequestFilterRadioSubmenu
           label="Checks"
+          icon={CircleDotIcon}
           value={filters.checks ?? UNFILTERED_VALUE}
           options={CHECKS_OPTIONS}
           onChange={(checks) => updateFilter("checks", checks)}
         />
-        {hostOptions.length > 2 ? (
-          <>
-            <MenuSeparator />
-            <PullRequestFilterRadioSubmenu
-              label="Host"
-              value={host ?? ALL_HOSTS_VALUE}
-              options={hostOptions}
-              onChange={(next) => onHost(next === ALL_HOSTS_VALUE ? undefined : next)}
-            />
-          </>
-        ) : null}
         {serverOptions.length > 2 ? (
           <>
             <MenuSeparator />
             <PullRequestFilterRadioSubmenu
               label="Server"
+              icon={ServerIcon}
               value={server ?? ALL_SERVERS_VALUE}
               options={serverOptions}
               onChange={(next) =>
@@ -647,6 +642,7 @@ export function PullRequestFiltersMenu({
         <MenuSeparator />
         <PullRequestFilterRadioSubmenu
           label="Project"
+          icon={FolderIcon}
           value={projectValue}
           options={projectOptions}
           onChange={(next) => {
@@ -658,4 +654,59 @@ export function PullRequestFiltersMenu({
       </MenuPopup>
     </Menu>
   );
+}
+
+const REVIEW_CLAUSES: Record<NonNullable<PullRequestListFilters["review"]>, string> = {
+  approved: "review is approved",
+  "changes-requested": "changes are requested",
+  "review-required": "review is required",
+  none: "there are no reviews",
+};
+
+/**
+ * The active narrowings as one sentence, for the empty list: "Author is theo and checks are
+ * failing." Null when nothing narrows the list.
+ */
+export function describePullRequestListFilters({
+  state,
+  involvement,
+  filters,
+  hostLabel,
+  serverLabel,
+  projectLabel,
+}: {
+  state: PullRequestListState;
+  involvement: PullRequestInvolvement;
+  filters: PullRequestListFilters;
+  hostLabel?: string | undefined;
+  serverLabel?: string | undefined;
+  projectLabel?: string | undefined;
+}): string | null {
+  const labels = (filters.labels ?? []).flat();
+  const clauses = [
+    state === "open" ? null : state === "all" ? "any state is shown" : `state is ${state}`,
+    involvement === "authored"
+      ? "only yours are shown"
+      : involvement === "reviewing"
+        ? "review is requested from you"
+        : null,
+    filters.author ? `author is ${filters.author}` : null,
+    labels.length === 0
+      ? null
+      : `${labels.length === 1 ? "label is" : "labels are"} ${labels.join(", ")}`,
+    filters.draft === "only"
+      ? "only drafts are shown"
+      : filters.draft === "hide"
+        ? "drafts are hidden"
+        : null,
+    filters.review ? REVIEW_CLAUSES[filters.review] : null,
+    filters.checks ? `checks are ${filters.checks}` : null,
+    hostLabel ? `host is ${hostLabel}` : null,
+    serverLabel ? `server is ${serverLabel}` : null,
+    projectLabel ? `project is ${projectLabel}` : null,
+  ].filter((clause) => clause !== null);
+  const last = clauses.at(-1);
+  if (last === undefined) return null;
+  const sentence = clauses.length === 1 ? last : `${clauses.slice(0, -1).join(", ")} and ${last}`;
+  return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`;
 }
