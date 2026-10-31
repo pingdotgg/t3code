@@ -60,5 +60,6 @@ it.live("a failed agent launch points at the prompt it could not run", () =>
     assert.isDefined(promptFilePath);
     assert.include(output, promptFilePath);
     assert.include(output, buildTriageLaunchPrompt(promptFilePath));
+    assert.include(output, NodePath.join(NodePath.dirname(promptFilePath), "context.md"));
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NetService.layer, TestConsole.layer))),
 );

@@ -102,6 +102,15 @@ const runInteractiveSession = (input: {
     child.once("exit", (code, signal) => resume(Effect.succeed(code ?? (signal === null ? 0 : 1))));
   });
 
+const describeTriageFiles = (session: {
+  readonly promptFilePath: string;
+  readonly contextFilePath: string;
+}) => [
+  "The triage prompt and machine context were written to:",
+  `  ${session.promptFilePath}`,
+  `  ${session.contextFilePath}`,
+];
+
 const agentFlag = Flag.Literals("agent", ["claude", "codex"]).pipe(
   Flag.withDescription("Agent CLI to use. Default: ask when both are installed."),
   Flag.optional,
@@ -164,16 +173,14 @@ export const triageCommand = Command.make("triage", {
       }
 
       // Windows .cmd shims cannot carry multiline argv; the prompt file also serves as the paste fallback.
-      const { sessionDir, promptFilePath, contextFilePath } = session;
+      const { sessionDir, promptFilePath } = session;
 
       if (selected === undefined) {
         yield* Console.log(
           [
             "No supported agent CLI (claude, codex) was found on this machine.",
             "",
-            "The triage prompt and machine context were written to:",
-            `  ${promptFilePath}`,
-            `  ${contextFilePath}`,
+            ...describeTriageFiles(session),
             "",
             "Paste the prompt file into any coding agent to run triage by hand.",
           ].join("\n"),
@@ -182,14 +189,26 @@ export const triageCommand = Command.make("triage", {
       }
 
       const model = Option.getOrUndefined(flags.model);
+      const launchPrompt = buildTriageLaunchPrompt(promptFilePath);
       const spawnSpec = yield* resolveSpawnCommand(selected.command, [
         ...(model === undefined ? [] : ["--model", model]),
-        buildTriageLaunchPrompt(promptFilePath),
+        launchPrompt,
       ]);
       yield* Console.log(`Starting ${selected.label}. It will ask what went wrong.\n`);
       const exitCode = yield* runInteractiveSession({ ...spawnSpec, cwd: sessionDir });
       if (exitCode !== 0) {
         process.exitCode = exitCode;
+        yield* Console.log(
+          [
+            "",
+            `${selected.label} exited with code ${String(exitCode)}.`,
+            "",
+            ...describeTriageFiles(session),
+            "",
+            `To retry, start \`${selected.command}\` yourself with any flags it suggested, or use any coding agent, and give it this prompt:`,
+            launchPrompt,
+          ].join("\n"),
+        );
       }
     }),
   ),
