@@ -19,11 +19,13 @@ import {
   RunId,
   ThreadId,
   type OrchestrationV2ServerCommand,
+  type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -1127,6 +1129,155 @@ describe("OrchestratorMcpService provider resolution", () => {
     runtimeRequests: [],
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
+
+  it.effect.each([
+    "parent completion",
+    "nested child completion",
+    "child run completion",
+    "child question",
+    "child approval",
+  ] as const)("a task wait still returns on %s", (wake) =>
+    Effect.gen(function* () {
+      const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+      const subscribed = yield* Deferred.make<void>();
+      const nestedId = NodeId.make("node:mcp-wait-nested");
+      const childRunId = RunId.make("run:mcp-wait-child");
+      const childRootId = NodeId.make("node:mcp-wait-child-root");
+      const eventThreadId = wake === "parent completion" ? parentThreadId : childThreadId;
+      const eventType =
+        wake === "child run completion"
+          ? "run.updated"
+          : wake === "child question" || wake === "child approval"
+            ? "runtime-request.updated"
+            : "subagent.updated";
+      const terminal = wake.endsWith("completion");
+      let ready = false;
+      const task = () => ({
+        id: taskId,
+        threadId: parentThreadId,
+        runId: parentRunId,
+        parentNodeId,
+        origin: "app_owned",
+        providerInstanceId: codexInstanceId,
+        driver: "codex",
+        childThreadId,
+        model: "gpt-5.4",
+        status: ready && terminal ? "completed" : "running",
+        result: ready && wake === "parent completion" ? "done" : null,
+      });
+      const child = () =>
+        ({
+          ...childProjection,
+          runs: [
+            {
+              id: childRunId,
+              ordinal: 1,
+              status:
+                wake === "nested child completion" || (ready && terminal) ? "completed" : "running",
+              startedAt: DateTime.makeUnsafe(0),
+              completedAt: ready && terminal ? DateTime.makeUnsafe(1) : null,
+            },
+          ],
+          subagents:
+            wake === "nested child completion"
+              ? [{ id: nestedId, status: ready ? "completed" : "running" }]
+              : [],
+          nodes: [{ id: childRootId, runId: childRunId }],
+          runtimeRequests:
+            ready && !terminal
+              ? [
+                  {
+                    id: "request:mcp-wait-answer",
+                    nodeId: childRootId,
+                    kind: wake === "child question" ? "user_input" : "command",
+                    status: "pending",
+                    responseCapability: { type: "live" },
+                    createdAt: DateTime.makeUnsafe(0),
+                  },
+                ]
+              : [],
+        }) as unknown as OrchestrationV2ThreadProjection;
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          assertProviderInstanceEnabled: () => Effect.void,
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+          getThreadRecords: (threadId) =>
+            Effect.sync(() => (threadId === parentThreadId ? parentProjection([task()]) : child())),
+          getThreadEventSequence: () => Effect.succeed(0),
+          delegatedTaskResultPending: () => Effect.succeed(false),
+          streamStoredEventsFrom: (input) =>
+            input?.threadId === eventThreadId && input.eventType === eventType
+              ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+                  Stream.drain,
+                  Stream.concat(Stream.fromQueue(events)),
+                )
+              : Stream.never,
+          dispatch: () =>
+            Effect.succeed({
+              sequence: 1,
+              storedEvents: [{ event: { type: "subagent.updated", payload: task() } }],
+            } as never),
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const waiting = yield* service
+          .delegateTask(scope, { task: "Review the change.", mode: "wait" })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(subscribed);
+        ready = true;
+        if (wake === "parent completion") {
+          yield* Queue.offer(events, {
+            sequence: 2,
+            event: {
+              type: "subagent.updated",
+              threadId: parentThreadId,
+              payload: { ...task(), id: nestedId },
+            },
+          } as unknown as OrchestrationV2StoredEvent);
+        }
+        yield* Queue.offer(events, {
+          sequence: 3,
+          event: {
+            type: eventType,
+            threadId: eventThreadId,
+            payload: { id: wake === "parent completion" ? taskId : nestedId },
+          },
+        } as unknown as OrchestrationV2StoredEvent);
+        const result = yield* Fiber.join(waiting);
+        assert.isFalse(result.waitTimedOut);
+        if (terminal) {
+          assert.equal(result.status, "completed");
+          if (wake === "parent completion") assert.equal(result.summary, "done");
+        } else {
+          assert.equal(result.status, "running");
+          if (wake === "child question") assert.isTrue(result.hasPendingQuestion);
+          else {
+            assert.deepEqual(result.pendingApproval, {
+              requestId: "request:mcp-wait-answer",
+              kind: "command",
+              runId: childRunId,
+            });
+          }
+        }
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+    }),
+  );
 
   it.effect(
     "advertises orchestration capability from registered adapters rather than a driver allowlist",

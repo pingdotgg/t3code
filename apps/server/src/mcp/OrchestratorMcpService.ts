@@ -1774,12 +1774,23 @@ const make = Effect.gen(function* () {
           : TASK_WAKE_EVENTS;
       return yield* Stream.mergeAll(
         wakeEvents.map(({ thread, eventType }) =>
-          threadManagement.streamStoredEventsFrom({
-            threadId:
-              thread === "parent" || childThreadId === null ? scope.thread.threadId : childThreadId,
-            afterSequence,
-            eventType,
-          }),
+          threadManagement
+            .streamStoredEventsFrom({
+              threadId:
+                thread === "parent" || childThreadId === null
+                  ? scope.thread.threadId
+                  : childThreadId,
+              afterSequence,
+              eventType,
+            })
+            .pipe(
+              Stream.filter(
+                ({ event }) =>
+                  thread === "child" ||
+                  event.type !== "subagent.updated" ||
+                  event.payload.id === taskId,
+              ),
+            ),
         ),
         { concurrency: "unbounded" },
       ).pipe(
