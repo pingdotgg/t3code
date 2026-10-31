@@ -733,7 +733,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       const ready = yield* readiness(host.id);
       let state = yield* refresh(ready);
       let device = findDevice(state, host.id, input.deviceId);
-      if (!device) {
+      if (!device || device.platform !== input.platform) {
         return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: input.deviceId });
       }
       // Hosts that route their own streams never encode emulator video with serve-emu's ffmpeg.
