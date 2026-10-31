@@ -159,6 +159,7 @@ describe("connection presentation", () => {
       phase: "reconnecting",
       error: "Disconnected.",
       traceId: "trace-1",
+      retryAt: 1,
     });
     const awaitingApproval = presentConnectionState(
       supervisorState({

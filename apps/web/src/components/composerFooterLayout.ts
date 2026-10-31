@@ -48,6 +48,8 @@ export interface RestingComposerControlsMeasurement {
   blockWidths: readonly number[];
   overflowWidth: number;
   iconOnlyBlockWidths?: readonly number[];
+  /** The leading picker's width with only its icon, when it has one. */
+  iconOnlyFixedWidth?: number;
 }
 
 function restingComposerControlsWidth(
@@ -85,43 +87,70 @@ export function resolveRestingComposerControlsNaturalWidth(
 
 const RESTING_CONTROLS_SLACK_PX = 1;
 
+export interface RestingComposerControlsLayout {
+  hiddenCount: number;
+  iconOnlyCount?: number;
+  pickerIconOnly?: boolean;
+  visible: boolean;
+}
+
+function restingComposerControlsSteps(input: RestingComposerControlsMeasurement) {
+  const iconSteps = input.iconOnlyBlockWidths ? input.blockWidths.length : 0;
+  const pickerSteps = input.iconOnlyFixedWidth === undefined ? 0 : 1;
+  const widthAtStep = (step: number, minimum = false) => {
+    const pickerIconOnly = pickerSteps > 0 && step > iconSteps;
+    const fixedWidth = pickerIconOnly
+      ? input.iconOnlyFixedWidth!
+      : minimum
+        ? input.minimumFixedWidth
+        : input.naturalFixedWidth;
+    return restingComposerControlsWidth(
+      input,
+      Math.max(0, step - iconSteps - pickerSteps),
+      fixedWidth,
+      Math.min(step, iconSteps),
+    );
+  };
+  return { iconSteps, pickerSteps, widthAtStep };
+}
+
 export function resolveRestingComposerControlsLayout(
   input: RestingComposerControlsMeasurement & {
     hostWidth: number;
-    previous?: { hiddenCount: number; iconOnlyCount?: number; visible: boolean };
+    previous?: RestingComposerControlsLayout;
   },
-): { hiddenCount: number; iconOnlyCount?: number; visible: boolean } {
+): RestingComposerControlsLayout {
   const { blockWidths, hostWidth, previous } = input;
-  const iconSteps = input.iconOnlyBlockWidths ? blockWidths.length : 0;
+  const { iconSteps, pickerSteps, widthAtStep } = restingComposerControlsSteps(input);
+  const labelSteps = iconSteps + pickerSteps;
   const previousStep = previous
     ? previous.hiddenCount > 0
-      ? iconSteps + Math.min(previous.hiddenCount, blockWidths.length)
-      : Math.min(previous.iconOnlyCount ?? 0, iconSteps)
+      ? labelSteps + Math.min(previous.hiddenCount, blockWidths.length)
+      : previous.pickerIconOnly && pickerSteps > 0
+        ? labelSteps
+        : Math.min(previous.iconOnlyCount ?? 0, iconSteps)
     : 0;
   let step = 0;
-  const widthAtStep = (candidate: number, fixedWidth = input.naturalFixedWidth) =>
-    restingComposerControlsWidth(
-      input,
-      Math.max(0, candidate - iconSteps),
-      fixedWidth,
-      Math.min(candidate, iconSteps),
-    );
-  // Use 1px slack for natural-width jitter on promotion; demote immediately to avoid clipping or layout
-  // flapping.
+  // Use 1px slack for natural-width jitter on promotion; demote immediately to avoid clipping.
   while (
-    step < iconSteps + blockWidths.length &&
+    step < labelSteps + blockWidths.length &&
     widthAtStep(step) > hostWidth - (step < previousStep ? RESTING_CONTROLS_SLACK_PX : 0)
   ) {
     step += 1;
   }
-  const hiddenCount = Math.max(0, step - iconSteps);
+  const hiddenCount = Math.max(0, step - labelSteps);
   const iconOnlyCount = Math.min(step, iconSteps);
-  const minimumWidth = widthAtStep(step, input.minimumFixedWidth);
+  const minimumWidth = widthAtStep(step, true);
   const visible =
     previous && !previous.visible
       ? minimumWidth <= hostWidth - RESTING_CONTROLS_SLACK_PX
       : minimumWidth <= hostWidth;
-  return { hiddenCount, ...(input.iconOnlyBlockWidths ? { iconOnlyCount } : {}), visible };
+  return {
+    hiddenCount,
+    ...(input.iconOnlyBlockWidths ? { iconOnlyCount } : {}),
+    ...(pickerSteps > 0 ? { pickerIconOnly: step > iconSteps } : {}),
+    visible,
+  };
 }
 
 export function resolveScrollToEndClearance(input: {
