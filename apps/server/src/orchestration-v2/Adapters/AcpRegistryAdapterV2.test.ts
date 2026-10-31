@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  EnvironmentId,
   MessageId,
   NodeId,
   ProjectId,
@@ -12,7 +13,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
+import { resolveSelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as DateTime from "effect/DateTime";
@@ -28,6 +29,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import {
@@ -468,6 +470,7 @@ describe("AcpRegistryAdapterV2", () => {
       readonly storedModel?: string;
       readonly storedModePick?: string;
       readonly turnModels?: ReadonlyArray<string>;
+      readonly rejectedModel?: string;
     }) {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       // Scope release gives the replay agent at most a second to exit, so the status
@@ -605,7 +608,19 @@ describe("AcpRegistryAdapterV2", () => {
           configurations.push(published);
           current = target;
         }
-      }).pipe(Effect.scoped);
+      }).pipe(
+        Effect.match({
+          onFailure: (error) => {
+            assert.isDefined(input.rejectedModel);
+            assert.equal(
+              makeProviderFailure({ cause: error }).message,
+              `The agent did not accept the model "${input.rejectedModel}". Choose another model for this provider, then retry.`,
+            );
+          },
+          onSuccess: () => assert.isUndefined(input.rejectedModel),
+        }),
+        Effect.scoped,
+      );
       yield* Effect.all(agentExits, { discard: true });
       yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
       return { configurations };
@@ -772,8 +787,70 @@ describe("AcpRegistryAdapterV2", () => {
         }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
 
+    it.effect.each([
+      "config",
+      "legacy",
+      "updated-config",
+      "removed-config",
+      "configuration-update",
+      "unavailable-before-configuration",
+    ] as const)(
+      "rejects an unavailable explicit model in a %s catalog before inference",
+      (catalog) => {
+        const duringTurn = catalog === "updated-config" || catalog === "removed-config";
+        const duringConfiguration = catalog === "configuration-update";
+        const changesOptions =
+          duringConfiguration || catalog === "unavailable-before-configuration";
+        const model = duringTurn || duringConfiguration ? "hermes" : "missing";
+        const restrictedOption = {
+          ...modelOption("model", "other"),
+          options: [{ value: "other", name: "Other" }],
+        };
+        return openWithStoredPicks({
+          setup: {
+            ...(catalog === "legacy" || catalog === "removed-config"
+              ? {
+                  models: {
+                    currentModelId: "other",
+                    availableModels: [{ modelId: "other", name: "Other" }],
+                  },
+                }
+              : {}),
+            configOptions:
+              catalog === "legacy"
+                ? []
+                : [
+                    {
+                      ...modelOption("model", "hermes"),
+                      options: [{ value: "hermes", name: "Hermes" }],
+                    },
+                    ...(changesOptions ? [permissionModeOption("ask")] : []),
+                  ],
+          },
+          storedModel: model,
+          ...(duringTurn ? { turnModels: [model, model] } : {}),
+          ...(changesOptions ? { storedModePick: "auto" } : {}),
+          rejectedModel: model,
+          pickFrames: duringTurn
+            ? prompt(configOptionUpdate(catalog === "removed-config" ? [] : [restrictedOption]))
+            : duringConfiguration
+              ? [
+                  outbound("session/set_config_option", {
+                    sessionId: "agent-session",
+                    configId: "permission-mode",
+                    value: "auto",
+                  }),
+                  answer("session/set_config_option", {
+                    configOptions: [restrictedOption, permissionModeOption("auto")],
+                  }),
+                ]
+              : [],
+        }).pipe(Effect.provide(layerTest), Effect.scoped);
+      },
+    );
+
     // regression: #19519 models come from session model state, not a hardcoded list
-    it.effect("leaves unadvertised model IDs alone in both model selection protocols", () =>
+    it.effect("keeps unadvertised default and auto selections agent-controlled", () =>
       Effect.gen(function* () {
         const { configurations } = yield* openWithStoredPicks({
           setup: {
@@ -783,15 +860,7 @@ describe("AcpRegistryAdapterV2", () => {
             },
           },
           storedModel: "default",
-          turnModels: [
-            "auto",
-            "removed-model",
-            "other",
-            "default",
-            "auto",
-            "hermes",
-            "removed-model",
-          ],
+          turnModels: ["auto", "default", "other", "default", "auto", "default", "auto"],
           pickFrames: [
             ...prompt(),
             ...prompt(),
@@ -1041,6 +1110,136 @@ describe("AcpRegistryAdapterV2", () => {
       assert.deepEqual(yield* steering({ agentId: "gemini" }), {
         ...copilot,
         supportsSteeringByInterruptRestart: true,
+      });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("gives Copilot T3's MCP server over HTTP when it advertises HTTP", () =>
+    Effect.gen(function* () {
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* (yield* Path.Path).fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const endpoint = "http://127.0.0.1:43123/mcp";
+      const sessionMcpServers = Effect.fn("sessionMcpServers")(function* (
+        config: Record<string, unknown>,
+        agentEnvironment: Record<string, string> = {},
+      ) {
+        const requests: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+        const instanceId = ProviderInstanceId.make("acp-registry-mcp-transport");
+        const threadId = ThreadId.make("thread-acp-registry-mcp-transport");
+        const mcpSession = {
+          environmentId: EnvironmentId.make("environment-acp-registry-mcp-transport"),
+          threadId,
+          providerSessionId: "mcp-session-acp-registry-mcp-transport",
+          providerInstanceId: instanceId,
+          endpoint,
+          browserToolsAvailable: false,
+        };
+        yield* mcpSessions.set({ ...mcpSession, authorizationHeader: "Bearer opened-token" });
+        const adapter = yield* makeAcpRegistryAdapterV2({
+          selfInvocation,
+          instanceId,
+          settings: yield* decodeAcpRegistryAdapterSettings(config),
+          environment: {},
+          nativeLogging: () => ({
+            requestLogger: (event) =>
+              Effect.sync(() => {
+                if (event.status === "started") requests.push(event);
+              }),
+          }),
+        }).pipe(
+          Effect.provide(
+            Layer.mock(AcpRegistrySupport.AcpRegistryCatalog)({
+              resolve: () =>
+                Effect.succeed({
+                  distribution: "local" as const,
+                  spawn: {
+                    command: process.execPath,
+                    args: [mockAgentPath],
+                    env: { T3_ACP_SESSION_LIFECYCLE: "1", ...agentEnvironment },
+                  },
+                }),
+            }),
+          ),
+        );
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-registry-mcp-transport"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* mcpSessions.set({ ...mcpSession, authorizationHeader: "Bearer rotated-token" });
+        yield* runtime.resumeThread({
+          providerThread: {
+            ...providerThread,
+            nativeThreadRef: {
+              driver: ACP_REGISTRY_PROVIDER,
+              nativeId: "mock-session-2",
+              strength: "strong",
+            },
+          },
+        });
+        const sent = (method: string) => {
+          const payload = requests.find((event) => event.method === method)?.payload;
+          return typeof payload === "object" && payload !== null
+            ? Reflect.get(payload, "mcpServers")
+            : undefined;
+        };
+        return { new: sent("session/new"), load: sent("session/load") };
+      });
+      const http = (authorization: string) => [
+        {
+          type: "http",
+          name: "t3-code",
+          url: endpoint,
+          headers: [{ name: "Authorization", value: authorization }],
+        },
+      ];
+      const stdio = (authorization: string) => [
+        {
+          name: "t3-code",
+          command: selfInvocation.command,
+          args: [...selfInvocationArgs(selfInvocation, ["acp-mcp-bridge"])],
+          env: [
+            { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+            { name: "T3_ACP_MCP_ENDPOINT", value: endpoint },
+            { name: "T3_ACP_MCP_AUTHORIZATION", value: authorization },
+          ],
+        },
+      ];
+
+      assert.deepEqual(
+        yield* sessionMcpServers({ agentId: "github-copilot-cli" }, { T3_ACP_MCP_HTTP: "1" }),
+        { new: http("Bearer opened-token"), load: http("Bearer rotated-token") },
+      );
+      const acp = [{ type: "acp", name: "t3-code", serverId: "t3-code" }];
+      assert.deepEqual(
+        yield* sessionMcpServers(
+          { agentId: "github-copilot-cli" },
+          { T3_ACP_MCP_HTTP: "1", T3_ACP_MCP_ACP: "1" },
+        ),
+        { new: acp, load: acp },
+      );
+      assert.deepEqual(yield* sessionMcpServers({ agentId: "github-copilot-cli" }), {
+        new: stdio("Bearer opened-token"),
+        load: stdio("Bearer rotated-token"),
+      });
+      assert.deepEqual(yield* sessionMcpServers({ agentId: "gemini" }, { T3_ACP_MCP_HTTP: "1" }), {
+        new: stdio("Bearer opened-token"),
+        load: stdio("Bearer rotated-token"),
       });
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );

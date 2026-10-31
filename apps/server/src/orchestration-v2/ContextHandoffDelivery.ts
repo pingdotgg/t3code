@@ -12,6 +12,13 @@ import {
   selectHistory,
 } from "@t3tools/provider-core/server/handoffBudget";
 
+/** The provider prompt for a turn that carries inline context ahead of the user's text. */
+export const withInlineContext = (
+  context: string,
+  userText: string,
+  messageHeading = "User message:",
+): string => (context === "" ? userText : `${context}\n\n${messageHeading}\n${userText}`);
+
 /** Persist around injection; ambiguous delivery requires a fresh native thread. Call unsent if refused before prompt consumption. */
 export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextHandoffs")(
   function* <InjectError = never, PersistError = never, BudgetError = never>(input: {
