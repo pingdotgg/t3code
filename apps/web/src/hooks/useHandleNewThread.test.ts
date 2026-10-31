@@ -5,6 +5,7 @@ const testState = vi.hoisted(() => {
   let completeProjectFileRead: (value: null) => void = () => undefined;
   let projectFileRead = Promise.resolve<null>(null);
   let projectRemoved = false;
+  let configMissing = false;
   let connectedEnvironmentIds = ["environment-primary", "environment-ssh"];
   let targetSettings = {
     defaultThreadEnvMode: "local" as "local" | "worktree" | null,
@@ -53,6 +54,13 @@ const testState = vi.hoisted(() => {
   };
 
   return {
+    toast: vi.fn(),
+    get configMissing() {
+      return configMissing;
+    },
+    setConfigMissing(value: boolean) {
+      configMissing = value;
+    },
     completeProjectFileRead: (value: null) => completeProjectFileRead(value),
     draftStore,
     get projectFileRead() {
@@ -95,6 +103,7 @@ const testState = vi.hoisted(() => {
       openDraftRoute = null;
       draftsWithUserText = new Set();
       projectRemoved = false;
+      configMissing = false;
       connectedEnvironmentIds = ["environment-primary", "environment-ssh"];
       targetSettings = {
         defaultThreadEnvMode: workspaceDefaults.envMode,
@@ -126,8 +135,14 @@ const testServerConfigs = () =>
         },
       },
     ],
-    ["environment-ssh", { settings: testState.targetSettings }],
+    ...(!testState.configMissing
+      ? [["environment-ssh", { settings: testState.targetSettings }] as const]
+      : []),
   ]);
+
+vi.mock("../components/ui/toast", () => ({
+  toastManager: { add: testState.toast },
+}));
 
 vi.mock("../rpc/atomRegistry", () => ({
   appAtomRegistry: {
@@ -261,6 +276,38 @@ describe.each([
     },
   ],
 ])("useNewThreadHandler with a %s draft", (_, draft) => {
+  it.each([true, false])(
+    "does not guess before settings load and uses them on retry (connected: %s)",
+    async (connected) => {
+      testState.reset(draft, { envMode: "worktree", startFromOrigin: true });
+      testState.toast.mockClear();
+      testState.setConfigMissing(true);
+      if (!connected) testState.disconnect("environment-ssh");
+      const openThread = useNewThreadHandler();
+      const projectRef = {
+        environmentId: "environment-ssh",
+        projectId: "project-remote",
+      } as never;
+
+      await expect(openThread(projectRef)).resolves.toBeNull();
+      expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+      expect(testState.draftStore.setDraftThreadContext).not.toHaveBeenCalled();
+      expect(testState.router.navigate).not.toHaveBeenCalled();
+      expect(testState.toast).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Environment settings are still loading" }),
+      );
+
+      testState.setConfigMissing(false);
+      await expect(openThread(projectRef)).resolves.not.toBeNull();
+      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+        "remote-project",
+        projectRef,
+        draft?.draftId ?? "draft-delayed",
+        expect.objectContaining({ envMode: "worktree", startFromOrigin: true }),
+      );
+    },
+  );
+
   it("abandons a delayed draft open when the user navigates elsewhere", async () => {
     testState.reset(draft);
     const openThread = useNewThreadHandler();
@@ -314,6 +361,25 @@ describe.each([
 });
 
 describe("useNewThreadHandler", () => {
+  it.each(["local", "worktree"] as const)(
+    "keeps an explicit %s choice while the target settings are unavailable",
+    async (envMode) => {
+      testState.reset(null);
+      testState.setConfigMissing(true);
+      await expect(
+        useNewThreadHandler()(
+          { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+          { envMode },
+        ),
+      ).resolves.not.toBeNull();
+      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+        "remote-project",
+        expect.anything(),
+        "draft-delayed",
+        expect.objectContaining({ envMode }),
+      );
+    },
+  );
   it("keeps the text of a draft that gained some while it waited", async () => {
     testState.reset(null);
     const raced = {
