@@ -156,6 +156,96 @@ describe("native device stream transport", () => {
   );
 });
 
+describe("iOS keypad protocol", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("encodes keypad presses and releases as HID key packets", async () => {
+    const packets: Uint8Array[] = [];
+    let opened!: (socket: Socket) => void;
+    const connected = new Promise<Socket>((resolve) => {
+      opened = resolve;
+    });
+    class Socket {
+      static OPEN = 1;
+      readyState = 1;
+      binaryType = "";
+      onmessage: ((event: { data: ArrayBuffer }) => void) | null = null;
+      constructor() {
+        opened(this);
+      }
+      send(packet: Uint8Array) {
+        packets.push(packet);
+      }
+      close() {}
+    }
+    vi.stubGlobal("WebSocket", Socket);
+    vi.stubGlobal("fetch", async () => new Response("frame"));
+    const client = createDeviceStreamClient(
+      {
+        platform: "ios",
+        deviceId: "keypad-device",
+        preferMjpeg: true,
+        access: {
+          httpBase: "https://device.test",
+          wsBase: "wss://device.test",
+          credentials: false,
+          query: {},
+        },
+      },
+      { getContext: () => null } as unknown as HTMLCanvasElement,
+      {
+        onStatus() {},
+        onScreen() {},
+        onUnauthorized() {},
+        onMjpegFallback() {},
+        onInputConnected() {},
+      },
+    );
+    try {
+      client.start();
+      const socket = await connected;
+      socket.onmessage?.({ data: Uint8Array.of(0x83).buffer });
+      const keys = [
+        ["NumpadDivide", 0x54],
+        ["NumpadMultiply", 0x55],
+        ["NumpadSubtract", 0x56],
+        ["NumpadAdd", 0x57],
+        ["NumpadEnter", 0x58],
+        ["Numpad1", 0x59],
+        ["Numpad2", 0x5a],
+        ["Numpad3", 0x5b],
+        ["Numpad4", 0x5c],
+        ["Numpad5", 0x5d],
+        ["Numpad6", 0x5e],
+        ["Numpad7", 0x5f],
+        ["Numpad8", 0x60],
+        ["Numpad9", 0x61],
+        ["Numpad0", 0x62],
+        ["NumpadDecimal", 0x63],
+        ["NumpadEqual", 0x67],
+        ["Digit1", 0x1e],
+        ["Enter", 0x28],
+      ] as const;
+      for (const [code] of keys) {
+        for (const phase of ["down", "up"] as const) {
+          client.sendKey({ code } as KeyboardEvent, phase);
+        }
+      }
+      const decoder = new TextDecoder();
+      expect(
+        packets.map((packet) => [packet[0], JSON.parse(decoder.decode(packet.subarray(1)))]),
+      ).toEqual(
+        keys.flatMap(([, usage]) => [
+          [0x06, { type: "down", usage }],
+          [0x06, { type: "up", usage }],
+        ]),
+      );
+    } finally {
+      client.stop();
+    }
+  });
+});
+
 describe("serve-emu frames", () => {
   it("strips the SEMU header and reads the keyframe flag and timestamp", () => {
     const buffer = new ArrayBuffer(16 + 3);
