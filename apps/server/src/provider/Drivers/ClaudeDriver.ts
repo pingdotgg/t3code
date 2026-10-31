@@ -82,7 +82,7 @@ function isClaudeNativeCommandPath(commandPath: string): boolean {
   );
 }
 
-// `claude update` installs from this feed, which trails npm's `latest` tag after a release.
+// `claude update` on the default `latest` channel installs from this feed, which trails npm's `latest` tag.
 const CLAUDE_NATIVE_LATEST_URL =
   "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest";
 
