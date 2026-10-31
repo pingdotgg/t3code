@@ -27,10 +27,14 @@ export interface WrappedTerminalLinkLine {
 }
 
 const URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
+// The default PowerShell prompt delimits its unquoted path with `PS ` and `>`.
+const POWERSHELL_PROMPT_PATH_PATTERN = /^PS ((?:[A-Za-z]:[\\/]|\\\\|\/)[^>\r\n]*)>/u;
+// Bare paths start only at a segment boundary: hover detection runs this on
+// every frame, so separator-free output must not be rescanned at every suffix.
 const FILE_PATH_PATTERN =
-  /(?:~[\\/]|\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:[\\/][A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
+  /(?:~[\\/]|\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|(?<![\p{L}\p{M}\p{N}._-])[\p{L}\p{M}\p{N}._-]+(?:[\\/][\p{L}\p{M}\p{N}._-]+)+(?::\d+){0,2}/gu;
 const QUOTED_FILE_PATH_PATTERN =
-  /(["'`])(?<path>(?:~[\\/]|\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\\\|[A-Za-z0-9._ -]+[\\/])[^\r\n]*?|[A-Za-z0-9._ -]+\.[A-Za-z0-9_-]+(?::\d+){0,2})\1(?<position>(?::\d+){0,2})/g;
+  /(["'`])(?<path>(?:~[\\/]|\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\\\|[\p{L}\p{M}\p{N}._ -]+[\\/])[^\r\n]*?|[\p{L}\p{M}\p{N}._ -]+\.[\p{L}\p{M}\p{N}_-]+(?::\d+){0,2})\1(?<position>(?::\d+){0,2})/gu;
 const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
 // Paths also drop a trailing colon: compilers end `file:line:col:` with one.
 const TRAILING_PATH_PUNCTUATION_PATTERN = /[.,;:!?]+$/;
@@ -102,17 +106,25 @@ function collectMatches(
 }
 
 export function extractTerminalLinks(line: string): TerminalLinkMatch[] {
+  const promptPath = POWERSHELL_PROMPT_PATH_PATTERN.exec(line)?.[1];
+  const promptMatches: TerminalLinkMatch[] = promptPath
+    ? [{ kind: "path", text: promptPath, start: 3, end: 3 + promptPath.length }]
+    : [];
   const requestRoutes = Array.from(line.matchAll(REQUEST_ROUTE_PATTERN), (match) => ({
     start: match.index,
     end: match.index + match[0].length,
   }));
-  const urlMatches = collectMatches(line, "url", URL_PATTERN, []);
-  const quotedMatches = collectMatches(line, "path", QUOTED_FILE_PATH_PATTERN, urlMatches);
+  const urlMatches = collectMatches(line, "url", URL_PATTERN, promptMatches);
+  const quotedMatches = collectMatches(line, "path", QUOTED_FILE_PATH_PATTERN, [
+    ...promptMatches,
+    ...urlMatches,
+  ]);
   const pathMatches = collectMatches(line, "path", FILE_PATH_PATTERN, [
+    ...promptMatches,
     ...urlMatches,
     ...quotedMatches,
   ]);
-  return [...urlMatches, ...quotedMatches, ...pathMatches]
+  return [...promptMatches, ...urlMatches, ...quotedMatches, ...pathMatches]
     .filter(
       (match) => match.kind === "url" || !requestRoutes.some((route) => overlaps(match, route)),
     )

@@ -1,111 +1,110 @@
-import "../../index.css";
+import { InfoIcon } from "lucide-react";
+import type { ReactNode } from "react";
+import { expect, it, vi } from "vite-plus/test";
 
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import "~/index.css";
 
-import { ComposerBannerStack } from "./ComposerBannerStack";
+import { render } from "../../../test/render";
+import { ComposerBanner } from "./ComposerBanner";
+import {
+  ComposerBannerStack,
+  NoticeText,
+  type ComposerBannerStackItem,
+} from "./ComposerBannerStack";
 
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
-
-const nextFrame = () =>
-  act(() => new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0))));
-
-async function render(width: number, description: string) {
-  container.style.width = `${width}px`;
-  await act(async () =>
-    root.render(
-      <ComposerBannerStack
-        items={[{ id: "usage", variant: "info", icon: null, title: "Usage limits", description }]}
-      />,
-    ),
-  );
-  await nextFrame();
+function notice(title: string, group?: ComposerBannerStackItem["group"]): ComposerBannerStackItem {
+  return { id: title, variant: "default", icon: <InfoIcon />, title, ...(group ? { group } : {}) };
 }
 
-const hasDetails = () => container.querySelector('[aria-label="Show notice details"]') !== null;
+it("puts machine notices first, whatever order the notices arrive in", async () => {
+  await using screen = await render(
+    <ComposerBannerStack items={[notice("Branch changed"), notice("Offline", "environment")]} />,
+  );
 
-it("only offers notice details when the description cannot fit", async () => {
-  await render(700, "OpenCode");
-  expect(hasDetails()).toBe(false);
-
-  await render(700, "OpenCode ".repeat(40));
-  expect(hasDetails()).toBe(true);
-
-  container.style.width = "4000px";
-  await nextFrame();
-  expect(hasDetails()).toBe(false);
-
-  await render(4000, "OpenCode");
-  expect(hasDetails()).toBe(false);
-
-  // A narrow composer hides the description entirely, so details are the only way to read it.
-  container.style.width = "300px";
-  await nextFrame();
-  expect(hasDetails()).toBe(true);
+  expect(screen.container.textContent).toBe("OfflineBranch changed");
 });
 
-it("keeps only the usage limit attached while an active goal waits in the collapsible stack", async () => {
-  await act(async () =>
-    root.render(
-      <ComposerBannerStack
-        items={[
-          {
-            id: "goal",
-            variant: "default",
-            priority: "activity",
-            icon: null,
-            title: "Goal active",
-            description: "Finish the banner fix",
-          },
-          {
-            id: "limit",
-            variant: "default",
-            priority: "urgent",
-            icon: null,
-            title: "Usage limit reached",
-          },
-        ]}
-      />,
+it("leaves the next attachment its own top edge when there are no notices", async () => {
+  await using screen = await render(
+    <ComposerBanner.Column>
+      <ComposerBannerStack items={[]} />
+      <ComposerBanner.Attachment>
+        <ComposerBanner.Root data-testid="drawer">Approval</ComposerBanner.Root>
+      </ComposerBanner.Attachment>
+    </ComposerBanner.Column>,
+  );
+
+  const surface = getComputedStyle(screen.getByTestId("drawer").element(), "::before");
+  expect(surface.borderTopWidth).toBe("1px");
+  expect(surface.borderTopLeftRadius).not.toBe("0px");
+});
+
+function noticeRow(width: string, children: ReactNode) {
+  return (
+    <div data-testid="row" className="flex items-center gap-1.5" style={{ width }}>
+      <NoticeText detailsLabel="Show details" className="min-w-0 truncate">
+        {children}
+      </NoticeText>
+    </div>
+  );
+}
+
+it("leaves out the details button when only a link's hit area reaches past the text", async () => {
+  // Phones lay out in device pixels, so a range can measure one float32 step (2^-17 px at
+  // this size) wider than its element. Headless Chromium's rects agree exactly.
+  const rangeRect = Range.prototype.getBoundingClientRect;
+  using _rangeRect = vi
+    .spyOn(Range.prototype, "getBoundingClientRect")
+    .mockImplementation(function (this: Range) {
+      const rect = rangeRect.call(this);
+      return new DOMRect(rect.x, rect.y, rect.width + 2 ** -17, rect.height);
+    });
+  // The flicker is a details button that mounts and then unmounts, so record every insertion.
+  const inserted: Node[] = [];
+  using observing = new DisposableStack();
+  const mutations = new MutationObserver((records) =>
+    inserted.push(...records.flatMap((record) => [...record.addedNodes])),
+  );
+  mutations.observe(document.body, { childList: true, subtree: true });
+  observing.defer(() => mutations.disconnect());
+  await using screen = await render(
+    noticeRow(
+      "20rem",
+      <>
+        Needs input{" "}
+        <button type="button" className="relative after:absolute after:-inset-x-10 after:inset-y-0">
+          Review
+        </button>
+      </>,
     ),
   );
 
-  const visibleBanners = () =>
-    Array.from(container.querySelectorAll('[data-slot="composer-banner"]')).filter((banner) =>
-      banner.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }),
-    );
-  const limit = page.getByText("Usage limit reached", { exact: true });
-  const goal = page.getByText("Goal active", { exact: true });
-
-  expect(visibleBanners()).toHaveLength(1);
-  await expect.element(limit).toBeVisible();
-  await expect.element(goal).not.toBeVisible();
-  expect(container.querySelector('[data-slot="composer-banner-attachment"]')?.textContent).toBe(
-    "Usage limit reached",
+  await expect.element(screen.getByText("Review")).toBeVisible();
+  const details = [
+    ...inserted,
+    ...mutations.takeRecords().flatMap((record) => [...record.addedNodes]),
+  ].filter(
+    (node) =>
+      node instanceof Element &&
+      (node.matches('[aria-label="Show details"]') ||
+        node.querySelector('[aria-label="Show details"]')),
   );
+  expect(details).toEqual([]);
+});
 
-  await act(async () => page.getByRole("button", { name: "Show other notices" }).click());
-  await expect.element(goal).toBeVisible();
-  await expect.element(limit).toBeVisible();
-  await expect.poll(visibleBanners).toHaveLength(2);
+it("shows the details button while text or nested text is cut, until it fits again", async () => {
+  await using screen = await render(noticeRow("4rem", "Waiting on a subagent with a long name"));
+  const details = screen.getByRole("button", { name: "Show details" });
+  await expect.element(details).toBeInTheDocument();
 
-  await act(async () => userEvent.keyboard("{Escape}"));
-  await expect.element(goal).not.toBeVisible();
-  await expect.element(limit).toBeVisible();
-  expect(visibleBanners()).toHaveLength(1);
+  screen.getByTestId("row").element().style.width = "40rem";
+  await expect.element(details).not.toBeInTheDocument();
+
+  await screen.rerender(
+    noticeRow(
+      "40rem",
+      <span className="inline-block max-w-16 truncate align-bottom">A long nested name</span>,
+    ),
+  );
+  await expect.element(details).toBeInTheDocument();
 });

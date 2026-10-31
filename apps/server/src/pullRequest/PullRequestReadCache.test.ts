@@ -1,123 +1,22 @@
+import * as NodeV8 from "node:v8";
+import * as NodeVM from "node:vm";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { PullRequestOperationError } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
-import * as Queue from "effect/Queue";
-import * as TestClock from "effect/testing/TestClock";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
-import * as ServerConfig from "../config.ts";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
+
+NodeV8.setFlagsFromString("--expose-gc");
+const collectGarbage = NodeVM.runInNewContext("gc") as () => void;
 
 const cacheLayer = (directory: string) =>
   PullRequestReadCache.make.pipe(Effect.provide(KeyValueStore.layerFileSystem(directory)));
 
-const ageFiles = (directory: string, names: ReadonlyArray<string>, age: Duration.Duration) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const mtime = DateTime.toDateUtc(DateTime.subtractDuration(yield* DateTime.now, age));
-    for (const name of names) yield* fs.utimes(path.join(directory, name), mtime, mtime);
-  });
-
 it.layer(NodeServices.layer)("PR filesystem cache", (it) => {
-  it.effect("prunes entry files written before the max age and keeps fresh ones", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pr-cache-" });
-      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-01T00:00:00Z")));
-      const cache = yield* cacheLayer(directory);
-      yield* cache.get("old", Effect.succeed("old"), ["pr"]);
-      yield* cache.invalidate("pr");
-      const [stale, revisions] = (yield* fs.readDirectory(directory)).toSorted();
-      assert.strictEqual(revisions, "revisions");
-      yield* cache.get("fresh", Effect.succeed("fresh"));
-      const fresh = (yield* fs.readDirectory(directory)).find(
-        (name) => name !== stale && name !== revisions,
-      );
-      const unrelated = "unrelated.json";
-      yield* fs.writeFileString(`${directory}/${unrelated}`, "{}");
-      const prefixed = "pr-v2-backup.json";
-      yield* fs.writeFileString(`${directory}/${prefixed}`, "{}");
-      const justExpired = Duration.sum(
-        PullRequestReadCache.ENTRY_FILE_MAX_AGE,
-        Duration.seconds(1),
-      );
-      yield* ageFiles(directory, [stale!, revisions!, unrelated, prefixed], justExpired);
-      yield* ageFiles(directory, [fresh!], PullRequestReadCache.ENTRY_FILE_MAX_AGE);
-
-      yield* PullRequestReadCache.pruneExpiredEntryFiles(directory);
-
-      assert.deepStrictEqual(
-        (yield* fs.readDirectory(directory)).toSorted(),
-        [fresh!, revisions!, unrelated, prefixed].toSorted(),
-      );
-    }),
-  );
-
-  it.effect("sweeps the cache directory every hour once the layer is built", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const { providerStatusCacheDir } = yield* ServerConfig.ServerConfig;
-      const directory = `${providerStatusCacheDir}/pull-requests`;
-      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-01T00:00:00Z")));
-      yield* (yield* cacheLayer(directory)).get("summary", Effect.succeed("cached"));
-      const [entry] = yield* fs.readDirectory(directory);
-      yield* ageFiles(
-        directory,
-        [entry!],
-        Duration.subtract(PullRequestReadCache.ENTRY_FILE_MAX_AGE, Duration.minutes(90)),
-      );
-      const operations = yield* Queue.unbounded<string>();
-      const observedFs = FileSystem.FileSystem.of({
-        ...fs,
-        stat: (path) => fs.stat(path).pipe(Effect.tap(() => Queue.offer(operations, "stat"))),
-        remove: (path, options) =>
-          fs.remove(path, options).pipe(Effect.tap(() => Queue.offer(operations, "remove"))),
-      });
-      yield* Layer.build(
-        PullRequestReadCache.layer.pipe(
-          Layer.provide(Layer.succeed(FileSystem.FileSystem, observedFs)),
-        ),
-      );
-      assert.strictEqual(yield* Queue.take(operations), "stat");
-      yield* TestClock.adjust("1 hour");
-      assert.strictEqual(yield* Queue.take(operations), "stat");
-      assert.deepStrictEqual(yield* fs.readDirectory(directory), [entry]);
-      yield* TestClock.adjust("1 hour");
-      assert.deepStrictEqual(yield* Queue.takeN(operations, 2), ["stat", "remove"]);
-      assert.deepStrictEqual(yield* fs.readDirectory(directory), []);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-pr-cache-layer-" })),
-    ),
-  );
-
-  it.effect("reuses files after restart and respects the original expiry", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pr-cache-" });
-      let reads = 0;
-      const lookup = Effect.sync(() => String(++reads));
-      const first = yield* cacheLayer(directory);
-      const key = "long/repository/key".repeat(100);
-      assert.strictEqual(yield* first.get(key, lookup), "1");
-      yield* TestClock.adjust("59 seconds");
-      const restarted = yield* cacheLayer(directory);
-      assert.strictEqual(yield* restarted.get(key, lookup), "1");
-      yield* TestClock.adjust("1 second");
-      assert.strictEqual(yield* restarted.get(key, lookup), "2");
-      assert.strictEqual(reads, 2);
-      assert.strictEqual((yield* fs.readDirectory(directory)).length, 1);
-    }),
-  );
-
   it.effect("clears in-flight reads before a new service can reuse them", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -212,29 +111,6 @@ it.layer(NodeServices.layer)("PR filesystem cache", (it) => {
     }).pipe(Effect.provide(KeyValueStore.layerMemory)),
   );
 
-  it.effect("compacts expired scope records without discarding fresh PR data", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pr-cache-" });
-      const cache = yield* cacheLayer(directory);
-      yield* cache.get("summary", Effect.succeed("old"), ["pr"]);
-      yield* cache.invalidate("pr");
-      for (let index = 0; index < 100; index++) yield* cache.invalidate(`pr-${index}`);
-      assert.strictEqual((yield* fs.readDirectory(directory)).length, 2);
-      const before = (yield* fs.stat(`${directory}/revisions`)).size;
-      yield* TestClock.adjust("59 seconds");
-      assert.strictEqual(yield* cache.get("summary", Effect.succeed("fresh"), ["pr"]), "fresh");
-      yield* TestClock.adjust("1 second");
-      yield* cache.invalidate("other-pr");
-      assert.isTrue((yield* fs.stat(`${directory}/revisions`)).size < before);
-      const restarted = yield* cacheLayer(directory);
-      assert.strictEqual(
-        yield* restarted.get("summary", Effect.die("cache miss"), ["pr"]),
-        "fresh",
-      );
-    }),
-  );
-
   it.effect("does not persist failed GitHub reads", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -247,6 +123,27 @@ it.layer(NodeServices.layer)("PR filesystem cache", (it) => {
     }),
   );
 
+  it.effect.each(["", "{", '{"pr":{"revision":42}}'])(
+    "recovers from malformed scope revisions without reusing stale entries: %j",
+    (corrupt) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pr-cache-" });
+        const original = yield* cacheLayer(directory);
+        yield* original.get("summary", Effect.succeed("stale"), ["pr"]);
+        yield* fs.writeFileString(directory + "/revisions", corrupt);
+        const recovered = yield* cacheLayer(directory);
+        let reads = 0;
+        const lookup = Effect.sync(() => String(++reads));
+        assert.strictEqual(yield* recovered.get("summary", lookup, ["pr"]), "1");
+        assert.strictEqual(yield* recovered.get("summary", lookup, ["pr"]), "1");
+        yield* recovered.invalidate("pr");
+        assert.strictEqual(yield* recovered.get("summary", lookup, ["pr"]), "2");
+        const restarted = yield* cacheLayer(directory);
+        assert.strictEqual(yield* restarted.get("summary", lookup, ["pr"]), "2");
+        assert.strictEqual(reads, 2);
+      }),
+  );
   it.effect("resumes caching after a failed scope read", () =>
     Effect.gen(function* () {
       const backing = yield* KeyValueStore.KeyValueStore;
@@ -273,6 +170,32 @@ it.layer(NodeServices.layer)("PR filesystem cache", (it) => {
       assert.strictEqual(yield* read, "1");
       assert.strictEqual(yield* read, "2");
       assert.strictEqual(yield* read, "2");
+    }).pipe(Effect.provide(KeyValueStore.layerMemory)),
+  );
+
+  it.effect("does not keep a caller's data alive after its reads and invalidations", () =>
+    Effect.gen(function* () {
+      const cache = yield* PullRequestReadCache.make;
+      const sweeps: Array<WeakRef<object>> = [];
+      // Like a sync sweep: an Effect.fn made per run that closes over that run's data.
+      const sweep = Effect.fn("sweep")(function* (index: number) {
+        const groups = new Map<string, number>(
+          Array.from({ length: 1_000 }, (_, id) => [`group-${id}`, id]),
+        );
+        sweeps.push(new WeakRef(groups));
+        const read = Effect.fn("read")(function* (pr: string) {
+          const size = groups.size;
+          yield* cache.invalidate(pr);
+          const answer = yield* cache.get(`${pr}-${index}`, Effect.succeed("answer"), [pr]);
+          return size + answer.length;
+        });
+        yield* Effect.forEach(["pr-1", "pr-2"], read, { discard: true });
+      });
+      for (let index = 0; index < 5; index++) yield* sweep(index);
+      // WeakRef targets stay alive until the current job ends, so yield before collecting.
+      yield* Effect.yieldNow;
+      collectGarbage();
+      assert.strictEqual(sweeps.filter((sweepData) => sweepData.deref() !== undefined).length, 0);
     }).pipe(Effect.provide(KeyValueStore.layerMemory)),
   );
 

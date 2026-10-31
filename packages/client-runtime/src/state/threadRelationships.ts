@@ -1,7 +1,8 @@
-import type {
-  OrchestrationV2ThreadProjection,
-  OrchestrationV2ThreadShell,
-  ThreadId,
+import {
+  isOrchestrationV2WorkActive,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadShell,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
@@ -103,7 +104,10 @@ export function deriveThreadRelationshipGraph(input: {
         targetThreadId: subagent.childThreadId,
         kind: "subagent",
         status:
-          child?.activityRunStatus ?? (child?.latestRunId != null ? child.status : subagent.status),
+          child?.activityRunStatus ??
+          (child?.latestRunId != null && !isOrchestrationV2WorkActive(subagent.status)
+            ? child.status
+            : subagent.status),
       });
     }
     for (const transfer of input.projection.contextTransfers) {
@@ -118,49 +122,6 @@ export function deriveThreadRelationshipGraph(input: {
   }
 
   return { nodes, edges: [...edgesByKey.values()] };
-}
-
-export function relatedThreadIds(
-  graph: ThreadRelationshipGraph,
-  threadId: ThreadId,
-): ReadonlyArray<ThreadId> {
-  const ids = new Set<ThreadId>();
-  for (const edge of graph.edges) {
-    if (edge.sourceThreadId === threadId) ids.add(edge.targetThreadId);
-    if (edge.targetThreadId === threadId) ids.add(edge.sourceThreadId);
-  }
-  return [...ids];
-}
-
-export function walkThreadRelationships(
-  graph: ThreadRelationshipGraph,
-  threadId: ThreadId,
-): ReadonlyArray<ThreadRelationshipWalkRow> {
-  const visited = new Set<ThreadId>([threadId]);
-  const pending: Array<{ readonly threadId: ThreadId; readonly depth: number }> = [
-    { threadId, depth: 0 },
-  ];
-  const rows: ThreadRelationshipWalkRow[] = [];
-
-  for (let index = 0; index < pending.length; index += 1) {
-    const current = pending[index];
-    if (current === undefined) continue;
-    for (const edge of graph.edges) {
-      const relatedId =
-        edge.sourceThreadId === current.threadId
-          ? edge.targetThreadId
-          : edge.targetThreadId === current.threadId
-            ? edge.sourceThreadId
-            : null;
-      if (relatedId === null || visited.has(relatedId)) continue;
-      visited.add(relatedId);
-      const depth = current.depth + 1;
-      rows.push({ threadId: relatedId, fromThreadId: current.threadId, depth, edge });
-      pending.push({ threadId: relatedId, depth });
-    }
-  }
-
-  return rows;
 }
 
 export function immediateThreadRelationships(
@@ -211,11 +172,8 @@ function threadCreatedAtMillis(node: ThreadRelationshipNode | undefined): number
 }
 
 /**
- * Web-specific by design: the panel pins the parent row first and a distinct
- * merge-back target second so their actions stay where the user expects, and
- * only then falls back to newest-created-first. Mobile does not share that
- * exception, so this is not the canonical relationship order and should not be
- * reused as one.
+ * Web pins the parent and distinct merge-back target before newest-created-first ordering.
+ * Mobile does not share this exception; do not reuse it as the canonical relationship order.
  */
 export function orderWebThreadLineageRows(input: {
   readonly graph: ThreadRelationshipGraph;

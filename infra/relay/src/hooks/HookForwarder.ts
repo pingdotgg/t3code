@@ -28,20 +28,13 @@ import * as HeldHooks from "./HeldHooks.ts";
 import * as HookInbox from "./HookInbox.ts";
 import { sendUpstream, TUNNEL_OFFLINE_STATUS } from "./upstream.ts";
 
-export const RELAY_HOOK_PATH_PREFIX = "/v1/hooks/";
+const RELAY_HOOK_PATH_PREFIX = "/v1/hooks/";
 export const RELAY_HOOK_MAX_BODY_BYTES = 1_048_576;
 export const RELAY_HOOK_RATE_LIMIT = { limit: 60, periodSeconds: 60 } as const;
-/**
- * Hook budgets are per URL, and a sender who knows an endpoint key can mint
- * new URLs for free, so every endpoint also has one overall budget.
- */
+/** URL budgets alone are bypassable by minting URLs; cap each endpoint too. */
 export const RELAY_HOOK_ENDPOINT_RATE_LIMIT = { limit: 600, periodSeconds: 60 } as const;
-/**
- * Upstream statuses that mean the environment did not take the request: the
- * tunnel has no origin (530) or cloudflared cannot reach the local server
- * (502, 503, 504) while it restarts.
- */
-export const ENVIRONMENT_UNREACHABLE_STATUSES: ReadonlySet<number> = new Set([
+/** No tunnel origin (530) or local server unavailable (502/503/504) means the environment did not take the request. */
+const ENVIRONMENT_UNREACHABLE_STATUSES: ReadonlySet<number> = new Set([
   502,
   503,
   504,
@@ -80,12 +73,7 @@ export const redactRelayHookUrl = (url: string): string => {
   return segments.join("/");
 };
 
-/**
- * Requests with a wrong token get their own budget, so they cannot use up a
- * real sender's; the environment rejects them. Built from decoded segments,
- * because the environment decodes them too: two spellings of one token
- * (`token`, `%74oken`) must share one budget.
- */
+/** Budget decoded tokens so equivalent spellings share limits and wrong tokens cannot exhaust a real sender's budget. */
 const hookBudgetKey = (hook: {
   readonly endpointKey: string;
   readonly hookId: string;
@@ -134,13 +122,10 @@ const hookNotFound = () => errorResponse(404, "hook_not_found");
 /** Longer than the inbox holds a request, so a held delivery's proof still verifies. */
 const DELIVERY_PROOF_LIFETIME_SECONDS = 25 * 60 * 60;
 
-/** Methods a webhook can arrive with; HEAD reaches the GET route and is refused. */
+// HEAD reaches GET routing but must be refused.
 const FORWARDED_METHODS = new Set(["GET", "POST", "PUT", "PATCH"]);
 
-/**
- * Whatever the environment answers is served from the relay's own origin, so
- * a body must never render or run there.
- */
+// Environment responses use the relay origin; never let their bodies render or run there.
 const SANDBOXED_RESPONSE_HEADERS = {
   "x-content-type-options": "nosniff",
   "content-security-policy": "sandbox; default-src 'none'",
@@ -236,14 +221,14 @@ const make = Effect.gen(function* () {
   const inbox = yield* HookInbox.HookInbox;
   const crypto = yield* Crypto.Crypto;
 
-  const signDeliveryProof = (input: {
-    readonly environmentId: string;
-    readonly deliveryId: string;
-    readonly receivedAt: string;
-    readonly hookId: string;
-    readonly jti: string;
-  }) =>
-    Effect.gen(function* () {
+  const signDeliveryProof = Effect.fn("HookForwarder.signDeliveryProof")(
+    function* (input: {
+      readonly environmentId: string;
+      readonly deliveryId: string;
+      readonly receivedAt: string;
+      readonly hookId: string;
+      readonly jti: string;
+    }) {
       const now = Math.floor((yield* Clock.currentTimeMillis) / 1_000);
       return yield* signRelayJwt({
         privateKey: Redacted.value(settings.cloudMintPrivateKey),
@@ -261,7 +246,9 @@ const make = Effect.gen(function* () {
           hookId: input.hookId,
         } satisfies RelayHookDeliveryProofPayload,
       });
-    }).pipe(Effect.orDie);
+    },
+    (effect, _input) => effect.pipe(Effect.orDie),
+  );
 
   const handle = Effect.fn("relay.hooks.forward")(function* (
     request: HttpServerRequest.HttpServerRequest,
@@ -329,13 +316,10 @@ const make = Effect.gen(function* () {
       return errorResponse(400, "invalid_body");
     }
 
-    // One id per request, so a request that reached the environment before a
-    // timeout and is later delivered from the inbox runs only once.
+    // Reuse one delivery ID so inbox retries cannot rerun requests that reached the environment before timeout.
     yield* Effect.annotateCurrentSpan({ "relay.hook.body_bytes": body.success.byteLength });
     const deliveryId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
-    // Proves to the environment that this delivery id, receive time and
-    // trace context came from the relay. Signed once here and stored with a
-    // held request, so the inbox never needs the signing key.
+    // Sign once before storing held requests so the inbox needs no signing key.
     const proof = yield* signDeliveryProof({
       environmentId: endpoint.environmentId,
       deliveryId,
@@ -354,37 +338,37 @@ const make = Effect.gen(function* () {
       headers: { ...forwardedHeaders(request.headers), [RELAY_HOOK_DELIVERY_HEADER]: proof },
       body: body.success,
     };
-    const holdOrFail = (status: 503 | 504, error: string) =>
-      Effect.gen(function* () {
-        if (!endpoint.holdWhileOffline) {
-          yield* outcome(error);
-          return errorResponse(status, error);
-        }
-        const stored = yield* inbox
-          .hold({
-            endpointKey: parsed.endpointKey,
-            baseUrl: endpoint.httpBaseUrl,
-            hook,
-          })
-          .pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("Could not hold webhook request", {
-                environmentId: endpoint.environmentId,
-                errorTag: cause._tag,
-              }).pipe(Effect.as(null)),
-            ),
-          );
-        if (stored === null) {
-          yield* outcome(error);
-          return errorResponse(status, error);
-        }
-        if (!stored) {
-          yield* outcome("inbox_full");
-          return errorResponse(503, "inbox_full");
-        }
-        yield* outcome("held");
-        return HttpServerResponse.jsonUnsafe({ queued: true }, { status: 202 });
-      });
+    // Keep offline outcomes on the enclosing relay.hooks.forward span.
+    const holdOrFail = Effect.fnUntraced(function* (status: 503 | 504, error: string) {
+      if (!endpoint.holdWhileOffline) {
+        yield* outcome(error);
+        return errorResponse(status, error);
+      }
+      const stored = yield* inbox
+        .hold({
+          endpointKey: parsed.endpointKey,
+          baseUrl: endpoint.httpBaseUrl,
+          hook,
+        })
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not hold webhook request", {
+              environmentId: endpoint.environmentId,
+              errorTag: cause._tag,
+            }).pipe(Effect.as(null)),
+          ),
+        );
+      if (stored === null) {
+        yield* outcome(error);
+        return errorResponse(status, error);
+      }
+      if (!stored) {
+        yield* outcome("inbox_full");
+        return errorResponse(503, "inbox_full");
+      }
+      yield* outcome("held");
+      return HttpServerResponse.jsonUnsafe({ queued: true }, { status: 202 });
+    });
 
     const upstream = yield* sendUpstream(endpoint.httpBaseUrl, hook).pipe(
       Effect.provideService(HttpClient.HttpClient, httpClient),

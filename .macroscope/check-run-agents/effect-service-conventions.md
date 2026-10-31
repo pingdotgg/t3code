@@ -1,7 +1,7 @@
 ---
 title: Effect Service Conventions
-model: gpt-6-sol
-effort: max
+model: gpt-6-1-sol
+reasoning: low
 input: incremental
 tools:
   - browse_code
@@ -43,6 +43,18 @@ Review changed TypeScript for the conventions below. They apply when a pull requ
 - Define a real `make` when the module owns construction, and export it only when another module imports it; knip fails CI on an unused export, so do not ask for an export nothing uses. Do not write `make = Effect.succeed(...)` only to force `Layer.effect`; use `Layer.succeed`, `Layer.scoped`, or whichever constructor matches.
 - Use plain `make` and `layer` in a module named for its implementation (`BunPtyAdapter.ts`). Keep implementation-specific names when one abstract port module holds several implementations (`makeCloudflaredRelayClient`, `layerCloudflared` in `RelayClient.ts`). `infra/relay/src/db.ts` may keep its inline `Layer.succeed(RelayDb, db)`.
 - When a service moves, delete the old files and update every consumer, including orchestration, MCP, tests, and integration harnesses. Do not leave compatibility re-export shims.
+
+## Effect functions and tracing
+
+- Reusable functions use named `Effect.fn("Service.operation")`, not functions wrapping
+  `Effect.gen`. Inline programs, callbacks, and layer construction can keep `Effect.gen`.
+- Named `Effect.fn` creates a span; the unnamed form does not. Default to named spans for service
+  operations and I/O. `Effect.fnUntraced` is deliberate for per-chunk/per-event work, tight loops,
+  or helpers duplicating an existing tracing boundary; require a nearby reason for new uses.
+- Preserve existing span names/options and avoid adding duplicate spans. Pass combinators after
+  the generator body; transforms receive the original function arguments after the effect.
+- Preserve generic signatures, laziness, resource scope, and interruption behavior. An explicit
+  generator return type is `Effect.fn.Return<A, E, R>`.
 
 ## Dependency acquisition and runtime boundaries
 

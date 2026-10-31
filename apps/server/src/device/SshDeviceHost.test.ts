@@ -26,6 +26,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     let forwards = 0;
     let failForward = true;
     let rejectConfig = true;
+    const releases: Array<string | undefined> = [];
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
         if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
@@ -33,6 +34,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
         (forwarding ? tunnelArgs : commandArgs).push([...command.args]);
         if (forwarding) tunnelStdins.push(command.options.stdin);
         let output = "";
+        let exitCode = 0;
         if (forwarding) {
           if (failForward) {
             failForward = false;
@@ -77,13 +79,19 @@ it.effect("preserves installed status after probes and cleans failed agent activ
               ? { daemonPort: 1235, token: "fixture", entryPath: "/agent.mjs" }
               : {}),
           });
+          if (mode === "") {
+            output = `${"verbose-prefix ".repeat(400)}PANIC: emulator SDK is broken\n`;
+            exitCode = 1;
+          }
         }
         return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(123),
           stdout: Stream.make(new TextEncoder().encode(output)),
           stderr: Stream.empty,
           all: Stream.empty,
-          exitCode: forwarding ? Effect.never : Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          exitCode: forwarding
+            ? Effect.never
+            : Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
           isRunning: Effect.succeed(forwarding),
           kill: () => Effect.void,
           stdin: Sink.drain,
@@ -94,7 +102,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
       }),
     );
     const host = yield* SshDeviceHost.make(
-      { id: "test", label: "Test", target: "test.example" },
+      { kind: "ssh", id: "test", label: "Test", target: "test.example" },
       () =>
         rejectConfig
           ? Effect.fail(
@@ -111,12 +119,22 @@ it.effect("preserves installed status after probes and cleans failed agent activ
       Effect.provideService(
         HttpClient.HttpClient,
         HttpClient.make((request) =>
-          Effect.succeed(HttpClientResponse.fromWeb(request, new Response("ok"))),
+          Effect.sync(() => {
+            if (!request.url.endsWith("/rpc"))
+              return HttpClientResponse.fromWeb(request, new Response("ok"));
+            releases.push(request.headers.authorization);
+            return HttpClientResponse.fromWeb(request, Response.json({ result: { ok: true } }));
+          }),
         ),
       ),
     );
     yield* host.ensureReady(() => Effect.void);
-    yield* SshDeviceHost.probe({ id: "test", label: "Test", target: "test.example" }).pipe(
+    yield* SshDeviceHost.probe({
+      kind: "ssh",
+      id: "test",
+      label: "Test",
+      target: "test.example",
+    }).pipe(
       Effect.provide(ServerConfig.layerTest(home, home)),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
@@ -124,6 +142,15 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     expect(owners[0]).toMatch(/^[a-f0-9]{24}$/);
     expect(forwards).toBe(1);
     expect(modes.filter((mode) => mode === "start")).toHaveLength(2);
+    const ready = yield* host.current;
+    expect(ready).not.toBeNull();
+    if (ready) {
+      const failed = yield* ready.run("emulator", ["-list-avds"]);
+      expect(failed.code).toBe(1);
+      expect(failed.stdout).toMatch(/^\[truncated\]/);
+      expect(failed.stderr).toBe(failed.stdout.trim());
+      expect(failed.stderr).toMatch(/PANIC: emulator SDK is broken$/);
+    }
     yield* host.platformAvailability("ios");
     expect((yield* host.summary).hubInstalled).toBe(true);
     const failed = yield* host.ensureAgentReady(() => Effect.void).pipe(Effect.result);
@@ -135,6 +162,10 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     yield* host.ensureAgentReady(() => Effect.void);
     yield* host.platformAvailability("ios");
     expect((yield* host.summary).agentDeviceInstalled).toBe(true);
+    // Close releases agent sessions through the forwarded daemon.
+    const agentReady = yield* host.current;
+    yield* agentReady!.releaseAgentSession!("t3-session", "device");
+    expect(releases).toEqual(["Bearer fixture"]);
     yield* host.stopAgent;
     expect(forwards).toBe(1);
     const multiplexingOff = ["ControlMaster=no", "ControlPath=none", "ControlPersist=no"];

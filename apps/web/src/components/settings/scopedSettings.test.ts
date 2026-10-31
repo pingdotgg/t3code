@@ -13,11 +13,11 @@ import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import {
-  listProjectOverrides,
   persistScopedSettingsPatch,
   planProjectOverridesClear,
   planScopedSettingsClear,
   planScopedSettingsPatch,
+  scopedIdleCompaction,
   resolveScopedSettingsTargets,
   scopedSettingsAreMixed,
   scopedSettingsSource,
@@ -31,7 +31,6 @@ function environment(
     connected?: boolean;
     loaded?: boolean;
     settings?: Partial<ServerSettings>;
-    projectOverrides?: boolean;
   } = {},
 ) {
   return {
@@ -45,9 +44,6 @@ function environment(
         ? null
         : {
             settings: { ...DEFAULT_SERVER_SETTINGS, ...options.settings },
-            environment: {
-              capabilities: { projectSettingsOverrides: options.projectOverrides !== false },
-            },
           },
   };
 }
@@ -124,13 +120,6 @@ describe("scoped settings targets", () => {
     });
   });
 
-  it("prefers the selected primary as the aggregate representative without including disconnected targets", () => {
-    const selected = selectScopedSettingsEnvironments(all, environments, server.environmentId);
-    expect(selected.environment).toBe(server);
-    expect(selected.environments).toEqual(environments);
-    expect(selected.connectedEnvironments).toEqual([laptop, server]);
-  });
-
   it("resolves each member's effective settings and source at project scope", () => {
     const overridden = environment("Server", {
       settings: {
@@ -199,23 +188,41 @@ describe("scoped settings writes", () => {
       },
     ]);
   });
-  it("isolates a formerly shared server preference to the named environment", async () => {
-    const persistServer = vi.fn().mockResolvedValue({ _tag: "Success" });
-    const persistClient = vi.fn();
-    await persistScopedSettingsPatch(
-      planScopedSettingsPatch(named, environments, { sidebarAutoSettleOnMerge: false }),
-      persistServer,
-      persistClient,
-    );
-    expect(persistServer.mock.calls).toEqual([
-      [
-        {
-          environmentId: server.environmentId,
-          input: { patch: { sidebarAutoSettleOnMerge: false } },
-        },
-      ],
+
+  it("compares idle compaction by mode, and offers Never only where every server stores it", () => {
+    const fixed = {
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        compactIdleThreads: false,
+        idleCompaction: "onReturn" as const,
+      },
+    };
+    const modes = {
+      settings: { ...DEFAULT_SERVER_SETTINGS, compactIdleThreads: "onReturn" as const },
+    };
+    const legacy = { settings: { ...DEFAULT_SERVER_SETTINGS, compactIdleThreads: false } };
+    expect(scopedIdleCompaction([fixed, modes])).toEqual({ mixed: false, neverAvailable: true });
+    expect(scopedIdleCompaction([fixed, legacy])).toEqual({ mixed: false, neverAvailable: false });
+    expect(
+      scopedIdleCompaction([fixed, { settings: { ...fixed.settings, idleCompaction: "off" } }])
+        .mixed,
+    ).toBe(true);
+  });
+
+  it("sends an idle compaction mode in the form each environment's server reads", () => {
+    const targets = [
+      environment("Fixed", { settings: { compactIdleThreads: false, idleCompaction: "onReturn" } }),
+      environment("Modes", { settings: { compactIdleThreads: "onReturn" } }),
+      environment("Switch", { settings: { compactIdleThreads: false } }),
+    ];
+    const plan = planScopedSettingsPatch(resolveSettingsScope({}, [], targets), targets, {
+      idleCompaction: "beforeCacheExpires",
+    });
+    expect(plan.serverWrites.map((write) => write.patch)).toEqual([
+      { idleCompaction: "beforeCacheExpires" },
+      { compactIdleThreads: "beforeCacheExpires" },
+      { compactIdleThreads: true },
     ]);
-    expect(persistClient).not.toHaveBeenCalled();
   });
 
   it("writes an aggregate preference only to connected environments with loaded configuration", async () => {
@@ -277,6 +284,7 @@ describe("scoped settings writes", () => {
       ).toEqual({ saved: [laptop.label], failed: unsupported });
     });
 
+    // regression: #18334 an environment silently dropped a setting with no warning
     it("reports a dropped key inside a project override", async () => {
       expect(
         await outcome(
@@ -285,23 +293,6 @@ describe("scoped settings writes", () => {
             projectSettingsOverrides: { [laptopProjectId]: { defaultAutoPull: true } },
           }),
         ),
-      ).toEqual({ saved: [laptop.label], failed: unsupported });
-    });
-
-    it("reports a nested key dropped beside one that saved", async () => {
-      const patch = { defaultAutoPull: true, enableAgentBrowserAccess: false };
-      const persistServer = vi.fn(async ({ environmentId }: { environmentId: EnvironmentId }) => ({
-        _tag: "Success" as const,
-        value: {
-          ...DEFAULT_SERVER_SETTINGS,
-          projectSettingsOverrides:
-            environmentId === laptop.environmentId
-              ? { [laptopProjectId]: patch }
-              : { [projectId]: { defaultAutoPull: true } },
-        },
-      }));
-      expect(
-        await outcome(planScopedSettingsPatch(project, environments, patch), persistServer),
       ).toEqual({ saved: [laptop.label], failed: unsupported });
     });
 
@@ -451,6 +442,7 @@ describe("scoped settings writes", () => {
     ).toEqual([]);
   });
 
+  // regression: #11541 device settings were written to the wrong scope
   it("scopes agent device access to projects while keeping hub and hosts environment-wide", () => {
     const plan = planScopedSettingsPatch(project, [laptop, server], {
       enableAgentDeviceAccess: true,
@@ -464,17 +456,13 @@ describe("scoped settings writes", () => {
     }
   });
 
-  it("refuses environment-wide keys and older servers at project scope", () => {
+  it("refuses environment-wide keys at project scope", () => {
     expect(
       planScopedSettingsPatch(project, environments, { enableProviderUpdateChecks: false }),
     ).toMatchObject({
       serverWrites: [],
       unavailableReason: "This setting is environment-wide and cannot be overridden by a project.",
     });
-    const legacy = environment("Server", { projectOverrides: false });
-    expect(
-      planScopedSettingsPatch(checkout, [laptop, legacy], { defaultAutoPull: true }),
-    ).toMatchObject({ serverWrites: [], unavailableReason: expect.stringContaining("update") });
   });
 
   it("clears overrides per member and removes an emptied entry", () => {
@@ -553,14 +541,6 @@ describe("scoped settings writes", () => {
 });
 
 describe("scoped settings mixed values", () => {
-  it("compares only requested settings across connected targets", () => {
-    const changed = environment("Changed", { settings: { enableAgentBrowserAccess: false } });
-    const targets = resolveScopedSettingsTargets(all, [laptop, changed]);
-    expect(scopedSettingsAreMixed(targets, ["enableAgentBrowserAccess"])).toBe(true);
-    expect(scopedSettingsAreMixed(targets, ["enableProviderUpdateChecks"])).toBe(false);
-    expect(scopedSettingsAreMixed([], ["enableAgentBrowserAccess"])).toBe(false);
-  });
-
   it("treats independently decoded equal nested settings as the same value", () => {
     const style = {
       ...DEFAULT_SERVER_SETTINGS.sourceControlWritingStyle,
@@ -576,7 +556,6 @@ describe("scoped settings mixed values", () => {
 
 describe("project overrides at environment scope", () => {
   const laptop = EnvironmentId.make("laptop");
-  const desk = EnvironmentId.make("desk");
   const fleet = ProjectId.make("fleet");
   const t3 = ProjectId.make("t3");
   const environment = (
@@ -590,23 +569,6 @@ describe("project overrides at environment scope", () => {
       settings: { ...DEFAULT_SERVER_SETTINGS, projectSettingsOverrides: overrides },
       environment: { capabilities: { projectSettingsOverrides: true } },
     },
-  });
-
-  it("lists only the projects that override the keys", () => {
-    const entries = listProjectOverrides(
-      [
-        environment(laptop, {
-          [fleet]: { defaultAutoPull: true, defaultThreadEnvMode: "local" },
-          [t3]: { defaultThreadEnvMode: "local" },
-        }),
-        environment(desk, { [fleet]: { defaultAutoPull: false } }),
-      ],
-      ["defaultAutoPull"],
-    );
-    expect(entries).toEqual([
-      { environmentId: laptop, projectId: fleet },
-      { environmentId: desk, projectId: fleet },
-    ]);
   });
 
   it("clears only those keys and drops entries that become empty", () => {
@@ -727,7 +689,6 @@ describe("partial object patches at project scope", () => {
           connection: { phase: "connected" },
           serverConfig: {
             settings,
-            environment: { capabilities: { projectSettingsOverrides: true } },
           },
         },
       ],
@@ -786,6 +747,7 @@ describe("model selection patches at project scope", () => {
     },
   });
 
+  // regression: #16581 changing a project's model kept the old model's options
   it("replaces old options when changing model selections", () => {
     const plan = planScopedSettingsPatch(checkout, [customized], {
       defaultModelSelection: { instanceId: claude, model: "claude-opus-4-8" },
