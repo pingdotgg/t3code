@@ -63,9 +63,10 @@ vi.mock("~/terminal/ghostty/surface", () => ({
     },
   },
 }));
-vi.mock("~/state/entities", () => {
+vi.mock(import("~/state/entities"), async (original) => {
   const project = { workspaceRoot: "/repo" };
   return {
+    ...(await original()),
     readEnvironmentSupportsServerBrowser: () => false,
     useEnvironmentSupportsServerBrowser: () => false,
     useQuietThreadShell: (ref: ScopedThreadRef) => ({
