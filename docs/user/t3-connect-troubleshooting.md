@@ -109,7 +109,8 @@ T3 Connect does not have an active link between your account and the host.
   run `t3 connect`.
 - **The host was deregistered from your account, or T3 Code was reinstalled on
   it.** A reinstalled host links under a new identity, so the old entry on this
-  device no longer works. Remove the old entry from this device, then add the
+  device no longer works. Remove the old entry from this device. If the host
+  was only deregistered, turn **T3 Connect** on there again first. Then add the
   host again from the T3 Connect list.
 - **The host was linked, but the server did not apply the link yet.** Run
   `t3 service restart` on the host, or restart `t3 serve`.

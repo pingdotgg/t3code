@@ -137,17 +137,19 @@ describe("presentConnectionDiagnosis", () => {
         traceId: "trace-1",
       }),
     );
-    expect(diagnose(backoff(failure))?.headline).toBe(
+    const withRegistration = (relayRegistration: "registered" | "unregistered") =>
+      presentConnectionDiagnosis({
+        hostLabel: "Mac mini",
+        state: backoff(failure),
+        via: "relay",
+        relayRegistration,
+      });
+    expect(withRegistration("registered")?.headline).toBe(
       "Mac mini is not linked to your T3 Connect account",
     );
-    const diagnosis = presentConnectionDiagnosis({
-      hostLabel: "Mac mini",
-      state: backoff(failure),
-      via: "relay",
-      relayRegistration: "unregistered",
-    });
+    const diagnosis = withRegistration("unregistered");
     expect(diagnosis?.headline).toContain("no longer on your T3 Connect account");
-    expect(diagnosis?.steps[0]).toMatch(/remove .* from this device/i);
+    expect(diagnosis?.steps[0]).toContain("remove it from this device");
   });
 
   it("keeps the relay health status out of a failure that has its own cause", () => {
