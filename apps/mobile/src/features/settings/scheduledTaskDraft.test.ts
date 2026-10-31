@@ -7,8 +7,10 @@ import {
   ProjectId,
 } from "@t3tools/contracts";
 import {
+  createDraft,
   scheduledTaskDefaultModel,
   DEFAULT_SCHEDULE,
+  hasScheduledTaskDraftChanges,
   scheduleDraftForTask,
   scheduleFromDraft,
 } from "./scheduledTaskDraft";
@@ -206,4 +208,50 @@ it("rejects dedupe keys without valid request placeholders", () => {
   expect(
     scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "webhook", coalesceKey: "{{body.bad" }),
   ).toBeNull();
+});
+
+describe("day-of-month schedules", () => {
+  it("round-trips days of the month limited to some months", () => {
+    const schedule = {
+      type: "fixed_time" as const,
+      timeOfDay: "09:00",
+      monthDays: [5],
+      months: [1, 4, 7, 10],
+    };
+    const draft = scheduleDraftForTask({ schedule });
+    expect(draft.dayMode).toBe("month");
+    expect(draft.limitMonths).toBe(true);
+    expect(scheduleFromDraft(draft)).toEqual(schedule);
+    // Switching the limit off runs every month but keeps the choice for switching back.
+    expect(scheduleFromDraft({ ...draft, limitMonths: false })).toEqual({
+      type: "fixed_time",
+      timeOfDay: "09:00",
+      monthDays: [5],
+    });
+  });
+
+  it("sends only the active day selection and leaves out every month", () => {
+    expect(
+      scheduleFromDraft({ ...DEFAULT_SCHEDULE, dayMode: "month", monthDays: [31, 4, 10] }),
+    ).toEqual({ type: "fixed_time", timeOfDay: "09:00", monthDays: [4, 10, 31] });
+  });
+
+  it.each([
+    { dayMode: "month" as const, monthDays: [] },
+    { dayMode: "month" as const, monthDays: [32] },
+    { limitMonths: true, months: [] },
+    { limitMonths: true, months: [13] },
+  ])("rejects an empty or invalid calendar selection %o", (fields) => {
+    expect(scheduleFromDraft({ ...DEFAULT_SCHEDULE, ...fields })).toBeNull();
+  });
+
+  it("marks a switch between weekdays and days of the month as a change", () => {
+    const draft = createDraft(null, null);
+    expect(
+      hasScheduledTaskDraftChanges(draft, {
+        ...draft,
+        schedule: { ...draft.schedule, dayMode: "month" },
+      }),
+    ).toBe(true);
+  });
 });

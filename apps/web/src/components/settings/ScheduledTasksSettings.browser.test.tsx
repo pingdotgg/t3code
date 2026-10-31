@@ -47,7 +47,12 @@ const threadFamilyRead = {
   threads: [{ id: task.threadId, title: "Fix login bug" }],
 };
 
-const state = vi.hoisted(() => ({ connected: true, tasksLoaded: true, secondary: false }));
+const state = vi.hoisted(() => ({
+  connected: true,
+  tasksLoaded: true,
+  secondary: false,
+  monthDays: true,
+}));
 const secondaryId = EnvironmentId.make("secondary");
 const permissions = new Map<string, Atom.Writable<boolean>>();
 
@@ -55,6 +60,7 @@ function setup() {
   state.connected = true;
   state.tasksLoaded = true;
   state.secondary = false;
+  state.monthDays = true;
   permissions.clear();
   permissions.set(environmentId, Atom.make(true));
   permissions.set(secondaryId, Atom.make(true));
@@ -70,7 +76,14 @@ function environment() {
     environmentId,
     label: "Laptop",
     connection: { phase: state.connected ? "connected" : "disconnected" },
-    serverConfig: state.connected ? { environment: { platform: "linux" } } : null,
+    serverConfig: state.connected
+      ? {
+          environment: {
+            platform: "linux",
+            capabilities: state.monthDays ? { scheduledTaskMonthDays: true } : {},
+          },
+        }
+      : null,
   };
 }
 
@@ -212,5 +225,19 @@ describe("ScheduledTasksSettings", () => {
 
     await expect.element(dialog.getByRole("heading", { name: "New task" })).toBeInTheDocument();
     await expect.element(name).toHaveValue("My draft");
+  });
+
+  it("offers days of the month only when the server can store them", async () => {
+    setup();
+    const monthDaysToggle = async (monthDays: boolean) => {
+      state.monthDays = monthDays;
+      await using _screen = await render(<ScheduledTasksSettings />);
+      await userEvent.click(page.getByRole("button", { name: "New task" }));
+      const dialog = page.getByRole("dialog");
+      await expect.element(dialog.getByRole("button", { name: "Mon" })).toBeInTheDocument();
+      return dialog.getByRole("button", { name: "Days of the month" }).query() !== null;
+    };
+    expect(await monthDaysToggle(false)).toBe(false);
+    expect(await monthDaysToggle(true)).toBe(true);
   });
 });

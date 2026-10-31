@@ -11,7 +11,7 @@ import {
   PlusIcon,
   Trash2Icon,
 } from "lucide-react";
-import { type ReactNode, useRef, useState } from "react";
+import { type Dispatch, type ReactNode, type SetStateAction, useRef, useState } from "react";
 import type {
   EnvironmentId,
   ModelSelection,
@@ -24,6 +24,14 @@ import type {
   ScheduledTaskWebhookDeliverySummary,
   ThreadId,
 } from "@t3tools/contracts";
+import {
+  MONTHS,
+  MONTH_DAYS,
+  MONTH_DAYS_UNSUPPORTED,
+  MONTH_NAMES,
+  describeFixedTimeSchedule,
+  describeMonthEndFallback,
+} from "@t3tools/client-runtime/scheduled-task-schedule";
 import {
   DEFAULT_WEBHOOK_PROMPT,
   emptyWebhookFilterDraft,
@@ -85,6 +93,7 @@ import {
   scheduledTaskDefaultModel,
   taskToDraft,
   type DraftState,
+  type DayMode,
   type ScheduleMode,
   type WorkspaceMode,
 } from "./scheduledTasksSettings.logic";
@@ -136,7 +145,11 @@ const EMPTY_DRAFT: DraftState = {
   scheduleMode: "fixed",
   intervalMinutes: "15",
   timeOfDay: "09:00",
+  dayMode: "week",
   weekdays: new Set([1, 2, 3, 4, 5]),
+  monthDays: new Set([1]),
+  limitMonths: false,
+  months: new Set(MONTHS),
   projectId: "",
   threadId: "",
   workspaceMode: "worktree",
@@ -292,14 +305,7 @@ export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
       ? `Every ${minutes} min`
       : `Every ${Math.round(schedule.everyMs / 1000)} sec`;
   }
-  const weekdays = schedule.weekdays ?? [];
-  const days =
-    weekdays.length === 0
-      ? "Daily"
-      : weekdays.length === 5 && weekdays.every((day) => day >= 1 && day <= 5)
-        ? "Weekdays"
-        : weekdays.map((day) => WEEKDAY_LABELS[day]).join(", ");
-  return `${days} at ${schedule.timeOfDay}`;
+  return describeFixedTimeSchedule(schedule);
 }
 
 /** formatRelativeTime handles only the past; upcoming runs need future labels. */
@@ -1155,6 +1161,135 @@ function ScheduledTaskDestination({
   );
 }
 
+/** Toggle values are strings; an empty choice is ignored so one option always stays on. */
+function numberChoices(values: readonly string[]): ReadonlySet<number> | null {
+  return values.length === 0 ? null : new Set(values.map(Number));
+}
+
+function FixedTimeScheduleFields({
+  draft,
+  setDraft,
+  calendarSupported,
+}: {
+  readonly draft: DraftState;
+  readonly setDraft: Dispatch<SetStateAction<DraftState>>;
+  readonly calendarSupported: boolean;
+}) {
+  const schedule = scheduleFromDraft(draft);
+  const fixed = schedule?.type === "fixed_time" ? schedule : null;
+  const fallback = fixed ? describeMonthEndFallback(fixed) : null;
+  // A draft already using them keeps the controls, so switching to an older server can be undone.
+  const showCalendar = calendarSupported || draft.dayMode === "month" || draft.limitMonths;
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Label htmlFor="scheduled-task-time">Run at</Label>
+          <Input
+            type="time"
+            id="scheduled-task-time"
+            nativeInput
+            className="w-32"
+            value={draft.timeOfDay}
+            onChange={(event) =>
+              setDraft((current) => ({ ...current, timeOfDay: event.target.value }))
+            }
+          />
+        </div>
+        {showCalendar ? (
+          <ToggleGroup
+            aria-label="Repeat on"
+            value={[draft.dayMode]}
+            onValueChange={(values) => {
+              const dayMode = values[0] as DayMode | undefined;
+              if (dayMode === "week" || dayMode === "month")
+                setDraft((current) => ({ ...current, dayMode }));
+            }}
+          >
+            <Toggle value="week">Days of the week</Toggle>
+            <Toggle value="month">Days of the month</Toggle>
+          </ToggleGroup>
+        ) : null}
+      </div>
+      {draft.dayMode === "week" ? (
+        <ToggleGroup
+          multiple
+          variant="check"
+          size="sm"
+          aria-label="Days of the week"
+          className="grid w-full grid-cols-7"
+          value={[...draft.weekdays].map(String)}
+          onValueChange={(values) => {
+            const weekdays = numberChoices(values);
+            if (weekdays) setDraft((current) => ({ ...current, weekdays }));
+          }}
+        >
+          {WEEKDAY_ORDER.map((day) => (
+            <Toggle key={day} value={String(day)} aria-label={WEEKDAY_LABELS[day]}>
+              {WEEKDAY_SHORT[day]}
+            </Toggle>
+          ))}
+        </ToggleGroup>
+      ) : (
+        <ToggleGroup
+          multiple
+          variant="check"
+          size="sm"
+          aria-label="Days of the month"
+          className="grid w-full grid-cols-7"
+          value={[...draft.monthDays].map(String)}
+          onValueChange={(values) => {
+            const monthDays = numberChoices(values);
+            if (monthDays) setDraft((current) => ({ ...current, monthDays }));
+          }}
+        >
+          {MONTH_DAYS.map((day) => (
+            <Toggle key={day} value={String(day)}>
+              {day}
+            </Toggle>
+          ))}
+        </ToggleGroup>
+      )}
+      {showCalendar ? (
+        <div className="flex items-center justify-between gap-4">
+          <Label htmlFor="scheduled-task-limit-months">Only in some months</Label>
+          <Switch
+            id="scheduled-task-limit-months"
+            checked={draft.limitMonths}
+            onCheckedChange={(limitMonths) => setDraft((current) => ({ ...current, limitMonths }))}
+          />
+        </div>
+      ) : null}
+      {draft.limitMonths ? (
+        <ToggleGroup
+          multiple
+          variant="check"
+          size="sm"
+          aria-label="Months"
+          className="grid w-full grid-cols-6"
+          value={[...draft.months].map(String)}
+          onValueChange={(values) => {
+            const months = numberChoices(values);
+            if (months) setDraft((current) => ({ ...current, months }));
+          }}
+        >
+          {MONTHS.map((month) => (
+            <Toggle key={month} value={String(month)}>
+              {MONTH_NAMES[month - 1]}
+            </Toggle>
+          ))}
+        </ToggleGroup>
+      ) : null}
+      {fixed ? (
+        <p className="rounded-lg bg-input/40 px-3 py-2 text-sm" role="status">
+          {describeFixedTimeSchedule(fixed)}.
+          {fallback ? <span className="text-muted-foreground"> {fallback}</span> : null}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function ScheduledTaskEditorForm({
   initialEnvironmentId,
   task,
@@ -1173,6 +1308,8 @@ function ScheduledTaskEditorForm({
   const environment = useEnvironment(environmentId);
   const connected =
     environment?.connection.phase === "connected" && environment.serverConfig !== null;
+  const calendarSupported =
+    environment?.serverConfig?.environment.capabilities.scheduledTaskMonthDays === true;
   const tasksQuery = useEnvironmentQuery(
     connected ? serverEnvironment.scheduledTasksLive({ environmentId, input: {} }) : null,
   );
@@ -1279,6 +1416,14 @@ function ScheduledTaskEditorForm({
     const schedule = scheduleFromDraft(draft);
     if (schedule === null) {
       for (const error of webhookDraftErrors(draft)) reportFailure(error.title, error.description);
+      return;
+    }
+    if (
+      !calendarSupported &&
+      schedule.type === "fixed_time" &&
+      (schedule.monthDays !== undefined || schedule.months !== undefined)
+    ) {
+      reportFailure("Update this environment", MONTH_DAYS_UNSUPPORTED);
       return;
     }
     if (
@@ -1768,42 +1913,11 @@ function ScheduledTaskEditorForm({
                 ) : null}
               </div>
             ) : draft.scheduleMode === "fixed" ? (
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="scheduled-task-time">Run at</Label>
-                  <Input
-                    type="time"
-                    id="scheduled-task-time"
-                    nativeInput
-                    className="w-32"
-                    value={draft.timeOfDay}
-                    onChange={(event) =>
-                      setDraft((current) => ({ ...current, timeOfDay: event.target.value }))
-                    }
-                  />
-                  <span className="text-xs text-muted-foreground">on</span>
-                </div>
-                <ToggleGroup
-                  multiple
-                  variant="outline"
-                  size="sm"
-                  aria-label="Days to run"
-                  value={[...draft.weekdays].map(String)}
-                  onValueChange={(values) => {
-                    if (values.length === 0) return;
-                    setDraft((current) => ({
-                      ...current,
-                      weekdays: new Set(values.map(Number)),
-                    }));
-                  }}
-                >
-                  {WEEKDAY_ORDER.map((day) => (
-                    <Toggle key={day} value={String(day)} aria-label={WEEKDAY_LABELS[day]}>
-                      {WEEKDAY_SHORT[day]}
-                    </Toggle>
-                  ))}
-                </ToggleGroup>
-              </div>
+              <FixedTimeScheduleFields
+                draft={draft}
+                setDraft={setDraft}
+                calendarSupported={calendarSupported}
+              />
             ) : (
               <div className="flex items-center gap-2">
                 <Label htmlFor="scheduled-task-interval">Run every</Label>

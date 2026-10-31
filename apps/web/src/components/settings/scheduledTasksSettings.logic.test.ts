@@ -344,3 +344,52 @@ it("rejects dedupe templates without a request placeholder", () => {
   expect(scheduleFromDraft({ ...draft, replayKey: "literal" })).toBeNull();
   expect(scheduleFromDraft({ ...draft, coalesceKey: "{{body.bad" })).toBeNull();
 });
+
+describe("fixed-time scheduled tasks", () => {
+  const fixedTask = (schedule: ScheduledTask["schedule"]): ScheduledTask => ({
+    ...legacyTask,
+    schedule,
+  });
+
+  it("round-trips days of the month limited to some months", () => {
+    const schedule = {
+      type: "fixed_time",
+      timeOfDay: "09:00",
+      monthDays: [5],
+      months: [1, 4, 7, 10],
+    } as const;
+    const draft = taskToDraft(fixedTask(schedule));
+    expect(draft.dayMode).toBe("month");
+    expect(draft.limitMonths).toBe(true);
+    expect(scheduleFromDraft(draft)).toEqual(schedule);
+    // Switching the limit off runs every month but keeps the choice for switching back.
+    expect(scheduleFromDraft({ ...draft, limitMonths: false })).toEqual({
+      type: "fixed_time",
+      timeOfDay: "09:00",
+      monthDays: [5],
+    });
+  });
+
+  it("sorts days numerically and sends only the active day selection", () => {
+    const draft = taskToDraft(fixedTask({ type: "fixed_time", timeOfDay: "09:00" }));
+    expect(
+      scheduleFromDraft({ ...draft, dayMode: "month", monthDays: new Set([31, 4, 10]) }),
+    ).toEqual({ type: "fixed_time", timeOfDay: "09:00", monthDays: [4, 10, 31] });
+    expect(scheduleFromDraft({ ...draft, dayMode: "week", weekdays: new Set([5, 1]) })).toEqual({
+      type: "fixed_time",
+      timeOfDay: "09:00",
+      weekdays: [1, 5],
+    });
+  });
+
+  it("leaves out selections that cover every day or month", () => {
+    const draft = taskToDraft(fixedTask({ type: "fixed_time", timeOfDay: "09:00" }));
+    expect(draft.dayMode).toBe("week");
+    expect(draft.limitMonths).toBe(false);
+    expect(scheduleFromDraft(draft)).toEqual({ type: "fixed_time", timeOfDay: "09:00" });
+    expect(scheduleFromDraft({ ...draft, limitMonths: true })).toEqual({
+      type: "fixed_time",
+      timeOfDay: "09:00",
+    });
+  });
+});

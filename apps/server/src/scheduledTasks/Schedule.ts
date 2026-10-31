@@ -21,9 +21,10 @@ export function nextScheduledRunAt(
 
   const time = parseTimeOfDay(schedule.timeOfDay);
   if (time === null) return null;
-  const weekdays =
-    schedule.weekdays && schedule.weekdays.length > 0 ? new Set(schedule.weekdays) : null;
-  for (let offset = 0; offset <= 7; offset += 1) {
+  const weekdays = selection(schedule.weekdays);
+  const monthDays = selection(schedule.monthDays);
+  const months = selection(schedule.months);
+  for (let offset = 0; offset <= MAX_LOOKAHEAD_DAYS; offset += 1) {
     const candidate = DateTime.setParts(DateTime.add(from, { days: offset }), {
       hour: time.hour,
       minute: time.minute,
@@ -31,15 +32,35 @@ export function nextScheduledRunAt(
       millisecond: 0,
     });
     if (DateTime.toEpochMillis(candidate) <= DateTime.toEpochMillis(from)) continue;
-    if (weekdays !== null && !weekdays.has(DateTime.toParts(candidate).weekDay)) continue;
+    const parts = DateTime.toParts(candidate);
+    if (months !== null && !months.has(parts.month)) continue;
+    if (weekdays !== null && !weekdays.has(parts.weekDay)) continue;
+    if (monthDays !== null && !matchesMonthDay(monthDays, candidate)) continue;
     return candidate;
   }
   return null;
 }
 
-function weekdayKey(weekdays: ReadonlyArray<number> | undefined): string {
-  const unique = [...new Set(weekdays ?? [])].toSorted((x, y) => x - y);
-  if (unique.length === 0 || unique.length === 7) return "daily";
+// One month filter can put the next run a year away, and a weekday filter can
+// push it up to six days further.
+const MAX_LOOKAHEAD_DAYS = 366 + 6;
+
+function selection(values: ReadonlyArray<number> | undefined): ReadonlySet<number> | null {
+  return values && values.length > 0 ? new Set(values) : null;
+}
+
+function matchesMonthDay(monthDays: ReadonlySet<number>, candidate: DateTime.DateTime): boolean {
+  const { day } = DateTime.toParts(candidate);
+  if (monthDays.has(day)) return true;
+  // A day the month doesn't have runs on its last day, so 31 means "month end".
+  const lastDay = DateTime.toParts(DateTime.endOf(candidate, "month")).day;
+  return day === lastDay && [...monthDays].some((monthDay) => monthDay > lastDay);
+}
+
+/** Normalizes a selection where none and all mean the same thing: no filter. */
+function selectionKey(values: ReadonlyArray<number> | undefined, all: number): string {
+  const unique = [...new Set(values ?? [])].toSorted((x, y) => x - y);
+  if (unique.length === 0 || unique.length === all) return "all";
   return unique.join(",");
 }
 
@@ -57,7 +78,9 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
     bTime !== null &&
     aTime.hour === bTime.hour &&
     aTime.minute === bTime.minute &&
-    weekdayKey(a.weekdays) === weekdayKey(b.weekdays)
+    selectionKey(a.weekdays, 7) === selectionKey(b.weekdays, 7) &&
+    selectionKey(a.monthDays, 31) === selectionKey(b.monthDays, 31) &&
+    selectionKey(a.months, 12) === selectionKey(b.months, 12)
   );
 }
 
