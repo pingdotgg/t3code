@@ -75,12 +75,27 @@ function variantMatchesParams(
   );
 }
 
+function defaultVariantParams(
+  model: Pick<SDKModel, "variants">,
+): ReadonlyArray<ModelParameterValue> | undefined {
+  return (model.variants ?? []).find((variant) => variant.isDefault === true)?.params;
+}
+
+function effectiveVariantParams(
+  model: Pick<SDKModel, "variants">,
+  params: ReadonlyArray<ModelParameterValue> | undefined,
+): ReadonlyArray<ModelParameterValue> | undefined {
+  return params !== undefined && params.length > 0 ? params : defaultVariantParams(model);
+}
+
 export function cursorSdkMaxModeForParams(
   model: Pick<SDKModel, "variants">,
   params: ReadonlyArray<ModelParameterValue> | undefined,
 ): boolean {
   const variants = model.variants ?? [];
-  const matching = variants.filter((variant) => variantMatchesParams(variant, params));
+  const matching = variants.filter((variant) =>
+    variantMatchesParams(variant, effectiveVariantParams(model, params)),
+  );
   return matching.length > 0 && matching.every((variant) => variant.isMaxMode === true);
 }
 
@@ -88,8 +103,9 @@ function cursorSdkParamsAdmitMaxMode(
   model: Pick<SDKModel, "variants">,
   params: ReadonlyArray<ModelParameterValue> | undefined,
 ): boolean {
+  const effective = effectiveVariantParams(model, params);
   return (model.variants ?? []).some(
-    (variant) => variantMatchesParams(variant, params) && variant.isMaxMode === true,
+    (variant) => variantMatchesParams(variant, effective) && variant.isMaxMode === true,
   );
 }
 
