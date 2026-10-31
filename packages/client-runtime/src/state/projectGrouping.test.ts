@@ -288,6 +288,20 @@ describe("buildProjectGroups", () => {
     expect(groups[1]?.label).toBe("julius/t3code-fork");
   });
 
+  // regression: #15049 a rename to the repository name snapped back to the display path
+  it("labels a renamed group by its title even when it matches the repository name", () => {
+    const folderTitles = [
+      makeProject("t3code", "/work/t3code", { title: "t3code" }),
+      makeProject("t3code-2", "/work/t3code-2", { title: "t3code" }),
+    ];
+    const renamed = folderTitles.map((project) => ({ ...project, hasCustomTitle: true }));
+
+    const label = (projects: ReadonlyArray<EnvironmentProject>) =>
+      buildProjectGroups({ projects, settings: settings("repository") })[0]?.label;
+    expect(label(folderTitles)).toBe("T3 Code");
+    expect(label(renamed)).toBe("t3code");
+  });
+
   it("applies a physical-project override without dropping its siblings", () => {
     const first = makeProject("t3code", "/work/t3code");
     const second = makeProject("t3code-2", "/work/t3code-2");

@@ -293,15 +293,7 @@ function ProjectDetail({
       toastManager.add({ type: "warning", title: "Project title cannot be empty" });
       return;
     }
-    if (
-      !projectGroupTitleNeedsUpdate(
-        group.memberProjects.map((member) => member.title),
-        title,
-        wasEdited,
-      )
-    ) {
-      return;
-    }
+    if (!projectGroupTitleNeedsUpdate(group.memberProjects, title, wasEdited)) return;
     await updateAllMembers({ title }, "Failed to rename project");
   };
 

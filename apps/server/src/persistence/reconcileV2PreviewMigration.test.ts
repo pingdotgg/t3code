@@ -27,6 +27,35 @@ const seedPreview = Effect.gen(function* () {
 });
 
 describe("V2 preview upgrade", () => {
+  it.effect("preserves recorded project renames when adding custom-title state", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 69 });
+      for (const projectId of ["renamed", "untouched"]) {
+        yield* sql`
+          INSERT INTO projection_projects
+            (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+          VALUES (${projectId}, 'repo', ${"/tmp/" + projectId}, '[]', '2026-10-01', '2026-10-01')
+        `;
+        yield* sql`
+          INSERT INTO orchestration_events
+            (event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+             actor_kind, payload_json, metadata_json, application_event_version)
+          VALUES (${projectId}, 'project', ${projectId}, 1, 'project.meta-updated', '2026-10-01',
+            'client', ${JSON.stringify(projectId === "renamed" ? { title: "repo" } : { autoPull: true })}, '{}', 2)
+        `;
+      }
+      yield* runMigrations();
+      assert.deepStrictEqual(
+        yield* sql`SELECT project_id, has_custom_title FROM projection_projects ORDER BY project_id`,
+        [
+          { project_id: "renamed", has_custom_title: 1 },
+          { project_id: "untouched", has_custom_title: 0 },
+        ],
+      );
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect("upgrades a published preview without replaying V2 or losing import progress", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -55,6 +84,7 @@ describe("V2 preview upgrade", () => {
         [73, "ActiveTurnItemIndexes"],
         [74, "ExcludeAttachmentPlaceholdersFromSearch"],
         [75, "SubagentDeliveryState"],
+        [76, "ProjectionProjectsCustomTitle"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -153,6 +183,7 @@ describe("V2 preview upgrade", () => {
         [73, "ActiveTurnItemIndexes"],
         [74, "ExcludeAttachmentPlaceholdersFromSearch"],
         [75, "SubagentDeliveryState"],
+        [76, "ProjectionProjectsCustomTitle"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
