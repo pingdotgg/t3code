@@ -46,6 +46,19 @@ export function materializeReplayTranscriptRuntimeInstructions(
         Array.isArray(frame.params.prompt)
       ) {
         const prompt: ReadonlyArray<unknown> = frame.params.prompt;
+        if (
+          prompt.some(
+            (part) =>
+              typeof part === "object" &&
+              part !== null &&
+              "type" in part &&
+              part.type === "text" &&
+              "text" in part &&
+              typeof part.text === "string" &&
+              part.text.trimStart().startsWith("/"),
+          )
+        )
+          return entry;
         const lastPart = prompt.at(-1);
         if (
           typeof lastPart === "object" &&

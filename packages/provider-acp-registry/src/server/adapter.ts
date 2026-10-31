@@ -4,6 +4,7 @@ import {
   isClaudeProvisionalSubagentTool,
 } from "./claudeAcp.ts";
 import {
+  registerDevinCompaction,
   normalizeDevinSessionUpdate,
   normalizeDevinToolCall,
   extractDevinSubagentUpdate,
@@ -218,7 +219,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
         }
       : AcpProviderCapabilitiesV2,
     customModels: readCustomModelEntries(options.settings.customModels).map((entry) => entry.slug),
-    compaction: "native",
+    compaction: registryAgentId === "devin" ? "native-async" : "native",
     promptFailure: (cause) => acpRegistryPromptFailure(registryAgentId, cause),
     ...(registryAgentId === "factory-droid"
       ? { extractElicitationForm: extractDroidElicitationForm }
@@ -242,6 +243,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
             "cognition.ai/subagentSupport": true,
             "cognition.ai/messageGrouping": true,
           },
+          registerExtensions: registerDevinCompaction,
           normalizeSessionUpdate: normalizeDevinSessionUpdate,
           normalizeToolCall: normalizeDevinToolCall,
           extractSubagentUpdate: extractDevinSubagentUpdate,

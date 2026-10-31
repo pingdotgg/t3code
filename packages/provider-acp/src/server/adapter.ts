@@ -175,6 +175,11 @@ export interface AcpAdapterV2UserInputRequest {
 
 export interface AcpAdapterV2ExtensionContext {
   readonly runtime: AcpSessionRuntime.AcpSessionRuntime["Service"];
+  readonly reportCompaction: (notice: {
+    readonly sessionId: string;
+    readonly status: "started" | "completed" | "failed" | "cancelled";
+    readonly summary?: string | undefined;
+  }) => Effect.Effect<void>;
   readonly reportProviderRetry: (input: {
     readonly sessionId: string;
     readonly failure: OrchestrationV2ProviderFailure;
@@ -360,7 +365,7 @@ export interface AcpAdapterV2Flavor {
   ) => Effect.Effect<void>;
   readonly subagentsIdleOnTurnCompletion?: boolean;
   // Marker agents compact silently; native agents must report their own outcome.
-  readonly compaction?: "marker" | "native";
+  readonly compaction?: "marker" | "native" | "native-async";
   readonly runtimeHarness?: string;
   readonly registerExtensions?: (
     context: AcpAdapterV2ExtensionContext,
@@ -862,7 +867,7 @@ function commandExitCode(value: unknown): number | undefined {
  * interrupted tools must not retain that stale success code.
  */
 function acpProjectedCommandExitCode(
-  status: "pending" | "running" | "waiting" | "completed" | "failed" | "interrupted",
+  status: ProjectedToolStatus,
   rawOutput: unknown,
 ): number | undefined {
   if (status !== "completed" && status !== "failed") {
@@ -1036,14 +1041,19 @@ function toolStatus(
   }
 }
 
-type ProjectedToolStatus = ReturnType<typeof toolStatus> | "interrupted";
+type ProjectedToolStatus = ReturnType<typeof toolStatus> | "interrupted" | "cancelled";
 
 function nodeStatus(status: ProjectedToolStatus): OrchestrationV2ExecutionNode["status"] {
   return status === "pending" ? "running" : status;
 }
 
 function completedAtForStatus(status: ProjectedToolStatus, now: DateTime.Utc): DateTime.Utc | null {
-  return status === "completed" || status === "failed" || status === "interrupted" ? now : null;
+  return status === "completed" ||
+    status === "failed" ||
+    status === "interrupted" ||
+    status === "cancelled"
+    ? now
+    : null;
 }
 
 function selectPermissionOptionId(
@@ -1158,6 +1168,7 @@ interface ActiveAcpTurn {
   interrupted: boolean;
   finalized: boolean;
   finalizedStatus: "completed" | "interrupted" | "failed" | "cancelled" | null;
+  compactionStatus?: "running" | "completed" | "failed" | "cancelled" | undefined;
   promptSettled: boolean;
   promptSettledStatus: "completed" | "interrupted" | "failed" | "cancelled" | null;
   workAccepted: boolean;
@@ -2024,7 +2035,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             runtimeGeneration,
             Effect.gen(function* () {
               yield* Ref.set(runtimeRestartRequired, true);
-              if (!followsAgentWorkState) return;
+              if (!followsAgentWorkState) {
+                const context = yield* Ref.get(activeTurn);
+                if (context?.compactionStatus === "running") {
+                  yield* finalizeTurn(
+                    context,
+                    "failed",
+                    makeProviderFailure({ class: "transport_error" }),
+                  );
+                }
+                return;
+              }
               agentWork = { sessionUpdate: "state_update", state: "idle", stopReason: "error" };
               for (const child of nativeChildren.values()) {
                 if (child.status !== "running") continue;
@@ -6373,6 +6394,43 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (flavor.registerExtensions !== undefined) {
             yield* flavor.registerExtensions({
               runtime: targetRuntime,
+              reportCompaction: (notice) =>
+                runRuntimeCallbackAtGeneration(
+                  handlerGeneration,
+                  Effect.gen(function* () {
+                    const context = yield* Ref.get(activeTurn);
+                    if (
+                      context === null ||
+                      context.finalized ||
+                      context.interrupted ||
+                      context.compactionStatus === undefined ||
+                      context.nativeThreadId !== notice.sessionId
+                    )
+                      return;
+                    context.compactionStatus =
+                      notice.status === "started" ? "running" : notice.status;
+                    const toolCallId = `acp-compaction:${context.nativeTurnId}`;
+                    yield* emitTool(
+                      context,
+                      {
+                        toolCallId,
+                        title: "Compact context",
+                        kind: "think",
+                        status:
+                          notice.status === "started"
+                            ? "inProgress"
+                            : notice.status === "completed"
+                              ? "completed"
+                              : "failed",
+                        data: { toolCallId, rawOutput: notice.summary },
+                      },
+                      context.compactionStatus,
+                    );
+                    if (context.promptSettled && context.compactionStatus !== "running") {
+                      yield* finalizeTurn(context, context.compactionStatus);
+                    }
+                  }),
+                ).pipe(Effect.asVoid),
               reportProviderRetry: (notice) =>
                 runRuntimeCallbackAtGeneration(handlerGeneration, reportProviderRetry(notice)).pipe(
                   Effect.asVoid,
@@ -7127,6 +7185,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ): Effect.fn.Return<void> {
           if (context.finalized) return;
           const settledStatus = context.interrupted ? "interrupted" : status;
+          if (context.compactionStatus === "running") yield* Ref.set(runtimeRestartRequired, true);
           context.finalizedStatus = settledStatus;
           context.finalized = true;
           const directStopQuarantine = yield* Ref.get(stoppedRunQuarantine);
@@ -7150,6 +7209,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* terminalizeOpenRunOwnedItems(context, {
               terminalizeSubagents: directStopQuarantine,
             });
+          }
+          for (const tool of context.tools.values()) {
+            if (
+              tool.toolCallId.startsWith("acp-compaction:") &&
+              (tool.status === "pending" || tool.status === "inProgress")
+            ) {
+              yield* emitTool(
+                context,
+                tool,
+                settledStatus === "completed" ? "interrupted" : settledStatus,
+              );
+            }
           }
           yield* closeTextStreams(context);
           if (settledStatus !== "failed") {
@@ -7606,6 +7677,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               interrupted: false,
               finalized: false,
               finalizedStatus: null,
+              compactionStatus:
+                flavor.compaction === "native-async" &&
+                turnInput.message.text.trim() === "/compact" &&
+                turnInput.message.attachments.length === 0
+                  ? "running"
+                  : undefined,
               promptSettled: false,
               promptSettledStatus: null,
               workAccepted: false,
@@ -7827,7 +7904,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       );
                       return;
                     }
-                    yield* finalizeTurn(context, status);
+                    context.promptSettled = true;
+                    if (
+                      status === "completed" &&
+                      !context.interrupted &&
+                      context.compactionStatus === "running"
+                    )
+                      return;
+                    yield* finalizeTurn(
+                      context,
+                      status === "completed" && context.compactionStatus !== "running"
+                        ? (context.compactionStatus ?? status)
+                        : status,
+                    );
                   }),
                 ).pipe(Effect.asVoid),
               ),
