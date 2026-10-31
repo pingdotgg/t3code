@@ -62,7 +62,7 @@
   gap: 8px;
   padding: 10px 12px;
   border-radius: 10px;
-  font-size: var(--type-control);
+  font-size: var(--text-control);
   line-height: 20px;
 }
 
