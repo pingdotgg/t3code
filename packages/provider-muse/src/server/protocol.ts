@@ -166,7 +166,10 @@ const DateMillis = Schema.Finite.check(
   Schema.isGreaterThan(0),
   Schema.isLessThanOrEqualTo(LATEST_DATE_MS),
 );
-/** Latest response subscription windows; verbatim Meta percentages may exceed 100. */
+/**
+ * `usage/changed` params: the Meta subscription windows the latest model
+ * response reported. Percentages are Meta's, verbatim, and may exceed 100.
+ */
 export const MuseSubscriptionUsage = Schema.Struct({
   observedAtMs: DateMillis,
   tier: Schema.String,
@@ -181,6 +184,13 @@ export const MuseSubscriptionUsage = Schema.Struct({
   }),
 });
 export type MuseSubscriptionUsage = typeof MuseSubscriptionUsage.Type;
+/** Experimental `account/read` result: the credential lane in effect and, for a login, its account. */
+export const MuseAccountState = Schema.Struct({
+  state: Schema.String,
+  label: Schema.optional(Schema.String),
+  credentialRequired: Schema.optional(Schema.Boolean),
+});
+export type MuseAccountState = typeof MuseAccountState.Type;
 export const MuseTurnRetryScheduled = Schema.Struct({
   turnId: NonEmptyString,
   nextAttempt: Schema.Int.check(Schema.isGreaterThan(0)),
