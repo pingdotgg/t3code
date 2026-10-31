@@ -5,7 +5,7 @@ import type { TimelineEntry } from "../../session-logic";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { toastManager } from "../ui/toast";
 import type { AssistantCitationRequest } from "./AssistantCitationSource";
-import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
+import { citationSourceId, type MessagesTimelineRow } from "./MessagesTimeline.logic";
 
 /** Whether the cited response is in the loaded history, after paging toward it. */
 export type CitedHistory =
@@ -91,15 +91,15 @@ export function resolveCitationPhase(input: {
   readonly rows: ReadonlyArray<MessagesTimelineRow>;
 }): CitationPhase {
   if (input.history._tag === "failed") return { _tag: "failed" };
-  const source = input.entries.find(
-    (entry) => entry.kind === "message" && entry.message.id === input.messageId,
-  );
+  const source = input.entries.find((entry) => citationSourceId(entry) === input.messageId);
   // The history store can hold the message a render before the entries do.
   if (!source) return { _tag: "loading" };
-  if (source.kind !== "message" || source.message.role !== "assistant") return { _tag: "failed" };
-  const row = input.rows.find(
-    (candidate) => candidate.kind === "message" && candidate.message.id === input.messageId,
-  );
+  if (
+    source.kind !== "proposed-plan" &&
+    (source.kind !== "message" || source.message.role !== "assistant")
+  )
+    return { _tag: "failed" };
+  const row = input.rows.find((candidate) => citationSourceId(candidate) === input.messageId);
   if (row) return { _tag: "ready", rowId: row.id };
   return { _tag: "expanding" };
 }
@@ -126,13 +126,19 @@ export function citedThreadSnapshot(input: {
     return input.error === null ? null : { message: null, hasMoreHistory: false, loadFailed: true };
   }
   // Older pages merge into the visible turn items, not the message list.
-  const item = input.thread.projection.visibleTurnItems.find(
-    (row) =>
-      (row.item.type === "assistant_message" || row.item.type === "user_message") &&
-      row.item.messageId === input.messageId,
+  const item = input.thread.projection.visibleTurnItems.find((row) =>
+    row.item.type === "proposed_plan"
+      ? row.item.id === input.messageId
+      : (row.item.type === "assistant_message" || row.item.type === "user_message") &&
+        row.item.messageId === input.messageId,
   )?.item;
   return {
-    message: item === undefined ? null : item.type === "assistant_message" ? "assistant" : "other",
+    message:
+      item === undefined
+        ? null
+        : item.type === "assistant_message" || item.type === "proposed_plan"
+          ? "assistant"
+          : "other",
     hasMoreHistory: input.history.hasMoreHistory,
   };
 }

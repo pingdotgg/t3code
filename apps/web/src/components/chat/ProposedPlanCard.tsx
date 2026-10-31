@@ -45,6 +45,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   cwd,
   workspaceRoot,
   findActive = false,
+  expandKey = null,
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
@@ -52,8 +53,15 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   cwd: string | undefined;
   workspaceRoot: string | undefined;
   findActive?: boolean;
+  /** Expands the card each time a new citation activation targets it. */
+  expandKey?: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [lastExpandKey, setLastExpandKey] = useState<string | null>(null);
+  if (expandKey !== lastExpandKey) {
+    setLastExpandKey(expandKey);
+    if (expandKey !== null) setExpanded(true);
+  }
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [lastSavePath, setLastSavePath] = useState("");

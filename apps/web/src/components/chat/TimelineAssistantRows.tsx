@@ -1,5 +1,5 @@
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
-import { type RunId } from "@t3tools/contracts";
+import { MessageId, type RunId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { memo, use, useState } from "react";
 import { type ChatMessage, type TurnDiffSummary } from "../../types";
@@ -233,14 +233,25 @@ export function ProposedPlanTimelineRow({
 
   return (
     <div className="min-w-0 px-1 py-0.5">
-      <ProposedPlanCard
-        planMarkdown={row.proposedPlan.planMarkdown}
-        environmentId={ctx.activeThreadEnvironmentId}
-        threadRef={ctx.threadRef ?? undefined}
-        cwd={ctx.markdownCwd}
-        workspaceRoot={ctx.workspaceRoot}
-        findActive={ctx.findActive}
-      />
+      <AssistantCitationSource
+        messageId={MessageId.make(row.id)}
+        {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
+        itemKey={row.id}
+        request={ctx.citationRequest}
+        listRef={ctx.listRef}
+      >
+        <ProposedPlanCard
+          planMarkdown={row.proposedPlan.planMarkdown}
+          environmentId={ctx.activeThreadEnvironmentId}
+          threadRef={ctx.threadRef ?? undefined}
+          cwd={ctx.markdownCwd}
+          workspaceRoot={ctx.workspaceRoot}
+          findActive={ctx.findActive}
+          expandKey={
+            ctx.citationRequest?.citation.messageId === row.id ? ctx.citationRequest.key : null
+          }
+        />
+      </AssistantCitationSource>
     </div>
   );
 }
