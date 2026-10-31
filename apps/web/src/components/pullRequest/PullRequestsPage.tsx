@@ -134,6 +134,10 @@ const MAX_PAGE_SIZE = 500;
 const EMPTY_VIEWERS: PullRequestListResult["viewers"] = {};
 const EMPTY_PARTITIONS: PullRequestPartitionsSnapshot = { authored: [], reviewing: [] };
 const NO_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>> = [];
+const UNAVAILABLE_SIDE_PANELS = {
+  preview: { available: false, onOpen: () => undefined },
+  diff: { available: false, onOpen: () => undefined },
+};
 const EMPTY_PREVIEW_SESSIONS = {};
 const EMPTY_PREVIEW_DESKTOP_STATE = {};
 const EMPTY_TERMINAL_LABELS = new Map<string, string>();
@@ -1487,17 +1491,14 @@ export function PullRequestsPage() {
                 useRightPanelStore.getState().moveSurface(rightPanelRef, surfaceId, toIndex);
             }}
             onCopyFilePath={() => undefined}
-            onAddBrowser={() => undefined}
+            panels={UNAVAILABLE_SIDE_PANELS}
             onAddBrowserInProfile={() => undefined}
             onAddTerminal={() => undefined}
-            onAddDiff={() => undefined}
             onAddFiles={() => undefined}
             onAddPullRequest={() => undefined}
             onAddPullRequests={() => undefined}
             onAddDevice={() => undefined}
-            browserAvailable={false}
             terminalAvailable={false}
-            diffAvailable={false}
             filesAvailable={false}
             pullRequestAvailable={false}
             pullRequestsAvailable={false}
