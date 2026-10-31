@@ -331,3 +331,46 @@ describe("mobile context clipboard imports", () => {
     ).toEqual(result!.context.records.map((record) => record.contextId));
   });
 });
+
+describe("public thread URL paste", () => {
+  it("imports a plain link without rich clipboard metadata", async () => {
+    const result = await importComposerContextClipboard(
+      { text: "https://app.t3.codes/destination/local-thread", fragment: "", html: "" },
+      0,
+      new AbortController().signal,
+      0,
+      EnvironmentId.make("destination"),
+    );
+    expect(result?.context.records).toMatchObject([
+      { kind: "thread", environmentId: "destination", threadId: "local-thread" },
+    ]);
+    expect(collectComposerContextReferences(result!.text)).toHaveLength(1);
+  });
+  it("imports an app link from a machine the destination links to", async () => {
+    const result = await importComposerContextClipboard(
+      { text: "t3code://threads/source/foreign-thread", fragment: "", html: "" },
+      0,
+      new AbortController().signal,
+      0,
+      EnvironmentId.make("destination"),
+      new Map([[EnvironmentId.make("source"), "Source"]]),
+    );
+    expect(result?.context.records).toMatchObject([
+      { kind: "thread", environmentId: "source", threadId: "foreign-thread" },
+    ]);
+    expect(result?.skippedThreads).toEqual([]);
+  });
+});
+
+it("preserves a public URL when the destination cannot read its environment", async () => {
+  const text = "See https://app.t3.codes/unknown/thread";
+  const result = await importComposerContextClipboard(
+    { text, fragment: "", html: "" },
+    0,
+    new AbortController().signal,
+    0,
+    EnvironmentId.make("destination"),
+  );
+  expect(result?.text).toBe(text);
+  expect(result?.context.records).toEqual([]);
+});

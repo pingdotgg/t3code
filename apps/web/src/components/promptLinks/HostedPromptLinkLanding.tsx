@@ -19,6 +19,8 @@ import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
 
+import { hostedThreadLinkAction } from "./hostedThreadLink";
+
 const OPENER_STORAGE_KEY = "t3code:prompt-link-opener";
 const Opener = Schema.NullOr(Schema.Literals(["app", "browser"]));
 
@@ -69,6 +71,13 @@ export function useHostedPromptLinkLanding(enabled: boolean): ReactNode | null {
       ? promptLinkAppPath(new URL(href, window.location.origin).href, window.location.origin)
       : null;
   if (appPath === null || continuedHref === href) return null;
+  const threadAction = hostedThreadLinkAction(
+    appPath,
+    isReady,
+    environments.map((e) => e.environmentId),
+  );
+  if (threadAction === "wait") return <></>;
+  if (threadAction === "continue") return null;
   const canContinue = isReady && environments.length > 0;
   if (opener === "browser") {
     if (canContinue) return null;
@@ -78,7 +87,7 @@ export function useHostedPromptLinkLanding(enabled: boolean): ReactNode | null {
     <HostedPromptLinkLanding
       appPath={appPath}
       canContinue={canContinue}
-      openInAppRemembered={opener === "app"}
+      openInAppRemembered={opener === "app" && threadAction !== "choose-manually"}
       onChoose={(choice, remember) => {
         if (remember) setOpener(choice);
         if (choice === "browser") setContinuedHref(href);
@@ -123,8 +132,12 @@ function HostedPromptLinkLanding({
   return (
     <StandalonePage>
       <StandalonePageHeader
-        title="Open this prompt"
-        description="It opens as a draft. Nothing runs until you press Send."
+        title={prompt === null ? "Open this thread" : "Open this prompt"}
+        description={
+          prompt === null
+            ? "Choose where to open your thread."
+            : "It opens as a draft. Nothing runs until you press Send."
+        }
       />
       {prompt !== null && prompt.hiddenCharacters > 0 ? (
         <Alert className="mt-5" variant="error">

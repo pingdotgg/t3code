@@ -5,7 +5,9 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { parseThreadDeepLink, threadDeepLink } from "@t3tools/shared/threadDeepLinks";
 import { promptLinkAppPath } from "@t3tools/shared/promptLinks";
+import { readLocalApi } from "../../localApi";
 import { readPairingAppLink, resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import { useRouter } from "@tanstack/react-router";
 import * as Effect from "effect/Effect";
@@ -28,7 +30,11 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { resolveThreadRouteTarget } from "../../threadRoutes";
 import { assetEnvironment } from "../../state/assets";
 import { readProject, readThreadShell } from "../../state/entities";
-import { useEnvironmentHttpBaseUrl, usePrimaryEnvironment } from "../../state/environments";
+import {
+  useEnvironments,
+  useEnvironmentHttpBaseUrl,
+  usePrimaryEnvironment,
+} from "../../state/environments";
 import { previewEnvironment } from "../../state/preview";
 import { allReachableShellsLiveAtom } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -81,6 +87,7 @@ function threadShowingBrowser(
 export function DesktopWebLinkCoordinator() {
   const router = useRouter();
   const primaryEnvironment = usePrimaryEnvironment();
+  const { environments, isReady: environmentsReady } = useEnvironments();
   const openPullRequestsInApp = useClientSettings((settings) => settings.pullRequestLinksOpenInApp);
   const openChangeRequest = useOpenChangeRequestLink();
   const { scratchEnvironmentId, openScratchProject } = useScratchProject();
@@ -98,9 +105,11 @@ export function DesktopWebLinkCoordinator() {
   // A sync IPC read; the setting only changes across a relaunch.
   const [localEnvironmentDisabled] = useState(isLocalEnvironmentDisabled);
   // With Local environment disabled there is no primary to wait for, so links run against the
-  // saved remote environments instead of waiting forever.
+  // saved remote environments instead of waiting forever. The catalog must finish loading
+  // before the bridge drains startup links, so saved remotes are not mistaken for unknown ones.
   const ready =
     webLinks !== undefined &&
+    environmentsReady &&
     (localEnvironmentDisabled ||
       (primaryEnvironment?.connection.phase === "connected" &&
         primaryEnvironment.serverConfig !== null));
@@ -207,8 +216,21 @@ export function DesktopWebLinkCoordinator() {
       return;
     }
     const appPath = promptLinkAppPath(url);
-    if (appPath !== null) {
+    const bareThread = parseThreadDeepLink(url);
+    if (
+      appPath !== null &&
+      (bareThread === null ||
+        environments.some((e) => e.environmentId === bareThread.environmentId))
+    ) {
       await router.navigate({ href: appPath });
+      return;
+    }
+    if (bareThread !== null) {
+      try {
+        await readLocalApi()?.shell.openExternal(threadDeepLink(bareThread));
+      } catch (error) {
+        reportFailure(url, error instanceof Error ? error.message : url);
+      }
       return;
     }
     const routeParams = router.state.matches.at(-1)?.params ?? {};
