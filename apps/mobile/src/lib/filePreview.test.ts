@@ -99,6 +99,9 @@ vi.mock("react-native", () => ({
       props.children,
     ),
 }));
+vi.mock("react-native-keyboard-controller", () => ({
+  KeyboardController: { dismiss: vi.fn(async () => {}) },
+}));
 vi.mock("../components/PierreEntryIcon", () => ({ PierreEntryIcon: () => null }));
 vi.mock("../components/ui/AppText", () => ({
   AppText: ({ children }: { children?: ReactNode }) => createElement("span", null, children),
