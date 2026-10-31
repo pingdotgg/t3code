@@ -16,6 +16,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -410,6 +411,34 @@ describe("CursorAdapterV2", () => {
       cancelCalls: 1,
       answers: ["Checking.", "Done."],
     },
+    {
+      reason: "a continuation during idle cancellation with a hung wait",
+      updates: [
+        { type: "text-delta", text: "Checking." },
+        { type: "turn-ended" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      duringCancel: [
+        { type: "text-delta", text: "Done." },
+        { type: "turn-ended" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.never,
+      failure: null,
+      cancelCalls: 1,
+      answers: ["Checking.", "Done."],
+    },
+    {
+      reason: "an interruption after idle cancellation timed out with a hung wait",
+      updates: [
+        { type: "text-delta", text: "Done." },
+        { type: "turn-ended" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.never,
+      failure: null,
+      status: "interrupted",
+      cancelOutcome: "timeout" as const,
+      interrupt: true,
+      cancelCalls: 2,
+    },
     ...(["before-wait", "after-wait", "timeout"] as const).map((cancelOutcome) => ({
       reason: "a cancelled wait when idle cancel fails " + cancelOutcome,
       updates: [
@@ -442,6 +471,8 @@ describe("CursorAdapterV2", () => {
       const { updates = [], wait, failure, status, cancelCalls } = testCase;
       const answers = "answers" in testCase ? testCase.answers : undefined;
       const continuation = "continuation" in testCase ? testCase.continuation : undefined;
+      const interrupt = "interrupt" in testCase && testCase.interrupt;
+      const duringCancel = "duringCancel" in testCase ? testCase.duringCancel : undefined;
       const cancelOutcome = "cancelOutcome" in testCase ? testCase.cancelOutcome : undefined;
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({
@@ -490,10 +521,16 @@ describe("CursorAdapterV2", () => {
                       ),
                     cancel: Effect.gen(function* () {
                       observedCancelCalls += 1;
+                      if (observedCancelCalls > 1) return;
+                      for (const update of duringCancel ?? [])
+                        yield* input.onDelta!(update).pipe(Effect.orDie);
                       if (cancelOutcome !== "before-wait") {
                         yield* Deferred.succeed(cancelled, undefined);
                       }
-                      if (cancelOutcome === "after-wait" || cancelOutcome === "timeout") {
+                      if (
+                        cancelOutcome === "after-wait" ||
+                        (cancelOutcome === "timeout" && !interrupt)
+                      ) {
                         yield* Deferred.await(waitObserved);
                       }
                       if (cancelOutcome === "timeout") return yield* Effect.never;
@@ -573,6 +610,21 @@ describe("CursorAdapterV2", () => {
       yield* TestClock.adjust("1 second");
       if (cancelOutcome === "before-wait") yield* Deferred.succeed(cancelled, undefined);
       if (cancelOutcome === "timeout") yield* TestClock.adjust("10 seconds");
+      if (interrupt) {
+        const started = yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "provider_turn.updated"),
+          Stream.take(1),
+          Stream.runCollect,
+        );
+        const interrupting = yield* runtime
+          .interruptTurn({
+            providerThread,
+            providerTurnId: started[0]!.providerTurn.id,
+          })
+          .pipe(Effect.forkScoped);
+        yield* TestClock.adjust("10 seconds");
+        yield* Fiber.join(interrupting);
+      }
       const events = yield* runtime.events.pipe(
         Stream.takeUntil((event) => event.type === "turn.terminal"),
         Stream.runCollect,

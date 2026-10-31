@@ -2240,18 +2240,15 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 ),
               );
               yield* Deferred.succeed(cancelResult, released);
-              if (
-                !released ||
-                context.finalized ||
-                context.interrupted ||
-                context.idleFinalizeGeneration !== generation ||
-                !context.turnEnded ||
-                cursorTurnHasActiveWork(context)
-              ) {
-                return;
-              }
+              if (!released || context.finalized) return;
               const transportFailure = context.assistantReply.failure;
-              const status = transportFailure === undefined ? "completed" : "failed";
+              const status = context.interrupted
+                ? "interrupted"
+                : transportFailure !== undefined
+                  ? "failed"
+                  : context.turnEnded && !cursorTurnHasActiveWork(context)
+                    ? "completed"
+                    : "cancelled";
               yield* finalizeTurn({
                 context,
                 status,
@@ -2792,7 +2789,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 providerThreadId: turnInput.providerThread.id,
                 providerTurnId: turnInput.providerTurnId,
               });
-              yield* finalizeTurn({ context, status: "interrupted" });
+              yield* finalizeTurn({
+                context,
+                status: "interrupted",
+                ...(context.idleCancelResult !== null
+                  ? { threadDisposition: "broken" as const }
+                  : {}),
+              });
             },
             (effect, turnInput) =>
               effect.pipe(
