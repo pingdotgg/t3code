@@ -7,6 +7,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
+  type ServerSettings,
 } from "@t3tools/contracts";
 import {
   type CustomModelDefinition,
@@ -16,7 +17,8 @@ import {
   resolveSelectableModel,
 } from "@t3tools/shared/model";
 import { getComposerProviderState } from "./components/chat/composerProviderState";
-import { UnifiedSettings } from "@t3tools/contracts/settings";
+import { type ClientSettings, UnifiedSettings } from "@t3tools/contracts/settings";
+import { resolveModelPreferences } from "@t3tools/shared/serverSettings";
 import * as Arr from "effect/Array";
 import * as Equal from "effect/Equal";
 import * as Result from "effect/Result";
@@ -311,8 +313,9 @@ export function resolveEffectiveDefaultModelSelection(
 }
 
 export function defaultModelSelectionsAreMixed(
+  clientSettings: ClientSettings,
   targets: ReadonlyArray<{
-    settings: UnifiedSettings;
+    settings: ServerSettings;
     providers: ReadonlyArray<ServerProvider>;
   }>,
 ): boolean {
@@ -322,7 +325,15 @@ export function defaultModelSelectionsAreMixed(
     return {
       stored,
       effective: selection
-        ? resolveEffectiveDefaultModelSelection(settings, providers, selection)
+        ? resolveEffectiveDefaultModelSelection(
+            {
+              ...clientSettings,
+              ...settings,
+              ...resolveModelPreferences(settings, clientSettings),
+            },
+            providers,
+            selection,
+          )
         : null,
     };
   });

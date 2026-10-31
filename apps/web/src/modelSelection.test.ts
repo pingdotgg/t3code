@@ -1,11 +1,16 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL,
+  DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@t3tools/contracts/settings";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_UNIFIED_SETTINGS,
+  type UnifiedSettings,
+} from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
 import { createModelSelection } from "@t3tools/shared/model";
 import { deriveEffectiveComposerModelState } from "./composerDraftStore";
@@ -92,34 +97,49 @@ describe("scoped default model selections", () => {
       ],
     };
 
-    expect(defaultModelSelectionsAreMixed([codex, claude])).toBe(true);
-    expect(defaultModelSelectionsAreMixed([claude, codex])).toBe(true);
-    expect(defaultModelSelectionsAreMixed([codex, codex])).toBe(false);
-    expect(defaultModelSelectionsAreMixed([claude])).toBe(false);
-    expect(defaultModelSelectionsAreMixed([])).toBe(false);
-    expect(defaultModelSelectionsAreMixed([codex, { ...codex, providers: [] }])).toBe(true);
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [codex, claude])).toBe(true);
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [claude, codex])).toBe(true);
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [codex, codex])).toBe(false);
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [claude])).toBe(false);
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [])).toBe(false);
     expect(
-      defaultModelSelectionsAreMixed([
+      defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [codex, { ...codex, providers: [] }]),
+    ).toBe(true);
+    expect(
+      defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [
         codex,
         { ...codex, providers: [provider({ instanceId: "codex", models: ["gpt-6-sol"] })] },
       ]),
     ).toBe(true);
-    expect(
-      defaultModelSelectionsAreMixed([
-        codex,
-        {
-          ...codex,
-          settings: {
-            ...codex.settings,
-            providerModelPreferences: {
-              [ProviderInstanceId.make("codex")]: {
-                hiddenModels: ["gpt-6-astra"],
-                modelOrder: [],
-              },
-            },
+    const configured = {
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerModelPreferences: {
+          [ProviderInstanceId.make("codex")]: {
+            hiddenModels: ["gpt-6-astra"],
+            modelOrder: [],
           },
-          providers: [provider({ instanceId: "codex", models: ["gpt-6-astra", "gpt-6-sol"] })],
         },
+      },
+      providers: [provider({ instanceId: "codex", models: ["gpt-6-astra", "gpt-6-sol"] })],
+    };
+    const inherited = { ...configured, settings: DEFAULT_SERVER_SETTINGS };
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [configured, inherited])).toBe(
+      true,
+    );
+    expect(defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [inherited, configured])).toBe(
+      true,
+    );
+    const clientSettings = {
+      ...DEFAULT_CLIENT_SETTINGS,
+      providerModelPreferences: configured.settings.providerModelPreferences,
+    };
+    expect(defaultModelSelectionsAreMixed(clientSettings, [configured, inherited])).toBe(false);
+    expect(defaultModelSelectionsAreMixed(clientSettings, [inherited, configured])).toBe(false);
+    expect(
+      defaultModelSelectionsAreMixed(clientSettings, [
+        { ...inherited, settings: { ...DEFAULT_SERVER_SETTINGS, providerModelPreferences: {} } },
+        inherited,
       ]),
     ).toBe(true);
   });
@@ -136,12 +156,17 @@ describe("scoped default model selections", () => {
         ),
       },
     };
-    expect(defaultModelSelectionsAreMixed([selected, { ...selected }])).toBe(false);
     expect(
-      defaultModelSelectionsAreMixed([selected, { providers, settings: DEFAULT_UNIFIED_SETTINGS }]),
+      defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [selected, { ...selected }]),
+    ).toBe(false);
+    expect(
+      defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [
+        selected,
+        { providers, settings: DEFAULT_UNIFIED_SETTINGS },
+      ]),
     ).toBe(true);
     expect(
-      defaultModelSelectionsAreMixed([
+      defaultModelSelectionsAreMixed(DEFAULT_CLIENT_SETTINGS, [
         selected,
         {
           ...selected,
