@@ -105,7 +105,11 @@ export function getFilesystemBrowseTabCompletion(
     prefix = prefix.slice(0, length);
   }
   const name = prefix.join("");
-  return name.length > filterQuery.length ? { name, isComplete: false } : null;
+  const lowerName = name.toLowerCase();
+  return name.length > filterQuery.length &&
+    visibleEntries.every((entry) => entry.name.toLowerCase().startsWith(lowerName))
+    ? { name, isComplete: false }
+    : null;
 }
 
 export function createBrowseNavigationCoordinator() {
