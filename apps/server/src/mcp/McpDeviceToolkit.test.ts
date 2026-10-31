@@ -269,6 +269,51 @@ it.effect("rejects unavailable agent access before booting or opening a device",
   );
 });
 
+it.effect("device_open reports a failed host's setup error instead of no devices", () => {
+  const failure = "Device support failed: npm was not found. Install Node.js, which includes npm.";
+  const failedState = {
+    ...state,
+    hostStatus: "failed" as const,
+    hostStatusDetail: failure,
+    hostStatuses: { local: { status: "failed" as const, detail: failure } },
+    devices: [],
+  };
+  const layerFailed = Layer.mock(DeviceService.DeviceService)({
+    state: Effect.succeed(failedState),
+    list: Effect.succeed(failedState),
+    open: () => Effect.die("Must not open a device on a host whose setup failed"),
+  });
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({ name: "device_open", arguments: { platform: "android" } })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(["device"])),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    const text = result.content
+      .flatMap((entry) => (entry.type === "text" ? [entry.text] : []))
+      .join("\n");
+    expect(result.isError).toBe(true);
+    expect(text).not.toContain("No android devices were found");
+    expect(text).toContain(failure);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      McpHttpServer.layerDeviceToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(layerFailed),
+        Layer.provide(layerProjectsMock),
+        Layer.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" }),
+        ),
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+  );
+});
+
 describe("device targeting across hosts", () => {
   const macHost = {
     id: "mac-mini",
