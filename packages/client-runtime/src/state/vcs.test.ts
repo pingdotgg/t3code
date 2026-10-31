@@ -209,6 +209,40 @@ describe("cached VCS refs", () => {
         invalidateVcsRefs(registry, TARGET);
 
         expect(yield* Queue.take(requests)).toEqual({ cwd: "/repo", limit: 100, refresh: true });
+
+        yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            registry.mount(
+              atoms.listRefs({
+                environmentId: TARGET.environmentId,
+                input: { cwd: "/other-repo", limit: 100 },
+              }),
+            ),
+          ),
+          (unmount) => Effect.sync(unmount),
+        );
+        expect(yield* Queue.take(requests)).toEqual({
+          cwd: "/other-repo",
+          limit: 100,
+          refresh: true,
+        });
+
+        yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            registry.mount(
+              atoms.listRefs({
+                environmentId: TARGET.environmentId,
+                input: { cwd: "/other-repo", query: "release", limit: 100 },
+              }),
+            ),
+          ),
+          (unmount) => Effect.sync(unmount),
+        );
+        expect(yield* Queue.take(requests)).toEqual({
+          cwd: "/other-repo",
+          query: "release",
+          limit: 100,
+        });
       }),
     ),
   );

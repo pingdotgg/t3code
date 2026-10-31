@@ -33,6 +33,9 @@ import {
   withVcsRefsPersistenceLock,
 } from "./vcsRefInvalidation.ts";
 
+// Share freshness across search and pagination keys, but keep it local to this registry.
+const serverRefsRevisionAtom = Atom.family((_key: string) => Atom.make(0).pipe(Atom.keepAlive));
+
 const OFFLINE_BRANCH_LIST_LIMIT = 100;
 const VCS_REFS_IDLE_TTL_MS = 30_000;
 const VCS_STATUS_IDLE_TTL_MS = 10_000;
@@ -122,7 +125,6 @@ export const makeCachedVcsRefsChanges = Effect.fn("CachedVcsRefsState.makeChange
   expectedRevision?: number,
   registry?: AtomRegistry.AtomRegistry,
   persistedCacheReadable = true,
-  bypassServerSnapshot = false,
 ) {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
   const cache = yield* Persistence.EnvironmentCacheStore;
@@ -144,6 +146,13 @@ export const makeCachedVcsRefsChanges = Effect.fn("CachedVcsRefsState.makeChange
         )
       : Option.none<VcsListRefsResult>();
   const refresh = Effect.fn("CachedVcsRefsState.refresh")(function* () {
+    const revisionAtom = serverRefsRevisionAtom(
+      `${environmentId.length}:${environmentId}${input.cwd}`,
+    );
+    const bypassServerSnapshot =
+      expectedRevision !== undefined &&
+      registry !== undefined &&
+      expectedRevision > registry.get(revisionAtom);
     const refs = yield* request(
       WS_METHODS.vcsListRefs,
       bypassServerSnapshot ? { ...input, refresh: true } : input,
@@ -170,6 +179,7 @@ export const makeCachedVcsRefsChanges = Effect.fn("CachedVcsRefsState.makeChange
       expectedRevision,
       persist: useCache,
     });
+    if (committed && bypassServerSnapshot) registry.set(revisionAtom, expectedRevision);
     return committed ? Option.some(refs) : Option.none<VcsListRefsResult>();
   });
 
@@ -221,7 +231,6 @@ function cachedVcsRefsChanges(
   input: VcsListRefsInput,
   expectedRevision: number,
   persistedCacheReadable: boolean,
-  bypassServerSnapshot: boolean,
 ) {
   return followStreamInEnvironment(
     environmentId,
@@ -233,7 +242,6 @@ function cachedVcsRefsChanges(
           expectedRevision,
           registry,
           persistedCacheReadable,
-          bypassServerSnapshot,
         );
       }),
     ),
@@ -250,21 +258,14 @@ export function createVcsEnvironmentAtoms<R, E>(
    */
   const listRefsFamily = Atom.family((key: string) => {
     const [environmentId, input] = JSON.parse(key) as [EnvironmentId, VcsListRefsInput];
-    let builtRevision: number | undefined;
     return runtime
       .atom((get) => {
         const state = get(vcsRefsCacheStateAtom({ environmentId }));
-        // The server snapshots refs for minutes and only drops them for its own Git
-        // writes; an invalidation also covers terminal and agent changes, so skip it.
-        const bypassServerSnapshot =
-          builtRevision !== undefined && builtRevision !== state.revision;
-        builtRevision = state.revision;
         return cachedVcsRefsChanges(
           environmentId,
           input,
           state.revision,
           state.persistedCacheReadable,
-          bypassServerSnapshot,
         );
       })
       .pipe(
