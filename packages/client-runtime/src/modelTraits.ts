@@ -152,7 +152,7 @@ export function buildTraitsTriggerDisplay(input: {
               descriptor,
               input.modelSelection,
               input.reportedModelSelection,
-            ) ?? (REASONING_SELECT_DESCRIPTOR_IDS.has(descriptor.id) ? descriptor.label : null));
+            ) ?? (descriptor.id === "thinking" ? descriptor.label : null));
     if (typeof label === "string" && label.length > 0) {
       if (
         reasoningLabelIndex === -1 &&
