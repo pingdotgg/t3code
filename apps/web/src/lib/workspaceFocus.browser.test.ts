@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { DraftId } from "../composerDraftStore";
+import { selectFocusedTab } from "../layout/layoutModel";
+import { useLayoutStore } from "../layout/layoutStore";
 import { createWorkspaceFocusController } from "./workspaceFocus";
 
 function setup() {
@@ -32,6 +37,83 @@ function setup() {
 }
 
 describe("workspace area focus", () => {
+  it("cycles through matching areas in separate panes and remembers each control", () => {
+    using fixture = setup();
+    const sidebar = fixture.area("sidebar", 0);
+    const firstPane = fixture.append('<div data-layout-tab-id="first"></div>');
+    const secondPane = fixture.append('<div data-layout-tab-id="second"></div>');
+    const first = fixture.area("composer", 2, firstPane);
+    const second = fixture.area("composer", 2, secondPane);
+    const remembered = document.createElement("button");
+    remembered.textContent = "Second control";
+    second.element.append(remembered);
+    remembered.focus();
+    sidebar.button.focus();
+    expect(fixture.controller.move(1)).toBe(true);
+    expect(document.activeElement).toBe(first.button);
+    expect(fixture.controller.move(1)).toBe(true);
+    expect(document.activeElement).toBe(remembered);
+    expect(fixture.controller.move(-1)).toBe(true);
+    expect(document.activeElement).toBe(first.button);
+  });
+
+  it("waits for a requested panel in its originating pane", async () => {
+    using fixture = setup();
+    const firstPane = fixture.append('<div data-layout-tab-id="first"></div>');
+    const secondPane = fixture.append('<div data-layout-tab-id="second"></div>');
+    const composer = fixture.area("composer", 2, firstPane);
+    fixture.area("panel", 4, secondPane);
+    composer.button.focus();
+    fixture.controller.request({ area: "panel" });
+    const panel = fixture.area("panel", 4, firstPane);
+    await vi.waitFor(() => expect(document.activeElement).toBe(panel.button));
+  });
+
+  it("waits for the requested thread's surface instead of another panel", async () => {
+    using fixture = setup();
+    const original = useLayoutStore.getState().layout;
+    using _restore = { [Symbol.dispose]: () => useLayoutStore.setState({ layout: original }) };
+    const otherRef = scopeThreadRef(EnvironmentId.make("other"), ThreadId.make("thread"));
+    const targetRef = scopeThreadRef(EnvironmentId.make("target"), ThreadId.make("thread"));
+    useLayoutStore.getState().openTab({ kind: "surface", threadRef: otherRef, surfaceId: "diff" });
+    const otherTab = selectFocusedTab(useLayoutStore.getState().layout)!;
+    useLayoutStore
+      .getState()
+      .openTab(
+        { kind: "surface", threadRef: targetRef, surfaceId: "diff" },
+        { placement: "new-column" },
+      );
+    const targetTab = selectFocusedTab(useLayoutStore.getState().layout)!;
+    const otherPane = fixture.append("<div></div>");
+    otherPane.dataset.layoutTabId = otherTab.id;
+    const other = fixture.area("panel", 4, otherPane);
+    other.button.focus();
+    fixture.controller.request({
+      area: "panel",
+      surface: { threadKey: scopedThreadKey(targetRef), surfaceId: "diff" },
+    });
+    const targetPane = fixture.append("<div></div>");
+    targetPane.dataset.layoutTabId = targetTab.id;
+    const target = fixture.area("panel", 4, targetPane);
+    await vi.waitFor(() => expect(document.activeElement).toBe(target.button));
+  });
+
+  it("skips a pane outside the clipped layout viewport", () => {
+    using fixture = setup();
+    const sidebar = fixture.area("sidebar", 0);
+    const clip = fixture.append(
+      '<div data-layout-clip="" style="position:relative;width:100px;height:100px;overflow:hidden"></div>',
+    );
+    const pane = document.createElement("div");
+    pane.dataset.layoutTabId = "offscreen";
+    pane.style.cssText = "position:absolute;left:200px;top:0;width:100px;height:100px";
+    clip.append(pane);
+    fixture.area("composer", 2, pane);
+    sidebar.button.focus();
+    expect(fixture.controller.move(1)).toBe(true);
+    expect(document.activeElement).toBe(sidebar.button);
+  });
+
   it("cycles in workspace order in both directions, independent of DOM order", () => {
     using fixture = setup();
     const panel = fixture.area("panel", 3);
@@ -249,6 +331,20 @@ describe("workspace area focus", () => {
     expect(document.activeElement).toBe(clickedRow);
   });
 
+  it("cycles to the launcher and returns there when a panel disappears", async () => {
+    using fixture = setup();
+    const sidebar = fixture.area("sidebar", 0);
+    const launcher = fixture.area("launcher", 1);
+    const panel = fixture.area("panel", 4);
+    sidebar.button.focus();
+    expect(fixture.controller.move(1)).toBe(true);
+    expect(document.activeElement).toBe(launcher.button);
+    expect(fixture.controller.move(1)).toBe(true);
+    expect(document.activeElement).toBe(panel.button);
+    panel.element.hidden = true;
+    await vi.waitFor(() => expect(document.activeElement).toBe(launcher.button));
+  });
+
   it("waits for a requested area to mount", async () => {
     using fixture = setup();
     fixture.area("composer", 2);
@@ -279,5 +375,111 @@ describe("workspace area focus", () => {
     composer.button.focus();
     expect(fixture.controller.move(1)).toBe(true);
     expect(document.activeElement).toBe(terminal.button);
+  });
+
+  it("cycles through every area of each visible pane and skips inactive tabs", () => {
+    using fixture = setup();
+    const sidebar = fixture.area("sidebar", 0);
+    const first = fixture.append('<div data-layout-tab-id="first"></div>');
+    const firstTabs = fixture.area("tabs", 0.5, first);
+    const firstConversation = fixture.area("conversation", 1, first);
+    const firstComposer = fixture.area("composer", 2, first);
+    const second = fixture.append('<div data-layout-tab-id="second"></div>');
+    const secondTabs = fixture.area("tabs", 0.5, second);
+    const secondConversation = fixture.area("conversation", 1, second);
+    const secondComposer = fixture.area("composer", 2, second);
+    const inactive = fixture.append('<div data-layout-tab-id="inactive" inert></div>');
+    fixture.area("composer", 2, inactive);
+    sidebar.button.focus();
+    for (const target of [
+      firstTabs.button,
+      firstConversation.element,
+      firstComposer.button,
+      secondTabs.button,
+      secondConversation.element,
+      secondComposer.button,
+      sidebar.button,
+    ]) {
+      expect(fixture.controller.move(1)).toBe(true);
+      expect(document.activeElement).toBe(target);
+    }
+    fixture.controller.move(-1);
+    expect(document.activeElement).toBe(secondComposer.button);
+    fixture.controller.move(-1);
+    expect(document.activeElement).toBe(secondConversation.element);
+  });
+
+  it("restores panel controls independently in panes with the same surface key", () => {
+    using fixture = setup();
+    const sidebar = fixture.area("sidebar", 0);
+    const first = fixture.append('<div data-layout-tab-id="first"></div>');
+    const firstPanel = fixture.area("panel", 3, first);
+    firstPanel.element.dataset.workspaceFocusKey = "panel:files";
+    const firstControl = document.createElement("button");
+    firstControl.setAttribute("aria-label", "Expand folder");
+    firstPanel.element.append(firstControl);
+    const second = fixture.append('<div data-layout-tab-id="second"></div>');
+    const secondPanel = fixture.area("panel", 3, second);
+    secondPanel.element.dataset.workspaceFocusKey = "panel:files";
+    const secondControl = firstControl.cloneNode() as HTMLButtonElement;
+    secondPanel.element.append(secondControl);
+    firstControl.focus();
+    secondControl.focus();
+    sidebar.button.focus();
+    fixture.controller.move(1);
+    expect(document.activeElement).toBe(firstControl);
+    fixture.controller.move(1);
+    expect(document.activeElement).toBe(secondControl);
+  });
+
+  it("targets content and panel requests in the focused pane", () => {
+    using fixture = setup();
+    const first = fixture.append('<div data-layout-tab-id="first"></div>');
+    fixture.area("composer", 2, first);
+    const firstPanel = fixture.area("panel", 3, first);
+    const second = fixture.append(
+      '<div data-layout-tab-id="second" data-layout-pane-focused="true"></div>',
+    );
+    const composer = fixture.area("composer", 2, second);
+    const panel = fixture.area("panel", 3, second);
+    expect(fixture.controller.focus("content")).toBe(true);
+    expect(document.activeElement).toBe(composer.button);
+    expect(fixture.controller.focus("panel")).toBe(true);
+    expect(document.activeElement).toBe(panel.button);
+    composer.element.hidden = true;
+    expect(fixture.controller.focus("content")).toBe(true);
+    expect(document.activeElement).toBe(panel.button);
+    expect(fixture.controller.move(-1, "panel")).toBe(true);
+    expect(document.activeElement).toBe(firstPanel.button);
+  });
+
+  it("changes keyboard ownership only when explicitly moving focus to a pane", () => {
+    using fixture = setup();
+    const original = useLayoutStore.getState().layout;
+    using _restore = { [Symbol.dispose]: () => useLayoutStore.setState({ layout: original }) };
+    useLayoutStore.getState().openTab({
+      kind: "chat",
+      target: { kind: "draft", draftId: DraftId.make("focus-first") },
+    });
+    const firstTab = selectFocusedTab(useLayoutStore.getState().layout)!;
+    useLayoutStore
+      .getState()
+      .openTab(
+        { kind: "chat", target: { kind: "draft", draftId: DraftId.make("focus-second") } },
+        { placement: "new-column" },
+      );
+    const secondTab = selectFocusedTab(useLayoutStore.getState().layout)!;
+    const first = fixture.append("<div></div>");
+    first.dataset.layoutTabId = firstTab.id;
+    const firstComposer = fixture.area("composer", 2, first);
+    const second = fixture.append("<div></div>");
+    second.dataset.layoutTabId = secondTab.id;
+    const secondComposer = fixture.area("composer", 2, second);
+    firstComposer.button.focus();
+    expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(secondTab.id);
+    secondComposer.button.focus();
+    fixture.controller.move(-1);
+    expect(document.activeElement).toBe(firstComposer.button);
+    expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(firstTab.id);
   });
 });

@@ -166,7 +166,8 @@ function defaultBindingForBinding(
       (entry) =>
         entry.command === binding.command && whenAstToExpression(entry.whenAst) === bindingWhen,
     ) ??
-    DEFAULT_RESOLVED_KEYBINDINGS.find((entry) => entry.command === binding.command)
+    // The last rule is the main key; alt+cmd aliases come first (later rules win).
+    DEFAULT_RESOLVED_KEYBINDINGS.findLast((entry) => entry.command === binding.command)
   );
 }
 
@@ -334,10 +335,9 @@ const COMMAND_LABELS: Partial<Record<string, string>> = {
   "terminal.splitVertical": "Split terminal vertically",
   "terminal.new": "New terminal",
   "terminal.close": "Close terminal",
-  "rightPanel.toggle": "Toggle right panel",
+  "rightPanel.toggle": "Toggle side pane",
   "threadPanel.toggle": "Toggle thread panel",
   "rightPanel.close": "Close right panel",
-  "rightPanel.new": "New right panel tab",
   "view.reopenClosed": "Reopen closed tab",
   "pullRequest.copyNumber": "Copy pull request number",
   "diff.toggle": "Toggle diff panel",
@@ -383,6 +383,35 @@ const COMMAND_LABELS: Partial<Record<string, string>> = {
   "thread.pin": "Pin thread",
   "thread.undo": "Undo last thread action",
   "git.commitPush": "Commit and push",
+  "tab.new": "New tab",
+  "tab.close": "Close tab",
+  "tab.next": "Next tab",
+  "tab.previous": "Previous tab",
+  "layout.splitRight": "New pane to the right",
+  "layout.splitDown": "New pane below",
+  "layout.fill": "Fill the window",
+  "layout.focusLeft": "Focus pane on the left",
+  "layout.focusRight": "Focus pane on the right",
+  "layout.focusUp": "Focus pane above",
+  "layout.focusDown": "Focus pane below",
+  "layout.moveLeft": "Move pane left",
+  "layout.moveRight": "Move pane right",
+  "layout.moveUp": "Move pane up",
+  "layout.moveDown": "Move pane down",
+  "layout.focusFirstColumn": "Focus first column",
+  "layout.focusLastColumn": "Focus last column",
+  "layout.cycleColumnWidth": "Column width ⅓ ½ ⅔",
+  "layout.centerColumn": "Center column",
+  "layout.pullLeft": "Pull pane into the left column",
+  "layout.pullRight": "Push pane out to its own column",
+  "layout.shortcutSheet": "Show every shortcut",
+  "layout.focusWorkspaceDown": "Next workspace",
+  "layout.focusWorkspaceUp": "Previous workspace",
+  "layout.moveToWorkspaceDown": "Send pane to the next workspace",
+  "layout.moveToWorkspaceUp": "Send pane to the previous workspace",
+  "layout.moveWorkspaceDown": "Move workspace down",
+  "layout.moveWorkspaceUp": "Move workspace up",
+  "layout.overview": "Overview",
   "usage.open": "Open usage",
   "usage.cost": "Show usage by cost",
   "usage.tokens": "Show usage by tokens",

@@ -186,7 +186,7 @@ const BADGE_VARIANTS = [
   "info",
   "unavailable",
 ] as const;
-const BADGE_SIZES = ["sm", "default", "lg", "control"] as const;
+const BADGE_SIZES = ["sm", "default", "lg"] as const;
 const ALERT_VARIANTS = ["default", "info", "warning", "error"] as const;
 
 /**
@@ -572,9 +572,6 @@ function ButtonsSection() {
         </div>
       </Specimen>
       <Specimen label="Inline" source="<InlineButton tone>">
-        <p className="text-sm text-muted-foreground">
-          Changes apply to <InlineButton tone="picker">this project</InlineButton>.
-        </p>
         <div className="grid grid-cols-3 gap-6">
           <div className="flex flex-col items-start gap-2">
             <Caption>Default</Caption>
@@ -685,13 +682,6 @@ function ControlsSection() {
               <ListTodoIcon />
               Plan
             </Toggle>
-          </ToggleGroup>
-        </Cell>
-        <Cell caption="segmented-flat">
-          <ToggleGroup variant="segmented-flat" defaultValue={["day"]}>
-            <Toggle value="day">Day</Toggle>
-            <Toggle value="week">Week</Toggle>
-            <Toggle value="month">Month</Toggle>
           </ToggleGroup>
         </Cell>
         <Cell caption="default (icon toggles)">

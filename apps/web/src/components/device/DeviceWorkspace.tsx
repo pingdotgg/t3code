@@ -19,7 +19,7 @@ export function DeviceWorkspace(props: {
   hostKind: DeviceHostSummary["kind"] | undefined;
   hostDiagnostics: string | undefined;
   visible: boolean;
-  onFloat: () => void;
+  onFloat?: (() => void) | undefined;
   onClose: () => void;
   onPowerOff: () => void;
 }) {

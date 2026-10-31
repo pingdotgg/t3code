@@ -18,6 +18,7 @@ import {
 } from "./renderer";
 import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
 import { isMonospaceFamily } from "../../appearanceFonts";
+import { setWheelScroller } from "../../motion/gesture";
 import { observeResize } from "../../lib/observeResize";
 
 const DEFAULT_TERMINAL_FONT_SIZE = 12;
@@ -1703,6 +1704,14 @@ export class GhosttyTerminalSurface {
     this.scrollViewport(rows);
   }
 
+  /** Whether the wheel still does something here `dy`'s way; otherwise it switches workspaces. */
+  private readonly canWheelScroll = (dy: number) => {
+    if (this.core.isMouseTracking() || this.core.isAlternateScreen()) return true;
+    const state = this.readScrollbarState();
+    if (state === null) return false;
+    return dy < 0 ? state.offset > 0 : state.offset < state.total - state.len;
+  };
+
   private readonly onMouseDown = (event: MouseEvent) => {
     if (event.button === 0 || (event.button === 1 && isMiddleClickPastePlatform())) {
       event.preventDefault();
@@ -1806,6 +1815,7 @@ export class GhosttyTerminalSurface {
     this.canvas.addEventListener("pointerup", this.onPointerUp);
     this.canvas.addEventListener("pointercancel", this.onPointerUp);
     this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
+    setWheelScroller(this.canvas, this.canWheelScroll);
     this.canvas.addEventListener("mousedown", this.onMouseDown);
     this.canvas.addEventListener("mouseup", this.onMouseUp);
     this.canvas.addEventListener("contextmenu", this.onContextMenu);
@@ -1836,6 +1846,7 @@ export class GhosttyTerminalSurface {
     this.canvas.removeEventListener("pointerup", this.onPointerUp);
     this.canvas.removeEventListener("pointercancel", this.onPointerUp);
     this.canvas.removeEventListener("wheel", this.onWheel);
+    setWheelScroller(this.canvas, null);
     this.canvas.removeEventListener("mousedown", this.onMouseDown);
     this.canvas.removeEventListener("mouseup", this.onMouseUp);
     this.canvas.removeEventListener("contextmenu", this.onContextMenu);

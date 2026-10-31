@@ -6,10 +6,14 @@ import {
   OtlpEndpointCheckInput,
   resolveEnvironmentMachineKind,
   ServerObservability,
+  ServerConfig,
   ServerProvider,
   ServerProviders,
 } from "./server.ts";
-import { ServerSettings } from "./settings.ts";
+import { DEFAULT_LAYOUT_SETTINGS, ServerSettings } from "./settings.ts";
+
+const decodeServerConfigSettings = Schema.decodeUnknownSync(ServerConfig.fields.settings);
+const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 
 const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
 const decodeServerProviders = Schema.decodeUnknownSync(ServerProviders);
@@ -130,5 +134,24 @@ describe("OtlpEndpointCheckInput", () => {
     for (const url of ["data:text/plain,ok", "file:///etc/hosts", "collector:4318/v1/traces"]) {
       expect(() => decode({ signal: "traces", url })).toThrow();
     }
+  });
+});
+
+describe("ServerConfig legacy client layout", () => {
+  it("retains older servers' layout only in the config migration path", () => {
+    const legacySettings = { layout: { newTabPosition: "end" }, responseStreamingMode: "turn" };
+    const configSettings = decodeServerConfigSettings(legacySettings);
+    expect(configSettings.layout).toEqual({ ...DEFAULT_LAYOUT_SETTINGS, newTabPosition: "end" });
+    expect(decodeServerSettings(legacySettings)).not.toHaveProperty("layout");
+    expect(configSettings.responseStreamingMode).toBe("turn");
+  });
+
+  it("ignores malformed legacy layout without resetting server preferences", () => {
+    const configSettings = decodeServerConfigSettings({
+      layout: { template: "retired-shape" },
+      responseStreamingMode: "turn",
+    });
+    expect(configSettings.layout).toBeUndefined();
+    expect(configSettings.responseStreamingMode).toBe("turn");
   });
 });
