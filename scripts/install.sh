@@ -271,12 +271,13 @@ path_prefix=
 case "$bin_dir" in "$HOME"/*) path_rest="${bin_dir#"$HOME"}" path_prefix='$HOME' ;; esac
 case "$path_rest" in *[!A-Za-z0-9_./-]*) path_rest= ;; esac
 if [ -n "$path_rest" ]; then
-  path_line="export PATH=\"${path_prefix}${path_rest}:\$PATH\""
+  # Last on PATH, so it never shadows another t3.
+  path_line="export PATH=\"\$PATH:${path_prefix}${path_rest}\""
   shell_name="${SHELL:-}"
   case "${shell_name##*/}" in
     zsh) path_command="printf '\\n%s\\n' '${path_line}' >> ~/.zshrc" ;;
     bash) [ "$platform" = darwin ] || path_command="printf '\\n%s\\n' '${path_line}' >> ~/.bashrc" ;;
-    fish) path_command="fish_add_path ${path_prefix}${path_rest}" ;;
+    fish) path_command="fish_add_path --append ${path_prefix}${path_rest}" ;;
   esac
 fi
 case ":${PATH}:" in

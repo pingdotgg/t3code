@@ -14,7 +14,7 @@ import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 import * as BootService from "../cloud/bootService.ts";
 import {
   generatedWindowsShimTarget,
-  launcherOwnsVersionsDir,
+  isVersionExecutable,
   pinnedRuntimeVersionsDir,
 } from "../cloud/pinnedRuntime.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
@@ -52,14 +52,14 @@ export const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(functi
     if (shimPath === undefined) return undefined;
     const contents = yield* fs.readFileString(shimPath).pipe(Effect.option);
     const target = Option.isSome(contents) ? generatedWindowsShimTarget(contents.value) : undefined;
-    return target !== undefined && launcherOwnsVersionsDir(path, input.versionsDir, target)
+    return target !== undefined && isVersionExecutable(path, input.versionsDir, target)
       ? shimPath
       : undefined;
   }
   const linkTarget = yield* fs.readLink(input.launchedAs).pipe(Effect.option);
   if (Option.isNone(linkTarget)) return undefined;
   const resolved = path.resolve(path.dirname(input.launchedAs), linkTarget.value);
-  return launcherOwnsVersionsDir(path, input.versionsDir, resolved) ? input.launchedAs : undefined;
+  return isVersionExecutable(path, input.versionsDir, resolved) ? input.launchedAs : undefined;
 });
 
 /** Whether `launcher` is a link or unedited `t3.cmd` into this home's runtime/versions. */
@@ -93,8 +93,8 @@ const ownsLauncher = Effect.fn("cli.uninstall.owns_launcher")(function* (
   return targets.some(
     (target) =>
       target !== undefined &&
-      (launcherOwnsVersionsDir(path, versionsDir, target) ||
-        launcherOwnsVersionsDir(path, realVersionsDir, target)),
+      (isVersionExecutable(path, versionsDir, target) ||
+        isVersionExecutable(path, realVersionsDir, target)),
   );
 });
 

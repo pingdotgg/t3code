@@ -12,7 +12,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import packageJson from "../../package.json" with { type: "json" };
-import { generatedWindowsShimTarget, launcherOwnsVersionsDir } from "../cloud/pinnedRuntime.ts";
+import { generatedWindowsShimTarget, isVersionExecutable } from "../cloud/pinnedRuntime.ts";
 import { detectCliRunner, resolveCliCommand, resolveEntryPath } from "./invocation.ts";
 
 export class CliInstallError extends Schema.TaggedError<CliInstallError>()("CliInstallError", {
@@ -92,8 +92,10 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
     !(
       Option.isSome(current) &&
       current.value !== undefined &&
-      (launcherOwnsVersionsDir(path, versionsDir, current.value) ||
-        launcherOwnsVersionsDir(path, realVersionsDir, current.value))
+      (isVersionExecutable(path, versionsDir, current.value) ||
+        isVersionExecutable(path, realVersionsDir, current.value) ||
+        // This home's desktop launcher, which install.sh also replaces.
+        current.value === path.join(path.dirname(runtimeDir), "bin", name))
     )
   ) {
     return yield* new CliInstallError({
@@ -233,7 +235,8 @@ export const inTerminalForeground = Effect.gen(function* () {
   return isForegroundPs(
     yield* spawner
       .string(
-        ChildProcess.make("ps", ["-o", "tpgid=,pgid=", "-p", String(process.pid)], {
+        // Absolute: under npx, PATH starts with a project's node_modules/.bin.
+        ChildProcess.make("/bin/ps", ["-o", "tpgid=,pgid=", "-p", String(process.pid)], {
           stdin: "ignore",
           stderr: "ignore",
         }),
@@ -260,7 +263,8 @@ export const offerCliInstall = Effect.fn("cli.install.offer")(function* <E, R, E
   const environment = yield* HostProcess.Environment;
   if (!input.interactive || environment.CI || environment.SUDO_USER) return true;
   if (environment.T3CODE_USE_NPM === "1" || environment.TERM === "dumb") return true;
-  if (input.args.some((arg) => SKIPPED_ARGUMENTS.has(arg))) return true;
+  // `--json=true` and `-y=true` are the same flags.
+  if (input.args.some((arg) => SKIPPED_ARGUMENTS.has(arg.split("=")[0]!))) return true;
   const command = topLevelCommand(input.args);
   if (command === "install" || command === "uninstall") return true;
   if (detectCliRunner(yield* resolveEntryPath) === null) return true;

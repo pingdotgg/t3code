@@ -14,6 +14,7 @@ import * as NodePath from "node:path";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  pathSetup,
   pathSetupCommand,
   CommandAvailability,
   CommandResolutionCache,
@@ -1055,14 +1056,14 @@ describe("pathSetupCommand", () => {
       "/home/theo/.local/bin",
       "/bin/bash",
       "linux",
-      `printf '\\n%s\\n' 'export PATH="/home/theo/.local/bin:$PATH"' >> ~/.bashrc`,
+      `printf '\\n%s\\n' 'export PATH="$PATH:/home/theo/.local/bin"' >> ~/.bashrc`,
     ],
-    ["/Users/theo/.local/bin", "/usr/bin/fish", "linux", "fish_add_path $HOME/.local/bin"],
+    ["/Users/theo/.local/bin", "/usr/bin/fish", "linux", "fish_add_path --append $HOME/.local/bin"],
     [
       "/opt/t3/bin",
       "/bin/zsh",
       "linux",
-      `printf '\\n%s\\n' 'export PATH="/opt/t3/bin:$PATH"' >> ~/.zshrc`,
+      `printf '\\n%s\\n' 'export PATH="$PATH:/opt/t3/bin"' >> ~/.zshrc`,
     ],
     ["/Users/theo/.local/bin", "/bin/tcsh", "darwin", undefined],
     ["/Users/theo/.local/bin", "/bin/bash", "darwin", undefined],
@@ -1073,5 +1074,13 @@ describe("pathSetupCommand", () => {
     ["bin", "/bin/zsh", "linux", undefined],
   ] as const)("%s with %s on %s", (directory, shell, platform, expected) => {
     expect(pathSetupCommand({ directory, home: "/Users/theo", shell, platform })).toBe(expected);
+  });
+
+  it("writes fish's startup file under XDG_CONFIG_HOME when it is set", () => {
+    const setup = { directory: "/opt/t3/bin", home: "/home/theo", shell: "/usr/bin/fish" } as const;
+    expect(pathSetup({ ...setup, platform: "linux", configHome: "/home/theo/cfg" })?.file).toBe(
+      "/home/theo/cfg/fish/config.fish",
+    );
+    expect(pathSetup({ ...setup, platform: "linux" })?.file).toBe("~/.config/fish/config.fish");
   });
 });

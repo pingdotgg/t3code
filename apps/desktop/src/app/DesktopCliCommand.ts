@@ -197,8 +197,13 @@ export const make = Effect.gen(function* () {
       // A Finder or desktop launch may not set SHELL.
       shell: process.env.SHELL || readUserLoginShell(),
       platform: environment.platform,
+      configHome: process.env.XDG_CONFIG_HOME,
     });
-    return setup && { ...setup, path: path.join(environment.homeDirectory, setup.file.slice(2)) };
+    if (setup === undefined) return undefined;
+    const file = setup.file.startsWith("~/")
+      ? path.join(environment.homeDirectory, setup.file.slice(2))
+      : setup.file;
+    return { ...setup, path: file };
   };
   const hasLine = (setup: { readonly path: string; readonly line: string }) =>
     fs.readFileString(setup.path).pipe(

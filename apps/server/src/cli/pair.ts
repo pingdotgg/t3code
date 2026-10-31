@@ -88,7 +88,7 @@ export class IncompatibleServerProtocolError extends Schema.TaggedError<Incompat
     return [
       `The running T3 Code server (${this.serverVersion}) speaks orchestration protocol ${String(this.serverProtocolVersion)}, but this CLI speaks protocol ${String(ORCHESTRATION_PROTOCOL_VERSION)}.`,
       // npx runs an installed t3 instead when it is newer; the opt-out keeps the pinned version.
-      `Pair with the matching CLI instead: \`${this.windows ? "$env:T3CODE_USE_NPM=1; " : "T3CODE_USE_NPM=1 "}npx t3@${this.serverVersion} pair\`.`,
+      `Pair with the matching CLI instead: \`${this.windows ? `cmd /c "set T3CODE_USE_NPM=1&& npx t3@${this.serverVersion} pair"` : `T3CODE_USE_NPM=1 npx t3@${this.serverVersion} pair`}\`.`,
     ].join("\n");
   }
 }

@@ -971,11 +971,13 @@ interface PathSetupInput {
   readonly home: string;
   readonly shell: string | undefined;
   readonly platform: NodeJS.Platform;
+  /** `XDG_CONFIG_HOME`, where fish reads its startup file when set. */
+  readonly configHome?: string | undefined;
 }
 
 /**
- * The startup file (home-relative, `~/...`) and line that put `directory` on PATH for new zsh,
- * bash, or fish terminals. Undefined on Windows (writing PATH there would flatten the registry's
+ * The startup file (`~/...`, or absolute under `configHome`) and line that put `directory` last on
+ * PATH for new zsh, bash, or fish terminals, so it never shadows another `t3`. Undefined on Windows (writing PATH there would flatten the registry's
  * `%VAR%` entries), for other shells, macOS bash, or unsafe paths.
  */
 export function pathSetup(
@@ -989,7 +991,8 @@ export function pathSetup(
   const directory = underHome ? `$HOME${rest}` : rest;
   const shell = input.shell?.split("/").pop();
   if (shell === "fish") {
-    return { file: "~/.config/fish/config.fish", line: `fish_add_path ${directory}` };
+    const configHome = input.configHome?.startsWith("/") ? input.configHome : "~/.config";
+    return { file: `${configHome}/fish/config.fish`, line: `fish_add_path --append ${directory}` };
   }
   // macOS bash reads only the first of .bash_profile, .bash_login, and .profile; no file is safe.
   const file =
@@ -998,7 +1001,7 @@ export function pathSetup(
       : shell === "bash" && input.platform !== "darwin"
         ? "~/.bashrc"
         : undefined;
-  return file && { file, line: `export PATH="${directory}:$PATH"` };
+  return file && { file, line: `export PATH="$PATH:${directory}"` };
 }
 
 /** A command to paste that does what {@link pathSetup} describes. */

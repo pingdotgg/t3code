@@ -108,8 +108,10 @@ export function manualServerUpdateCommand(
   }
   const runner =
     installation?.kind === "pnpm-dlx" ? "pnpm dlx" : installation?.kind === "bunx" ? "bunx" : "npx";
-  const useNpm = os === "windows" ? "$env:T3CODE_USE_NPM=1; " : "T3CODE_USE_NPM=1 ";
-  return `${useNpm}${runner} t3@${targetVersion}`;
+  // On Windows, `cmd /c` works from both Command Prompt and PowerShell and does not keep the variable.
+  return os === "windows"
+    ? `cmd /c "set T3CODE_USE_NPM=1&& ${runner} t3@${targetVersion}"`
+    : `T3CODE_USE_NPM=1 ${runner} t3@${targetVersion}`;
 }
 
 export function buildVersionMismatchDismissalKey(

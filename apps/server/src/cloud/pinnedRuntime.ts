@@ -386,6 +386,17 @@ export function launcherOwnsVersionsDir(
   return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
+/** Whether `candidate` is a version's own executable, `<versionsDir>/<version>/t3[.exe]`. */
+export function isVersionExecutable(
+  path: Path.Path,
+  versionsDir: string,
+  candidate: string,
+): boolean {
+  return /^(?!\.\.)[^\\/]+[\\/]t3(?:\.exe)?$/i.test(
+    path.relative(versionsDir, path.resolve(candidate)),
+  );
+}
+
 /** The executable a `t3.cmd` shim written by the install script or `t3 update` runs. */
 export const windowsShimTarget = (contents: string) => /^"([^"]+)"/m.exec(contents)?.[1];
 

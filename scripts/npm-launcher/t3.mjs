@@ -193,10 +193,9 @@ function newestInstalled(home) {
         if (!isComplete(path.join(versions, installed), installed)) continue;
         fs.accessSync(target, fs.constants.X_OK);
         // A Windows `t3.cmd` needs a shell; its target does not.
-        found.push({
-          version: installed,
-          command: process.platform === "win32" ? target : launcher,
-        });
+        // Run the target just checked, not the link, which could change after the check. The
+        // link stays argv0, since `t3 update` and `t3 uninstall` find themselves through it.
+        found.push({ version: installed, command: target, argv0: launcher });
       } catch {}
     }
   } catch {}
@@ -222,7 +221,7 @@ function newestInstalled(home) {
           bundle ? fs.statSync(bundle).ctimeMs : 0,
         );
         if (changed <= info.ctimeMs) {
-          found.push({ version: desktop, command: shim });
+          found.push({ version: desktop, command: shim, argv0: shim });
         }
       }
     } catch {}
@@ -255,12 +254,15 @@ async function main() {
       : newestInstalled(home);
   if (installed && compareVersions(installed.version, version) >= 0) {
     note(
-      `using your installed t3 ${installed.version} (${installed.command}). Set T3CODE_USE_NPM=1 for npm's ${version}.`,
+      `using your installed t3 ${installed.version} (${installed.argv0}). Set T3CODE_USE_NPM=1 for npm's ${version}.`,
     );
     const { T3CODE_NPM_LAUNCHER_PATH: _, ...env } = process.env;
-    return run(installed.command, env, ipc, () => {
-      note(`your installed t3 at ${installed.command} could not run, so npm's ${version} runs.`);
-      runNpm(home, ipc).catch(fail);
+    return run(installed.command, env, ipc, {
+      argv0: installed.argv0,
+      fallback: () => {
+        note(`your installed t3 at ${installed.argv0} could not run, so npm's ${version} runs.`);
+        runNpm(home, ipc).catch(fail);
+      },
     });
   }
   if (installed) {
@@ -290,12 +292,13 @@ async function runNpm(home, ipc) {
 }
 
 /** `fallback` runs instead when the executable cannot start at all. */
-function run(executable, env, ipc, fallback) {
+function run(executable, env, ipc, { argv0, fallback } = {}) {
   let child;
   try {
     child = spawn(executable, process.argv.slice(2), {
       stdio: ipc ? ["inherit", "inherit", "inherit", "ipc"] : "inherit",
       env,
+      ...(argv0 === undefined ? {} : { argv0 }),
     });
   } catch (error) {
     // Node throws some spawn errors (ETXTBSY) instead of emitting them.
@@ -334,7 +337,8 @@ function run(executable, env, ipc, fallback) {
   });
   child.on("exit", (code, signal) =>
     finish(() =>
-      // 126 and 127 mean the shell could not run it; t3 never exits with them (triage maps them).
+      // 126 and 127 mean it could not start: a handoff target is at least as new as this
+      // launcher, so its CLI never exits with them (triage maps them).
       fallback && (code === 126 || code === 127)
         ? fallBack()
         : process.exit(code ?? 128 + (os.constants.signals[signal] || 1)),

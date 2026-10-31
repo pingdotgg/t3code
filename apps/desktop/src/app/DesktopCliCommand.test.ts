@@ -149,7 +149,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       yield* Effect.all([command.addToPath, command.addToPath], { concurrency: "unbounded" });
       expect((yield* command.addToPath).pathSetup).toEqual({ file: "~/.zshrc", added: true });
       expect(yield* fs.readFileString(zshrc)).toBe(
-        '# mine\n# Added by T3 Code\nexport PATH="$HOME/.local/bin:$PATH"\n',
+        '# mine\n# Added by T3 Code\nexport PATH="$PATH:$HOME/.local/bin"\n',
       );
 
       expect((yield* command.uninstall).installedPath).toBeNull();

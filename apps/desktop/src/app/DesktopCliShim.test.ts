@@ -107,9 +107,21 @@ describe("renderCliShim", () => {
   });
 
   it("extracts the AppImage where it cannot be mounted", () => {
-    const { shim, appImage } = fakeAppImage(false);
-    const result = run(shim, ["--version"], { APPIMAGE_EXTRACT_AND_RUN: "1" });
+    const { root, shim, appImage } = fakeAppImage(false);
+    // Under npx a project's node_modules/.bin comes first on PATH; the shim's helpers skip it.
+    const projectBin = NodePath.join(root, "project-bin");
+    for (const helper of ["mktemp", "head", "sleep", "rm"]) {
+      writeExecutable(
+        NodePath.join(projectBin, helper),
+        `#!/bin/sh\ntouch "${root}/ran-${helper}"\n`,
+      );
+    }
+    const result = run(shim, ["--version"], {
+      APPIMAGE_EXTRACT_AND_RUN: "1",
+      PATH: `${projectBin}:${process.env.PATH}`,
+    });
     expect(result.status).toBe(3);
+    expect(NodeFS.readdirSync(root).filter((name) => name.startsWith("ran-"))).toEqual([]);
     expect(result.stdout).toMatch(
       /squashfs-root\/resources\/app\.asar\/apps\/server\/dist\/bin\.mjs/,
     );

@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - Effect's file info has no ctime, which a moved-in app keeps.
+import * as NodeFS from "node:fs";
+
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -32,7 +35,8 @@ export const renderCliShim = (input: {
   readonly target: CliShimTarget;
   readonly shimPath: string;
   readonly t3Home: string;
-  readonly version: string;
+  /** Undefined leaves the version line out, so npx never runs this app in place of npm's t3. */
+  readonly version: string | undefined;
 }) => {
   const { target } = input;
   if (target.kind === "windows") {
@@ -74,7 +78,7 @@ export const renderCliShim = (input: {
     "#!/bin/sh",
     `# ${MARKER}`,
     // The npm launcher reads this to prefer the app's t3 when it is at least as new.
-    `# T3 Code version: ${input.version}`,
+    ...(input.version === undefined ? [] : [`# T3 Code version: ${input.version}`]),
     `export T3CODE_CLI_PATH=${shellWord(input.shimPath)}`,
     `home=${shellWord(input.t3Home)}`,
     'export T3CODE_HOME="${T3CODE_HOME:-$home}"',
@@ -96,18 +100,20 @@ export const renderCliShim = (input: {
     "unset APPIMAGE_EXTRACT_AND_RUN",
     // The runtime stays mounted until killed; traps unmount it because background jobs ignore Ctrl-C.
     // 126 means T3 Code could not start, so the npm launcher runs its own copy instead.
-    "work=$(mktemp -d) || exit 126",
+    // `command -p` finds helpers on the system PATH: under npx, PATH starts with a project's
+    // node_modules/.bin, and the CLI below still gets the user's PATH.
+    "work=$(command -p mktemp -d) || exit 126",
     '"$app" --appimage-mount >"$work/mount" 2>/dev/null &',
     "mounter=$!",
-    `trap 'kill "$mounter" 2>/dev/null; wait "$mounter" 2>/dev/null; rm -rf "$work"' EXIT`,
+    `trap 'kill "$mounter" 2>/dev/null; wait "$mounter" 2>/dev/null; command -p rm -rf "$work"' EXIT`,
     "trap 'exit 130' INT TERM",
     "mount=",
     'while kill -0 "$mounter" 2>/dev/null; do',
     // The mounter may not have created the file yet; the loop just tries again.
-    '  mount=$(head -n 1 "$work/mount" 2>/dev/null)',
+    '  mount=$(command -p head -n 1 "$work/mount" 2>/dev/null)',
     '  [ -d "$mount" ] && break',
     "  mount=",
-    "  sleep 0.05",
+    "  command -p sleep 0.05",
     "done",
     // Without FUSE the runtime cannot mount (it prints why and exits); extracting the image still works.
     'if [ -z "$mount" ]; then',
@@ -161,11 +167,21 @@ export const install = Effect.gen(function* () {
         }),
         onNone: () => ({ kind: "direct" as const, executable: process.execPath, entry }),
       });
+  // An app replaced on disk while this one runs (an update, or an older app moved in) may not be
+  // this version; the next app to start names its own.
+  const app = target.kind === "appimage" ? target.appImage : process.execPath;
+  const bundle = /^(.*\.app)\//.exec(app)?.[1];
+  const startedAt = (yield* Clock.currentTimeMillis) - process.uptime() * 1000;
+  const replaced = [app, bundle].some(
+    (file) =>
+      file !== undefined &&
+      (NodeFS.statSync(file, { throwIfNoEntry: false })?.ctimeMs ?? 0) > startedAt,
+  );
   const content = renderCliShim({
     target,
     shimPath,
     t3Home: environment.baseDir,
-    version: environment.appVersion,
+    version: replaced ? undefined : environment.appVersion,
   });
 
   return yield* Effect.gen(function* () {

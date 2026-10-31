@@ -160,7 +160,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         NodePath.join(root, "alias/runtime/versions/1.2.3/t3"),
       );
       expect(upgrade.output).toContain(
-        `printf '\\n%s\\n' 'export PATH="$HOME/bin:$PATH"' >> ~/.zshrc`,
+        `printf '\\n%s\\n' 'export PATH="$PATH:$HOME/bin"' >> ~/.zshrc`,
       );
 
       // Containers and CI often have no SHELL; `set -u` must not stop the installer there.
@@ -182,7 +182,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         env: { HOME: root, SHELL: "/bin/zsh", PATH: "/usr/bin:/bin" },
       });
       expect(relative.code, relative.output).toBe(0);
-      expect(relative.output).toContain(`'export PATH="$HOME/bin:$PATH"'`);
+      expect(relative.output).toContain(`'export PATH="$PATH:$HOME/bin"'`);
 
       await NodeFSP.rm(link);
       await NodeFSP.symlink(NodePath.join(home, "bin/t3"), link);

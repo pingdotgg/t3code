@@ -58,9 +58,13 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
       yield* fs.symlink(root, path.join(root, "alias"));
       yield* fs.symlink(path.join(root, "alias/runtime/versions/1.0.0/t3"), throughAlias);
       yield* fs.symlink(path.join(versionsDir, "0.9.0/t3"), pruned);
+      // Another program inside a version is not a launcher.
+      const sibling = path.join(root, "bin/t3-sibling");
+      yield* fs.symlink(path.join(versionsDir, "1.0.0/node"), sibling);
       yield* fs.writeFileString(
         path.join(root, "runtime/launchers"),
-        [ours, theirs, copy, throughAlias, pruned, path.join(root, "missing")].join("\n") + "\n",
+        [ours, theirs, copy, throughAlias, pruned, sibling, path.join(root, "missing")].join("\n") +
+          "\n",
       );
       for (const dir of [versionsDir, path.join(root, "alias/runtime/versions")]) {
         assert.deepStrictEqual(yield* findRecordedLaunchers(dir), [ours, throughAlias, pruned]);

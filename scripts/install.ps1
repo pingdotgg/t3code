@@ -228,7 +228,10 @@ if (Test-Path -LiteralPath $shim) {
   # Full paths, so a target like versions\..\other cannot pass as ours.
   $ownedPrefix = [System.IO.Path]::GetFullPath($versionsDir).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
   if ($existingTarget) { $existingTarget = [System.IO.Path]::GetFullPath($existingTarget) }
-  if (-not $existingTarget.StartsWith($ownedPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+  # Exactly <version>\t3.exe, never another program inside a version.
+  $owned = $existingTarget.StartsWith($ownedPrefix, [System.StringComparison]::OrdinalIgnoreCase) -and
+    ($existingTarget.Substring($ownedPrefix.Length) -match '^[^\\/]+\\t3\.exe$')
+  if (-not $owned) {
     Fail "another t3 is already at $shim. Remove it and run this again, or run $(Join-Path $targetDir 't3.exe') directly."
   }
 }
@@ -243,7 +246,10 @@ if (-not ((Test-Path $launchers) -and ((Get-Content $launchers) -contains $shimP
 }
 if ($interactive) { [Console]::Error.Write("`r$esc[2K") }
 [Console]::Error.WriteLine("  ${green}Installed T3 Code $version$reset`n")
-if (($env:PATH -split ";") -notcontains $binDir) {
+if ($binDir.Contains(";")) {
+  # PATH would split the folder at the `;`, so name the command in full instead.
+  Write-Host "  Run ${bold}$shim$reset to get started.`n"
+} elseif (($env:PATH -split ";") -notcontains $binDir) {
   # `irm | iex` runs in the user's own session, so t3 works in this window right away.
   $env:Path = "$binDir;$env:Path"
   Write-Host "  Run ${bold}t3$reset to get started. For new windows, add $binDir to your PATH.`n"

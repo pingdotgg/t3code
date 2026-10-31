@@ -77,6 +77,17 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       assert.include(error.message, "Another t3 is already at");
       assert.equal(yield* fs.readFileString(link), "#!/bin/sh\n");
 
+      // Only `<version>/t3` is ours, not another program inside a version.
+      yield* fs.remove(link);
+      yield* fs.symlink(path.join(runtimeDir, "versions/0.0.1/node"), link);
+      const sibling = yield* provide(installCli()).pipe(Effect.flip);
+      assert.include(sibling.message, "Another t3 is already at");
+      // This home's desktop launcher is replaced, as install.sh does.
+      yield* fs.remove(link);
+      yield* fs.symlink(path.join(root, ".t3/bin/t3"), link);
+      yield* provide(installCli());
+      assert.equal(yield* fs.readLink(link), executable);
+
       // A failed link leaves a staging path it did not create alone.
       yield* fs.remove(link);
       const staging = `${link}.${process.pid}.tmp`;
@@ -164,6 +175,7 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       yield* offer(false, { args: ["--log-level", "debug", "install"] });
       yield* offer(false, { args: ["status", "--json"] });
       yield* offer(false, { args: ["up", "--yes"] });
+      yield* offer(false, { args: ["status", "--json=true"] });
       yield* offer(false, { env: { T3CODE_USE_NPM: "1" } });
       const globalBin = path.join(root, "global-bin");
       yield* fs.makeDirectory(globalBin);

@@ -32,7 +32,7 @@ describe("versionSkew", () => {
       "T3CODE_USE_NPM=1 npx t3@0.0.45",
     );
     expect(manualServerUpdateCommand("0.0.45", { kind: "pnpm-dlx" }, "windows")).toBe(
-      "$env:T3CODE_USE_NPM=1; pnpm dlx t3@0.0.45",
+      'cmd /c "set T3CODE_USE_NPM=1&& pnpm dlx t3@0.0.45"',
     );
   });
   beforeEach(() => {
