@@ -20,6 +20,7 @@ import {
   pinnedRuntimeCommand,
   pinnedRuntimePaths,
   PinnedRuntimeInstallError,
+  type PinnedRuntimePaths,
 } from "./pinnedRuntime.ts";
 import {
   SERVICE_LAUNCHER_PROTOCOL,
@@ -207,6 +208,8 @@ export interface BootServiceManager {
   readonly handoff?: ReadonlyArray<BootServiceStep>;
   readonly deactivate: ReadonlyArray<BootServiceStep>;
   readonly finalize: ReadonlyArray<BootServiceStep>;
+  /** The unit starts a copy of the runtime kept here instead of its versioned directory. */
+  readonly launcherDir?: string;
 }
 
 function systemdManager(input: {
@@ -288,6 +291,7 @@ function systemdManager(input: {
 function launchdManager(input: {
   readonly path: Path.Path;
   readonly homeDir: string;
+  readonly baseDir: string;
   readonly uid: number;
   readonly environmentPath: string;
 }): BootServiceManager {
@@ -350,12 +354,15 @@ function launchdManager(input: {
       },
     ],
     finalize: [],
+    // TCC keys the launch agent's privacy grants to its program path, so it must not change.
+    launcherDir: input.path.join(input.baseDir, "runtime", "launcher"),
   };
 }
 
 function selectBootServiceManager(input: {
   readonly platform: NodeJS.Platform;
   readonly homeDir: string;
+  readonly baseDir: string;
   readonly uid: number | undefined;
   readonly path: Path.Path;
   readonly environmentPath: string;
@@ -370,6 +377,7 @@ function selectBootServiceManager(input: {
     return launchdManager({
       path: input.path,
       homeDir: input.homeDir,
+      baseDir: input.baseDir,
       uid: input.uid,
       environmentPath: input.environmentPath,
     });
@@ -566,6 +574,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const detectedManager = selectBootServiceManager({
     platform,
     homeDir,
+    baseDir: input.baseDir,
     uid,
     path,
     environmentPath,
@@ -575,6 +584,15 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
   const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
   const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion, platform);
+  const launcherDir = detectedManager?.launcherDir;
+  const launcherPaths: PinnedRuntimePaths =
+    launcherDir === undefined
+      ? runtimePaths
+      : {
+          versionDir: launcherDir,
+          entryPath: path.join(launcherDir, path.basename(runtimePaths.entryPath)),
+          sentinelPath: path.join(launcherDir, path.basename(runtimePaths.sentinelPath)),
+        };
   const writeDurably = (filePath: string, contents: string) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -595,11 +613,72 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       }),
     ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
   const plan: BootServicePlan = {
-    program: [runtimePaths.entryPath, "__service-launcher"],
+    program: [launcherPaths.entryPath, "__service-launcher"],
     baseDir: input.baseDir,
     logPath,
     unitPath,
   };
+
+  // cp -c clones on APFS and copies all bytes where cloning is unsupported; fs.copy never clones.
+  const copyLauncher = (source: string, destination: string) =>
+    runner
+      .run({
+        command: "cp",
+        args: ["-c", "-pR", source, destination],
+        timeout: Duration.minutes(10),
+      })
+      .pipe(
+        Effect.filterOrFail((result) => result.code === 0),
+        Effect.catch(() =>
+          fs
+            .remove(destination, { recursive: true, force: true })
+            .pipe(Effect.andThen(fs.copy(source, destination))),
+        ),
+      );
+  // A running launcher keeps executing its copy, and writing into a running signed
+  // Mach-O can kill it, so a new copy is staged beside it and swapped in by rename.
+  const publishLauncher = Effect.fn("cloud.boot_service.publish_launcher")(function* (
+    directory: string,
+  ) {
+    // Staging is per publish and rename onto a non-empty launcher fails, so overlaps publish only complete copies.
+    const staging = yield* fs.makeTempDirectory({
+      directory: path.dirname(directory),
+      prefix: `${path.basename(directory)}.next-`,
+    });
+    const next = path.join(staging, "launcher");
+    const previous = path.join(staging, "previous");
+    yield* Effect.gen(function* () {
+      yield* copyLauncher(runtimePaths.versionDir, next);
+      // Interrupted between the renames, the unit would point at a missing program.
+      yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          const replacing = yield* fs.exists(directory);
+          if (replacing) yield* fs.rename(directory, previous);
+          yield* fs
+            .rename(next, directory)
+            .pipe(
+              Effect.tapError(() =>
+                replacing ? fs.rename(previous, directory).pipe(Effect.ignore) : Effect.void,
+              ),
+            );
+        }),
+      );
+    }).pipe(
+      Effect.ensuring(fs.remove(staging, { recursive: true, force: true }).pipe(Effect.ignore)),
+    );
+  });
+  const removeLauncher = Effect.fn("cloud.boot_service.remove_launcher")(function* (
+    directory: string,
+  ) {
+    const name = path.basename(directory);
+    const parent = path.dirname(directory);
+    const entries = yield* fs.readDirectory(parent).pipe(Effect.orElseSucceed(() => []));
+    yield* Effect.forEach(
+      entries.filter((entry) => entry === name || entry.startsWith(`${name}.next-`)),
+      (entry) => fs.remove(path.join(parent, entry), { recursive: true, force: true }),
+      { discard: true },
+    );
+  });
 
   const requireManager = Effect.suspend(() =>
     detectedManager === undefined
@@ -854,6 +933,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           return yield* new BootServiceUpdatePendingError();
         }
       }
+      if (manager.launcherDir !== undefined) yield* publishLauncher(manager.launcherDir);
       yield* writeDurably(unitPath, manager.render(plan));
 
       if (start) {
@@ -959,9 +1039,12 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     )
       return false;
     yield* runSteps(manager.deactivate);
-    yield* fs
-      .remove(unitPath)
-      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+    yield* fs.remove(unitPath).pipe(
+      Effect.andThen(
+        manager.launcherDir === undefined ? Effect.void : removeLauncher(manager.launcherDir),
+      ),
+      Effect.mapError((cause) => new BootServiceInstallError({ cause })),
+    );
     yield* runSteps(manager.finalize);
     return true;
   }).pipe(Effect.withSpan("cloud.boot_service.uninstall"));
@@ -973,10 +1056,20 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     if (!(yield* fs.exists(unitPath))) {
       return { supported: true, installed: false, current: false, unitPath, logPath };
     }
-    const [unit, runtimeEntryExists, runtimeSentinel, stateText] = yield* Effect.all([
+    const runtimeCurrent = (paths: PinnedRuntimePaths) =>
+      Effect.all([
+        fs.exists(paths.entryPath),
+        fs.readFileString(paths.sentinelPath).pipe(Effect.option),
+      ]).pipe(
+        Effect.map(
+          ([entryExists, sentinel]) =>
+            entryExists && Option.isSome(sentinel) && sentinel.value.trim() === input.cliVersion,
+        ),
+      );
+    const [unit, runtimeIsCurrent, launcherIsCurrent, stateText] = yield* Effect.all([
       fs.readFileString(unitPath),
-      fs.exists(runtimePaths.entryPath),
-      fs.readFileString(runtimePaths.sentinelPath).pipe(Effect.option),
+      runtimeCurrent(runtimePaths),
+      runtimeCurrent(launcherPaths),
       fs.readFileString(statePath).pipe(Effect.option),
     ]);
     const state = Option.isSome(stateText) ? parseServiceState(stateText.value) : undefined;
@@ -1000,9 +1093,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       current:
         problems.length === 0 &&
         normalizeUnit(unit) === normalizeUnit(detectedManager.render(plan)) &&
-        runtimeEntryExists &&
-        Option.isSome(runtimeSentinel) &&
-        runtimeSentinel.value.trim() === input.cliVersion &&
+        runtimeIsCurrent &&
+        launcherIsCurrent &&
         state?.activeVersion === input.cliVersion &&
         state?.update?.status !== "pending",
       unitPath,
