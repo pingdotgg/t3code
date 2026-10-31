@@ -1034,7 +1034,7 @@ const make = Effect.gen(function* () {
           ),
         );
 
-  const loadProjection = (threadId: ThreadId) =>
+  const loadProjection = (threadId: ThreadId, includeUserMessages = true) =>
     threadManagement
       .getThreadRecords(
         threadId,
@@ -1047,7 +1047,7 @@ const make = Effect.gen(function* () {
           "contextTransfers",
           "turnItems",
         ],
-        { turnItemTypes: [], messageRoles: ["user"] },
+        { turnItemTypes: [], messageRoles: includeUserMessages ? ["user"] : [] },
       )
       .pipe(
         Effect.mapError((error) =>
@@ -1106,6 +1106,7 @@ const make = Effect.gen(function* () {
 
   const loadCaller = Effect.fn("OrchestratorMcpService.loadCaller")(function* (
     scope: McpInvocationScope,
+    includeUserMessages = true,
   ) {
     yield* requireCapability(scope);
     if (scope.thread === undefined) {
@@ -1114,7 +1115,7 @@ const make = Effect.gen(function* () {
         limits: clientModeCeiling(scope.client),
       } as const;
     }
-    const parent = yield* loadProjection(scope.thread.threadId);
+    const parent = yield* loadProjection(scope.thread.threadId, includeUserMessages);
     return {
       parent,
       limits: {
@@ -1223,7 +1224,8 @@ const make = Effect.gen(function* () {
     scope: McpInvocationScope,
     threadId: ThreadId,
   ) {
-    const { parent } = yield* loadCaller(scope);
+    // Caller prompts are not used to read a timeline or acknowledge a child result.
+    const { parent } = yield* loadCaller(scope, false);
     const shell = yield* threadManagement
       .getThreadShell(threadId)
       .pipe(Effect.mapError(threadManagementFailure));
@@ -1234,13 +1236,19 @@ const make = Effect.gen(function* () {
         `Thread ${threadId} is no longer available.`,
       );
     }
-    const target = yield* threadManagement
-      .getProjectThreadRecords({ projectId: shell.projectId, threadId }, [
-        "runs",
-        "runtimeRequests",
-        "contextTransfers",
-      ])
-      .pipe(Effect.mapError(threadManagementFailure));
+    const input = { projectId: shell.projectId, threadId };
+    // Transfers are needed only to acknowledge a caller's child-task result.
+    const records =
+      parent === undefined
+        ? threadManagement
+            .getProjectThreadRecords(input, ["runs", "runtimeRequests"])
+            .pipe(Effect.map((target) => ({ ...target, contextTransfers: [] })))
+        : threadManagement.getProjectThreadRecords(input, [
+            "runs",
+            "runtimeRequests",
+            "contextTransfers",
+          ]);
+    const target = yield* records.pipe(Effect.mapError(threadManagementFailure));
     return { parent, target, shell } as const;
   });
 
