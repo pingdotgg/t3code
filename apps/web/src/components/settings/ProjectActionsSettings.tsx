@@ -6,7 +6,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
-import { ChevronDownIcon, PlusIcon } from "lucide-react";
+import { FileDownIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
 import { useEnvironments } from "../../state/environments";
@@ -107,69 +107,53 @@ export function ProjectActionsSettings() {
   };
 
   return (
-    <SettingsSection id="project-actions" title="Actions">
-      <SettingsRow
-        serverScoped
-        settingKeys={["defaultProjectScripts"]}
-        mixed={mixed}
-        title="Actions"
-        description="Commands that run in this project's checkout or its worktree, with optional shortcuts."
-        onResetOverride={() => void persist(() => null)}
-        control={
-          <div className="flex flex-wrap items-center gap-1.5">
-            {importableScripts.length > 0 ? (
-              <Menu>
-                <MenuTrigger
-                  render={
-                    <Button
-                      id="import-scripts"
-                      size="xs"
-                      variant="secondary"
-                      disabled={saving || !canWriteSettings}
-                      type="button"
-                    />
-                  }
-                >
-                  Import scripts
-                  <ChevronDownIcon className="size-3.5" />
-                </MenuTrigger>
-                <MenuPopup align="end">
-                  <MenuGroup>
-                    <MenuGroupLabel>Import from t3.json</MenuGroupLabel>
-                    <p className="px-2 pb-2 text-pretty text-sm text-muted-foreground">
-                      Add actions declared by this checkout without editing them first.
-                    </p>
-                  </MenuGroup>
-                  <MenuSeparator />
-                  {importableScripts.map((fileScript) => (
-                    <MenuItem
-                      key={`${fileScript.name} ${fileScript.command}`}
-                      onClick={() => void importFileScript(fileScript)}
-                    >
-                      <ScriptIcon icon={fileScript.icon ?? "play"} className="size-4 shrink-0" />
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate font-medium">{fileScript.name}</div>
-                        <div className="truncate font-mono text-muted-foreground">
-                          {fileScript.command}
-                        </div>
-                      </div>
-                    </MenuItem>
-                  ))}
-                </MenuPopup>
-              </Menu>
-            ) : null}
-            <Button
-              size="xs"
-              variant="secondary"
-              disabled={saving || !canWriteSettings || targets.length === 0}
-              onClick={() => setRequest({ scriptId: null, initial: EMPTY_PROJECT_SCRIPT_INPUT })}
+    <SettingsSection
+      id="project-actions"
+      title="Actions"
+      headerAction={
+        importableScripts.length > 0 ? (
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button
+                  id="import-scripts"
+                  size="xs"
+                  variant="secondary"
+                  disabled={saving || !canWriteSettings}
+                  type="button"
+                />
+              }
             >
-              <PlusIcon className="size-3.5" />
-              Add action
-            </Button>
-          </div>
-        }
-      />
+              <FileDownIcon />
+              Import from t3.json
+            </MenuTrigger>
+            <MenuPopup align="end">
+              <MenuGroup>
+                <MenuGroupLabel>Import from t3.json</MenuGroupLabel>
+                <p className="px-2 pb-2 text-pretty text-body text-muted-foreground">
+                  Add actions declared by this checkout without editing them first.
+                </p>
+              </MenuGroup>
+              <MenuSeparator />
+              {importableScripts.map((fileScript) => (
+                <MenuItem
+                  key={`${fileScript.name} ${fileScript.command}`}
+                  onClick={() => void importFileScript(fileScript)}
+                >
+                  <ScriptIcon icon={fileScript.icon ?? "play"} className="size-4 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-medium">{fileScript.name}</div>
+                    <div className="truncate font-mono text-muted-foreground">
+                      {fileScript.command}
+                    </div>
+                  </div>
+                </MenuItem>
+              ))}
+            </MenuPopup>
+          </Menu>
+        ) : null
+      }
+    >
       {mixed ? (
         <SettingsRow
           title="Different actions across environments"
@@ -183,6 +167,26 @@ export function ProjectActionsSettings() {
           onEdit={(script) => setRequest(editorRequestForScript(script, keybindings))}
         />
       )}
+      <SettingsRow
+        serverScoped
+        settingKeys={["defaultProjectScripts"]}
+        mixed={mixed}
+        leading={<PlusIcon />}
+        title="Add action"
+        description="Runs in this checkout or its worktree, with an optional shortcut."
+        onResetOverride={() => void persist(() => null)}
+        control={
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={saving || !canWriteSettings || targets.length === 0}
+            onClick={() => setRequest({ scriptId: null, initial: EMPTY_PROJECT_SCRIPT_INPUT })}
+          >
+            <PlusIcon />
+            Add
+          </Button>
+        }
+      />
       {t3File.status === "invalid" ? (
         <SettingsRow
           title="t3.json is invalid"

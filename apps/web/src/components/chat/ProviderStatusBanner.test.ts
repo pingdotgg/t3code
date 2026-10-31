@@ -56,6 +56,22 @@ describe("compatibility banners", () => {
     ).toBeNull();
   });
 
+  it("shows an unsupported version warning when an update exists", () => {
+    const updatable: ServerProvider = {
+      ...provider,
+      versionAdvisory: {
+        status: "behind_latest",
+        currentVersion: "1.0.0",
+        latestVersion: "2.0.0",
+        updateCommand: "npm i -g @openai/codex@latest",
+        canUpdate: true,
+        checkedAt: null,
+        message: null,
+      },
+    };
+    expect(shouldShowProviderStatusBanner(updatable, null)).toBe(true);
+  });
+
   it("shows downgrade guidance instead of a broken OpenCode inventory timeout", () => {
     const message = "This provider version is known to be incompatible. Use 1.14.19.";
     const broken: ServerProvider = {
