@@ -632,6 +632,7 @@ export class OrchestrationEffectWorkerV2 extends Context.Service<
 >()("t3/orchestration-v2/EffectWorker/OrchestrationEffectWorkerV2") {}
 
 export interface OrchestrationEffectWorkerOptions {
+  readonly slotWaitMs?: number;
   readonly workerId?: string;
   readonly maxAttempts?: number;
 }
@@ -650,6 +651,7 @@ export const layerWithOptions = (
       const executor = yield* OrchestrationEffectExecutorV2;
       const executions = yield* FiberSet.make();
       const workerId = options.workerId ?? `orchestration-v2:${process.pid}`;
+      const slotWaitMs = Math.max(1, options.slotWaitMs ?? 30_000);
       const maxAttempts = Math.max(1, options.maxAttempts ?? 5);
       const wasCancelled = (effectId: string) =>
         outbox.get(effectId).pipe(
@@ -852,22 +854,25 @@ export const layerWithOptions = (
             }
             return true;
           });
-          // Drain and recovery must await settlement even after the lease expires.
+          // Drain and recovery must await settlement even after the worker wait expires.
           if (executionScope === undefined) return yield* settle;
           const settlement = yield* settle.pipe(Effect.forkIn(executionScope));
           yield* FiberSet.add(executions, settlement);
-          // Expiry frees capacity without replaying external work that may still
+          // The wait limit frees capacity without replaying external work that may still
           // succeed. Keep the row running (and its thread ordered) until this
           // execution settles; only process-loss recovery may reclaim it.
           const settled = yield* Fiber.await(settlement).pipe(
-            Effect.timeoutOption(Duration.millis(leaseDurationMs)),
+            Effect.timeoutOption(Duration.millis(slotWaitMs)),
             Effect.onInterrupt(() => Fiber.interrupt(settlement)),
           );
           if (Option.isSome(settled)) return yield* settled.value;
-          yield* Effect.logWarning("Orchestration effect outlived its lease; freeing its worker", {
-            effectId: effect.id,
-            effectType: effect.request.type,
-          });
+          yield* Effect.logWarning(
+            "Orchestration effect exceeded its worker wait; freeing its worker",
+            {
+              effectId: effect.id,
+              effectType: effect.request.type,
+            },
+          );
           yield* increment(orchestrationEffectOverdueTotal, { effect_type: effect.request.type });
           yield* Fiber.join(settlement).pipe(
             Effect.catchCause((cause) =>
@@ -880,7 +885,7 @@ export const layerWithOptions = (
           );
           return true;
         },
-        (effect, _excludeRestartContinuations?: boolean) =>
+        (effect, _excludeRestartContinuations?: boolean, _executionScope?: Scope.Scope) =>
           effect.pipe(
             Effect.mapError((cause) =>
               isOrchestrationEffectWorkerError(cause)

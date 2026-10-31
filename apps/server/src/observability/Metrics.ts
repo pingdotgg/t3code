@@ -39,7 +39,7 @@ export const orchestrationEffectOverdueTotal = Metric.counter(
   "t3_orchestration_effect_overdue_total",
   {
     description:
-      "Orchestration effects that outlived their lease and kept running after freeing their worker.",
+      "Orchestration effects that exceeded the worker wait and kept running after freeing their worker.",
   },
 );
 
