@@ -239,9 +239,7 @@ export function makeWindow(
       untilTime: untilTime.toISOString(),
     };
   }
-  // Subtracting fixed milliseconds from `now` lands on the wrong calendar day
-  // around a DST transition. The window start is pure calendar arithmetic on
-  // the local end day, done in UTC where days are uniform.
+  // Use calendar arithmetic in UTC; fixed millisecond subtraction crosses DST days incorrectly.
   const [year = 0, month = 1, dayOfMonth = 1] = untilDay
     .split("-")
     .map((part) => Number.parseInt(part, 10));
