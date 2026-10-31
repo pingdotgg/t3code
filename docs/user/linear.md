@@ -32,6 +32,10 @@ issue**. You can still switch each one off for a single launch from the hint und
 or in the pipeline dialog. The issue is only moved when it is in Backlog, Triage or an unstarted
 state. A pipeline keeps one comment up to date as its steps finish.
 
+## On mobile
+
+The mobile app has a Linear tab. Browse teams, projects, milestones and issues, open an issue, and start a chat or run a pipeline from it. Connecting Linear and editing mappings stay on the computer (Settings → Integrations → Linear); the phone picks up the connection automatically.
+
 ## Things to know
 
 - The page refreshes when you return to it, every minute while it is open, and when you choose
