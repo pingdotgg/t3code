@@ -1340,7 +1340,7 @@ const make = Effect.gen(function* () {
             return Effect.void;
         }
         if (!anyWorktreePolicy(lastSettings, (rules) => rules.worktreeOnDelete)) return Effect.void;
-        return event.type === "provider-session.updated"
+        return event.type === "provider-session.updated" && event.payload.status === "error"
           ? providerSessions
               .isLive(event.payload.id)
               .pipe(Effect.flatMap((live) => (live ? Effect.void : requestSweep)))

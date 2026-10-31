@@ -1757,6 +1757,10 @@ describe("storage cleanup reports and local file policies", () => {
             worktreeOnDelete,
           });
           fixture.setThreads([]);
+          fixture.setDeletedThreads([
+            shell({ branch: "feature", worktreePath: fixture.worktree, deletedAt: at(0) }),
+          ]);
+          yield* fixture.fs.writeFileString(`${fixture.worktree}/tracked.txt`, "agent edit\n");
           const events = yield* Queue.unbounded<{
             readonly event: OrchestrationV2DomainEvent;
             readonly processed: Deferred.Deferred<void>;
@@ -1827,7 +1831,7 @@ describe("storage cleanup reports and local file policies", () => {
 
           yield* publish(sessionUpdated("stopped", ""));
           expect(fixture.snapshotReads()).toBe(startupReads + 2 * Number(worktreeOnDelete));
-          expect(fixture.sessionLiveChecks()).toBe(worktreeOnDelete ? 7 : 0);
+          expect(fixture.sessionLiveChecks()).toBe(worktreeOnDelete ? 6 : 0);
 
           fixture.setSessionLive(true);
           yield* publish({
@@ -1838,7 +1842,7 @@ describe("storage cleanup reports and local file policies", () => {
             payload: { ...shell({ deletedAt: at(0) }), lastVisitedAt: null },
           });
           expect(fixture.snapshotReads()).toBe(startupReads + 3 * Number(worktreeOnDelete));
-          expect(fixture.sessionLiveChecks()).toBe(worktreeOnDelete ? 7 : 0);
+          expect(fixture.sessionLiveChecks()).toBe(worktreeOnDelete ? 6 : 0);
         }),
       ),
   );
