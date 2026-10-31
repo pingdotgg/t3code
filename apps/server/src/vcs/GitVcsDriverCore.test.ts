@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import { assert, it, describe } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -313,6 +314,57 @@ it.effect.each(["root", "nested", "worktree"] as const)(
       assert.include(yield* fs.readFileString(runsPath), "clean");
     }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("starts Git for Windows reads without a console", () => {
+  const commands: Array<{
+    readonly args: ReadonlyArray<string>;
+    readonly detached: boolean | undefined;
+    readonly windowsHide: boolean | undefined;
+  }> = [];
+  const spawner = ChildProcessSpawner.make((command) =>
+    Effect.sync(() => {
+      if (!ChildProcess.isStandardCommand(command)) {
+        return assert.fail("expected a standard Git command");
+      }
+      commands.push({
+        args: command.args,
+        detached: command.options.detached,
+        windowsHide: command.options.windowsHide,
+      });
+      return makeNonRepositoryHandle();
+    }),
+  );
+  const layer = GitVcsDriver.layer.pipe(
+    Layer.provide(layerServerConfig),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HostProcess.Platform, "win32"),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    yield* driver.statusDetailsLocal("/repo");
+
+    assert.deepStrictEqual(commands, [
+      { args: ["rev-parse", "--git-path", "index"], detached: true, windowsHide: true },
+      {
+        args: ["status", "--porcelain=2", "--branch", "-z"],
+        detached: undefined,
+        windowsHide: undefined,
+      },
+    ]);
+  }).pipe(
+    Effect.provide(layer),
+    Effect.provideService(
+      SpawnExecutableResolution,
+      () => "C:\\Program Files\\Git\\mingw64\\bin\\git.exe",
+    ),
+  );
+});
 
 it.effect("invalidates origin remote cache when a driver mutation adds origin", () =>
   Effect.gen(function* () {

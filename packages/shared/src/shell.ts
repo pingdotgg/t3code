@@ -814,6 +814,96 @@ export interface SpawnCommandOptions extends CommandAvailabilityOptions {
   readonly bypassNpmShim?: boolean;
 }
 
+const GIT_GLOBAL_OPTIONS_WITH_VALUE = new Set([
+  "-C",
+  "-c",
+  "--git-dir",
+  "--work-tree",
+  "--namespace",
+  "--config-env",
+  "--super-prefix",
+  "--attr-source",
+]);
+
+const positionals = (args: ReadonlyArray<string>) => args.filter((arg) => !arg.startsWith("-"));
+
+// Git accepts abbreviated and bundled options (`--del`, `-qd`), so a read is
+// recognized by allowing its options rather than by rejecting the write ones.
+const SYMBOLIC_REF_READ_OPTIONS = new Set(["-q", "--quiet", "--short"]);
+
+const GIT_READ_SUBCOMMANDS = new Map<string, (args: ReadonlyArray<string>) => boolean>([
+  [
+    "rev-parse",
+    (args) =>
+      (args.length === 1 &&
+        [
+          "--git-dir",
+          "--git-common-dir",
+          "--show-toplevel",
+          "--show-prefix",
+          "--is-inside-work-tree",
+          "--is-bare-repository",
+        ].includes(args[0]!)) ||
+      (args.length === 2 && args[0] === "--git-path"),
+  ],
+  [
+    "config",
+    (args) =>
+      [
+        "--get",
+        "--get-all",
+        "--get-regexp",
+        "--get-urlmatch",
+        "--list",
+        "-l",
+        "get",
+        "list",
+      ].includes(args[0] ?? "") && args.slice(1).every((arg) => !arg.startsWith("-")),
+  ],
+  [
+    "symbolic-ref",
+    (args) =>
+      args.every((arg) => !arg.startsWith("-") || SYMBOLIC_REF_READ_OPTIONS.has(arg)) &&
+      positionals(args).length <= 1,
+  ],
+  [
+    "remote",
+    (args) => {
+      const [first] = positionals(args);
+      return first === undefined || first === "get-url";
+    },
+  ],
+]);
+
+// Only detach Git for Windows reads that cannot start helpers.
+export function runsGitWithoutConsole(
+  platform: NodeJS.Platform,
+  executable: string,
+  args: ReadonlyArray<string>,
+): boolean {
+  if (platform !== "win32") return false;
+  const path = NodePath.win32;
+  if (path.basename(executable).toLowerCase() !== "git.exe") return false;
+  const binDirectory = path.dirname(executable);
+  if (path.basename(binDirectory).toLowerCase() !== "bin") return false;
+  const build = path.basename(path.dirname(binDirectory)).toLowerCase();
+  if (!GIT_FOR_WINDOWS_BUILDS.some((candidate) => candidate === build)) return false;
+  if (args.includes("--help")) return false;
+  let index = 0;
+  for (let arg = args[0]; arg?.startsWith("-"); arg = args[index]) {
+    if (GIT_GLOBAL_OPTIONS_WITH_VALUE.has(arg)) {
+      index += 2;
+    } else if (arg === "--no-pager" || GIT_GLOBAL_OPTIONS_WITH_VALUE.has(arg.split("=")[0]!)) {
+      index += 1;
+    } else {
+      return false;
+    }
+  }
+  const subcommand = args[index];
+  const isRead = subcommand === undefined ? undefined : GIT_READ_SUBCOMMANDS.get(subcommand);
+  return isRead?.(args.slice(index + 1)) ?? false;
+}
+
 export const resolveSpawnCommand = Effect.fnUntraced(function* (
   command: string,
   args: ReadonlyArray<string>,
