@@ -43,7 +43,26 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
       <Text className="font-t3-bold text-lg text-foreground">
         {props.approval.appName ?? props.approval.requestKind}
       </Text>
-      {props.approval.detail ? (
+      {props.approval.files && props.approval.files.length > 0 ? (
+        <View className="gap-1">
+          {props.approval.files.map((file) => (
+            <View key={`${file.operation ?? ""}:${file.path}`} className="flex-row gap-2">
+              <Text
+                className="flex-1 font-sans text-sm text-foreground-secondary"
+                numberOfLines={1}
+                ellipsizeMode="middle"
+              >
+                {file.path}
+              </Text>
+              {file.additions !== undefined || file.deletions !== undefined ? (
+                <Text className="font-mono text-xs text-foreground-secondary">
+                  +{file.additions ?? 0} −{file.deletions ?? 0}
+                </Text>
+              ) : null}
+            </View>
+          ))}
+        </View>
+      ) : props.approval.detail ? (
         <Text className="font-sans text-sm leading-normal text-foreground-secondary">
           {props.approval.detail}
         </Text>

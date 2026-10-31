@@ -1,6 +1,6 @@
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
-function formatWorkingTimer(startIso: string, endIso: string): string | null {
+export function formatWorkingTimer(startIso: string, endIso: string): string | null {
   const startedAtMs = Date.parse(startIso);
   const endedAtMs = Date.parse(endIso);
   if (!Number.isFinite(startedAtMs) || !Number.isFinite(endedAtMs)) {

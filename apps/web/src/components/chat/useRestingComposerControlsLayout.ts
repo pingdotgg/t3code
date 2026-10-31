@@ -1,6 +1,9 @@
 import { measureRestingComposerControls } from "./restingComposerControlsMeasurement";
 import { observeResize } from "~/lib/observeResize";
-import { resolveRestingComposerControlsLayout } from "../composerFooterLayout";
+import {
+  resolveRestingComposerControlsLayout,
+  type RestingComposerControlsLayout,
+} from "../composerFooterLayout";
 import { useLayoutEffect, useRef, useState } from "react";
 
 export function useRestingComposerControlsLayout(
@@ -13,11 +16,10 @@ export function useRestingComposerControlsLayout(
     controlsRef.current = element;
     setControls(element);
   };
-  const [layout, setLayout] = useState<{
-    hiddenCount: number;
-    iconOnlyCount?: number;
-    visible: boolean;
-  }>({ hiddenCount: 0, visible: true });
+  const [layout, setLayout] = useState<RestingComposerControlsLayout>({
+    hiddenCount: 0,
+    visible: true,
+  });
 
   const measure = () => {
     const currentHost = useControlsAsHost ? controls : host;
@@ -39,6 +41,7 @@ export function useRestingComposerControlsLayout(
       });
       return next.hiddenCount === current.hiddenCount &&
         next.iconOnlyCount === current.iconOnlyCount &&
+        next.pickerIconOnly === current.pickerIconOnly &&
         next.visible === current.visible
         ? current
         : next;
@@ -80,6 +83,7 @@ export function useRestingComposerControlsLayout(
     attachControls,
     hiddenBlockCount: layout.hiddenCount,
     iconOnlyBlockCount: layout.iconOnlyCount ?? 0,
+    pickerIconOnly: layout.pickerIconOnly ?? false,
     controlsVisible: layout.visible,
   };
 }
