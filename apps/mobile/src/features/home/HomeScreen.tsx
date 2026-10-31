@@ -85,6 +85,7 @@ import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-sw
 import { useFabScroll } from "./FabScrollContext";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { ThreadListFilters } from "./ThreadListFilters";
+import { useRestoreOffsetAfterSearch } from "./useRestoreOffsetAfterSearch";
 
 interface HomeScreenProps {
   readonly projects: ReadonlyArray<EnvironmentProject>;
@@ -316,14 +317,12 @@ export function HomeScreen(props: HomeScreenProps) {
   const listRef = useRef<LegendListRef>(null);
   const searchMode = workspace?.state.tabs.threads.searchMode;
   const restoredOffset = workspace?.state.tabs.threads.scrollOffset;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the thread list's saved scroll offset through the list ref when search goes back to resting
-  useEffect(() => {
-    if (searchMode !== "resting" || restoredOffset === undefined) return;
+  useRestoreOffsetAfterSearch(searchMode, restoredOffset, (offset) =>
     listRef.current?.scrollToOffset({
-      offset: restoredOffset - (Platform.OS === "ios" ? insets.top : 0),
+      offset: offset - (Platform.OS === "ios" ? insets.top : 0),
       animated: false,
-    });
-  }, [searchMode, insets.top, restoredOffset]);
+    }),
+  );
   const swipeRowActivation = createSwipeRowActivation();
   const activateVisibleRows = (rows: ReadonlyArray<ThreadListV2ListItem>) => {
     const state = listRef.current?.getState();
@@ -813,6 +812,8 @@ export function HomeScreen(props: HomeScreenProps) {
               // the list in the same frame as the bar.
               contentInsetAdjustmentBehavior="automatic"
               contentInsetStartAdjustment={Platform.OS === "ios" ? insets.top : 0}
+              // RN scrollTo clamps against raw insets and ignores the automatic bar inset.
+              scrollToOverflowEnabled
               initialScrollOffset={
                 initialScrollOffset > 0
                   ? initialScrollOffset - (Platform.OS === "ios" ? insets.top : 0)
