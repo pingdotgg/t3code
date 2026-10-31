@@ -213,6 +213,16 @@ const VcsStatusChangeRequest = Schema.Struct({
   updatedAt: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
+/** How a working-tree file differs from HEAD; the files tree labels rows with it. */
+export const VcsWorkingTreeFileStatus = Schema.Literals([
+  "added",
+  "modified",
+  "deleted",
+  "renamed",
+  "untracked",
+]);
+export type VcsWorkingTreeFileStatus = typeof VcsWorkingTreeFileStatus.Type;
+
 const VcsStatusLocalShape = {
   isRepo: Schema.Boolean,
   sourceControlProvider: Schema.optional(SourceControlProviderInfo),
@@ -229,6 +239,8 @@ const VcsStatusLocalShape = {
         path: GitFilePath,
         insertions: NonNegativeInt,
         deletions: NonNegativeInt,
+        /** Optional for compatibility with older servers. */
+        status: Schema.optional(VcsWorkingTreeFileStatus),
       }),
     ),
     insertions: NonNegativeInt,

@@ -23,6 +23,7 @@ import {
 } from "~/reviewCommentContext";
 
 import { DiffCommentAnnotation } from "../../diffs/DiffCommentAnnotation";
+import { DiffFileBasename } from "../../diffs/DiffFileHeaderParts";
 import { DIFF_VIEW_UNSAFE_CSS } from "../../diffs/StyledDiffCodeView";
 import { Button } from "../../ui/button";
 import {
@@ -299,6 +300,7 @@ function ExcerptDiff({
         options={options}
         lineAnnotations={annotations}
         selectedLines={draft?.range ?? null}
+        renderHeaderPrefix={() => <DiffFileBasename path={excerpt.path} />}
         renderAnnotation={(annotation) => (
           <div className="font-sans">
             {annotation.metadata.markers.length > 0 ? (
