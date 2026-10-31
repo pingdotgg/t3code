@@ -522,13 +522,20 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
   // Candidates are checked against the process cwd, so the lookup runs in a child with a temp cwd.
   const resolveInChild = `
 import { createRequire } from "node:module";
-const [shellPath, command, rawPaths] = process.argv.slice(1);
+const [shellPath, command, rawPaths, rawGitPaths, gitShim, xcodeGit] = process.argv.slice(1);
 const requireFromShell = createRequire(shellPath);
 const Effect = await import(requireFromShell.resolve("effect/Effect"));
 const { layer } = await import(requireFromShell.resolve("@effect/platform-node/NodeServices"));
 const HostProcess = await import(shellPath.replace(/shell\\.ts$/, "HostProcess.ts"));
 const Shell = await import(shellPath);
 const resolved = {};
+const resolvedGit = {};
+const defaultResolver = Shell.SpawnExecutableResolution.defaultValue();
+const resolveExecutable = (...args) => {
+  const found = defaultResolver(...args);
+  return found === gitShim ? "/usr/bin/git" : found;
+};
+const locateXcodeGit = () => xcodeGit;
 await Effect.runPromise(Effect.gen(function* () {
   const caches = new Map();
   for (const [label, { PATH, cwd, cacheGroup }] of Object.entries(JSON.parse(rawPaths))) {
@@ -543,8 +550,19 @@ await Effect.runPromise(Effect.gen(function* () {
       spawn: Shell.SpawnExecutableResolution.defaultValue()(command, process.platform, { PATH }) ?? null,
     };
   }
+  for (const [label, { PATH, cwd, cacheGroup }] of Object.entries(JSON.parse(rawGitPaths))) {
+    process.chdir(cwd);
+    let cache = caches.get(cacheGroup);
+    if (!cache) caches.set(cacheGroup, cache = new Map());
+    resolvedGit[label] = yield* Shell.resolveSpawnCommand("git", ["status"], { env: { PATH } }).pipe(
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(Shell.SpawnExecutableResolution, resolveExecutable),
+      Effect.provideService(Shell.XcodeGitLocation, locateXcodeGit),
+      Effect.provideService(Shell.CommandResolutionCache, cache),
+    );
+  }
 }).pipe(Shell.withPathDirectoryListings, Effect.provide(layer)));
-console.log(JSON.stringify(resolved));
+console.log(JSON.stringify({ resolved, resolvedGit }));
 `;
 
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
@@ -559,8 +577,13 @@ console.log(JSON.stringify(resolved));
         const command = "t3-empty-path-cli";
         const inCwd = path.join(cwd, command);
         const inListed = path.join(listed, command);
+        const gitShim = path.join(listed, "git");
+        const xcodeGit = path.join(listed, "xcode-git");
         yield* fs.writeFileString(inCwd, "#!/bin/sh\n", { mode: 0o755 });
         yield* fs.writeFileString(inListed, "#!/bin/sh\n", { mode: 0o755 });
+        yield* fs.writeFileString(path.join(cwd, "git"), "#!/bin/sh\n", { mode: 0o755 });
+        yield* fs.writeFileString(gitShim, "#!/bin/sh\n", { mode: 0o755 });
+        yield* fs.writeFileString(xcodeGit, "#!/bin/sh\n", { mode: 0o755 });
         yield* fs.utimes(cwd, 4_102_444_800, 4_102_444_800);
         yield* fs.utimes(empty, 4_102_444_800, 4_102_444_800);
         const missing = path.join(cwd, "missing");
@@ -599,6 +622,15 @@ console.log(JSON.stringify(resolved));
             ([label, row]) => [label, { ...row, cwd, cacheGroup: label }] as const,
           ),
         ];
+        const gitEntries = ["", "."].flatMap((entry) => {
+          const PATH = `${entry}:${listed}`;
+          return [
+            { PATH, cwd: empty, cacheGroup: `xcode-first-${entry}`, expected: xcodeGit },
+            { PATH, cwd, cacheGroup: `xcode-first-${entry}`, expected: "git" },
+            { PATH, cwd, cacheGroup: `local-first-${entry}`, expected: "git" },
+            { PATH, cwd: empty, cacheGroup: `local-first-${entry}`, expected: xcodeGit },
+          ];
+        });
         const stdout = NodeChildProcess.execFileSync(
           process.execPath,
           [
@@ -619,11 +651,16 @@ console.log(JSON.stringify(resolved));
                 ]),
               ),
             ),
+            JSON.stringify(gitEntries),
+            gitShim,
+            xcodeGit,
           ],
           { cwd, encoding: "utf8", env: {} },
         );
-        const resolved: Record<string, { effect: string | null; spawn: string | null }> =
-          JSON.parse(stdout);
+        const { resolved, resolvedGit }: {
+          resolved: Record<string, { effect: string | null; spawn: string | null }>;
+          resolvedGit: Record<string, { command: string; args: string[]; shell: boolean }>;
+        } = JSON.parse(stdout);
 
         // A relative result is relative to the child's cwd.
         const anchored = (found: string | null, directory: string) =>
@@ -646,6 +683,14 @@ console.log(JSON.stringify(resolved));
         ).toEqual(
           Object.fromEntries(
             entries.map(([label, row]) => [label, { effect: row.expected, spawn: row.expected }]),
+          ),
+        );
+        expect(resolvedGit).toEqual(
+          Object.fromEntries(
+            gitEntries.map((row, index) => [
+              String(index),
+              { command: row.expected, args: ["status"], shell: false },
+            ]),
           ),
         );
       }),

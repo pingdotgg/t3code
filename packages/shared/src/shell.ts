@@ -449,6 +449,16 @@ function resolvePathEnvironmentVariable(env: NodeJS.ProcessEnv): string {
   return readEnvPath(env) ?? "";
 }
 
+function pathSearchCwd(pathValue: string, platform: NodeJS.Platform): string | undefined {
+  if (platform === "win32" || pathValue.length === 0) return undefined;
+  return pathValue.split(POSIX_PATH_DELIMITER).some((entry) => {
+    const directory = entry === "" ? "." : stripWrappingQuotes(entry.trim());
+    return directory.length > 0 && !NodePath.posix.isAbsolute(directory);
+  })
+    ? process.cwd()
+    : undefined;
+}
+
 function resolveWindowsPathExtensions(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
   const rawValue = env.PATHEXT;
   const fallback = [".COM", ".EXE", ".BAT", ".CMD"];
@@ -639,10 +649,7 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     pathEntries.push(pathEntry);
   }
 
-  const cwd =
-    platform !== "win32" && pathEntries.some((entry) => !path.isAbsolute(entry))
-      ? process.cwd()
-      : undefined;
+  const cwd = pathSearchCwd(pathValue, platform);
   const cacheKey = [
     platform,
     pathValue,
@@ -796,12 +803,15 @@ const resolveMacosGit = Effect.fnUntraced(function* (
 ) {
   const locateXcodeGit = yield* XcodeGitLocation;
   const cache = yield* CommandResolutionCache;
+  const pathValue = resolvePathEnvironmentVariable(env);
+  const cwd = pathSearchCwd(pathValue, "darwin");
   const cacheKey = [
     "xcode-git",
     String(spawnResolverCacheId(resolveExecutable)),
     String(spawnResolverCacheId(locateXcodeGit)),
-    resolvePathEnvironmentVariable(env),
+    pathValue,
     env.DEVELOPER_DIR ?? "",
+    ...(cwd === undefined ? [] : [cwd]),
   ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
   const nowNanos = yield* Clock.currentTimeNanos;
   const cached = cache.get(cacheKey);
