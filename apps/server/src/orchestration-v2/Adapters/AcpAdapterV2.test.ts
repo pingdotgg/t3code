@@ -5230,6 +5230,112 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("ends the turn for a restart when the agent never confirms the cancel", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      let runtimeOrdinalSeen = 0;
+      const instanceId = ProviderInstanceId.make("acp-unconfirmed-cancel");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+            ),
+            // Only the first agent ignores the cancel; a replacement runtime answers normally.
+            environment: (runtimeOrdinal) =>
+              runtimeOrdinal === 1 ? { T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: "1" } : {},
+            protocolEvents,
+            wrapRuntime: (runtime, runtimeOrdinal) => {
+              runtimeOrdinalSeen = runtimeOrdinal;
+              return runtime;
+            },
+          }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-unconfirmed-cancel");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("session-acp-unconfirmed-cancel"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
+      );
+      const started = Option.getOrThrow(
+        yield* runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === "native-cancel-tool",
+          ),
+          Stream.runHead,
+        ),
+      );
+      if (started.type !== "turn_item.updated" || started.turnItem.providerTurnId === null) {
+        return yield* Effect.die("Expected the native cancellable command");
+      }
+      const providerTurnId = started.turnItem.providerTurnId;
+      const interrupt = yield* runtime
+        .interruptTurn({ providerThread, providerTurnId, endOnTimeout: true })
+        .pipe(Effect.forkScoped);
+      yield* Stream.fromQueue(protocolEvents).pipe(
+        Stream.filter(
+          (event) =>
+            event.direction === "incoming" &&
+            typeof event.payload === "string" &&
+            event.payload.includes("native-cancel-received"),
+        ),
+        Stream.runHead,
+      );
+      yield* TestClock.adjust("10 seconds");
+      yield* Fiber.join(interrupt);
+      const terminal = Option.getOrThrow(
+        yield* runtime.events.pipe(
+          Stream.filter(
+            (event) => event.type === "turn.terminal" && event.providerTurnId === providerTurnId,
+          ),
+          Stream.runHead,
+        ),
+      );
+      assert.equal(terminal.type === "turn.terminal" && terminal.status, "interrupted");
+      // The unconfirmed prompt may still write to the old session, so the next turn must not share it.
+      yield* runtime.startTurn(
+        makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 2 }),
+      );
+      const nextTerminal = Option.getOrThrow(
+        yield* runtime.events.pipe(
+          Stream.filter(
+            (event) => event.type === "turn.terminal" && event.providerTurnId !== providerTurnId,
+          ),
+          Stream.runHead,
+        ),
+      );
+      assert.equal(nextTerminal.type === "turn.terminal" && nextTerminal.status, "completed");
+      assert.equal(runtimeOrdinalSeen, 2);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("cancels pending permission requests while interrupting an ACP turn", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
