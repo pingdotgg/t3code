@@ -281,8 +281,8 @@ export function ShimmeringWorkContent(props: {
   // docs/internals/performance-regressions.md.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- steps the native shimmer value while visible and active, and stops it on cleanup
   useEffect(() => {
-    progress.setValue(0);
     if (contentWidth <= 0 || reducedMotion || !appIsActive || !screenIsFocused) return;
+    progress.setValue(0);
 
     let step = 0;
     let timer: ReturnType<typeof setTimeout>;
