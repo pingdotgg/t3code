@@ -1,5 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - the test hashes view bytes the way PluginViews does.
 import * as NodeCrypto from "node:crypto";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
@@ -16,12 +19,14 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import { vi } from "vite-plus/test";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PluginCatalog from "./PluginCatalog.ts";
 import * as PluginManifestLoader from "./PluginManifestLoader.ts";
 import * as PluginSupervisor from "./PluginSupervisor.ts";
 import * as PluginViews from "./PluginViews.ts";
+import * as ViewFile from "./pluginViewFile.ts";
 
 // Children run the real CLI entry, which routes `__plugin-host` to the child runtime.
 const BIN_PATH = `${import.meta.dirname}/../bin.ts`;
@@ -32,29 +37,23 @@ const toJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const VIEW_SCRIPT = `t3View.ready.then(() => t3View.call("echo", { from: "view" }));\n`;
 
-/** Intercepts only an opened asset's reads; stat and scoped close use the real handle. */
 const withAssetReads = (
-  fs: FileSystem.FileSystem,
   read: (
     target: string,
-    file: FileSystem.File,
+    file: ViewFile.ViewFile,
     buffer: Uint8Array,
-  ) => ReturnType<FileSystem.File["read"]>,
-): FileSystem.FileSystem => ({
-  ...fs,
-  open: (target, options) =>
-    fs.open(target, options).pipe(
-      Effect.map(
-        (file) =>
-          new Proxy(file, {
-            get: (self, key, receiver) =>
-              key === "read"
-                ? (buffer: Uint8Array) => read(target, file, buffer)
-                : Reflect.get(self, key, receiver),
-          }),
-      ),
+  ) => ReturnType<ViewFile.ViewFile["read"]>,
+) => {
+  const open = ViewFile.open;
+  return vi.spyOn(ViewFile, "open").mockImplementation((target) =>
+    open(target).pipe(
+      Effect.map((file) => ({
+        ...file,
+        read: (buffer: Uint8Array) => read(target, file, buffer),
+      })),
     ),
-});
+  );
+};
 
 /** Starts a catalogue, its supervisor, and the views service in `scope`, as one server start would. */
 const startViews = Effect.fn("startViews")(function* (
@@ -182,60 +181,95 @@ it.layer(NodeServices.layer)("PluginViews", (it) => {
       ),
     );
 
-    it.effect("bounds reads when an asset grows after its handle was statted", () =>
-      withDatabase(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const plugin = yield* preparePlugin();
-          let bytesRead = 0;
-          const growing = withAssetReads(fs, (target, file, buffer) =>
-            file.read(buffer).pipe(
-              Effect.tap((count) =>
-                Effect.sync(() => {
-                  if (target === plugin.script) bytesRead += count;
-                }),
-              ),
-            ),
-          );
-          const grow = (target: string) =>
-            target === plugin.script
-              ? fs.writeFileString(target, "x".repeat(PLUGIN_VIEW_SCRIPT_MAX_BYTES + 4096))
-              : Effect.void;
-          const viewFs: FileSystem.FileSystem = {
-            ...growing,
-            stat: (target) => fs.stat(target).pipe(Effect.tap(() => grow(target))),
-            readFile: (target) =>
-              fs.readFile(target).pipe(
-                Effect.tap((bytes) =>
-                  Effect.sync(() => {
-                    if (target === plugin.script) bytesRead += bytes.length;
-                  }),
+    // quarantine: #16056 POSIX FIFOs are unavailable on Windows.
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+      "rejects an asset swapped to a FIFO without waiting for a writer",
+      () =>
+        withDatabase(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const plugin = yield* preparePlugin();
+            const serviceScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+              Scope.close(scope, Exit.void),
+            );
+            yield* Effect.addFinalizer(() =>
+              Effect.tryPromise(async () => {
+                const writer = await NodeFSP.open(
+                  plugin.script,
+                  NodeFS.constants.O_WRONLY | NodeFS.constants.O_NONBLOCK,
+                );
+                await writer.close();
+              }).pipe(Effect.ignore),
+            );
+            let swapped = false;
+            const viewFs: FileSystem.FileSystem = {
+              ...fs,
+              realPath: (target) =>
+                fs.realPath(target).pipe(
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      if (target !== plugin.script || swapped) return;
+                      swapped = true;
+                      NodeFS.unlinkSync(target);
+                      NodeChildProcess.execFileSync("mkfifo", [target]);
+                    }),
+                  ),
                 ),
+            };
+            const { catalog, views } = yield* startViews(serviceScope, viewFs);
+            yield* install(catalog, plugin.directory);
+            const shown = yield* awaitViews(views, (snapshot) => snapshot.problems.length > 0);
+            expect(swapped).toBe(true);
+            expect(shown.views).toEqual([]);
+            expect(shown.problems).toHaveLength(1);
+          }),
+        ),
+    );
+
+    it.effect.each(["asset", "manifest"] as const)(
+      "bounds reads when a %s grows after its handle was statted",
+      (kind) =>
+        withDatabase(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const plugin = yield* preparePlugin();
+            const targetPath =
+              kind === "asset" ? plugin.script : `${plugin.directory}/t3-plugin.json`;
+            const maxBytes = kind === "asset" ? PLUGIN_VIEW_SCRIPT_MAX_BYTES : 64 * 1024;
+            let bytesRead = 0;
+            const open = ViewFile.open;
+            using _open = vi.spyOn(ViewFile, "open").mockImplementation((target) =>
+              open(target).pipe(
+                Effect.map((file) => ({
+                  ...file,
+                  stat: file.stat.pipe(
+                    Effect.tap(() =>
+                      target === targetPath
+                        ? fs.writeFileString(target, "x".repeat(maxBytes + 4096)).pipe(Effect.orDie)
+                        : Effect.void,
+                    ),
+                  ),
+                  read: (buffer: Uint8Array) =>
+                    file.read(buffer).pipe(
+                      Effect.tap((count) =>
+                        Effect.sync(() => {
+                          if (target === targetPath) bytesRead += count;
+                        }),
+                      ),
+                    ),
+                })),
               ),
-            open: (target, options) =>
-              growing.open(target, options).pipe(
-                Effect.map((file) =>
-                  target !== plugin.script
-                    ? file
-                    : new Proxy(file, {
-                        get: (self, key, receiver) =>
-                          key === "stat"
-                            ? file.stat.pipe(Effect.tap(() => grow(target)))
-                            : Reflect.get(self, key, receiver),
-                      }),
-                ),
-              ),
-          };
-          const { catalog, views } = yield* startViews(yield* Scope.Scope, viewFs);
-          yield* install(catalog, plugin.directory);
-          const shown = yield* awaitViews(
-            views,
-            (snapshot) => snapshot.problems.length > 0 || snapshot.views.length > 0,
-          );
-          expect(shown.views).toEqual([]);
-          expect(bytesRead).toBe(PLUGIN_VIEW_SCRIPT_MAX_BYTES + 1);
-        }),
-      ),
+            );
+            const { catalog, views } = yield* startViews(yield* Scope.Scope);
+            yield* install(catalog, plugin.directory);
+            const shown = yield* awaitViews(
+              views,
+              (snapshot) => snapshot.problems.length > 0 || snapshot.views.length > 0,
+            );
+            expect(shown.views).toEqual([]);
+            expect(bytesRead).toBe(maxBytes + 1);
+          }),
+        ),
     );
     it.effect("serves a view's consented bytes only to its current generation", () =>
       withDatabase(
@@ -350,7 +384,7 @@ it.layer(NodeServices.layer)("PluginViews", (it) => {
           const reached = yield* Deferred.make<void>();
           const release = yield* Deferred.make<void>();
           let held = false;
-          const holding = withAssetReads(fs, (target, file, buffer) =>
+          using _holding = withAssetReads((target, file, buffer) =>
             Effect.suspend(() => {
               if (held || !target.endsWith("panel.js")) return file.read(buffer);
               held = true;
@@ -360,7 +394,7 @@ it.layer(NodeServices.layer)("PluginViews", (it) => {
               );
             }),
           );
-          const { catalog, views } = yield* startViews(yield* Scope.Scope, holding);
+          const { catalog, views } = yield* startViews(yield* Scope.Scope);
           const installation = yield* install(catalog, plugin.directory);
 
           yield* Deferred.await(reached);
@@ -393,24 +427,21 @@ it.layer(NodeServices.layer)("PluginViews", (it) => {
     it.effect("serves nothing when the bytes read differ from the bytes digested", () =>
       withDatabase(
         Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
           const plugin = yield* preparePlugin();
           // As if the script changed for the read and was restored before the digest.
-          const swapped = withAssetReads(fs, (target, file, buffer) => {
+          const positions = new WeakMap<ViewFile.ViewFile, number>();
+          using _swapped = withAssetReads((target, file, buffer) => {
             if (!target.endsWith("panel.js")) return file.read(buffer);
             return Effect.suspend(() => {
               const bytes = new TextEncoder().encode(`${VIEW_SCRIPT}// swapped\n`);
-              return file.seek(0n, "current").pipe(
-                Effect.map((position) => {
-                  const part = bytes.subarray(Number(position), Number(position) + buffer.length);
-                  buffer.set(part);
-                  return part.length;
-                }),
-                Effect.tap((length) => file.seek(BigInt(length), "current")),
-              );
+              const position = positions.get(file) ?? 0;
+              const part = bytes.subarray(position, position + buffer.length);
+              buffer.set(part);
+              positions.set(file, position + part.length);
+              return Effect.succeed(part.length);
             });
           });
-          const { catalog, views } = yield* startViews(yield* Scope.Scope, swapped);
+          const { catalog, views } = yield* startViews(yield* Scope.Scope);
           const installation = yield* install(catalog, plugin.directory);
           const shown = yield* awaitViews(
             views,
@@ -435,7 +466,6 @@ it.layer(NodeServices.layer)("PluginViews", (it) => {
     it.effect("serves nothing when views sharing a script read it differently", () =>
       withDatabase(
         Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
           const plugin = yield* preparePlugin({
             views: [
               { id: "panel", title: "Panel", placement: "side-panel", script: "views/panel.js" },
@@ -444,30 +474,27 @@ it.layer(NodeServices.layer)("PluginViews", (it) => {
           });
           // As if the script changed for the first view's read and was restored before the second.
           let reads = 0;
-          const swapped: FileSystem.FileSystem = {
-            ...fs,
-            open: (target, options) =>
-              fs.open(target, options).pipe(
-                Effect.map((file) => {
-                  if (!target.endsWith("panel.js") || reads++ !== 0) return file;
-                  const bytes = new TextEncoder().encode(`${VIEW_SCRIPT}// swapped\n`);
-                  let offset = 0;
-                  return new Proxy(file, {
-                    get: (self, key, receiver) =>
-                      key === "read"
-                        ? (buffer: Uint8Array) =>
-                            Effect.sync(() => {
-                              const part = bytes.subarray(offset, offset + buffer.length);
-                              buffer.set(part);
-                              offset += part.length;
-                              return part.length;
-                            })
-                        : Reflect.get(self, key, receiver),
-                  });
-                }),
-              ),
-          };
-          const { catalog, views } = yield* startViews(yield* Scope.Scope, swapped);
+          const open = ViewFile.open;
+          using _swapped = vi.spyOn(ViewFile, "open").mockImplementation((target) =>
+            open(target).pipe(
+              Effect.map((file) => {
+                if (!target.endsWith("panel.js") || reads++ !== 0) return file;
+                const bytes = new TextEncoder().encode(`${VIEW_SCRIPT}// swapped\n`);
+                let offset = 0;
+                return {
+                  ...file,
+                  read: (buffer: Uint8Array) =>
+                    Effect.sync(() => {
+                      const part = bytes.subarray(offset, offset + buffer.length);
+                      buffer.set(part);
+                      offset += part.length;
+                      return part.length;
+                    }),
+                };
+              }),
+            ),
+          );
+          const { catalog, views } = yield* startViews(yield* Scope.Scope);
           const installation = yield* install(catalog, plugin.directory);
           const shown = yield* awaitViews(
             views,

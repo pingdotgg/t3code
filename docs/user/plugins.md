@@ -122,6 +122,10 @@ Agents see two tools in every session that uses T3 Code's MCP server: `plugin_to
 thread to use one enabled later. Disabling or removing a plugin refuses its tools at once in every
 session and cancels calls in progress.
 
+Calls require a live thread in full-access/default mode. Restricted and planning
+threads can list tools but cannot execute them, because a trusted plugin's
+side-effect declaration does not constrain the code it runs.
+
 ### Settings and storage
 
 With the `settings` capability, list up to 32 fields in `settings`. Each has a `type` (`text`,
