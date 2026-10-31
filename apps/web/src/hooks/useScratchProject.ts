@@ -17,8 +17,12 @@ import {
   useEnvironments,
   usePrimaryEnvironmentId,
 } from "~/state/environments";
+import { useDraftSendOnOpenStore } from "~/draftSendOnOpenStore";
 import { projectEnvironment } from "~/state/projects";
 import { type NewThreadHandler, useNewThreadHandler } from "./useHandleNewThread";
+
+// The server offers no scratch folder when its data dir sits in a git work tree.
+const SCRATCH_UNAVAILABLE_REASON = "Off on this server: its data folder is inside a git repo";
 
 function reportScratchFailure(title: string, error: unknown) {
   toastManager.add(
@@ -46,6 +50,21 @@ export function createScratchProjectActions(input: {
       if (entry.environmentId === environmentId) environment = entry;
     }
     return availableScratchWorkspaceRoot(environment?.connection.phase, environment?.serverConfig);
+  };
+
+  /**
+   * Why "No project" is off for a connected environment whose config came
+   * without a scratch folder; null while it is available or still loading.
+   */
+  const scratchUnavailableReason = (environmentId: EnvironmentId | null): string | null => {
+    const environment = [...input.environments()].find(
+      (entry) => entry.environmentId === environmentId,
+    );
+    return environment?.connection.phase === "connected" &&
+      environment.serverConfig !== null &&
+      environment.serverConfig.scratchWorkspaceRoot === undefined
+      ? SCRATCH_UNAVAILABLE_REASON
+      : null;
   };
 
   // The primary (local) environment wins; `fallback` only applies when it offers no scratch root.
@@ -77,18 +96,33 @@ export function createScratchProjectActions(input: {
     return null;
   };
 
-  const startScratchThread = async (environmentId: EnvironmentId) => {
+  /**
+   * Opens a draft without a project. With `sendCarriedDraft`, the message
+   * typed on the no-projects home moves into it and sends from there.
+   */
+  const startScratchThread = async (
+    environmentId: EnvironmentId,
+    options?: { sendCarriedDraft?: boolean },
+  ) => {
+    // Armed before the project exists, so the draft's move sends however it opens.
+    if (options?.sendCarriedDraft) useDraftSendOnOpenStore.setState({ armed: true });
     const project = await openScratchProject(environmentId);
-    if (project) {
-      await input
-        .handleNewThread(scopeProjectRef(project.environmentId, project.id))
-        .catch((error: unknown) =>
-          reportScratchFailure("Could not start without a project", error),
-        );
+    if (!project) {
+      useDraftSendOnOpenStore.setState({ armed: false });
+      return;
     }
+    await input
+      .handleNewThread(scopeProjectRef(project.environmentId, project.id))
+      .catch((error: unknown) => reportScratchFailure("Could not start without a project", error));
   };
 
-  return { scratchWorkspaceRootFor, scratchEnvironmentId, openScratchProject, startScratchThread };
+  return {
+    scratchWorkspaceRootFor,
+    scratchEnvironmentId,
+    scratchUnavailableReason,
+    openScratchProject,
+    startScratchThread,
+  };
 }
 
 export function useScratchProject() {
