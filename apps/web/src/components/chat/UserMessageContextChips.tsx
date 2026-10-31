@@ -25,10 +25,10 @@ import ChatMarkdown from "../ChatMarkdown";
 import { EnvironmentContextChip } from "../EnvironmentContextChip";
 import { ThreadContextChip } from "../ThreadContextChip";
 import { ResponseReplyCard } from "./AssistantCitationChip";
-import { MessageCircleIcon, MousePointerClickIcon, PaintbrushIcon } from "lucide-react";
+import { AtSignIcon, MessageCircleIcon, MousePointerClickIcon, PaintbrushIcon } from "lucide-react";
 import type { ComposerContextId, KnownComposerContextRecord } from "@t3tools/contracts";
 import { buildExpandedImagePreview } from "./ExpandedImagePreview";
-import { WorkspaceEntryIcon, WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
+import { WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -82,12 +82,7 @@ function UserMessageMentionChip(props: {
                 useRightPanelStore.getState().openFile(ctx.threadRef, props.record.path);
             }}
           >
-            <WorkspaceEntryIcon
-              path={props.record.path}
-              environmentId={ctx.activeThreadEnvironmentId}
-              cwd={ctx.workspaceRoot}
-              theme={ctx.resolvedTheme}
-            />
+            <AtSignIcon aria-hidden="true" />
             <ContextChipLabel>{props.record.label}</ContextChipLabel>
           </ContextChip>
         }

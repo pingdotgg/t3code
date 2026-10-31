@@ -18,10 +18,17 @@ function composerCommandMenuPositionsEqual(
   );
 }
 
+// The gap between the tray and a menu floating above it, and the pen's widest menu.
+const COMPOSER_MENU_GAP_PX = 8;
+export const COMPOSER_MENU_MAX_WIDTH_PX = 520;
+
+/** Floats a menu above the composer tray, aligned with its left edge. */
 export function ComposerCommandMenuLayer(props: {
   anchor: HTMLElement | null;
+  maxWidth?: number;
   children: ReactNode;
 }) {
+  const { maxWidth } = props;
   const [position, setPosition] = useState<ComposerCommandMenuPosition | null>(null);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- positions the menu from the composer's DOM rect, tracking window resize, scroll and ancestor resizes
@@ -30,27 +37,20 @@ export function ComposerCommandMenuLayer(props: {
     if (!anchor) return;
 
     const updatePosition = () => {
-      const form = anchor.closest<HTMLElement>('[data-chat-composer-form="true"]');
-      const mainSurface = form?.querySelector<HTMLElement>(
-        '[data-chat-composer-main-surface="true"]',
-      );
-      const rect = (mainSurface ?? form ?? anchor).getBoundingClientRect();
-      const rootFontSizePx =
-        Number.parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16;
-      const drawerInsetRem = Number.parseFloat(
-        window.getComputedStyle(form ?? anchor).getPropertyValue("--chat-composer-drawer-inset"),
-      );
-      const drawerInset = drawerInsetRem * rootFontSizePx;
-      const width = rect.width - drawerInset * 2;
+      const tray =
+        anchor.closest<HTMLElement>('[data-slot="composer-shell"]') ??
+        anchor.closest<HTMLElement>('[data-chat-composer-form="true"]') ??
+        anchor;
+      const rect = tray.getBoundingClientRect();
+      const width = maxWidth === undefined ? rect.width : Math.min(rect.width, maxWidth);
       if (width <= 0) {
         setPosition(null);
         return;
       }
-      const composerOverlap = rootFontSizePx + 1;
       const next = {
-        bottom: window.innerHeight - rect.top - composerOverlap,
-        left: rect.left + drawerInset,
-        maxHeight: Math.max(96, rect.top - 24 + composerOverlap),
+        bottom: window.innerHeight - rect.top + COMPOSER_MENU_GAP_PX,
+        left: rect.left,
+        maxHeight: Math.max(96, rect.top - 24 - COMPOSER_MENU_GAP_PX),
         width,
       };
       setPosition((current) =>
@@ -73,7 +73,7 @@ export function ComposerCommandMenuLayer(props: {
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
     };
-  }, [props.anchor]);
+  }, [props.anchor, maxWidth]);
 
   if (!props.anchor || !position) return null;
 
