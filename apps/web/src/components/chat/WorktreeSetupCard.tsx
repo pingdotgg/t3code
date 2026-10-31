@@ -138,19 +138,19 @@ function HeaderIcon({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
     case "running":
       return (
         <span className="inline-flex shrink-0 text-info-foreground">
-          <Spinner size="md" />
+          <Spinner size="sm" />
         </span>
       );
     case "done":
       return snapshot.stages.some((stage) => stage.status === "failed") ? (
-        <TriangleAlertIcon aria-hidden className="size-4 shrink-0 text-warning-foreground" />
+        <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0 text-warning-foreground" />
       ) : (
-        <CircleCheckIcon aria-hidden className="size-4 shrink-0 text-success-foreground" />
+        <CircleCheckIcon aria-hidden className="size-3.5 shrink-0 text-success-foreground" />
       );
     case "failed":
-      return <CircleXIcon aria-hidden className="size-4 shrink-0 text-error-foreground" />;
+      return <CircleXIcon aria-hidden className="size-3.5 shrink-0 text-error-foreground" />;
     case "cancelled":
-      return <MinusIcon aria-hidden className="size-4 shrink-0 text-dim-foreground" />;
+      return <MinusIcon aria-hidden className="size-3.5 shrink-0 text-dim-foreground" />;
   }
 }
 
@@ -174,7 +174,7 @@ function CardHeader({
   const text = headerLabel(snapshot);
   const stageLabel = runningStageLabel(snapshot);
   return (
-    <div className="flex h-10 min-w-0 items-center gap-2.5 border-b border-hairline px-3.5 text-body tabular-nums">
+    <div className="flex min-w-0 items-center gap-2 px-3.5 py-2.5 text-label tabular-nums">
       <HeaderIcon snapshot={snapshot} />
       <span
         ref={running ? observeVisibleAnimation : undefined}
@@ -208,13 +208,22 @@ function DetailRow({
   trailing?: ReactNode;
 }) {
   return (
-    <div className="flex min-h-6 min-w-0 items-center gap-3 text-body">
-      <dt className="w-14 shrink-0 text-dim-foreground">{label}</dt>
-      <dd className="flex min-w-0 flex-1 items-center gap-2.5">
-        <span aria-hidden className="shrink-0 text-muted-foreground [&>svg]:size-3.5">
-          {icon}
+    <div className="flex min-w-0 items-center gap-2.5 text-meta">
+      <dt
+        className={cn(
+          "w-14 shrink-0 text-dim-foreground",
+          trailing ? "flex h-6 items-center self-start" : null,
+        )}
+      >
+        {label}
+      </dt>
+      <dd className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1.5">
+        <span className="flex min-w-40 flex-1 items-center gap-2.5">
+          <span aria-hidden className="shrink-0 text-muted-foreground [&>svg]:size-3">
+            {icon}
+          </span>
+          <span className="min-w-0 flex-1 font-mono text-foreground">{children}</span>
         </span>
-        <span className="min-w-0 flex-1 font-mono text-foreground">{children}</span>
         {trailing}
       </dd>
     </div>
@@ -251,7 +260,7 @@ function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: b
     line: lines[lines.length - OUTPUT_TAIL_LINES + slot] ?? "",
   }));
   return (
-    <pre className="overflow-hidden rounded-control surface-well px-2.5 py-1.5 font-mono text-caption leading-relaxed text-muted-foreground select-text">
+    <pre className="flex flex-col gap-0.5 overflow-hidden rounded-lg bg-well px-2.5 py-2 dark:bg-black/35 dark:bg-none font-mono text-caption text-muted-foreground select-text">
       {rows.map(({ slot, line }) => (
         <div
           key={slot}
@@ -370,7 +379,30 @@ export function WorktreeSetupCard({
     );
   }
 
+  const showSetupRow = setupStage !== undefined && setupStage.status !== "skipped";
   const hasActions = showTerminal || onWorkLocally || (onCancel && running);
+  const actions = hasActions ? (
+    <>
+      {showTerminal ? (
+        <Button type="button" size="xs" variant="secondary" onClick={onOpenTerminal}>
+          <TerminalIcon aria-hidden />
+          Open terminal
+        </Button>
+      ) : null}
+      {onWorkLocally ? (
+        <Button type="button" size="xs" variant="secondary" onClick={onWorkLocally}>
+          <LaptopIcon aria-hidden />
+          Work locally
+        </Button>
+      ) : null}
+      {onCancel && running ? (
+        <Button type="button" size="xs" variant="secondary" onClick={onCancel}>
+          <XIcon aria-hidden />
+          Cancel
+        </Button>
+      ) : null}
+    </>
+  ) : null;
   return (
     <section
       aria-label="Worktree setup"
@@ -378,8 +410,8 @@ export function WorktreeSetupCard({
       className={cn("overflow-hidden rounded-card", embedded ? "surface-card" : "surface-panel")}
     >
       <CardHeader snapshot={snapshot} totalElapsed={totalElapsed} />
-      <div className="flex flex-col gap-2.5 px-3.5 py-3">
-        <dl className="flex flex-col gap-0.5">
+      <div className="flex flex-col gap-1.5 px-3.5 pt-2.5 pb-3">
+        <dl className="flex flex-col gap-1.5">
           {snapshot.baseRef ? (
             <DetailRow label="Base" icon={<GitBranchIcon />}>
               <MiddleTruncate value={snapshot.baseRef} className="flex" />
@@ -395,15 +427,16 @@ export function WorktreeSetupCard({
               <MiddleTruncate value={snapshot.worktreePath} className="flex" />
             </DetailRow>
           ) : null}
-          {setupStage && setupStage.status !== "skipped" ? (
-            <div className="mt-1.5">
+          {setupStage && showSetupRow ? (
+            <div className="mt-1">
               <DetailRow
                 label="Setup"
                 icon={<PlayIcon />}
                 trailing={
-                  <span className="flex shrink-0 items-center gap-2">
+                  <span className="ml-auto flex shrink-0 items-center gap-1.5">
                     {setupStatusChip(setupStage)}
                     {retryButton}
+                    {actions}
                   </span>
                 }
               >
@@ -427,27 +460,8 @@ export function WorktreeSetupCard({
           </p>
         ) : null}
 
-        {hasActions ? (
-          <div className="-mx-2 flex flex-wrap items-center gap-0.5">
-            {showTerminal ? (
-              <Button type="button" size="xs" variant="ghost-muted" onClick={onOpenTerminal}>
-                <TerminalIcon aria-hidden />
-                Open terminal
-              </Button>
-            ) : null}
-            {onWorkLocally ? (
-              <Button type="button" size="xs" variant="ghost-muted" onClick={onWorkLocally}>
-                <LaptopIcon aria-hidden />
-                Work locally
-              </Button>
-            ) : null}
-            {onCancel && running ? (
-              <Button type="button" size="xs" variant="ghost-muted" onClick={onCancel}>
-                <XIcon aria-hidden />
-                Cancel
-              </Button>
-            ) : null}
-          </div>
+        {actions && !showSetupRow ? (
+          <div className="flex flex-wrap items-center justify-end gap-1.5">{actions}</div>
         ) : null}
       </div>
     </section>
