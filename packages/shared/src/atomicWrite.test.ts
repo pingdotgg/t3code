@@ -13,6 +13,9 @@ import * as TestClock from "effect/testing/TestClock";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import * as HostProcess from "./HostProcess.ts";
 
+// Windows has no POSIX permission bits; chmod there only toggles read-only.
+const windowsHost = HostProcess.Platform.defaultValue() === "win32";
+
 it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
   it.effect("keeps a symlinked file linked and rewrites its destination", () =>
     Effect.gen(function* () {
@@ -24,12 +27,16 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
       yield* fs.makeDirectory(path.dirname(destination), { recursive: true });
       yield* fs.makeDirectory(path.dirname(link), { recursive: true });
       yield* fs.writeFileString(destination, "before");
+      yield* fs.chmod(destination, 0o600);
       yield* fs.symlink(destination, link);
 
       yield* writeFileStringAtomically({ filePath: link, contents: "after" });
 
       assert.strictEqual(yield* fs.readLink(link), destination);
       assert.strictEqual(yield* fs.readFileString(destination), "after");
+      if (!windowsHost) {
+        assert.strictEqual((yield* fs.stat(destination)).mode & 0o777, 0o600);
+      }
     }),
   );
 
@@ -47,6 +54,9 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
 
       assert.strictEqual(yield* fs.readLink(link), destination);
       assert.strictEqual(yield* fs.readFileString(destination), "fresh");
+      if (!windowsHost) {
+        assert.strictEqual((yield* fs.stat(destination)).mode & 0o777, 0o600);
+      }
     }),
   );
 
@@ -84,12 +94,16 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
       yield* fs.makeDirectory(home, { recursive: true });
       yield* fs.symlink(linkedState, path.join(home, "state"));
       yield* fs.writeFileString(destination, "before");
+      yield* fs.chmod(destination, 0o664);
       yield* fs.symlink("../config/settings.json", link);
 
       yield* writeFileStringAtomically({ filePath: link, contents: "after" });
 
       assert.strictEqual(yield* fs.readLink(link), "../config/settings.json");
       assert.strictEqual(yield* fs.readFileString(destination), "after");
+      if (!windowsHost) {
+        assert.strictEqual((yield* fs.stat(destination)).mode & 0o777, 0o664);
+      }
     }),
   );
 
@@ -194,6 +208,7 @@ it.effect("succeeds when the write lands but its temp directory cannot be remove
       makeDirectory: () => Effect.void,
       makeTempDirectory: () => Effect.succeed("/home/settings.json.abc123"),
       writeFileString: () => Effect.void,
+      chmod: () => Effect.void,
       rename: (_from, to) => Effect.sync(() => void renamed.push(to)),
       remove: (path) =>
         Effect.sync(() => void removed.push(path)).pipe(
