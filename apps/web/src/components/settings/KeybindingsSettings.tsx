@@ -913,15 +913,13 @@ function KeybindingSourceBadge({ source }: { source: KeybindingRow["source"] }) 
 
 function KeybindingRowTitle({ row }: { row: KeybindingRow }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={<span className="flex min-w-0 items-center gap-2 text-body text-foreground" />}
-      >
-        <span className="truncate">{commandLabel(row.command)}</span>
-        <KeybindingSourceBadge source={row.source} />
-      </TooltipTrigger>
-      <TooltipPopup side="top">{row.command}</TooltipPopup>
-    </Tooltip>
+    <TooltipTrigger
+      payload={row.command}
+      render={<span className="flex min-w-0 items-center gap-2 text-body text-foreground" />}
+    >
+      <span className="truncate">{commandLabel(row.command)}</span>
+      <KeybindingSourceBadge source={row.source} />
+    </TooltipTrigger>
   );
 }
 
@@ -973,6 +971,7 @@ function KeybindingSettingsRow(props: KeybindingRowProps) {
     <SettingsSearchTarget
       id={anchorId}
       role="row"
+      style={{ contentVisibility: "auto", containIntrinsicSize: "auto 38px" }}
       className={cn(KEYBINDING_TABLE_ROW, "group/row min-h-9.5 py-1 outline-none")}
     >
       <span role="cell" className={KEYBINDING_TABLE_COMMAND}>
@@ -997,7 +996,7 @@ function KeybindingSettingsRow(props: KeybindingRowProps) {
             aria-label={`Edit when clause for ${commandLabel(row.command)}`}
             onClick={() => setEditing("when")}
           >
-            <span className="truncate font-mono font-normal">{row.when || "Always"}</span>
+            <span className="truncate font-mono text-meta">{row.when || "Always"}</span>
             <ChevronDownIcon className="size-3.5 shrink-0 opacity-0 group-focus-within/row:opacity-60 group-hover/row:opacity-60 pointer-coarse:opacity-60" />
           </Button>
         </span>
@@ -1036,6 +1035,7 @@ function EditableKeybindingSettingsRow(
     <SettingsSearchTarget
       id={anchorId}
       role="row"
+      style={{ contentVisibility: "auto", containIntrinsicSize: "auto 38px" }}
       className={cn(KEYBINDING_TABLE_ROW, "group/row min-h-9.5 py-1 outline-none")}
     >
       <span role="cell" className={KEYBINDING_TABLE_COMMAND}>
@@ -1334,33 +1334,40 @@ function KeybindingsList(props: KeybindingsListProps) {
   };
   const anchorIds = keybindingAnchorIds(rows);
   return (
-    <div
-      role="table"
-      aria-label="Shortcuts"
-      className={cn(
-        KEYBINDING_TABLE_GRID,
-        "[&>*+*]:border-t [&>*+*]:border-divider dark:[&>*+*]:border-divider/60",
+    <Tooltip<KeybindingCommand>>
+      {({ payload }) => (
+        <>
+          <div
+            role="table"
+            aria-label="Shortcuts"
+            className={cn(
+              KEYBINDING_TABLE_GRID,
+              "[&>*+*]:border-t [&>*+*]:border-divider dark:[&>*+*]:border-divider/60",
+            )}
+          >
+            <KeybindingTableHead />
+            {isAddingBinding ? <NewKeybindingSettingsRow {...newProps} /> : null}
+            {rows.map((row) => (
+              <KeybindingSettingsRow
+                key={row.id}
+                row={row}
+                anchorId={anchorIds.get(row.id)}
+                isSaving={savingCommand === row.command}
+                {...rowActions}
+              />
+            ))}
+            {rows.length === 0 && !isAddingBinding ? (
+              <div className="col-span-full">
+                <SettingsNoMatches onClear={onClearQuery}>
+                  No keybindings match “{query.trim()}”.
+                </SettingsNoMatches>
+              </div>
+            ) : null}
+          </div>
+          <TooltipPopup side="top">{payload}</TooltipPopup>
+        </>
       )}
-    >
-      <KeybindingTableHead />
-      {isAddingBinding ? <NewKeybindingSettingsRow {...newProps} /> : null}
-      {rows.map((row) => (
-        <KeybindingSettingsRow
-          key={row.id}
-          row={row}
-          anchorId={anchorIds.get(row.id)}
-          isSaving={savingCommand === row.command}
-          {...rowActions}
-        />
-      ))}
-      {rows.length === 0 && !isAddingBinding ? (
-        <div className="col-span-full">
-          <SettingsNoMatches onClear={onClearQuery}>
-            No keybindings match “{query.trim()}”.
-          </SettingsNoMatches>
-        </div>
-      ) : null}
-    </div>
+    </Tooltip>
   );
 }
 
