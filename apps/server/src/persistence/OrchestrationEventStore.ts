@@ -60,7 +60,17 @@ export class OrchestrationEventStore extends Context.Service<
       readonly eventType?: OrchestrationV2DomainEvent["type"];
       readonly limit?: number;
       readonly skipUnknownEventTypes?: boolean;
+      /** Bound fetched JSON per page, always allowing one indivisible event. */
+      readonly maxPageBytes?: number;
     }) => Stream.Stream<OrchestrationV2StoredEvent, OrchestrationEventStoreError>;
+
+    /** Check a scoped replay range without reading or restoring event payloads. */
+    readonly hasAgentEvent: (input: {
+      readonly threadId: ThreadId;
+      readonly afterSequence: number;
+      readonly throughSequence: number;
+      readonly eventType: OrchestrationV2DomainEvent["type"];
+    }) => Effect.Effect<boolean, OrchestrationEventStoreError>;
 
     readonly getAgentReplayStats: (input: {
       readonly threadId: ThreadId;
@@ -392,9 +402,9 @@ const makeEventStore = Effect.gen(function* () {
     readonly eventType?: OrchestrationV2DomainEvent["type"];
     readonly onlyAgentEvents?: boolean;
     readonly limit: number;
-  }) =>
-    sql<ApplicationEventRow>`
-      SELECT
+    readonly maxPageBytes?: number;
+  }) => {
+    const columns = sql`
         sequence,
         event_id,
         command_id,
@@ -407,6 +417,8 @@ const makeEventStore = Effect.gen(function* () {
         application_event_version,
         causation_event_id,
         correlation_id
+    `;
+    const from = sql`
       FROM orchestration_events
       ${
         // Otherwise the sequence index wins and command lookups scan every V2 event.
@@ -431,9 +443,41 @@ const makeEventStore = Effect.gen(function* () {
           ...(input.commandId === undefined ? [] : [sql`command_id = ${input.commandId}`]),
           ...(input.eventType === undefined ? [] : [sql`event_type = ${input.eventType}`]),
         ])}
-      ORDER BY sequence ASC
-      LIMIT ${input.limit}
+    `;
+    if (input.maxPageBytes === undefined) {
+      return sql<ApplicationEventRow>`
+        SELECT ${columns} ${from} ORDER BY sequence ASC LIMIT ${input.limit}
+      `.pipe(NodeSqliteClient.readOnly);
+    }
+    // Materialize only candidate ids. Walk their restored sizes until the page
+    // fills (at most one overflow row), rather than restoring all 500 bodies.
+    // Prompt references must be sized after restoration, including JSON escaping.
+    return sql<ApplicationEventRow>`
+      WITH RECURSIVE candidates AS MATERIALIZED (
+        SELECT sequence, ROW_NUMBER() OVER (ORDER BY sequence) AS ordinal
+        ${from} ORDER BY sequence ASC LIMIT ${input.limit}
+      ), replay_page(cursor, replay_bytes, row_count) AS (
+        SELECT orchestration_events.sequence,
+          octet_length(${restoredPayloadJson}) + octet_length(metadata_json), 1
+        FROM orchestration_events
+        JOIN candidates ON candidates.sequence = orchestration_events.sequence
+        WHERE candidates.ordinal = 1
+        UNION ALL
+        SELECT orchestration_events.sequence,
+          page.replay_bytes + octet_length(${restoredPayloadJson}) + octet_length(metadata_json),
+          page.row_count + 1
+        FROM replay_page AS page
+        JOIN candidates ON candidates.ordinal = page.row_count + 1
+        JOIN orchestration_events ON orchestration_events.sequence = candidates.sequence
+        WHERE page.replay_bytes < ${input.maxPageBytes}
+      )
+      SELECT ${columns}
+      FROM orchestration_events
+      JOIN replay_page ON replay_page.cursor = orchestration_events.sequence
+      WHERE replay_page.row_count = 1 OR replay_page.replay_bytes <= ${input.maxPageBytes}
+      ORDER BY sequence
     `.pipe(NodeSqliteClient.readOnly);
+  };
 
   const appendAgentEvents: OrchestrationEventStore["Service"]["appendAgentEvents"] = (input) =>
     Effect.forEach(
@@ -556,6 +600,7 @@ const makeEventStore = Effect.gen(function* () {
           ...(input?.eventType === undefined ? {} : { eventType: input.eventType }),
           onlyAgentEvents: true,
           limit: pageLimit,
+          ...(input?.maxPageBytes === undefined ? {} : { maxPageBytes: input.maxPageBytes }),
         }).pipe(
           Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.readAgentEvents:query")),
           Effect.map((rows) => {
@@ -564,7 +609,7 @@ const makeEventStore = Effect.gen(function* () {
             return [
               rows,
               last === undefined ||
-              rows.length < pageLimit ||
+              (input?.maxPageBytes === undefined && rows.length < pageLimit) ||
               nextRemaining <= 0 ||
               (input?.throughSequence !== undefined && last.sequence >= input.throughSequence)
                 ? Option.none()
@@ -584,6 +629,23 @@ const makeEventStore = Effect.gen(function* () {
       ),
     );
   };
+
+  const hasAgentEvent: OrchestrationEventStore["Service"]["hasAgentEvent"] = (input) =>
+    sql<{ readonly found: number }>`
+      SELECT EXISTS (
+        SELECT 1 FROM orchestration_events
+        WHERE aggregate_kind = 'thread'
+          AND stream_id = ${input.threadId}
+          AND application_event_version = 2
+          AND sequence > ${input.afterSequence}
+          AND sequence <= ${input.throughSequence}
+          AND event_type = ${input.eventType}
+      ) AS found
+    `.pipe(
+      NodeSqliteClient.readOnly,
+      Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.hasAgentEvent:query")),
+      Effect.map((rows) => rows[0]?.found === 1),
+    );
 
   const getAgentReplayStats: OrchestrationEventStore["Service"]["getAgentReplayStats"] = (input) =>
     sql<{
@@ -743,6 +805,7 @@ const makeEventStore = Effect.gen(function* () {
     appendProjectEvent,
     appendAgentEvents,
     readAgentEvents,
+    hasAgentEvent,
     getAgentReplayStats,
     getReplayStats,
     latestAgentSequence,

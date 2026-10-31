@@ -68,6 +68,72 @@ const seedEvents = Effect.fn("test.seedSequenceEvents")(function* (
   `;
 });
 
+it.effect("checks creation ranges without restoring or decoding payloads", () =>
+  Effect.gen(function* () {
+    const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+    const threadId = ThreadId.make("creation-existence");
+    const inserted = yield* seedEvents([
+      { ...eventRow(1, "thread", 2, threadId), event_type: "thread.created", payload_json: "{" },
+      eventRow(2, "thread", 2, threadId),
+      { ...eventRow(3, "thread", 2, "other"), event_type: "thread.created", payload_json: "{" },
+      { ...eventRow(4, "thread", 1, threadId), event_type: "thread.created", payload_json: "{" },
+    ]);
+    const range = {
+      threadId,
+      afterSequence: 0,
+      throughSequence: inserted[3]!.sequence,
+      eventType: "thread.created" as const,
+    };
+    assert.isTrue(yield* store.hasAgentEvent(range));
+    assert.isFalse(yield* store.hasAgentEvent({ ...range, afterSequence: inserted[0]!.sequence }));
+    assert.isFalse(yield* store.hasAgentEvent({ ...range, throughSequence: 0 }));
+    assert.isTrue(yield* store.hasAgentEvent({ ...range, throughSequence: inserted[0]!.sequence }));
+  }).pipe(Effect.provide(layerEventStore)),
+);
+
+it.effect("fetches the next byte-bounded replay page after delivering the previous page", () =>
+  Effect.gen(function* () {
+    const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+    const sql = yield* SqlClient.SqlClient;
+    const threadId = ThreadId.make("byte-paged-replay");
+    const rows = [1, 2].map((ordinal) => ({
+      ...eventRow(ordinal, "thread", 2, threadId),
+      payload_json: encodeJson({
+        providerSessionId: `session:${ordinal}:${"x".repeat(180_000)}`,
+        detachedAt: occurredAt,
+      }),
+    }));
+    const inserted = yield* seedEvents(rows);
+    const updatedPayload = {
+      providerSessionId: ProviderSessionId.make("session:updated"),
+      detachedAt: occurredAt,
+    };
+    const items = yield* store
+      .readAgentEvents({
+        threadId,
+        throughSequence: inserted[1]!.sequence,
+        maxPageBytes: 256 * 1024,
+      })
+      .pipe(
+        Stream.tap((item) =>
+          item.sequence === inserted[0]!.sequence
+            ? sql`UPDATE orchestration_events SET payload_json = ${encodeJson(updatedPayload)}
+              WHERE sequence = ${inserted[1]!.sequence}`
+            : Effect.void,
+        ),
+        Stream.runCollect,
+      );
+    assert.deepEqual(
+      items.map((item) => item.sequence),
+      inserted.map((item) => item.sequence),
+    );
+    assert.deepEqual(items[1]!.event.payload, {
+      ...updatedPayload,
+      detachedAt: DateTime.makeUnsafe(occurredAt),
+    });
+  }).pipe(Effect.provide(layerEventStore)),
+);
+
 it.effect("keeps application and scoped agent high-water marks separate from legacy history", () =>
   Effect.gen(function* () {
     const store = yield* OrchestrationEventStore.OrchestrationEventStore;
