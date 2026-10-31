@@ -178,6 +178,15 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       yield* command.uninstall;
       expect(yield* fs.readFileString(theirs)).toBe("npm's t3\n");
       expect(yield* fs.readLink(path.join(home, "bin", "t3"))).toBe(path.join(home, "gone"));
+      // Another tool's link that leads on to this app's launcher is still that tool's.
+      yield* command.install.pipe(Effect.ignore);
+      const managed = path.join(home, "manager", "t3");
+      yield* fs.makeDirectory(path.dirname(managed));
+      yield* fs.symlink(path.join(home, ".t3", "bin", "t3"), managed);
+      yield* fs.remove(path.join(home, "bin", "t3"));
+      yield* fs.symlink(managed, path.join(home, "bin", "t3"));
+      yield* command.uninstall;
+      expect(yield* fs.readLink(path.join(home, "bin", "t3"))).toBe(managed);
 
       const launcher = path.join(home, ".t3", "bin", "t3");
       yield* fs.writeFileString(launcher, "npm's t3\n");

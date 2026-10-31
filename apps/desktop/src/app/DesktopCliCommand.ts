@@ -99,11 +99,13 @@ export const make = Effect.gen(function* () {
 
   const isOurLink = Effect.fn("DesktopCliCommand.isOurLink")(
     function* (link: string) {
-      yield* fs.readLink(link);
+      // Only a direct link: a chain through another tool's link is that tool's.
+      const target = path.resolve(path.dirname(link), yield* fs.readLink(link));
+      if (Option.isSome(yield* fs.readLink(target).pipe(Effect.option))) return false;
       // The launcher is a few KB; never read a large binary another `t3` links to.
-      const info = yield* fs.stat(link);
+      const info = yield* fs.stat(target);
       if (info.type !== "File" || Number(info.size) > 16_384) return false;
-      const content = yield* fs.readFileString(link);
+      const content = yield* fs.readFileString(target);
       return content.includes(DesktopCliShim.MARKER);
     },
     Effect.orElseSucceed(() => false),

@@ -106,7 +106,11 @@ export const linkCommand = Effect.fn("cli.install.link_command")(function* (inpu
     .remove(staging, { force: true })
     .pipe(
       Effect.andThen(fs.symlink(input.executable, staging)),
-      Effect.andThen(fs.rename(staging, commandLink)),
+      Effect.andThen(
+        fs
+          .rename(staging, commandLink)
+          .pipe(Effect.tapError(() => fs.remove(staging, { force: true }).pipe(Effect.ignore))),
+      ),
     );
   if (kind === "missing") yield* fs.symlink(commandLink, input.link);
   if (kind !== "older") return true;

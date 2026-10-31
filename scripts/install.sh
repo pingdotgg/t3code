@@ -284,8 +284,10 @@ elif [ -e "$public" ] || [ -L "$public" ]; then
 fi
 # Inside the T3 home, so swapping it in place cannot replace another program's file.
 rm -f "${command_link}.$$.tmp"
-ln -s "${target_dir}/t3" "${command_link}.$$.tmp" && mv -f "${command_link}.$$.tmp" "$command_link" ||
+if ! { ln -s "${target_dir}/t3" "${command_link}.$$.tmp" && mv -f "${command_link}.$$.tmp" "$command_link"; }; then
+  rm -f "${command_link}.$$.tmp"
   fail "could not link ${command_link}"
+fi
 case "$kind" in
   # An empty spot is linked without -f, so a file that appears after the check above is kept.
   # Into the folder, so an entry of any kind already named t3 makes ln fail instead of filling it.
