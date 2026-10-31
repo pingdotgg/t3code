@@ -74,6 +74,7 @@ vi.mock("../state/terminal", () => ({ terminalEnvironment: { write: {}, resize: 
 vi.mock("../state/preview", () => ({ previewEnvironment: { open: {} } }));
 vi.mock("../layout/PaneTabs", () => ({
   LayoutPaneTab: () => null,
+  LayoutPaneTabStrip: ({ children }: { children: React.ReactNode }) => children,
   useLayoutPaneSiblingTabs: () => ({ before: [], after: [] }),
 }));
 vi.mock("../editorPreferences", () => ({ useOpenInPreferredEditor: () => () => {} }));
