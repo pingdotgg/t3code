@@ -4,6 +4,9 @@ import * as Drizzle from "@alchemy.run/drizzle/Postgres";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as TestClock from "effect/testing/TestClock";
+import { PgDialect } from "drizzle-orm/pg-core";
+import type { SQL } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import * as DeliveryAttempts from "./DeliveryAttempts.ts";
@@ -173,10 +176,12 @@ describe("DeliveryAttempts", () => {
 
   const pruneWith = (batches: ReadonlyArray<number>) => {
     const deleteCalls: number[] = [];
+    const predicates: SQL[] = [];
     const fakeDb = {
       delete: () => ({
-        where: () => ({
+        where: (predicate: SQL) => ({
           returning: () => {
+            predicates.push(predicate);
             const size = batches[deleteCalls.length] ?? 0;
             deleteCalls.push(size);
             return Effect.succeed(Array.from({ length: size }, (_, index) => ({ id: `${index}` })));
@@ -193,15 +198,26 @@ describe("DeliveryAttempts", () => {
         ),
       ),
     );
-    return { run, deleteCalls };
+    return { run, deleteCalls, predicates };
   };
 
   it.effect("stops pruning once a batch comes back short", () => {
     const full = DeliveryAttempts.DELIVERY_ATTEMPT_PRUNE_BATCH_SIZE;
-    const { run, deleteCalls } = pruneWith([full, 12]);
+    const { run, deleteCalls, predicates } = pruneWith([full, 12]);
     return Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-05-26T00:00:00.000Z"));
       expect(yield* run).toBe(full + 12);
       expect(deleteCalls).toEqual([full, 12]);
+      expect(predicates.map((predicate) => new PgDialect().sqlToQuery(predicate))).toEqual([
+        {
+          sql: '"relay_delivery_attempts"."id" in (select "id" from "relay_delivery_attempts" where "relay_delivery_attempts"."created_at" < $1 limit $2)',
+          params: ["2026-05-19T00:00:00.000Z", full],
+        },
+        {
+          sql: '"relay_delivery_attempts"."id" in (select "id" from "relay_delivery_attempts" where "relay_delivery_attempts"."created_at" < $1 limit $2)',
+          params: ["2026-05-19T00:00:00.000Z", full],
+        },
+      ]);
     });
   });
 
