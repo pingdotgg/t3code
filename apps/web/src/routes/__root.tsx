@@ -19,6 +19,7 @@ import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
+import { WelcomeWizardCoordinator } from "../components/onboarding/WelcomeWizardCoordinator";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { DevReplayHost } from "../components/DevReplayHost";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
@@ -30,6 +31,7 @@ import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkC
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
+import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { Button } from "../components/ui/button";
@@ -186,10 +188,12 @@ function RootRouteBranch() {
       <CustomSnoozeDialogHost />
       <GuestShareDialogHost />
       <ProjectCloneToastCoordinator />
+      <ProviderUpdateLaunchNotification />
       <AddProjectToMachineDialogHost />
       {import.meta.env.DEV && primaryEnvironmentAuthenticated ? <DevReplayHost /> : null}
       {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
       {appShell}
+      <WelcomeWizardCoordinator />
       {/* Keep the theme editor above the router so drafts survive navigation. */}
       <ThemeEditorHost />
     </>
