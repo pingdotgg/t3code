@@ -10,6 +10,7 @@ import type { ClientSettings } from "@t3tools/contracts/settings";
 import * as Option from "effect/Option";
 import type { AtomRegistry } from "effect/reactivity";
 import {
+  BellIcon,
   CircleAlertIcon,
   CircleCheckIcon,
   MessageCircleQuestionIcon,
@@ -17,6 +18,7 @@ import {
 } from "lucide-react";
 
 import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings";
+import { setAgentAlertPresenter } from "../lib/agentAlertPresenter";
 import { isWindowsPlatform } from "../lib/utils";
 import { environmentSummaries } from "../state/presentation";
 import { environmentShell } from "../state/shell";
@@ -335,6 +337,88 @@ export function startThreadNotifications(
     };
   };
 
+  const presentAgentAlert = (alert: {
+    readonly environmentId: EnvironmentId;
+    readonly threadId: ThreadId;
+    readonly body: string;
+  }) => {
+    const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
+    if (mode === "off" && !inAppNotificationsEnabled) return;
+    const active = (router.state.matches.at(-1)?.params ?? {}) as {
+      environmentId?: string;
+      threadId?: string;
+    };
+    const looking =
+      document.visibilityState === "visible" &&
+      document.hasFocus() &&
+      active.environmentId === alert.environmentId &&
+      active.threadId === alert.threadId;
+    if (looking) return;
+    const shell = registry.get(environmentShell.stateValueAtom(alert.environmentId));
+    const threads =
+      shell.status === "live" && Option.isSome(shell.snapshot) ? shell.snapshot.value.threads : [];
+    const title = threads.find((thread) => thread.id === alert.threadId)?.title || "T3";
+    if (hasNotificationSound(mode)) {
+      void playNotificationSound("input", () =>
+        hasNotificationSound(getClientSettings().notificationMode),
+      );
+    }
+    const openThread = () => {
+      void router.navigate({
+        to: "/$environmentId/$threadId",
+        params: { environmentId: alert.environmentId, threadId: alert.threadId },
+      });
+    };
+    if (
+      inAppNotificationsEnabled &&
+      document.visibilityState === "visible" &&
+      document.hasFocus()
+    ) {
+      const toastId = toastManager.add({
+        type: "warning",
+        title,
+        description: alert.body,
+        data: {
+          hideCopyButton: true,
+          leadingIcon: <BellIcon aria-hidden className="size-4 text-warning-foreground" />,
+        },
+        actionProps: {
+          children: "Open thread",
+          onClick: () => {
+            toastManager.close(toastId);
+            openThread();
+          },
+        },
+      });
+      return;
+    }
+    if (
+      !hasDesktopNotifications(mode) ||
+      (document.visibilityState === "visible" && document.hasFocus()) ||
+      typeof Notification === "undefined" ||
+      Notification.permission !== "granted"
+    ) {
+      return;
+    }
+    try {
+      const notification = new Notification(title, {
+        body: alert.body,
+        tag: `${threadNotificationTag(alert.environmentId, alert.threadId)}:alert`,
+        silent: true,
+      });
+      trackNotification(alert.environmentId, notification);
+      notification.addEventListener("click", () => {
+        notification.close();
+        window.focus();
+        void window.desktopBridge?.revealWindow?.().catch(() => undefined);
+        openThread();
+      });
+    } catch {
+      // Some browsers expose Notification but reject desktop presentation.
+    }
+  };
+  setAgentAlertPresenter(presentAgentAlert);
+
   const onSettings = () => {
     applyMode();
     syncEnvironments();
@@ -350,6 +434,7 @@ export function startThreadNotifications(
   onSettings();
 
   return () => {
+    setAgentAlertPresenter(null);
     unsubscribeSettings();
     unsubscribeEnvironmentIds();
     for (const entry of watched.values()) entry.unsubscribe();

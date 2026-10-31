@@ -2,18 +2,22 @@ import {
   makeAggregateState,
   TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS,
 } from "./agentActivityAggregate.ts";
-import type {
-  RelayAgentActivityState,
-  RelayDeliveryResult,
-  RelayPublishResponse,
+import {
+  RelayAgentAwarenessPreferences,
+  type RelayAgentActivityState,
+  type RelayDeliveryResult,
+  type RelayPublishResponse,
 } from "@t3tools/contracts/relay";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
-import { isTerminalPhase } from "./agentActivityPayloads.ts";
+import { isTerminalPhase, sanitizeApnsNotificationPayload } from "./agentActivityPayloads.ts";
 
 export { isExpiredAgentActivityState } from "./agentActivityPayloads.ts";
 import * as AgentActivityRows from "./AgentActivityRows.ts";
@@ -21,6 +25,10 @@ import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
 import * as FcmDeliveries from "./FcmDeliveries.ts";
+
+const decodeAlertPreferences = Schema.decodeUnknownOption(
+  Schema.fromJsonString(RelayAgentAwarenessPreferences),
+);
 
 export type AgentActivityPublishError =
   | FcmDeliveries.FcmDeliveryError
@@ -40,6 +48,14 @@ export class AgentActivityPublisher extends Context.Service<
       readonly threadId: string;
       readonly state: RelayAgentActivityState | null;
     }) => Effect.Effect<RelayPublishResponse, AgentActivityPublishError>;
+    readonly publishAlert: (input: {
+      readonly environmentId: string;
+      readonly environmentPublicKey: string;
+      readonly threadId: string;
+      readonly title: string;
+      readonly body: string;
+      readonly deepLink: string;
+    }) => Effect.Effect<RelayPublishResponse>;
     readonly replayForLiveActivityRegistration: (input: {
       readonly userId: string;
       readonly deviceId: string;
@@ -52,6 +68,7 @@ export class AgentActivityPublisher extends Context.Service<
 >()("t3code-relay/agentActivity/AgentActivityPublisher") {}
 
 const make = Effect.gen(function* () {
+  const crypto = yield* Crypto.Crypto;
   const rows = yield* AgentActivityRows.AgentActivityRows;
   const links = yield* EnvironmentLinks.EnvironmentLinks;
   const liveActivities = yield* LiveActivities.LiveActivities;
@@ -110,6 +127,81 @@ const make = Effect.gen(function* () {
       { concurrency: 4 },
     );
     return deliveriesByTarget.flat();
+  });
+
+  const publishAlertDeliveries = Effect.fn(
+    "relay.agent_activity_publisher.publish_alert_deliveries",
+  )(function* (input: {
+    readonly environmentId: string;
+    readonly environmentPublicKey: string;
+    readonly threadId: string;
+    readonly title: string;
+    readonly body: string;
+    readonly deepLink: string;
+  }) {
+    const notification = sanitizeApnsNotificationPayload({
+      title: input.title,
+      body: input.body,
+      environmentId: input.environmentId,
+      threadId: input.threadId,
+      deepLink: input.deepLink,
+    });
+    yield* Effect.annotateCurrentSpan({
+      "relay.environment_id": input.environmentId,
+      "relay.thread_id": input.threadId,
+    });
+    const deliveryUsers = yield* links.listDeliveryUsersForEnvironment({
+      environmentId: input.environmentId,
+      environmentPublicKey: input.environmentPublicKey,
+    });
+    const deliveriesByUser = yield* Effect.forEach(
+      deliveryUsers.filter((user) => user.notificationsEnabled),
+      Effect.fnUntraced(function* (deliveryUser) {
+        const targets = yield* liveActivities.listTargets({ userId: deliveryUser.userId });
+        return yield* Effect.forEach(
+          targets,
+          Effect.fnUntraced(function* (target) {
+            if (!target.push_token) return null;
+            const preferences = decodeAlertPreferences(target.preferences_json);
+            // A proactive alert is the same kind of "come look" as needing input.
+            if (
+              Option.isNone(preferences) ||
+              !preferences.value.notificationsEnabled ||
+              !preferences.value.notifyOnInput
+            ) {
+              return null;
+            }
+            if (target.platform === "android") {
+              return yield* fcmDeliveries.enqueue({
+                target,
+                state: null,
+                directAlert: {
+                  title: notification.title,
+                  body: notification.body,
+                  deepLink: notification.deepLink,
+                  environmentId: notification.environmentId,
+                  threadId: notification.threadId,
+                },
+              });
+            }
+            return yield* apnsDeliveries.sendPushNotification({
+              target,
+              token: target.push_token,
+              sourceJobId: yield* crypto.randomUUIDv4(),
+              notification,
+            });
+          }),
+          { concurrency: 4 },
+        );
+      }),
+      { concurrency: 4 },
+    );
+    return {
+      ok: true as const,
+      deliveries: deliveriesByUser
+        .flat()
+        .filter((delivery): delivery is RelayDeliveryResult => delivery !== null),
+    };
   });
 
   return AgentActivityPublisher.of({
@@ -243,6 +335,15 @@ const make = Effect.gen(function* () {
         ),
       };
     }),
+    publishAlert: Effect.fn("AgentActivityPublisher.publishAlert")((input) =>
+      publishAlertDeliveries(input).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("agent alert delivery failed", { cause }).pipe(
+            Effect.as({ ok: false as const, deliveries: [] }),
+          ),
+        ),
+      ),
+    ),
   });
 });
 

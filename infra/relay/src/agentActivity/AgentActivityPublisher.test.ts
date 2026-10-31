@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { makeAggregateState } from "./agentActivityAggregate.ts";
 import type { RelayAgentActivityState, RelayDeliveryResult } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
@@ -12,6 +13,7 @@ import * as FcmDeliveries from "./FcmDeliveries.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
 
 const layerPublisher = AgentActivityPublisher.layer.pipe(
+  Layer.provide(NodeCrypto.layer),
   Layer.provide(
     Layer.succeed(FcmDeliveries.FcmDeliveries, {
       enqueue: () => Effect.succeed(null),
@@ -165,6 +167,7 @@ describe("AgentActivityPublisher", () => {
     }).pipe(
       Effect.provide(
         AgentActivityPublisher.layer.pipe(
+          Layer.provide(NodeCrypto.layer),
           Layer.provide(
             Layer.mergeAll(
               Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
@@ -520,5 +523,128 @@ describe("makeAggregateState", () => {
       { threadId: "a-4" },
       { threadId: "a-5" },
     ]);
+  });
+
+  it.effect("sends a one-shot alert without writing activity rows", () => {
+    const preferences = JSON.stringify({
+      liveActivitiesEnabled: false,
+      notificationsEnabled: true,
+      notifyOnApproval: true,
+      notifyOnInput: true,
+      notifyOnCompletion: true,
+      notifyOnFailure: true,
+    });
+    const android = {
+      ...target("android"),
+      platform: "android" as const,
+      ios_major_version: null,
+      push_token: "android-token",
+      preferences_json: preferences,
+    };
+    const ios = {
+      ...target("ios"),
+      push_token: "ios-token",
+      preferences_json: preferences,
+    };
+    const fcmCalls: Array<Parameters<FcmDeliveries.FcmDeliveries["Service"]["enqueue"]>[0]> = [];
+    const appleCalls: Array<
+      Parameters<ApnsDeliveries.ApnsDeliveries["Service"]["sendPushNotification"]>[0]
+    > = [];
+    let upserts = 0;
+    return Effect.gen(function* () {
+      const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+      const result = yield* publisher.publishAlert({
+        environmentId: "env",
+        environmentPublicKey: "key",
+        threadId: "thread",
+        title: "Thread",
+        body: "Build finished",
+        deepLink: "/threads/env/thread",
+      });
+      expect(upserts).toBe(0);
+      expect(result.ok).toBe(true);
+      expect(fcmCalls).toEqual([
+        {
+          target: android,
+          state: null,
+          directAlert: {
+            title: "Thread",
+            body: "Build finished",
+            deepLink: "/threads/env/thread",
+            environmentId: "env",
+            threadId: "thread",
+          },
+        },
+      ]);
+      expect(appleCalls).toMatchObject([
+        {
+          token: "ios-token",
+          notification: {
+            title: "Thread",
+            body: "Build finished",
+            deepLink: "/threads/env/thread",
+            environmentId: "env",
+            threadId: "thread",
+          },
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        AgentActivityPublisher.layer.pipe(
+          Layer.provide(NodeCrypto.layer),
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(
+                AgentActivityRows.AgentActivityRows,
+                makeAgentActivityRows({
+                  upsert: () =>
+                    Effect.sync(() => {
+                      upserts += 1;
+                    }),
+                }),
+              ),
+              Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
+              Layer.succeed(
+                LiveActivities.LiveActivities,
+                makeLiveActivities({ listTargets: () => Effect.succeed([android, ios]) }),
+              ),
+              Layer.succeed(
+                ApnsDeliveries.ApnsDeliveries,
+                makeApnsDeliveries({
+                  sendPushNotification: (input) =>
+                    Effect.sync(() => {
+                      appleCalls.push(input);
+                      return {
+                        deviceId: input.target.device_id,
+                        kind: "push_notification",
+                        ok: true,
+                        apnsStatus: 200,
+                        apnsReason: null,
+                        apnsId: "apns-id",
+                      };
+                    }),
+                }),
+              ),
+              Layer.succeed(FcmDeliveries.FcmDeliveries, {
+                enqueue: (input) =>
+                  Effect.sync(() => {
+                    fcmCalls.push(input);
+                    return {
+                      deviceId: input.target.device_id,
+                      kind: "push_notification",
+                      ok: true,
+                      queued: true,
+                      apnsStatus: null,
+                      apnsReason: null,
+                      apnsId: null,
+                    };
+                  }),
+                process: () => Effect.void,
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
   });
 });

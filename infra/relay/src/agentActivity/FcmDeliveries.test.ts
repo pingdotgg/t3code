@@ -208,6 +208,61 @@ function harness() {
   };
 }
 
+describe("direct alerts", () => {
+  const directAlert = {
+    title: "Thread",
+    body: "Build finished",
+    deepLink: "/threads/env/thread",
+    environmentId: "env",
+    threadId: "thread",
+    eventId: "event-1",
+  };
+
+  it.effect("keeps the live card and a stable id across retries", () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      const now = yield* DateTime.now;
+      h.current.state = { ...state, updatedAt: DateTime.formatIso(now) };
+      const job = { ...h.job, state: null, queuedAt: now.epochMilliseconds, directAlert };
+      yield* delivery.process(job);
+      yield* delivery.process(job);
+      yield* delivery.process({
+        ...job,
+        directAlert: { ...directAlert, eventId: "event-2", title: "Later" },
+      });
+      expect(h.sent).toHaveLength(3);
+      expect(h.sent[0]?.data.alert_only).toBe("true");
+      expect(h.sent[0]?.data.active).toBe("true");
+      expect(h.sent[0]?.data.alert_title).toBe("Thread");
+      expect(h.sent[0]?.data.alert_id).toBe(h.sent[1]?.data.alert_id);
+      expect(h.sent[0]?.data.alert_id).not.toBe(h.sent[2]?.data.alert_id);
+      expect(h.marked).toHaveLength(0);
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  it.effect("drops a queued alert after the environment is unlinked or muted", () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      const now = yield* DateTime.now;
+      const job = { ...h.job, state: null, queuedAt: now.epochMilliseconds, directAlert };
+      h.current.linked = false;
+      yield* delivery.process(job);
+      h.current.linked = true;
+      h.current.mutedEnvironments = ["env"];
+      yield* delivery.process(job);
+      h.current.mutedEnvironments = [];
+      h.current.target.preferences_json = encodeJson({
+        ...preferences,
+        notificationsEnabled: false,
+      });
+      yield* delivery.process(job);
+      expect(h.sent).toHaveLength(0);
+    }).pipe(Effect.provide(h.layer));
+  });
+});
+
 describe("Android delivery routing", () => {
   const secondState: RelayAgentActivityState = {
     ...state,

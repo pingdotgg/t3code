@@ -21,6 +21,7 @@ import * as AgentActivityPublisher from "./AgentActivityPublisher.ts";
 import * as FcmDeliveries from "./FcmDeliveries.ts";
 
 const layerPublisher = AgentActivityPublisher.layer.pipe(
+  Layer.provide(NodeCryptoLayer.layer),
   Layer.provide(
     Layer.succeed(FcmDeliveries.FcmDeliveries, {
       enqueue: () => Effect.succeed(null),
@@ -191,6 +192,7 @@ function makeAgentActivityPublisher(
 ): AgentActivityPublisher.AgentActivityPublisher["Service"] {
   return {
     publish: () => Effect.succeed({ ok: true, deliveries: [] }),
+    publishAlert: () => Effect.succeed({ ok: true, deliveries: [] }),
     replayForLiveActivityRegistration: () => Effect.succeed(null),
     endIdleLiveActivities: Effect.void,
     ...overrides,
