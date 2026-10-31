@@ -966,6 +966,44 @@ it.layer(
       }),
   );
 
+  it.effect.skipIf(!symlinksSupported)(
+    "keeps npm's latest version for an npm install whose launcher is in the native location",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-native-npm-prefix");
+        const target = NodePath.join(
+          tempDir,
+          ".local",
+          "lib",
+          "node_modules",
+          "@example",
+          "native-package-tool",
+          "bin",
+          "native-package-tool",
+        );
+        writeExecutable(target);
+        const launcher = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
+        NodeFS.mkdirSync(NodePath.dirname(launcher), { recursive: true });
+        NodeFS.symlinkSync(target, launcher);
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          makePackageManagedProviderMaintenanceResolver({
+            provider: driver("nativePackageTool"),
+            npmPackageName: "@example/native-package-tool",
+            nativeUpdate: {
+              args: ["update"],
+              isCommandPath: isNativeTestCommandPath("/.local/bin/native-package-tool"),
+              lookupLatestVersion: Effect.die("an npm install should not read the native feed"),
+            },
+          }),
+          { binaryPath: launcher, env: { PATH: "" } },
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+        expect(capabilities.update?.args).toEqual(["update"]);
+        expect(capabilities.latestVersion).toBeUndefined();
+      }),
+  );
+
   it.effect.each(["wrapper", "symlink"])(
     "keeps a mise-owned %s in a native install location manual-only",
     (launcher, { skip }) => {

@@ -472,7 +472,11 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     !commandPaths.some(isMiseCommandPath) &&
     !(yield* isMiseWrapperScript(context))
   ) {
-    return nativeUpdate.lookupLatestVersion
+    // An npm `--prefix ~/.local` install shares the launcher path but follows npm's releases.
+    const followsReleaseFeed = !commandPaths.some((commandPath) =>
+      normalizeCommandPath(commandPath).includes("/node_modules/"),
+    );
+    return nativeUpdate.lookupLatestVersion && followsReleaseFeed
       ? { ...native, latestVersion: null, lookupLatestVersion: nativeUpdate.lookupLatestVersion }
       : native;
   }
