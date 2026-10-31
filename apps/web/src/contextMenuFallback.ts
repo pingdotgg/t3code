@@ -1,5 +1,7 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 
+import { MENU_ITEM_ROW_CLASS, MENU_SUB_TRIGGER_ROW_CLASS } from "./components/ui/menu";
+
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<string, string> }>> = {
@@ -182,9 +184,7 @@ function createIconElement(name: string, tone: "neutral" | "destructive"): SVGSV
   svg.setAttribute("stroke-linejoin", "round");
   svg.setAttribute(
     "class",
-    tone === "destructive"
-      ? "-mx-0.5 size-4.5 shrink-0 sm:size-4"
-      : "-mx-0.5 size-4.5 shrink-0 text-muted-foreground sm:size-4",
+    tone === "destructive" ? "size-[15px] shrink-0 text-current" : "size-[15px] shrink-0",
   );
   for (const node of paths) {
     const child = document.createElementNS(SVG_NS, node.tag);
@@ -399,18 +399,19 @@ export function showContextMenuFallback<T extends string>(
       menu.tabIndex = -1;
 
       // Size to the content and scroll only past the viewport; clampMenuPosition
-      // keeps the same 4px inset on each edge.
+      // keeps the same 6px inset on each edge.
       const inner = document.createElement("div");
       inner.className =
-        "max-h-[calc(100vh-0.5rem)] min-w-0 max-w-sm overflow-y-auto overflow-x-hidden p-1";
+        "max-h-[calc(100vh-0.5rem)] min-w-0 max-w-sm overflow-y-auto overflow-x-hidden p-1.5";
       inner.style.cssText =
-        "max-height:calc(100vh - 0.5rem);min-width:0;max-width:24rem;overflow-x:hidden;overflow-y:auto;padding:0.25rem;";
+        "max-height:calc(100vh - 0.5rem);min-width:0;max-width:24rem;overflow-x:hidden;overflow-y:auto;padding:0.375rem;display:flex;flex-direction:column;gap:1px;";
 
       for (const item of entries) {
         if (item.separatorBefore === true && inner.children.length > 0) {
           const separator = document.createElement("div");
-          separator.className = "my-1 h-px bg-hairline";
-          separator.style.cssText = "height:1px;margin:0.25rem 0;background:var(--hairline);";
+          separator.className = "mx-2.5 my-1 h-px shrink-0 bg-hairline";
+          separator.style.cssText =
+            "height:1px;flex-shrink:0;margin:0.25rem 0.625rem;background:var(--hairline);";
           separator.dataset.contextMenuSeparator = "true";
           separator.setAttribute("role", "separator");
           inner.appendChild(separator);
@@ -418,7 +419,7 @@ export function showContextMenuFallback<T extends string>(
 
         if (item.header === true) {
           const header = document.createElement("div");
-          header.className = "px-2 py-1.5 font-medium text-muted-foreground text-xs";
+          header.className = "px-2.5 py-1.5 text-meta text-dim-foreground";
           header.textContent = item.label;
           inner.appendChild(header);
           continue;
@@ -435,15 +436,12 @@ export function showContextMenuFallback<T extends string>(
         button.tabIndex = -1;
         button.setAttribute("role", "menuitem");
         button.setAttribute("aria-disabled", String(isDisabled));
-        const rowBase =
-          "flex w-full cursor-default select-none items-center gap-2 rounded-item px-2 py-1 text-left outline-none transition-colors min-h-8 text-label";
-        button.className = isDisabled
-          ? `${rowBase} pointer-events-none cursor-not-allowed text-muted-foreground opacity-64`
-          : isLeafDestructive
-            ? `${rowBase} text-destructive-foreground hover:bg-destructive/10 hover:text-destructive-foreground`
-            : `${rowBase} text-foreground hover:bg-accent hover:text-accent-foreground`;
+        const rowBase = `${hasChildren ? MENU_SUB_TRIGGER_ROW_CLASS : MENU_ITEM_ROW_CLASS} w-full text-left`;
+        button.dataset.variant = isLeafDestructive ? "destructive" : "default";
+        button.className = rowBase;
+        if (isDisabled) button.dataset.disabled = "";
         button.style.cssText =
-          "display:flex;width:100%;min-height:2rem;align-items:center;gap:0.5rem;border:0;border-radius:var(--radius-item);background:transparent;padding:0.25rem 0.5rem;color:var(--contrast-foreground);font-family:var(--font-sans,system-ui,sans-serif);font-size:0.875rem;line-height:1.25rem;text-align:left;cursor:default;";
+          "display:flex;width:100%;min-height:2rem;align-items:center;gap:0.625rem;border:0;border-radius:8px;background:transparent;padding:0.25rem 0.625rem;color:var(--contrast-foreground);font-family:var(--font-sans,system-ui,sans-serif);font-size:0.8125rem;font-weight:500;line-height:1.125rem;text-align:left;cursor:default;";
         if (isLeafDestructive) {
           button.style.color = "var(--destructive-foreground)";
         }
@@ -465,9 +463,8 @@ export function showContextMenuFallback<T extends string>(
             button.appendChild(check);
           } else {
             const spacer = document.createElement("span");
-            spacer.className = "-mx-0.5 size-4.5 shrink-0 sm:size-4";
-            spacer.style.cssText =
-              "display:inline-block;width:1rem;height:1rem;flex-shrink:0;margin-inline:-0.125rem;";
+            spacer.className = "size-[15px] shrink-0";
+            spacer.style.cssText = "display:inline-block;width:15px;height:15px;flex-shrink:0;";
             spacer.setAttribute("aria-hidden", "true");
             button.appendChild(spacer);
           }
@@ -488,10 +485,7 @@ export function showContextMenuFallback<T extends string>(
           button.setAttribute("aria-expanded", "false");
           const chevron = createIconElement("chevron-right", "neutral");
           if (chevron) {
-            chevron.setAttribute(
-              "class",
-              "-me-1.5 ms-auto size-4.5 shrink-0 text-muted-foreground opacity-80 sm:size-4",
-            );
+            chevron.setAttribute("class", "ms-auto size-3.5 shrink-0 text-muted-foreground");
             chevron.setAttribute("aria-hidden", "true");
             chevron.dataset.contextMenuChevron = "true";
             button.appendChild(chevron);
@@ -503,6 +497,8 @@ export function showContextMenuFallback<T extends string>(
           let isFocused = false;
           const updateHighlight = () => {
             const isHighlighted = isHovered || isFocused;
+            if (isHighlighted) button.dataset.highlighted = "";
+            else delete button.dataset.highlighted;
             button.style.background =
               isHighlighted || item.checked ? "var(--selected-soft-fill)" : "transparent";
             button.style.color = isHighlighted

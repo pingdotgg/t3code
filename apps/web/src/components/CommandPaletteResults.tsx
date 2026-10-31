@@ -139,14 +139,14 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
             />
           )
         }
-        estimatedItemSize={40}
+        estimatedItemSize={34}
         drawDistance={400}
         onLayout={updateScrollFade}
         onScroll={updateScrollFade}
         onReady={updateScrollFade}
         // Legend counts style padding (not class padding) in its size, end state and row positions.
         style={{ paddingTop: 8, paddingBottom: 8 }}
-        contentContainerClassName="px-2"
+        contentContainerClassName="px-1.5"
         className={cn(
           "min-h-0 scroll-py-6 overflow-x-hidden overscroll-y-contain [&::-webkit-scrollbar-track]:my-2",
           getVirtualizedScrollFadeClassName(scrollFade),
@@ -157,7 +157,7 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
 }
 
 export function CommandPaletteTitleIcon(props: { children: ReactNode }) {
-  return <span className="flex h-5 shrink-0 items-center self-start pt-0.5">{props.children}</span>;
+  return <span className="flex h-5 shrink-0 items-center [&_svg]:size-3.5">{props.children}</span>;
 }
 
 function CommandPaletteTitle({
@@ -230,8 +230,13 @@ function CommandPaletteRowContent({ item }: { item: CommandPaletteResultItem }) 
     <>
       <CommandPaletteTitleIcon>{item.icon}</CommandPaletteTitleIcon>
       {item.description || item.threadContentMatch || item.matchHint ? (
-        <span className="flex min-w-0 flex-1 flex-col">
-          <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-foreground in-data-[active=true]:text-strong-foreground">
+        <span
+          className={cn(
+            "flex min-w-0 flex-1",
+            item.threadContentMatch || item.matchHint ? "flex-col" : "items-center gap-2",
+          )}
+        >
+          <span className="flex min-w-0 items-center gap-1.5 text-control text-foreground in-data-[active=true]:text-strong-foreground">
             {title}
             <ThreadRowContext item={item} />
           </span>
@@ -240,11 +245,13 @@ function CommandPaletteRowContent({ item }: { item: CommandPaletteResultItem }) 
           ) : item.matchHint ? (
             <SearchMatchHintLine hint={item.matchHint} />
           ) : item.description ? (
-            <span className="min-w-0 text-dim-foreground text-xs">{item.description}</span>
+            <span className="min-w-0 text-dim-foreground text-meta font-normal">
+              {item.description}
+            </span>
           ) : null}
         </span>
       ) : (
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium text-foreground in-data-[active=true]:text-strong-foreground">
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-control text-foreground in-data-[active=true]:text-strong-foreground">
           {title}
         </span>
       )}
