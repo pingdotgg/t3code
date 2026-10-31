@@ -200,17 +200,20 @@ const layerElectronTheme = Layer.succeed(ElectronTheme.ElectronTheme, {
   onUpdated: () => Effect.void,
 } satisfies ElectronTheme.ElectronTheme["Service"]);
 
-const layerDesktopEnvironment = DesktopEnvironment.layer(environmentInput).pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      NodeServices.layer,
-      DesktopConfig.layerTest({
-        T3CODE_PORT: "3773",
-        VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
-      }),
+const layerDesktopEnvironmentFor = (platform: NodeJS.Platform) =>
+  DesktopEnvironment.layer({ ...environmentInput, platform }).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        DesktopConfig.layerTest({
+          T3CODE_PORT: "3773",
+          VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
+        }),
+      ),
     ),
-  ),
-);
+  );
+
+const layerDesktopEnvironment = layerDesktopEnvironmentFor(environmentInput.platform);
 
 const desktopWindowBoundsEquivalence = Schema.toEquivalence(
   DesktopAppSettings.DesktopWindowBoundsSchema,
@@ -236,6 +239,11 @@ function layerTest(input: {
   readonly previewZoomReapplies?: number[];
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
   readonly focusedWindow?: Electron.BrowserWindow;
+  readonly platform?: NodeJS.Platform;
+  readonly appearanceWindows?: ReadonlyArray<{
+    readonly window: Electron.BrowserWindow;
+    readonly titleBarOverlay: boolean;
+  }>;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const layerDesktopAppSettings = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -293,7 +301,14 @@ function layerTest(input: {
     reveal: (window) => Effect.sync(() => input.onReveal?.(window)),
     sendAll: () => Effect.void,
     destroyAll: input.destroyAll ?? Effect.void,
-    syncAllAppearance: (sync) => sync(input.window),
+    syncAllAppearance: (sync) =>
+      input.appearanceWindows === undefined
+        ? sync(input.window, { titleBarOverlay: true })
+        : Effect.forEach(
+            input.appearanceWindows,
+            ({ window, titleBarOverlay }) => sync(window, { titleBarOverlay }),
+            { discard: true },
+          ),
   } satisfies ElectronWindow.ElectronWindow["Service"]);
 
   return DesktopWindow.layer.pipe(
@@ -305,7 +320,9 @@ function layerTest(input: {
           recordMetrics: () => Effect.void,
           shutdown: Effect.void,
         }),
-        layerDesktopEnvironment,
+        input.platform === undefined
+          ? layerDesktopEnvironment
+          : layerDesktopEnvironmentFor(input.platform),
         layerDesktopAppSettings,
         layerDesktopClientSettings,
         layerDesktopServerExposure,
@@ -414,7 +431,8 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
       reveal: (window) => Ref.update(revealedWindows, (windows) => [...windows, window]),
       sendAll: () => Effect.void,
       destroyAll: Effect.void,
-      syncAllAppearance: (sync) => (fallbackWindow ? sync(fallbackWindow) : Effect.void),
+      syncAllAppearance: (sync) =>
+        fallbackWindow ? sync(fallbackWindow, { titleBarOverlay: true }) : Effect.void,
     } satisfies ElectronWindow.ElectronWindow["Service"];
 
     const layer = DesktopWindow.layer.pipe(
@@ -939,6 +957,38 @@ describe("DesktopWindow", () => {
         assert.equal(fakeWindow.getNormalBounds.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
     }),
+  );
+
+  it.effect.each(["linux", "win32"] satisfies ReadonlyArray<NodeJS.Platform>)(
+    "updates title bar overlays only on overlay windows on %s",
+    (platform) =>
+      Effect.gen(function* () {
+        const framed = makeFakeBrowserWindow();
+        vi.mocked(framed.window.setTitleBarOverlay).mockImplementation(() => {
+          throw new TypeError("Titlebar overlay is not enabled");
+        });
+        const overlay = makeFakeBrowserWindow();
+        const layer = layerTest({
+          window: overlay.window,
+          createCount: yield* Ref.make(0),
+          mainWindow: yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none()),
+          platform,
+          appearanceWindows: [
+            { window: framed.window, titleBarOverlay: false },
+            { window: overlay.window, titleBarOverlay: true },
+          ],
+        });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.syncAppearance;
+        }).pipe(Effect.provide(layer));
+
+        assert.deepEqual(vi.mocked(framed.window.setBackgroundColor).mock.calls, [["#ffffff"]]);
+        assert.lengthOf(vi.mocked(framed.window.setTitleBarOverlay).mock.calls, 0);
+        assert.deepEqual(vi.mocked(overlay.window.setBackgroundColor).mock.calls, [["#ffffff"]]);
+        assert.lengthOf(vi.mocked(overlay.window.setTitleBarOverlay).mock.calls, 1);
+      }),
   );
 
   it.effect("maps macOS horizontal swipes to available history navigation", () =>
