@@ -627,7 +627,7 @@ function pageIncludesTerminalTaskResult(input: {
     if (!matchesResult) return false;
 
     const text = turnItemText(row.item);
-    return text !== null && text.length <= input.maxChars;
+    return text !== null && text.length <= textPageEnd(text, 0, input.maxChars);
   });
 }
 
