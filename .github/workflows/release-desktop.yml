@@ -128,6 +128,43 @@ jobs:
       T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ inputs.clerk_cli_oauth_client_id }}
       T3CODE_RELAY_URL: ${{ inputs.relay_url }}
     steps:
+      # windows-11-arm keeps the workspace, TEMP, and pnpm store on its
+      # network-attached C: disk and leaves a local NVMe disk unformatted. Run
+      # from that disk as a D: Dev Drive; D: is already excluded from Defender
+      # (real-time scanning stays on there because tamper protection blocks
+      # the image's attempt to disable it). In a full unsigned arm64 job this
+      # cut dependency install from 269s to 63s and the job from 571s to 320s;
+      # NTFS on the same disk measured the same. The junction keeps every
+      # GITHUB_WORKSPACE path unchanged, and the store shares the volume so
+      # pnpm can still hard link. Without a raw NVMe disk the job stays on C:.
+      - name: Use local NVMe for Windows ARM builds
+        if: inputs.platform == 'win' && inputs.arch == 'arm64'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $disk = Get-Disk |
+            Where-Object { $_.PartitionStyle -eq "RAW" -and -not $_.IsBoot -and -not $_.IsSystem -and $_.FriendlyName -match "NVMe" } |
+            Sort-Object Size -Descending |
+            Select-Object -First 1
+          if (-not $disk -or (Test-Path "D:\")) {
+            Write-Warning "No raw local NVMe disk or D: is taken; building on C:."
+            exit 0
+          }
+          if ($disk.IsOffline) { $disk | Set-Disk -IsOffline $false }
+          if ($disk.IsReadOnly) { $disk | Set-Disk -IsReadOnly $false }
+          $disk |
+            Initialize-Disk -PartitionStyle GPT -PassThru |
+            New-Partition -DriveLetter D -UseMaximumSize |
+            Format-Volume -DevDrive -FileSystem ReFS -NewFileSystemLabel DevDrive -Confirm:$false -Force |
+            Out-Null
+          New-Item -ItemType Directory -Force -Path D:\workspace, D:\tmp, D:\pnpm-store | Out-Null
+          # This shell starts inside the empty workspace, which blocks removing it.
+          Set-Location -LiteralPath $env:RUNNER_TEMP
+          [Environment]::CurrentDirectory = $env:RUNNER_TEMP
+          Remove-Item -LiteralPath $env:GITHUB_WORKSPACE -Recurse -Force
+          New-Item -ItemType Junction -Path $env:GITHUB_WORKSPACE -Target D:\workspace | Out-Null
+          Add-Content -Path $env:GITHUB_ENV -Encoding ascii -Value "TEMP=D:\tmp", "TMP=D:\tmp", "pnpm_config_store_dir=D:\pnpm-store"
+
       # This repository is public, so Git needs no credentials. checkout's
       # credential cleanup runs submodule foreach even with submodules disabled,
       # which fails on the orphaned gitlinks in our vendored .repos tree.
