@@ -164,8 +164,8 @@ export function AppearanceSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection id="appearance-style" title="Style" variant="plain" hideTitle>
-        <SettingsSearchTarget className="space-y-3" id={searchableSetting("surface-style").id}>
-          <div className="flex min-h-8 items-center px-3 sm:px-4">
+        <SettingsSearchTarget className="space-y-2" id={searchableSetting("surface-style").id}>
+          <div className="flex min-h-7 items-center">
             <h3 className="text-label text-dim-foreground">
               {searchableSetting("surface-style").title}
             </h3>
