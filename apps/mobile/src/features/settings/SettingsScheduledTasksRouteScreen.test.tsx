@@ -36,7 +36,20 @@ vi.mock("../../components/EnvironmentMachineSymbol", () => ({
   EnvironmentMachineSymbol: () => null,
   ENVIRONMENT_MACHINE_SYMBOLS: {},
 }));
-vi.mock("../../components/ui/Menu", () => ({ Menu: () => null }));
+vi.mock("../../components/ui/Menu", () => ({
+  Menu: ({
+    actions,
+    onPressAction,
+  }: {
+    actions: readonly { id: string; title: string }[];
+    onPressAction: (event: { nativeEvent: { event: string } }) => void;
+  }) =>
+    actions.map(({ id, title }) => (
+      <button key={id} onClick={() => onPressAction({ nativeEvent: { event: id } })}>
+        Select {title}
+      </button>
+    )),
+}));
 vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
 vi.mock("./components/SettingsScreen", () => ({ SettingsScreen: Children }));
 vi.mock("./components/SettingsSection", () => ({ SettingsSection: Children }));
@@ -80,14 +93,20 @@ vi.mock("../../components/ui/ThemedSwitch", () => ({
   }) => <button onClick={() => onValueChange(!value)}>Toggle enabled</button>,
 }));
 vi.mock("../../state/entities", () => ({
-  useProjects: () => [{ environmentId: "environment", id: "project", title: "Project" }],
+  useProjects: () => [
+    { environmentId: "environment", id: "project", title: "Project" },
+    { environmentId: "target", id: "target-project", title: "Target project" },
+  ],
   useServerConfigs: () => new Map(),
   useEnvironmentServerConfig: () => null,
 }));
 vi.mock("./settings-environment-filter", () => ({
   useSettingsEnvironmentFilter: () => ({
     selectedTargets: [{ environmentId: "environment", label: "Environment" }],
-    availableTargets: [{ environmentId: "environment", label: "Environment" }],
+    availableTargets: [
+      { environmentId: "environment", label: "Environment" },
+      { environmentId: "target", label: "Target" },
+    ],
     selectedProjectKey: null,
     projectGroups: [],
   }),
@@ -225,5 +244,19 @@ describe("scheduled task batched edits", () => {
     expect(
       appAtomRegistry.get(scheduledTaskEditorSessionAtom)?.current?.draft.schedule.filters,
     ).toHaveLength(2);
+  });
+  it("keeps the target project when an old picker fires after changing environments", () => {
+    const editor = appAtomRegistry.get(scheduledTaskEditorSessionAtom)?.current;
+    if (!editor) throw new Error("Missing editor");
+    act(() => startScheduledTaskEditor({ ...editor, draft: { ...editor.draft, task: null } }));
+    act(() => {
+      button("Interval").click();
+      button("Select Target").click();
+      button("Select Project").click();
+    });
+    expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)?.current).toMatchObject({
+      environmentId: "target",
+      draft: { projectId: "target-project", schedule: { mode: "interval" } },
+    });
   });
 });

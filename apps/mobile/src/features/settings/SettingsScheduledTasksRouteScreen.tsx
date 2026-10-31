@@ -615,7 +615,9 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
             setDraft={(update) => {
               if (!saving)
                 setEditor((current) =>
-                  current ? { ...current, draft: update(current.draft) } : current,
+                  current && current.environmentId === editor.environmentId
+                    ? { ...current, draft: update(current.draft) }
+                    : current,
                 );
             }}
             onSaved={() => {
