@@ -4,6 +4,7 @@ import {
   TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
 } from "@t3tools/contracts";
+import { AsyncResult, Atom } from "effect/reactivity";
 import * as DateTime from "effect/DateTime";
 import { injectHtmlRenderBootstrap } from "@t3tools/shared/htmlRender";
 import { expect, it, vi } from "vite-plus/test";
@@ -120,18 +121,28 @@ it("renders HTML tool details in the existing sandbox and fits the page", async 
 });
 
 it.each([
-  { status: "failed" as const, isError: false },
-  { status: "completed" as const, isError: true },
-])("shows the HTML and diagnostics when the preview failed: %j", async ({ status, isError }) => {
-  setup();
-  const html = "<style>body{min-height:100vh}</style><h1>Invalid page</h1>";
-  await using screen = await render(
-    <V2ItemInspector
-      projectedItem={projectedHtml(html, "2026-10-20T00:00:00Z", status, isError)}
-      environmentId={EnvironmentId.make("environment-html")}
-    />,
-  );
-  expect(screen.container.textContent).toContain(html);
-  expect(screen.container.textContent).toContain("Viewport height rejected");
-  expect(screen.container.querySelector("iframe")).toBeNull();
-});
+  { status: "failed" as const, isError: false, guest: false },
+  { status: "completed" as const, isError: true, guest: false },
+  { status: "completed" as const, isError: false, guest: true },
+])(
+  "keeps HTML source readable when a preview is unavailable: %j",
+  async ({ status, isError, guest }) => {
+    setup();
+    const html = "<style>body{min-height:100vh}</style><h1>Invalid page</h1>";
+    const projected = projectedHtml(html, "2026-10-20T00:00:00Z", status, isError);
+    const detail = Atom.make(AsyncResult.success({ item: projected.item }));
+    const commandOutput = Atom.make(AsyncResult.initial<never, never>());
+    await using screen = await render(
+      <V2ItemInspector
+        projectedItem={projected}
+        source={guest ? { detail: () => detail, commandOutput: () => commandOutput } : undefined}
+        environmentId={EnvironmentId.make("environment-html")}
+      />,
+    );
+    expect(screen.container.textContent).toContain(html);
+    expect(screen.container.textContent).toContain(
+      guest ? "Console: no errors" : "Viewport height rejected",
+    );
+    expect(screen.container.querySelector("iframe")).toBeNull();
+  },
+);

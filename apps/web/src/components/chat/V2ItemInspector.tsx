@@ -203,6 +203,7 @@ function ToolCallBody(
     readonly command?: string;
     readonly args?: unknown;
     readonly toolName?: string | null;
+    readonly previewHtml?: boolean;
     readonly status?: OrchestrationV2ProjectedTurnItem["item"]["status"];
     readonly toolResult?: unknown;
     readonly threadRef?: ScopedThreadRef;
@@ -215,7 +216,7 @@ function ToolCallBody(
   const call = toolCallLines({
     command: props.command,
     args: props.args,
-    toolName: props.toolName,
+    toolName: props.previewHtml === false ? undefined : props.toolName,
     status: props.status,
     output: props.toolResult,
   });
@@ -406,6 +407,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       {item.type === "dynamic_tool" ? (
         <ToolCallBody
           toolName={item.toolName}
+          previewHtml={props.source === undefined}
           status={item.status}
           toolResult={item.output}
           args={item.input}
