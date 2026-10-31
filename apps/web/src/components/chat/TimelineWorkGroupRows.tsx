@@ -391,7 +391,9 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
         {backgroundWorktreeSetup ? (
           <BackgroundWorktreeSetupChip snapshot={backgroundWorktreeSetup} />
         ) : null}
-        {window ? <WorkingBarSlot window={window} pendingRequest={pendingRequest} /> : null}
+        <div className="ms-auto flex min-w-0 items-center justify-end">
+          {window ? <WorkingBarSlot window={window} pendingRequest={pendingRequest} /> : null}
+        </div>
       </div>
       {window ? <WorkingWindowView window={window} itemKey={row.id} /> : null}
     </div>
