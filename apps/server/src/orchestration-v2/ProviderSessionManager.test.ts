@@ -3575,6 +3575,38 @@ it.effect(
           resumeCount: 7,
           unloaded: ["native-links-a", "native-links-a", "native-links-a"],
         });
+        const idleUnloadAttempted = yield* Deferred.make<void>();
+        yield* Ref.set(
+          beforeUnload,
+          Deferred.succeed(idleUnloadAttempted, undefined).pipe(
+            Effect.andThen(Effect.die("idle unload failed")),
+          ),
+        );
+        const subscription = yield* runtime.subscribeEvents!;
+        const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!;
+        yield* Queue.offer(queue, {
+          type: "turn.terminal",
+          driver: CODEX_DRIVER,
+          providerThreadId: providerThreads[threadA]!.id,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "links-idle-turn",
+          }),
+          runOrdinal: 1,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        yield* subscription.events.pipe(Stream.runHead);
+        yield* TestClock.adjust("1 second");
+        yield* Deferred.await(idleUnloadAttempted);
+        yield* settings.updateSettings({ linkedEnvironmentsEnabled: false });
+        yield* Ref.set(beforeUnload, Effect.void);
+        yield* resume(threadA);
+        assert.deepEqual(yield* observed, {
+          resumeCount: 8,
+          unloaded: Array(4).fill("native-links-a"),
+        });
         const final = yield* Ref.get(state);
         assert.equal(final.openCount, 1);
         assert.equal(final.closeCount, 0);

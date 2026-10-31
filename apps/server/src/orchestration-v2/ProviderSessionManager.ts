@@ -1638,15 +1638,12 @@ export const layerWithOptions = (
                   latest.loadedProviderThreadKeyByThread,
                 );
                 loadedProviderThreadKeyByThread.delete(input.threadId);
-                const linkedEnvironmentsByThread = new Map(latest.linkedEnvironmentsByThread);
-                linkedEnvironmentsByThread.delete(input.threadId);
                 const idleThreadUnloads = new Map(latest.idleThreadUnloads);
                 idleThreadUnloads.delete(input.threadId);
                 const updated = new Map(current);
                 updated.set(key, {
                   ...latest,
                   loadedProviderThreadKeyByThread,
-                  linkedEnvironmentsByThread,
                   idleThreadUnloads,
                 });
                 return [true, updated] as const;
@@ -1654,6 +1651,15 @@ export const layerWithOptions = (
               if (!unloading) return "skipped" as const;
               yield* unloadThread({ providerThread: pending.providerThread }).pipe(
                 Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
+                Effect.tap(() =>
+                  Ref.update(sessions, (current) => {
+                    const latest = current.get(key);
+                    if (latest?.runtime !== entry.runtime) return current;
+                    const linkedEnvironmentsByThread = new Map(latest.linkedEnvironmentsByThread);
+                    linkedEnvironmentsByThread.delete(input.threadId);
+                    return new Map(current).set(key, { ...latest, linkedEnvironmentsByThread });
+                  }),
+                ),
                 Effect.catchCause((cause) =>
                   Effect.logWarning("orchestration-v2.driver-session.idle-unload-failed", {
                     providerSessionId: input.providerSessionId,
