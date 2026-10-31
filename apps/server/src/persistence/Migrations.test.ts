@@ -134,7 +134,7 @@ it.effect("upgrades startup recovery lookups without changing candidate selectio
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const store = yield* ProjectionStore.ProjectionStoreV2;
-    yield* runMigrations({ toMigrationInclusive: 73 });
+    yield* runMigrations({ toMigrationInclusive: 75 });
 
     for (const threadId of [
       "history",
@@ -246,7 +246,7 @@ it.effect("upgrades startup recovery lookups without changing candidate selectio
 
     const expected = ["active", "archived", "child", "duplicate", "malformed", "native", "queued"];
     assert.deepStrictEqual((yield* store.getRecoveryThreadIds("runtime")).toSorted(), expected);
-    assert.deepStrictEqual(yield* runMigrations(), [[74, "StartupRecoveryIndexes"]]);
+    assert.deepStrictEqual(yield* runMigrations(), [[76, "StartupRecoveryIndexes"]]);
     assert.deepStrictEqual(yield* runMigrations(), []);
 
     const statements: Array<string> = [];
