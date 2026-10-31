@@ -71,4 +71,20 @@ describe("mergeProviderInstanceEnvironment", () => {
       });
     }),
   );
+
+  it.effect("replaces every inherited spelling of a name on Windows, and only there", () =>
+    Effect.gen(function* () {
+      const merge = (platform: NodeJS.Platform) =>
+        mergeProviderInstanceEnvironment(
+          [{ name: "Https_Proxy", value: "http://gateway", sensitive: false }],
+          { HTTPS_PROXY: "http://mine", PATH: "/bin" },
+        ).pipe(Effect.provideService(HostProcess.Platform, platform));
+      expect(yield* merge("win32")).toEqual({ Https_Proxy: "http://gateway", PATH: "/bin" });
+      expect(yield* merge("linux")).toEqual({
+        HTTPS_PROXY: "http://mine",
+        Https_Proxy: "http://gateway",
+        PATH: "/bin",
+      });
+    }),
+  );
 });
