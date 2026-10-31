@@ -181,6 +181,7 @@ export function RightPanelSurfaceContent(props: {
         <Suspense fallback={<PullRequestListGhost />}>
           <ThreadPullRequestsPanel threadRef={threadRef} />
         </Suspense>
+      );
     case "side-chat":
       // Not lazy: revealing a suspended tiptap editor tears down its view and crashes the composer.
       return (
