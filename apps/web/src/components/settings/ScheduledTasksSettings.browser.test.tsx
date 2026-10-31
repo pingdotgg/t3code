@@ -6,6 +6,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ScheduledTaskId,
+  ThreadId,
   type ScheduledTask,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -24,7 +25,7 @@ const task: ScheduledTask = {
   enabled: true,
   schedule: { type: "interval", everyMs: 60_000 },
   projectId,
-  threadId: null,
+  threadId: ThreadId.make("older-thread"),
   workspaceStrategy: { type: "root" },
   modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
   runtimeMode: "full-access",
@@ -38,6 +39,12 @@ const task: ScheduledTask = {
   lastRunStatus: "never",
   lastRunError: null,
   runCount: 0,
+};
+
+// Stands in for the thread family read the editor makes when the shell lacks the bound thread.
+const threadFamilyRead = {
+  snapshotSequence: 1,
+  threads: [{ id: task.threadId, title: "Fix login bug" }],
 };
 
 const state = vi.hoisted(() => ({ connected: true, tasksLoaded: true, secondary: false }));
@@ -102,11 +109,21 @@ vi.mock(import("../../state/server"), async (original) => {
     },
   };
 });
+vi.mock(import("../../state/threads"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    threadFamilies: { ...actual.threadFamilies, familyAtom: (() => threadFamilyRead) as never },
+  };
+});
 // Mirrors the real query: a null request (disconnected environment) has no data.
 vi.mock(import("../../state/query"), async (original) => ({
   ...(await original()),
   useEnvironmentQuery: ((request: unknown) => ({
-    data: request === null ? null : { tasks: state.tasksLoaded ? [task] : [] },
+    data:
+      request === null || request === threadFamilyRead
+        ? request
+        : { tasks: state.tasksLoaded ? [task] : [] },
     error: null,
     isPending: false,
     refresh: vi.fn(),
@@ -166,6 +183,7 @@ describe("ScheduledTasksSettings", () => {
   it("keeps a linked task's unsaved edits across a disconnect and reconnect", async () => {
     setup();
     await using screen = await render(<ScheduledTasksSettings taskId={task.id} />);
+    await expect.element(page.getByRole("dialog").getByText("Fix login bug")).toBeVisible();
     const name = page.getByRole("dialog").getByRole("textbox", { name: "Name" });
     await expect.element(name).toHaveValue("Review issues");
     await userEvent.fill(name, "Review stale issues");
