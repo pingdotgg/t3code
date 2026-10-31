@@ -1797,9 +1797,8 @@ const make = Effect.gen(function* () {
     const remoteName = yield* gitDriver
       .resolvePrimaryRemoteName(cwd)
       .pipe(Effect.orElseSucceed(() => null));
-    // Launch fetches a bare name from `origin` only, so any other remote must be named.
-    const onRemote = (branch: string) =>
-      remoteName === "origin" ? branch : `${remoteName}/${branch}`;
+    // Launch resolves a bare name through a local branch's upstream, or else assumes `origin`.
+    const onRemote = (branch: string) => `${remoteName}/${branch}`;
     const remoteDefault =
       remoteName === null
         ? null

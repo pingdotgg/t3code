@@ -2516,7 +2516,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         );
         yield* mcp.scheduleTask(client, { projectId, prompt: "Check the build", schedule });
         assert.deepEqual(yield* Ref.get(saved), [
-          { type: "worktree", baseRef: "master", startFromOrigin: true },
+          { type: "worktree", baseRef: "origin/master", startFromOrigin: true },
         ]);
       }),
     );
@@ -2532,7 +2532,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           bindToCurrentThread: false,
         });
         assert.deepEqual(yield* Ref.get(saved), [
-          { type: "worktree", baseRef: "master", startFromOrigin: true },
+          { type: "worktree", baseRef: "origin/master", startFromOrigin: true },
         ]);
       }),
     );
@@ -2564,14 +2564,14 @@ describe("OrchestratorMcpService provider resolution", () => {
         remote: "origin",
         remoteDefault: null,
         refs: ["refs/heads/master", "refs/remotes/origin/main"],
-        baseRef: "main",
+        baseRef: "origin/main",
       },
       {
         name: "no recorded HEAD, master only on the remote",
         remote: "origin",
         remoteDefault: null,
         refs: ["refs/remotes/origin/master"],
-        baseRef: "master",
+        baseRef: "origin/master",
       },
       {
         name: "a remote not called origin",
