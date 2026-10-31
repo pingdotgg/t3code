@@ -14,12 +14,17 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as ChildProcess from "effect/process/ChildProcess";
+import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -34,6 +39,7 @@ import {
 } from "./adapter.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import { ConfigurationError } from "./sdk.ts";
+import { cursorWorkspaceMcpServers } from "./workspaceMcpServers.ts";
 
 describe("CursorAdapterV2", () => {
   it.effect.each([
@@ -1676,6 +1682,135 @@ describe("CursorAdapterV2", () => {
     assert.notInclude(logged, "secret-cursor-api-key");
     assert.notInclude(logged, "secret-cursor-mcp-token");
   });
+
+  it.effect.skipIf(!symlinksSupported)(
+    "starts mcp.json servers that use Cursor's workspace variables",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const scratch = yield* fileSystem.realPath(
+          yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-mcp-" }),
+        );
+        const workspace = path.join(scratch, "workspace");
+        const home = path.join(scratch, "home");
+        const loadServers = () =>
+          cursorWorkspaceMcpServers(cwd, { MCP_TYPE: "stdio" }).pipe(
+            Effect.provideService(HostProcess.HomeDirectory, home),
+            Effect.provideService(HostProcess.Environment, {}),
+          );
+        // Cursor resolves the project root through symlinks, as git does.
+        yield* fileSystem.makeDirectory(path.join(workspace, "packages", "app"), {
+          recursive: true,
+        });
+        yield* fileSystem.symlink(workspace, path.join(scratch, "link"));
+        const cwd = path.join(scratch, "link", "packages", "app");
+        yield* spawnAndCollect("git", ChildProcess.make("git", ["init", workspace]));
+        yield* fileSystem.makeDirectory(path.join(workspace, ".cursor"), { recursive: true });
+        yield* fileSystem.makeDirectory(path.join(home, ".cursor"), { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(workspace, ".cursor", "mcp.json"),
+          `{
+          // Cursor's editor accepts comments here.
+          "mcpServers": {
+            "repro": { "command": "node", "args": ["\${workspaceFolder}/server.mjs"], "startupTimeoutSec": 120 },
+            "plain": { "command": "node", "args": ["server.mjs"] },
+            "argument-only": { "command": "node", "args": ["server.mjs", "--workspace", "\${workspaceFolder}"] },
+            "env-only": { "command": "node", "args": ["server.mjs"], "env": { "PROJECT_ROOT": "\${workspaceFolder}" } },
+            "cwd-only": { "command": "node", "args": ["server.mjs"], "cwd": "\${workspaceFolder}" },
+            "off": { "command": "node", "args": ["\${workspaceFolder}/off.mjs"] },
+            "typed": { "type": "\${env:MCP_TYPE}", "command": "node", "args": ["server.mjs"] },
+            "plugin-docs-search": { "command": "node", "args": ["\${workspaceFolder}/search.mjs"] },
+          },
+        }`,
+        );
+        yield* fileSystem.writeFileString(
+          path.join(home, ".cursor", "mcp.json"),
+          JSON.stringify({
+            mcpServers: {
+              repro: { command: "node", args: ["${userHome}/shadowed.mjs"] },
+              docs: {
+                url: "https://docs.example/${workspaceFolderBasename}",
+                headers: { Authorization: "Bearer ${env:DOCS_TOKEN}" },
+                tls: { caBundle: "${userHome}/ca.pem" },
+              },
+            },
+          }),
+        );
+        // Cursor keeps per-project state under a directory named after the project path.
+        const projectDirectory = workspace.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "");
+        yield* fileSystem.makeDirectory(path.join(home, ".cursor", "projects", projectDirectory), {
+          recursive: true,
+        });
+        yield* fileSystem.writeFileString(
+          path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
+          JSON.stringify(["off"]),
+        );
+
+        const instanceId = ProviderInstanceId.make("cursor");
+        const threadId = ThreadId.make("cursor-mcp-thread");
+        const modelSelection = { instanceId, model: "composer-2.5" };
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd,
+        });
+        let openedWith: CursorAgentSdk.CursorAgentSdkOpenInput["options"] | undefined;
+        const adapter = yield* makeCursorAdapterV2({
+          instanceId,
+          environment: {
+            HOME: path.join(scratch, "override"),
+            CURSOR_DATA_DIR: path.join(scratch, "override"),
+            DOCS_TOKEN: "docs-token",
+            MCP_TYPE: "stdio",
+          },
+        }).pipe(
+          Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+            assertComplete: Effect.void,
+            open: (input) =>
+              Effect.sync(() => {
+                openedWith = input.options;
+                return {
+                  agentId: "native-cursor-mcp",
+                  listMessages: Effect.succeed([]),
+                  close: Effect.void,
+                  send: () => Effect.die("unused"),
+                };
+              }),
+          }),
+          Effect.provide(TestProviderHost.layer({ cwd })),
+        );
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("cursor-mcp-session"),
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime
+          .ensureThread({ threadId, modelSelection, runtimePolicy })
+          .pipe(
+            Effect.provideService(HostProcess.HomeDirectory, home),
+            Effect.provideService(HostProcess.Environment, {}),
+          );
+
+        const expectedServers = {
+          repro: { command: "node", args: [`${workspace}/server.mjs`], startupTimeoutSec: 120 },
+        };
+        assert.deepEqual(openedWith?.mcpServers, expectedServers);
+        for (const disabledState of ["[", '{"off": true}', '["off",]']) {
+          yield* fileSystem.writeFileString(
+            path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
+            disabledState,
+          );
+          assert.isTrue(Exit.isFailure(yield* Effect.exit(loadServers())));
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+        ),
+      ),
+  );
 
   it("recognizes direct and SDK-wrapped abort failures as cancellation", () => {
     assert.isTrue(CursorAgentSdk.isCursorCancellationError({ name: "AbortError" }));
