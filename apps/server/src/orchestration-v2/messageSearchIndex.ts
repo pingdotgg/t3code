@@ -40,34 +40,71 @@ export const indexedMessageCondition = (sql: SqlClient.SqlClient, row = "message
   AND ${nonPlaceholderMessageCondition(sql, row)}
 `;
 
+// Curly apostrophes straight, as search folds a query, since iOS keyboards
+// type "’" and others type "'".
+const foldApostrophes = (text: string) => `replace(replace(${text}, '’', ''''), '‘', '''')`;
+
+const readableText = (row: string) =>
+  `COALESCE(${row}.search_text, json_extract(${row}.payload_json, '$.text'))`;
+
 /**
- * What the index stores for a message: its text with curly apostrophes
- * straight, as search folds a query, since iOS keyboards type "’" and others
- * type "'". Migration 69's triggers use it too. `payload` is the message's
+ * A message's text as it reads: migration 77's search_text where a quote's
+ * percent-encoded link reads differently, else the stored text. `row` names
+ * the message row.
+ */
+export const messageSearchText = (sql: SqlClient.SqlClient, row = "messages") =>
+  sql.literal(readableText(row));
+
+/**
+ * A message's stored text with apostrophes folded, what the index held before
+ * migration 77. Migration 69's backfill uses it. `payload` is the message's
  * JSON column.
  */
 export const indexedMessageText = (sql: SqlClient.SqlClient, payload: string) =>
-  sql.literal(`replace(replace(json_extract(${payload}, '$.text'), '’', ''''), '‘', '''')`);
+  sql.literal(foldApostrophes(`json_extract(${payload}, '$.text')`));
+
+// What the index stores: a message's readable text with apostrophes folded.
+// Migrations 69 and 74 create the triggers before migration 77 adds
+// search_text, and `t3 doctor` can rebuild a database that has not migrated,
+// so those fall back to the stored text.
+const indexedText = Effect.fn("MessageSearchIndex.indexedText")(function* (
+  sql: SqlClient.SqlClient,
+) {
+  const column = yield* sql`
+    SELECT 1 FROM pragma_table_info('orchestration_v2_projection_messages')
+    WHERE name = 'search_text'
+  `;
+  const readable = column.length > 0;
+  return {
+    readable,
+    of: (row: string) =>
+      readable
+        ? sql.literal(foldApostrophes(readableText(row)))
+        : indexedMessageText(sql, `${row}.payload_json`),
+  };
+});
 
 export const createMessageSearchTriggers = Effect.fn("MessageSearchIndex.createTriggers")(
   function* (sql: SqlClient.SqlClient) {
+    const text = yield* indexedText(sql);
     yield* sql`
       CREATE TRIGGER orchestration_v2_message_search_insert
       AFTER INSERT ON orchestration_v2_projection_messages
       WHEN ${indexedMessageCondition(sql, "new")}
       BEGIN
         INSERT INTO orchestration_v2_message_search (rowid, text)
-        SELECT new.rowid, ${indexedMessageText(sql, "new.payload_json")}
+        SELECT new.rowid, ${text.of("new")}
         WHERE json_extract(new.payload_json, '$.text') IS NOT NULL;
       END
     `;
     // Streaming deltas rewrite the row many times a second; skip them until the
-    // message settles. Upserts rewrite every column, so a finished message
-    // re-indexes only when what the index reads changed. Deleting a rowid the
-    // index never held is a no-op.
+    // message settles. Upserts rewrite every column, so re-index only when what
+    // the index reads changed, search_text included for migration 77's backfill.
+    // Deleting a rowid the index never held is a no-op.
     yield* sql`
       CREATE TRIGGER orchestration_v2_message_search_update
-      AFTER UPDATE OF payload_json, streaming, role ON orchestration_v2_projection_messages
+      AFTER UPDATE OF payload_json, streaming, role${sql.literal(text.readable ? ", search_text" : "")}
+        ON orchestration_v2_projection_messages
       WHEN (old.streaming = 0 OR new.streaming = 0)
         AND (
           old.streaming IS NOT new.streaming
@@ -75,11 +112,12 @@ export const createMessageSearchTriggers = Effect.fn("MessageSearchIndex.createT
           OR json_extract(old.payload_json, '$.text') IS NOT json_extract(new.payload_json, '$.text')
           OR json_extract(old.payload_json, '$.createdBy')
             IS NOT json_extract(new.payload_json, '$.createdBy')
+          ${sql.literal(text.readable ? "OR old.search_text IS NOT new.search_text" : "")}
         )
       BEGIN
         DELETE FROM orchestration_v2_message_search WHERE rowid = old.rowid AND old.streaming = 0;
         INSERT INTO orchestration_v2_message_search (rowid, text)
-        SELECT new.rowid, ${indexedMessageText(sql, "new.payload_json")}
+        SELECT new.rowid, ${text.of("new")}
         WHERE ${indexedMessageCondition(sql, "new")}
           AND json_extract(new.payload_json, '$.text') IS NOT NULL;
       END
@@ -108,6 +146,7 @@ export const rebuildMessageSearch = Effect.fn("MessageSearchIndex.rebuild")(func
     SELECT 1 FROM sqlite_master WHERE name = 'orchestration_v2_message_search'
   `;
   if (index.length === 0) return;
+  const text = yield* indexedText(sql);
   // One transaction: an interrupt between clear and refill would leave an
   // empty index that nothing repairs, since search only checks the table exists.
   yield* sql.withTransaction(
@@ -118,7 +157,7 @@ export const rebuildMessageSearch = Effect.fn("MessageSearchIndex.rebuild")(func
       `;
       yield* sql`
         INSERT INTO orchestration_v2_message_search (rowid, text)
-        SELECT messages.rowid, ${indexedMessageText(sql, "messages.payload_json")}
+        SELECT messages.rowid, ${text.of("messages")}
         FROM orchestration_v2_projection_messages AS messages
         WHERE ${indexedMessageCondition(sql)}
           AND json_extract(messages.payload_json, '$.text') IS NOT NULL

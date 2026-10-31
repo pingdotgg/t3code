@@ -90,6 +90,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type * as Statement from "effect/sql/Statement";
 
+import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import {
@@ -2416,6 +2417,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "message.updated": {
               const payloadJson = yield* encodeMessagePayload(event.payload);
               const payload = parseEncodedPayload(payloadJson);
+              // Thread search matches this readable text; NULL when it equals the stored text.
+              const searchText = assistantCitationsToPlainText(event.payload.text);
               yield* sql`
               INSERT INTO orchestration_v2_projection_messages (
                 message_id,
@@ -2426,7 +2429,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 streaming,
                 created_at,
                 updated_at,
-                payload_json
+                payload_json,
+                search_text
               )
               VALUES (
                 ${event.payload.id},
@@ -2437,7 +2441,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${booleanInt(event.payload.streaming)},
                 ${stringField(payload, "createdAt")},
                 ${stringField(payload, "updatedAt")},
-                ${payloadJson}
+                ${payloadJson},
+                ${searchText === event.payload.text ? null : searchText}
               )
               ON CONFLICT(message_id)
               DO UPDATE SET
@@ -2448,7 +2453,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 streaming = excluded.streaming,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at,
-                payload_json = excluded.payload_json
+                payload_json = excluded.payload_json,
+                search_text = excluded.search_text
             `;
               break;
             }
