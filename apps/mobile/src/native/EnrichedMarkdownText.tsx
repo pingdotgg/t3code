@@ -60,8 +60,6 @@ function enrichedStyle(
       ...body,
       color: style.strongColor,
       fontFamily: style.headingFontFamily,
-      fontWeight:
-        style.headingFontFamily === style.fontFamily ? ("bold" as const) : ("normal" as const),
       fontSize,
       lineHeight: fontSize * 1.35,
       marginTop: 8,
