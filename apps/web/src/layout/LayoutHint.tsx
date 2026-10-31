@@ -54,6 +54,7 @@ function useHintPlacement() {
   useLayoutEffect(() => {
     const host = hint?.offsetParent;
     if (!host) return;
+    const animations = new Set<Animation>();
     const place = () => {
       const pane = host.querySelector("[data-layout-pane-focused='true'][data-layout-pane-id]");
       if (!pane) return;
@@ -68,6 +69,20 @@ function useHintPlacement() {
         bottom: hostRect.bottom - floor,
         maxWidth: paneRect.width - 2 * HINT_EDGE_PX,
       });
+      // Camera and pane transforms move the anchor without resize or scroll events.
+      for (const animation of host.getAnimations({ subtree: true })) {
+        const target = (animation.effect as KeyframeEffect | null)?.target;
+        if (
+          animation.playState !== "running" ||
+          !(target instanceof Element) ||
+          !target.contains(pane) ||
+          animations.has(animation)
+        )
+          continue;
+        animations.add(animation);
+        animation.addEventListener("finish", place, { once: true });
+        animation.addEventListener("cancel", place, { once: true });
+      }
     };
     place();
     const pane = host.querySelector("[data-layout-pane-focused='true'][data-layout-pane-id]");
@@ -83,6 +98,10 @@ function useHintPlacement() {
     return () => {
       window.cancelAnimationFrame(frame);
       stopResize();
+      for (const animation of animations) {
+        animation.removeEventListener("finish", place);
+        animation.removeEventListener("cancel", place);
+      }
       host.removeEventListener("scroll", place, { capture: true });
       window.removeEventListener("resize", place);
     };
