@@ -99,7 +99,7 @@ export default function VirtualTablePreview(props: {
           ref={measureRef}
           aria-hidden="true"
           className="invisible absolute top-0 border-separate border-spacing-0 text-meta/4"
-          style={{ width: Math.max(width - rowHeader, props.columns * 128) }}
+          style={{ width: Math.max(width - rowHeader, props.columns * 56) }}
         >
           <thead>
             <tr>
@@ -107,7 +107,7 @@ export default function VirtualTablePreview(props: {
                 <th
                   key={i}
                   className={cn(
-                    "min-w-32 max-w-80 border-b px-3 py-1.5 text-meta/4 whitespace-nowrap",
+                    "min-w-14 max-w-80 border-b px-2 py-1.5 text-meta/4 whitespace-nowrap",
                     columnClass(props.columnKinds?.[i]),
                   )}
                 >
@@ -126,7 +126,7 @@ export default function VirtualTablePreview(props: {
                     <td
                       key={j}
                       className={cn(
-                        "max-w-80 border-b px-3 py-1.5 whitespace-pre-wrap break-words tabular-nums",
+                        "max-w-80 border-b px-2 py-1.5 whitespace-pre-wrap break-words tabular-nums",
                         columnClass(props.columnKinds?.[j]),
                       )}
                     >
@@ -165,7 +165,7 @@ export default function VirtualTablePreview(props: {
                         role="columnheader"
                         aria-colindex={column + 1}
                         className={cn(
-                          "shrink-0 overflow-hidden px-3 py-1.5 text-ellipsis whitespace-pre last:rounded-tr-row",
+                          "shrink-0 overflow-hidden px-2 py-1.5 text-ellipsis whitespace-pre last:rounded-tr-row",
                           columnClass(props.columnKinds?.[column]),
                         )}
                         style={{ width: sizes[column] }}
@@ -269,7 +269,7 @@ function RowPage(
                   props.source
                     ? `min-w-0 flex-1 px-3 py-1 ${props.wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`
                     : cn(
-                        "shrink-0 truncate px-3 py-1.5 text-foreground tabular-nums",
+                        "shrink-0 truncate px-2 py-1.5 text-foreground tabular-nums",
                         columnClass(props.columnKinds?.[column]),
                       )
                 }
