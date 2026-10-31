@@ -61,6 +61,46 @@ function contrastRatio(first: string, second: string): number {
 }
 
 describe("theme files", () => {
+  it("persists distinct non-Latin theme files without changing explicit or ASCII ids", () => {
+    const stored = new Map<string, string>();
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => stored.get(key) ?? null,
+        setItem: (key: string, value: string) => stored.set(key, value),
+      },
+    });
+    invalidateCustomThemes();
+    try {
+      const file = {
+        version: THEME_FILE_VERSION,
+        appearance: "dark",
+        colors: { canvas: "#101820" },
+      };
+      const night = parseThemeFile({ ...file, name: "夜" });
+      const morning = parseThemeFile({ ...file, name: "朝" });
+      expect(morning.id).not.toBe(night.id);
+      expect(parseThemeFile({ ...file, name: " 夜 " }).id).toBe(night.id);
+      expect(parseThemeFile({ ...file, name: "Ocean Night" }).id).toBe("ocean-night");
+      const legacy = parseThemeFile({ ...file, name: "旧", id: "custom-theme" });
+      expect(legacy.id).toBe("custom-theme");
+      const themes = [legacy, night, morning];
+      for (const theme of themes) {
+        installCustomTheme(theme);
+        expect(parseThemeFile(JSON.parse(serializeThemeFile(theme))).id).toBe(theme.id);
+      }
+      invalidateCustomThemes();
+      expect(getCustomThemes().map((theme) => [theme.id, theme.label])).toEqual(
+        themes.map((theme) => [theme.id, theme.label]),
+      );
+      expect(() => installCustomTheme(parseThemeFile({ ...file, name: "夜" }))).toThrow(
+        "already installed",
+      );
+    } finally {
+      vi.unstubAllGlobals();
+      invalidateCustomThemes();
+    }
+  });
+
   it("keeps built-in and standard search pairs readable and distinct from inline code", () => {
     const toOklab = converter("oklab");
     const distance = (first: string, second: string) => {
