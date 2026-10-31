@@ -28,7 +28,7 @@ var root = document.getElementById("root");
 function post(message){ window.ReactNativeWebView.postMessage(JSON.stringify(message)); }
 function reportHeight(){ post({ type: "height", height: document.body.scrollHeight }); }
 try {
-  mermaid.initialize({ startOnLoad: false, theme: data.dark ? "dark" : "default" });
+  mermaid.initialize({ startOnLoad: false, theme: data.dark ? "dark" : "default", securityLevel: "strict" });
   mermaid.render("diagram", data.source).then(function(result) {
     root.innerHTML = result.svg;
     reportHeight();
@@ -53,6 +53,18 @@ new ResizeObserver(reportHeight).observe(document.body);
 type HeightMessage = { readonly type: "height"; readonly height: number };
 type ErrorMessage = { readonly type: "error"; readonly message: string };
 
+function parseMermaidMessage(data: string): HeightMessage | ErrorMessage | null {
+  try {
+    return JSON.parse(data) as HeightMessage | ErrorMessage;
+  } catch {
+    return null;
+  }
+}
+
+function isHeightMessage(message: HeightMessage | ErrorMessage): message is HeightMessage {
+  return message.type === "height";
+}
+
 export function MobileMermaidDiagram(props: { readonly source: string; readonly dark: boolean }) {
   const [height, setHeight] = useState(220);
   const [failed, setFailed] = useState<string | null>(null);
@@ -60,16 +72,15 @@ export function MobileMermaidDiagram(props: { readonly source: string; readonly 
   const html = useMemo(() => buildHtml(props.source, props.dark), [props.source, props.dark]);
 
   const onMessage = (event: WebViewMessageEvent) => {
-    try {
-      const message = JSON.parse(event.nativeEvent.data) as HeightMessage | ErrorMessage;
-      if (message.type === "height" && Number.isFinite(message.height)) {
+    const message = parseMermaidMessage(event.nativeEvent.data);
+    if (!message) return;
+    if (isHeightMessage(message)) {
+      if (Number.isFinite(message.height)) {
         setHeight(Math.min(Math.max(Math.ceil(message.height) + 16, 120), 800));
-      } else if (message.type === "error") {
-        setFailed(message.message);
       }
-    } catch {
-      // Ignore malformed WebView messages.
+      return;
     }
+    setFailed(message.message);
   };
 
   return (
@@ -107,6 +118,7 @@ export function MobileMermaidDiagram(props: { readonly source: string; readonly 
           source={{ html }}
           javaScriptEnabled
           domStorageEnabled={false}
+          allowFileAccess={false}
           scrollEnabled={false}
           style={{ height }}
           onMessage={onMessage}
