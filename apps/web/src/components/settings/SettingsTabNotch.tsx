@@ -9,6 +9,7 @@ import {
   LAYOUT_TAB_ICON_CLASS,
   LAYOUT_TAB_SLOT_CLASS,
   LayoutPaneTab,
+  LayoutPaneTabStrip,
   LayoutTabCloseButton,
   useLayoutPaneSiblingTabs,
 } from "../../layout/PaneTabs";
@@ -41,40 +42,44 @@ export function SettingsTabNotch({
   const siblingTabs = useLayoutPaneSiblingTabs();
   return (
     <PaneNotch>
-      <div className="flex min-w-0 items-center gap-1 overflow-hidden">
+      <LayoutPaneTabStrip>
         {modal ? null : siblingTabs.before.map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)}
         <span className={cn(LAYOUT_TAB_SLOT_CLASS, "min-w-15")}>
           {/* Uncapped, unlike a chat tab: its breadcrumb filters use the header's free room. */}
-          <div className={cn(PANE_TAB_CLASS, "max-w-none")} data-layout-settings-tab="">
+          <div
+            className={cn(PANE_TAB_CLASS, "max-w-none")}
+            data-layout-pane-tab={!modal ? (tabId ?? undefined) : undefined}
+            data-layout-settings-tab=""
+          >
             <span className={LAYOUT_TAB_ICON_CLASS}>{icon}</span>
             {children}
           </div>
           {!modal && tabId !== null ? <LayoutTabCloseButton tabId={tabId} title={title} /> : null}
         </span>
         {modal ? null : siblingTabs.after.map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)}
-      </div>
+      </LayoutPaneTabStrip>
       {modal ? null : (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="bare"
-              size="icon-xs"
-              data-pane-notch-add=""
-              aria-label="New tab"
-              onClick={() => {
-                if (tabId !== null) useLayoutStore.getState().focusTab(tabId);
-                openLayoutNewTab();
-                // A page outside the layout (pull requests, usage) goes to it.
-                if (tabId === null) void navigate({ to: "/" });
-              }}
-            />
-          }
-        >
-          <PlusIcon />
-        </TooltipTrigger>
-        <TooltipPopup side="bottom">New tab{shortcut ? ` (${shortcut})` : ""}</TooltipPopup>
-      </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="bare"
+                size="icon-xs"
+                data-pane-notch-add=""
+                aria-label="New tab"
+                onClick={() => {
+                  if (tabId !== null) useLayoutStore.getState().focusTab(tabId);
+                  openLayoutNewTab();
+                  // A page outside the layout (pull requests, usage) goes to it.
+                  if (tabId === null) void navigate({ to: "/" });
+                }}
+              />
+            }
+          >
+            <PlusIcon />
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">New tab{shortcut ? ` (${shortcut})` : ""}</TooltipPopup>
+        </Tooltip>
       )}
     </PaneNotch>
   );
