@@ -12,8 +12,10 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "./lib/storage";
 import { randomUUID } from "./lib/utils";
 import { type RightPanelSurface } from "./rightPanelStore";
+import type { DraftId } from "./composerDraftStore";
 
 export type ClosedView =
+  | { kind: "chat"; threadRef: ScopedThreadRef; draftId?: DraftId; paneId: string; index: number }
   | {
       kind: "panel-tab";
       threadRef: ScopedThreadRef;
@@ -38,6 +40,8 @@ const sameTarget = (entry: ClosedViewEntry, view: ClosedView): boolean => {
     return false;
   }
   switch (entry.kind) {
+    case "chat":
+      return view.kind === "chat" && entry.draftId === view.draftId;
     case "panel-tab":
       return view.kind === "panel-tab" && entry.surface.id === view.surface.id;
     case "browser":
@@ -55,6 +59,10 @@ const isAttachment = Schema.is(ChatFileAttachment);
 const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
   const view = entry as ClosedViewEntry | null;
   if (!view || typeof view.id !== "string" || !isThreadRef(view.threadRef)) return false;
+  if (view.kind === "chat") {
+    return typeof view.paneId === "string" && Number.isSafeInteger(view.index) && view.index >= 0 &&
+      (view.draftId === undefined || typeof view.draftId === "string");
+  }
   if (view.kind === "browser") return isSnapshot(view.snapshot);
   if (view.kind !== "panel-tab") return false;
   const surface = view.surface;
