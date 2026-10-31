@@ -540,6 +540,7 @@ it.effect("keeps local Android and iOS available without ffmpeg", () =>
           ANDROID_HOME: `${baseDir}/sdk`,
         }),
         Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(HostProcess.Architecture, "arm64"),
       );
     const host = yield* LocalDeviceHost.make().pipe(
       Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
@@ -566,6 +567,38 @@ it.effect("keeps local Android and iOS available without ffmpeg", () =>
     });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("reports iOS unavailable on a Mac whose server cannot load serve-sim", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-intel-" });
+    yield* fs.makeDirectory(`${baseDir}/bin`);
+    yield* fs.writeFileString(`${baseDir}/bin/xcrun`, "#!/bin/sh\nexit 0\n");
+    yield* fs.chmod(`${baseDir}/bin/xcrun`, 0o755);
+    const reason = (arch: NodeJS.Architecture, isExecutable = false) =>
+      LocalDeviceHost.__testing
+        .platformReason("ios")
+        .pipe(
+          Effect.provideService(HostProcess.Environment, { HOME: baseDir, PATH: `${baseDir}/bin` }),
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(HostProcess.Architecture, arch),
+          Effect.provideService(HostProcess.IsExecutable, isExecutable),
+        );
+    expect(yield* reason("arm64")).toBeNull();
+    expect(yield* reason("x64")).toBe(
+      "iOS Simulators need an Apple silicon Mac running the Apple silicon build of T3 Code.",
+    );
+    // A packaged server runs the hub on PATH's Node, so its own architecture decides nothing.
+    expect(yield* reason("x64", true)).toBeNull();
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it("limits the hub to Android where it cannot serve iOS Simulators", () => {
+  const { hubPlatformArguments } = LocalDeviceHost.__testing;
+  expect(hubPlatformArguments("darwin", true)).toEqual([]);
+  expect(hubPlatformArguments("darwin", false)).toEqual(["--platform", "android"]);
+  expect(hubPlatformArguments("linux", true)).toEqual(["--platform", "android"]);
+});
 
 it.effect(
   "constructs and inspects an unconfigured host without installing or starting helpers",

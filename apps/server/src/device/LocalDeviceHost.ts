@@ -100,12 +100,24 @@ interface RunningHost {
   readonly helpers: DeviceHost.DeviceHostReady["helpers"];
 }
 
+/**
+ * serve-sim ships arm64-only native code. An unpackaged server runs the hub on its own Node,
+ * so an x64 one (an Intel Mac, or the Intel build under Rosetta) cannot stream iOS. A packaged
+ * server runs the hub on the Node from PATH, whose architecture this process does not know.
+ */
+const hubCannotLoadServeSim = Effect.gen(function* () {
+  if (yield* HostProcess.IsExecutable) return false;
+  return (yield* HostProcess.Architecture) !== "arm64";
+});
+
 const platformReason = Effect.fn("LocalDeviceHost.platformReason")(function* (
   platform: DevicePlatform,
 ): Effect.fn.Return<string | null, never, FileSystem.FileSystem | Path.Path> {
   const hostPlatform = yield* HostProcess.Platform;
   if (platform === "ios") {
     if (hostPlatform !== "darwin") return "iOS Simulators need macOS with Xcode.";
+    if (yield* hubCannotLoadServeSim)
+      return "iOS Simulators need an Apple silicon Mac running the Apple silicon build of T3 Code.";
     if (!(yield* isCommandAvailable("xcrun"))) return "Xcode command line tools were not found.";
     return null;
   }
@@ -253,9 +265,9 @@ const hubEnvironment = Effect.fn("LocalDeviceHost.hubEnvironment")(function* (
   return env;
 });
 
-/** Only a Mac can list Apple simulators; elsewhere the hub's attempt surfaces as an error. */
-const hubPlatformArguments = (hostPlatform: NodeJS.Platform) =>
-  hostPlatform === "darwin" ? [] : ["--platform", "android"];
+/** Only a Mac whose hub loads serve-sim can serve Apple simulators; elsewhere it lists ones it cannot stream. */
+const hubPlatformArguments = (hostPlatform: NodeJS.Platform, servesIos: boolean) =>
+  hostPlatform === "darwin" && servesIos ? [] : ["--platform", "android"];
 
 export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -268,6 +280,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const environment = yield* HostProcess.Environment;
   const workingDirectory = yield* HostProcess.WorkingDirectory;
   const hostPlatform = yield* HostProcess.Platform;
+  const hubServesIos = !(yield* hubCannotLoadServeSim);
   const sdk = yield* androidSdk;
   const hostEnvironment = deviceHostEnvironment(environment, sdk.root, hostPlatform, path);
   const startLock = yield* Semaphore.make(1);
@@ -423,7 +436,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
               "127.0.0.1",
               "--hide-sidebar",
               "--hide-boot-device",
-              ...hubPlatformArguments(hostPlatform),
+              ...hubPlatformArguments(hostPlatform, hubServesIos),
             ],
             {
               cwd: workingDirectory,
@@ -879,6 +892,7 @@ export const __testing = {
   AgentDeviceDaemonFile,
   androidSdk,
   platformReason,
+  hubPlatformArguments,
   deviceHostEnvironment,
   hubEnvironment,
 };
