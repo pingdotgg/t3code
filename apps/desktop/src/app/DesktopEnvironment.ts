@@ -209,7 +209,10 @@ const make = Effect.fn("desktop.environment.make")(function* (
     appRoot,
     serverRoot,
     backendEntryPath: path.join(serverRoot, "apps/server/dist/bin.mjs"),
-    clientAssetsDir: path.join(serverRoot, "apps/server/dist/client"),
+    // A separately built client must match this release: the desktop bridge is not versioned.
+    clientAssetsDir: Option.getOrElse(config.clientAssetsDirOverride, () =>
+      path.join(serverRoot, "apps/server/dist/client"),
+    ),
     backendCwd: input.isPackaged ? homeDirectory : appRoot,
     preloadPath: path.join(input.dirname, "preload.cjs"),
     compileCachePath: path.join(input.dirname, "compileCache.cjs"),
