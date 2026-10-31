@@ -113,6 +113,11 @@ const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   SSH_ASKPASS: "",
   SSH_ASKPASS_REQUIRE: "never",
 } satisfies NodeJS.ProcessEnv);
+const upstreamRefreshEnvironment = Effect.map(HostProcess.Environment, (environment) =>
+  environment.T3CODE_GIT_PRESERVE_ASKPASS === "1"
+    ? { ...STATUS_UPSTREAM_REFRESH_ENV, GIT_ASKPASS: environment.GIT_ASKPASS ?? "" }
+    : STATUS_UPSTREAM_REFRESH_ENV,
+);
 const DEFAULT_BASE_BRANCH_CANDIDATES = ["main", "master"] as const;
 const GIT_LIST_BRANCHES_DEFAULT_LIMIT = 100;
 const NON_REPOSITORY_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitStatusDetails>({
@@ -1336,7 +1341,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         // healthy writer. A separate safety limit prevents a hung transport from
         // occupying its worker slot indefinitely.
         const started = yield* executeGit("GitVcsDriver.fetchRemoteForStatus", fetchCwd, args, {
-          env: STATUS_UPSTREAM_REFRESH_ENV,
+          env: yield* upstreamRefreshEnvironment,
           fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
           timeoutMs: Duration.toMillis(STATUS_UPSTREAM_FETCH_TIMEOUT),
           forceKillAfterMs: 1_000,
@@ -4367,7 +4372,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fetchRemote = Effect.fn("fetchRemote")(function* (input: GitVcsDriver.GitFetchRemoteInput) {
     const args = ["fetch", "--quiet", "--", input.remoteName];
     const options = {
-      env: STATUS_UPSTREAM_REFRESH_ENV,
+      env: yield* upstreamRefreshEnvironment,
       fallbackErrorDetail: `git fetch ${input.remoteName} failed`,
     };
     // Another fetch in the same repository, such as the background status
