@@ -5426,6 +5426,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
           });
 
+        // Claude runs one root turn at a time, so a user turn's result also ends a wake turn it
+        // folded in. Its buffered frames would leave the continuation waiting for a result forever.
+        const dropAbsorbedWakeFrames = (nativeThreadId: string) =>
+          Ref.update(wakeBuffers, (current) => {
+            const buffered = current.get(nativeThreadId);
+            if (buffered === undefined) return current;
+            const lastResult = buffered.messages.findLastIndex((entry) => entry.type === "result");
+            const wakeStart = buffered.messages.findIndex(
+              (entry, index) => index > lastResult && isClaudeRootTurnFrame(entry),
+            );
+            if (wakeStart === -1) return current;
+            const messages = buffered.messages.filter(
+              (entry, index) =>
+                index < wakeStart ||
+                (entry.type === "system" && "task_id" in entry) ||
+                parentToolUseIdFromSdkMessage(entry) !== null,
+            );
+            const updated = new Map(current);
+            if (messages.length === 0) updated.delete(nativeThreadId);
+            else updated.set(nativeThreadId, { ...buffered, messages });
+            return updated;
+          });
+
         // The SDK emits no initial roster; reset roster and wake eligibility when opening a live query.
         const resetBackgroundTaskStateForNativeThreadProcess = Effect.fnUntraced(function* (
           nativeThreadId: string,
@@ -9337,6 +9360,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.delete(context.providerTurnId);
               return next;
             });
+            if (!isClaudeProviderContinuationTurn(context.input)) {
+              yield* dropAbsorbedWakeFrames(liveQuery.nativeThreadId);
+            }
             const usageLimited =
               context.authenticationFailureMessage === undefined &&
               (context.rejectedRateLimitTypes.size > 0 ||
