@@ -1593,7 +1593,7 @@ export function ThreadsSettingsPanel() {
                   key={instanceId}
                   serverScoped
                   title={`Use banked Codex resets${instance.displayName ? ` for ${instance.displayName}` : ""}`}
-                  description="For native Codex accounts. When an included usage limit is exhausted, redeem one banked reset and resume eligible threads after Codex reports a reset and a fresh usage check shows the limit clear."
+                  description="Requires Resume after usage limits to be enabled. For native Codex accounts, redeem one banked reset when an included usage limit is exhausted and resume eligible threads after Codex reports a reset and a fresh usage check shows the limit clear."
                   settingKeys={["autoRedeemCodexResetCredits"]}
                   control={
                     <ScopedSwitch

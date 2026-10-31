@@ -133,6 +133,7 @@ export function AutoSettleSettingsRows(props: {
                   key={instanceId}
                   icon="clock"
                   label={`Use banked Codex resets${instance.displayName ? ` for ${instance.displayName}` : ""}`}
+                  subtitle="Requires Resume after usage limits to be enabled."
                   value={referenceSettings.autoRedeemCodexResetCredits[instanceId] === true}
                   disabled={disabled}
                   onValueChange={(value) =>
