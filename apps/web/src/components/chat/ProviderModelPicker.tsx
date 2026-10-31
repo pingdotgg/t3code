@@ -5,7 +5,7 @@ import {
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { createContext, memo, type ReactNode, useRef, useState } from "react";
+import { memo, type ReactNode, useRef, useState } from "react";
 import { Badge } from "../ui/badge";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -67,9 +67,6 @@ function lockBackgroundScroll(popup: HTMLElement | null) {
     body.style.paddingRight = previousBodyPaddingRight;
   };
 }
-
-/** What a docked effort column needs from its picker: the model it serves. */
-export const DockedPickerContext = createContext<{ modelLabel: string }>({ modelLabel: "" });
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   environmentId: EnvironmentId | null;
@@ -398,27 +395,25 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         touchBackdrop
       >
         {props.effortColumn ? (
-          <DockedPickerContext value={{ modelLabel: triggerTitle }}>
-            <div className="flex flex-col">
-              <div className="flex max-h-86.5 max-sm:max-h-none max-sm:flex-col">
-                {picker}
-                <div
-                  data-model-picker-effort
-                  className="flex min-h-0 w-48 shrink-0 flex-col border-l border-border/70 bg-muted/40 max-sm:max-h-64 max-sm:w-full max-sm:border-t max-sm:border-l-0"
-                  onKeyDown={(event) => {
-                    if (event.key !== "ArrowLeft" || event.altKey || event.ctrlKey || event.metaKey)
-                      return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    searchInputRef.current?.focus();
-                  }}
-                >
-                  {props.effortColumn}
-                </div>
+          <div className="flex flex-col">
+            <div className="flex max-h-86.5 max-sm:max-h-none max-sm:flex-col">
+              {picker}
+              <div
+                data-model-picker-effort
+                className="flex min-h-0 w-48 shrink-0 flex-col border-l border-border/70 bg-muted/40 max-sm:max-h-64 max-sm:w-full max-sm:border-t max-sm:border-l-0"
+                onKeyDown={(event) => {
+                  if (event.key !== "ArrowLeft" || event.altKey || event.ctrlKey || event.metaKey)
+                    return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  searchInputRef.current?.focus();
+                }}
+              >
+                {props.effortColumn}
               </div>
-              {props.footer}
             </div>
-          </DockedPickerContext>
+            {props.footer}
+          </div>
         ) : (
           picker
         )}
