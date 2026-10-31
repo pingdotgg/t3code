@@ -26,7 +26,7 @@ export const mergeProviderInstanceEnvironment = Effect.fn(function* (
       }
     }
     next[name] =
-      variable.name === "CODEX_HOME" || variable.name === "CLAUDE_CONFIG_DIR"
+      name === "CODEX_HOME" || name === "CLAUDE_CONFIG_DIR"
         ? expandHomePath(variable.value, home)
         : variable.value;
   }

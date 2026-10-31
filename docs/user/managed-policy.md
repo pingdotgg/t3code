@@ -131,9 +131,9 @@ A few settings need care:
   rules.
 - Manage `idleCompaction`, not the older `compactIdleThreads`. A Claude instance's own idle
   compaction choice still wins over `idleCompaction`.
-- A variable in a provider instance can replace its launch arguments, so a lock on
-  `providerInstances.<id>.config` or its `launchArgs` needs `providerInstances.<id>.environment`
-  locked too. Locking the whole instance covers both.
+- A provider instance's fields override each other, so lock `providerInstances.<id>` as a whole,
+  or pin single fields with [`providers.instances`](#providers). T3 Code refuses a lock on one
+  field inside an instance.
 
 ## Limits
 

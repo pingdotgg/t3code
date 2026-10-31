@@ -120,7 +120,7 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
             ...base,
             settings: { "storageCleanup.worktreeAfterDays": { value: 7, locked: true } },
           }),
-          // T3CODE_CODEX_LAUNCH_ARGS in the instance's own variables would replace them.
+          // An instance's own variables, home paths, and setup mode would override the lock.
           JSON.stringify({
             ...base,
             settings: {
@@ -145,7 +145,7 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
       assert.include(reasons[8], 'manage "defaultModelSelection" as a whole');
       assert.include(reasons[9], 'manage "idleCompaction" instead');
       assert.include(reasons[10], 'lock "worktreeCleanup" too');
-      assert.include(reasons[11], 'lock "providerInstances.codex.environment" too');
+      assert.include(reasons[11], 'lock "providerInstances.codex" as a whole');
     }),
   );
 
@@ -273,6 +273,25 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
         assert.include(
           homeLocked.summary?.limits?.providers?.lockedInstanceFields?.[claude] ?? [],
           "config.homePath",
+        );
+        // Codex has a second home setting, which a locked CODEX_HOME owns too.
+        const codexHome = yield* ManagedPolicy.fromDocument("/test/policy.json", {
+          schemaVersion: 1,
+          organization: "Example Corp",
+          limits: {
+            providers: {
+              instances: {
+                [codex]: {
+                  locked: true,
+                  environment: [{ name: "CODEX_HOME", value: "/opt/codex-home" }],
+                },
+              },
+            },
+          },
+        });
+        assert.includeMembers(
+          [...(codexHome.summary?.limits?.providers?.lockedInstanceFields?.[codex] ?? [])],
+          ["config.homePath", "config.shadowHomePath"],
         );
         // The same override from the environment that starts the server is ignored too.
         const host = { PATH: "/usr/bin", T3CODE_CODEX_LAUNCH_ARGS: "--yolo" };

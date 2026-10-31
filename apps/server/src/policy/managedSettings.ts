@@ -273,22 +273,14 @@ export function makeManagedSettings(
         reason: `"${lock.path}" can be overridden by "${unheld[1]}"; lock "${unheld[1]}" too`,
       };
     }
-    // T3CODE_CODEX_LAUNCH_ARGS in an instance's own variables replaces its launch arguments.
-    const [head, instanceId, field, key] = lock.segments;
-    if (
-      head === "providerInstances" &&
-      instanceId !== undefined &&
-      field === "config" &&
-      (key === undefined || key === "launchArgs")
-    ) {
-      const environment = `providerInstances.${instanceId}.environment`;
-      const entry = `providerInstances.${instanceId}`;
-      if (!locks.some((other) => other.path === environment || other.path === entry)) {
-        return {
-          _tag: "Invalid",
-          reason: `"${lock.path}" can be overridden by "${environment}"; lock "${environment}" too`,
-        };
-      }
+    // An instance's fields override each other: a variable replaces launch arguments, a home
+    // path rewrites a home variable, and a setup mode brings its own runtime.
+    const [head, instanceId] = lock.segments;
+    if (head === "providerInstances" && instanceId !== undefined && lock.segments.length > 2) {
+      return {
+        _tag: "Invalid",
+        reason: `"${lock.path}" is one field of a provider instance whose fields override each other; lock "providerInstances.${instanceId}" as a whole, or pin fields with limits.providers.instances`,
+      };
     }
   }
 

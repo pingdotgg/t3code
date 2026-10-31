@@ -153,14 +153,24 @@ export const providerHostEnvironment = (
 ): NodeJS.ProcessEnv => {
   if (summary === undefined) return environment;
   const next = { ...environment };
-  for (const name of LAUNCH_OVERRIDE_VARIABLES) delete next[name];
+  for (const name of Object.keys(next)) {
+    if (LAUNCH_OVERRIDE_VARIABLES.some((override) => override === name.toUpperCase())) {
+      delete next[name];
+    }
+  }
   return next;
 };
 
-/** The variable each driver's `homePath` setting sets at launch. */
-const HOME_VARIABLES: ReadonlyMap<ProviderDriverKind, string> = new Map([
-  [ProviderDriverKind.make("claudeAgent"), "CLAUDE_CONFIG_DIR"],
-  [ProviderDriverKind.make("codex"), "CODEX_HOME"],
+/** Each driver's home variable, and the settings that rewrite it at launch. */
+const HOME_VARIABLES: ReadonlyMap<
+  ProviderDriverKind,
+  { readonly variable: string; readonly fields: ReadonlyArray<string> }
+> = new Map([
+  [ProviderDriverKind.make("claudeAgent"), { variable: "CLAUDE_CONFIG_DIR", fields: ["homePath"] }],
+  [
+    ProviderDriverKind.make("codex"),
+    { variable: "CODEX_HOME", fields: ["homePath", "shadowHomePath"] },
+  ],
 ]);
 
 const configRecord = (instance: ProviderInstanceConfig | undefined): Record<string, unknown> =>
@@ -319,12 +329,12 @@ export function makeManagedProviders(
       const homeLocked =
         home !== undefined &&
         (pin.environment ?? []).some(
-          (variable) => variableKey(variable.name) === variableKey(home),
+          (variable) => variableKey(variable.name) === variableKey(home.variable),
         );
       rules.set(driver, {
         pin,
         config: pin.locked
-          ? [...pinnedFields(pin), ...bypasses, ...(homeLocked ? ["homePath"] : [])]
+          ? [...pinnedFields(pin), ...bypasses, ...(homeLocked ? home.fields : [])]
           : [],
         fill: pin.locked ? [] : pinnedFields(pin),
         environment: pin.locked ? "locked" : "fill",
