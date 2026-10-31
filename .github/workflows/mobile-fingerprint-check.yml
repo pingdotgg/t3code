@@ -88,12 +88,13 @@ jobs:
         env:
           BASE_SHA: ${{ steps.changes.outputs.base_sha }}
         run: |
-          git checkout --quiet "$BASE_SHA"
-          # Re-sync node_modules to the base commit's lockfile before
-          # fingerprinting — a dep-changing PR must not fingerprint the base
-          # against head's installed packages.
-          pnpm install --filter=@t3tools/mobile...
-          cd apps/mobile
+          # Keep installed graphs separate: pnpm records approvals in node_modules
+          # and flags revoked approvals across the full lockfile, even during
+          # a filtered install.
+          base_checkout="$RUNNER_TEMP/fp/base-checkout"
+          git worktree add --detach "$base_checkout" "$BASE_SHA"
+          pnpm --dir "$base_checkout" install --filter=@t3tools/mobile...
+          cd "$base_checkout/apps/mobile"
           for platform in ios android; do
             npx expo-updates fingerprint:generate --platform "$platform" > "$RUNNER_TEMP/fp/base/$platform.json"
           done

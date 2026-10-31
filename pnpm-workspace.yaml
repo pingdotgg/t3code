@@ -10,6 +10,9 @@ packages:
 # true = allowed to run build scripts; false mirrors the pnpm 10 behavior
 # where anything outside onlyBuiltDependencies was silently not built.
 allowBuilds:
+  # pnpm also requires approval to reuse the patched package cache. This version has no install hooks.
+  # Recheck hooks when updating its version, integrity or patch.
+  "alchemy@2.0.0-beta.80": true
   browser-tabs-lock: false
   bufferutil: false
   core-js: false
