@@ -17,6 +17,12 @@ function stripQuote(line: string): string {
   return line.replace(QUOTE_RE, "");
 }
 
+function quoteDepth(line: string): number {
+  const match = QUOTE_RE.exec(line);
+  if (!match) return 0;
+  return match[0].split(">").length - 1;
+}
+
 function fenceLanguage(info: string): string {
   return info.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
 }
@@ -29,11 +35,19 @@ function fenceHash(source: string): string {
   return `m${(hash >>> 0).toString(36)}`;
 }
 
-function closerIndex(lines: readonly string[], from: number, fence: string): number {
+function closerIndex(
+  lines: readonly string[],
+  depths: readonly number[],
+  from: number,
+  fence: string,
+  minDepth: number,
+): number {
   const char = fence[0] === "`" ? "`" : "~";
   const closeRe = new RegExp(`^ {0,3}${char}{${fence.length},}[ \\t]*$`);
   for (let scan = from; scan < lines.length; scan += 1) {
-    if (closeRe.test(lines[scan] ?? "")) return scan;
+    // A fenced block ends when its blockquote ends, so only a fence at the
+    // opener's quote depth or deeper can close it.
+    if ((depths[scan] ?? 0) >= minDepth && closeRe.test(lines[scan] ?? "")) return scan;
   }
   return -1;
 }
@@ -42,12 +56,13 @@ function closerIndex(lines: readonly string[], from: number, fence: string): num
 function collectDefinitions(markdown: string): string[] {
   const found: string[] = [];
   const lines = markdown.split("\n").map(stripQuote);
+  const depths = markdown.split("\n").map(quoteDepth);
   let index = 0;
   while (index < lines.length) {
     const line = lines[index] ?? "";
     const open = FENCE_RE.exec(line);
     if (open) {
-      const close = closerIndex(lines, index + 1, open[1] ?? "```");
+      const close = closerIndex(lines, depths, index + 1, open[1] ?? "```", depths[index] ?? 0);
       index = close === -1 ? lines.length : close + 1;
       continue;
     }
@@ -69,6 +84,7 @@ export function splitMarkdownWithMermaid(markdown: string): MermaidMarkdownSegme
   > = [];
   const lines = markdown.split("\n");
   const text = lines.map(stripQuote);
+  const depths = lines.map(quoteDepth);
   let markdownStart = 0;
   let index = 0;
 
@@ -89,7 +105,8 @@ export function splitMarkdownWithMermaid(markdown: string): MermaidMarkdownSegme
       continue;
     }
     const fence = open[1] ?? "```";
-    const close = closerIndex(text, index + 1, fence);
+    const depth = depths[index] ?? 0;
+    const close = closerIndex(text, depths, index + 1, fence, depth);
     if (close === -1) {
       index += 1;
       continue;

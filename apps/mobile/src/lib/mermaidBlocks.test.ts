@@ -89,6 +89,15 @@ describe("splitMarkdownWithMermaid", () => {
     expect(segments[1]).toMatchObject({ kind: "mermaid", source: "A --> B" });
   });
 
+  it("does not let an unquoted fence close a quoted mermaid block", () => {
+    const markdown = ["> ```mermaid", "> A --> B", "Outside", "```ts", "const x = 1;", "```"].join(
+      "\n",
+    );
+    const segments = splitMarkdownWithMermaid(markdown);
+    expect(segments.map((segment) => segment.kind)).toEqual(["markdown"]);
+    expect(segments[0]).toMatchObject({ kind: "markdown", markdown });
+  });
+
   it("ignores link definitions inside fenced code", () => {
     const segments = splitMarkdownWithMermaid(
       [
