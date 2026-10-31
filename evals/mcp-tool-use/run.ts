@@ -745,7 +745,13 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     ...priorCalls.flatMap((call) =>
       ["link_pull_request", "watch_pull_request"].includes(call.tool) && isRecord(call.input)
         ? [pullRequest(repo, call.input).url]
-        : [],
+        : call.tool === "link_pull_requests" &&
+            isRecord(call.input) &&
+            Array.isArray(call.input.urls)
+          ? call.input.urls
+              .filter((url) => PULL_REQUEST_URL.test(valueText(url)))
+              .map((url) => pullRequest(repo, { url }).url)
+          : [],
     ),
   ];
   const taskNumbers = [...valueText(prior).matchAll(/task-(\d+)/g)].map((match) =>
@@ -939,6 +945,8 @@ const DEFAULT_THREAD = {
 const HTML_RENDERED =
   "Shown to the reader above your reply. Don't mention or describe the page; reply with only what it doesn't already say.";
 
+const PULL_REQUEST_URL = /\/pull\/\d+\/?$/;
+
 /** Pull request identity from a `url` or `repository` plus `number` input, like T3's results. */
 const pullRequest = (repo: string, input: Readonly<Record<string, unknown>>) => {
   const url = typeof input.url === "string" ? input.url : "";
@@ -1004,6 +1012,27 @@ const t3Default = (sample: Sample, name: string, input: Readonly<Record<string, 
       const alreadyLinked = sample.linked.has(pr().url);
       sample.linked.add(pr().url);
       return { ...pr(), alreadyLinked };
+    }
+    case "link_pull_requests": {
+      const urls = Array.isArray(input.urls) ? input.urls.map(valueText) : [];
+      const invalidUrls = urls.filter((url) => !PULL_REQUEST_URL.test(url));
+      const targets = [...new Set(urls.filter((url) => PULL_REQUEST_URL.test(url)))].map((url) =>
+        pullRequest(sample.repo, { url }),
+      );
+      const fresh = targets.filter(({ url }) => !sample.linked.has(url));
+      for (const { url } of targets) sample.linked.add(url);
+      const byRepository = (prs: ReadonlyArray<ReturnType<typeof pullRequest>>) =>
+        [...Map.groupBy(prs, (pr) => pr.repository).values()].map((group) => ({
+          host: "github.com",
+          repository: group[0]!.repository,
+          numbers: group.map((pr) => pr.number),
+        }));
+      return {
+        linked: byRepository(fresh),
+        alreadyLinked: byRepository(targets.filter((pr) => !fresh.includes(pr))),
+        linkedCount: targets.length,
+        ...(invalidUrls.length > 0 ? { invalidUrls } : {}),
+      };
     }
     case "request_secret": {
       // T3 names both a ref and a file with 32 hex characters, and keeps files in its secrets dir.
@@ -1114,6 +1143,7 @@ const withProductFields = (name: string, value: unknown, child: boolean): unknow
     case "t3_thread_search":
       return listed("matches");
     case "link_pull_request":
+    case "link_pull_requests":
       return child ? { ...value, next: CHILD_PULL_REQUEST_REPORT_NEXT } : value;
     default:
       return value;
