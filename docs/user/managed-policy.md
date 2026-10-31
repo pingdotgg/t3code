@@ -212,7 +212,9 @@ to it, such as one `t3 pair --tailscale` set up, and leaves other routes alone. 
 while such a route stays on, or while Tailscale's answer cannot be read; the error names the
 command that turns the route off. A route whose target is a name, such as `localhost` or another
 machine on the same port, also stops it, since a name can resolve to this server; change the route
-or T3 Code's port. It does start when Tailscale is not installed, not running, or
+or T3 Code's port. If Tailscale is installed but does not answer, as on a Mac where it was never set up, the
+server does not start until Tailscale is set up or removed. It does start when Tailscale is not
+installed, not running, or
 logged out, since nothing forwards then; a route Tailscale kept returns when Tailscale runs again,
 so restart T3 Code after that.
 

@@ -1,9 +1,11 @@
 import type { ManagedPolicyDocument } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as NetService from "@t3tools/shared/Net";
@@ -145,6 +147,8 @@ it.effect(
         readonly stderr?: string;
       };
       readonly offExitCode?: number;
+      /** `serve status` never answers, as on a Mac where Tailscale was never set up. */
+      readonly statusHangs?: boolean;
       /** `off` exits as told but leaves the config alone. */
       readonly offIgnored?: boolean;
     }
@@ -224,11 +228,14 @@ it.effect(
             return Effect.succeed(
               ChildProcessSpawner.makeHandle({
                 pid: ChildProcessSpawner.ProcessId(1),
-                exitCode: Effect.succeed(
-                  ChildProcessSpawner.ExitCode(
-                    isStatus ? status.exitCode : (answers.offExitCode ?? 0),
-                  ),
-                ),
+                exitCode:
+                  isStatus && answers.statusHangs === true
+                    ? Effect.never
+                    : Effect.succeed(
+                        ChildProcessSpawner.ExitCode(
+                          isStatus ? status.exitCode : (answers.offExitCode ?? 0),
+                        ),
+                      ),
                 isRunning: Effect.succeed(false),
                 kill: () => Effect.void,
                 unref: Effect.succeed(Effect.void),
@@ -350,6 +357,10 @@ it.effect(
         const unread = yield* close({ status }).pipe(Effect.flip);
         assert.include(unread.message, "does not start until Tailscale Serve can be checked");
       }
+      // A Tailscale that never answers is not read as nothing to close, and the refusal says why.
+      const hung = yield* close({ statusHangs: true }).pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust("10 seconds");
+      assert.include((yield* Fiber.join(hung)).message, "Tailscale did not answer");
       // Tailscale down, logged out, or not installed forwards nothing now.
       for (const stderr of [
         dialFailure("connection refused"),

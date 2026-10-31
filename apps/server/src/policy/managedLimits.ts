@@ -131,10 +131,13 @@ export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServ
     Effect.tapError((cause) =>
       Effect.logWarning("Tailscale Serve could not be checked", { cause }),
     ),
-    Effect.mapError(() =>
+    Effect.mapError((error) =>
       refuseRemoteClients(
         policy,
-        "so the server does not start until Tailscale Serve can be checked",
+        error._tag === "TailscaleCommandTimeoutError"
+          ? // Seen on a Mac where Tailscale is installed but was never set up.
+            "so the server does not start until Tailscale Serve can be checked, and Tailscale did not answer; open Tailscale and finish setting it up, or remove it"
+          : "so the server does not start until Tailscale Serve can be checked",
       ),
     ),
   );
