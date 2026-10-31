@@ -1092,5 +1092,12 @@ describe("pathSetupCommand", () => {
       pathSetup({ ...setup, shell: "/bin/zsh", platform: "darwin", zdotdir: "/Users/theo/.zsh" })
         ?.file,
     ).toBe("/Users/theo/.zsh/.zshrc");
+    // A set folder that cannot be written safely means no setup, never the unread default.
+    expect(
+      pathSetup({ ...setup, shell: "/bin/zsh", platform: "darwin", zdotdir: "/Users/theo/my zsh" }),
+    ).toBeUndefined();
+    expect(
+      pathSetup({ ...setup, platform: "linux", configHome: "/home/theo/my cfg" }),
+    ).toBeUndefined();
   });
 });

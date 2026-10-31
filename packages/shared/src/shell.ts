@@ -992,11 +992,13 @@ export function pathSetup(
   if (!/^[\w./-]+$/.test(rest)) return undefined;
   const directory = underHome ? `$HOME${rest}` : rest;
   const shell = input.shell?.split("/").pop();
+  // A set folder the shell reads from replaces the default; one unsafe to write means no setup,
+  // since the default file would never be read.
+  const readFrom = (value: string | undefined, fallback: string) =>
+    !value ? fallback : value.startsWith("/") && /^[\w./-]+$/.test(value) ? value : undefined;
   if (shell === "fish") {
-    const configHome =
-      input.configHome?.startsWith("/") && /^[\w./-]+$/.test(input.configHome)
-        ? input.configHome
-        : "~/.config";
+    const configHome = readFrom(input.configHome, "~/.config");
+    if (configHome === undefined) return undefined;
     // --path changes $PATH itself; fish_user_paths would go ahead of the system folders.
     return {
       file: `${configHome}/fish/config.fish`,
@@ -1004,11 +1006,10 @@ export function pathSetup(
     };
   }
   // macOS bash reads only the first of .bash_profile, .bash_login, and .profile; no file is safe.
+  const zdotdir = readFrom(input.zdotdir, "~");
   const file =
     shell === "zsh"
-      ? input.zdotdir?.startsWith("/") && /^[\w./-]+$/.test(input.zdotdir)
-        ? `${input.zdotdir}/.zshrc`
-        : "~/.zshrc"
+      ? zdotdir && `${zdotdir}/.zshrc`
       : shell === "bash" && input.platform !== "darwin"
         ? "~/.bashrc"
         : undefined;

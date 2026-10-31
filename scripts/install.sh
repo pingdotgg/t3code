@@ -278,6 +278,14 @@ launchers="${t3_home}/runtime/launchers"
 grep -qxF "$launcher" "$launchers" 2>/dev/null || printf '%s\n' "$launcher" >> "$launchers"
 if "$interactive"; then printf '\r\033[2K' >&2; fi
 printf '  %sInstalled T3 Code %s%s\n\n' "$green" "$version" "$reset" >&2
+# The folder a shell reads its startup file from: $1 when set and safe to paste, else $2 when
+# unset. A set but unsafe folder prints nothing, since the default would never be read.
+read_from() {
+  case "$1" in
+    "") printf '%s' "$2" ;;
+    /*) case "$1" in *[!A-Za-z0-9_./-]*) ;; *) printf '%s' "$1" ;; esac ;;
+  esac
+}
 # A command to paste for zsh, Linux bash, or fish, like `t3 install` prints. macOS bash reads only
 # one of several startup files, so no single file is safe to change there.
 path_command=
@@ -291,16 +299,15 @@ if [ -n "$path_rest" ]; then
   shell_name="${SHELL:-}"
   case "${shell_name##*/}" in
     zsh)
-      # zsh reads .zshrc from ZDOTDIR when it is set.
-      zsh_rc='~/.zshrc'
-      case "${ZDOTDIR:-}" in /*) case "$ZDOTDIR" in *[!A-Za-z0-9_./-]*) ;; *) zsh_rc="${ZDOTDIR}/.zshrc" ;; esac ;; esac
-      path_command="printf '\\n%s\\n' '${path_line}' >> ${zsh_rc}" ;;
+      # zsh reads .zshrc from ZDOTDIR when it is set; ~/.zshrc would never be read then.
+      zsh_dir="$(read_from "${ZDOTDIR:-}" '~')"
+      [ -z "$zsh_dir" ] || path_command="printf '\\n%s\\n' '${path_line}' >> ${zsh_dir}/.zshrc" ;;
     bash) [ "$platform" = darwin ] || path_command="printf '\\n%s\\n' '${path_line}' >> ~/.bashrc" ;;
     fish)
       # --path changes $PATH itself; fish_user_paths would go ahead of the system folders.
-      fish_dir='~/.config/fish'
-      case "${XDG_CONFIG_HOME:-}" in /*) case "$XDG_CONFIG_HOME" in *[!A-Za-z0-9_./-]*) ;; *) fish_dir="${XDG_CONFIG_HOME}/fish" ;; esac ;; esac
-      path_command="mkdir -p ${fish_dir} && printf '\\n%s\\n' 'fish_add_path --append --path ${path_prefix}${path_rest}' >> ${fish_dir}/config.fish" ;;
+      config_dir="$(read_from "${XDG_CONFIG_HOME:-}" '~/.config')"
+      fish_dir="${config_dir}/fish"
+      [ -z "$config_dir" ] || path_command="mkdir -p ${fish_dir} && printf '\\n%s\\n' 'fish_add_path --append --path ${path_prefix}${path_rest}' >> ${fish_dir}/config.fish" ;;
   esac
 fi
 # A t3 earlier on PATH runs instead; the PATH command adds this folder last.
