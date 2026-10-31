@@ -255,7 +255,10 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
+  const hubNames = new Map<string, LimitAccount["displayName"]>();
   const merge = (key: string, next: LimitAccount) => {
+    // The first hub to report an account names it, matching the source label it keeps.
+    if (next.sourceLabel !== null && !hubNames.has(key)) hubNames.set(key, next.displayName);
     // Prefer hub redemption to clear its routing cooldown too; displayed balance still follows the freshest read.
     const previousHub = hubRedeems.get(key);
     if (
@@ -290,7 +293,8 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     const creditSource = creditSources.get(key);
     accounts.set(key, {
       ...previous,
-      displayName: previous.displayName ?? next.displayName,
+      // A hub names its accounts the same on every machine; instances signed in elsewhere do not.
+      displayName: hubNames.get(key) ?? previous.displayName ?? next.displayName,
       plan: previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
       environments,
@@ -344,7 +348,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         merge(resolveKey(account) ?? key, {
           key,
           driver: account.driver,
-          displayName: account.email ? null : account.id.replace(/\.json$/i, ""),
+          displayName: account.email ? source.label : account.id.replace(/\.json$/i, ""),
           email: account.email,
           plan: account.plan,
           accentColor: undefined,
