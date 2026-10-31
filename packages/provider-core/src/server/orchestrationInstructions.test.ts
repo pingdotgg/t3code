@@ -3,11 +3,70 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
+  T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
   t3AcpPromptWithInstructions,
   t3OrchestrationPrompt,
   t3OrchestrationSystemPrompt,
 } from "./orchestrationInstructions.ts";
+
+describe("T3 browser routing instructions", () => {
+  it("only supplies preview routing when browser access is available", () => {
+    assert.notInclude(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "`preview_*`");
+    assert.include(T3_CODE_BROWSER_TOOL_INSTRUCTIONS, "Honor the browser the user selected.");
+    assert.notInclude(t3OrchestrationSystemPrompt(true, false, false), "`preview_*`");
+    assert.include(
+      t3OrchestrationSystemPrompt(true, true, false),
+      T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
+    );
+    assert.isUndefined(t3OrchestrationSystemPrompt(false, true, false));
+  });
+
+  it("reaches prompt-injected providers when browser access changes", () => {
+    const state = {
+      interactionMode: "default",
+      hasT3Mcp: true,
+      hasBrowserTools: false,
+      hasDeviceTools: false,
+    } as const;
+    const enabled = { ...state, hasBrowserTools: true };
+
+    const acp = t3AcpPromptWithInstructions({
+      prompt: "Open the page.",
+      state: enabled,
+      previousState: state,
+    });
+    assert.include(acp, T3_CODE_BROWSER_TOOL_INSTRUCTIONS);
+    assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Again.", state }), "`preview_*`");
+    assert.include(
+      t3AcpPromptWithInstructions({ prompt: "Use the page again.", state, previousState: enabled }),
+      "T3 Code browser access is unavailable.",
+    );
+
+    const cursor = t3OrchestrationPrompt({
+      prompt: "Open the page.",
+      hasT3Mcp: true,
+      hasBrowserTools: true,
+      hasDeviceTools: false,
+      orchestrationDelivered: true,
+      browserInstructionsDelivered: false,
+      deviceInstructionsDelivered: false,
+    });
+    assert.include(cursor, "Honor the browser the user selected.");
+    assert.include(
+      t3OrchestrationPrompt({
+        prompt: "Use the page again.",
+        hasT3Mcp: true,
+        hasBrowserTools: false,
+        hasDeviceTools: false,
+        orchestrationDelivered: true,
+        browserInstructionsDelivered: true,
+        deviceInstructionsDelivered: false,
+      }),
+      "T3 Code browser access is unavailable.",
+    );
+  });
+});
 
 describe("T3 device instructions", () => {
   it("route device work through device_open and give Claude the line that loads the tools", () => {
@@ -40,16 +99,21 @@ describe("T3 device instructions", () => {
   });
 
   it("reach OpenCode and Cursor only when the session holds device access", () => {
-    assert.include(t3OrchestrationSystemPrompt(true, true), T3_CODE_DEVICE_TOOL_INSTRUCTIONS);
-    assert.notInclude(t3OrchestrationSystemPrompt(true, false), "## T3 Code devices");
-    assert.isUndefined(t3OrchestrationSystemPrompt(false, true));
+    assert.include(
+      t3OrchestrationSystemPrompt(true, false, true),
+      T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
+    );
+    assert.notInclude(t3OrchestrationSystemPrompt(true, false, false), "## T3 Code devices");
+    assert.isUndefined(t3OrchestrationSystemPrompt(false, false, true));
 
     const firstRun = (hasDeviceTools: boolean) =>
       t3OrchestrationPrompt({
         prompt: "Check the login screen.",
         hasT3Mcp: true,
+        hasBrowserTools: false,
         hasDeviceTools,
         orchestrationDelivered: false,
+        browserInstructionsDelivered: false,
         deviceInstructionsDelivered: false,
       });
     assert.include(firstRun(true), T3_CODE_DEVICE_TOOL_INSTRUCTIONS);
@@ -59,8 +123,10 @@ describe("T3 device instructions", () => {
       t3OrchestrationPrompt({
         prompt: "Check the login screen.",
         hasT3Mcp: true,
+        hasBrowserTools: false,
         hasDeviceTools: true,
         orchestrationDelivered: true,
+        browserInstructionsDelivered: false,
         deviceInstructionsDelivered,
       });
     assert.include(laterRun(false), T3_CODE_DEVICE_TOOL_INSTRUCTIONS);
@@ -69,7 +135,12 @@ describe("T3 device instructions", () => {
   });
 
   it("reach ACP agents again when device access changes mid-thread", () => {
-    const state = { interactionMode: "default", hasT3Mcp: true, hasDeviceTools: false } as const;
+    const state = {
+      interactionMode: "default",
+      hasT3Mcp: true,
+      hasBrowserTools: false,
+      hasDeviceTools: false,
+    } as const;
     const withDevices = t3AcpPromptWithInstructions({
       prompt: "Check the login screen.",
       state: { ...state, hasDeviceTools: true },

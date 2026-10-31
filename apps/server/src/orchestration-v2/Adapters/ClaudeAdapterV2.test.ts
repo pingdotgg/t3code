@@ -729,6 +729,25 @@ describe("ClaudeAdapterV2 device instructions", () => {
   });
 });
 
+describe("ClaudeAdapterV2 browser instructions", () => {
+  const append = (browserToolsAvailable: boolean) => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-thread-claude-browser",
+      resume: false,
+      cwd: "/workspace",
+      mcpServers: { "t3-code": { type: "http", url: "http://127.0.0.1/mcp" } },
+      browserToolsAvailable,
+    });
+    return (options.systemPrompt as { readonly append?: string }).append ?? "";
+  };
+
+  it("only supplies preview routing to sessions with browser access", () => {
+    assert.notInclude(append(false), "`preview_*`");
+    assert.include(append(true), "Honor the browser the user selected.");
+  });
+});
+
 describe("ClaudeAdapterV2 context usage", () => {
   it("dates cache expiry from the request start, not the response end", () => {
     const usage = ClaudeAdapterV2.claudeProviderTurnTokenUsage(

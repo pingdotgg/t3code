@@ -48,6 +48,7 @@ export async function loadMcpBridge(
     readonly allowsTool?: (name: string) => boolean;
     readonly runtimeMode?: string;
     readonly inputSchema?: Record<string, unknown>;
+    readonly browserToolsAvailable?: boolean;
   } = {},
 ) {
   const handlers = new Map<string, AgentStartHook>();
@@ -92,6 +93,7 @@ export async function loadMcpBridge(
         T3_MCP_BEARER_TOKEN: "fixture-token",
         T3_PI_MCP_EXTENSION_PATH: "/fixture/pi-t3-extension.ts",
         T3_PI_RUNTIME_MODE: options.runtimeMode,
+        T3_PI_BROWSER_TOOLS: options.browserToolsAvailable ? "1" : undefined,
       },
     },
     AbortSignal,
