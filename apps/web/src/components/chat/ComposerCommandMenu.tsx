@@ -243,12 +243,12 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
           <CommandList
             id={props.listId}
             aria-label={props.triggerKind ? LISTBOX_LABEL_BY_TRIGGER[props.triggerKind] : undefined}
-            inset="compact"
-            className="max-h-80 min-h-0"
+            inset="composer"
+            className="max-h-112 min-h-0"
           >
             {pullRequestsPending ? (
               <CommandGroup spacing="composer">
-                <CommandGroupLabel spacing="composer">Pull requests</CommandGroupLabel>
+                <CommandGroupLabel>Pull requests</CommandGroupLabel>
                 <div
                   role="status"
                   className="flex min-h-8 items-center gap-2.5 px-2.5 text-meta text-dim-foreground"
@@ -260,7 +260,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
             ) : null}
             {groups.map((group) => (
               <CommandGroup key={group.key} spacing="composer">
-                <CommandGroupLabel spacing="composer">{group.label}</CommandGroupLabel>
+                <CommandGroupLabel>{group.label}</CommandGroupLabel>
                 {group.items.map((item) => (
                   <ComposerCommandMenuItem
                     key={item.id}
@@ -279,7 +279,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         ) : (
           // Nothing to list yet: the menu keeps its header and one row's height,
           // so searching and no-match read as states of the same list.
-          <div className="p-1">
+          <div className="p-1.5">
             {props.triggerKind ? (
               <div className="px-2.5 pt-2 pb-1 text-caption text-dim-foreground">
                 {LISTBOX_LABEL_BY_TRIGGER[props.triggerKind]}
@@ -344,7 +344,7 @@ function ComposerMenuSurface({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "surface-popover kbd-in-popover flex min-h-0 w-full flex-col overflow-hidden rounded-card text-popover-foreground",
+        "surface-popover kbd-in-popover flex min-h-0 w-full flex-col overflow-hidden rounded-card text-popover-foreground [--kbd-background:var(--kbd-fill)] [--type-label:0.8125rem] [--type-meta:0.75rem] [--type-caption:0.6875rem]",
         className,
       )}
       {...props}
@@ -359,13 +359,13 @@ function ComposerMenuFooter(props: {
   return (
     <div
       data-slot="composer-menu-footer"
-      className="mx-1 mb-1 flex shrink-0 items-center gap-3 border-t border-divider px-2.5 pt-2 pb-1 font-normal text-caption text-dim-foreground pointer-coarse:hidden"
+      className="mx-1.5 mb-1.5 flex shrink-0 items-center gap-3 border-t border-divider px-2.5 pt-2 pb-1 font-normal text-caption text-dim-foreground pointer-coarse:hidden"
     >
       {props.hints.map((hint) => (
         <span key={hint.label} className="inline-flex items-center gap-1.25">
           <span className="inline-flex items-center gap-0.5">
             {Children.map(hint.keys, (key) => (
-              <Kbd>{key}</Kbd>
+              <Kbd size="sm">{key}</Kbd>
             ))}
           </span>
           {hint.label}
@@ -473,7 +473,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
             "min-w-0 max-w-full truncate text-label",
             props.item.type === "pull-request" ||
               (props.triggerKind === "slash-command" && !isSlashSkill)
-              ? "font-mono"
+              ? "font-mono text-meta [--type-meta:0.78125rem]"
               : "font-sans",
           )}
         >
@@ -510,7 +510,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           {pullRequestPresentation.label}
         </Badge>
       ) : props.isActive ? (
-        <Kbd aria-hidden="true">
+        <Kbd size="sm" aria-hidden="true">
           <CornerDownLeftIcon />
         </Kbd>
       ) : null}
