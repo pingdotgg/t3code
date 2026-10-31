@@ -1,4 +1,5 @@
 import {
+  type SandboxCredentialEnvironment,
   type SandboxProviderInfo,
   SandboxProviderError,
   type SandboxProviderKind,
@@ -34,7 +35,15 @@ export interface SandboxProviderDriver {
     readonly name: string;
     readonly size: string;
     readonly ttlMinutes?: number | undefined;
+    readonly environment?: string | undefined;
   }) => Effect.Effect<CreatedSandbox, SandboxProviderError, HttpClient.HttpClient>;
+  readonly listEnvironments?: (input: {
+    readonly config: SandboxProviderConfig;
+  }) => Effect.Effect<
+    ReadonlyArray<SandboxCredentialEnvironment>,
+    SandboxProviderError,
+    HttpClient.HttpClient
+  >;
   readonly execute: (input: {
     readonly config: SandboxProviderConfig;
     readonly sandboxId: string;

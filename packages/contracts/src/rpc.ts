@@ -29,6 +29,8 @@ import {
 import {
   SandboxCreateInput,
   SandboxCreateResult,
+  SandboxCredentialEnvironmentsInput,
+  SandboxCredentialEnvironmentsResult,
   SandboxDeleteInput,
   SandboxProviderError,
   SandboxProvidersResult,
@@ -602,6 +604,7 @@ export const WS_METHODS = {
   sourceControlAppAccess: "sourceControl.appAccess",
   sourceControlStarred: "sourceControl.starred",
   sandboxesProviders: "sandboxes.providers",
+  sandboxesEnvironments: "sandboxes.environments",
   sandboxesCreate: "sandboxes.create",
   sandboxesDelete: "sandboxes.delete",
   projectCloneStart: "projectClone.start",
@@ -1266,6 +1269,12 @@ const WsSandboxesProvidersRpc = Rpc.make(WS_METHODS.sandboxesProviders, {
   payload: Schema.Void,
   success: SandboxProvidersResult,
   error: EnvironmentAuthorizationError,
+});
+
+const WsSandboxesEnvironmentsRpc = Rpc.make(WS_METHODS.sandboxesEnvironments, {
+  payload: SandboxCredentialEnvironmentsInput,
+  success: SandboxCredentialEnvironmentsResult,
+  error: Schema.Union([SandboxProviderError, EnvironmentAuthorizationError]),
 });
 
 const WsSandboxesCreateRpc = Rpc.make(WS_METHODS.sandboxesCreate, {
@@ -2109,6 +2118,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlAppAccessRpc,
   WsSourceControlStarredRpc,
   WsSandboxesProvidersRpc,
+  WsSandboxesEnvironmentsRpc,
   WsSandboxesCreateRpc,
   WsSandboxesDeleteRpc,
   WsProjectCloneStartRpc,

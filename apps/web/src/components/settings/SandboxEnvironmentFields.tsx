@@ -1,6 +1,11 @@
 import { BoxIcon, ExternalLinkIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
-import type { EnvironmentId, SandboxCreateResult, SandboxProviderInfo } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  SandboxCreateResult,
+  SandboxCredentialEnvironment,
+  SandboxProviderInfo,
+} from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -9,6 +14,7 @@ import {
 import { cn } from "../../lib/utils";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Spinner } from "../ui/spinner";
@@ -21,6 +27,23 @@ import { readEnvironmentScope } from "~/state/session";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 
 const EMPTY_PROVIDERS: ReadonlyArray<SandboxProviderInfo> = [];
+const EMPTY_CREDENTIAL_ENVIRONMENTS: ReadonlyArray<SandboxCredentialEnvironment> = [];
+const NO_CREDENTIAL_ENVIRONMENT = "__none__";
+
+const describeCredentialEnvironment = (environment: SandboxCredentialEnvironment): string => {
+  if (environment.safeForThirdParties) {
+    return environment.proxyAiCredentials
+      ? "Passes nothing. AI calls go through Boat's proxy, so real keys stay outside the sandbox."
+      : "Passes nothing: no secrets, GitHub token, or agent logins.";
+  }
+  const passes = [
+    environment.passGithub ? "GitHub token and repositories" : null,
+    environment.passSecrets ? "environment secrets" : null,
+    environment.passAgentsCredentials ? "agent logins" : null,
+    environment.passSandboxCredentials ? "sandbox credentials" : null,
+  ].filter((value): value is string => value !== null);
+  return passes.length === 0 ? "Passes no credentials." : `Passes ${passes.join(", ")}.`;
+};
 
 const formatFailure = (error: unknown): string =>
   error instanceof Error
@@ -55,12 +78,38 @@ export function SandboxEnvironmentFields({
   const [label, setLabel] = useState("");
   const [size, setSize] = useState("");
   const [repositoryUrl, setRepositoryUrl] = useState("");
+  const [credentialEnvironment, setCredentialEnvironment] = useState("");
+  const [allowCredentials, setAllowCredentials] = useState(false);
   const [isProvisioning, setIsProvisioning] = useState(false);
   const providers = providersQuery.data?.providers ?? EMPTY_PROVIDERS;
   const provider = providers.find((candidate) => candidate.kind === selectedKind) ?? providers[0];
   const selectedSize = size === "" ? (provider ? providerDefaultSize(provider) : "") : size;
+  const environmentsQuery = useEnvironmentQuery(
+    provider?.kind === "boat"
+      ? serverEnvironment.sandboxesEnvironments({
+          environmentId,
+          input: { provider: "boat" },
+        })
+      : null,
+  );
+  const credentialEnvironments =
+    environmentsQuery.data?.environments ?? EMPTY_CREDENTIAL_ENVIRONMENTS;
+  const selectedCredentialEnvironment = credentialEnvironments.find(
+    (candidate) => candidate.name === credentialEnvironment,
+  );
+  const passesCredentials =
+    selectedCredentialEnvironment !== undefined &&
+    !selectedCredentialEnvironment.safeForThirdParties &&
+    (selectedCredentialEnvironment.passGithub ||
+      selectedCredentialEnvironment.passSecrets ||
+      selectedCredentialEnvironment.passAgentsCredentials ||
+      selectedCredentialEnvironment.passSandboxCredentials);
   const canWriteSettings = readEnvironmentScope(environmentId, AuthSettingsWriteScope);
-  const disabled = isProvisioning || provider === undefined || !canWriteSettings;
+  const disabled =
+    isProvisioning ||
+    provider === undefined ||
+    !canWriteSettings ||
+    (passesCredentials && !allowCredentials);
 
   const handleCreate = async () => {
     if (provider === undefined) return;
@@ -74,6 +123,9 @@ export function SandboxEnvironmentFields({
         ...(label.trim() === "" ? {} : { label: label.trim() }),
         ...(selectedSize === "" ? {} : { size: selectedSize }),
         ...(repositoryUrl.trim() === "" ? {} : { repositoryUrl: repositoryUrl.trim() }),
+        ...(credentialEnvironment === ""
+          ? {}
+          : { environment: credentialEnvironment, allowCredentials: true }),
       },
     });
     if (created._tag === "Failure") {
@@ -147,6 +199,8 @@ export function SandboxEnvironmentFields({
                 onClick={() => {
                   setSelectedKind(candidate.kind);
                   setSize("");
+                  setCredentialEnvironment("");
+                  setAllowCredentials(false);
                 }}
               >
                 <span
@@ -260,8 +314,76 @@ export function SandboxEnvironmentFields({
             </label>
           </div>
 
+          {provider.kind === "boat" ? (
+            <div className="space-y-2">
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-foreground">
+                  Boat environment
+                </span>
+                <Select
+                  value={
+                    credentialEnvironment === "" ? NO_CREDENTIAL_ENVIRONMENT : credentialEnvironment
+                  }
+                  disabled={isProvisioning || environmentsQuery.isPending}
+                  onValueChange={(value) => {
+                    if (value === null) return;
+                    setCredentialEnvironment(value === NO_CREDENTIAL_ENVIRONMENT ? "" : value);
+                    setAllowCredentials(false);
+                  }}
+                >
+                  <SelectTrigger aria-label="Boat credential environment" size="default">
+                    <SelectValue>
+                      {selectedCredentialEnvironment?.name ?? "No credentials (recommended)"}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    <SelectItem value={NO_CREDENTIAL_ENVIRONMENT}>
+                      No credentials (recommended)
+                    </SelectItem>
+                    {credentialEnvironments.map((candidate) => (
+                      <SelectItem key={candidate.name} value={candidate.name}>
+                        {candidate.name}
+                        {candidate.safeForThirdParties ? " (safe for third parties)" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </label>
+              <p className="text-2xs leading-relaxed text-muted-foreground">
+                {selectedCredentialEnvironment === undefined
+                  ? "No Boat secrets, GitHub token, or agent logins reach the sandbox."
+                  : describeCredentialEnvironment(selectedCredentialEnvironment)}
+              </p>
+              {environmentsQuery.error ? (
+                <p className="text-2xs text-destructive">
+                  Could not list Boat environments. The sandbox will start with no credentials.
+                </p>
+              ) : null}
+              {passesCredentials ? (
+                <Alert variant="error">
+                  <AlertDescription>
+                    <label className="flex cursor-pointer items-start gap-2">
+                      <Checkbox
+                        className="mt-0.5"
+                        checked={allowCredentials}
+                        disabled={isProvisioning}
+                        onCheckedChange={(checked) => setAllowCredentials(checked === true)}
+                      />
+                      <span>
+                        I understand this sandbox will receive the credentials listed above. Prefer
+                        a Boat environment that is safe for third parties or leaves out secrets.
+                      </span>
+                    </label>
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+            </div>
+          ) : null}
+
           <p className="text-2xs leading-relaxed text-muted-foreground">
-            The sandbox starts without your Boat account's secrets, GitHub token, or agent logins.
+            {credentialEnvironment === ""
+              ? "The sandbox starts without your Boat account's secrets, GitHub token, or agent logins."
+              : "The sandbox receives only what this Boat environment passes."}{" "}
             The server creates the machine, installs T3 Code, and pairs it. This usually takes one
             to three minutes and bills the provider account that owns the key.
           </p>
