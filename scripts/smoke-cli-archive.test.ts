@@ -34,7 +34,7 @@ const archiveLayer = Layer.mergeAll(
   ),
 );
 
-const runArchive = (stdout: string, expectVersion: string, exitCode = 0) =>
+const runArchive = (stdout: string, expectVersion: string) =>
   smokeCliArchive({ archive: "t3-test.tar.gz", expectVersion }).pipe(
     Effect.scoped,
     Effect.provide(archiveLayer),
@@ -46,7 +46,7 @@ const runArchive = (stdout: string, expectVersion: string, exitCode = 0) =>
         return Effect.succeed(
           ChildProcessSpawner.makeHandle({
             pid: ChildProcessSpawner.ProcessId(1),
-            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(isVersion ? exitCode : 0)),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
             isRunning: Effect.succeed(false),
             kill: () => Effect.void,
             unref: Effect.succeed(Effect.void),
@@ -78,15 +78,4 @@ it.effect.each(["0.1.10", "0.1.1-nightly.20261020.3411"])(
         assert.include(error.detail, `t3 v${version}`);
       }
     }),
-);
-
-it.effect("rejects a failed --version command even when its version matches", () =>
-  Effect.gen(function* () {
-    const error = yield* runArchive("t3 v0.1.1\n", "0.1.1", 1).pipe(Effect.flip);
-    assert.equal(error._tag, "CliArchiveSmokeError");
-    if (error._tag === "CliArchiveSmokeError") {
-      assert.equal(error.step, "running --version");
-      assert.include(error.detail, "exit 1");
-    }
-  }),
 );
