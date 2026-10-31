@@ -32,6 +32,7 @@ import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2Pend
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { getInitialServerConfig, request } from "../rpc/client.ts";
 
@@ -85,7 +86,10 @@ export interface ThreadCommandInput extends CommandMetadata {
 export type DeleteThreadInput = ThreadCommandInput;
 export type ArchiveThreadInput = ThreadCommandInput;
 export type UnarchiveThreadInput = ThreadCommandInput;
-export type SettleThreadInput = ThreadCommandInput;
+export interface SettleThreadInput extends ThreadCommandInput {
+  /** Replays an offline settle; the server rejects it if the thread changed after this. */
+  readonly snapshotSequence?: number;
+}
 
 export interface UnsettleThreadInput extends ThreadCommandInput {
   readonly reason: "user";
@@ -106,6 +110,8 @@ export interface ReorderActiveThreadInput extends ThreadCommandInput {
 
 export interface SnoozeThreadInput extends ThreadCommandInput {
   readonly snoozedUntil: string;
+  /** Replays an offline snooze; the server rejects it if the thread changed after this. */
+  readonly snapshotSequence?: number;
 }
 
 export interface UnsnoozeThreadInput extends ThreadCommandInput {
@@ -268,6 +274,22 @@ const dispatch = (command: OrchestrationV2Command) =>
 
 const getProjection = (threadId: ThreadId) =>
   request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, { threadId });
+
+export class ThreadVersionGuardUnsupportedError extends Schema.TaggedError<ThreadVersionGuardUnsupportedError>()(
+  "ThreadVersionGuardUnsupportedError",
+  { message: Schema.String },
+) {}
+
+// Older servers drop snapshotSequence, so a replay there could overwrite newer changes.
+const requireThreadVersionGuard = Effect.fn("EnvironmentCommands.requireThreadVersionGuard")(
+  function* () {
+    const config = yield* getInitialServerConfig();
+    if (config.environment.capabilities.threadTriageVersionGuard === true) return;
+    return yield* new ThreadVersionGuardUnsupportedError({
+      message: "This environment's server is too old to sync offline changes. Update the server.",
+    });
+  },
+);
 
 const persistAttachments = Effect.fn("EnvironmentCommands.persistAttachments")(function* (
   threadId: ThreadId,
@@ -475,7 +497,16 @@ export const unarchiveThread = Effect.fn("EnvironmentCommands.unarchiveThread")(
 export const settleThread = Effect.fn("EnvironmentCommands.settleThread")(function* (
   input: SettleThreadInput,
 ) {
-  return yield* simpleThreadCommand("thread.settle", input);
+  if (input.snapshotSequence === undefined) {
+    return yield* simpleThreadCommand("thread.settle", input);
+  }
+  yield* requireThreadVersionGuard();
+  return yield* dispatch({
+    type: "thread.settle",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    snapshotSequence: input.snapshotSequence,
+  });
 });
 
 export const pinThread = Effect.fn("EnvironmentCommands.pinThread")(function* (
@@ -547,11 +578,13 @@ export const unsettleThread = Effect.fn("EnvironmentCommands.unsettleThread")(fu
 export const snoozeThread = Effect.fn("EnvironmentCommands.snoozeThread")(function* (
   input: SnoozeThreadInput,
 ) {
+  if (input.snapshotSequence !== undefined) yield* requireThreadVersionGuard();
   return yield* dispatch({
     type: "thread.snooze",
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     snoozedUntil: input.snoozedUntil,
+    ...(input.snapshotSequence === undefined ? {} : { snapshotSequence: input.snapshotSequence }),
   });
 });
 

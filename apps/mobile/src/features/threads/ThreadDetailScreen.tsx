@@ -543,6 +543,11 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   });
   const unsnoozeThread = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
   const unsettleThread = useAtomCommand(threadEnvironment.unsettle, { reportFailure: false });
+  // Offline, wake and un-settle can still cancel or queue where the last session could operate.
+  const offlineTriagePermitted = useAtomValue(
+    threadEnvironment.offlineTriagePermittedAtom(props.environmentId),
+  );
+  const canTriageThread = props.canOperateThread || offlineTriagePermitted;
   const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata, { reportFailure: false });
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const anyRunStop = useAtomValue(
@@ -621,7 +626,9 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     latestRunCompletedAt: props.selectedThread.latestRun?.completedAt ?? null,
   });
   const runStatusAction = async (action: "stop" | "wake" | "unsettle" | "dismiss") => {
-    if (statusPending || !props.canOperateThread) return;
+    const permitted =
+      action === "wake" || action === "unsettle" ? canTriageThread : props.canOperateThread;
+    if (statusPending || !permitted) return;
     const request = { threadKey: selectedThreadKey };
     setStatusRequest(request);
     const target = {
@@ -785,7 +792,8 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                 : "Dismissing..."
             : actionLabel,
           accessibilityLabel: actionLabel,
-          disabled: !props.canOperateThread || statusPending,
+          disabled:
+            !(snoozed || settled ? canTriageThread : props.canOperateThread) || statusPending,
           onPress: () => void runStatusAction(snoozed ? "wake" : settled ? "unsettle" : "dismiss"),
         },
       };

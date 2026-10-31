@@ -69,6 +69,8 @@ export function buildDraftActionMenuItems(options: {
 
 export interface ThreadActionMenuState {
   readonly canOperate: boolean;
+  /** Offline, settle, snooze and their undo can queue where the last session could operate. */
+  readonly canTriageOffline?: boolean;
   readonly canFind?: boolean;
   readonly branch: string | null;
   readonly projectFilter: {
@@ -111,6 +113,16 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "copy-thread",
     "copy-thread-id",
   ].includes(action);
+}
+
+export function isThreadTriageAction(action: string): boolean {
+  return (
+    action === "settle" ||
+    action === "unsettle" ||
+    action === "snooze" ||
+    action === "unsnooze" ||
+    action.startsWith("snooze:")
+  );
 }
 
 export function buildThreadActionMenuItems(
@@ -255,7 +267,8 @@ export function buildThreadActionMenuItems(
   return state.canOperate
     ? items
     : items.map((item) =>
-        threadActionRequiresOperate(item.id)
+        threadActionRequiresOperate(item.id) &&
+        !(state.canTriageOffline === true && isThreadTriageAction(item.id))
           ? {
               ...item,
               disabled: true,

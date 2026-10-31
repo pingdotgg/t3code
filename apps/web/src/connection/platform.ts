@@ -61,6 +61,7 @@ import {
   type DesktopSecondaryBootstrapsRead,
 } from "./desktopLocal";
 import * as ConnectionStorage from "./storage";
+import { browserThreadTriageOutboxStore } from "./threadTriageOutboxStore";
 import { clientPresentationMetadata } from "./clientMetadata";
 
 let nextObservedRpcRequestId = 0;
@@ -794,7 +795,12 @@ const layerEnvironmentOwnedDataCleanup = Layer.succeed(
     clear: Effect.fn("Persistence.EnvironmentOwnedDataCleanup.clear")(function (environmentId) {
       return Effect.sync(() => {
         clearComposerDraftsEnvironment(environmentId);
-      });
+      }).pipe(
+        Effect.andThen(browserThreadTriageOutboxStore.clearEnvironment(environmentId)),
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not clear offline thread changes.", { environmentId, cause }),
+        ),
+      );
     }),
   }),
 );

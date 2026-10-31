@@ -20,6 +20,7 @@ function deferred<T>() {
 
 const state = vi.hoisted(() => ({
   scopes: new Map<string, Set<string>>(),
+  offlineTriage: new Set<string>(),
   threads: [] as {
     environmentId: EnvironmentId;
     id: ThreadId;
@@ -57,7 +58,11 @@ vi.mock("../state/use-atom-command", () => ({
       state.requests.push({ action, ...request });
       const scope =
         action === "removeWorktree" ? AuthSourceControlWriteScope : AuthOrchestrationOperateScope;
-      if (!state.scopes.get(request.environmentId)?.has(scope)) {
+      // A remembered offline grant lets the command queue settle and snooze locally.
+      if (
+        !state.scopes.get(request.environmentId)?.has(scope) &&
+        !state.offlineTriage.has(request.environmentId)
+      ) {
         return AsyncResult.failure(Cause.fail(new Error("Server denied the request")));
       }
       state.afterRequest?.(action);
@@ -75,6 +80,9 @@ vi.mock("../state/use-atom-query-runner", () => ({
         }),
 }));
 vi.mock("../state/threads", () => ({
+  readThreadTriageScope: (environmentId: string) =>
+    state.scopes.get(environmentId)?.has(AuthOrchestrationOperateScope) === true ||
+    state.offlineTriage.has(environmentId),
   threadEnvironment: Object.fromEntries(
     [
       "archive",
@@ -220,6 +228,7 @@ beforeEach(() => {
       latestTurn: null,
     },
   ];
+  state.offlineTriage = new Set();
   state.requests = [];
   state.localEffects = [];
   state.confirm.mockReset().mockResolvedValue(true);
@@ -254,6 +263,17 @@ describe("thread action permissions", () => {
       expect(state.requests).toEqual([
         expect.objectContaining({ action: name, environmentId: secondary }),
       ]);
+    },
+  );
+
+  it.each(operations)(
+    "$name follows the remembered offline grant only for settle and snooze",
+    async ({ name, run }) => {
+      state.offlineTriage.add(secondary);
+      const result = await run(useThreadActions(), target);
+      const triage = ["settle", "unsettle", "snooze", "unsnooze"].includes(name);
+      expect(result._tag).toBe(triage ? "Success" : "Failure");
+      expect(state.requests.map(({ action }) => action)).toEqual(triage ? [name] : []);
     },
   );
 

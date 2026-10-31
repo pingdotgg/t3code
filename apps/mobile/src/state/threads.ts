@@ -17,6 +17,8 @@ import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { appAtomRegistry } from "./atom-registry";
+import { environmentSession } from "./session";
+import { serverEnvironment } from "./server";
 import {
   pendingThreadCreationOutcomesAtom,
   selectThreadCreationDetail,
@@ -32,9 +34,22 @@ export const olderSettledThreads = createOlderSettledThreadAtoms(
   connectionAtomRuntime,
   environmentShell.stateAtom,
 );
+// Null until the catalog loads; a removed environment is false.
+const environmentRegisteredAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => {
+    const catalog = get(environmentCatalog.catalogValueAtom);
+    return catalog.isReady ? catalog.entries.has(environmentId) : null;
+  }),
+);
 export const threadEnvironment = createThreadEnvironmentAtoms(
   connectionAtomRuntime,
   threadFamilies.snapshotAtom,
+  {
+    shellStatusAtom: environmentShell.statusAtom,
+    operateScopeAtom: environmentSession.operateScopeAtom,
+    serverConfigAtom: serverEnvironment.configValueAtom,
+    registeredAtom: environmentRegisteredAtom,
+  },
 );
 export const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime);
 export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(

@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
@@ -67,6 +68,7 @@ import { useNowMinute } from "../../hooks/useNowMinute";
 import { useNowSecond } from "../../hooks/useNowSecond";
 import { vcsEnvironment } from "../../state/vcs";
 import { useEnvironmentQuery } from "../../state/query";
+import { threadEnvironment } from "../../state/threads";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { formatRelativeTimeLabel, parseTimestampDate } from "../../timestampFormat";
 import type { SidebarThreadSummary } from "../../types";
@@ -131,6 +133,15 @@ export type SidebarProviderEntry = Pick<
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
   return label.endsWith(" ago") ? label.slice(0, -4) : label;
+}
+
+function PendingSyncLabel() {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span />}>Pending</TooltipTrigger>
+      <TooltipPopup side="top">Waiting to sync with its environment</TooltipPopup>
+    </Tooltip>
+  );
 }
 
 // Subscribes to the minute tick itself, so only the label re-renders each
@@ -456,10 +467,14 @@ export function SortableThreadRow(
     rowProps.thread.environmentId,
     AuthOrchestrationOperateScope,
   );
+  // Offline, a drop onto Settled can still queue; the drop handler keeps other moves live-only.
+  const canTriageThread = useAtomValue(
+    threadEnvironment.offlineTriagePermittedAtom(rowProps.thread.environmentId),
+  );
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: sortableId,
     disabled:
-      sortableDisabled || !canOperateThread
+      sortableDisabled || !(canOperateThread || canTriageThread)
         ? SIDEBAR_SORTABLE_DRAG_DISABLED
         : SIDEBAR_SORTABLE_DRAG_ENABLED,
     animateLayoutChanges: animateSidebarLayoutChanges,
@@ -655,6 +670,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
+  // Offline, snooze can still queue where the last session could change threads.
+  const offlineTriagePermitted = useAtomValue(
+    threadEnvironment.offlineTriagePermittedAtom(thread.environmentId),
+  );
+  const pendingSync = useAtomValue(threadEnvironment.pendingSyncAtom(thread.environmentId)).has(
+    thread.id,
+  );
   const { leaseLiveStatus, rowRef: leaseRowRef } = useSidebarRowSubscriptionLease(props.isActive);
   const { revealRef } = props;
   const rowRef = (row: HTMLElement | null) => {
@@ -927,7 +949,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     setSnoozeGateClock({ thread, now: new Date(snoozeGateOpensAt).toISOString() });
   }
   const showSnoozeButton =
-    canOperateThread && props.snoozeSupported && canSnooze(thread, { now: snoozeGateNow });
+    (canOperateThread || offlineTriagePermitted) &&
+    props.snoozeSupported &&
+    canSnooze(thread, { now: snoozeGateNow });
   // Closing here, not just masking, keeps the menu from reopening when the button returns.
   if (snoozeMenuOpenRaw && !showSnoozeButton) setSnoozeMenuOpen(false);
   const snoozeMenuOpen = snoozeMenuOpenRaw && showSnoozeButton;
@@ -1270,7 +1294,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       !isWoke && "group-any-hover/sidebar-row:opacity-0",
                     )}
                   >
-                    {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
+                    {pendingSync ? (
+                      <span className="text-xs">
+                        <PendingSyncLabel />
+                      </span>
+                    ) : variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
                       <span className="inline-flex items-center gap-1 text-xs text-info-foreground tabular-nums">
                         {/* The clock tells a wake time from an age at a glance. */}
                         <AlarmClockIcon aria-hidden className="size-3" />
@@ -1459,7 +1487,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
                     )}
                   >
-                    {topStatus ? (
+                    {pendingSync ? (
+                      <PendingSyncLabel />
+                    ) : topStatus ? (
                       isWokeStatus ? (
                         <Tooltip>
                           <TooltipTrigger

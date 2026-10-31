@@ -62,7 +62,11 @@ vi.mock("../state/entities", () => ({
   useProjects: () => [{ id: "project", environmentId: "secondary" }],
 }));
 vi.mock("../state/environments", () => ({ usePrimaryEnvironmentId: () => "primary" }));
-vi.mock("../state/threads", () => ({ threadEnvironment: { updateMetadata: "metadata" } }));
+vi.mock("../state/threads", () => ({
+  // No remembered offline permission here, so triage follows the live grant.
+  readThreadTriageScope: (environmentId: string) => state.granted.has(environmentId),
+  threadEnvironment: { updateMetadata: "metadata" },
+}));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: () => async () => {
     recordEffect("metadata");

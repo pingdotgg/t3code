@@ -65,6 +65,19 @@ export function planThreadUndo(
   return [{ action: "unsettle" }, ...(thread?.pinnedAt != null ? [pin] : []), ...snooze];
 }
 
+/**
+ * True when an Undo step cancelled a settle or snooze still waiting to sync. The server never
+ * saw the change, so the rest of the plan (re-pin, re-snooze) has nothing to restore.
+ */
+export function cancelledPendingSync(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "cancelledPendingSync" in value &&
+    value.cancelledPendingSync === true
+  );
+}
+
 export async function executeThreadUndo<Result>(
   plan: ThreadUndoPlan,
   execute: (step: ThreadUndoStep) => Promise<Result>,

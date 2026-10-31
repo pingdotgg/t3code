@@ -27,6 +27,7 @@ import { appAtomRegistry } from "../state/atom-registry";
 import { clearThreadOutboxEnvironment } from "../state/thread-outbox-removal";
 import { clearComposerDraftsEnvironment } from "../state/use-composer-drafts";
 import { clearThreadComposerErrorsForEnvironment } from "../state/thread-composer-error";
+import { mobileThreadTriageOutboxStore } from "../state/thread-triage-outbox-storage";
 import { mobileApplicationActiveWakeup } from "./app-state-wakeups";
 import * as ConnectionStorage from "./storage";
 
@@ -258,6 +259,7 @@ const layerEnvironmentOwnedDataCleanup = Layer.succeed(
           Effect.promise(() => clearThreadOutboxEnvironment(environmentId)),
           Effect.promise(() => clearComposerDraftsEnvironment(environmentId)),
           Effect.sync(() => clearThreadComposerErrorsForEnvironment(environmentId)),
+          mobileThreadTriageOutboxStore.clearEnvironment(environmentId),
         ],
         { concurrency: "unbounded", discard: true },
       ).pipe(

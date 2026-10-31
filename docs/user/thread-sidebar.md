@@ -165,6 +165,14 @@ sending an answer or restarting the agent. Settling also closes the thread's
 terminals that wait at an idle prompt, and keeps their output. A terminal that
 runs a command, such as a dev server, stays open.
 
+You can settle or snooze a thread while its environment is offline, if this device
+could change threads there the last time it connected and the environment runs a
+release with offline sync. The thread shows **Waiting to sync** on mobile or
+**Pending** on web and desktop, and the change is sent when the environment
+reconnects. If the thread changed there in the meantime, that environment's state
+wins and your change is dropped. Undo a pending settle before snoozing the same
+thread while offline.
+
 To reclaim disk space from settled work, turn on **Run in the thread's worktree when the
 thread settles** for one of the project's actions, or set `"runOnSettle": true` on a
 `t3.json` script, for example `cargo clean`. It runs each time a thread in its own

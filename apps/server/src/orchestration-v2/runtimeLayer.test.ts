@@ -6602,6 +6602,133 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
     }),
   );
 
+  // A client replays settle or snooze it took offline; any change after its cached shell wins.
+  it.effect(
+    "rejects a replayed settle or snooze once the thread changed after the client's snapshot",
+    () =>
+      Effect.gen(function* () {
+        const projects = yield* ProjectService.ProjectService;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projectId = ProjectId.make("runtime-layer-triage-version-project");
+        const threadId = ThreadId.make("runtime-layer-triage-version-thread");
+        const snoozedUntil = "2099-07-25T09:00:00.000Z";
+        yield* projects.create({
+          commandId: CommandId.make("runtime-layer-triage-version-project-create"),
+          projectId,
+          title: "Triage version",
+          workspaceRoot: "/tmp/runtime-layer-triage-version-project",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("runtime-layer-triage-version-thread-create"),
+          threadId,
+          projectId,
+          title: "Triage version thread",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        const versionOf = Effect.fn("versionOf")(function* () {
+          const shell = yield* orchestrator.getShellSnapshot();
+          const thread = shell.threads.find((candidate) => candidate.id === threadId);
+          assert.isDefined(thread);
+          return { updatedAt: thread.updatedAt, snapshotSequence: shell.snapshotSequence };
+        });
+        const rename = (suffix: string) =>
+          orchestrator.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make(`runtime-layer-triage-version-rename-${suffix}`),
+            threadId,
+            title: `Renamed ${suffix}`,
+          });
+
+        // Same millisecond: updatedAt cannot tell the snapshots apart, the sequence can.
+        const cached = yield* versionOf();
+        yield* rename("same-ms");
+        assert.deepEqual((yield* versionOf()).updatedAt, cached.updatedAt);
+        const staleSettle = yield* orchestrator
+          .dispatch({
+            type: "thread.settle",
+            commandId: CommandId.make("runtime-layer-triage-version-settle-stale"),
+            threadId,
+            snapshotSequence: cached.snapshotSequence,
+          })
+          .pipe(Effect.flip);
+        assert.instanceOf(staleSettle, Orchestrator.OrchestratorDispatchError);
+
+        const beforeLaterChange = yield* versionOf();
+        yield* TestClock.adjust("1 second");
+        yield* rename("later");
+        const staleSnooze = yield* orchestrator
+          .dispatch({
+            type: "thread.snooze",
+            commandId: CommandId.make("runtime-layer-triage-version-snooze-stale"),
+            threadId,
+            snoozedUntil,
+            snapshotSequence: beforeLaterChange.snapshotSequence,
+          })
+          .pipe(Effect.flip);
+        assert.instanceOf(staleSnooze, Orchestrator.OrchestratorDispatchError);
+        const untouched = (yield* orchestrator.getThreadProjection(threadId)).thread;
+        assert.isNull(untouched.settledOverride);
+        assert.isNull(untouched.snoozedUntil ?? null);
+
+        // Shutdown and restart recovery stop live sessions; that is not a change the user made.
+        const now = yield* DateTime.now;
+        const session = {
+          id: ProviderSessionId.make("runtime-layer-triage-version-session"),
+          driver,
+          providerInstanceId: modelSelection.instanceId,
+          status: "ready" as const,
+          cwd: "/tmp/runtime-layer-triage-version-project",
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        };
+        const sessionEvent = (type: "provider-session.attached" | "provider-session.updated") =>
+          eventSink.write({
+            commandId: CommandId.make(`runtime-layer-triage-version-${type}`),
+            events: [
+              {
+                id: EventId.make(`runtime-layer-triage-version-${type}`),
+                type,
+                threadId,
+                driver,
+                providerInstanceId: session.providerInstanceId,
+                occurredAt: now,
+                payload:
+                  type === "provider-session.attached"
+                    ? session
+                    : { ...session, status: "stopped" },
+              },
+            ],
+          });
+        yield* sessionEvent("provider-session.attached");
+        const current = yield* versionOf();
+        yield* sessionEvent("provider-session.updated");
+        const settle = {
+          type: "thread.settle" as const,
+          commandId: CommandId.make("runtime-layer-triage-version-settle"),
+          threadId,
+          snapshotSequence: current.snapshotSequence,
+        };
+        const accepted = yield* orchestrator.dispatch(settle);
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).thread.settledOverride,
+          "settled",
+        );
+        // A retry after a lost acknowledgement replays the receipt instead of failing the guard.
+        assert.equal((yield* orchestrator.dispatch(settle)).sequence, accepted.sequence);
+      }),
+  );
+
   it.effect("moves a thread into a project rooted at its own folder", () =>
     Effect.gen(function* () {
       const projects = yield* ProjectService.ProjectService;

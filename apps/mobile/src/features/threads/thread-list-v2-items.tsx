@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
@@ -257,6 +258,8 @@ type ThreadListV2ShelfHeaderProps = {
   readonly onToggle: () => void;
   readonly pane?: "screen" | "sidebar";
 };
+
+const TRIAGE_MENU_ACTION_IDS = new Set(["settle", "snooze", "unsettle", "unsnooze"]);
 
 const SHELF_LABEL = { working: "Working", snoozed: "Snoozed", settled: "Settled" } as const;
 
@@ -695,9 +698,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ? { ...workingLabel, label: "Goal" }
       : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
   const recede = shouldRecedeThreadRow({ status, selected });
+  const pendingSync = useAtomValue(threadEnvironment.pendingSyncAtom(thread.environmentId)).has(
+    thread.id,
+  );
+  const timeLabel = pendingSync ? "Waiting to sync" : props.timeLabel;
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const rowAccessibilityLabel = `${thread.title}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}`;
-  const timeLabel = props.timeLabel;
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const handleAcknowledgeWoke = useCallback(() => {
@@ -719,6 +725,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleRename = useCallback(() => onRenameThread(thread), [onRenameThread, thread]);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
+  // Offline, settle and snooze can still queue where the last session could change threads.
+  const offlineTriagePermitted = useAtomValue(
+    threadEnvironment.offlineTriagePermittedAtom(thread.environmentId),
+  );
+  const triageOnly = !canOperateThread && offlineTriagePermitted;
   const handleRegenerateTitle = useCallback(
     () => onRegenerateThreadTitle(thread),
     [onRegenerateThreadTitle, thread],
@@ -1047,11 +1058,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : null,
     [handleMenuAction, snoozePresetActions, swipeActions.secondary, thread.title],
   );
-  const swipeAccessibilityHint = !canOperateThread
-    ? "Opens the thread"
-    : secondaryAction === null
-      ? `Opens the thread. Swipe left to ${primaryAction.label.toLowerCase()}.`
-      : `Opens the thread. Swipe left for ${primaryAction.label.toLowerCase()} and snooze actions.`;
+  const swipeAccessibilityHint =
+    !canOperateThread && !triageOnly
+      ? "Opens the thread"
+      : secondaryAction === null
+        ? `Opens the thread. Swipe left to ${primaryAction.label.toLowerCase()}.`
+        : `Opens the thread. Swipe left for ${primaryAction.label.toLowerCase()} and snooze actions.`;
 
   const titleTextInset = props.project ? projectIconSize + 8 : 0;
   const cardContent = (
@@ -1391,7 +1403,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             )}
             style={{ fontFamily: MONO_FONT }}
           >
-            {snoozedRow && props.snoozeWakeLabelText !== undefined
+            {!pendingSync && snoozedRow && props.snoozeWakeLabelText !== undefined
               ? props.snoozeWakeLabelText
               : timeLabel}
           </Text>
@@ -1399,8 +1411,30 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       </RowPressable>
     );
 
-  if (!canOperateThread)
+  if (!canOperateThread && !(triageOnly && swipeActions.primary !== "archive"))
     return <View style={rowAppearance.swipeContainerStyle}>{rowContent(() => {})}</View>;
+  const menuActions: MenuAction[] = [
+    ...(thread.branch
+      ? [
+          {
+            id: "new-thread-on-branch",
+            title: getThreadListV2NewBranchMenuTitle(thread.branch),
+            image: "square.and.pencil",
+          },
+        ]
+      : []),
+    { id: "copy-thread", title: "Copy thread", image: "text.bubble" },
+    { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
+    ...(snoozedRow
+      ? snoozedMenuActions
+      : !props.settlementSupported
+        ? legacyMenuActions
+        : canUnsettle
+          ? slimMenuActions
+          : swipeActions.secondary === "snooze"
+            ? snoozableCardMenuActions
+            : cardMenuActions),
+  ];
 
   return (
     <View collapsable={false}>
@@ -1427,28 +1461,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       >
         {(close) => (
           <Menu
-            actions={[
-              ...(thread.branch
-                ? [
-                    {
-                      id: "new-thread-on-branch",
-                      title: getThreadListV2NewBranchMenuTitle(thread.branch),
-                      image: "square.and.pencil",
-                    },
-                  ]
-                : []),
-              { id: "copy-thread", title: "Copy thread", image: "text.bubble" },
-              { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
-              ...(snoozedRow
-                ? snoozedMenuActions
-                : !props.settlementSupported
-                  ? legacyMenuActions
-                  : canUnsettle
-                    ? slimMenuActions
-                    : swipeActions.secondary === "snooze"
-                      ? snoozableCardMenuActions
-                      : cardMenuActions),
-            ]}
+            actions={
+              triageOnly
+                ? menuActions.filter((action) => TRIAGE_MENU_ACTION_IDS.has(action.id ?? ""))
+                : menuActions
+            }
             onPressAction={handleMenuAction}
             shouldOpenOnLongPress
           >

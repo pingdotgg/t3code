@@ -65,6 +65,32 @@ describe("buildThreadActionMenuItems", () => {
     },
   );
 
+  it.each([false, true])(
+    "keeps only settle and snooze directions offline where triage is remembered (reversed: %s)",
+    (reversed) => {
+      const items = buildThreadActionMenuItems({
+        ...baseState,
+        canOperate: false,
+        canTriageOffline: true,
+        isPinned: reversed,
+        isSettled: reversed,
+        isSnoozed: reversed,
+      });
+      expect(items.filter((item) => item.disabled).map((item) => item.id)).toEqual([
+        reversed ? "unpin" : "pin",
+        "rename",
+        "regenerate-title",
+        "auto-settle",
+        "archive",
+        "delete",
+      ]);
+      expect(
+        items.find((item) => item.id === "snooze")?.children?.some((child) => child.disabled) ??
+          false,
+      ).toBe(false);
+    },
+  );
+
   it("disables archive and turning into a project while the thread is running", () => {
     const items = buildThreadActionMenuItems({
       ...baseState,

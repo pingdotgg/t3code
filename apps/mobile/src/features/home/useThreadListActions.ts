@@ -77,8 +77,19 @@ function actionFailureTitle(action: ThreadListAction): string {
   return "Could not delete thread";
 }
 
-function checkThreadOperationPermission(thread: EnvironmentThreadShell, title: string): boolean {
+/** Settle, snooze and their undo may queue offline where the last session could change threads. */
+function checkThreadOperationPermission(
+  thread: EnvironmentThreadShell,
+  title: string,
+  triage = false,
+): boolean {
   if (readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) return true;
+  if (
+    triage &&
+    appAtomRegistry.get(threadEnvironment.offlineTriagePermittedAtom(thread.environmentId))
+  ) {
+    return true;
+  }
   Dialog.alert(title, "This connection cannot change threads.");
   return false;
 }
@@ -97,8 +108,10 @@ function useThreadActionExecutor(
     action: ThreadListAction,
     thread: EnvironmentThreadShell,
     onStarted?: () => void,
+    onSucceeded?: (value: unknown) => void,
   ) => {
-    if (!checkThreadOperationPermission(thread, actionFailureTitle(action))) return false;
+    const triage = action === "settle" || action === "unsettle";
+    if (!checkThreadOperationPermission(thread, actionFailureTitle(action), triage)) return false;
     const key = scopedThreadKey(thread.environmentId, thread.id);
     if (inFlightThreadKeys.current.has(key)) {
       return false;
@@ -160,6 +173,7 @@ function useThreadActionExecutor(
       if (action === "archive" || action === "unarchive" || action === "delete") {
         refreshArchivedThreadsForEnvironment(thread.environmentId);
       }
+      onSucceeded?.(result.value);
       onCompleted?.(action, thread);
       return true;
     })();
@@ -234,21 +248,27 @@ export function useThreadListActions(): {
       action,
       claim,
       undo: async () => {
+        // A local cancellation keeps pin placement, but may have replaced a queued snooze.
+        let cancelledQueued = false;
         try {
           await ThreadUndo.executeThreadUndo(
             plan,
             async (step) => {
               switch (step.action) {
                 case "unsettle":
-                  return unsettleThread(thread);
+                  return (
+                    (await executeAction("unsettle", thread, undefined, (value) => {
+                      cancelledQueued = ThreadUndo.cancelledPendingSync(value);
+                    })) === true
+                  );
                 case "unsnooze":
                   return unsnoozeThread(thread);
                 case "pin":
-                  return pinThread(thread, step.orderKey);
+                  return cancelledQueued || pinThread(thread, step.orderKey);
                 case "snooze": {
                   const failureTitle =
                     action === "Unpinned" ? "Could not undo unpin" : "Could not undo settle";
-                  if (!checkThreadOperationPermission(thread, failureTitle)) return false;
+                  if (!checkThreadOperationPermission(thread, failureTitle, true)) return false;
                   const result = await snoozeMutation({
                     environmentId: thread.environmentId,
                     input: { threadId: thread.id, snoozedUntil: step.snoozedUntil },
@@ -291,7 +311,7 @@ export function useThreadListActions(): {
     return succeeded;
   };
   const snoozeThread = async (thread: EnvironmentThreadShell, snoozedUntil: string) => {
-    if (!checkThreadOperationPermission(thread, "Could not snooze thread")) return false;
+    if (!checkThreadOperationPermission(thread, "Could not snooze thread", true)) return false;
     const key = scopedThreadKey(thread.environmentId, thread.id);
     if (snoozeInFlightThreadKeys.current.has(key)) {
       return false;
@@ -349,7 +369,7 @@ export function useThreadListActions(): {
     return succeeded;
   };
   const unsnoozeThread = async (thread: EnvironmentThreadShell) => {
-    if (!checkThreadOperationPermission(thread, "Could not wake thread")) return false;
+    if (!checkThreadOperationPermission(thread, "Could not wake thread", true)) return false;
     const key = scopedThreadKey(thread.environmentId, thread.id);
     if (snoozeInFlightThreadKeys.current.has(key)) {
       return false;
