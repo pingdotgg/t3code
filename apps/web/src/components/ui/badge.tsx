@@ -22,7 +22,7 @@ const badgeVariants = cva(
         // Row status pill (sidebar thread cards): 18px tall, 5px inset (4px padding plus the
         // 1px transparent border), 10px glyph at full strength. The label keeps the row meta size.
         status:
-          "h-4.5 px-[4px] text-caption leading-none [&_svg:not([class*='opacity-'])]:opacity-100 [&_svg:not([class*='size-'])]:size-2.5 sm:[&_svg:not([class*='size-'])]:size-2.5",
+          "h-4.5 px-[4px] text-micro leading-none [&_svg:not([class*='opacity-'])]:opacity-100 [&_svg:not([class*='size-'])]:size-2.5 sm:[&_svg:not([class*='size-'])]:size-2.5",
       },
       variant: {
         // State badges: an exact 31/255 tint of the status hue with its readable label.
