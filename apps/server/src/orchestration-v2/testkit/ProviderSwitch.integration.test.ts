@@ -115,6 +115,8 @@ function makeTestAdapter(input: {
   readonly failedRunOrdinals?: ReadonlySet<number>;
   readonly interruptedRunOrdinals?: ReadonlySet<number>;
   readonly holdRunOrdinal?: number;
+  readonly pendingBackgroundWork?: Ref.Ref<boolean>;
+  readonly subagentOnlyBackgroundWork?: boolean;
   readonly holdFirstTurn?: Deferred.Deferred<void>;
   readonly releaseFirstTurn?: Deferred.Deferred<void>;
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
@@ -146,6 +148,14 @@ function makeTestAdapter(input: {
           providerSessionId: sessionInput.providerSessionId,
           providerSession,
           events: Stream.fromPubSub(events),
+          ...(input.pendingBackgroundWork === undefined
+            ? {}
+            : {
+                hasPendingBackgroundWorkForThread: (_thread, options) =>
+                  input.subagentOnlyBackgroundWork && options?.includeSubagents !== true
+                    ? Effect.succeed(false)
+                    : Ref.get(input.pendingBackgroundWork!),
+              }),
           ...(input.getModelContextWindow === undefined
             ? {}
             : { getModelContextWindow: input.getModelContextWindow }),
@@ -419,6 +429,13 @@ describe("orchestration v2 provider switching", () => {
     "screenshot-fallback",
     "screenshot-reported-capacity-native",
     "screenshot-option-change-retry-native",
+    "screenshot-exhausted-target-native",
+    "screenshot-exhausted-target-fallback",
+    "screenshot-exhausted-target-estimate-native",
+    "screenshot-exhausted-target-oversized-native",
+    "screenshot-exhausted-target-tight-native",
+    "screenshot-exhausted-target-background-native",
+    "screenshot-exhausted-target-subagent-native",
     "prior-images-reasoning-change-replacement-small-native",
     "imported-prior-images-fallback",
     "prior-images-telemetry-native",
@@ -438,11 +455,16 @@ describe("orchestration v2 provider switching", () => {
         const failStartOnce = yield* Ref.make(false);
         const failResumeOnce = yield* Ref.make(false);
         const generation = yield* Ref.make(0);
+        const pendingBackgroundWork = yield* Ref.make(false);
         const priorImages = scenario.includes("prior-images");
+        const exhaustedTarget = scenario.includes("exhausted-target");
         const replaceNative = scenario.includes("replacement");
         const capacityScenario = modelScenario || scenario.includes("reported-capacity");
         const returning =
-          scenario === "large-current-input" || scenario.includes("-change-") || priorImages;
+          scenario === "large-current-input" ||
+          scenario.includes("-change-") ||
+          priorImages ||
+          exhaustedTarget;
         const targetSelection: ModelSelection = !modelScenario
           ? CLAUDE_MODEL_SELECTION
           : {
@@ -467,10 +489,19 @@ describe("orchestration v2 provider switching", () => {
             driver: CLAUDE_DRIVER,
             capabilities: ClaudeProviderCapabilitiesV2,
             modelSelection: CLAUDE_MODEL_SELECTION,
-            responseByRunOrdinal: {},
+            responseByRunOrdinal: scenario.includes("target-estimate")
+              ? { 2: "x".repeat(10_000) }
+              : {},
             capturedTurns,
             ...(scenario.includes("retry") || scenario.includes("unsent") ? { failStartOnce } : {}),
             ...(replaceNative ? { failResumeOnce, nativeThreadGeneration: generation } : {}),
+            ...(exhaustedTarget ? { nativeThreadGeneration: generation } : {}),
+            ...(scenario.includes("target-background") || scenario.includes("target-subagent")
+              ? {
+                  pendingBackgroundWork,
+                  subagentOnlyBackgroundWork: scenario.includes("target-subagent"),
+                }
+              : {}),
             ...(scenario.includes("reported-capacity")
               ? { initialContextUsage: { usedTokens: 999_999, maxTokens: 1_000_000 } }
               : {}),
@@ -498,8 +529,11 @@ describe("orchestration v2 provider switching", () => {
                         ? 1_000_000
                         : 32_000,
                   }
-                : scenario === "large-current-input" || priorImages
-                  ? { getModelContextWindow: () => 32_000 }
+                : scenario === "large-current-input" || priorImages || exhaustedTarget
+                  ? {
+                      getModelContextWindow: () =>
+                        scenario.includes("target-tight") ? 25_121 : 32_000,
+                    }
                   : {}),
             ...(scenario.endsWith("-native") || scenario === "large-current-input"
               ? { injectedHistory }
@@ -546,7 +580,9 @@ describe("orchestration v2 provider switching", () => {
                     }))
                   : turnUsageScenario && ordinal >= targetOrdinal
                     ? [screenshot, { ...screenshot, id: "current-2" }]
-                    : scenario.startsWith("screenshot") && ordinal >= targetOrdinal
+                    : scenario.startsWith("screenshot") &&
+                        ordinal >= targetOrdinal &&
+                        (!exhaustedTarget || ordinal === targetOrdinal)
                       ? screenshots
                       : priorImages && ordinal === (scenario.startsWith("imported") ? 1 : 2)
                         ? [screenshot]
@@ -602,19 +638,49 @@ describe("orchestration v2 provider switching", () => {
           yield* Effect.addFinalizer(() => Effect.sync(() => spy?.mockRestore()));
           const current = scenario.startsWith("compact")
             ? "/compact"
-            : capacityScenario && !turnUsageScenario
-              ? "x".repeat(70_000)
-              : scenario === "large-current-input"
-                ? "x".repeat(9_000)
-                : "Continue work";
+            : scenario.includes("target-oversized")
+              ? "x".repeat(40_000)
+              : capacityScenario && !turnUsageScenario
+                ? "x".repeat(70_000)
+                : scenario === "large-current-input"
+                  ? "x".repeat(9_000)
+                  : "Continue work";
           if (returning) {
             if (scenario.includes("unsent")) yield* Ref.set(failStartOnce, true);
             yield* dispatch(
               2,
-              turnUsageScenario ? "x".repeat(27_460) : "Establish target",
+              turnUsageScenario
+                ? "x".repeat(27_460)
+                : scenario.includes("target-estimate")
+                  ? "x".repeat(12_000)
+                  : "Establish target",
               CLAUDE_MODEL_SELECTION,
             );
             yield* wait(2);
+            if (exhaustedTarget) {
+              assert.equal(
+                (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status,
+                "completed",
+              );
+            }
+            if (exhaustedTarget && !scenario.includes("target-estimate")) {
+              const target = (yield* orchestrator.getThreadProjection(
+                threadId,
+              )).providerThreads.find(
+                (thread) => thread.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
+              )!;
+              yield* eventSink.write({
+                events: [
+                  {
+                    id: EventId.make("exhausted-target-usage"),
+                    type: "provider-thread.updated",
+                    threadId,
+                    occurredAt: yield* DateTime.now,
+                    payload: { ...target, contextUsage: { usedTokens: 30_000, maxTokens: 32_000 } },
+                  },
+                ],
+              });
+            }
             if (modelScenario && !turnUsageScenario) {
               const target = (yield* orchestrator.getThreadProjection(
                 threadId,
@@ -695,6 +761,8 @@ describe("orchestration v2 provider switching", () => {
             yield* Ref.set(failResumeOnce, true);
           }
           if (scenario.includes("retry")) yield* Ref.set(failStartOnce, true);
+          if (scenario.includes("target-background") || scenario.includes("target-subagent"))
+            yield* Ref.set(pendingBackgroundWork, true);
           yield* dispatch(targetOrdinal, current, targetSelection);
           yield* wait(targetOrdinal);
           if (scenario.includes("retry")) {
@@ -780,7 +848,73 @@ describe("orchestration v2 provider switching", () => {
             yield* wait(targetOrdinal + 3);
           }
           const projection = yield* orchestrator.getThreadProjection(threadId);
+          if (
+            scenario.includes("target-oversized") ||
+            scenario.includes("target-tight") ||
+            scenario.includes("target-background") ||
+            scenario.includes("target-subagent")
+          ) {
+            assert.equal(projection.runs.at(-1)?.status, "failed");
+            assert.equal(yield* Ref.get(generation), 1);
+            assert.equal(projection.messages.at(-1)!.text, current);
+            assert.deepEqual(projection.messages.at(-1)!.attachments, screenshots);
+            if (scenario.includes("target-background") || scenario.includes("target-subagent")) {
+              assert.isTrue(yield* Ref.get(pendingBackgroundWork));
+              const failure = projection.turnItems.findLast((item) => item.type === "error");
+              assert.equal(
+                failure?.type === "error" ? failure.failure.message : null,
+                "The target provider still has background work running. Wait for it to finish or stop it before retrying the handoff.",
+              );
+            }
+            return;
+          }
           assert.equal(projection.runs.at(-1)?.status, "completed");
+          if (exhaustedTarget) {
+            assert.equal(yield* Ref.get(generation), 2);
+            const turns = (yield* Ref.get(capturedTurns)).filter(
+              (turn) => turn.driver === CLAUDE_DRIVER,
+            );
+            assert.notEqual(turns[0]!.nativeThreadId, turns[1]!.nativeThreadId);
+            const latestRun = projection.runs.at(-1)!;
+            assert.equal(
+              projection.attempts.find((attempt) => attempt.id === latestRun.activeAttemptId)!
+                .nativeThreadId,
+              turns[1]!.nativeThreadId,
+            );
+            const context = scenario.endsWith("-native")
+              ? yield* encodeJson(yield* Ref.get(injectedHistory))
+              : turns[1]!.text;
+            assert.include(context, "Original request with constraints");
+            assert.include(context, "Original partial work");
+            assert.include(context, "New source constraint");
+            assert.include(turns[1]!.text, current);
+            assert.deepEqual(turns[1]!.attachments, screenshots);
+            const historyBeforeFollowup = yield* Ref.get(injectedHistory);
+            yield* dispatch(5, "Continue after automatic recovery", CLAUDE_MODEL_SELECTION);
+            yield* wait(5);
+            assert.equal(
+              (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status,
+              "completed",
+            );
+            assert.equal(yield* Ref.get(generation), 2);
+            assert.equal(
+              (yield* Ref.get(capturedTurns)).at(-1)!.text,
+              "Continue after automatic recovery",
+            );
+            assert.deepEqual(yield* Ref.get(injectedHistory), historyBeforeFollowup);
+            if (scenario.includes("target-estimate")) {
+              yield* dispatch(6, "Another source turn", CODEX_MODEL_SELECTION);
+              yield* wait(6);
+              yield* dispatch(7, "Return after recovery", CLAUDE_MODEL_SELECTION);
+              yield* wait(7);
+              assert.equal(
+                (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status,
+                "completed",
+              );
+              assert.equal(yield* Ref.get(generation), 2);
+            }
+            return;
+          }
           if (priorImages) {
             const handoff = projection.contextHandoffs.at(-1)!;
             const context = scenario.endsWith("-native")
@@ -901,7 +1035,12 @@ describe("orchestration v2 provider switching", () => {
       }),
     ),
   );
-  it.live.each(["turn-start", "injection", "large-missed-request"] as const)(
+  it.live.each([
+    "turn-start",
+    "injection",
+    "large-missed-request",
+    "exhausted-target-retry",
+  ] as const)(
     "recovers %s failure without duplicating history in the same native thread",
     (failure) =>
       Effect.scoped(
@@ -999,6 +1138,22 @@ describe("orchestration v2 provider switching", () => {
               failure !== "injection" ? "injected" : "pending",
             );
             const historyBeforeRetry = (yield* Ref.get(injectedHistory)).length;
+            if (failure === "exhausted-target-retry") {
+              const target = failed.providerThreads.find(
+                (thread) => thread.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
+              )!;
+              yield* (yield* EventSink.EventSinkV2).write({
+                events: [
+                  {
+                    id: EventId.make("exhausted-retry-usage"),
+                    type: "provider-thread.updated",
+                    threadId,
+                    occurredAt: yield* DateTime.now,
+                    payload: { ...target, contextUsage: { usedTokens: 30_000, maxTokens: 32_000 } },
+                  },
+                ],
+              });
+            }
             const retryText =
               failure === "large-missed-request" ? "y".repeat(10_000) : "Retry target request";
             yield* dispatch(3, retryText, CLAUDE_MODEL_SELECTION);
@@ -1006,7 +1161,7 @@ describe("orchestration v2 provider switching", () => {
             const retried = yield* orchestrator.getThreadProjection(threadId);
             const lastTurn = (yield* Ref.get(capturedTurns)).at(-1)!;
             assert.equal(lastTurn.text, retryText);
-            if (failure !== "injection") {
+            if (failure !== "injection" && failure !== "exhausted-target-retry") {
               const delta = yield* encodeJson(
                 (yield* Ref.get(injectedHistory)).slice(historyBeforeRetry),
               );

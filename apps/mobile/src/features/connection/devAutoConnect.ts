@@ -1,9 +1,8 @@
 import type { NavigationState, PartialState } from "@react-navigation/native";
-import { StackActions } from "@react-navigation/native";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { CommonActions, StackActions } from "@react-navigation/native";
 import { Atom } from "effect/reactivity";
 
-import { findLinkedRoute } from "../../lib/appLinking";
+import { findLinkedRoute, updateLinkedRoute } from "../../lib/appLinking";
 import { rootNavigationRef, whenRootNavigationReady } from "../../lib/rootNavigation";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { leaveSettingsPage } from "../settings/settings-navigation";
@@ -44,10 +43,10 @@ function isAutoConnectFlag(value: unknown): boolean {
   return value === "1" || value === "true";
 }
 
-async function connect(pairingUrl: string, expectedEnvironmentId: EnvironmentId | undefined) {
+async function connect(pairingUrl: string) {
   const attempt: DevAutoConnectAttempt = { pairingUrl, status: "connecting" };
   appAtomRegistry.set(devAutoConnectAttemptAtom, attempt);
-  const outcome = await pairEnvironment(pairingUrl, expectedEnvironmentId);
+  const outcome = await pairEnvironment(pairingUrl);
   // A later link replaced or cleared this attempt; its result belongs to no open form.
   if (appAtomRegistry.get(devAutoConnectAttemptAtom) !== attempt) return;
   if (!outcome.ok) {
@@ -72,6 +71,20 @@ async function connect(pairingUrl: string, expectedEnvironmentId: EnvironmentId 
 }
 
 /**
+ * `routeFor` makes a pairing an "Add route" to a saved environment, which skips the guard against
+ * a pairing taking over that environment's id. Only in-app navigation may set it, never a link.
+ */
+export function withoutPairingTarget(
+  state: PartialState<NavigationState> | undefined,
+): PartialState<NavigationState> | undefined {
+  return updateLinkedRoute(state, PAIRING_FORM_ROUTES, (route) => {
+    if (route.params === undefined || !("routeFor" in route.params)) return route;
+    const { routeFor: _routeFor, ...params } = route.params as { readonly routeFor?: unknown };
+    return { ...route, params };
+  });
+}
+
+/**
  * `connections/new?pairingUrl=…&autoConnect=1` (or `settings/environment-new?…`) pairs from the
  * link itself, so a remount of the form never pairs twice. Production builds ignore the flag so
  * a link can never pair with an attacker-chosen host.
@@ -85,15 +98,33 @@ export function startDevAutoConnect(
   const params = (route.params ?? {}) as {
     readonly autoConnect?: unknown;
     readonly pairingUrl?: unknown;
-    readonly routeFor?: EnvironmentId;
   };
   const pairingUrl = typeof params.pairingUrl === "string" ? params.pairingUrl.trim() : "";
   if (isAutoConnectFlag(params.autoConnect) && pairingUrl.length > 0) {
-    void connect(pairingUrl, params.routeFor);
+    void connect(pairingUrl);
   } else {
     // Only links put a pairing URL on the form, so a form opened by any other link starts
     // clean instead of showing an earlier auto-connect's failure for the same URL.
     appAtomRegistry.set(devAutoConnectAttemptAtom, null);
   }
   return state;
+}
+
+/**
+ * A pairing link that lands on an open pairing form fills that form. React Navigation would push
+ * `ConnectionsNew` over the Settings page's `SettingsEnvironmentNew`, stacking two copies of the
+ * same form. The form keys on the link's pairing URL, so new params remount it with the prefill.
+ */
+export function pairingFormLinkAction(
+  link: PartialState<NavigationState>,
+  current: NavigationState | undefined,
+) {
+  const linked = findLinkedRoute(link, PAIRING_FORM_ROUTES);
+  const open = current?.routes[current.index];
+  if (!linked || !current || !open || !PAIRING_FORM_ROUTES.includes(open.name)) return undefined;
+  return {
+    ...CommonActions.replaceParams(linked.params ?? {}),
+    source: open.key,
+    target: current.key,
+  };
 }

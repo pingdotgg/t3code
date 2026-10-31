@@ -157,7 +157,7 @@ function ThemeColorPickerPanel({
   };
 
   return (
-    <div className="w-72 bg-popover">
+    <div className="w-72">
       <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
         <div className="min-w-0">
           <p className="truncate text-xs font-semibold text-foreground">{label}</p>
@@ -249,6 +249,7 @@ function ThemeColorPicker({
 }) {
   const [committer] = useState(createFrameCommitter);
   // Unmounting with the popover open (the editor closes mid-drag) never fires onOpenChange.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- flushes the frame committer on unmount, since an open popover never fires onOpenChange
   useEffect(() => committer.flush, [committer]);
   return (
     <Popover

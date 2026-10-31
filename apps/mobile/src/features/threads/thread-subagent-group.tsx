@@ -7,6 +7,7 @@ import type {
   EnvironmentId,
   OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
+  ServerProvider,
 } from "@t3tools/contracts";
 import { Pressable, View, type ColorValue } from "react-native";
 
@@ -18,8 +19,11 @@ import type { ThreadFeedActivity } from "../../lib/threadActivity";
 import { serverEnvironment } from "../../state/server";
 import { environmentThreadDetails } from "../../state/threads";
 import { subagentCardElapsed } from "./subagent-card-presentation";
+import { useEnvironments } from "../../state/environments";
+import { useServerConfigs } from "../../state/entities";
 import { SubagentRow } from "./SubagentRow";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
+import { subagentThreadTarget } from "./threadAgentsPresentation";
 import { WorkLogBlock } from "./work-log-layout";
 
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
@@ -38,14 +42,22 @@ function SubagentElapsed({ agents }: { readonly agents: ReadonlyArray<AgentTimin
 
 function SubagentAvatar(props: {
   readonly item: SubagentItem;
-  readonly iconUrl?: string | null | undefined;
+  readonly provider: ServerProvider | undefined;
 }) {
+  // A remote task's own driver is only a "remote" label.
+  const driver =
+    props.provider?.driver ??
+    (props.item.remoteChild === undefined ? props.item.driver : undefined);
   return (
     <View
       accessible={false}
       className="h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-card"
     >
-      <ProviderIcon provider={props.item.driver} iconUrl={props.iconUrl} size={15} />
+      {driver === undefined ? (
+        <SymbolView name="sparkles" size={13} tintColorClassName="accent-icon-muted" />
+      ) : (
+        <ProviderIcon provider={driver} iconUrl={props.provider?.iconUrl} size={15} />
+      )}
     </View>
   );
 }
@@ -68,6 +80,7 @@ export function ThreadSubagentGroup(props: {
     environmentThreadDetails.threadAtom(scopeThreadRef(props.environmentId, members[0]!.threadId)),
     (thread) => thread?.projection.subagents,
   );
+  const { presentationById } = useEnvironments();
   const agents = members.map((item) => {
     const live = liveAgents?.find((agent) => agent.id === item.subagentId);
     return {
@@ -85,8 +98,13 @@ export function ThreadSubagentGroup(props: {
   const label = `${agents.length} subagents`;
   const summary = summarizeSubagentStatuses(agents.map((agent) => agent.status));
   const expanded = props.expandedRows[props.anchorKey] ?? false;
-  const iconUrl = (item: SubagentItem) =>
-    config?.providers.find((provider) => provider.instanceId === item.providerInstanceId)?.iconUrl;
+  const serverConfigs = useServerConfigs();
+  // A task in a linked environment runs a provider instance of that environment.
+  const providerOf = (item: SubagentItem) =>
+    (item.remoteChild === undefined
+      ? config
+      : serverConfigs.get(item.remoteChild.environmentId)
+    )?.providers.find((provider) => provider.instanceId === item.providerInstanceId);
   return (
     <WorkLogBlock>
       {grouped ? (
@@ -100,7 +118,7 @@ export function ThreadSubagentGroup(props: {
           <View className="flex-row items-center">
             {agents.slice(0, 3).map((agent, index) => (
               <View key={agent.item.id} style={{ marginLeft: index === 0 ? 0 : -7 }}>
-                <SubagentAvatar item={agent.item} iconUrl={iconUrl(agent.item)} />
+                <SubagentAvatar item={agent.item} provider={providerOf(agent.item)} />
               </View>
             ))}
             {agents.length > 3 ? (
@@ -137,29 +155,40 @@ export function ThreadSubagentGroup(props: {
       {!grouped || expanded ? (
         <View className="mb-1 gap-px rounded-xl border border-border bg-card/30 p-1">
           {agents.map((agent) => {
-            const threadId = agent.childThreadId;
+            // A task in a linked environment opens there, if this app is connected to it.
+            const target = subagentThreadTarget(agent, props.environmentId, (id) =>
+              presentationById.has(id),
+            );
             return (
               <Pressable
                 key={agent.item.id}
                 accessible
-                accessibilityRole={threadId === null ? undefined : "link"}
+                accessibilityRole={target === null ? undefined : "link"}
                 accessibilityHint={
-                  threadId === null ? "Provider-managed agent" : "Opens this agent's thread"
+                  target !== null
+                    ? "Opens this agent's thread"
+                    : agent.remoteChild !== undefined
+                      ? `Runs on ${agent.remoteChild.label}`
+                      : "Provider-managed agent"
                 }
-                disabled={threadId === null}
+                disabled={target === null}
                 onPress={() => {
-                  if (threadId === null) return;
+                  if (target === null) return;
                   if (
                     openInspector(
                       { environmentId: props.environmentId, threadId: members[0]!.threadId },
-                      { type: "thread", environmentId: props.environmentId, threadId },
+                      {
+                        type: "thread",
+                        environmentId: target.environmentId,
+                        threadId: target.threadId,
+                      },
                     )
                   )
                     return;
                   navigation.dispatch(
                     StackActions.push("Thread", {
-                      environmentId: String(props.environmentId),
-                      threadId: String(threadId),
+                      environmentId: String(target.environmentId),
+                      threadId: String(target.threadId),
                     }),
                   );
                 }}
@@ -168,6 +197,7 @@ export function ThreadSubagentGroup(props: {
                 <SubagentRow
                   environmentId={props.environmentId}
                   subagent={agent}
+                  canOpenRemote={target !== null}
                   elapsed={<SubagentElapsed agents={[agent]} />}
                 />
               </Pressable>

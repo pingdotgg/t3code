@@ -1,10 +1,6 @@
+import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import { WorkLogButton, WorkLogList, WorkLogRow } from "./WorkLog";
 import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
-import {
-  getQuestionAnswerPreview,
-  getQuestionTextPreview,
-  hasQuestionAnswer,
-} from "@t3tools/client-runtime/work-log/user-input";
 import { type ToolActivityIcon } from "@t3tools/contracts";
 import { liveThoughtLine } from "@t3tools/client-runtime/work-log/presentation";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
@@ -71,12 +67,17 @@ export const WorkGroupSection = memo(function WorkGroupSection({
   isExpandedToolGroup: boolean;
   displayLabel?: string | undefined;
 }) {
-  const { workspaceRoot, routeThreadKey, onToggleWorkEntry } = use(TimelineRowCtx);
+  const { workspaceRoot, routeThreadKey, onToggleWorkEntry, pendingApprovals } =
+    use(TimelineRowCtx);
   const onToggleStandaloneEntry = (collapsed: boolean) =>
     onToggleWorkEntry(disclosureAnchorKey, collapsed);
-  const nonEmptyEntries = groupedEntries.filter((entry) =>
-    workEntryIsVisibleInGroup(entry, isExpandedToolGroup),
-  );
+  const nonEmptyEntries = groupedEntries.filter((entry) => {
+    const item = entry.projectedItem?.item;
+    return (
+      (item?.type === "approval_request" && pendingApprovals.has(item.requestId)) ||
+      workEntryIsVisibleInGroup(entry, isExpandedToolGroup)
+    );
+  });
 
   if (nonEmptyEntries.length === 0) return null;
   if (isExpandedToolGroup && nonEmptyEntries.every((entry) => entry.itemType === "reasoning")) {
@@ -200,6 +201,7 @@ function ExpandedWorkGroupEntries({
     setRestoringPosition(false);
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the list scroller and its content with ResizeObserver to update scroll fades
   useLayoutEffect(() => {
     const element = listRef.current?.getScrollableNode();
     if (!element) return;
@@ -225,6 +227,7 @@ function ExpandedWorkGroupEntries({
     setExpandedContentHeight(height);
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads expanded row sizes from LegendList's measured state after layout
   useLayoutEffect(updateExpandedContentHeight, [entries, updateExpandedContentHeight]);
 
   return (
@@ -274,12 +277,12 @@ const workEntryKey = (entry: TimelineWorkEntry) => entry.id;
 export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
   const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup } =
     use(TimelineRowActivityCtx);
-  const compacting = row.compacting ?? (isCompacting ? "Compacting…" : undefined);
-  const shimmer = isPreparingWorktree || compacting !== undefined;
+  const compacting = row.compacting === true || isCompacting;
+  const shimmer = isPreparingWorktree || compacting;
   const label = isPreparingWorktree ? (
     "Setting up worktree…"
-  ) : compacting !== undefined ? (
-    <CompactingLabel label={compacting} />
+  ) : compacting ? (
+    <CompactingLabel createdAt={row.createdAt} />
   ) : row.createdAt ? (
     <>
       Working for <WorkingTimer createdAt={row.createdAt} />
@@ -339,11 +342,17 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
   );
 }
 
-function CompactingLabel({ label }: { label: string }) {
+function CompactingLabel({ createdAt }: { createdAt: string | null }) {
   return (
     <span className="inline-flex items-center gap-1.5">
       <Minimize2Icon aria-hidden="true" className="size-3" />
-      {label}
+      {createdAt ? (
+        <span>
+          Compacting for <WorkingTimer createdAt={createdAt} />
+        </span>
+      ) : (
+        "Compacting…"
+      )}
     </span>
   );
 }
@@ -352,7 +361,11 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
   const ctx = use(TimelineRowCtx);
   const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
   if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
-  const activity = <LiveActivityRow label="Thinking" iconName="brain" active shimmer />;
+  // A failed group keeps this disclosure while an approval waits, but nothing is thinking then.
+  const live = ctx.pendingApprovals.size === 0;
+  const activity = (
+    <LiveActivityRow label="Thinking" iconName="brain" active={live} shimmer={live} />
+  );
   const { groupId } = row;
   if (groupId === undefined) return activity;
   return (
@@ -478,11 +491,13 @@ export function LiveWorkEntryTimelineRow({
 }) {
   const ctx = use(TimelineRowCtx);
   const threadTarget = useThreadReadTarget(row.entry, ctx.activeThreadEnvironmentId);
-  const questionHeading = row.entry.questionAnswer
-    ? getQuestionTextPreview(row.entry.questionAnswer)
-    : "";
-  const label = questionHeading || liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
+  const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
   const threadLabel = threadReadLabel(label, threadTarget);
+
+  const item = row.entry.projectedItem?.item;
+  const pendingApproval =
+    item?.type === "approval_request" ? ctx.pendingApprovals.get(item.requestId) : undefined;
+  if (pendingApproval) return <TimelinePendingApprovalRow approval={pendingApproval} />;
 
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
   const thoughtLine = row.thought && !row.expanded ? liveThoughtLine(row.thought.detail ?? "") : "";
@@ -537,13 +552,6 @@ export function LiveWorkEntryTimelineRow({
             ) : (
               "Thought"
             )
-          ) : row.entry.questionAnswer && hasQuestionAnswer(row.entry.questionAnswer) ? (
-            <span className="flex min-w-0 gap-1.5">
-              <span className="min-w-0 truncate">{label}</span>
-              <span className="min-w-0 truncate text-foreground">
-                {getQuestionAnswerPreview(row.entry.questionAnswer)}
-              </span>
-            </span>
           ) : row.entry.itemType === "reasoning" ? (
             <ChatMarkdown
               inline
@@ -580,7 +588,7 @@ export function WorkGroupToggleTimelineRow({
   return (
     <WorkGroupHeader
       label={row.summary}
-      iconName={row.summaryToolIcon ?? row.toolSurface ?? toolGroupSummaryIconName(row.summaryKind)}
+      iconName={row.toolSurface ?? toolGroupSummaryIconName(row.summaryKind)}
       toolIcon={row.toolIcon}
       failed={row.hasFailure}
       expanded={row.expanded}
@@ -596,7 +604,6 @@ function WorkGroupHeader(props: {
   iconName: WorkEntryIconName;
   toolIcon?: ToolActivityIcon | undefined;
   failed?: boolean | undefined;
-  active?: boolean | undefined;
   expanded: boolean;
   createdAt: string;
   timestampFormat: TimestampFormat;
@@ -604,7 +611,6 @@ function WorkGroupHeader(props: {
 }) {
   return (
     <WorkLogButton
-      ref={props.active && !props.failed ? observeVisibleAnimation : undefined}
       aria-label={props.failed ? `${props.label}, tool call failed` : props.label}
       aria-expanded={props.expanded}
       onClick={props.onToggle}
@@ -616,11 +622,7 @@ function WorkGroupHeader(props: {
           muted
         />
       }
-      label={
-        <span className={cn("block truncate", props.active && !props.failed && "live-tool-shine")}>
-          {props.label}
-        </span>
-      }
+      label={<span className="block truncate">{props.label}</span>}
       trailing={
         <TimelineRowTimestamp createdAt={props.createdAt} timestampFormat={props.timestampFormat} />
       }

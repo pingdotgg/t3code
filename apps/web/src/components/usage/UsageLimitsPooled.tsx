@@ -252,6 +252,7 @@ function ActiveSegmentPopover({
   // The trigger is gone, so the popup has nothing to anchor to: an exit transition would
   // slide it to the viewport origin. Unmount it outright, which also clears Base UI's
   // active-trigger bookkeeping so the segment can open again when it comes back.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- closes the popover handle and unmounts the Base UI popup before paint when its trigger is gone
   useLayoutEffect(() => {
     if (available) return;
     handle.close();
@@ -659,6 +660,9 @@ export function UsageLimitsPooled({
             ) : null}
             <div className="min-w-0 space-y-1">
               <h2 className="text-sm font-medium">{link.label}</h2>
+              <p className="text-xs break-words text-muted-foreground">
+                {link.accounts.join(", ")}
+              </p>
               {link.url === CHATGPT_USAGE_URL ? (
                 <p className="text-xs text-muted-foreground">
                   View usage in ChatGPT with your connected account.
