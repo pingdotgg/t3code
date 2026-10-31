@@ -80,6 +80,40 @@ const makeHarness = Effect.fn("TestEnvironmentRpc.makeHarness")(function* () {
 });
 
 describe("environment RPC", () => {
+  it.effect("keeps a checked subscription on its session after the supervisor reconnects", () =>
+    Effect.gen(function* () {
+      const { activeSession, supervisor } = yield* makeHarness();
+      const calls: Array<string> = [];
+      const checked = session({
+        [WS_METHODS.pluginsSubscribe]: () => {
+          calls.push("checked");
+          return Stream.succeed({ installations: [] });
+        },
+      } as unknown as WsRpcProtocolClient);
+      const unsupported = session({
+        [WS_METHODS.pluginsSubscribe]: () => {
+          calls.push("unsupported");
+          return Stream.succeed({ installations: [] });
+        },
+      } as unknown as WsRpcProtocolClient);
+      yield* SubscriptionRef.set(activeSession, Option.some(unsupported));
+      const received = yield* subscribe(
+        WS_METHODS.pluginsSubscribe,
+        {},
+        {
+          session: checked,
+          resubscribe: Stream.succeed(undefined),
+        },
+      ).pipe(
+        Stream.runHead,
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+      expect(Option.getOrThrow(received)).toEqual({ installations: [] });
+      expect(calls.length).toBeGreaterThan(0);
+      expect(calls).not.toContain("unsupported");
+    }),
+  );
+
   it.effect("binds finite streaming commands to one active session", () =>
     Effect.gen(function* () {
       const firstEvents = yield* Queue.unbounded<RelayClientInstallProgressEvent>();

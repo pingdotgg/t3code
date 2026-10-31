@@ -11,6 +11,8 @@ import {
 import { RowPressable } from "../../components/ui/RowPressable";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { runPluginAction, usePluginActions } from "../../state/plugin-actions";
+import { pluginActionLabels, pluginActionsAt } from "@t3tools/client-runtime/state/pluginActions";
 import { threadArrangementOpenAtom } from "../../state/thread-order";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -862,6 +864,37 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ],
     [canTurnIntoProject, props.titleRegenerationSupported, thread.runtime, isRegeneratingTitle],
   );
+  const pluginActions = usePluginActions(thread.environmentId);
+  const pluginMenuEntries = useMemo(() => {
+    const entries = pluginActionsAt(pluginActions, "thread-menu", {
+      threadId: thread.id,
+      projectId: thread.projectId,
+    });
+    const labels = pluginActionLabels(entries.map((entry) => entry.action));
+    return entries.map((entry, index) => ({
+      ...entry,
+      menuId: `plugin-action:${entry.action.id}`,
+      title: labels[index] ?? entry.action.title,
+    }));
+  }, [pluginActions, thread.id, thread.projectId]);
+  // One submenu keeps the long-press menu short however many plugins add actions.
+  const pluginMenuActions = useMemo<MenuAction[]>(
+    () =>
+      pluginMenuEntries.length === 0
+        ? []
+        : [
+            {
+              id: "plugin-actions",
+              title: "Plugin actions",
+              image: "puzzlepiece.extension",
+              subactions: pluginMenuEntries.map((entry) => ({
+                id: entry.menuId,
+                title: entry.title,
+              })),
+            },
+          ],
+    [pluginMenuEntries],
+  );
   const snoozableCardMenuActions = useMemo<MenuAction[]>(
     () => [
       { id: "settle", title: "Settle", image: "checkmark" },
@@ -924,6 +957,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
+      const pluginEntry = pluginMenuEntries.find((entry) => entry.menuId === nativeEvent.event);
+      if (pluginEntry) {
+        void runPluginAction({
+          environmentId: thread.environmentId,
+          action: pluginEntry.action,
+          target: pluginEntry.target,
+        });
+        return;
+      }
       if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
       if (nativeEvent.event === "settle") handleSettle();
       if (nativeEvent.event === "unsettle") handleUnsettle();
@@ -987,6 +1029,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handleUnpin,
       handleUnsettle,
       handleUnsnooze,
+      pluginMenuEntries,
       setCustomSnoozeOpen,
       snoozePresets,
       props.snoozePresets,
@@ -1439,6 +1482,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 : []),
               { id: "copy-thread", title: "Copy thread", image: "text.bubble" },
               { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
+              ...pluginMenuActions,
               ...(snoozedRow
                 ? snoozedMenuActions
                 : !props.settlementSupported

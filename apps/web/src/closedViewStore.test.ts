@@ -58,6 +58,12 @@ describe("closedViewStore", () => {
       id: "bad",
       kind: "panel-tab",
       threadRef: refA,
+      surface: { kind: "plugin-view", id: "plugin-view:i:board", installationId: "i" },
+    },
+    {
+      id: "bad",
+      kind: "panel-tab",
+      threadRef: refA,
       surface: { kind: "side-chat", id: "side-chat:x" },
     },
   ])("discards incomplete saved views %j while retaining valid history", async (entry) => {
@@ -71,6 +77,29 @@ describe("closedViewStore", () => {
     expect(useClosedViewStore.persist.hasHydrated()).toBe(true);
     expect(useClosedViewStore.getState().entries).toEqual([{ ...diff(refA), id }]);
     expect(() => useClosedViewStore.getState().remember(diff(refB))).not.toThrow();
+  });
+
+  it("preserves saved plugin view restore data", async () => {
+    const surfaces = [
+      {
+        kind: "plugin-view",
+        id: "plugin-view:installation-1:board",
+        installationId: "installation-1",
+        viewId: "board",
+        title: "Board",
+      },
+    ];
+    const entries = surfaces.map((surface, index) => ({
+      id: String(index),
+      kind: "panel-tab",
+      threadRef: refA,
+      surface,
+    })) as ClosedViewEntry[];
+    const { storage, name } = useClosedViewStore.persist.getOptions();
+    await storage!.setItem(name!, { state: { entries }, version: 0 });
+    await useClosedViewStore.persist.rehydrate();
+    expect(useClosedViewStore.persist.hasHydrated()).toBe(true);
+    expect(useClosedViewStore.getState().entries).toEqual(entries);
   });
 
   it("keeps private tabs available in memory without saving their metadata", async () => {

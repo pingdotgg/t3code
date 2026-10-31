@@ -20,15 +20,19 @@ import {
 } from "@t3tools/client-runtime/operations/projects";
 import {
   type EnvironmentId,
-  type ProjectId,
   type EnvironmentMachineKind,
   type FilesystemBrowseEntry,
   type KeybindingCommand,
+  type PluginAction,
+  type PluginActionTarget,
+  type ProjectId,
+  type ThreadId,
   type SourceControlDiscoveryResult,
   type SourceControlRepositoryInfo,
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import { filterFilesystemBrowseEntries } from "@t3tools/client-runtime/state/filesystem";
+import { pluginActionLabels, pluginActionsAt } from "@t3tools/client-runtime/state/pluginActions";
 import { type ReactNode } from "react";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
@@ -53,6 +57,43 @@ export function buildLinkedThreadActionItems(
     searchTerms: [input.query, thread.title],
     icon: input.icon,
     run: () => input.runThread({ environmentId: input.environmentId, id: thread.id }),
+  }));
+}
+
+/**
+ * The environment's palette plugin actions. Running one needs
+ * `orchestration:operate`, so a connection without it is offered none.
+ */
+export function buildPluginActionItems(input: {
+  readonly environmentId: EnvironmentId;
+  readonly actions: ReadonlyArray<PluginAction>;
+  readonly canOperate: boolean;
+  readonly threadId: ThreadId | null;
+  readonly projectId: ProjectId | null;
+  readonly icon: ReactNode;
+  readonly runAction: (input: {
+    readonly environmentId: EnvironmentId;
+    readonly action: PluginAction;
+    readonly target: PluginActionTarget;
+  }) => Promise<unknown>;
+}): CommandPaletteActionItem[] {
+  if (!input.canOperate) return [];
+  const { environmentId } = input;
+  const entries = pluginActionsAt(input.actions, "command-palette", {
+    threadId: input.threadId,
+    projectId: input.projectId,
+  });
+  const labels = pluginActionLabels(entries.map((entry) => entry.action));
+  return entries.map(({ action, target }, index) => ({
+    kind: "action",
+    value: `plugin-action:${environmentId}:${action.id}`,
+    searchTerms: [action.title, action.name, action.pluginName, "plugin"],
+    title: labels[index] ?? action.title,
+    description: action.description ?? action.pluginName,
+    icon: input.icon,
+    run: async () => {
+      await input.runAction({ environmentId, action, target });
+    },
   }));
 }
 
