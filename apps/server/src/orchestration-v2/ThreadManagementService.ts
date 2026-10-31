@@ -1035,6 +1035,8 @@ const make = Effect.gen(function* () {
       type: "thread.settle",
       commandId: CommandId.make(`server:settle-after-run:${input.runId}`),
       threadId: input.threadId,
+      // Like auto-settles, stamp the completion: clients only silence settles stamped after it.
+      ...(run.completedAt === null ? {} : { settledAt: run.completedAt }),
     });
   });
 

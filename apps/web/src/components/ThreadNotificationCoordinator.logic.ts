@@ -40,7 +40,7 @@ export function createThreadNotificationGate<Key>(
     ): void {
       if (next.settled && next.completedAt !== null) lastSettled.set(key, next.completedAt);
       if (!next.settled || options.archived || options.quiet) cancel(key);
-      // The first sighting, archived threads, and stopped or silent runs never notify completion.
+      // The first sighting, archived threads, and stopped, silent, or user-settled runs never notify completion.
       if (!prior || options.archived || options.quiet) skip(key, next.completedAt);
       if (!prior || options.archived) return;
       if (next.attention && next.attention !== prior.attention) {

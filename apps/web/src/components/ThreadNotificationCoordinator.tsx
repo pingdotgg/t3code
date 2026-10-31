@@ -224,9 +224,15 @@ export function startThreadNotifications(
     entry.previous = next;
     entry.gate.retain(new Set(next.keys()));
     for (const [prior, state] of changed) {
+      const { settledOverride, settledAt } = state.thread;
+      // Auto and agent settles stamp the run's own completion; a later stamp is the user dismissing it.
+      const userSettled =
+        settledOverride === "settled" &&
+        state.completedAt !== null &&
+        Date.parse(settledAt ?? "") > state.completedAt;
       entry.gate.observe(state.thread.id, prior, state, {
         archived: state.thread.archivedAt !== null,
-        quiet: state.raw.latestRunStopRequested === true,
+        quiet: state.raw.latestRunStopRequested === true || userSettled,
       });
     }
   };

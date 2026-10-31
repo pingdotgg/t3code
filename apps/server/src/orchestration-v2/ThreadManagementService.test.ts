@@ -5,6 +5,7 @@ import {
   MessageId,
   type OrchestrationV2Command,
   type OrchestrationV2Run,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2ProviderThread,
   ProviderThreadId,
   ProviderDriverKind,
@@ -567,7 +568,8 @@ it.effect.each([
     const projectId = ProjectId.make("project:thread-management:settle-after-run");
     const threadId = ThreadId.make("thread:thread-management:settle-after-run");
     const runId = RunId.make("run:thread-management:settle-after-run");
-    const dispatched: Array<string> = [];
+    const completedAt = DateTime.makeUnsafe("2026-09-13T07:00:01.000Z");
+    const dispatched: Array<OrchestrationV2ServerCommand> = [];
     const layerTest = ThreadManagementService.layer.pipe(
       Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
       Layer.provide(
@@ -577,11 +579,11 @@ it.effect.each([
           getThreadRecords: () =>
             Effect.succeed({
               thread: { id: threadId, projectId, deletedAt: null },
-              runs: [{ id: runId, status }],
+              runs: [{ id: runId, status, completedAt }],
             } as unknown as OrchestrationV2ThreadProjection),
           dispatch: (command) =>
             Effect.sync(() => {
-              dispatched.push(command.type);
+              dispatched.push(command);
               return { sequence: 1, storedEvents: [] } as never;
             }),
         }),
@@ -595,7 +597,10 @@ it.effect.each([
 
     yield* service.settleAfterRun({ projectId, threadId, runId });
 
-    expect(dispatched).toEqual(settles ? ["thread.settle"] : []);
+    // Stamped at the completion, so clients still notify it like an auto-settle.
+    expect(dispatched).toMatchObject(
+      settles ? [{ type: "thread.settle", settledAt: completedAt }] : [],
+    );
   }),
 );
 

@@ -105,6 +105,7 @@ const thread = {
   id: "thread",
   title: "Test thread",
   archivedAt: null as string | null,
+  settledAt: null as string | null,
   hasPendingApprovals: false,
   hasPendingUserInput: false,
   session: null as { status: string } | null,
@@ -162,8 +163,8 @@ function toV2ThreadShell(input: typeof thread) {
       ? DateTime.makeUnsafe(latestTurn.completedAt)
       : undefined,
     archivedAt: input.archivedAt ? DateTime.makeUnsafe(input.archivedAt) : null,
-    settledOverride: null,
-    settledAt: null,
+    settledOverride: input.settledAt ? "settled" : null,
+    settledAt: input.settledAt ? DateTime.makeUnsafe(input.settledAt) : null,
     lastVisitedAt: null,
     deletedAt: null,
   };
@@ -258,5 +259,37 @@ it("holds a completion through a continuation gap and notifies once it settles",
   await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS - 1);
   expect(TestNotification.sent).toEqual([]);
   await vi.advanceTimersByTimeAsync(1);
+  expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Thread completed"]);
+});
+
+it("does not notify a completion the user settles during the grace", async () => {
+  await using app = setup();
+  app.start();
+  using _timers = fakeTimers();
+  const latestTurn = {
+    turnId: "turn",
+    state: "completed",
+    completedAt: "2026-09-13T07:00:01.000Z",
+  };
+  state.shells.set("one", shell({ latestTurn }));
+  await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS / 2);
+  state.shells.set("one", shell({ latestTurn, settledAt: "2026-09-13T07:00:02.000Z" }));
+  await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
+  expect(TestNotification.sent.map((sent) => sent.title)).toEqual([]);
+});
+
+it("still notifies a completion that auto-settles during the grace", async () => {
+  await using app = setup();
+  app.start();
+  using _timers = fakeTimers();
+  const latestTurn = {
+    turnId: "turn",
+    state: "completed",
+    completedAt: "2026-09-13T07:00:01.000Z",
+  };
+  state.shells.set("one", shell({ latestTurn }));
+  await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS / 2);
+  state.shells.set("one", shell({ latestTurn, settledAt: latestTurn.completedAt }));
+  await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
   expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Thread completed"]);
 });
