@@ -1,7 +1,6 @@
 import {
   EnvironmentId,
   NodeId,
-  type OrchestratorMcpThreadReadResult,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   ProjectId,
@@ -275,24 +274,27 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
 
   await Effect.gen(function* () {
     const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-    const pages = Effect.fn(function* (maxCharsPerItem: number) {
-      const read: Array<string | null> = [];
-      let textOffset: number | null = 0;
-      while (textOffset !== null) {
-        const result: OrchestratorMcpThreadReadResult = yield* service.readThread(makeScope(), {
+    for (const [maxCharsPerItem, expected] of [
+      [2, ["a", "😀", "bc"]],
+      [1, ["a", "😀", "b", "c"]],
+    ] as const) {
+      let textOffset = 0;
+      for (const [index, text] of expected.entries()) {
+        const result = yield* service.readThread(makeScope(), {
           threadId: parentThreadId,
           view: "activity",
           itemId,
           textOffset,
           maxCharsPerItem,
         });
-        read.push(result.items[0]!.text);
-        textOffset = result.items[0]!.nextTextOffset ?? null;
+        textOffset += text.length;
+        expect(result.items[0]).toMatchObject({
+          text,
+          textTruncated: index < expected.length - 1,
+          nextTextOffset: index < expected.length - 1 ? textOffset : null,
+        });
       }
-      return read;
-    });
-    expect(yield* pages(2)).toEqual(["a", "😀", "bc"]);
-    expect(yield* pages(1)).toEqual(["a", "😀", "b", "c"]);
+    }
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
