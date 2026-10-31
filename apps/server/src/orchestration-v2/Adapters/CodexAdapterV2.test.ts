@@ -8374,6 +8374,67 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ),
       ),
     );
+
+    it.effect("classifies permission requests that only list sandbox entries", () =>
+      Effect.gen(function* () {
+        const permissionRequest = (
+          id: number,
+          itemId: string,
+          entries: CodexSchema.PermissionsRequestApprovalParams__AdditionalFileSystemPermissions["entries"],
+        ): Array<CodexReplay.CodexAppServerReplayEntry> => [
+          {
+            type: "emit_inbound",
+            label: `permissions ${itemId}`,
+            frame: {
+              id,
+              method: "item/permissions/requestApproval",
+              params: {
+                threadId: nativeThreadId,
+                turnId: nativeTurnId,
+                itemId,
+                cwd: "/w",
+                startedAtMs: 2,
+                permissions: { fileSystem: { entries } },
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: `permissions ${itemId}`,
+            frame: { id, result: { permissions: { fileSystem: { entries } }, scope: "turn" } },
+          },
+        ];
+        const { harness, answerNext } = yield* startApprovalTurn("permission-entries", [
+          ...permissionRequest(0, "write-glob", [
+            { access: "read", path: { type: "path", path: "/w/src" } },
+            { access: "write", path: { type: "glob_pattern", pattern: "/w/out/**" } },
+          ]),
+          ...permissionRequest(1, "read-glob", [
+            { access: "read", path: { type: "glob_pattern", pattern: "/w/docs/**" } },
+          ]),
+          turnCompleted(nativeTurnId),
+        ]);
+        const write = yield* answerNext;
+        const read = yield* answerNext;
+        yield* harness.firstTerminal;
+
+        assert.deepEqual(
+          [write, read].map((request) => [
+            request.kind,
+            approvalItem(harness.events, request)?.requestKind,
+          ]),
+          [
+            ["file-change", "file-change"],
+            ["file-read", "file-read"],
+          ],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
   });
 });
 
