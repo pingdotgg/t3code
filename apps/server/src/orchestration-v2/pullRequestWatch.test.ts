@@ -287,6 +287,20 @@ describe("evaluatePullRequestWatch", () => {
       "- The checks still running when one failed have finished on aaaaaaa. Still failing:\n  - lint https://ci.example/lint",
     );
 
+    // A new advisory failure keeps what was owed rather than owing a required check started since.
+    const advisory = detail({
+      checks: [
+        required("lint", "failure"),
+        required("unit", "pending"),
+        required("smoke", "pending"),
+        check("bot", "failure"),
+        check("e2e", "failure"),
+      ],
+    });
+    const later = evaluatePullRequestWatch(first.next, advisory, noRemarks);
+    assert.deepEqual(later.changes, [{ kind: "checks-failed", failed: [check("e2e", "failure")] }]);
+    assert.deepEqual(later.next.owedChecks, ["unit"]);
+
     // A rerun of the failed required check is not the gate finishing, even with an advisory failure.
     const rerun = detail({
       checks: [

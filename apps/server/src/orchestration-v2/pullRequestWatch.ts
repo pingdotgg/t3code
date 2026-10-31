@@ -90,8 +90,8 @@ export function evaluatePullRequestWatch(
       // Gate checks still running when one failed are owed one wake when they finish, since
       // the gate can no longer pass and so never sends the checks-passed wake.
       const running = gate.filter((check) => check.status === "pending").map((check) => check.name);
-      owedChecks =
-        newlyFailed.length > 0 ? running : owedBefore.filter((name) => running.includes(name));
+      const gateNewlyFailed = newlyFailed.some((check) => gateNames.includes(check.name));
+      owedChecks = gateNewlyFailed ? running : owedBefore.filter((name) => running.includes(name));
       if (newlyFailed.length === 0 && owedBefore.length > 0 && owedChecks.length === 0) {
         changes.push({ kind: "checks-finished", failing: gate.filter(isFailedCheck) });
       }
