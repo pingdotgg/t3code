@@ -3,6 +3,7 @@ import { it as effectIt } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { CommandAvailability, WindowsShellEnvironment } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Observe the existing synchronous shell probe without launching the user's login shell.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
@@ -62,6 +63,62 @@ effectIt.effect("hydrates PATH when the desktop handoff is absent", () =>
       }),
     (probe) => Effect.sync(() => probe.mockRestore()),
   ),
+);
+
+// The inherited PATH already holds the absolute fallback dirs, so each case only
+// depends on whether the fixture HOME has ~/.local/bin, not on this host.
+effectIt.effect("falls back to existing CLI dirs when probes return no PATH", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const cases = [
+      {
+        localBin: true,
+        inherited: (home: string) =>
+          `${home}/.nvm/bin:/usr/local/bin:/usr/bin:/opt/homebrew/bin:/usr/bin`,
+        probe: "",
+        expected: (home: string) =>
+          `${home}/.nvm/bin:/usr/local/bin:/usr/bin:/opt/homebrew/bin:${home}/.local/bin`,
+      },
+      {
+        localBin: false,
+        inherited: () => "/usr/local/bin:/opt/homebrew/bin:/usr/bin",
+        probe: "",
+        expected: () => "/usr/local/bin:/opt/homebrew/bin:/usr/bin",
+      },
+      {
+        localBin: true,
+        inherited: () => "/usr/bin",
+        probe: "__T3CODE_ENV_PATH_START__\n/opt/tools/bin\n__T3CODE_ENV_PATH_END__\n",
+        expected: () => "/opt/tools/bin:/usr/bin",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const home = yield* fileSystem.makeTempDirectoryScoped();
+      if (testCase.localBin) {
+        yield* fileSystem.makeDirectory(`${home}/.local/bin`, { recursive: true });
+      }
+      const env: NodeJS.ProcessEnv = {
+        HOME: home,
+        SHELL: "/bin/zsh",
+        PATH: testCase.inherited(home),
+      };
+
+      yield* Effect.acquireUseRelease(
+        Effect.sync(() =>
+          vi.spyOn(NodeChildProcess, "execFileSync").mockReturnValue(testCase.probe),
+        ),
+        () =>
+          fixPath().pipe(
+            Effect.provideService(HostProcess.Platform, "darwin"),
+            Effect.provideService(HostProcess.Environment, env),
+          ),
+        (probe) => Effect.sync(() => probe.mockRestore()),
+      );
+
+      assert.equal(env.PATH, testCase.expected(home));
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 effectIt.effect("keeps mise's PATH record with the login shell PATH", () =>
