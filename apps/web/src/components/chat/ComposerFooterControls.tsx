@@ -115,8 +115,6 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
                   ref={permissionsChipRef}
                   data-composer-shortcut="composer.mode"
                   size={size}
-                  // Mirrors the model trigger's trailing pe-1 so the gaps on both sides of the chip match.
-                  className="ps-1.5"
                   aria-label={`Permissions: ${runtimeModeOption.label}`}
                 />
               }
