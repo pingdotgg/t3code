@@ -26,7 +26,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return { ...actual, realpath: vi.fn(actual.realpath) };
 });
 
-// Temp folders count as known workspaces unless named as unknown.
 const UNKNOWN_WORKSPACE_PREFIX = "t3code-unknown-workspace-";
 const layerKnownWorkspacesTest = Layer.mock(KnownWorkspaces.KnownWorkspaces)({
   assertContains: (cwd) =>
@@ -429,6 +428,38 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("saves over an existing file without rescanning the workspace", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/main.ts", "export {};\n");
+
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "src/main.ts",
+          contents: "export const edited = true;\n",
+        });
+
+        expect(yield* fileSystem.readFileString(path.join(cwd, "src/main.ts"))).toBe(
+          "export const edited = true;\n",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.fresh(WorkspaceFileSystem.layer).pipe(
+            Layer.provide(layerKnownWorkspacesTest),
+            Layer.provide(WorkspacePaths.layer),
+            Layer.provide(
+              Layer.mock(WorkspaceEntries.WorkspaceEntries)({
+                refresh: () => Effect.die("An overwrite rescanned the workspace."),
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+
     it.effect("rejects writes outside the workspace root", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -575,7 +606,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const path = yield* Path.Path;
         const cwd = yield* makeTempDir;
         yield* writeTextFile(cwd, ".git/config", "[core]\n");
-        // A bare repository named `.bare`, and a linked worktree's git folder inside it.
         yield* writeTextFile(cwd, ".bare/HEAD", "ref: refs/heads/main\n");
         yield* writeTextFile(cwd, ".bare/objects/info/packs");
         yield* writeTextFile(cwd, ".bare/refs/heads/main");
@@ -649,7 +679,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const parentDir = yield* makeTempDir;
-        // A bare repository with a worktree checked out inside it.
         const bare = path.join(parentDir, "repo.git");
         yield* writeTextFile(bare, "HEAD", "ref: refs/heads/main\n");
         yield* writeTextFile(bare, "objects/info/packs");
