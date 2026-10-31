@@ -246,5 +246,5 @@ if (($env:PATH -split ";") -notcontains $binDir) {
   $env:Path = "$binDir;$env:Path"
   Write-Host "  Run ${bold}t3$reset to get started. For new windows, add $binDir to your PATH.`n"
 } else {
-  Write-Host "  Run ${bold}t3$reset to get started.`n"
+  Write-Host "  Run ${bold}t3$reset to use T3 Code here, or ${bold}t3 up$reset to use it from your other devices.`n"
 }
