@@ -1,4 +1,4 @@
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { randomUUID } from "~/lib/utils";
 import { useAtomValue } from "@effect/atom-react";
@@ -6,6 +6,10 @@ import { primaryServerKeybindingsAtom } from "~/state/server";
 import { PreviewAnnotationSpeech } from "./PreviewAnnotationSpeech";
 import type { DesktopPreviewAnnotationVoiceConfig } from "@t3tools/contracts";
 import { previewStreamDownloadUrl } from "@t3tools/client-runtime/preview/server-browser-stream";
+import { useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
+import { useLayoutStore } from "../../layout/layoutStore";
+import { findThreadChat } from "../../layout/surfaceSync";
+import { isThreadlessSurfacesRef } from "../../threadlessSurfaces";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -21,10 +25,11 @@ import {
   type PreviewAdjustInput,
 } from "@t3tools/contracts";
 import {
+  isPreviewTabFromEarlierRun,
   normalizePreviewUrl,
   isPreviewUrlNormalizationError,
-  resolveAddressBarInput,
   previewPdfAssetUrl,
+  resolveAddressBarInput,
   resolveSearchUrlTemplate,
 } from "@t3tools/shared/preview";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
@@ -64,6 +69,7 @@ import { useRightPanelStore } from "~/rightPanelStore";
 
 import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
+import { reopenBrowserSurface } from "./addBrowserSurface";
 import { closePreviewSession } from "./closePreviewSession";
 import { openPreviewSession } from "./openPreviewSession";
 import { showPreviewPopup } from "./showPreviewPopup";
@@ -170,6 +176,8 @@ export function PreviewView({
   const miniPlayerTabId = usePreviewMiniPlayerStore((state) =>
     selectThreadPreviewMiniPlayerTabId(state.byThreadKey, threadRef),
   );
+  const chatShown = useLayoutStore((state) => findThreadChat(state.layout, threadRef) !== null);
+  const canFloat = !isThreadlessSurfacesRef(threadRef) && chatShown;
   const addPreviewAnnotation = useComposerDraftStore((store) => store.addPreviewAnnotation);
   const addImage = useComposerDraftStore((store) => store.addImage);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
@@ -193,6 +201,21 @@ export function PreviewView({
         : findActiveBrowserRecordingRuntimeTabId(threadRef, tabId)
       : null;
   const snapshot = tabId ? (previewState.sessions[tabId] ?? null) : null;
+  // Its tab is gone, as after a restart: navigating opens a new one in its place.
+  const lostTabId =
+    requestedTabId &&
+    snapshot === null &&
+    previewState.listLoaded &&
+    !previewState.suppressedTabIds.has(requestedTabId)
+      ? requestedTabId
+      : null;
+  // One lost to a restart of its server reopens right away, at the page it showed.
+  const lostToRestart =
+    lostTabId !== null &&
+    previewState.serverEpoch !== null &&
+    isPreviewTabFromEarlierRun(lostTabId, previewState.serverEpoch);
+  const [reopenFailedTabId, setReopenFailedTabId] = useState<string | null>(null);
+  const reopening = lostToRestart && reopenFailedTabId !== lostTabId;
   const nativeServerTab = useRendersServerTabNatively(threadRef.environmentId, snapshot);
   const isServerTab = snapshot?.runtime === "server" && !nativeServerTab;
   const serverOwnsRendering = snapshot?.runtime === "server";
@@ -219,12 +242,12 @@ export function PreviewView({
   const layoutZoomFactor = useBrowserLayoutZoomFactor(desktopOverlay?.zoomFactor ?? 1);
   const navStatus = snapshot?.navStatus ?? { _tag: "Idle" as const };
   const url = navStatus._tag === "Idle" ? "" : navStatus.url;
-  const loading = desktopOverlay?.loading ?? navStatus._tag === "Loading";
+  const loading = reopening || (desktopOverlay?.loading ?? navStatus._tag === "Loading");
   const canGoBack = desktopOverlay?.canGoBack ?? snapshot?.canGoBack ?? false;
   const canGoForward = desktopOverlay?.canGoForward ?? snapshot?.canGoForward ?? false;
   const refreshDisabled = navStatus._tag === "Idle";
   const isUnreachable = navStatus._tag === "LoadFailed";
-  const showEmptyState = shouldShowPreviewEmptyState(snapshot);
+  const showEmptyState = !reopening && shouldShowPreviewEmptyState(snapshot);
   const serverStreamPending =
     isServerTab && !showEmptyState && !isUnreachable && serverFrameTabId !== runtimeTabId;
   const controller = desktopOverlay?.controller ?? "none";
@@ -237,7 +260,40 @@ export function PreviewView({
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
 
+  const navUrl = navStatus._tag === "Success" ? navStatus.url : null;
+  const { environmentId: threadEnvironmentId, threadId } = threadRef;
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Persist browser navigation reported by the external preview runtime for later session restoration.
+  useEffect(() => {
+    if (requestedTabId && navUrl) {
+      useRightPanelStore
+        .getState()
+        .rememberBrowserUrl(scopeThreadRef(threadEnvironmentId, threadId), requestedTabId, navUrl);
+    }
+  }, [navUrl, requestedTabId, threadEnvironmentId, threadId]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Reopen a restored browser surface when its prior server runtime no longer exists.
+  useEffect(() => {
+    if (!lostToRestart || lostTabId === null) return;
+    void reopenBrowserSurface({
+      threadRef: scopeThreadRef(threadEnvironmentId, threadId),
+      tabId: lostTabId,
+      openPreview: open,
+    }).then((result) => {
+      if (result._tag === "Failure") setReopenFailedTabId(lostTabId);
+    });
+  }, [lostTabId, lostToRestart, open, threadEnvironmentId, threadId]);
+
   const navigateToResolvedUrl = async (resolvedUrl: string) => {
+    if (lostTabId !== null) {
+      const result = await reopenBrowserSurface({
+        threadRef,
+        tabId: lostTabId,
+        openPreview: open,
+        url: resolvedUrl,
+      });
+      return result._tag === "Success";
+    }
     if (isServerTab && serverSurfaceRef.current) {
       if (serverInputDisabled) return false;
       serverSurfaceRef.current.navigate(resolvedUrl);
@@ -434,7 +490,7 @@ export function PreviewView({
   };
 
   const handlePictureInPicture = () => {
-    if (!tabId) return;
+    if (!tabId || !canFloat) return;
     if (miniPlayerTabId === tabId) {
       usePreviewMiniPlayerStore.getState().close(threadRef);
       return;
@@ -852,8 +908,10 @@ export function PreviewView({
   }, [runtimeTabId, pickOwnerKey]);
 
   // Subscribe only while visible; ChatView always owns URL-aware toggle-panel handling.
+  const paneFocusedRef = useLayoutPaneFocusedRef();
   const onPreviewAction = useEffectEvent(
     (action: Parameters<Parameters<typeof subscribePreviewAction>[0]>[0]) => {
+      if (!paneFocusedRef.current) return;
       switch (action) {
         case "refresh":
           handleRefresh();
@@ -918,7 +976,7 @@ export function PreviewView({
         captureDisabled={!desktopOverlay || isUnreachable}
         recording={recordingRuntimeTabId !== null}
         onPictureInPicture={
-          tabId && (isServerTab || previewBridge) ? handlePictureInPicture : undefined
+          canFloat && tabId && (isServerTab || previewBridge) ? handlePictureInPicture : undefined
         }
         pictureInPicture={miniPlayerTabId === tabId}
         pictureInPictureDisabled={

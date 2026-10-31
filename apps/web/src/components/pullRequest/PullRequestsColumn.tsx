@@ -2,17 +2,13 @@ import type { PullRequestListState } from "@t3tools/contracts";
 import { ChevronRightIcon, SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
-import { isElectron } from "~/env";
 import { cn } from "~/lib/utils";
+import { useLayoutPaneFocusedRef } from "~/layout/layoutPaneContext";
 import { Button } from "../ui/button";
+import { PaneNotch } from "../PaneNotch";
 import { RefreshIcon } from "../ui/refresh-icon";
-import {
-  WorkspaceBreadcrumb,
-  WorkspaceBreadcrumbItem,
-  WorkspaceBreadcrumbSeparator,
-} from "../WorkspaceBreadcrumb";
+import { SettingsPaneHeader, SettingsTabNotch } from "../settings/SettingsTabNotch";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
-import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
 import { PullRequestGlyph } from "./pullRequestIcons";
 import { PullRequestCompactFilterMenu } from "./PullRequestCompactFilterMenu";
@@ -24,24 +20,25 @@ function ExpandableSearch({
   searchValue,
   open,
   onOpenChange,
+  containerRef,
   onFocusWithin,
 }: {
   searchInput: ReactNode;
   searchValue: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  containerRef: RefObject<HTMLDivElement | null>;
   /**
    * An unmount fires no blur, which is the point: whoever unmounted this can still see the reader
    * was mid-typing and move the focus somewhere that continues the sentence.
    */
   onFocusWithin?: (focused: boolean) => void;
 }) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the search input DOM node when the topbar search opens
   useEffect(() => {
     if (!open) return;
     containerRef.current?.querySelector("input")?.focus();
-  }, [open]);
+  }, [containerRef, open]);
   if (open || searchValue.length > 0) {
     return (
       <div
@@ -69,12 +66,7 @@ function ExpandableSearch({
   );
 }
 
-/**
- * The pull request list column. Its header holds the whole scope on one row: the page and the
- * host it reads on the left, then state, sort, filters, a folded search and refresh on the
- * right. In a narrow column the menus drop their words and keep their glyphs. The header is
- * the window drag region; its interactive children opt out through the `.drag-region`
- */
+/** Header controls opt out of the window drag region; narrow columns fold them. */
 export function PullRequestsColumn({
   refreshing,
   onRefresh,
@@ -87,10 +79,10 @@ export function PullRequestsColumn({
   searchInput,
   sortMenu,
   filtersMenu,
-  rightPanelControl,
-  titlebarControls,
+  compactMenu,
   rightPanelOpen,
   maximizedAway,
+  split,
   listBody,
   scrollRef,
 }: {
@@ -105,14 +97,17 @@ export function PullRequestsColumn({
   searchInput: ReactNode;
   sortMenu: ReactNode;
   filtersMenu: ReactNode;
-  rightPanelControl: ReactNode;
-  titlebarControls: ReactNode;
+  /** State, sort, filters and refresh in one menu, for a narrow column. */
+  compactMenu: ReactNode;
   rightPanelOpen: boolean;
   maximizedAway: boolean;
+  /** Whether the list sits beside an open review as its own pane. */
+  split: boolean;
   listBody: ReactNode;
   scrollRef: RefObject<HTMLDivElement | null>;
 }) {
   const contentArea = workspaceAreaProps("pull-requests", 1, "Pull requests");
+  const focusedRef = useLayoutPaneFocusedRef();
   const [searchOpen, setSearchOpen] = useState(false);
   const topbarSearchRef = useRef<HTMLDivElement | null>(null);
   // shortcut would otherwise do nothing. It unfolds the header search and selects the query
@@ -120,7 +115,7 @@ export function PullRequestsColumn({
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown listener focuses the visible search input on Cmd/Ctrl+F
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+      if (!focusedRef.current || event.defaultPrevented) return;
       if (event.key.toLowerCase() !== "f" || !(event.metaKey || event.ctrlKey)) return;
       if (event.altKey || event.shiftKey) return;
       event.preventDefault();
@@ -131,71 +126,81 @@ export function PullRequestsColumn({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [focusedRef]);
   const searchExpanded = searchOpen || searchValue.length > 0;
 
   return (
     <div
       {...contentArea}
       inert={maximizedAway}
+      data-pane-notch-host={split ? "" : undefined}
       className={cn(
         "@container/pr-list flex min-h-0 min-w-0 flex-col overflow-x-hidden bg-background",
         maximizedAway ? "w-0 flex-none" : "flex-1",
+        // Beside an open review the list is a pane of its own, its corner given to the notch.
+        split && "overflow-hidden surface-grain md:rounded-pane md:rounded-ss-none",
       )}
     >
-      {}
-      <WorkspacePageHeader
-        electron={isElectron}
-        reserveNativeControls={!rightPanelOpen}
-        className="relative bg-background"
-      >
-        {titlebarControls}
-        <WorkspaceBreadcrumb ariaLabel="Pull request scope" className="overflow-hidden">
-          {/* An expanded search owns the scarce horizontal space in a narrow column. The page
-              title stays available to readers either way. */}
-          <WorkspaceBreadcrumbItem
-            current
-            className={cn("gap-1.5", searchExpanded && "sr-only @3xl/pr-list:not-sr-only")}
-          >
-            <PullRequestGlyph.pullRequest aria-hidden className="size-3.5 shrink-0" />
-            <h1 className="truncate">Pull requests</h1>
-          </WorkspaceBreadcrumbItem>
-          <WorkspaceBreadcrumbSeparator
-            className={cn(searchExpanded && "hidden @3xl/pr-list:flex")}
-          >
-            <ChevronRightIcon className="size-3" />
-          </WorkspaceBreadcrumbSeparator>
-          <WorkspaceBreadcrumbItem className="shrink">
+      {/* A closed right panel leaves this column full-width, so the header reserves native
+          window controls. */}
+      <SettingsPaneHeader trailingEdge={!rightPanelOpen}>
+        <SettingsTabNotch
+          title="Pull requests"
+          icon={
+            <PullRequestGlyph.pullRequest
+              aria-hidden
+              className="size-3.5 shrink-0 text-foreground"
+            />
+          }
+        >
+          <nav aria-label="Pull request scope" className="flex min-w-0 items-center gap-1.75">
+            {/* An expanded search owns the scarce horizontal space in a narrow column. The page
+                title stays available to readers either way. */}
+            <h1 className={cn("shrink-0", searchExpanded && "sr-only @3xl/pr-list:not-sr-only")}>
+              Pull requests
+            </h1>
+            <ChevronRightIcon
+              aria-hidden
+              className={cn(
+                "size-3 shrink-0 text-dim-foreground",
+                searchExpanded && "hidden @3xl/pr-list:block",
+              )}
+            />
             <PullRequestCompactFilterMenu
+              inline
+              className="shrink"
               label="Filter by provider"
               value={host ?? ""}
               options={hostMenuOptions}
               onChange={(next) => onHost(next === "" ? undefined : next)}
             />
-          </WorkspaceBreadcrumbItem>
-        </WorkspaceBreadcrumb>
-        <div className="min-w-0 flex-1" />
-        <div ref={topbarSearchRef} className="flex shrink items-center gap-0.5">
-          <PullRequestCompactFilterMenu
-            label="Filter by state"
-            value={state}
-            options={STATE_TABS}
-            onChange={onState}
-            className="shrink-0"
-            labelClassName="hidden @3xl/pr-list:inline"
-          />
-          {sortMenu}
-          {filtersMenu}
+          </nav>
+        </SettingsTabNotch>
+        <PaneNotch side="right" className="ms-auto shrink-0 gap-0.5">
+          <div className="hidden items-center gap-0.5 @3xl/pr-list:flex">
+            <PullRequestCompactFilterMenu
+              label="Filter by state"
+              value={state}
+              options={STATE_TABS}
+              onChange={onState}
+              className="shrink-0"
+            />
+            {sortMenu}
+            {filtersMenu}
+          </div>
           <ExpandableSearch
             searchInput={searchInput}
             searchValue={searchValue}
             open={searchOpen}
             onOpenChange={setSearchOpen}
+            containerRef={topbarSearchRef}
           />
-          <PullRequestRefreshControl compact refreshing={refreshing} onRefresh={onRefresh} />
-        </div>
-        {rightPanelControl}
-      </WorkspacePageHeader>
+          <div className="flex items-center @3xl/pr-list:hidden">{compactMenu}</div>
+          <div className="hidden items-center @3xl/pr-list:flex">
+            <PullRequestRefreshControl compact refreshing={refreshing} onRefresh={onRefresh} />
+          </div>
+        </PaneNotch>
+      </SettingsPaneHeader>
 
       <div ref={scrollRef} className="scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto">
         <WorkspacePageContainer width="expanded" className="min-h-full gap-4">

@@ -1,169 +1,95 @@
-// A neutral miniature of the window (pen eWIa5 wireframes): the chrome with
-// the sidebar and a tab, and the inset pane with a conversation and the
-// composer. It shows the appearance mode, not the theme, so it keeps the
-// default palette. Drawn as one static SVG on the pen's 188x120 grid.
-import { useId } from "react";
+// Preview appearance modes with default-theme tokens, regardless of the active theme.
+// Set both foreground variables because foreground utilities read --contrast-foreground.
+import type { CSSProperties } from "react";
 import type { AppearanceChoice } from "../../hooks/useTheme";
+import { LayoutPaneSkeleton, PaneNotchTab } from "../../layout/PaneSkeleton";
 
-type ChromeTone = "light" | "dark";
-type PaneTone = "light" | "dark";
+type Tone = "light" | "dark";
 
-const CHROME_COLORS = {
-  light: {
-    window: "#e4e4e4",
-    search: "#fafafa",
-    searchStroke: "#00000012",
-    threadActive: "#f5f5f5",
-    threadTitle: "#00000026",
-    thread: "#0000001a",
-  },
-  dark: {
-    window: "#000000",
-    search: "#1c1c1c",
-    searchStroke: null,
-    threadActive: "#1f1f1f",
-    threadTitle: "#ffffff3a",
-    thread: "#ffffff1f",
-  },
+const TONE_TOKENS = {
+  light: { chrome: "#e4e4e4", pane: "#f5f5f5", foreground: "#252525" },
+  dark: { chrome: "#000000", pane: "#151515", foreground: "#d4d4d4" },
 } as const;
 
-const PANE_COLORS = {
-  light: {
-    pane: "#f5f5f5",
-    // The tab is the notch cut into the pane, so it follows the pane.
-    tab: "#f5f5f5",
-    tabLabel: "#00000059",
-    bubble: "#e6e6e6",
-    line: "#00000017",
-    working: "#00000024",
-    row: "#0000000e",
-    tray: "#ffffff",
-    trayStroke: "#00000014",
-    send: "#1a1a1a",
-  },
-  dark: {
-    pane: "#151515",
-    tab: "#2a2a2a",
-    tabLabel: "#ffffff66",
-    bubble: "#262626",
-    line: "#ffffff1c",
-    working: "#ffffff26",
-    row: "#ffffff10",
-    tray: "#1f1f1f",
-    trayStroke: "#ffffff14",
-    send: "#eeeeee",
-  },
-} as const;
+function chromeVars(tone: Tone) {
+  const t = TONE_TOKENS[tone];
+  return {
+    colorScheme: tone,
+    "--app-chrome-background": t.chrome,
+    "--foreground": t.foreground,
+    "--contrast-foreground": t.foreground,
+  } as CSSProperties;
+}
 
-const THREAD_ROWS = [
-  { y: 28, width: 20 },
-  { y: 35, width: 26 },
-  { y: 42, width: 16 },
-  { y: 49, width: 24 },
-  { y: 56, width: 18 },
-] as const;
+function paneVars(tone: Tone) {
+  const t = TONE_TOKENS[tone];
+  return {
+    colorScheme: tone,
+    "--background": t.pane,
+    "--foreground": t.foreground,
+    "--contrast-foreground": t.foreground,
+  } as CSSProperties;
+}
 
-const WORK_ROWS = [
-  { y: 34, width: 50 },
-  { y: 39, width: 62 },
-  { y: 44, width: 44 },
-  { y: 49, width: 56 },
-] as const;
+const THREAD_ROW_WIDTHS = ["w-4/5", "w-3/5", "w-[70%]", "w-1/2"] as const;
 
-function WireframeWindow({ chrome, pane }: { chrome: ChromeTone; pane: PaneTone }) {
-  const c = CHROME_COLORS[chrome];
-  const p = PANE_COLORS[pane];
+function WireframeWindow({ chrome, pane }: { chrome: Tone; pane: Tone }) {
   return (
-    <g>
-      <rect fill={c.window} height="120" width="188" />
-      <rect
-        fill={c.search}
-        height="5"
-        rx="2.5"
-        width="36"
-        x="6"
-        y="8"
-        {...(c.searchStroke ? { stroke: c.searchStroke, strokeWidth: 0.75 } : {})}
-      />
-      <rect fill={c.threadActive} height="6" rx="2" width="36" x="6" y="18" />
-      <rect fill={c.threadTitle} height="2" rx="1" width="22" x="9" y="20" />
-      {THREAD_ROWS.map((row) => (
-        <rect fill={c.thread} height="2" key={row.y} rx="1" width={row.width} x="9" y={row.y} />
-      ))}
-      <rect fill={c.thread} height="2" rx="1" width="14" x="9" y="108" />
-      <rect fill={c.thread} height="2" rx="1" width="18" x="9" y="112" />
-      <rect fill={p.tab} height="6" rx="3" width="26" x="52" y="3" />
-      <rect fill={p.tabLabel} height="2" rx="1" width="14" x="56" y="6" />
-      <g transform="translate(48 11)">
-        <rect fill={p.pane} height="105" rx="6" width="136" />
-        <rect fill={p.bubble} height="12" rx="4" width="50" x="78" y="8" />
-        <rect fill={p.line} height="2" rx="1" width="36" x="82" y="12" />
-        <rect fill={p.line} height="2" rx="1" width="24" x="82" y="16" />
-        <rect fill={p.working} height="2" rx="1" width="30" x="10" y="27" />
-        <rect fill={p.row} height="2" rx="1" width="30" x="94" y="27" />
-        {WORK_ROWS.map((row) => (
-          <g key={row.y}>
-            <rect fill={p.line} height="3" rx="1" width="3" x="10" y={row.y} />
-            <rect fill={p.row} height="2" rx="1" width={row.width} x="16" y={row.y + 1} />
-          </g>
+    <div className="absolute inset-0 bg-(--app-chrome-background)" style={chromeVars(chrome)}>
+      <div className="absolute inset-y-0 left-0 flex w-[21%] flex-col gap-1.25 px-1.5 pt-1.5 pb-1.75">
+        <div className="flex gap-0.75">
+          <div className="size-1 rounded-full bg-foreground/25" />
+          <div className="size-1 rounded-full bg-foreground/25" />
+          <div className="size-1 rounded-full bg-foreground/25" />
+        </div>
+        <div className="h-2 rounded-full bg-foreground/12" />
+        <div className="h-2.5 rounded-sm bg-foreground/10" />
+        {THREAD_ROW_WIDTHS.map((width) => (
+          <div className={`h-0.5 ${width} rounded-full bg-foreground/20`} key={width} />
         ))}
-        <rect
-          fill={p.tray}
-          height="19"
-          rx="5"
-          stroke={p.trayStroke}
-          strokeWidth="1"
-          width="111"
-          x="12.5"
-          y="79.5"
-        />
-        <rect fill={p.line} height="2" rx="1" width="42" x="18" y="86" />
-        <circle cx="115.5" cy="87.5" fill={p.send} r="3.5" />
-        <rect fill={p.row} height="2" rx="1" width="28" x="18" y="94" />
-      </g>
-    </g>
+        <div className="mt-auto h-0.5 w-3/5 rounded-full bg-foreground/20" />
+        <div className="h-2 rounded-sm bg-foreground/10" />
+      </div>
+      <div
+        className="absolute top-[3px] right-[3px] bottom-[3px] left-[21%] flex flex-col overflow-hidden rounded-md rounded-tl-none bg-background"
+        style={paneVars(pane)}
+      >
+        <PaneNotchTab className="h-3 w-[42%] shrink-0 gap-1 px-1.25" style={chromeVars(chrome)}>
+          <div className="size-1 shrink-0 rounded-full bg-foreground/40" />
+          <div className="h-0.5 flex-1 rounded-full bg-foreground/35" />
+        </PaneNotchTab>
+        <LayoutPaneSkeleton shape="chat" />
+      </div>
+    </div>
   );
 }
 
 export function ThemeWireframe({ mode }: { mode: AppearanceChoice }) {
-  // The pen rims light wireframes with black alpha and the rest with white.
+  // Light frames rim with black alpha and the rest with white.
   const rim = mode === "light" ? "#00000014" : "#ffffff14";
-  // Several wireframes render at once, so clip ids must be unique.
-  const id = useId();
-  const frameClipId = `${id}-frame`;
-  const darkHalfClipId = `${id}-dark-half`;
   return (
-    <svg
-      aria-hidden
-      className="block aspect-[188/120] w-full"
-      preserveAspectRatio="xMidYMid slice"
-      viewBox="0 0 188 120"
-    >
-      <defs>
-        <clipPath id={frameClipId}>
-          <rect height="120" rx="8" width="188" />
-        </clipPath>
-        <clipPath id={darkHalfClipId}>
-          <rect height="120" width="94" x="94" />
-        </clipPath>
-      </defs>
-      <g clipPath={`url(#${frameClipId})`}>
-        {mode === "system" ? (
-          <>
-            <WireframeWindow chrome="light" pane="light" />
-            <g clipPath={`url(#${darkHalfClipId})`}>
-              <WireframeWindow chrome="dark" pane="dark" />
-            </g>
-          </>
-        ) : mode === "dark" ? (
+    <div aria-hidden className="relative aspect-[188/120] w-full overflow-hidden rounded-lg">
+      {mode === "system" ? (
+        <>
           <WireframeWindow chrome="dark" pane="dark" />
-        ) : mode === "black-chrome" ? (
-          <WireframeWindow chrome="dark" pane="light" />
-        ) : (
-          <WireframeWindow chrome="light" pane="light" />
-        )}
-      </g>
-      <rect fill="none" height="119" rx="7.5" stroke={rim} width="187" x="0.5" y="0.5" />
-    </svg>
+          {/* Keep light paint off the dark rim and clip the split without an antialiased path. */}
+          <div className="absolute inset-y-0 left-0 w-1/2 overflow-hidden">
+            <div className="relative h-full w-[200%]">
+              <WireframeWindow chrome="light" pane="light" />
+            </div>
+          </div>
+        </>
+      ) : mode === "dark" ? (
+        <WireframeWindow chrome="dark" pane="dark" />
+      ) : mode === "black-chrome" ? (
+        <WireframeWindow chrome="dark" pane="light" />
+      ) : (
+        <WireframeWindow chrome="light" pane="light" />
+      )}
+      <div
+        className="pointer-events-none absolute inset-0 rounded-lg"
+        style={{ boxShadow: `inset 0 0 0 1px ${rim}` }}
+      />
+    </div>
   );
 }

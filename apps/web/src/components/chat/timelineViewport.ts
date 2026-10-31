@@ -68,7 +68,10 @@ const DOWN_KEYS = new Set(["PageDown", "End", "ArrowDown", " "]);
  * Owns the timeline scroll node's input listeners for as long as the node is
  * mounted, and turns them into one navigation signal.
  */
-export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewport & {
+export function attachTimelineViewport(
+  scrollNode: HTMLElement,
+  ownsDocumentKeys?: () => boolean,
+): TimelineViewport & {
   readonly dispose: () => void;
 } {
   const listeners = new Set<(navigation: TimelineNavigation) => void>();
@@ -97,6 +100,7 @@ export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewpor
       !(event.target instanceof Node) ||
       (!scrollNode.contains(event.target) &&
         ((event.target !== document.body && event.target !== document.documentElement) ||
+          ownsDocumentKeys?.() === false ||
           isInSideChatPane(scrollNode))) ||
       event.isComposing ||
       event.altKey ||

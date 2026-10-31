@@ -456,7 +456,7 @@ export function AddEnvironmentDialog({
     <div className="space-y-4">
       {relayRouteOffer !== null ? (
         <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
-          <p className="text-xs text-muted-foreground">
+          <p className="text-meta text-muted-foreground">
             This machine is on your T3 Connect account. Use it as a fallback route.
           </p>
           <Button
