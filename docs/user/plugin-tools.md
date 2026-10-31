@@ -30,6 +30,10 @@ Agents see two tools in every session that uses T3 Code's MCP server:
 
 ## Which sessions can use a plugin
 
+Calls require a live thread in full-access/default mode. Restricted and planning
+threads can list tools but cannot execute them, because a trusted plugin's
+side-effect declaration does not constrain the code it runs.
+
 A session can use the tool plugins that were enabled when it started. A plugin
 you enable later, or enable again after disabling it, shows up as not
 available in this session. To use it, start a new thread.
