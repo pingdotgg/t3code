@@ -171,7 +171,6 @@ minimumReleaseAgeExclude:
   - expo-sqlite@58.0.13
   - expo-symbols@58.0.4
   - electron@44.10.0
-  - "@anthropic-ai/claude-agent-sdk@0.3.276"
   - "@shadcn/lint@0.1.5"
   - cn@0.3.2
   - uniwind@1.13.0
