@@ -360,6 +360,37 @@ export function projectComposerContextForProvider(input: {
   return `${body}\n\n<${CONTEXT_ENVELOPE_TAG} version="1">\n${entries.join("\n")}\n</${CONTEXT_ENVELOPE_TAG}>`;
 }
 
+/** Display text for a provider-projected message: the text without its generated envelope. */
+export function stripComposerContextEnvelope(text: string): string {
+  const opener = `\n\n<${CONTEXT_ENVELOPE_TAG} version="1">\n`;
+  const closer = `\n</${CONTEXT_ENVELOPE_TAG}>`;
+  const start = text.lastIndexOf(opener);
+  if (start === -1) return text;
+  // Payloads are escaped, so the first closer and every `<context` line are generated.
+  const end = text.indexOf(closer, start + opener.length);
+  if (end === -1) return text;
+  const rest = text.slice(end + closer.length);
+  if (rest !== "" && !rest.startsWith("\n\n")) return text;
+  const body = text.slice(0, start);
+  const markers = new Set<string>();
+  for (let index = body.indexOf("ref="); index !== -1; index = body.indexOf("ref=", index + 4)) {
+    // Context ids are at most 128 characters, which bounds each lookahead.
+    const candidate = body.slice(index + 4, index + 133);
+    const close = candidate.indexOf("]");
+    if (close > 0) markers.add(candidate.slice(0, close));
+  }
+  const entryOpen = `<${CONTEXT_ENTRY_TAG} kind="`;
+  let entries = 0;
+  for (const line of text.slice(start + opener.length, end).split("\n")) {
+    if (!line.startsWith(entryOpen)) continue;
+    const idStart = line.indexOf('" id="', entryOpen.length);
+    const idEnd = idStart === -1 ? -1 : line.indexOf('"', idStart + 6);
+    if (idEnd === -1 || !markers.has(line.slice(idStart + 6, idEnd))) return text;
+    entries += 1;
+  }
+  return entries > 0 ? body + rest : text;
+}
+
 // An agent reads threads on its own machine and on those it links to, even when a draft
 // moves between machines.
 export function threadContextsOutsideEnvironment(input: {

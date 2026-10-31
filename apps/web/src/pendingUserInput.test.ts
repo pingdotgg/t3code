@@ -1,7 +1,12 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { formatInlineContextReference } from "./lib/composerContextReferences";
-import { threadContextReference } from "./lib/composerContextRecords";
+import {
+  imageContextReference,
+  reviewCommentContextRecord,
+  reviewCommentContextReference,
+  threadContextReference,
+} from "./lib/composerContextRecords";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 
 import {
@@ -25,6 +30,60 @@ describe("projectPendingUserInputAnswer", () => {
     expect(projectPendingUserInputAnswer(answer, [record])).toBe(
       "Compare [Reference work](t3-thread://v2/env-answer/reference-thread)",
     );
+  });
+
+  // regression: #28022 review comment chips in question answers reached the agent as bare links
+  it("sends review comment chips with the comment text and diff", () => {
+    const comment = {
+      id: "review-comment-answer",
+      sectionId: "working-tree",
+      sectionTitle: "Working tree",
+      filePath: "docs/plan.md",
+      startIndex: 15,
+      endIndex: 15,
+      rangeLabel: "L16",
+      text: "Rename this step to match the migration",
+      diff: "+- Step 3: backfill legacy rows",
+    };
+    const reviewRecord = reviewCommentContextRecord(comment);
+    const answer = `See ${formatInlineContextReference(reviewCommentContextReference(comment))}`;
+    const projected = projectPendingUserInputAnswer(answer, [reviewRecord]);
+    expect(projected).toContain(comment.text);
+    expect(projected).toContain(comment.diff);
+    expect(projected).not.toContain("t3-context://");
+  });
+
+  it("sends image chips as their label and leaves image-only answers unchanged", () => {
+    const comment = {
+      id: "review-comment-image",
+      sectionId: "working-tree",
+      sectionTitle: "Working tree",
+      filePath: "docs/plan.md",
+      startIndex: 15,
+      endIndex: 15,
+      rangeLabel: "L16",
+      text: "Match this screenshot",
+      diff: "+- Step 3",
+    };
+    const image = {
+      type: "image" as const,
+      id: "image-answer",
+      name: "screen.png",
+      mimeType: "image/png",
+      sizeBytes: 4,
+      previewUrl: "blob:screen",
+      file: new File(["png"], "screen.png", { type: "image/png" }),
+    };
+    const imageChip = formatInlineContextReference(imageContextReference(image));
+    const records = [reviewCommentContextRecord(comment)];
+    const projected = projectPendingUserInputAnswer(
+      `${imageChip} vs ${formatInlineContextReference(reviewCommentContextReference(comment))}`,
+      records,
+    );
+    expect(projected).toContain("screen.png vs ");
+    expect(projected).not.toContain('unavailable="true"');
+    expect(projected).not.toContain('kind="image"');
+    expect(projectPendingUserInputAnswer(`Like ${imageChip}`, records)).toBe(`Like ${imageChip}`);
   });
 
   // regression: #18789 answers to pending questions lost exact text and option values
