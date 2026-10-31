@@ -1,5 +1,19 @@
 import { stripDisplayedPlanMarkdown, proposedPlanTitle } from "@t3tools/shared/proposedPlanText";
 
+/** Top-level numbered items outside code fences: the plan's steps. 0 when it has none. */
+export function proposedPlanStepCount(planMarkdown: string): number {
+  let inFence = false;
+  let count = 0;
+  for (const line of planMarkdown.split(/\r?\n/)) {
+    if (/^\s{0,3}(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (!inFence && /^\s{0,1}\d+[.)]\s+\S/.test(line)) count += 1;
+  }
+  return count;
+}
+
 export function buildCollapsedProposedPlanPreviewMarkdown(
   planMarkdown: string,
   options?: {
