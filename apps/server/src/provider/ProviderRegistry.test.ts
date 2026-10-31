@@ -840,13 +840,12 @@ it.layer(
         models: [opus, fable],
       } satisfies ServerProvider;
 
-      const afterBoot = ProviderRegistry.mergeProviderSnapshot(
-        hydrateCachedProvider({
-          cachedProvider: probedProvider,
-          fallbackProvider: pendingProvider,
-        }),
-        pendingProvider,
-      );
+      const hydrated = hydrateCachedProvider({
+        cachedProvider: probedProvider,
+        fallbackProvider: pendingProvider,
+      });
+      assert.deepStrictEqual(hydrated.models, [opus]);
+      const afterBoot = ProviderRegistry.mergeProviderSnapshot(hydrated, pendingProvider);
       const afterProbe = ProviderRegistry.mergeProviderSnapshot(pendingProvider, probedProvider);
       const afterFailedProbe = ProviderRegistry.mergeProviderSnapshot(afterProbe, failedProbe);
 

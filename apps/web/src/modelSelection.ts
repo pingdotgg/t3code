@@ -173,7 +173,12 @@ function getAppModelOptions(
   );
 
   const defaultInstanceId = defaultInstanceIdForDriver(provider);
-  const customModels = readInstanceCustomModels(settings, defaultInstanceId, provider);
+  const restrictedModels = providers.find(
+    (candidate) => candidate.instanceId === defaultInstanceId,
+  )?.restrictedModels;
+  const customModels = readInstanceCustomModels(settings, defaultInstanceId, provider).filter(
+    (model) => !restrictedModels?.some((restricted) => restricted.slug === model.slug),
+  );
   for (const entry of normalizeCustomModelEntries(customModels, builtInModelSlugs)) {
     if (seen.has(entry.slug)) {
       continue;
@@ -214,7 +219,14 @@ export function getAppModelOptionsForInstance(
     ),
   );
 
-  const customModels = readInstanceCustomModels(settings, entry.instanceId, entry.driverKind);
+  const customModels = readInstanceCustomModels(
+    settings,
+    entry.instanceId,
+    entry.driverKind,
+  ).filter(
+    (model) =>
+      !entry.snapshot.restrictedModels?.some((restricted) => restricted.slug === model.slug),
+  );
   for (const custom of normalizeCustomModelEntries(customModels, builtInModelSlugs)) {
     if (seen.has(custom.slug)) {
       continue;
