@@ -148,12 +148,8 @@ function UnseenPeekDot({ side, tabId }: { side: "left" | "right"; tabId: string 
   );
 }
 
-/**
- * Half the gap between panes, applied on each side that has a neighbor. The gap
- * is the chrome gutter (`--workspace-pane-inset`), the same 12px that separates
- * the panes from the sidebar and the window edges.
- */
-const HALF_PANE_GAP = "calc(var(--workspace-pane-inset) / 2)";
+/** Pen R49C1s: neighboring panes share an 8px gutter, independent of the window inset. */
+const HALF_PANE_GAP = "4px";
 
 const FULL_RECT = { left: 0, top: 0, width: 1, height: 1 };
 const FULL_SLOT: LayoutPaneSlot = {
