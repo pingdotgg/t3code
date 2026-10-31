@@ -405,8 +405,10 @@ describe("observability", () => {
             Effect.provideService(Tracer.Tracer, tracer),
           );
           yield* Effect.die(new Error(`RequestParseError (GET ${url})`)).pipe(
+            Effect.tapCause((cause) => Effect.logError(cause)),
             Effect.withSpan("DeviceHubProxy.proxyWebSocket"),
             Effect.provideService(Tracer.Tracer, tracer),
+            Effect.provide(Logger.layer([Logger.tracerLogger], { mergeWithExisting: false })),
             Effect.exit,
           );
           yield* sink.close();
@@ -415,6 +417,7 @@ describe("observability", () => {
           const exported = delegates.map((span) =>
             JSON.stringify({
               attributes: Object.fromEntries(span.attributes),
+              events: span.events.map(([, , attributes]) => attributes),
               exit:
                 span.status._tag === "Ended" && Exit.isFailure(span.status.exit)
                   ? Cause.pretty(span.status.exit.cause)
@@ -426,6 +429,7 @@ describe("observability", () => {
             assert.notInclude(text, "proof-secret");
           }
           assert.include(written, "wsTicket=<redacted>&dpop=<redacted>&clientSurface=web");
+          assert.include(exported.join("\n"), "effect.cause");
         }),
       ),
     );

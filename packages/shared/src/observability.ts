@@ -623,7 +623,11 @@ class LocalFileSpan implements Tracer.Span {
   }
 
   event(name: string, startTime: bigint, attributes?: Record<string, unknown>): void {
-    const nextAttributes = attributes ?? {};
+    const cause = attributes?.["effect.cause"];
+    const nextAttributes =
+      typeof cause === "string"
+        ? { ...attributes, "effect.cause": redactUrlCredentials(cause) }
+        : (attributes ?? {});
     this.events.push([name, startTime, nextAttributes]);
     this.delegate.event(name, startTime, nextAttributes);
   }
