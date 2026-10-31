@@ -42,8 +42,8 @@ const TRAILING_PATH_PUNCTUATION_PATTERN = /[.,;:!?]+$/;
 const REQUEST_ROUTE_PATTERN =
   /(?:^|[\s"'`])(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS|CONNECT|TRACE|proxying)\s+["'`]?(?:\/|[A-Za-z0-9_-]+\/)[^\s?]*\?\S*/g;
 // The tail of `redis://host/0` or `file:///a.mjs` is not a path. One-letter schemes stay drives,
-// and the lookbehind keeps runs of letters from being rescanned at every suffix.
-const SCHEME_URL_PATTERN = /(?<![A-Za-z\d.])[A-Za-z][A-Za-z\d+.-]+:\/\/[^\s"'`<>]+/gu;
+// a diff's `+` or `-` may lead, and the lookbehind keeps runs from being rescanned at every suffix.
+const SCHEME_URL_PATTERN = /(?<![A-Za-z\d+.-])[+-]?[A-Za-z][A-Za-z\d+.-]+:\/\/[^\s"'`<>]+/gu;
 
 function trimClosingDelimiters(value: string, kind: TerminalLinkKind): string {
   let output = value.replace(
