@@ -195,7 +195,8 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
       }
       if (draftKey === props.routeDraftId) {
         if (frozenActive.routeDraftId === draftKey && frozenActive.row !== null) {
-          rows.push(frozenActive.row);
+          // The snapshot predates session fields set right after the draft opens (Linear issue).
+          rows.push({ ...frozenActive.row, session });
         }
         continue;
       }
