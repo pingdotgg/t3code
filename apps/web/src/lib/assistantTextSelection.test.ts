@@ -310,6 +310,15 @@ describe("captureAssistantTextSelection", () => {
     expect(capture(source, nativeSelection([quote, 0], [control, 1]))).toBeNull();
   });
 
+  it("does not quote a response marked unquotable", () => {
+    const quote = textNode("Reasoning shown as a reply.");
+    const source = new SelectionNode("DIV", "", {
+      "data-assistant-citation-source": "assistant",
+      "data-assistant-citation-quotable": "false",
+    }).append(quote);
+    expect(capture(source, nativeSelection([quote, 0], [quote, quote.length]))).toBeNull();
+  });
+
   it.each([
     new SelectionNode("BUTTON"),
     new SelectionNode("SPAN", "", { role: "button" }),

@@ -55,6 +55,7 @@ import {
   type OrchestrationV2IdleCompaction,
   type WorktreeSetupSnapshot,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2ProviderRef,
   type RunAttemptId,
   type RuntimeRequestId,
   RunId,
@@ -679,6 +680,16 @@ export function resolveAssistantMessageCopyState({
     text: hasText ? (visible ? renderCodexDirectivesForCopy(text) : text) : null,
     visible,
   };
+}
+
+// Claude 5.1+ shows a thinking block before a tool call as a reply. It is still reasoning,
+// which no provider lets users quote, and quoting it trips Claude's reasoning_extraction refusal.
+export function isQuotableAssistantMessage(
+  nativeItemRef: OrchestrationV2ProviderRef | null | undefined,
+) {
+  return !(
+    nativeItemRef?.driver === "claudeAgent" && /:thinking:\d+$/u.test(nativeItemRef.nativeId ?? "")
+  );
 }
 
 function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {

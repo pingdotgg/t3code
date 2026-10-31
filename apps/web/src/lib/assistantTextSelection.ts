@@ -219,7 +219,13 @@ export function captureAssistantTextSelection(
   const last = selectedTextBoundary(range, range.commonAncestorContainer, true);
   if (first === null || last === null) return null;
   const source = first.parentElement?.closest<HTMLElement>("[data-assistant-citation-source]");
-  if (!source || !viewport.contains(source)) return null;
+  if (
+    !source ||
+    !viewport.contains(source) ||
+    source.matches("[data-assistant-citation-quotable=false]")
+  ) {
+    return null;
+  }
 
   // Paragraph selection can end at the next block's offset 0 or a parent
   // boundary. Validate the text actually selected, not that empty endpoint.
