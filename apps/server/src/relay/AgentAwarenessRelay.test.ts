@@ -357,6 +357,37 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
+  it.effect("keeps the phase's published time when a finished thread is renamed", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* relay.publishThread(THREAD_ID);
+      const completedAt = DateTime.makeUnsafe("2026-09-04T12:01:00.000Z");
+      yield* Ref.set(currentShell, shell({ status: "completed", updatedAt: completedAt }));
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      yield* Ref.set(
+        currentShell,
+        shell({
+          status: "completed",
+          title: "Renamed thread",
+          updatedAt: DateTime.makeUnsafe("2026-09-04T13:00:00.000Z"),
+        }),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.deepEqual(
+        publications.map(({ state }) => [state?.phase, state?.threadTitle, state?.updatedAt]),
+        [
+          ["running", "Thread", NOW],
+          ["completed", "Thread", "2026-09-04T12:01:00.000Z"],
+          ["completed", "Renamed thread", "2026-09-04T12:01:00.000Z"],
+        ],
+      );
+    }),
+  );
+
   it.effect("republishes unchanged state with fresh credentials after relinking", () =>
     Effect.gen(function* () {
       const { relay, secrets, publications } = yield* makeTestRelay();
