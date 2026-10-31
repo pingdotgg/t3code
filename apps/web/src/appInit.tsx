@@ -1,10 +1,9 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import { createBrowserHistory, createHashHistory } from "@tanstack/react-router";
-import * as Schema from "effect/Schema";
 
 import { applyAppearanceContrast } from "./appearanceContrast";
-import { applyAppearanceFontVariables, TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "./appearanceFonts";
+import { applyAppearanceFontVariables } from "./appearanceFonts";
 import { startElectronBrowserHost } from "./browser/ElectronBrowserHost";
 import { startBrowserProfileReporting } from "./browser/BrowserProfileReporter";
 import { startPreviewTitleRecording } from "./browserHistoryStore";
@@ -31,7 +30,7 @@ import {
 } from "./composerDraftStore";
 import { startDefaultThemeAdoption } from "./hooks/useDefaultTheme";
 import { startEnvironmentThemeRepaint } from "./hooks/useEnvironmentTheme";
-import { readLocalStorageValue, subscribeLocalStorageKey } from "./hooks/useLocalStorage";
+import { getUiLocale } from "./hooks/useI18n";
 import {
   getClientSettings,
   startModelPreferencesMigration,
@@ -60,18 +59,10 @@ import { resolveThreadRouteTarget } from "./threadRoutes";
 function startClientAppearance(): void {
   const root = document.documentElement;
   let applied: ClientSettings | null = null;
-  let appliedSeparateFonts: boolean | null = null;
   const apply = () => {
     const settings = getClientSettings();
     const previous = applied;
     applied = settings;
-    const separateFonts = readLocalStorageValue(
-      TYPOGRAPHY_ADVANCED_STORAGE_KEY,
-      false,
-      Schema.Boolean,
-    );
-    const previousSeparateFonts = appliedSeparateFonts;
-    appliedSeparateFonts = separateFonts;
     if (previous?.diffColorScheme !== settings.diffColorScheme) {
       root.dataset.diffColorScheme = settings.diffColorScheme;
     }
@@ -96,8 +87,7 @@ function startClientAppearance(): void {
       previous.fontSizeInterface !== settings.fontSizeInterface ||
       previous.fontSizePrompt !== settings.fontSizePrompt ||
       previous.fontSizeCode !== settings.fontSizeCode ||
-      previous.fontSmoothing !== settings.fontSmoothing ||
-      previousSeparateFonts !== separateFonts
+      previous.fontSmoothing !== settings.fontSmoothing
     ) {
       applyAppearanceFontVariables(root, {
         sans: settings.fontFamilySans,
@@ -107,12 +97,19 @@ function startClientAppearance(): void {
         sizePrompt: settings.fontSizePrompt,
         sizeCode: settings.fontSizeCode,
         smoothing: settings.fontSmoothing,
-        separate: separateFonts,
       });
     }
   };
   subscribeClientSettings(apply);
-  subscribeLocalStorageKey(TYPOGRAPHY_ADVANCED_STORAGE_KEY, apply);
+  apply();
+}
+
+/** Keeps `<html lang>` in step with the UI language setting for accessibility and font shaping. */
+function startDocumentLanguage(): void {
+  const apply = () => {
+    document.documentElement.lang = getUiLocale();
+  };
+  subscribeClientSettings(apply);
   apply();
 }
 
@@ -179,6 +176,7 @@ export function startAppServices(): AppRouter {
   installDesktopPasteAsText(window.desktopBridge, window);
 
   startClientAppearance();
+  startDocumentLanguage();
   startDocumentTitle();
   startEnvironmentThemeRepaint();
   startBrowserChromeThemeSync(router);
