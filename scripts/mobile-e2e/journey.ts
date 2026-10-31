@@ -113,26 +113,43 @@ export async function runJourney(
     findLabel(snapshot, /^(Dismiss|OK|Close)$/) !== undefined
       ? findLabel(snapshot, /^Could not|failed|went wrong/i)
       : undefined;
-  for (let dialogs = 0; ; dialogs++) {
-    const launch = await device.waitFor(
-      (snapshot) => loaded(snapshot) || errorDialog(snapshot) !== undefined,
-      "the app to load",
-      180_000,
-    );
-    const dialog = errorDialog(launch);
-    if (!dialog || dialogs >= 3) break;
-    await capture("launch error", launch, [
-      check("no error dialog on launch", false, dialog.label ?? "error dialog"),
-    ]);
-    await device.agent(["press", `label="${findLabel(launch, /^(Dismiss|OK|Close)$/)!.label}"`]);
-    await delay(1_000);
-  }
+  let dialogs = 0;
+  /** Waits for `ready`, recording and dismissing up to three error dialogs on the way. */
+  const settle = async (
+    ready: (snapshot: Snapshot) => boolean,
+    label: string,
+    timeoutMs: number,
+  ) => {
+    for (;;) {
+      const snapshot = await device.waitFor(
+        (current) => ready(current) || errorDialog(current) !== undefined,
+        label,
+        timeoutMs,
+      );
+      const dialog = errorDialog(snapshot);
+      if (!dialog || dialogs >= 3) return snapshot;
+      dialogs++;
+      await capture("launch error", snapshot, [
+        check("no error dialog on launch", false, dialog.label ?? "error dialog"),
+      ]);
+      await device.agent([
+        "press",
+        `label="${findLabel(snapshot, /^(Dismiss|OK|Close)$/)!.label}"`,
+      ]);
+      await delay(1_000);
+    }
+  };
+  await settle(loaded, "the app to load", 180_000);
   let threads: Snapshot | null = null;
   for (let attempt = 1; attempt <= 2 && !threads; attempt++) {
     const pairing = new URLSearchParams({ pairingUrl: await pair(), autoConnect: "1" });
     await device.openUrl(`t3code-dev://connections/new?${pairing}`);
-    threads = await device
-      .waitFor((snapshot) => threadRow(snapshot) !== undefined, "the paired thread list", 60_000)
+    threads = await settle(
+      (snapshot) => threadRow(snapshot) !== undefined,
+      "the paired thread list",
+      60_000,
+    )
+      .then((snapshot) => (threadRow(snapshot) ? snapshot : null))
       .catch(() => null);
   }
   if (!threads) throw new Error("the app did not show the fixture threads after pairing");

@@ -2,6 +2,7 @@ import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
+  isProviderNativeSubagentThread,
   type OrchestrationV2DomainEvent,
   type ProviderThreadId,
   type OrchestrationV2RestartCancelledBackgroundWork,
@@ -93,10 +94,6 @@ function isBackgroundCapableTurnItemType(type: string): boolean {
 }
 
 function isNonterminalTurnItemStatus(status: string): boolean {
-  return status === "pending" || status === "running" || status === "waiting";
-}
-
-function isNonterminalNodeStatus(status: string): boolean {
   return status === "pending" || status === "running" || status === "waiting";
 }
 
@@ -232,16 +229,37 @@ export const make = Effect.gen(function* () {
         }
         runs.push(run);
       }
+      const pendingRequests = projection.runtimeRequests.filter(
+        (request) => request.status === "pending",
+      );
+      // The lost provider callback cannot resume; persisted questions can be
+      // answered by a new user message in threads that accept messages.
+      const questions = pendingRequests.filter(
+        (request) =>
+          request.kind === "user_input" &&
+          request.responseCapability.type === "live" &&
+          projection.turnItems.some(
+            (item) =>
+              item.type === "user_input_request" &&
+              item.requestId === request.id &&
+              item.nodeId === request.nodeId &&
+              item.questions.length > 0 &&
+              item.questions.every((question) => question.question.trim().length > 0),
+          ) &&
+          !isProviderNativeSubagentThread(projection.thread),
+      );
+      const recoveredRequestIds = new Set(questions.map((request) => request.id));
       const messageRequestNodeIds = new Set(
-        projection.runtimeRequests
+        pendingRequests
           .filter(
             (request) =>
-              request.status === "pending" && request.responseCapability.type === "message",
+              request.responseCapability.type === "message" || recoveredRequestIds.has(request.id),
           )
           .map((request) => request.nodeId),
       );
-      const requests = projection.runtimeRequests.filter(
-        (request) => request.status === "pending" && request.responseCapability.type !== "message",
+      const requests = pendingRequests.filter(
+        (request) =>
+          request.responseCapability.type !== "message" && !recoveredRequestIds.has(request.id),
       );
       // Delegated task rows, items and nodes stay open: the child settles them.
       const delegatedTaskNodeIds = new Set<string>([
@@ -336,6 +354,16 @@ export const make = Effect.gen(function* () {
           providerInstanceId: run.providerInstanceId,
           occurredAt: now,
           payload: { ...run, queueHeld: true },
+        });
+      }
+      for (const question of questions) {
+        events.push({
+          id: yield* allocateEventId(),
+          type: "runtime-request.updated",
+          threadId: projection.thread.id,
+          nodeId: question.nodeId,
+          occurredAt: now,
+          payload: { ...question, responseCapability: { type: "message" } },
         });
       }
       for (const request of requests) {
@@ -512,7 +540,7 @@ export const make = Effect.gen(function* () {
         if (item.nodeId !== null && item.nodeId !== undefined) {
           const staleItemNode = projection.nodes.find(
             (candidate) =>
-              candidate.id === item.nodeId && isNonterminalNodeStatus(candidate.status),
+              candidate.id === item.nodeId && isNonterminalTurnItemStatus(candidate.status),
           );
           if (staleItemNode !== undefined && !cancelledStaleNodeIds.has(staleItemNode.id)) {
             cancelledStaleNodeIds.add(staleItemNode.id);

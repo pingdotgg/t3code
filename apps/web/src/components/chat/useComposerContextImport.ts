@@ -39,6 +39,7 @@ import {
 import { assetEnvironment } from "~/state/assets";
 import { copiedComposerAttachmentFile } from "~/lib/copiedComposerAttachments";
 import { countQuestionAttachments, questionAttachmentDraftId } from "../../questionAttachments";
+import { collectInlineContextIds } from "../../lib/composerContextReferences";
 import { elementContextToPreviewAnnotation } from "../../lib/elementContext";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { pendingDraftWork } from "./pendingDraftWork";
@@ -75,6 +76,7 @@ async function downloadAttachmentBlob(url: string): Promise<Blob | null> {
  */
 export function useComposerContextImport(input: {
   readonly environmentId: EnvironmentId;
+  readonly linkedEnvironments: ReadonlyMap<EnvironmentId, string>;
   readonly activeThread: ChatComposerProps["activeThread"];
   readonly activeThreadId: ChatComposerProps["activeThreadId"];
   readonly composerDraftTarget: ChatComposerProps["composerDraftTarget"];
@@ -86,11 +88,13 @@ export function useComposerContextImport(input: {
   readonly composerContextRecords: ComposerDraftContextRecords;
   readonly composerImages: ReadonlyArray<ComposerImageAttachment>;
   readonly composerFilesRef: ChatComposerProps["composerFilesRef"];
+  readonly promptRef: RefObject<string>;
   readonly pendingThreadImportsRef: RefObject<Map<string, number>>;
   readonly addComposerFilesToDraft: (files: ComposerFileAttachment[]) => string[];
 }) {
   const {
     environmentId,
+    linkedEnvironments,
     activeThread,
     activeThreadId,
     composerDraftTarget,
@@ -102,6 +106,7 @@ export function useComposerContextImport(input: {
     composerContextRecords,
     composerImages,
     composerFilesRef,
+    promptRef,
     pendingThreadImportsRef,
     addComposerFilesToDraft,
   } = input;
@@ -189,6 +194,20 @@ export function useComposerContextImport(input: {
         fail("Downloading it from the source failed.");
         return;
       }
+      // Question attachments have no inline reference; annotations can own their screenshots.
+      const references = new Set(collectInlineContextIds(promptRef.current));
+      if (
+        !questionAttachmentTarget &&
+        !references.has(toKindScopedComposerContextId(record.kind, localId)) &&
+        !(
+          record.kind === "image" &&
+          references.has(previewAnnotationContextId(localId)) &&
+          getComposerDraft(composerDraftTarget)?.previewAnnotations.some(
+            (annotation) => annotation.id === localId,
+          )
+        )
+      )
+        return;
       file = new File([blob], record.name, { type: record.mimeType || blob.type });
     }
     // The draft these bytes belong to may have been sent or switched away from while they
@@ -372,8 +391,13 @@ export function useComposerContextImport(input: {
           break;
         }
         case "thread": {
-          // The agent can only read threads on its own server; a pasted foreign one is dropped.
-          if (record.environmentId !== environmentId) break;
+          // The agent reads threads on its own server and the machines it links to; a pasted
+          // thread from any other machine is dropped.
+          if (
+            record.environmentId !== environmentId &&
+            !linkedEnvironments.has(record.environmentId)
+          )
+            break;
           addComposerDraftThreadContexts(threadDraftTarget, [record], {
             appendReference: false,
           });

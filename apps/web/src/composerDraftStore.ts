@@ -435,7 +435,6 @@ interface ComposerDraftStoreState {
   >;
   stickyActiveProvider: ProviderInstanceId | null;
   getComposerDraft: (target: ComposerThreadTarget) => ComposerThreadDraftState | null;
-  getDraftThreadByLogicalProjectKey: (logicalProjectKey: string) => ProjectDraftSession | null;
   getDraftSessionByLogicalProjectKey: (logicalProjectKey: string) => ProjectDraftSession | null;
   getDraftThreadByProjectRef: (projectRef: ScopedProjectRef) => ProjectDraftSession | null;
   getDraftSessionByProjectRef: (projectRef: ScopedProjectRef) => ProjectDraftSession | null;
@@ -515,13 +514,6 @@ interface ComposerDraftStoreState {
       replaceOptions?: boolean;
     },
   ) => void;
-  setModelOptions: (
-    threadRef: ComposerThreadTarget,
-    modelOptions:
-      | Partial<Record<string, ReadonlyArray<ProviderOptionSelection>>>
-      | null
-      | undefined,
-  ) => void;
   applyStickyState: (threadRef: ComposerThreadTarget) => void;
   setProviderModelOptions: (
     threadRef: ComposerThreadTarget,
@@ -573,7 +565,6 @@ interface ComposerDraftStoreState {
     context: TerminalContextDraft,
     index: number,
   ) => boolean;
-  addTerminalContext: (threadRef: ComposerThreadTarget, context: TerminalContextDraft) => void;
   addTerminalContexts: (
     threadRef: ComposerThreadTarget,
     contexts: TerminalContextDraft[],
@@ -646,17 +637,10 @@ interface ComposerDraftModelState {
   modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
 }
 
-function providerSelectionsFromModelSelection(
+function selectionsByInstance(
   modelSelection: ModelSelection | null | undefined,
-): ProviderOptionSelectionsByProvider | null {
-  if (!modelSelection) {
-    return null;
-  }
-  const options = modelSelection.options;
-  if (!options || options.length === 0) {
-    return null;
-  }
-  return { [modelSelection.instanceId]: options };
+): Partial<Record<string, ModelSelection>> | null {
+  return modelSelection ? { [modelSelection.instanceId]: modelSelection } : null;
 }
 
 function modelSelectionByProviderToOptions(
@@ -1109,6 +1093,8 @@ export function deriveEffectiveComposerModelState(input: {
   providers: ReadonlyArray<ServerProvider>;
   selectedProvider: ProviderDriverKind;
   selectedInstanceId?: ProviderInstanceId | null | undefined;
+  /** The instance the draft, thread or project asked for; differs from the selection on fallback. */
+  requestedInstanceId?: ProviderInstanceId | null | undefined;
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
   settings: UnifiedSettings;
@@ -1168,16 +1154,65 @@ export function deriveEffectiveComposerModelState(input: {
         activeSelection.model,
       ))
     : baseModel;
-  const modelOptions =
-    modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??
-    providerSelectionsFromModelSelection(input.threadModelSelection) ??
-    providerSelectionsFromModelSelection(input.projectModelSelection) ??
-    null;
+  // Options come from the first of the draft, thread and project that has any. Their selections
+  // stay with them, so a fallback instance can check which model the options belong to.
+  const optionSelections =
+    [
+      input.draft?.modelSelectionByProvider,
+      selectionsByInstance(input.threadModelSelection),
+      selectionsByInstance(input.projectModelSelection),
+    ].find((selections) => modelSelectionByProviderToOptions(selections) !== null) ?? null;
+  const modelOptions = modelSelectionByProviderToOptions(optionSelections);
 
   return {
     selectedModel,
-    modelOptions,
+    modelOptions: withFallbackInstanceOptions({
+      ...input,
+      modelOptions,
+      optionSelections,
+      selectedModel,
+    }),
   };
+}
+
+/**
+ * When the requested instance is disabled or unavailable, the composer shows another instance of
+ * the same driver. When that instance has no options of its own and shows the model the requested
+ * instance's options were picked with, it takes those options instead of the model's defaults.
+ */
+function withFallbackInstanceOptions(input: {
+  readonly modelOptions: ProviderOptionSelectionsByProvider | null;
+  readonly optionSelections: Partial<Record<string, ModelSelection>> | null;
+  readonly selectedModel: string;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly selectedProvider: ProviderDriverKind;
+  readonly selectedInstanceId?: ProviderInstanceId | null | undefined;
+  readonly requestedInstanceId?: ProviderInstanceId | null | undefined;
+}): ProviderOptionSelectionsByProvider | null {
+  const { modelOptions, selectedInstanceId, requestedInstanceId } = input;
+  if (
+    !modelOptions ||
+    !selectedInstanceId ||
+    !requestedInstanceId ||
+    selectedInstanceId === requestedInstanceId ||
+    modelOptions[selectedInstanceId] !== undefined
+  ) {
+    return modelOptions;
+  }
+  const requestedOptions = modelOptions[requestedInstanceId];
+  const requestedDriver = input.providers.find(
+    (provider) => provider.instanceId === requestedInstanceId,
+  )?.driver;
+  // The model of the selection the options came from, which can differ from the shown model's source.
+  const requestedModel = input.optionSelections?.[requestedInstanceId]?.model;
+  if (
+    !requestedOptions ||
+    requestedDriver !== input.selectedProvider ||
+    requestedModel !== input.selectedModel
+  ) {
+    return modelOptions;
+  }
+  return { ...modelOptions, [selectedInstanceId]: requestedOptions };
 }
 
 function revokeObjectPreviewUrl(previewUrl: string): void {
@@ -2439,9 +2474,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
         stickyOptionsByModelByProvider: {},
         stickyActiveProvider: null,
         getComposerDraft: (target) => getComposerDraftState(get(), target),
-        getDraftThreadByLogicalProjectKey: (logicalProjectKey) => {
-          return get().getDraftSessionByLogicalProjectKey(logicalProjectKey);
-        },
         getDraftSessionByLogicalProjectKey: (logicalProjectKey) => {
           const normalizedLogicalProjectKey = logicalProjectDraftKey(logicalProjectKey);
           if (normalizedLogicalProjectKey.length === 0) {
@@ -2993,51 +3025,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
-        setModelOptions: (threadRef, modelOptions) => {
-          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
-          if (threadKey.length === 0) {
-            return;
-          }
-          set((state) => {
-            const existing = state.draftsByThreadKey[threadKey];
-            if (!existing && (!modelOptions || Object.keys(modelOptions).length === 0)) {
-              return state;
-            }
-            const base = existing ?? createEmptyThreadDraft();
-            const nextMap = { ...base.modelSelectionByProvider };
-            for (const provider of ["codex", "claudeAgent", "cursor", "opencode"] as const) {
-              if (!modelOptions || !(provider in modelOptions)) continue;
-              const opts = modelOptions[provider];
-              const driverKind = ProviderDriverKind.make(provider);
-              const instanceKey = defaultInstanceIdForDriver(driverKind);
-              const current = nextMap[instanceKey];
-              if (opts && opts.length > 0) {
-                nextMap[instanceKey] = createModelSelection(
-                  instanceKey,
-                  current?.model ?? DEFAULT_MODEL_BY_PROVIDER[driverKind] ?? DEFAULT_MODEL,
-                  opts,
-                );
-              } else if (current?.options) {
-                const { options: _, ...rest } = current;
-                nextMap[instanceKey] = rest as ModelSelection;
-              }
-            }
-            if (Equal.equals(base.modelSelectionByProvider, nextMap)) {
-              return state;
-            }
-            const nextDraft: ComposerThreadDraftState = {
-              ...base,
-              modelSelectionByProvider: nextMap,
-            };
-            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
-            if (shouldRemoveDraft(nextDraft)) {
-              delete nextDraftsByThreadKey[threadKey];
-            } else {
-              nextDraftsByThreadKey[threadKey] = nextDraft;
-            }
-            return { draftsByThreadKey: nextDraftsByThreadKey };
-          });
-        },
         setProviderModelOptions: (threadRef, provider, nextProviderOptions, options) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {
@@ -3533,17 +3520,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             };
           });
           return inserted;
-        },
-        addTerminalContext: (threadRef, context) => {
-          const threadKey = resolveComposerDraftKey(get(), threadRef);
-          const threadId = resolveComposerThreadId(get(), threadRef);
-          if (!threadKey || !threadId) {
-            return;
-          }
-          get().addTerminalContexts(
-            typeof threadRef === "string" ? DraftId.make(threadKey) : threadRef,
-            [context],
-          );
         },
         addTerminalContexts: (threadRef, contexts, options) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef);
@@ -4262,9 +4238,7 @@ export function subscribeComposerDraftModelReconciliation(input: {
       const thread = get(input.threadShellAtom(ref));
       if (!thread || !draftModelPickMatchesThread(pick, thread.modelSelection)) continue;
       // Status and selection must come from the same emission; derived atoms can update apart.
-      const shell = Option.getOrNull(
-        AsyncResult.value(get(input.shellStateAtom(ref.environmentId))),
-      );
+      const shell = AsyncResult.getOrElse(get(input.shellStateAtom(ref.environmentId)), () => null);
       if (shell?.status !== "live") continue;
       const authoritativeThread = Option.getOrNull(shell.snapshot)?.threads.find(
         (candidate) => candidate.id === ref.threadId,

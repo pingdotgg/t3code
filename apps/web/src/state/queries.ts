@@ -27,7 +27,6 @@ import type {
   VcsRef,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useState } from "react";
 
@@ -208,7 +207,7 @@ export function usePaginatedBranches(target: VcsRefTarget) {
     pagesKey === null ? EMPTY_VCS_REF_PAGES_ATOM : vcsRefPagesAtom(pagesKey),
   );
   const values = results.flatMap((result) => {
-    const value = Option.getOrNull(AsyncResult.value(result));
+    const value = AsyncResult.getOrElse(result, () => null);
     return value === null ? [] : [value];
   });
   const refs = new Map<string, VcsRef>();

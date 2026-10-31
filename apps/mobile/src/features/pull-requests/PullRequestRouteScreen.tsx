@@ -41,7 +41,7 @@ import {
   pullRequestDiffInitialPosition,
 } from "./pullRequestDiffDebug";
 import { usePullRequestDiffHighlightFiles } from "./usePullRequestDiffHighlightFiles";
-import { isPullRequestTestFile } from "./pullRequestFileFilters";
+import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
 import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
@@ -74,7 +74,7 @@ import { useAndroidWorkspaceBack } from "../workspace/useAndroidWorkspaceNavigat
 import { EmptyState } from "../../components/ui/EmptyState";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { relativeTime } from "../../lib/time";
+import { RelativeTime } from "../../components/RelativeTime";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { usePullRequestLiveChecks } from "./usePullRequestLiveChecks";
@@ -82,6 +82,7 @@ import { pullRequestLabelColor } from "./pullRequestList";
 import { PullRequestReactions } from "./PullRequestReactions";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
+import { SourceControlAppAccessNotice } from "./SourceControlAppAccessNotice";
 import { usePullToRefresh } from "../../state/use-pull-to-refresh";
 import {
   resolveNativeReviewDiffView,
@@ -110,6 +111,7 @@ import {
   PullRequestReadStatus,
 } from "./PullRequestPresentation";
 import { usePullRequestFilesSection } from "./PullRequestFiles";
+import { usePullRequestMaintainerEdits } from "./usePullRequestMaintainerEdits";
 import { PullRequestDescription } from "./PullRequestDescription";
 import { PullRequestMediaVisibleContext } from "./PullRequestMedia";
 import { PullRequestMarkdownRepository } from "./PullRequestMarkdown";
@@ -211,7 +213,7 @@ function PullRequestIdentity(props: {
           {pr.author?.login ?? "Unknown author"}
         </Text>
         <Text className="shrink text-right text-2xs text-foreground-muted" numberOfLines={1}>
-          Updated {relativeTime(pr.updatedAt)} ago
+          Updated <RelativeTime timestamp={pr.updatedAt} /> ago
         </Text>
       </View>
       <View className="flex-row items-start gap-1.5">
@@ -415,6 +417,11 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const terminology = sourceControlClients.get(identity?.provider).changeRequest;
   const permissions = usePullRequestPermissions(params, pr);
   const action = usePullRequestAction(params, pr);
+  const maintainerEdits = usePullRequestMaintainerEdits(
+    params,
+    pr,
+    permissions.canEditMaintainerEdits,
+  );
   const showsDeleteBranch = pr !== null && canPerformPullRequestAction(pr, "delete-branch");
   const confirmDeleteBranch = () =>
     pr &&
@@ -516,6 +523,19 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                     },
                   ]
                 : []),
+              ...(maintainerEdits.visible
+                ? [
+                    {
+                      accessibilityLabel: "Allow edits from maintainers",
+                      icon: "pencil" as const,
+                      selected: maintainerEdits.value,
+                      disabled: maintainerEdits.saving,
+                      subtitle: maintainerEdits.subtitle,
+                      overflowOnly: true,
+                      onPress: maintainerEdits.toggle,
+                    },
+                  ]
+                : []),
               ...(identity
                 ? [
                     {
@@ -594,6 +614,17 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                 onPress={() => navigation.navigate("PullRequestEdit", { ...params, field: "body" })}
               >
                 <Toolbar.Label>Edit description</Toolbar.Label>
+              </Toolbar.MenuAction>
+            ) : null}
+            {maintainerEdits.visible ? (
+              <Toolbar.MenuAction
+                icon="pencil"
+                isOn={maintainerEdits.value}
+                disabled={maintainerEdits.saving}
+                subtitle={maintainerEdits.subtitle}
+                onPress={maintainerEdits.toggle}
+              >
+                <Toolbar.Label>Allow edits from maintainers</Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
             {identity ? (
@@ -720,6 +751,12 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                         <View>
                           {tab === "overview" && identity ? (
                             <View>
+                              <SourceControlAppAccessNotice
+                                environmentId={params.environmentId}
+                                provider={identity.provider}
+                                host={params.host}
+                                repository={params.repository}
+                              />
                               {pr ? (
                                 <PullRequestOverview
                                   pr={pr}
@@ -757,7 +794,12 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                               </View>
                             </View>
                           ) : null}
-                          {tab === "guide" ? <PullRequestGuideContent params={params} /> : null}
+                          {tab === "guide" ? (
+                            <PullRequestGuideContent
+                              params={params}
+                              visible={section === "guide"}
+                            />
+                          ) : null}
                           {tab === "activity" ? (
                             <PullRequestActivityFilters
                               value={activityFilter}
@@ -831,19 +873,25 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                           }}
                         >
                           <PullRequestIdentity pr={identity} params={params} />
-                          <SegmentedControl
-                            options={[
-                              { value: "overview", label: "Overview" },
-                              ...(guidesEnabled
-                                ? [{ value: "guide" as const, label: "Guide" }]
-                                : []),
-                              { value: "activity", label: "Activity" },
-                            ]}
-                            selected={section}
-                            onSelect={selectSection}
-                            role="tab"
-                            size="compact"
-                          />
+                          {/* UIKit draws the tapped control's glass lens outside the hidden
+                              tab's opacity, so only the visible tab mounts the control. */}
+                          {Platform.OS !== "ios" || section === tab ? (
+                            <SegmentedControl
+                              options={[
+                                { value: "overview", label: "Overview" },
+                                ...(guidesEnabled
+                                  ? [{ value: "guide" as const, label: "Guide" }]
+                                  : []),
+                                { value: "activity", label: "Activity" },
+                              ]}
+                              selected={section}
+                              onSelect={selectSection}
+                              role="tab"
+                              size="compact"
+                            />
+                          ) : (
+                            <View style={{ height: 32 }} />
+                          )}
                         </View>
                       ) : null}
                     </>
@@ -998,7 +1046,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
   const jumpedUnder = useRef<boolean | null>(filter.hideTestFiles);
   const hasTestFiles =
     result.parsed.kind === "files" &&
-    result.parsed.files.some((file) => isPullRequestTestFile(file.path));
+    result.parsed.files.some((file) => isTestChangedFile(file.path));
   const jumpStarted = () =>
     jumpedUnder.current !== null && (!hasTestFiles || jumpedUnder.current === filter.hideTestFiles);
   const scrollToFile = (fileId: string) => {

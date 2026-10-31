@@ -1,7 +1,6 @@
 import type {
   ThreadPendingApproval,
   ThreadPendingUserInput,
-  ThreadUserInputQuestion,
 } from "@t3tools/client-runtime/state/thread-requests";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
@@ -80,13 +79,6 @@ import {
 
 export type PendingApproval = ThreadPendingApproval;
 export type PendingUserInput = ThreadPendingUserInput;
-
-export interface PendingUserInputDraftAnswer {
-  readonly selectedOptionValues?: ReadonlyArray<string>;
-  readonly customAnswer?: string;
-  readonly attachmentCount?: number;
-  readonly attachmentsBlocked?: boolean;
-}
 
 export interface ThreadFeedActivity {
   readonly id: string;
@@ -231,6 +223,7 @@ type ThreadFeedEntryContent =
     }
   | {
       readonly type: "run-fold";
+      readonly deferredWorkItemIds?: ReadonlyArray<string>;
       readonly id: string;
       readonly createdAt: string;
       readonly runId: RunId;
@@ -252,19 +245,6 @@ export interface ThreadFeedLatestRun {
   readonly turnEnded?: boolean;
 }
 
-export interface AgentSpawnSummary {
-  readonly title: string;
-  readonly status: string;
-  readonly tone: "working" | "completed" | "failed" | "stopped";
-  readonly members: ReadonlyArray<{
-    readonly title: string;
-    readonly status: string;
-    readonly tone: "working" | "completed" | "failed" | "stopped";
-    readonly detail: string | undefined;
-    readonly updatedAt: string;
-  }>;
-}
-
 /** Long Android headers can ANR despite one-line display; cap labels only, preserving expanded and copied text. */
 const WORK_LOG_LABEL_MAX_LENGTH = 200;
 
@@ -273,6 +253,7 @@ function compactWorkEntryText(value: string): string {
 }
 
 export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = false): string {
+  if (entry.itemType === "fork") return entry.label;
   if (expanded && entry.itemType === "reasoning")
     return entry.toolLifecycleStatus === "inProgress" ? "Thinking" : "Thought";
   const presentation = resolveWorkEntryToolPresentation(entry);
@@ -372,7 +353,7 @@ export function threadFeedCompactionLabels(feed: ReadonlyArray<ThreadFeedEntry>)
             ? undefined
             : {
                 title: `Context compacted after ${age} idle`,
-                compacting: `Compacting after ${age} idle…`,
+                compacting: "Compacting…",
               });
         if (labels) labelsByEntryId.set(entry.id, labels);
         pendingResumeAgeByRunId.delete(entry.runId);
@@ -416,73 +397,6 @@ export function isLinkRequestActivityGroup(entry: ThreadFeedActivityGroup): bool
 
 function isUserInputActivityGroup(entry: ThreadFeedActivityGroup): boolean {
   return entry.activities.some((activity) => activity.workEntry.questionAnswer !== undefined);
-}
-
-function normalizeDraftAnswer(value: string | undefined): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function resolvePendingUserInputOptionValue(
-  question: ThreadUserInputQuestion,
-  value: string,
-): string | null {
-  if (question.options.some((option) => option.value === value)) {
-    return value;
-  }
-
-  const label = value.trim();
-  return label.length > 0 &&
-    question.options.some((option) => option.value === undefined && option.label.trim() === label)
-    ? label
-    : null;
-}
-
-function normalizeSelectedOptionValues(
-  question: ThreadUserInputQuestion,
-  value: ReadonlyArray<string> | undefined,
-): ReadonlyArray<string> {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return Array.from(
-    new Set(
-      value
-        .map((entry) => resolvePendingUserInputOptionValue(question, entry))
-        .filter((entry): entry is string => entry !== null),
-    ),
-  );
-}
-
-function resolvePendingUserInputAnswer(
-  question: ThreadUserInputQuestion,
-  draft: PendingUserInputDraftAnswer | undefined,
-): string | ReadonlyArray<string> | null {
-  if (draft?.attachmentsBlocked) return null;
-  const customAnswer =
-    question.allowCustomAnswer === false
-      ? null
-      : question.initialAnswer !== undefined
-        ? (draft?.customAnswer ?? null)
-        : normalizeDraftAnswer(draft?.customAnswer);
-  if (customAnswer !== null && customAnswer.length > 0) {
-    return customAnswer;
-  }
-
-  const selectedOptionValues = normalizeSelectedOptionValues(question, draft?.selectedOptionValues);
-  if (question.multiSelect) {
-    return selectedOptionValues.length > 0
-      ? selectedOptionValues
-      : (customAnswer ??
-          (question.allowCustomAnswer !== false && (draft?.attachmentCount ?? 0) > 0 ? "" : null));
-  }
-  return (
-    selectedOptionValues[0] ??
-    customAnswer ??
-    (question.allowCustomAnswer !== false && (draft?.attachmentCount ?? 0) > 0 ? "" : null)
-  );
 }
 
 function capitalizePhrase(value: string): string {
@@ -1081,7 +995,7 @@ export function threadFeedRunIsUnsettled(
   );
 }
 
-export function threadFeedActivityIsVisible(
+function threadFeedActivityIsVisible(
   activity: Pick<ThreadFeedActivity, "prominent" | "status" | "toolLike"> &
     Partial<Pick<ThreadFeedActivity, "lifecycleStatus">>,
 ): boolean {
@@ -1095,6 +1009,7 @@ export function threadFeedActivityIsVisible(
 }
 
 interface ThreadFeedRunFold {
+  readonly deferredWorkItemIds?: ReadonlyArray<string>;
   readonly runId: RunId;
   readonly createdAt: string;
   readonly hiddenEntryIds: ReadonlySet<string>;
@@ -1286,7 +1201,17 @@ function deriveThreadFeedRunFolds(
     const duration = elapsedMs === null ? null : formatDuration(elapsedMs);
     const interrupted =
       latestRunMatches && (latestRun.status === "interrupted" || latestRun.status === "cancelled");
+    const deferredWorkItemIds = group.entries.flatMap((entry) =>
+      entry.type === "activity-group"
+        ? entry.activities.flatMap((activity) =>
+            activity.projectedItem.item.deferredWork
+              ? [String(activity.projectedItem.sourceItemId)]
+              : [],
+          )
+        : [],
+    );
     foldsByAnchorId.set(firstHiddenEntry.id, {
+      ...(deferredWorkItemIds.length > 0 ? { deferredWorkItemIds } : {}),
       runId,
       createdAt: firstHiddenEntry.createdAt,
       hiddenEntryIds,
@@ -1297,6 +1222,23 @@ function deriveThreadFeedRunFolds(
         : duration
           ? `Worked for ${duration}`
           : "Worked",
+    });
+  }
+  const covered = new Set(
+    [...foldsByAnchorId.values()].flatMap((fold) => [...fold.hiddenEntryIds]),
+  );
+  for (const entry of feed) {
+    if (entry.type !== "activity-group" || covered.has(entry.id)) continue;
+    const deferredWorkItemIds = entry.activities.flatMap((activity) =>
+      activity.projectedItem.item.deferredWork ? [String(activity.projectedItem.sourceItemId)] : [],
+    );
+    if (deferredWorkItemIds.length === 0) continue;
+    foldsByAnchorId.set(entry.id, {
+      runId: RunId.make(`deferred-work:${entry.id}`),
+      createdAt: entry.createdAt,
+      hiddenEntryIds: new Set([entry.id]),
+      label: "Earlier work",
+      deferredWorkItemIds,
     });
   }
   return foldsByAnchorId;
@@ -1514,11 +1456,13 @@ export function deriveThreadFeedPresentation(
         row.runId !== fold.runId ||
         row.createdAt !== fold.createdAt ||
         row.label !== fold.label ||
-        row.expanded !== expanded
+        row.expanded !== expanded ||
+        row.deferredWorkItemIds?.join("|") !== fold.deferredWorkItemIds?.join("|")
       ) {
         row = {
           type: "run-fold",
           id: `run-fold:${fold.runId}`,
+          ...(fold.deferredWorkItemIds ? { deferredWorkItemIds: fold.deferredWorkItemIds } : {}),
           createdAt: fold.createdAt,
           runId: fold.runId,
           label: fold.label,
@@ -1688,7 +1632,7 @@ function isWorkLogFeedRow(row: ThreadFeedEntry | undefined): boolean {
   );
 }
 
-export const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
+const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
 
 function thinkingRow(createdAt: string, runId: RunId | null) {
   if (cachedThinkingRow?.createdAt !== createdAt || cachedThinkingRow.runId !== runId) {
@@ -1956,93 +1900,6 @@ function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boo
   return activity.detail ?? activity.summary;
 }
 
-export function setPendingUserInputCustomAnswer(
-  question: ThreadUserInputQuestion,
-  draft: PendingUserInputDraftAnswer | undefined,
-  customAnswer: string,
-): PendingUserInputDraftAnswer {
-  if (question.allowCustomAnswer === false) {
-    return draft ?? {};
-  }
-
-  const selectedOptionValues =
-    question.initialAnswer !== undefined || customAnswer.trim().length > 0
-      ? undefined
-      : normalizeSelectedOptionValues(question, draft?.selectedOptionValues);
-  return {
-    customAnswer,
-    ...(selectedOptionValues && selectedOptionValues.length > 0 ? { selectedOptionValues } : {}),
-  };
-}
-
-export function isPendingUserInputOptionSelected(
-  question: ThreadUserInputQuestion,
-  draft: PendingUserInputDraftAnswer | undefined,
-  optionValue: string,
-): boolean {
-  if (question.allowCustomAnswer !== false && normalizeDraftAnswer(draft?.customAnswer)) {
-    return false;
-  }
-
-  const resolvedOptionValue = resolvePendingUserInputOptionValue(question, optionValue);
-  return (
-    resolvedOptionValue !== null &&
-    normalizeSelectedOptionValues(question, draft?.selectedOptionValues).includes(
-      resolvedOptionValue,
-    )
-  );
-}
-
-export function togglePendingUserInputOptionSelection(
-  question: ThreadUserInputQuestion,
-  draft: PendingUserInputDraftAnswer | undefined,
-  optionValue: string,
-): PendingUserInputDraftAnswer {
-  const resolvedOptionValue = resolvePendingUserInputOptionValue(question, optionValue);
-  if (resolvedOptionValue === null) {
-    return draft ?? {};
-  }
-
-  if (question.multiSelect) {
-    const selectedOptionValues = normalizeSelectedOptionValues(
-      question,
-      draft?.selectedOptionValues,
-    );
-    const nextSelectedOptionValues = selectedOptionValues.includes(resolvedOptionValue)
-      ? selectedOptionValues.filter((value) => value !== resolvedOptionValue)
-      : [...selectedOptionValues, resolvedOptionValue];
-
-    return {
-      customAnswer: "",
-      ...(nextSelectedOptionValues.length > 0
-        ? { selectedOptionValues: nextSelectedOptionValues }
-        : {}),
-    };
-  }
-
-  return {
-    customAnswer: "",
-    selectedOptionValues: [resolvedOptionValue],
-  };
-}
-
-export function buildPendingUserInputAnswers(
-  questions: ReadonlyArray<ThreadUserInputQuestion>,
-  draftAnswers: Record<string, PendingUserInputDraftAnswer>,
-): Record<string, string | ReadonlyArray<string>> | null {
-  const answers: Record<string, string | ReadonlyArray<string>> = {};
-
-  for (const question of questions) {
-    const answer = resolvePendingUserInputAnswer(question, draftAnswers[question.id]);
-    if (answer === null) {
-      return null;
-    }
-    answers[question.id] = answer;
-  }
-
-  return answers;
-}
-
 interface ThreadFeedBuild {
   readonly rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
   readonly attempts: ReadonlyArray<OrchestrationV2RunAttempt> | undefined;
@@ -2202,8 +2059,14 @@ export function buildThreadFeed(
   for (let index = restart?.row ?? 0; index < visibleTurnItems.length; index += 1) {
     const row = visibleTurnItems[index]!;
     const item = row.item;
-    if (turnItemIsWorkspacePreparation(item)) continue;
+    if (turnItemIsWorkspacePreparation(item) && !item.deferredWork) continue;
     if (item.type === "todo_list" || item.type === "checkpoint") continue;
+    if (
+      item.type === "user_message" &&
+      item.inputIntent === "queued_turn" &&
+      item.status === "pending"
+    )
+      continue;
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
     if (
       item.type === "run_interrupt_request" ||
@@ -2239,10 +2102,7 @@ export function buildThreadFeed(
       entryRows.push(index);
       continue;
     }
-    const app =
-      item.type === "dynamic_tool" && item.status === "completed"
-        ? mcpAppFromToolItem(item)
-        : undefined;
+    const app = item.type === "dynamic_tool" ? mcpAppFromToolItem(item) : undefined;
     if (app) {
       const entry: RawThreadFeedEntry = {
         type: "mcp-app",

@@ -4,7 +4,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Base64 from "effect/encoding/Base64";
 
-import * as GitHubRest from "./GitHubRest.ts";
+import * as GitHubAppAccess from "./GitHubAppAccess.ts";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
 export interface CascadeLayer {
@@ -42,10 +42,11 @@ export const cascadeRebaseStack = Effect.fn("cascadeRebaseStack")(function* (inp
   readonly layers: ReadonlyArray<CascadeLayer>;
   readonly remote?: string;
 }) {
-  const api = yield* GitHubRest.GitHubRest;
+  const appAccess = yield* GitHubAppAccess.GitHubAppAccess;
   const { process } = yield* SourceControlHost.SourceControlHost;
   const fileSystem = yield* FileSystem.FileSystem;
-  const { token } = yield* api.credential(input.host);
+  // A push takes one credential up front, so it must be one that reaches the repository.
+  const { token } = yield* appAccess.credentialFor(input.host, input.repository);
   const first = input.layers[0];
   if (first === undefined) return 0;
   const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-stack-rebase-" }).pipe(

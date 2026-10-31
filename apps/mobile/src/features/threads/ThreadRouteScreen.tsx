@@ -67,7 +67,6 @@ import {
   resolvePreferredThreadWorktreePath,
   stagePendingTerminalLaunch,
 } from "../terminal/terminalLaunchContext";
-import { terminalDebugLog } from "../terminal/terminalDebugLog";
 import type { ThreadDetailScreenProps } from "./ThreadDetailScreen";
 import { ThreadScreenBinding, ThreadScreenFallback, ThreadScreenHost } from "./ThreadScreenHost";
 import { draftRouteIdentity } from "./thread-route-state";
@@ -81,7 +80,7 @@ import { useSelectedThreadWorktree } from "../../state/use-selected-thread-workt
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { resolveMergeBackTargetThreadId } from "@t3tools/client-runtime/state/thread-relationships";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
-import { threadEnvironment, useThreadFamily } from "../../state/threads";
+import { threadEnvironment } from "../../state/threads";
 import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/threads";
 import { useProjects } from "../../state/entities";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
@@ -96,7 +95,11 @@ import {
   ThreadInspectorContentStack,
   type ThreadInspectorMode,
 } from "./thread-inspector-content-stack";
-import { threadRouteIsHydrating } from "./thread-route-hydration";
+import {
+  threadDetailErrorIsCurrent,
+  threadRouteIsHydrating,
+  threadRouteOpensDraft,
+} from "./thread-route-hydration";
 import { ThreadHeader } from "./ThreadHeader";
 import {
   useAndroidWorkspaceBack,
@@ -240,12 +243,6 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   const connectionsReady = useConnectionsReady();
   const { connectionState } = useRemoteConnectionStatus();
   const { selectedThread } = useThreadSelection();
-  // Subagent rows, the open child's own row and its ancestors come from the family when the
-  // shell leaves idle children out.
-  useThreadFamily(
-    selectedThread?.environmentId ?? null,
-    selectedThread?.lineage.rootThreadId ?? null,
-  );
   const params = props.route.params ?? {};
   const environmentIdRaw = firstRouteParam(params.environmentId);
   const threadIdRaw = firstRouteParam(params.threadId);
@@ -266,6 +263,13 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
       ? null
       : scopedThreadKey(selectedThread.environmentId, selectedThread.id);
   const selectedThreadDetailState = useSelectedThreadDetailState();
+  const detailError = selectedThreadDetailState.error;
+  const [errorBeforeConnected, setErrorBeforeConnected] = useState(() =>
+    routeConnectionState === "connected" ? Option.none<string>() : detailError,
+  );
+  if (routeConnectionState !== "connected" && errorBeforeConnected !== detailError) {
+    setErrorBeforeConnected(detailError);
+  }
   const withInspectorHeader = (content: ReactNode) => (
     <>
       {props.inspectorPresentation ? (
@@ -298,14 +302,25 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
     shellStatus: routeEnvironmentShellState.status,
     shellHasError: routeEnvironmentShellState.hasError,
     detailStatus: selectedThreadDetailState.status,
-    detailHasError: Option.isSome(selectedThreadDetailState.error),
+    detailHasError: threadDetailErrorIsCurrent({
+      connectionState: routeConnectionState,
+      error: detailError,
+      errorBeforeConnected,
+    }),
   });
 
   if (stillHydrating) {
     return withInspectorHeader(<OpeningThreadLoadingScreen />);
   }
 
-  if (routeName === "Thread" && !props.inspectorPresentation) {
+  if (
+    routeName === "Thread" &&
+    !props.inspectorPresentation &&
+    threadRouteOpensDraft({
+      connectionState: routeConnectionState,
+      detailStatus: selectedThreadDetailState.status,
+    })
+  ) {
     return <UnavailableThreadDraftRedirect environmentId={environmentId} />;
   }
 
@@ -675,12 +690,6 @@ function ThreadRouteContent(
   };
 
   const handleOpenTerminal = (nextTerminalId?: string | null) => {
-    terminalDebugLog("terminal-menu:open-existing", {
-      terminalId: nextTerminalId ?? null,
-      hasThread: Boolean(selectedThread),
-      hasWorkspaceRoot: Boolean(selectedThreadProject?.workspaceRoot),
-    });
-
     if (
       !selectedThread ||
       !selectedThreadProject?.workspaceRoot ||
@@ -698,12 +707,6 @@ function ThreadRouteContent(
   };
 
   const handleOpenNewTerminal = () => {
-    terminalDebugLog("terminal-menu:open-new", {
-      hasThread: Boolean(selectedThread),
-      hasWorkspaceRoot: Boolean(selectedThreadProject?.workspaceRoot),
-      listedTerminalIds: terminalMenuSessions.map((session) => session.terminalId),
-    });
-
     if (
       !selectedThread ||
       !selectedThreadProject?.workspaceRoot ||
@@ -727,22 +730,11 @@ function ThreadRouteContent(
   };
 
   const handleRunProjectScript = async (script: ProjectScript) => {
-    terminalDebugLog("project-script:press", {
-      scriptId: script.id,
-      command: script.command,
-      hasThread: Boolean(selectedThread),
-      hasWorkspaceRoot: Boolean(selectedThreadProject?.workspaceRoot),
-    });
-
     if (
       !selectedThread ||
       !selectedThreadProject?.workspaceRoot ||
       !readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)
     ) {
-      terminalDebugLog("project-script:abort", {
-        scriptId: script.id,
-        reason: "no-thread-workspace-or-terminal-access",
-      });
       return;
     }
 
@@ -780,12 +772,6 @@ function ThreadRouteContent(
         env,
         initialInput: projectScriptTerminalInput(script.command),
       },
-    });
-    terminalDebugLog("project-script:staged", {
-      scriptId: script.id,
-      terminalId: targetTerminalId,
-      cwd,
-      worktreePath: preferredWorktreePath,
     });
 
     void navigation.navigate("ThreadTerminal", {
