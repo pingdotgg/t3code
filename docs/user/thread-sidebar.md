@@ -138,6 +138,11 @@ there. A thread returns to the top of the active list when it finishes, fails, o
 answer. The Working section lists the thread you last sent work to first. Pinned threads stay in
 the pinned section.
 
+On web and desktop, a thread whose agent is idle and waiting only on pull requests it watches moves
+into its own collapsed **Watching PRs** section instead. It keeps babysitting: when checks,
+comments, or conflicts wake the agent, the thread shows in Working while it runs, then returns to
+Watching PRs. It comes back to the active list when the watch ends or the agent needs you.
+
 This is on by default. Turn it off with **Settings → General → Working section** on web and desktop,
 or **Settings → General → Working section** on iOS and Android. Each device keeps its own
 choice.

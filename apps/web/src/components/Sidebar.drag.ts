@@ -16,6 +16,7 @@ type Layout = Parameters<SortingStrategy>[0];
 const isShelfHeader = (item: SidebarListItem | undefined) =>
   item?.kind === "marker" &&
   (item.marker === "working-header" ||
+    item.marker === "watching-header" ||
     item.marker === "snoozed-header" ||
     item.marker === "settled-header");
 
@@ -56,7 +57,9 @@ export function createSidebarCollisionDetection(
       if (pointer.x >= boundary.left && pointer.x <= boundary.right) {
         if (pointer.y < previousY && pointer.y <= boundary.bottom) boundarySection = "pinned";
         else if (pointer.y > previousY && pointer.y >= boundary.top) boundarySection = "active";
-        const nextHeader = (["working-header", "snoozed-header", "settled-header"] as const)
+        const nextHeader = (
+          ["working-header", "watching-header", "snoozed-header", "settled-header"] as const
+        )
           .map((marker) =>
             args.droppableContainers.find((container) => container.id === sidebarMarkerId(marker)),
           )
@@ -118,6 +121,7 @@ export function createSidebarSortingStrategy(input: {
       pinned: [],
       active: [],
       working: [],
+      watching: [],
       snoozed: [],
       settled: [],
     };
@@ -132,7 +136,12 @@ export function createSidebarSortingStrategy(input: {
         }
         continue;
       }
-      if (item.section === "pinned" || item.section === "active" || item.section === "working")
+      if (
+        item.section === "pinned" ||
+        item.section === "active" ||
+        item.section === "working" ||
+        item.section === "watching"
+      )
         cardHeight ??= rects[index]?.height;
       else slimHeight ??= rects[index]?.height;
       if (item.key !== active.key) groups[item.section].push(item);
@@ -180,6 +189,10 @@ export function createSidebarSortingStrategy(input: {
       marker("working-header");
       projected.push(...groups.working);
     }
+    if (items.some((item) => item.kind === "marker" && item.marker === "watching-header")) {
+      marker("watching-header");
+      projected.push(...groups.watching);
+    }
     if (
       groups.snoozed.length > 0 ||
       ((active.section !== "snoozed" || (input.snoozedThreadCount ?? 0) > 1) &&
@@ -195,7 +208,10 @@ export function createSidebarSortingStrategy(input: {
       const rect = index === undefined ? undefined : rects[index];
       const fallback =
         item.kind === "thread" &&
-        (item.section === "pinned" || item.section === "active" || item.section === "working")
+        (item.section === "pinned" ||
+          item.section === "active" ||
+          item.section === "working" ||
+          item.section === "watching")
           ? cardHeight
           : slimHeight;
       const moved = item.kind === "thread" && item.key === active.key;
