@@ -25,7 +25,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { McpAttachmentInput } from "./attachment/input.ts";
-import { McpSchema, McpServer } from "effect/ai";
+import { McpSchema, McpServer, Tool } from "effect/ai";
 import { FetchHttpClient } from "effect/http";
 
 import {
@@ -955,6 +955,69 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
     ),
   ),
 );
+
+import { OrchestratorToolkit } from "./orchestrator/tools.ts";
+import { PullRequestsToolkit } from "./pullRequests/tools.ts";
+import { DeviceToolkit } from "./device/tools.ts";
+import { WorktreeToolkit } from "./worktree/tools.ts";
+
+interface ParameterSchema {
+  readonly description?: string;
+  readonly properties?: Readonly<Record<string, ParameterSchema>>;
+  readonly anyOf?: ReadonlyArray<ParameterSchema>;
+  readonly items?: ParameterSchema;
+}
+
+const parameterFields = (schema: ParameterSchema, field: string): ParameterSchema[] => [
+  ...(schema.properties?.[field] ? [schema.properties[field]] : []),
+  ...(schema.anyOf ?? []).flatMap((member) => parameterFields(member, field)),
+  ...(schema.items ? parameterFields(schema.items, field) : []),
+];
+
+it("advertises existing string parameter guidance to MCP clients", () => {
+  const tools = {
+    ...OrchestratorToolkit.tools,
+    ...PullRequestsToolkit.tools,
+    ...DeviceToolkit.tools,
+    ...WorktreeToolkit.tools,
+  };
+  for (const [name, path] of [
+    ["delegate_task", "clientRequestId"],
+    ["delegate_task", "target.providerInstanceId"],
+    ["delegate_task", "target.driverKind"],
+    ["request_secret", "label"],
+    ["request_secret", "reason"],
+    ["schedule_task", "projectId"],
+    ["list_scheduled_tasks", "projectId"],
+    ["orchestrator_capabilities", "search"],
+    ["link_pull_request", "threadId"],
+    ["link_pull_request", "repository"],
+    ["link_pull_request", "host"],
+    ["list_thread_pull_requests", "threadId"],
+    ["t3_worktree_handoff", "baseRef"],
+    ["t3_worktree_handoff", "continuationPrompt"],
+    ["device_open", "deviceId"],
+    ["device_open", "hostId"],
+    ["device_screenshot", "deviceId"],
+    ["device_close", "deviceId"],
+    ["t3_thread_update", "title"],
+    ["t3_thread_update", "clientRequestId"],
+    ["schedule_task", "schedule.timeOfDay"],
+    ["schedule_task", "schedule.signature.header"],
+  ] as const) {
+    const schema = Tool.getJsonSchema(tools[name]) as ParameterSchema;
+    const fields = path
+      .split(".")
+      .reduce<ParameterSchema[]>(
+        (nodes, field) => nodes.flatMap((node) => parameterFields(node, field)),
+        [schema],
+      );
+    expect(fields.length, name + "." + path).toBeGreaterThan(0);
+    for (const field of fields) {
+      expect(field.description, name + "." + path).toEqual(expect.any(String));
+    }
+  }
+});
 
 it.effect(
   "t3_thread_list settled:false with an empty statuses list lists the unsettled threads",

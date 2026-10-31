@@ -1144,6 +1144,17 @@ it.effect("lists pull request watch tools only to threads that are not delegated
           const body = (yield* listed.json) as {
             readonly result: { readonly tools: ReadonlyArray<{ readonly name: string }> };
           };
+          expect(body.result.tools.find((tool) => tool.name === "link_pull_request")).toMatchObject(
+            {
+              inputSchema: {
+                properties: {
+                  threadId: { description: "Thread. Default: this thread." },
+                  repository: { description: "With `number`, when no `url`." },
+                  host: { description: "Default: this project's host." },
+                },
+              },
+            },
+          );
           return body.result.tools.map((tool) => tool.name);
         });
 

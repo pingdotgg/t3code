@@ -5,11 +5,9 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 /** Uses the managed worktree folder; handoff detaches the provider, ending this turn and resuming there next run. */
 export const WorktreeMcpHandoffInput = Schema.Struct({
   branch: TrimmedNonEmptyString,
-  baseRef: Schema.optional(
-    TrimmedNonEmptyString.annotate({
-      description: "Default: checked-out branch.",
-    }),
-  ),
+  baseRef: Schema.optional(TrimmedNonEmptyString).annotate({
+    description: "Default: checked-out branch.",
+  }),
   startFromOrigin: Schema.optional(
     Schema.Boolean.annotate({
       description:
@@ -22,10 +20,10 @@ export const WorktreeMcpHandoffInput = Schema.Struct({
     }),
   ),
   continuationPrompt: Schema.optional(
-    TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)).annotate({
-      description: "Work to resume in the worktree next turn. Omitted: thread waits.",
-    }),
-  ),
+    TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)),
+  ).annotate({
+    description: "Work to resume in the worktree next turn. Omitted: thread waits.",
+  }),
 });
 export type WorktreeMcpHandoffInput = typeof WorktreeMcpHandoffInput.Type;
 

@@ -26,19 +26,23 @@ export function hasOnlyPairedSurrogates(value: string): boolean {
   return true;
 }
 
-const ThreadMetadataTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512)).annotate({
+const ThreadMetadataTitle = Schema.optional(
+  TrimmedNonEmptyString.check(Schema.isMaxLength(512)),
+).annotate({
   description: "New concise display title. Required only when action is rename.",
 });
 
-const ThreadMetadataClientRequestId = TrimmedNonEmptyString.check(Schema.isMaxLength(256))
-  .check(
+const ThreadMetadataClientRequestId = Schema.optional(
+  TrimmedNonEmptyString.check(Schema.isMaxLength(256)).check(
     Schema.makeFilter((value) =>
       hasOnlyPairedSurrogates(value)
         ? true
         : "clientRequestId must contain valid paired Unicode surrogates.",
     ),
-  )
-  .annotate({ description: "Stable idempotency key to reuse when retrying this mutation." });
+  ),
+).annotate({
+  description: "Stable idempotency key to reuse when retrying this mutation.",
+});
 
 export const ThreadMetadataMcpAction = Schema.Literals(["rename", "regenerate_title"]);
 export type ThreadMetadataMcpAction = typeof ThreadMetadataMcpAction.Type;
@@ -46,8 +50,8 @@ export type ThreadMetadataMcpAction = typeof ThreadMetadataMcpAction.Type;
 export const ThreadMetadataMcpUpdateInput = Schema.Struct({
   threadId: Schema.optional(ThreadId),
   action: ThreadMetadataMcpAction,
-  title: Schema.optional(ThreadMetadataTitle),
-  clientRequestId: Schema.optional(ThreadMetadataClientRequestId),
+  title: ThreadMetadataTitle,
+  clientRequestId: ThreadMetadataClientRequestId,
 }).check(
   Schema.makeFilter((input) =>
     (input.action === "rename") === (input.title !== undefined)

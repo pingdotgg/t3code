@@ -20,7 +20,7 @@ import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 
 const TimeOfDay = TrimmedNonEmptyString.check(
   Schema.isPattern(/^([01]?\d|2[0-3]):([0-5]\d)$/),
-).annotate({ description: "Local time as HH:MM, such as 09:30." });
+).pipe(Schema.annotateEncoded({ description: "Local time as HH:MM, such as 09:30." }));
 
 export const MIN_SCHEDULED_TASK_INTERVAL_MS = 60_000;
 
@@ -46,9 +46,11 @@ const ScheduledTaskFixedTimeSchedule = Schema.Struct({
 });
 
 const ScheduledTaskWebhookSignatureFields = {
-  header: TrimmedNonEmptyString.annotate({
-    description: "Header with the signature, such as x-hub-signature-256.",
-  }),
+  header: TrimmedNonEmptyString.pipe(
+    Schema.annotateEncoded({
+      description: "Header with the signature, such as x-hub-signature-256.",
+    }),
+  ),
   encoding: Schema.Literals(["hex", "base64"]),
   prefix: Schema.String.annotate({
     description: "Text before the digest, such as 'sha256='. Empty for none.",
