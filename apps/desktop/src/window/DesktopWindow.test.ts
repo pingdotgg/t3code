@@ -472,6 +472,45 @@ describe("DesktopWindow", () => {
     );
   });
 
+  it("rejects renderer navigations whose origin only serializes as null", () => {
+    for (const applicationUrl of ["t3code://app/", "t3code-dev://app/"]) {
+      assert.isTrue(
+        DesktopWindow.isSameOriginRendererNavigation({
+          applicationUrl,
+          navigationUrl: `${applicationUrl}threads?id=1#latest`,
+        }),
+        applicationUrl,
+      );
+    }
+    for (const navigationUrl of [
+      "t3code://other/",
+      "t3code://app.example/",
+      "t3code://app:8080/",
+      "t3code://user@other/",
+      "t3code:app",
+      "t3code-dev://app/",
+      "file:///etc/passwd",
+      "data:text/html,<p>hi</p>",
+      "javascript:alert(1)",
+      "about:blank",
+      "blob:t3code://app/0b5e2c4a",
+    ]) {
+      assert.isFalse(
+        DesktopWindow.isSameOriginRendererNavigation({
+          applicationUrl: "t3code://app/",
+          navigationUrl,
+        }),
+        navigationUrl,
+      );
+    }
+    assert.isFalse(
+      DesktopWindow.isSameOriginRendererNavigation({
+        applicationUrl: "data:text/html,app",
+        navigationUrl: "data:text/html,other",
+      }),
+    );
+  });
+
   it.effect(
     "opens and reopens the window without backend readiness when local execution is disabled",
     () =>
@@ -973,6 +1012,17 @@ describe("DesktopWindow", () => {
         if (!willNavigate) {
           return yield* Effect.die("will-navigate listener was not registered");
         }
+        for (const [url, expectedPrevented] of [
+          ["t3code-dev://app/threads?id=1#latest", false],
+          ["t3code-dev://other/", true],
+          ["t3code://app/", true],
+        ] as const) {
+          const preventDefault = vi.fn();
+          willNavigate({ preventDefault }, url);
+          assert.equal(preventDefault.mock.calls.length, expectedPrevented ? 1 : 0, url);
+        }
+        assert.deepEqual(openedExternalUrls, []);
+
         let prevented = false;
         willNavigate(
           {
