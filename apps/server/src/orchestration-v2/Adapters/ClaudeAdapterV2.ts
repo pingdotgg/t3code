@@ -3632,7 +3632,7 @@ function terminalStatusFromResult(
     return isOverloadedResult(message) ||
       message.api_error_status === 429 ||
       terminalResultError(message.terminal_reason, failureHint) !== undefined ||
-      (message.is_error && failureHint !== undefined)
+      message.is_error
       ? "failed"
       : "completed";
   }
