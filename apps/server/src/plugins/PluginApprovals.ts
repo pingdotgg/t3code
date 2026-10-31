@@ -36,7 +36,10 @@ import * as Stream from "effect/Stream";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { EventSinkV2, type EventSinkV2Error } from "../orchestration-v2/EventSink.ts";
 import { LiveStreamBufferError } from "../orchestration-v2/LiveStreamBudget.ts";
-import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
+import {
+  OrchestratorCommandRejectedError,
+  OrchestratorV2,
+} from "../orchestration-v2/Orchestrator.ts";
 import {
   ProjectionStoreV2,
   type ProjectionRuntimeResponseContext,
@@ -178,6 +181,7 @@ export const make = Effect.fn("PluginApprovals.make")(function* (
     installation: PluginInstallation,
     threadId: ThreadId,
     requestId: RuntimeRequestId,
+    kind: PluginApprovalKind,
     input: Schema.Json,
   ) => {
     const { installationId, generation } = installation;
@@ -205,21 +209,42 @@ export const make = Effect.fn("PluginApprovals.make")(function* (
         const decision = answer.success.decision === "approve" ? "accept" : "decline";
         const { reason } = answer.success;
         const recorded = yield* orchestrator
-          .dispatch({
-            type: "runtime-request.plugin-respond",
-            commandId: CommandId.make(
-              `plugin-approval:${requestId}:${installationId}:${generation}`,
-            ),
-            threadId,
-            requestId,
-            resolvedBy: {
-              _tag: "plugin",
-              pluginId: installation.manifest?.id ?? "",
-              pluginName: installation.manifest?.name ?? "",
-              decision,
-              ...(reason === undefined || reason.trim() === "" ? {} : { reason: reason.trim() }),
+          .dispatch(
+            {
+              type: "runtime-request.plugin-respond",
+              commandId: CommandId.make(
+                `plugin-approval:${requestId}:${installationId}:${generation}`,
+              ),
+              threadId,
+              requestId,
+              resolvedBy: {
+                _tag: "plugin",
+                pluginId: installation.manifest?.id ?? "",
+                pluginName: installation.manifest?.name ?? "",
+                decision,
+                ...(reason === undefined || reason.trim() === "" ? {} : { reason: reason.trim() }),
+              },
             },
-          })
+            {
+              beforeCommit: Effect.gen(function* () {
+                const current = (yield* catalog.list).installations.find(
+                  (candidate) => candidate.installationId === installationId,
+                );
+                if (
+                  current === undefined ||
+                  current.generation !== generation ||
+                  current.consent?.digest !== installation.consent?.digest ||
+                  !answers(current, kind)
+                )
+                  return yield* new OrchestratorCommandRejectedError({
+                    commandId: CommandId.make(
+                      `plugin-approval:${requestId}:${installationId}:${generation}`,
+                    ),
+                    commandType: "runtime-request.plugin-respond",
+                  });
+              }),
+            },
+          )
           .pipe(Effect.result);
         yield* Result.isSuccess(recorded)
           ? publish({ _tag: "Recorded", ...ids, decision })
@@ -294,7 +319,7 @@ export const make = Effect.fn("PluginApprovals.make")(function* (
       });
       yield* Effect.forEach(
         participants,
-        (installation) => ask(installation, threadId, requestId, input),
+        (installation) => ask(installation, threadId, requestId, kind, input),
         { concurrency: "unbounded", discard: true },
       );
     },

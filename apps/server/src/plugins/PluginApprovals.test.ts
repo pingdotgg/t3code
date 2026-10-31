@@ -37,6 +37,7 @@ import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexA
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
@@ -71,6 +72,7 @@ const orchestration = Layer.unwrap(
     const database = SqlitePersistence.layerMemory;
     return Layer.mergeAll(
       database,
+      ThreadCommandExecutor.layer,
       ProjectionStore.layer.pipe(Layer.provide(database)),
       ProviderReplayHarness.layerWithRegistry(
         { name: "plugin-approvals" },
@@ -665,6 +667,65 @@ it.layer(NodeServices.layer)("PluginApprovals", (it) => {
           });
         }),
       ),
+    );
+
+    it.effect.each(["disabled", "removed", "replaced", "consent-revoked"] as const)(
+      "refuses an answer revoked while waiting for the thread lock: %s",
+      (revocation) =>
+        withOrchestration(
+          Effect.gen(function* () {
+            yield* createThread;
+            const queued = yield* Deferred.make<void>();
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+            let revoked = false;
+            const original = stubCatalog([
+              { id: "test.policy", decide: () => answer({ decision: "approve" }) },
+            ]);
+            const catalog = PluginCatalog.PluginCatalog.of({
+              ...original,
+              list: Effect.map(original.list, ({ installations }) => ({
+                installations: !revoked
+                  ? installations
+                  : revocation === "removed"
+                    ? []
+                    : installations.map((installation) => ({
+                        ...installation,
+                        ...(revocation === "disabled" ? { enabled: false } : {}),
+                        ...(revocation === "replaced"
+                          ? { generation: installation.generation + 1 }
+                          : {}),
+                        ...(revocation === "consent-revoked" ? { consent: null } : {}),
+                      })),
+              })),
+            });
+            const { until } = yield* startApprovals(catalog).pipe(
+              Effect.provideService(Orchestrator.OrchestratorV2, {
+                ...orchestrator,
+                dispatch: (...args) =>
+                  Deferred.succeed(queued, undefined).pipe(
+                    Effect.andThen(orchestrator.dispatch(...args)),
+                  ),
+              }),
+            );
+            const requestId = yield* executor.withLock(
+              threadId,
+              Effect.gen(function* () {
+                const requestId = yield* raise(`revoked-${revocation}`, "git status");
+                yield* Deferred.await(queued);
+                revoked = true;
+                return requestId;
+              }),
+            );
+            expect(yield* until(settled(requestId))).toMatchObject({ _tag: "Refused" });
+            expect(yield* outcome(requestId)).toMatchObject({ status: "pending", item: "waiting" });
+            yield* userAnswers(requestId, "decline");
+            expect(yield* outcome(requestId)).toMatchObject({
+              status: "resolved",
+              decision: "decline",
+            });
+          }),
+        ),
     );
 
     it.effect("withdraws plugin calls when the user answers first", () =>
