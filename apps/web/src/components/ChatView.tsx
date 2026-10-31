@@ -3891,6 +3891,9 @@ export default function ChatView(props: ChatViewProps) {
                   onAddProjectScript={saveProjectScriptStable}
                   onUpdateProjectScript={updateProjectScriptStable}
                   onDeleteProjectScript={deleteProjectScriptStable}
+                  onCompactContext={onComposerCompactContextStable}
+                  compactDisabled={compactDisabled}
+                  compactDisabledReason={compactDisabledReason}
                   usage={{
                     providerInstanceId: activeProviderInstanceId,
                     providers: providerStatuses,
