@@ -9,6 +9,7 @@ import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import {
   deriveProviderSubagentStatus,
   deriveRunlessWorkStartedAt,
+  deriveSideChatTurnSupervised,
   deriveThreadActivityRun,
   deriveThreadRuntime,
   threadRuntimeHasInterruptibleRun,
@@ -299,7 +300,12 @@ export function useThreadComposerState() {
       : modelSelection,
     serverConfig?.providers ?? [],
   );
-  const runtimeMode = selectedDraft.runtimeMode ?? selectedThread?.runtimeMode ?? null;
+  const sideChatTurnSupervised =
+    selectedThreadProjection !== null &&
+    deriveSideChatTurnSupervised(selectedThreadProjection.projection);
+  const runtimeMode = sideChatTurnSupervised
+    ? "approval-required"
+    : (selectedDraft.runtimeMode ?? selectedThread?.runtimeMode ?? null);
   const selectedProvider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
     (provider) => provider.instanceId === modelSelection?.instanceId,
   );
@@ -667,7 +673,9 @@ export function useThreadComposerState() {
       attachments,
       context: draft.context,
       modelSelection,
-      runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
+      runtimeMode: sideChatTurnSupervised
+        ? "approval-required"
+        : (draft.runtimeMode ?? thread.runtimeMode),
       interactionMode: resolveProviderInteractionMode(
         provider,
         draft.interactionMode ?? thread.interactionMode,

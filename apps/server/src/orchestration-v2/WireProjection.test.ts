@@ -12,6 +12,8 @@ import {
   ProviderInstanceId,
   ThreadId,
   TurnItemId,
+  RunId,
+  type OrchestrationV2ContextHandoff,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadStreamItem,
@@ -81,6 +83,43 @@ describe("orchestration V2 wire projection", () => {
     };
     expect(JSON.stringify(projectDomainEventForWire(event))).not.toContain(item.summary);
     expect(item.summary).toBe("PRIVATE_HANDOFF_TRANSCRIPT");
+  });
+
+  it("reports whether a handoff was delivered while stripping its delivery details", () => {
+    const handoff = {
+      id: ContextHandoffId.make("handoff:delivered"),
+      threadId: base.threadId,
+      targetRunId: RunId.make("run-1"),
+      fromProviderThreadIds: [],
+      toProviderThreadId: ProviderThreadId.make("target"),
+      coveredRunOrdinals: { from: 1, to: 1 },
+      strategy: "manual_context" as const,
+      status: "ready" as const,
+      summaryMessageId: null,
+      summaryText: "PRIVATE_HANDOFF_TRANSCRIPT",
+      createdByProviderInstanceId: null,
+      createdAt: base.updatedAt,
+      updatedAt: base.updatedAt,
+    };
+    const delivery = {
+      nativeThreadId: "native",
+      status: "inline" as const,
+      itemIds: [],
+    };
+    const event = (payload: OrchestrationV2ContextHandoff) => ({
+      id: EventId.make("handoff:delivered"),
+      type: "context-handoff.updated" as const,
+      threadId: base.threadId,
+      occurredAt: base.updatedAt,
+      payload,
+    });
+    const undelivered = projectDomainEventForWire(event(handoff));
+    const delivered = projectDomainEventForWire(event({ ...handoff, delivery }));
+    expect(undelivered.payload).toMatchObject({ delivered: false, summaryText: "" });
+    expect(delivered.payload).toMatchObject({ delivered: true, summaryText: "" });
+    expect(delivered.payload).not.toHaveProperty("delivery");
+    // Live thread events are projected by the event sink and again by the WebSocket handler.
+    expect(projectDomainEventForWire(delivered).payload).toMatchObject({ delivered: true });
   });
 
   it("preserves image metadata through wire and JSON contracts while redacting output", () => {

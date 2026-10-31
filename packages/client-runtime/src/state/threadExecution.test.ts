@@ -1,4 +1,6 @@
 import {
+  ContextHandoffId,
+  ContextTransferId,
   TurnItemId,
   NodeId,
   MessageId,
@@ -23,6 +25,7 @@ import {
   deriveLatestThreadRun,
   deriveProviderSubagentStatus,
   deriveRunlessWorkStartedAt,
+  deriveSideChatTurnSupervised,
   deriveThreadActivityRun,
   deriveThreadRuntime,
   presentProviderGoal,
@@ -258,6 +261,55 @@ describe("thread execution presentation", () => {
       activeRunId: null,
     });
     expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(false);
+  });
+});
+
+describe("deriveSideChatTurnSupervised", () => {
+  it("supervises a side chat's turn until the server reports its context delivered", () => {
+    const failed = run("run-failed", 1, "failed");
+    const sideChat = {
+      ...v2Projection,
+      thread: {
+        ...v2Projection.thread,
+        lineage: {
+          ...v2Projection.thread.lineage,
+          parentThreadId: ThreadId.make("parent"),
+          sideChat: true,
+        },
+      },
+    };
+    const withHandoff = (delivered: boolean | undefined) => ({
+      ...sideChat,
+      runs: [failed],
+      contextHandoffs: [
+        {
+          id: ContextHandoffId.make("handoff-side"),
+          transferId: ContextTransferId.make("transfer-side"),
+          threadId: v2Projection.thread.id,
+          targetRunId: failed.id,
+          fromProviderThreadIds: [],
+          toProviderThreadId: ProviderThreadId.make("provider-thread-side"),
+          coveredRunOrdinals: { from: 1, to: 1 },
+          strategy: "manual_context" as const,
+          status: "ready" as const,
+          summaryMessageId: null,
+          summaryText: "",
+          ...(delivered === undefined ? {} : { delivered }),
+          createdByProviderInstanceId: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    });
+
+    expect(deriveSideChatTurnSupervised(sideChat)).toBe(true);
+    expect(deriveSideChatTurnSupervised(withHandoff(false))).toBe(true);
+    expect(deriveSideChatTurnSupervised(withHandoff(true))).toBe(false);
+    // Older servers do not report delivery; only the first turn is known to be supervised.
+    expect(deriveSideChatTurnSupervised(withHandoff(undefined))).toBe(false);
+    expect(
+      deriveSideChatTurnSupervised({ ...withHandoff(false), thread: v2Projection.thread }),
+    ).toBe(false);
   });
 });
 

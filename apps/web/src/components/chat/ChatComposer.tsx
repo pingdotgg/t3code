@@ -418,6 +418,8 @@ export interface ChatComposerProps {
   threadSyncPhase: ThreadSyncPhase | null;
 
   runtimeMode: RuntimeMode;
+  /** Narrower than the provider's modes when the server pins the next turn's mode. */
+  allowedRuntimeModes?: ReadonlyArray<RuntimeMode> | undefined;
   defaultRuntimeMode?: RuntimeMode;
   interactionMode: ProviderInteractionMode;
 
@@ -545,6 +547,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     showPlanFollowUpPrompt,
     activeProposedPlan,
     runtimeMode,
+    allowedRuntimeModes,
     interactionMode: requestedInteractionMode,
     lockedProvider,
     providerStatuses,
@@ -908,7 +911,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const { modes: compatibleRuntimeModes, mode: compatibleRuntimeMode } =
     resolveCompatibleRuntimeMode(
       runtimeMode,
-      selectedProviderEntry?.snapshot.supportedRuntimeModes,
+      allowedRuntimeModes ?? selectedProviderEntry?.snapshot.supportedRuntimeModes,
     );
   const compatibleRuntimeModeOptions = runtimeModeOptions.filter((option) =>
     compatibleRuntimeModes.includes(option.mode),
