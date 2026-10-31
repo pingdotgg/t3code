@@ -1169,30 +1169,34 @@ describe("Working shelf (beta)", () => {
       expect(resolveSidebarDropVerb("active", "working")).toBeNull();
     });
 
+    const planWorkingDrop = (overKey: string) =>
+      planSidebarThreadDrop({
+        activeKey: "w1",
+        activeSection: "working",
+        target: resolveSidebarDropTarget(items, "w1", overKey)!,
+        pinnedOrder: ["p1"],
+        pinnedKeysById: new Map([["p1", "m"]]),
+        activeOrder: ["a1", "a2"],
+        activeKeysById: new Map([
+          ["a1", "f"],
+          ["a2", "t"],
+        ]),
+        activeTimeOrdered: true,
+      });
+
+    it("pins a Working thread at the spot it is dropped", () => {
+      expect(planWorkingDrop("p1")).toMatchObject({ kind: "pin", order: ["w1", "p1"] });
+      expect(resolveSidebarDropVerb("working", "pinned")).toBe("pin");
+    });
+
     it.each([
-      ["pinned", "p1"],
       ["active", "a2"],
       ["settled", "s1"],
     ] as const)(
-      "does not move a Working thread into %s when its reference drag ends in the sidebar",
+      "does not move a Working thread into %s when its drag ends in the sidebar",
       (section, overKey) => {
-        const target = resolveSidebarDropTarget(items, "w1", overKey);
-        expect(target?.section).toBe(section);
-        expect(
-          planSidebarThreadDrop({
-            activeKey: "w1",
-            activeSection: "working",
-            target: target!,
-            pinnedOrder: ["p1"],
-            pinnedKeysById: new Map([["p1", "m"]]),
-            activeOrder: ["a1", "a2"],
-            activeKeysById: new Map([
-              ["a1", "f"],
-              ["a2", "t"],
-            ]),
-            activeTimeOrdered: true,
-          }),
-        ).toEqual({ kind: "none" });
+        expect(resolveSidebarDropTarget(items, "w1", overKey)?.section).toBe(section);
+        expect(planWorkingDrop(overKey)).toEqual({ kind: "none" });
       },
     );
 

@@ -98,6 +98,7 @@ export function createSidebarSortingStrategy(input: {
   settledVisibleCount?: number;
   routeThreadKey?: string | null;
   snoozedThreadCount?: number;
+  workingThreadCount?: number;
   cardHeight?: number;
   slimHeight?: number;
   boundaryLabelHeight?: number;
@@ -113,7 +114,9 @@ export function createSidebarSortingStrategy(input: {
     const over = items[overIndex] ?? active;
     if (active?.kind !== "thread" || !over || !rects[0]) return [];
     const target = resolveSidebarDropTarget(items, active.key, sidebarListItemId(over));
-    if (!target) return [];
+    // A lifted Working row has no slot of its own, but the boundary labels still need room.
+    if (!target && active.section !== "working") return [];
+    const targetSection = target?.section ?? "working";
     const groups: Record<SidebarSection, ThreadItem[]> = {
       pinned: [],
       active: [],
@@ -142,22 +145,24 @@ export function createSidebarSortingStrategy(input: {
     cardHeight ??= 82 * scale;
     slimHeight ??= 36 * scale;
     const labelHeight = (input.boundaryLabelHeight ?? 0) * scale;
-    const group = groups[target.section];
+    const group = groups[targetSection];
     const order =
-      target.section === "pinned"
-        ? target.pinnedOrder
-        : target.section === "settled"
-          ? input.settledOrder
-          : (input.activeOrder ?? target.activeOrder);
+      target === null
+        ? items.flatMap((item) => (item.kind === "thread" ? [item.key] : []))
+        : target.section === "pinned"
+          ? target.pinnedOrder
+          : target.section === "settled"
+            ? input.settledOrder
+            : (input.activeOrder ?? target.activeOrder);
     const ranks = new Map(order.map((key, index) => [key, index]));
     const rank = ranks.get(active.key) ?? Number.POSITIVE_INFINITY;
     const index = group.findIndex(
       (item) => (ranks.get(item.key) ?? Number.POSITIVE_INFINITY) > rank,
     );
-    group.splice(index < 0 ? group.length : index, 0, { ...active, section: target.section });
+    group.splice(index < 0 ? group.length : index, 0, { ...active, section: targetSection });
     const settledOrder = (
       input.settledOrder.length > 0 ? input.settledOrder : groups.settled.map((item) => item.key)
-    ).filter((key) => key !== active.key || target.section === "settled");
+    ).filter((key) => key !== active.key || targetSection === "settled");
     const visible = input.settledExpanded
       ? settledOrder.slice(0, input.settledVisibleCount ?? settledOrder.length)
       : [];
@@ -176,7 +181,11 @@ export function createSidebarSortingStrategy(input: {
     projected.push(...groups.pinned);
     marker("pinned-divider");
     section("active");
-    if (items.some((item) => item.kind === "marker" && item.marker === "working-header")) {
+    if (
+      groups.working.length > 0 ||
+      ((active.section !== "working" || (input.workingThreadCount ?? 0) > 1) &&
+        items.some((item) => item.kind === "marker" && item.marker === "working-header"))
+    ) {
       marker("working-header");
       projected.push(...groups.working);
     }
