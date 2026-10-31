@@ -6356,7 +6356,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     { status: 429, cooldown: "1h2m3s", seconds: 3723, proxy: true },
     { status: 429, cooldown: "1h2m3s", seconds: 3723, proxy: true, sdkResetSeconds: 60 },
     { status: 429, cooldown: "1h2m3s", seconds: 7200, proxy: true, sdkResetSeconds: 7200 },
-    { status: 429, cooldown: "1h2m3s", seconds: 3723, proxy: true, sdkResetSeconds: null },
+    { status: 429, cooldown: "1h2m3s", seconds: 0, proxy: true, sdkResetSeconds: null },
     {
       status: 429,
       cooldown: "nested 1h",
