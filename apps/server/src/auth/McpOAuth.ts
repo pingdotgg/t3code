@@ -28,6 +28,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpServerRequest } from "effect/http";
 
+import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
@@ -255,6 +256,16 @@ const make = Effect.gen(function* () {
     .getOrCreateRandom(SIGNING_SECRET_NAME, 32)
     .pipe(Effect.orDie);
   const codes = yield* Ref.make<ReadonlyMap<string, PendingCode>>(new Map());
+  // A gateway such as an OpenAI secure MCP tunnel rewrites discovery to its own address, so its
+  // clients ask for tokens for that address while their requests still reach this origin.
+  const resourceAliases = new Set((yield* ServerConfig.ServerConfig).mcpResourceAliases);
+
+  /** The resource a request asks for, if this server issues tokens for it. */
+  const targetResource = (urls: McpOAuthUrls, presented: string | undefined) => {
+    // Aliases match exactly: a gateway may route by any part of its URL, query included.
+    if (presented !== undefined && resourceAliases.has(presented)) return presented;
+    return sameResource(urls, presented) ? urls.resource : undefined;
+  };
 
   const sign = (domain: string, payload: string) => signPayload(`${domain}.${payload}`, signingKey);
 
@@ -303,6 +314,7 @@ const make = Effect.gen(function* () {
         authorization.client.clientId,
         authorization.redirectUri,
         authorization.codeChallenge,
+        authorization.resource,
       ]),
     );
 
@@ -382,7 +394,8 @@ const make = Effect.gen(function* () {
     ) {
       return yield* fail("invalid_request", "PKCE with code_challenge_method=S256 is required.");
     }
-    if (!sameResource(urls, request.resource)) {
+    const resource = targetResource(urls, request.resource);
+    if (resource === undefined) {
       return yield* fail("invalid_target", `This server only issues tokens for ${urls.resource}.`);
     }
     return {
@@ -390,7 +403,7 @@ const make = Effect.gen(function* () {
       redirectUri,
       codeChallenge,
       state,
-      resource: urls.resource,
+      resource,
       issuer: urls.issuer,
     } satisfies AuthorizationRequest;
   });
@@ -516,8 +529,8 @@ const make = Effect.gen(function* () {
         pending.expiresAtMs <= now ||
         pending.clientId !== clientId ||
         pending.redirectUri !== redirectUri ||
-        pending.resource !== urls.resource ||
-        !sameResource(urls, token.resource) ||
+        // An omitted resource means the one the code was issued for.
+        targetResource(urls, token.resource ?? pending.resource) !== pending.resource ||
         !(yield* pkceVerifies(verifier, pending.codeChallenge))
       ) {
         return yield* fail("invalid_grant", "The authorization code is invalid or expired.");

@@ -147,6 +147,38 @@ const EnvServerConfig = Config.all({
         .filter((entry) => entry.length > 0),
     ),
   ),
+  mcpResourceAliases: Config.String("T3CODE_MCP_RESOURCE_ALIASES").pipe(
+    Config.withDefault(""),
+    Config.mapEffect((value) => {
+      const aliases = value
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+      // Requests are matched against an alias exactly, so it must be written as clients send it.
+      const invalid = aliases.findIndex((alias) => {
+        const url = URL.canParse(alias) ? new URL(alias) : undefined;
+        return (
+          url === undefined ||
+          url.protocol !== "https:" ||
+          url.username !== "" ||
+          url.password !== "" ||
+          /[?#]/u.test(alias) ||
+          url.href !== alias
+        );
+      });
+      return invalid === -1
+        ? Effect.succeed(aliases)
+        : Effect.fail(
+            new Config.ConfigError(
+              new Schema.SchemaError(
+                new SchemaIssue.InvalidValue({
+                  message: `T3CODE_MCP_RESOURCE_ALIASES entry ${invalid + 1} must be a canonical https URL without credentials, a query or a fragment.`,
+                }),
+              ),
+            ),
+          );
+    }),
+  ),
   noBrowser: Config.Boolean("T3CODE_NO_BROWSER").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -505,6 +537,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     devUrl,
     ...(devAuthToken === undefined ? {} : { devAuthToken }),
     devAllowedOrigins: env.devAllowedOrigins,
+    mcpResourceAliases: env.mcpResourceAliases,
     noBrowser,
     startupPresentation,
     desktopBootstrapToken,
