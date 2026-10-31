@@ -145,7 +145,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   /* The inset sidebar's extra edge padding, so its content (already inset by
      --sidebar-content-inset) also starts one pane inset from the window. */
   --workspace-sidebar-edge-inset: calc(var(--workspace-pane-inset) - var(--sidebar-content-inset));
-  --workspace-pane-header-height: 2.25rem;
+  --workspace-pane-header-height: 2.125rem;
   --workspace-pane-inset-top: max(
     0px,
     calc((var(--workspace-chrome-row-height) - var(--workspace-pane-header-height)) / 2)
@@ -164,8 +164,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   /* How far a timeline control's hover fill may reach past the text column:
      a 24px icon button whose 12px glyph sits on the column edge. */
   --chat-lane-reach: 0.375rem;
-  /* The popover card is 380px (pen zSCUg) inside the panel viewport's 8px inline padding. */
-  --thread-details-panel-width: 24.75rem;
+  /* The 272px details stack (pen zSCUg), plus the panel viewport's 8px sides. */
+  --thread-details-panel-width: 18rem;
   /* The prompt on phones: iOS zooms into any input under 16px on focus. */
   --font-size-prompt-touch: max(var(--font-size-prompt, 1rem), 16px);
   /* Type role sizes (see @theme). Body and label text sit on the 14px base;
@@ -472,6 +472,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --text-prompt: var(--type-prompt);
   --text-prompt--line-height: 1.43;
   --text-prompt--font-weight: 400;
+  --text-control: 0.8125rem;
+  --text-control--line-height: 1.38;
+  --text-control--font-weight: 500;
   --text-label: var(--type-label);
   --text-label--line-height: 1.38;
   --text-label--font-weight: 500;
@@ -976,6 +979,24 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     var(--surface-fill) border-box;
   box-shadow: var(--surface-shadow);
 }
+/* Details use the snapshot's lower raised surfaces without repainting the composer. */
+:root:not([data-theme-id]:not([data-theme-id=""])):is(
+    :not([data-surface-style]),
+    [data-surface-style="gradient-rim"]
+  )
+  .thread-details-stack {
+  --tray-fill: linear-gradient(180deg, #fefefe, #fafafa);
+  --composer-fill: linear-gradient(180deg, #ffffff, #fafafa);
+}
+:root.dark:not([data-theme-id]:not([data-theme-id=""])):is(
+    :not([data-surface-style]),
+    [data-surface-style="gradient-rim"]
+  )
+  .thread-details-stack {
+  --tray-fill: linear-gradient(180deg, #1c1c1c, #191919);
+  --composer-fill: linear-gradient(180deg, #202020, #1c1c1c);
+}
+
 /* The composer: tray around it, text box inside, and the user's prompt. */
 @utility surface-tray {
   border: 1px solid var(--tray-stroke);
