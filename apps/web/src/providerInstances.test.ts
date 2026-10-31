@@ -333,6 +333,13 @@ describe("resolveSelectableProviderInstance", () => {
     expect(resolveSelectableProviderInstance(providers, disabled)).toBeUndefined();
     expect(resolveSelectableProviderInstance(providers, unavailable)).toBeUndefined();
     expect(resolveSelectableProviderInstance(providers, unknown)).toBeUndefined();
+    const restricted = {
+      ...provider({ provider: ProviderDriverKind.make("claudeAgent"), instanceId: unavailable }),
+      restrictedModels: [{ slug: "claude-opus-5-5", name: "Claude Opus 5.5" }],
+    };
+    expect(resolveSelectableProviderInstance([restricted], unavailable)).toBeUndefined();
+    const allowed = provider({ provider: ProviderDriverKind.make("codex"), instanceId: disabled });
+    expect(resolveSelectableProviderInstance([restricted, allowed], unavailable)).toBe(disabled);
   });
 });
 

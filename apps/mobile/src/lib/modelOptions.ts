@@ -40,19 +40,20 @@ export type ModelOption = {
   readonly canHide?: boolean;
   readonly capabilities: ModelCapabilities | null;
   readonly selection: ModelSelection;
-  readonly providerUpdateRequired?: ProviderUpdateRequired;
+  readonly providerWithheldModels?: ProviderWithheldModels;
 };
 
-type ProviderUpdateRequired = Pick<
+/** The provider fields naming models it never offers, which pickers explain instead. */
+type ProviderWithheldModels = Pick<
   T3ServerConfig["providers"][number],
-  "driver" | "updateRequiredModels"
+  "driver" | "updateRequiredModels" | "restrictedModels"
 >;
 
 export type ProviderGroup = {
   readonly providerKey: string;
   readonly providerLabel: string;
   readonly models: ReadonlyArray<ModelOption>;
-  readonly updateRequired?: ProviderUpdateRequired;
+  readonly withheldModels?: ProviderWithheldModels;
 };
 
 function providerDisplayLabel(provider: {
@@ -135,6 +136,29 @@ function normalizeSelectionOptions(
       };
 }
 
+function providerWithheldModels(
+  provider: T3ServerConfig["providers"][number],
+): ProviderWithheldModels | undefined {
+  if (!provider.updateRequiredModels?.length && !provider.restrictedModels?.length) {
+    return undefined;
+  }
+  return {
+    driver: provider.driver,
+    ...(provider.updateRequiredModels
+      ? { updateRequiredModels: provider.updateRequiredModels }
+      : {}),
+    ...(provider.restrictedModels ? { restrictedModels: provider.restrictedModels } : {}),
+  };
+}
+
+/** Claude Code answers a model the organization turned off with a different one. */
+function isRestrictedModel(
+  provider: T3ServerConfig["providers"][number] | undefined,
+  model: string,
+): boolean {
+  return provider?.restrictedModels?.some((restricted) => restricted.slug === model) === true;
+}
+
 /** Require explicit projectId or null so omissions cannot bypass project provider disablement. */
 export function isModelSelectionUnavailable(
   config: T3ServerConfig | null | undefined,
@@ -147,7 +171,10 @@ export function isModelSelectionUnavailable(
   const provider = config.providers.find(
     (candidate) => candidate.instanceId === selection.instanceId,
   );
-  if (isDisabledForProject(config, provider, selection.instanceId, projectId)) {
+  if (
+    isDisabledForProject(config, provider, selection.instanceId, projectId) ||
+    isRestrictedModel(provider, selection.model)
+  ) {
     return true;
   }
   const driver =
@@ -170,10 +197,16 @@ export function describeUnavailableModelSelection(
   const provider = config?.providers.find(
     (candidate) => candidate.instanceId === selection.instanceId,
   );
-  return isDisabledForProject(config, provider, selection.instanceId, projectId)
+  if (isDisabledForProject(config, provider, selection.instanceId, projectId)) {
+    return {
+      title: "Model turned off for this project",
+      detail: "Turn it back on from web or desktop, or choose another model.",
+    };
+  }
+  return isRestrictedModel(provider, selection.model)
     ? {
-        title: "Model turned off for this project",
-        detail: "Turn it back on from web or desktop, or choose another model.",
+        title: "Model turned off by your organization",
+        detail: "Choose another model.",
       }
     : {
         title: "Antigravity model unavailable",
@@ -200,7 +233,8 @@ export function resolveSelectableModelSelection(
   return provider &&
     isProviderEnabledForProject(config, provider, projectId) &&
     provider.installed &&
-    provider.auth.status !== "unauthenticated"
+    provider.auth.status !== "unauthenticated" &&
+    !isRestrictedModel(provider, selection.model)
     ? selection
     : null;
 }
@@ -308,9 +342,7 @@ export function buildModelOptions(
 
     const providerLabel = providerDisplayLabel(provider);
     const providerBadge = providerBadgeFor(provider.instanceId);
-    const updateRequired = provider.updateRequiredModels?.length
-      ? { driver: provider.driver, updateRequiredModels: provider.updateRequiredModels }
-      : undefined;
+    const withheldModels = providerWithheldModels(provider);
     const preferences = config?.settings?.providerModelPreferences?.[provider.instanceId];
     const hiddenModels = new Set(preferences?.hiddenModels ?? []);
     const order = new Map((preferences?.modelOrder ?? []).map((slug, index) => [slug, index]));
@@ -339,7 +371,7 @@ export function buildModelOptions(
         canHide: !model.isCustom,
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
-        ...(updateRequired ? { providerUpdateRequired: updateRequired } : {}),
+        ...(withheldModels ? { providerWithheldModels: withheldModels } : {}),
         capabilities: model.capabilities,
         selection: normalizeSelectionOptions(
           {
@@ -381,6 +413,7 @@ export function buildModelOptions(
       const model = provider?.models.find(
         (candidate) => candidate.slug === fallbackModelSelection.model,
       );
+      const withheldModels = provider ? providerWithheldModels(provider) : undefined;
       const providerDriver =
         provider?.driver ?? instanceConfig?.driver ?? fallbackModelSelection.instanceId;
       const providerLabel = providerDisplayLabel({
@@ -393,7 +426,12 @@ export function buildModelOptions(
         : undefined;
       options.set(key, {
         key,
-        label: model?.name ?? fallbackModelSelection.model,
+        label:
+          model?.name ??
+          [...(provider?.updateRequiredModels ?? []), ...(provider?.restrictedModels ?? [])].find(
+            (withheld) => withheld.slug === fallbackModelSelection.model,
+          )?.name ??
+          fallbackModelSelection.model,
         ...(shortName ? { shortName } : {}),
         subtitle: model?.subProvider ?? "",
         providerKey: fallbackModelSelection.instanceId,
@@ -407,6 +445,7 @@ export function buildModelOptions(
         provider?.updateRequiredModels?.some((gated) => gated.slug === fallbackModelSelection.model)
           ? { isUnavailable: true }
           : {}),
+        ...(withheldModels ? { providerWithheldModels: withheldModels } : {}),
         capabilities: model?.capabilities ?? null,
         selection: fallbackModelSelection,
       });
@@ -422,19 +461,19 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
     {
       providerLabel: string;
       models: ModelOption[];
-      updateRequired: ProviderUpdateRequired | undefined;
+      withheldModels: ProviderWithheldModels | undefined;
     }
   >();
   for (const option of options) {
     const existing = groups.get(option.providerKey);
     if (existing) {
       existing.models.push(option);
-      existing.updateRequired ??= option.providerUpdateRequired;
+      existing.withheldModels ??= option.providerWithheldModels;
     } else {
       groups.set(option.providerKey, {
         providerLabel: option.providerLabel,
         models: [option],
-        updateRequired: option.providerUpdateRequired,
+        withheldModels: option.providerWithheldModels,
       });
     }
   }
@@ -443,6 +482,6 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
     providerKey,
     providerLabel: group.providerLabel,
     models: group.models,
-    ...(group.updateRequired ? { updateRequired: group.updateRequired } : {}),
+    ...(group.withheldModels ? { withheldModels: group.withheldModels } : {}),
   }));
 }
