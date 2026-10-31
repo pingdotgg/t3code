@@ -482,6 +482,8 @@ function LiveActivityRow({
   failed = false,
   active = false,
   shimmer = false,
+  interruptible = false,
+  createdAt,
 }: {
   label: ReactNode;
   iconName?: WorkEntryIconName;
@@ -489,10 +491,14 @@ function LiveActivityRow({
   failed?: boolean;
   active?: boolean;
   shimmer?: boolean;
+  interruptible?: boolean;
+  createdAt?: string;
 }) {
-  const { pendingRequest, turnEnded } = use(TimelineRowActivityCtx);
+  const { onInterrupt } = use(TimelineRowCtx);
+  const { pendingRequest, turnEnded, activeTurnStartedAt } = use(TimelineRowActivityCtx);
   const animated = active && !failed && !pendingRequest && !turnEnded;
   const showShimmer = animated && shimmer;
+  const timerCreatedAt = createdAt ?? activeTurnStartedAt;
   return (
     <div
       ref={animated ? observeVisibleAnimation : undefined}
@@ -505,6 +511,23 @@ function LiveActivityRow({
         failed={failed}
         announceFailure={failed}
         active={animated && !shimmer}
+        trailing={
+          interruptible && animated && onInterrupt ? (
+            <span className="flex shrink-0 items-center gap-2.5 text-caption text-dim-foreground">
+              {timerCreatedAt ? <WorkingTimer createdAt={timerCreatedAt} /> : null}
+              <Button
+                variant="ghost-muted"
+                size="xs"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onInterrupt();
+                }}
+              >
+                Stop
+              </Button>
+            </span>
+          ) : undefined
+        }
       />
       {showShimmer ? (
         <ActivityShimmerOverlay>
@@ -523,6 +546,7 @@ function LiveActivityContent({
   announceFailure = false,
   active = false,
   highlighted = false,
+  trailing,
 }: {
   label: ReactNode;
   iconName: WorkEntryIconName | undefined;
@@ -531,6 +555,7 @@ function LiveActivityContent({
   announceFailure?: boolean;
   active?: boolean;
   highlighted?: boolean;
+  trailing?: ReactNode;
 }) {
   const showTrailingFailureMark =
     failed && iconName !== undefined && !toolIconAcceptsTint(toolIcon);
@@ -574,7 +599,9 @@ function LiveActivityContent({
       trailing={
         showTrailingFailureMark ? (
           <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
-        ) : null
+        ) : (
+          trailing
+        )
       }
     />
   );
@@ -869,6 +896,8 @@ const WorkingWindowItemView = memo(function WorkingWindowItemView({
         label={liveWorkEntryLabel(entry, ctx.workspaceRoot, true)}
         iconName={workEntryIconName(entry)}
         toolIcon={entry.toolIcon ?? entry.toolSource?.icon}
+        createdAt={entry.createdAt}
+        interruptible
         active
       />
     );
@@ -930,7 +959,6 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
       >
         <div
           ref={observeHeight}
-          inert={!open}
           role={open ? "region" : undefined}
           aria-label={open ? "Work history" : undefined}
           className={cn(
@@ -941,10 +969,12 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
           )}
         >
           {shown.map((item) => (
-            <WorkingWindowItemView key={item.id} item={item} />
+            <div key={item.id} inert={!open && !workingWindowItemIsLive(item)} className="min-w-0">
+              <WorkingWindowItemView item={item} />
+            </div>
           ))}
           {showThinking ? (
-            <LiveActivityRow label="Thinking" iconName="brain" active shimmer />
+            <LiveActivityRow label="Thinking" iconName="brain" active shimmer interruptible />
           ) : null}
         </div>
       </div>
