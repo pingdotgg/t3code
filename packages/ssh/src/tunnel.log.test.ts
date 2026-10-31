@@ -24,21 +24,32 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-log-" });
       const target = { alias: "fixture", hostname: "fixture", username: null, port: null };
       const stateKey = yield* remoteStateKey(target);
-      for (const mode of ["node", "archive"] as const) {
-        const home = path.join(root, mode, "home");
+      for (const [mode, diagnostic] of [
+        ["node", false],
+        ["archive", false],
+        ["node", true],
+        ["archive", true],
+      ] as const) {
+        const scenario = path.join(root, `${mode}-${diagnostic ? "diagnostic" : "empty"}`);
+        const home = path.join(scenario, "home");
         const state = path.join(home, ".t3", "ssh-launch", stateKey);
-        const bin = path.join(root, mode, "bin");
+        const bin = path.join(scenario, "bin");
         yield* fs.makeDirectory(state, { recursive: true });
         yield* fs.makeDirectory(bin);
         const legacyLog = path.join(state, "server.log");
         yield* fs.writeFileString(legacyLog, "STALE_DIAGNOSTIC\n");
-        const fixture = path.join(root, mode, "fake-t3.sh");
+        const fifo = path.join(scenario, "ready.fifo");
+        if (diagnostic) {
+          const makeFifo = yield* spawner.spawn(ChildProcess.make("mkfifo", [fifo]));
+          assert.equal(Number(yield* makeFifo.exitCode), 0);
+        }
+        const fixture = path.join(scenario, "fake-t3.sh");
         const fixtureScript =
-          '#!/bin/sh\ncase "$1" in\n  --version) echo 1.2.3 ;;\n  __ssh-helper) case "$2" in\n    pick-port) echo 37731 ;;\n    wait-ready | runtime-port) exit 1 ;;\n  esac ;;\n  serve) exit 0 ;;\nesac\n';
+          '#!/bin/sh\ncase "$1" in\n  --version) echo 1.2.3 ;;\n  __ssh-helper) case "$2" in\n    pick-port) echo 37731 ;;\n    wait-ready) if [ -n "$T3_TEST_LOG_FIFO" ]; then printf "ready\\n" > "$T3_TEST_LOG_FIFO"; fi; exit 1 ;;\n    runtime-port) exit 1 ;;\n  esac ;;\n  serve) if [ -n "$T3_TEST_LOG_FIFO" ]; then printf "CURRENT_DIAGNOSTIC\\n"; read -r ready < "$T3_TEST_LOG_FIFO"; fi; exit 0 ;;\nesac\n';
         yield* fs.writeFileString(fixture, fixtureScript, { mode: 0o700 });
         yield* fs.writeFileString(
           path.join(bin, "node"),
-          '#!/bin/sh\nif [ "$1" = "-" ]; then\n  case "$3" in 3773) cat >/dev/null; echo 37731; exit 0 ;; esac\n  cat >/dev/null; exit 1\nfi\nif [ "$1" = "-e" ]; then exec "$T3_TEST_REAL_NODE" "$@"; fi\nexec sh "$@"\n',
+          '#!/bin/sh\nif [ "$1" = "-" ]; then\n  case "$3" in 3773) cat >/dev/null; echo 37731; exit 0 ;; esac\n  cat >/dev/null; if [ "$2" = "37731" ] && [ -n "$T3_TEST_LOG_FIFO" ]; then printf "ready\\n" > "$T3_TEST_LOG_FIFO"; fi; exit 1\nfi\nif [ "$1" = "-e" ]; then exec "$T3_TEST_REAL_NODE" "$@"; fi\nexec sh "$@"\n',
           { mode: 0o700 },
         );
         if (mode === "archive") {
@@ -69,6 +80,7 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
                   HOME: home,
                   PATH: `${bin}:${environment.PATH ?? "/usr/bin:/bin"}`,
                   T3_TEST_REAL_NODE: executable,
+                  T3_TEST_LOG_FIFO: diagnostic ? fifo : "",
                 },
                 extendEnv: false,
               },
@@ -94,9 +106,12 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         const currentLog = path.join(state, logBasename!);
         assert.equal(exitCode, 1, stderr);
         assert.notInclude(stderr, "STALE_DIAGNOSTIC");
-        assert.include(stderr, "It wrote nothing to");
+        assert.include(stderr, diagnostic ? "CURRENT_DIAGNOSTIC" : "It wrote nothing to");
         assert.match(logBasename ?? "", /^server\.log\.[A-Za-z0-9]{8}$/u);
-        assert.equal(yield* fs.readFileString(currentLog), "");
+        assert.equal(
+          yield* fs.readFileString(currentLog),
+          diagnostic ? "CURRENT_DIAGNOSTIC\n" : "",
+        );
         assert.equal(
           yield* fs.readFileString(legacyLog),
           "STALE_DIAGNOSTIC\nLATE_OLD_DESCRIPTOR\n",
