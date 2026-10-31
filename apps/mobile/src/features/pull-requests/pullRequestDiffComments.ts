@@ -34,6 +34,7 @@ export function annotatePullRequestDiff(
   drafts: readonly PendingReviewComment[],
   headSha: string | undefined,
 ): NativeReviewDiffData {
+  if (threads.length === 0 && drafts.length === 0) return data;
   const anchors = new Map<string, NativeReviewDiffRow[]>();
   const firstByPath = new Map<string, NativeReviewDiffRow>();
   const lines = new Map<string, NativeReviewDiffRow>();

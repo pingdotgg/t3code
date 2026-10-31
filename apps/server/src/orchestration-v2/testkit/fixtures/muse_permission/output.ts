@@ -10,11 +10,7 @@ import {
 } from "../shared.ts";
 import { MUSE_PERMISSION_APPROVED_FILE, MUSE_PERMISSION_DECLINED_FILE } from "./input.ts";
 
-/**
- * Decline answers with Muse's Reject (`abort`) choice, so the command never
- * runs and the turn still settles instead of waiting on an answer Muse cannot
- * accept.
- */
+/** Decline uses Muse Reject (abort); the command never runs and the turn can settle. */
 export function assertMusePermissionOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,

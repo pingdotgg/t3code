@@ -1,28 +1,55 @@
+import { RegistryContext } from "@effect/atom-react";
+import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
 import { useEffect } from "react";
 import { act, render } from "../../../test/render";
 import { expect, it, vi } from "vite-plus/test";
 
-const { listEntries } = vi.hoisted(() => ({ listEntries: vi.fn() }));
-vi.mock("~/state/projects", async () => {
-  const { Atom } = await import("effect/reactivity");
-  const Effect = await import("effect/Effect");
-  return {
-    projectEnvironment: {
-      listEntries: (request: unknown) => Atom.make(Effect.promise(() => listEntries(request))),
-    },
-  };
-});
+const { listEntries, mocks } = vi.hoisted(() => ({
+  listEntries: vi.fn(),
+  mocks: {
+    reconnect: false,
+    reachable: null as unknown as Atom.Writable<boolean>,
+    connectedSession: null as unknown as Atom.Writable<number>,
+  },
+}));
+vi.mock("~/connection/catalog", () => ({
+  environmentCatalog: {
+    sessionGenerationAtom: () => Atom.make((get) => get(mocks.connectedSession)),
+  },
+}));
+vi.mock("~/state/projects", () => ({
+  projectEnvironment: {
+    listEntries: (request: unknown) =>
+      mocks.reconnect
+        ? Atom.make((get) =>
+            get(mocks.reachable)
+              ? AsyncResult.success({
+                  entries: [{ path: "README.md", kind: "file" }],
+                  truncated: false,
+                })
+              : AsyncResult.failure(Cause.fail(new Error("Environment is reconnecting."))),
+          )
+        : Atom.make(Effect.promise(() => listEntries(request))),
+  },
+}));
 
 import { useDirectoryEntries } from "./useDirectoryEntries";
 
 function setup() {
+  mocks.reconnect = false;
+  mocks.reachable = Atom.make(false);
+  mocks.connectedSession = Atom.make(1);
   let view!: ReturnType<typeof useDirectoryEntries>;
   const calls: Array<{ path: string; resolve: (entries: readonly ProjectEntry[]) => void }> = [];
   let activeQueries = 0;
   let peakQueries = 0;
-  function Probe() {
+  function HookProbe() {
     const result = useDirectoryEntries(EnvironmentId.make("files-test"), "/workspace");
+    // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- exposes committed hook output to the test driver
     useEffect(() => {
       view = result;
     });
@@ -47,7 +74,11 @@ function setup() {
     });
   });
   return {
-    Probe,
+    Probe: () => (
+      <RegistryContext.Provider value={appAtomRegistry}>
+        <HookProbe />
+      </RegistryContext.Provider>
+    ),
     settle,
     calls,
     get view() {
@@ -65,21 +96,22 @@ function setup() {
   };
 }
 
-it.each([1, 2, 3, 4, 5])("coalesces 20 overlapping refreshes (sample %s)", async () => {
+it("coalesces 20 overlapping refreshes", async () => {
   const state = setup();
+  // The hook probe does not navigate.
   await using screen = await render(<state.Probe />, { router: false });
   await state.settle(0);
   await act(async () => {
     for (let index = 0; index < 20; index++) state.view.refresh();
   });
   for (let index = 1; index < state.calls.length; index++) await state.settle(index);
-  console.log(`20 overlapping refreshes: ${state.calls.length - 1} root listing requests`);
   expect(state.calls).toHaveLength(3); // Initial load, active refresh, one final rescan.
   expect(state.view.isPending).toBe(false);
 });
 
 it("rescans mutations during both the initial listing and the follow-up", async () => {
   const state = setup();
+  // The hook probe does not navigate.
   await using screen = await render(<state.Probe />, { router: false });
   await act(async () => state.view.refresh());
   await state.settle(0);
@@ -98,6 +130,7 @@ it("rescans mutations during both the initial listing and the follow-up", async 
 
 it("shares the follow-up promise and does not resolve callers before the final listing", async () => {
   const state = setup();
+  // The hook probe does not navigate.
   await using screen = await render(<state.Probe />, { router: false });
   let completed = false;
   const first = state.view.load("", true);
@@ -118,6 +151,7 @@ it("retains the four-query concurrency bound across directories and refreshes", 
     kind: "directory" as const,
   }));
   const state = setup();
+  // The hook probe does not navigate.
   await using screen = await render(<state.Probe />, { router: false });
   await state.settle(0, folders);
   await act(async () => {
@@ -139,9 +173,6 @@ it("retains the four-query concurrency bound across directories and refreshes", 
     await state.settle(index, state.calls[index]!.path === "" ? folders : []);
     expect(state.activeQueries).toBeLessThanOrEqual(4);
   }
-  console.log(
-    `8 folders with 20 overlapping refreshes: ${state.calls.length} total listing requests, peak ${state.peakQueries} active queries`,
-  );
   expect(state.peakQueries).toBe(4);
   expect(new Set(state.calls.map((call) => call.path)).size).toBe(9);
   for (const path of ["", ...folders.map((folder) => folder.path)]) {
@@ -152,9 +183,35 @@ it("retains the four-query concurrency bound across directories and refreshes", 
 
 it("does not start a queued follow-up after unmount", async () => {
   const state = setup();
+  // The hook probe does not navigate.
   await using screen = await render(<state.Probe />, { router: false });
   await act(async () => state.view.refresh());
   await screen.unmount();
   await state.settle(0);
   expect(state.calls).toHaveLength(1);
+});
+
+function ReconnectProbe() {
+  const directory = useDirectoryEntries(EnvironmentId.make("env-files"), "/repo");
+  return (
+    <output>{directory.error ?? directory.entries.map((entry) => entry.path).join(",")}</output>
+  );
+}
+
+it("reads a folder that failed while unreachable again once a new session is up", async () => {
+  setup();
+  mocks.reconnect = true;
+  await using screen = await render(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <ReconnectProbe />
+    </RegistryContext.Provider>,
+    // The hook probe does not navigate.
+    { router: false },
+  );
+  await expect.element(screen.getByText("Environment is reconnecting.")).toBeInTheDocument();
+  await act(() => {
+    appAtomRegistry.set(mocks.reachable, true);
+    appAtomRegistry.set(mocks.connectedSession, 2);
+  });
+  await expect.element(screen.getByText("README.md")).toBeInTheDocument();
 });
