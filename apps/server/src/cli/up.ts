@@ -53,7 +53,9 @@ export const connectEnabled = (link: {
   readonly cliMode: CliState.CliDesiredLinkMode;
   readonly managedTunnel: boolean;
   readonly revoked: boolean;
-}) => !link.revoked && ((link.cliDesired && link.cliMode === "managed") || link.managedTunnel);
+}) =>
+  // The server starts no tunnel for a CLI publish-only link, even with an old tunnel config.
+  !link.revoked && (link.cliDesired ? link.cliMode === "managed" : link.managedTunnel);
 
 const readSetup = Effect.fn("cli.up.read_setup")(function* () {
   const { baseDir } = yield* ServerConfig.ServerConfig;
@@ -280,10 +282,8 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
       ? (yield* disconnectCloud({ clearAuthorization: false })).status === "failed"
       : false;
   const previousLan = (yield* CliService.readServiceEnv(baseDir)).entries.T3CODE_LAN;
-  // Only the background service reads service.env.
-  if (before.service.supported) {
-    yield* CliService.writeServiceEnv(baseDir, { T3CODE_LAN: String(routes.lan) });
-  }
+  // Also with no service manager: the file records the choice that `t3 status` shows.
+  yield* CliService.writeServiceEnv(baseDir, { T3CODE_LAN: String(routes.lan) });
   // When the service step fails, an installed service still runs with the old
   // value, so the file goes back to match it.
   // A new T3 Connect link is undone too, so a rerun sees it as a change and restarts.

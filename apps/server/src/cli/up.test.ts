@@ -90,6 +90,14 @@ it.each([
     on: false,
   },
   {
+    label: "a publish-only link with an old tunnel config",
+    cliDesired: true,
+    cliMode: "publish_only",
+    managedTunnel: true,
+    revoked: false,
+    on: false,
+  },
+  {
     label: "a revoked link",
     cliDesired: true,
     cliMode: "managed",
@@ -237,6 +245,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       installs: 0,
       restarts: 0,
       envAfter: "T3CODE_LAN=false\n",
+    },
+    {
+      label: "no service manager still records the choice",
+      installed: false,
+      status: { supported: false },
+      env: "",
+      args: ["--lan"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_LAN=true\n",
     },
     {
       label: "the old default is kept",
