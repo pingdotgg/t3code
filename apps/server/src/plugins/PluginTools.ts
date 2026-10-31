@@ -1,17 +1,5 @@
-/**
- * Tools that enabled plugins offer to agents, behind the two fixed MCP tools
- * `plugin_tools_list` and `plugin_tool_call`.
- *
- * Tools are declared in the consented manifest, so listing them reads the
- * catalogue and never starts a plugin; only a call does. A provider session
- * holds a snapshot of grants, taken when its MCP credential was prepared: the
- * tool plugins enabled at that moment, each with its registration generation.
- * Every list and call intersects that snapshot with the catalogue as it is
- * now, so a plugin disabled, removed, or re-registered since then is refused
- * at once, and a plugin enabled later waits for a new session. Calls are
- * pinned to the granted generation all the way into the supervisor, and
- * disabling a plugin fails its calls in flight.
- */
+// Grants pin installation generations; every list/call intersects them with the current catalogue.
+// Listing never starts plugins; revocation rejects in-flight calls and later registrations.
 import {
   PLUGIN_TOOL_LIMITS,
   PLUGIN_TOOLS_CAPABILITY,
