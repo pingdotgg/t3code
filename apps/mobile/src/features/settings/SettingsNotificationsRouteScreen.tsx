@@ -1,6 +1,4 @@
 import * as Dialog from "../../components/ui/Dialog";
-import { AuthRelayWriteScope } from "@t3tools/contracts";
-import { readEnvironmentScope } from "../../state/session";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAuth } from "@clerk/expo";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
@@ -25,19 +23,17 @@ import {
   openAndroidLiveUpdateSettings,
   supportsAndroidLiveUpdateSettings,
 } from "../agent-awareness/androidNotifications";
-import { setLiveActivityUpdatesEnabled } from "../agent-awareness/liveActivityPreferences";
 import { requestAgentNotificationPermission } from "../agent-awareness/notificationPermissions";
 import {
   getAgentAwarenessRegistrationStatus,
   refreshAgentAwarenessRegistration,
   subscribeAgentAwarenessRegistrationStatus,
+  updateAgentAwarenessRegistrationPreferences,
 } from "../agent-awareness/remoteRegistration";
-import { refreshManagedRelayEnvironments } from "../cloud/managedRelayState";
-import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/publicConfig";
+import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
 import { runtime } from "../../lib/runtime";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
-import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
@@ -45,7 +41,7 @@ import { SettingsScreen } from "./components/SettingsScreen";
 import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
-type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
+type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "updating";
 
 const notificationStatusAtom = makePermissionStatusAtom<NotificationStatus>({
   label: "mobile:notification-permission",
@@ -118,8 +114,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
       : agentAwarenessPlatform.subtitle;
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
-  const { getToken, isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
-  const { savedConnectionsById } = useSavedRemoteConnections();
+  const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const notificationStatus = useAtomValue(notificationStatusAtom);
   const setNotificationStatus = useAtomSet(notificationStatusAtom);
   // A write in progress or a failed one shows its own status until the auth or
@@ -140,15 +135,9 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     setLiveActivityOverride({ status, basis: liveActivityBasis });
   const liveActivityWriteInFlight = useRef(false);
   const deviceRegistered = useDeviceRegistered();
-  const liveActivitiesPreferenceEnabled = AsyncResult.isSuccess(preferencesResult)
-    ? preferencesResult.value.liveActivitiesEnabled !== false
-    : true;
   const canClearLiveActivitiesPreference =
     AsyncResult.isSuccess(preferencesResult) &&
     preferencesResult.value.liveActivitiesEnabled !== false;
-
-  const connections = Object.values(savedConnectionsById);
-  const environmentCount = connections.length;
 
   const requestNotifications = async () => {
     const result = await settleAsyncResult(() =>
@@ -219,13 +208,13 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     );
   };
 
-  const linkEnvironments = async () => {
+  const enableLiveActivities = async () => {
     if (!isSignedIn) {
       promptSignIn();
       return;
     }
 
-    setLiveActivityStatus("linking");
+    setLiveActivityStatus("updating");
     if (Platform.OS === "android") {
       const permission = await settleAsyncResult(() =>
         runtime.runPromiseExit(requestAgentNotificationPermission),
@@ -253,32 +242,9 @@ function ConfiguredSettingsNotificationsRouteScreen() {
       }
       setNotificationStatus("enabled");
     }
-    const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
-    if (tokenResult._tag === "Failure") {
-      setLiveActivityStatus("disabled");
-      const error = squashAtomCommandFailure(tokenResult);
-      Dialog.alert(
-        Platform.OS === "android" ? "Ongoing activity unavailable" : "Live Activities unavailable",
-        error instanceof Error ? error.message : "Could not enable agent activity updates.",
-      );
-      return;
-    }
-    if (!tokenResult.value) {
-      promptSignIn();
-      setLiveActivityStatus("signed-out");
-      return;
-    }
-
     const updateResult = await settleAsyncResult(() =>
       runtime.runPromiseExit(
-        setLiveActivityUpdatesEnabled({
-          canConfigureEnvironment: (environmentId) =>
-            readEnvironmentScope(environmentId, AuthRelayWriteScope),
-          enabled: true,
-          previousEnabled: liveActivitiesPreferenceEnabled,
-          clerkToken: tokenResult.value,
-          connections,
-        }),
+        updateAgentAwarenessRegistrationPreferences({ liveActivitiesEnabled: true }),
       ),
     );
     if (updateResult._tag === "Failure") {
@@ -296,15 +262,11 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     }
 
     savePreferences({ liveActivitiesEnabled: true });
-    refreshManagedRelayEnvironments();
     setLiveActivityStatus("enabled");
-    // Environment linking can precede device registration; only registered devices can receive Live Activities.
     if (getAgentAwarenessRegistrationStatus() === "registered") {
       Dialog.alert(
         Platform.OS === "android" ? "Ongoing activity enabled" : "Live Activities enabled",
-        environmentCount > 0
-          ? "Agent activity updates are enabled for environments this connection can configure."
-          : "Agent activity updates are enabled. Add an environment to start receiving updates.",
+        "Agent activity updates are enabled for this device.",
       );
     } else {
       Dialog.alert(
@@ -335,29 +297,9 @@ function ConfiguredSettingsNotificationsRouteScreen() {
   };
 
   async function disableLiveActivities() {
-    let token: string | null = null;
-    if (isSignedIn) {
-      const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
-      if (tokenResult._tag === "Failure") {
-        setLiveActivityStatus("enabled");
-        reportAtomCommandResult(tokenResult, {
-          label: "live activity disable token lookup",
-        });
-        return;
-      }
-      token = tokenResult.value;
-    }
-
     const updateResult = await settleAsyncResult(() =>
       runtime.runPromiseExit(
-        setLiveActivityUpdatesEnabled({
-          canConfigureEnvironment: (environmentId) =>
-            readEnvironmentScope(environmentId, AuthRelayWriteScope),
-          enabled: false,
-          previousEnabled: liveActivitiesPreferenceEnabled,
-          clerkToken: token,
-          connections,
-        }),
+        updateAgentAwarenessRegistrationPreferences({ liveActivitiesEnabled: false }),
       ),
     );
     if (updateResult._tag === "Failure") {
@@ -368,7 +310,6 @@ function ConfiguredSettingsNotificationsRouteScreen() {
       return;
     }
     savePreferences({ liveActivitiesEnabled: false });
-    refreshManagedRelayEnvironments();
     setLiveActivityStatus("disabled");
   }
 
@@ -377,7 +318,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     if (liveActivityWriteInFlight.current) return;
     if (!enabled) {
       liveActivityWriteInFlight.current = true;
-      setLiveActivityStatus("linking");
+      setLiveActivityStatus("updating");
       await disableLiveActivities();
       liveActivityWriteInFlight.current = false;
       return;
@@ -389,7 +330,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     }
 
     liveActivityWriteInFlight.current = true;
-    await linkEnvironments();
+    await enableLiveActivities();
     liveActivityWriteInFlight.current = false;
   };
 
@@ -426,7 +367,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
               !agentAwarenessPushAvailable ||
               !isLoaded ||
               liveActivityStatus === "checking" ||
-              liveActivityStatus === "linking"
+              liveActivityStatus === "updating"
             }
             icon="bolt.circle"
             label={
@@ -439,7 +380,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
             subtitle={agentAwarenessSubtitle}
             value={
               agentAwarenessPushAvailable &&
-              (liveActivityStatus === "enabled" || liveActivityStatus === "linking") &&
+              (liveActivityStatus === "enabled" || liveActivityStatus === "updating") &&
               deviceRegistered
             }
             onValueChange={(enabled) => void handleLiveActivitiesChange(enabled)}
