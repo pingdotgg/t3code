@@ -510,6 +510,22 @@ it("notes a substituted model with the root provider notice from the same run", 
     ).text,
     "Review done.",
   );
+  // The newest turn reported no model, so an earlier turn's substitution is not attributed to it.
+  assert.equal(
+    subagentResultForRun(
+      {
+        ...projection,
+        messages: [{ ...answer.message, runId: run.id }],
+        turnItems: [notice("fallback", fallback)],
+        providerTurns: [
+          { runAttemptId: run.activeAttemptId, ordinal: 1, model: "gpt-5.4-mini" },
+          { runAttemptId: run.activeAttemptId, ordinal: 2 },
+        ] as never,
+      },
+      run,
+    ).text,
+    "Review done.",
+  );
 });
 
 it.effect("ends an orphaned native subagent's node when only its record already ended", () =>

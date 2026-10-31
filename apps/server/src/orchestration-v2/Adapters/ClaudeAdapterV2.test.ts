@@ -90,6 +90,10 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
+import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  resolveClaudeModelSlug,
+} from "../../provider/ClaudeModelCatalog.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -7291,6 +7295,37 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ]);
       yield* Queue.take(harness.terminalReceipts);
       assert.equal(lastProviderTurn(harness.events).model, "claude-sonnet-4-6");
+
+      // A requested alias that the catalog resolves to the reported model is no substitution.
+      const aliasTurn = (ordinal: number, reported: string) =>
+        Effect.gen(function* () {
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              ...turnInput,
+              modelSelection: { ...turnInput.modelSelection, model: "opus" },
+              attemptId: RunAttemptId.make(`attempt-claude-restricted-model-${ordinal}`),
+              providerTurnOrdinal: ordinal,
+              text: "Use the alias.",
+            }),
+          );
+          yield* Queue.offerAll(harness.sdkMessages, [
+            usageStreamFrame({
+              type: "message_start",
+              message: { id: `alias-model-${ordinal}`, model: reported, usage: zeroUsage },
+            }),
+            makeResultFrame({
+              uuid: `00000000-0000-4000-8000-00000000067${ordinal}`,
+              result: "Done.",
+            }),
+          ]);
+          yield* Queue.take(harness.terminalReceipts);
+          return lastProviderTurn(harness.events).model;
+        });
+      assert.equal(
+        yield* aliasTurn(5, resolveClaudeModelSlug(BUNDLED_CLAUDE_MODEL_CATALOG, "opus")),
+        "opus",
+      );
+      assert.equal(yield* aliasTurn(6, "claude-sonnet-4-6"), "claude-sonnet-4-6");
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -10171,63 +10206,90 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("starts the wake run when Claude opens the wake turn, before its output", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
-        const now = yield* DateTime.now;
+  it.effect.each(["init", "stream start"] as const)(
+    "starts the wake run when Claude opens the wake turn with %s, before its output",
+    (opening) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const now = yield* DateTime.now;
 
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-claude-wake-init-1"),
-            text: "Run the build in the background.",
-            attachments: [],
-          }),
-        );
-        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
-        yield* Queue.offer(harness.sdkMessages, turnOneResult);
-        yield* harness.awaitTerminal(1);
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-init-1"),
+              text: "Run the build in the background.",
+              attachments: [],
+            }),
+          );
+          yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+          yield* Queue.offer(harness.sdkMessages, turnOneResult);
+          yield* harness.awaitTerminal(1);
 
-        yield* harness.offerAndWait(wakeNotification);
-        assert.lengthOf(harness.continuationRequests, 0);
-        yield* harness.offerAndWait(wakeTurnInit);
-        assert.lengthOf(harness.continuationRequests, 1);
-        assert.equal(harness.continuationRequests[0]?.detail, WAKE_SUMMARY);
+          yield* harness.offerAndWait(wakeNotification);
+          assert.lengthOf(harness.continuationRequests, 0);
+          if (opening === "init") {
+            yield* harness.offerAndWait(wakeTurnInit);
+          } else {
+            yield* harness.offerAndWait(
+              usageStreamFrame(
+                {
+                  type: "message_start",
+                  message: { id: "wake-child", model: "claude-haiku-4-5", usage: zeroUsage },
+                },
+                "native-child",
+              ),
+            );
+            assert.lengthOf(harness.continuationRequests, 0);
+            yield* harness.offerAndWait(
+              usageStreamFrame({
+                type: "message_start",
+                message: { id: "wake-root", model: "claude-sonnet-4-6", usage: zeroUsage },
+              }),
+            );
+          }
+          assert.lengthOf(harness.continuationRequests, 1);
+          assert.equal(harness.continuationRequests[0]?.detail, WAKE_SUMMARY);
 
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-claude-wake-init-2"),
-            text: "Background task completed.",
-            attachments: [],
-            providerTurnOrdinal: 2,
-            messageCreatedBy: "agent",
-            messageCreationSource: "provider",
-          }),
-        );
-        assert.lengthOf(harness.terminalEvents(), 1);
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-init-2"),
+              text: "Background task completed.",
+              attachments: [],
+              providerTurnOrdinal: 2,
+              messageCreatedBy: "agent",
+              messageCreationSource: "provider",
+            }),
+          );
+          assert.lengthOf(harness.terminalEvents(), 1);
 
-        yield* harness.offerAndWait(wakeAssistant);
-        yield* harness.offerAndWait(wakeResult);
-        yield* harness.awaitTerminal(2);
-        assert.equal(harness.terminalEvents()[1]?.status, "completed");
-        assert.lengthOf(harness.continuationRequests, 1);
-        assert.isTrue(
-          harness.events.some(
-            (event) => event.type === "message.updated" && event.message.text === WAKE_RESULT_TEXT,
+          if (opening === "init") {
+            yield* harness.offerAndWait(wakeAssistant);
+          }
+          yield* harness.offerAndWait(wakeResult);
+          yield* harness.awaitTerminal(2);
+          assert.equal(harness.terminalEvents()[1]?.status, "completed");
+          assert.lengthOf(harness.continuationRequests, 1);
+          assert.isTrue(
+            harness.events.some(
+              (event) =>
+                event.type === "message.updated" && event.message.text === WAKE_RESULT_TEXT,
+            ),
+          );
+          if (opening === "stream start") {
+            assert.equal(lastProviderTurn(harness.events).model, "claude-sonnet-4-6");
+          }
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
           ),
-        );
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
         ),
       ),
-    ),
   );
 
   it.effect.each([true, false])(

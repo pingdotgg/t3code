@@ -5555,7 +5555,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const reported = typeof model === "string" ? model.trim() : "";
           // "<synthetic>" identifies CLI notices, not a model.
           if (reported.length > 0 && reported !== "<synthetic>") {
-            context.executedModel = resolveClaudeModelSlug(subagentModelCatalog, reported);
+            const executed = resolveClaudeModelSlug(subagentModelCatalog, reported);
+            const requested = context.input.modelSelection.model;
+            // Keep the run's own label, such as an alias, when it names the model that ran.
+            context.executedModel =
+              resolveClaudeModelSlug(subagentModelCatalog, requested) === executed
+                ? requested
+                : executed;
           }
         };
 
@@ -7893,7 +7899,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               });
             });
           }
-          const isWakeTurnStart = isClaudeTurnStartMessage(message);
+          const isWakeTurnStart =
+            isClaudeTurnStartMessage(message) ||
+            (message.type === "stream_event" &&
+              message.event.type === "message_start" &&
+              message.parent_tool_use_id == null);
           const isWakeEvidence =
             isPendingTaskNotification ||
             isPendingSubagentNotification ||
@@ -7952,7 +7962,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               message.task_id,
             );
           }
-          // Open continuations only after root init, user, assistant, or result frames prove a wake began.
+          // Open continuations only after root init, message start, user, assistant, or result frames prove a wake began.
           // Background child frames can stream while the root is idle.
           const buffered = (yield* Ref.get(wakeBuffers)).get(wakeInput.nativeThreadId);
           const hasBufferedNotification =
