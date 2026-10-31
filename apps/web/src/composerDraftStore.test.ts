@@ -2542,5 +2542,14 @@ describe("Daybreak explicit clearing", () => {
       settings: DEFAULT_UNIFIED_SETTINGS,
     });
     expect(effective.modelOptions?.[CODEX_INSTANCE]).toEqual([]);
+    store.setStickyModelSelection({
+      ...previous,
+      options: [...previous.options, { id: "reasoningEffort", value: "high" }],
+    });
+    store.setStickyModelSelection(modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"));
+    store.setStickyModelSelection({ instanceId: CODEX_INSTANCE, model: "gpt-6-luna" });
+    expect(
+      useComposerDraftStore.getState().stickyModelSelectionByProvider[CODEX_INSTANCE]?.options,
+    ).toEqual([{ id: "reasoningEffort", value: "high" }]);
   });
 });
