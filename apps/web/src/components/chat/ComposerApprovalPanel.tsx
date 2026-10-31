@@ -1,11 +1,11 @@
 import { ShieldIcon } from "lucide-react";
-import { use, useEffect, useEffectEvent, useRef, useState } from "react";
+import { use, useEffect, useEffectEvent, useState } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import type { ProviderApprovalDecision, RuntimeRequestId } from "@t3tools/contracts";
 import type { PendingApproval } from "../../session-logic";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { ComposerBanner } from "./ComposerBanner";
-import { ComposerRequestCard, useRequestCardEnterShortcut } from "./ComposerRequestCard";
+import { ComposerRequestCard } from "./ComposerRequestCard";
 import {
   ComposerPendingApprovalActions,
   DEFAULT_APPROVAL_OPTIONS,
@@ -25,26 +25,24 @@ export function ComposerApprovalPanel({
   isResponding: boolean;
   onRespond: (requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => Promise<unknown>;
 }) {
-  const cardRef = useRef<HTMLDivElement>(null);
   const backgroundThread = use(BackgroundThreadContext);
   const [expanded, setExpanded] = useState(true);
   const [alwaysAllow, setAlwaysAllow] = useState(false);
-  const canRespond = !disabled && !isResponding && approval.responseCapability === "live";
+  const canRespond =
+    expanded && !disabled && !isResponding && approval.responseCapability === "live";
   const options = approval.options ?? DEFAULT_APPROVAL_OPTIONS;
   const primary = resolveApprovalPrimaryDecision(options, alwaysAllow);
-  useRequestCardEnterShortcut(
-    canRespond && primary ? () => void onRespond(approval.requestId, primary.decision) : null,
-  );
   const decline = options.find((option) => option.decision === "decline");
-  const declineFromShortcut = useEffectEvent(() => {
-    if (decline) void onRespond(approval.requestId, decline.decision);
+  const respondFromShortcut = useEffectEvent((key: string) => {
+    const decision = key === "Enter" ? primary?.decision : decline?.decision;
+    if (decision) void onRespond(approval.requestId, decision);
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the active approval owns Escape while focus is on its card or the page, leaving editors and modal controls to their own shortcuts
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- active tray approval shortcuts work in the thread workspace while editors, buttons, menus and dialogs keep their own keys
   useEffect(() => {
-    if (!canRespond || !decline || backgroundThread) return;
+    if (!canRespond || backgroundThread) return;
     const handler = (event: KeyboardEvent) => {
       if (
-        event.key !== "Escape" ||
+        (event.key !== "Escape" && event.key !== "Enter") ||
         event.defaultPrevented ||
         event.isComposing ||
         event.metaKey ||
@@ -54,16 +52,19 @@ export function ComposerApprovalPanel({
       )
         return;
       if (
-        event.target !== document.body &&
-        !(event.target instanceof Node && cardRef.current?.contains(event.target))
+        event.target instanceof Element &&
+        event.target.closest(
+          'input, textarea, select, button, a[href], [role="button"], [role="link"], summary, [contenteditable]:not([contenteditable="false"]), [role="dialog"], [role="menu"]',
+        )
       )
         return;
+      if (!(event.key === "Enter" ? primary : decline)) return;
       event.preventDefault();
-      declineFromShortcut();
+      respondFromShortcut(event.key);
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [canRespond, decline, backgroundThread]);
+  }, [canRespond, primary, decline, backgroundThread]);
   const title =
     approval.requestKind === "command"
       ? "Command approval"
@@ -74,7 +75,7 @@ export function ComposerApprovalPanel({
     <Collapsible
       open={expanded}
       onOpenChange={setExpanded}
-      render={<ComposerRequestCard.Root ref={cardRef} data-chat-composer-request-card="approval" />}
+      render={<ComposerRequestCard.Root data-chat-composer-request-card="approval" />}
     >
       <ComposerRequestCard.Header
         render={<CollapsibleTrigger render={<button type="button" />} />}
