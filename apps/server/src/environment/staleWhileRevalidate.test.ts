@@ -114,7 +114,7 @@ it.effect("abandons a hung refresh so a later call can start another", () =>
               )
             : Effect.succeed(call).pipe(
                 Effect.tap(() =>
-                  call === 3 ? Deferred.succeed(refreshed, undefined) : Effect.void,
+                  call === 3 ? Effect.fiber.pipe(Effect.flatMap((fiber) => Deferred.succeed(refreshed, fiber))) : Effect.void,
                 ),
               ),
         ),
