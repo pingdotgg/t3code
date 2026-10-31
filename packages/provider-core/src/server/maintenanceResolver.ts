@@ -91,6 +91,8 @@ export interface PackageManagedProviderMaintenanceDefinition {
     readonly env?:
       | NodeJS.ProcessEnv
       | ((context: ProviderMaintenanceResolutionContext) => NodeJS.ProcessEnv);
+    /** The updater's own release channel; when set, installs it owns never consult npm. */
+    readonly lookupLatestVersion?: Effect.Effect<string | null>;
   } | null;
 }
 
@@ -470,7 +472,13 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     !commandPaths.some(isMiseCommandPath) &&
     !(yield* isMiseWrapperScript(context))
   ) {
-    return native;
+    // An npm `--prefix ~/.local` install shares the launcher path but follows npm's releases.
+    const followsReleaseFeed = !commandPaths.some((commandPath) =>
+      normalizeCommandPath(commandPath).includes("/node_modules/"),
+    );
+    return nativeUpdate.lookupLatestVersion && followsReleaseFeed
+      ? { ...native, latestVersion: null, lookupLatestVersion: nativeUpdate.lookupLatestVersion }
+      : native;
   }
   // A `node_modules` path not proven below belongs to another package or a
   // project, so the provider's own updater could act on the wrong install.
@@ -893,6 +901,23 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
     Effect.orElseSucceed(() => Option.none()),
   );
   return Option.isSome(payload) ? nonEmptyString(payload.value.version) : null;
+});
+
+const PLAIN_VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
+
+/** A release feed that answers with a bare version; anything else is unknown. */
+export const fetchPlainTextLatestVersion = Effect.fn("fetchPlainTextLatestVersion")(function* (
+  url: string,
+) {
+  const client = yield* HttpClient.HttpClient;
+  const text = yield* client.get(url).pipe(
+    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.flatMap((response) => response.text),
+    Effect.timeoutOption(LATEST_VERSION_TIMEOUT_MS),
+    Effect.orElseSucceed(() => Option.none()),
+  );
+  const version = Option.isSome(text) ? text.value.trim() : "";
+  return PLAIN_VERSION_PATTERN.test(version) ? version : null;
 });
 
 /** The installer's own answer is cached apart from the npm registry entry. */
