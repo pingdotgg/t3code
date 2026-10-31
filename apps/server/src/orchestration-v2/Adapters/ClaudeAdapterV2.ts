@@ -238,11 +238,20 @@ function claudePromptCacheTtlMs(
 // getContextUsage reports a 150,000 window as a 117,000 threshold, for every catalog model.
 const CLAUDE_AUTO_COMPACT_RESERVE_TOKENS = 33_000;
 
-function claudeAutoCompactThreshold(autoCompactWindow: string, maxTokens: number | null) {
-  const windowTokens = Number(autoCompactWindow);
-  return windowTokens > 0 && (maxTokens === null || windowTokens < maxTokens)
-    ? { autoCompactThreshold: windowTokens - CLAUDE_AUTO_COMPACT_RESERVE_TOKENS }
-    : {};
+// Like Claude's /context, measure usage against the window when it is below the model's.
+function claudeContextLimits(
+  autoCompactWindow: number | undefined,
+  modelSelection: ModelSelection,
+) {
+  const contextWindow = claudeContextWindow(modelSelection);
+  return autoCompactWindow !== undefined &&
+    autoCompactWindow > 0 &&
+    (contextWindow === null || autoCompactWindow < contextWindow)
+    ? {
+        maxTokens: autoCompactWindow,
+        autoCompactThreshold: autoCompactWindow - CLAUDE_AUTO_COMPACT_RESERVE_TOKENS,
+      }
+    : { maxTokens: contextWindow };
 }
 
 function claudeMessageInputTokens(usage: {
@@ -267,13 +276,12 @@ export function claudeProviderTurnTokenUsage(
   },
   modelSelection: ModelSelection,
   updatedAt: string,
-  autoCompactWindow = "",
+  autoCompactWindow?: number,
   requestedAt?: DateTime.Utc,
 ) {
   const inputTokens = claudeMessageInputTokens(usage);
   const outputTokens = usage.output_tokens;
   const promptCacheTtlMs = claudePromptCacheTtlMs(usage.cache_creation);
-  const maxTokens = claudeContextWindow(modelSelection);
   // The cache lifetime starts with the request, not when its response ends.
   const promptCacheExpiresAt =
     promptCacheTtlMs === undefined || requestedAt === undefined
@@ -281,13 +289,12 @@ export function claudeProviderTurnTokenUsage(
       : DateTime.formatIso(DateTime.add(requestedAt, { milliseconds: promptCacheTtlMs }));
   return {
     usedTokens: inputTokens + outputTokens,
-    maxTokens,
+    ...claudeContextLimits(autoCompactWindow, modelSelection),
     inputTokens,
     cachedInputTokens: usage.cache_read_input_tokens ?? 0,
     outputTokens,
     reasoningOutputTokens: 0,
     ...(promptCacheTtlMs === undefined ? {} : { promptCacheTtlMs }),
-    ...claudeAutoCompactThreshold(autoCompactWindow, maxTokens),
     ...(promptCacheExpiresAt === undefined ? {} : { promptCacheExpiresAt }),
     updatedAt,
   };
@@ -2661,6 +2668,20 @@ const decodeClaudeSubagentCacheSettings = Schema.decodeUnknownEffect(
     ),
   ),
 );
+const ClaudeAutoCompactWindowSetting = Schema.Union([Schema.Int, Schema.Literal("auto")]);
+// Values are checked one at a time, so a bad entry for another model can't hide this one.
+const decodeClaudeAutoCompactSettings = Schema.decodeUnknownEffect(
+  fromLenientJson(
+    Schema.Struct({
+      autoCompactWindow: Schema.optionalKey(Schema.Unknown),
+      modelSettings: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+    }),
+  ),
+);
+const decodeClaudeModelAutoCompactSettings = Schema.decodeUnknownOption(
+  Schema.Struct({ autoCompactWindow: ClaudeAutoCompactWindowSetting }),
+);
+const decodeClaudeAutoCompactWindow = Schema.decodeUnknownOption(ClaudeAutoCompactWindowSetting);
 const decodeClaudeEnvSettings = Schema.decodeUnknownEffect(
   fromLenientJson(
     Schema.StructWithRest(
@@ -4004,6 +4025,7 @@ interface ActiveClaudeTurnContext {
       { readonly startedAt: DateTime.Utc; readonly ordinal: number; text: string }
     >;
   };
+  readonly autoCompactWindow: number | undefined;
   // Snapshots repeat message_start input, sometimes as zeros, so only fill gaps in streamed usage.
   // Compaction clears usage without forgetting the root request.
   // `requestedAt` starts the request's prompt cache lifetime.
@@ -4621,31 +4643,61 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       if (path.dirname(directory) === directory) return cwd;
     }
   });
-  // Settings env beats the process env, --settings over local over project over user, and a local
-  // file an older Claude Code left in cwd applies under the root one. resolveSettings reads local
-  // from cwd only.
+  // Local over project over user, and a local file an older Claude Code left in cwd applies under
+  // the root one. resolveSettings reads local from cwd only.
+  const settingsFilesByPrecedence = Effect.fn("ClaudeAdapterV2.settingsFilesByPrecedence")(
+    function* (cwd: string | null) {
+      if (cwd === null) return [path.join(homePath, "settings.json")];
+      const localDirectory = yield* localSettingsDirectory(cwd);
+      return [
+        path.join(localDirectory, ".claude", "settings.local.json"),
+        ...(localDirectory === cwd ? [] : [path.join(cwd, ".claude", "settings.local.json")]),
+        path.join(cwd, ".claude", "settings.json"),
+        path.join(homePath, "settings.json"),
+      ];
+    },
+  );
+  // Settings env beats the process env, and --settings beats every settings file.
   const resolveToolSearchOverride = Effect.fn("ClaudeAdapterV2.resolveToolSearchOverride")(
     function* (cwd: string | null, launchArgSettings: ClaudeSdkSettings | undefined) {
       const launchValue = launchArgSettings?.env?.ENABLE_TOOL_SEARCH;
       if (typeof launchValue === "string") return claudeToolSearchOverride(launchValue);
-      const localDirectory = cwd === null ? null : yield* localSettingsDirectory(cwd);
-      const settingsFiles = [
-        ...(cwd === null || localDirectory === null
-          ? []
-          : [
-              path.join(localDirectory, ".claude", "settings.local.json"),
-              ...(localDirectory === cwd ? [] : [path.join(cwd, ".claude", "settings.local.json")]),
-              path.join(cwd, ".claude", "settings.json"),
-            ]),
-        path.join(homePath, "settings.json"),
-      ];
-      for (const settingsFile of settingsFiles) {
+      for (const settingsFile of yield* settingsFilesByPrecedence(cwd)) {
         const value = yield* readToolSearchSetting(settingsFile);
         if (value !== undefined) return claudeToolSearchOverride(value);
       }
       return claudeToolSearchOverride(adapterOptions.environment.ENABLE_TOOL_SEARCH);
     },
   );
+
+  // T3's setting is sent as flag settings, so it beats every settings file. In one file,
+  // modelSettings.<model>.autoCompactWindow (what /autocompact writes) replaces the top-level
+  // value; "auto" keeps Claude's tuned window.
+  const resolveAutoCompactWindow = Effect.fn("ClaudeAdapterV2.resolveAutoCompactWindow")(function* (
+    cwd: string | null,
+    modelSelection: ModelSelection,
+  ) {
+    const fromT3 = Number(adapterOptions.settings.autoCompactWindow);
+    if (fromT3 > 0) return fromT3;
+    const model = compileClaudeModelSelection(modelSelection).apiModelId.replace(/\[1m\]$/i, "");
+    for (const settingsFile of yield* settingsFilesByPrecedence(cwd)) {
+      const settings = yield* fileSystem.readFileString(settingsFile).pipe(
+        Effect.flatMap(decodeClaudeAutoCompactSettings),
+        Effect.orElseSucceed(() => undefined),
+      );
+      const value = Option.getOrUndefined(
+        Option.orElse(
+          Option.map(
+            decodeClaudeModelAutoCompactSettings(settings?.modelSettings?.[model]),
+            (entry) => entry.autoCompactWindow,
+          ),
+          () => decodeClaudeAutoCompactWindow(settings?.autoCompactWindow),
+        ),
+      );
+      if (value !== undefined) return value === "auto" ? undefined : value;
+    }
+    return undefined;
+  });
 
   const userInvocableSkills = (cwd: string | null) =>
     discoverClaudeSkills(
@@ -5027,7 +5079,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             usage,
             context.input.modelSelection,
             DateTime.formatIso(now),
-            adapterOptions.settings.autoCompactWindow,
+            context.autoCompactWindow,
             context.streamUsage?.requestedAt,
           );
           if (tokenUsage.inputTokens <= 0) return;
@@ -8594,7 +8646,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ? Math.round(postTokens)
                 : undefined;
             if (afterTokenCount !== undefined) {
-              const maxTokens = claudeContextWindow(context.input.modelSelection);
               yield* emitProviderEvent({
                 type: "provider_turn.updated",
                 driver: CLAUDE_PROVIDER,
@@ -8615,11 +8666,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   completedAt: null,
                   tokenUsage: {
                     usedTokens: afterTokenCount,
-                    maxTokens,
-                    ...claudeAutoCompactThreshold(
-                      adapterOptions.settings.autoCompactWindow,
-                      maxTokens,
-                    ),
+                    ...claudeContextLimits(context.autoCompactWindow, context.input.modelSelection),
                     updatedAt: DateTime.formatIso(now),
                   },
                 },
@@ -10438,9 +10485,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                     Effect.provideService(Path.Path, path),
                   );
+            const autoCompactWindow = yield* resolveAutoCompactWindow(
+              turnInput.runtimePolicy.cwd,
+              turnInput.modelSelection,
+            );
             const querySession = yield* openQuery(turnInput, nativeThreadId);
             const context: ActiveClaudeTurnContext = {
               input: turnInput,
+              autoCompactWindow,
               queryPolicy: querySession.queryPolicy,
               nativeThreadId,
               nativeTurnId,
