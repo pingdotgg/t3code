@@ -16,7 +16,6 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   MessageId,
-  repositoryGroupingKeyOf,
   ThreadId,
 } from "@t3tools/contracts";
 import { threadContextsOutsideEnvironment } from "@t3tools/shared/composerContextReferences";
@@ -93,7 +92,10 @@ import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
-import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
+import {
+  resolveEnvironmentProjectMatch,
+  resolveNewTaskEnvironments,
+} from "./new-task-project-selection";
 import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 import {
@@ -583,12 +585,16 @@ export function NewTaskFlowProvider(
     const match = resolveEnvironmentProjectMatch(
       projects.filter((project) => project.environmentId === environmentId),
       selectedProject,
+      groupingSettings,
+      projects,
     );
+    if (!match) return false;
     updateFlow({
-      draftKey: match ? carryDraftContentTo(match) : readFlow().draftKey,
+      draftKey: carryDraftContentTo(match),
       environmentId,
-      projectKey: match ? scopedProjectKey(match.environmentId, match.id) : null,
+      projectKey: scopedProjectKey(match.environmentId, match.id),
     });
+    return true;
   };
 
   const openScratch = useAtomCommand(projectEnvironment.openScratch, { reportFailure: false });
@@ -603,8 +609,7 @@ export function NewTaskFlowProvider(
       return true;
     }
     if (!isScratchDraft) {
-      selectEnvironment(environmentId);
-      return true;
+      return selectEnvironment(environmentId);
     }
     const request = {};
     latestSwitchRef.current = request;
@@ -789,12 +794,6 @@ export function NewTaskFlowProvider(
       ) !== null,
   );
 
-  const selectedRepositoryKey = selectedProject?.repositoryIdentity
-    ? repositoryGroupingKeyOf(selectedProject.repositoryIdentity)
-    : null;
-  // Use || null: placeholder workspaceRoot can be empty, and an empty basename rejects real hosts.
-  const selectedWorkspaceBasename = selectedProject?.workspaceRoot.split("/").at(-1) || null;
-  const selectedProjectTitle = selectedProject?.title ?? null;
   const environments = (() => {
     if (isScratchDraft) {
       return scratchEnvironments.map((environment) => ({
@@ -802,44 +801,12 @@ export function NewTaskFlowProvider(
         environmentLabel: environment.environmentLabel,
       }));
     }
-    const seen = new Set<EnvironmentId>();
-    const result: Array<{
-      readonly environmentId: EnvironmentId;
-      readonly environmentLabel: string;
-    }> = [];
-    const hostsSelectedRepository = (project: EnvironmentProject) => {
-      if (selectedRepositoryKey === null && selectedWorkspaceBasename === null) {
-        return true;
-      }
-      const projectKey = project.repositoryIdentity
-        ? repositoryGroupingKeyOf(project.repositoryIdentity)
-        : null;
-      if (selectedRepositoryKey !== null && projectKey !== null) {
-        return projectKey === selectedRepositoryKey;
-      }
-      return (
-        project.workspaceRoot.split("/").at(-1) === selectedWorkspaceBasename ||
-        (selectedProjectTitle !== null && project.title === selectedProjectTitle)
-      );
-    };
-    for (const project of projects) {
-      if (!hostsSelectedRepository(project)) {
-        continue;
-      }
-      if (seen.has(project.environmentId)) {
-        continue;
-      }
-      const environment = savedConnectionsById[project.environmentId];
-      if (!environment) {
-        continue;
-      }
-      seen.add(project.environmentId);
-      result.push({
-        environmentId: project.environmentId,
-        environmentLabel: environment.environmentLabel,
-      });
-    }
-    return result;
+    return resolveNewTaskEnvironments({
+      projects,
+      selectedProject,
+      settings: groupingSettings,
+      savedConnectionsById,
+    });
   })();
 
   const value = {

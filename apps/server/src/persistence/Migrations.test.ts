@@ -29,6 +29,45 @@ const v2TableCount = Effect.gen(function* () {
 });
 
 describe("runMigrations", () => {
+  it.effect("adds explicit grouping after project pinning and archiving", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 76 });
+      const before = yield* history;
+      yield* sql`
+        INSERT INTO projection_projects
+          (project_id, title, workspace_root, scripts_json, pinned_at, archived_at, created_at, updated_at)
+        VALUES ('sdk-project', 'SDK', '/work/sdk', '[]', '2026-10-27', '2026-10-28', '2026-10-27', '2026-10-28')
+      `;
+
+      assert.deepStrictEqual(yield* runMigrations(), [[77, "ProjectGroupingIdentity"]]);
+      assert.deepStrictEqual(yield* history, [...before, [77, "ProjectGroupingIdentity"]]);
+      assert.deepStrictEqual(
+        yield* sql`SELECT project_id, title, workspace_root, pinned_at, archived_at, grouping_identity FROM projection_projects`,
+        [
+          {
+            project_id: "sdk-project",
+            title: "SDK",
+            workspace_root: "/work/sdk",
+            pinned_at: "2026-10-27",
+            archived_at: "2026-10-28",
+            grouping_identity: null,
+          },
+        ],
+      );
+      yield* sql`
+        UPDATE projection_projects
+        SET grouping_identity = '39c61a1b-8a64-43a6-9da5-65c15da93d52'
+        WHERE project_id = 'sdk-project'
+      `;
+      assert.deepStrictEqual(
+        yield* sql`SELECT grouping_identity FROM projection_projects WHERE project_id = 'sdk-project'`,
+        [{ grouping_identity: "39c61a1b-8a64-43a6-9da5-65c15da93d52" }],
+      );
+      assert.deepStrictEqual(yield* runMigrations(), []);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect("refuses to start when another migration took a V2 id", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

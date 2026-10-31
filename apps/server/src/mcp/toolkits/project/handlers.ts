@@ -302,6 +302,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         if (workspaceRoot === undefined) {
           // Only updates record model defaults; reject defaults that creation would silently drop.
           if (
+            input.groupingIdentity !== undefined ||
             input.scripts !== undefined ||
             input.createWorkspaceRootIfMissing !== undefined ||
             input.defaultModelSelection !== undefined
@@ -309,7 +310,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             return yield* new OrchestratorMcpFailure({
               code: "invalid_request",
               message:
-                "A project started from its title takes only a title; set scripts or defaultModelSelection afterwards with t3_project_update.",
+                "A project started from its title takes only a title; set groupingIdentity, scripts or defaultModelSelection afterwards with t3_project_update.",
             });
           const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
           const created = yield* folders.createNamedProject({ name: input.title }).pipe(
