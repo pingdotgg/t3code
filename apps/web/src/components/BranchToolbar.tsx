@@ -1034,13 +1034,11 @@ export const BranchToolbar = memo(function BranchToolbar({
       onAddToMachine={onAddToMachine}
     />
   );
-  // The machine chip leads the row only on remote threads. Local threads pick
-  // their machine from the workspace menu instead, unless there is no Git
-  // workspace to hang that menu on.
+  // Local threads choose their machine from the workspace menu.
   const showMachineChip =
     availableEnvironments !== undefined &&
     showEnvironmentIndicator &&
-    (activeEnvironmentOption?.isPrimary === false || !showGitControls);
+    activeEnvironmentOption?.isPrimary === false;
 
   return (
     <ComposerSurface.ContextStrip
@@ -1060,6 +1058,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           {...(addTargets.length > 0 ? { onAddToMachine: () => onAddToMachine(null) } : {})}
         />
       ) : null}
+      {!showGitControls && !showMachineChip ? workspaceMenu : null}
       {showGitControls ? (
         <BranchToolbarBranchSelector
           forceNewWorktree={forceNewWorktree}
