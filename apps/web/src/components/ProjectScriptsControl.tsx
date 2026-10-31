@@ -2,6 +2,7 @@ import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import {
   AuthSettingsWriteScope,
   type EnvironmentId,
+  type ThreadId,
   type ProjectScript,
   type T3ProjectFileScript,
 } from "@t3tools/contracts";
@@ -12,8 +13,20 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { projectScriptMenuLabel } from "@t3tools/shared/projectScripts";
-import { ChevronDownIcon, DownloadIcon, PlusIcon, SettingsIcon, WrenchIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  DownloadIcon,
+  PlusIcon,
+  SettingsIcon,
+  SquareIcon,
+  SquareTerminalIcon,
+  WrenchIcon,
+} from "lucide-react";
 import { useState } from "react";
+import { useThreadDiscoveredPorts } from "../portDiscoveryState";
+import { useEnvironment } from "../state/environments";
+import { previewEnvironment } from "../state/preview";
+import { useAtomCommand } from "../state/use-atom-command";
 
 import { commandForProjectScript, primaryProjectScript } from "~/projectScripts";
 import { shortcutLabelForCommand } from "~/keybindings";
@@ -54,6 +67,7 @@ interface ProjectScriptsControlProps {
   presentation?: "toolbar" | "menu";
   onRequestMenuClose?: () => void;
   environmentId: EnvironmentId;
+  threadId?: ThreadId;
   scripts: ReadonlyArray<ProjectScript>;
   fileScripts?: ReadonlyArray<T3ProjectFileScript>;
   preferredScriptId?: string | null;
@@ -71,6 +85,7 @@ export default function ProjectScriptsControl({
   presentation = "toolbar",
   onRequestMenuClose,
   environmentId,
+  threadId,
   scripts,
   fileScripts = NO_FILE_SCRIPTS,
   preferredScriptId = null,
@@ -80,6 +95,16 @@ export default function ProjectScriptsControl({
   onDeleteScript,
 }: ProjectScriptsControlProps) {
   const isPanel = displayMode === "panel";
+  const servers = useThreadDiscoveredPorts({ environmentId, threadId: threadId ?? null });
+  const stopServer = useAtomCommand(previewEnvironment.stopLocalServer, {
+    label: "project action stop",
+  });
+  const canStopServer = useAtomValue(
+    previewEnvironment.stopLocalServer.permissionAtom(environmentId),
+  );
+  const supportsStop =
+    useEnvironment(environmentId)?.serverConfig?.environment.capabilities.localServerStop === true;
+  const [stoppingServer, setStoppingServer] = useState(false);
   const keybindings =
     useAtomValue(serverEnvironment.configValueAtom(environmentId))?.keybindings ??
     DEFAULT_RESOLVED_KEYBINDINGS;
@@ -96,6 +121,18 @@ export default function ProjectScriptsControl({
   const primaryScript =
     (preferredScriptId ? scripts.find((script) => script.id === preferredScriptId) : undefined) ??
     primaryProjectScript(scripts);
+  const runningScriptServer = (() => {
+    if (!primaryScript?.previewUrl) return undefined;
+    try {
+      const url = new URL(primaryScript.previewUrl);
+      if (!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) return undefined;
+      return servers.find(
+        (server) => server.port === Number(url.port || (url.protocol === "https:" ? 443 : 80)),
+      );
+    } catch {
+      return undefined;
+    }
+  })();
   const importableScripts = fileScripts.filter(
     (fileScript) =>
       !scripts.some(
@@ -264,54 +301,57 @@ export default function ProjectScriptsControl({
           )}
         </>
       ) : isPanel ? (
-        <div role="group" aria-label="Project scripts">
+        <div className="flex items-center" role="group" aria-label="Project scripts">
           {primaryScript ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <ThreadDetailsControl
-                    aria-label={`Run ${primaryScript.name}`}
-                    aria-disabled={!onRunScript || undefined}
-                    onClick={() => onRunScript?.(primaryScript)}
-                  />
-                }
-              >
-                <ScriptIcon icon={primaryScript.icon} />
-                <MenuItemLabel>Run {primaryScript.name}</MenuItemLabel>
-                <MenuShortcut>
-                  {shortcutLabelForCommand(keybindings, commandForProjectScript(primaryScript.id))}
-                </MenuShortcut>
-              </TooltipTrigger>
-              <TooltipPopup side="top">
-                {onRunScript
-                  ? `Run ${primaryScript.name}`
-                  : "Pair this client again with permission to run terminal commands."}
-              </TooltipPopup>
-            </Tooltip>
-          ) : null}
-          {scripts.length > 0 || importableScripts.length > 0 ? (
-            <Menu
-              open={actionsMenuOpen.scripts}
-              onOpenChange={(open) =>
-                setActionsMenuOpen({ presentation, scripts: open, imports: false })
-              }
+            <ThreadDetailsControl
+              aria-label={`Run ${primaryScript.name}`}
+              disabled={!onRunScript}
+              onClick={() => onRunScript?.(primaryScript)}
             >
-              <MenuTrigger
-                render={<ThreadDetailsControl part="choice" aria-label="Script actions" />}
-              >
-                <ScriptIcon icon="play" />
-                <MenuItemLabel>Project actions</MenuItemLabel>
-              </MenuTrigger>
-              <MenuPopup side="right" align="start">
-                {scriptItems}
-              </MenuPopup>
-            </Menu>
+              <span className="relative shrink-0">
+                <SquareTerminalIcon className="size-4 text-muted-foreground" />
+                {runningScriptServer ? (
+                  <span className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-success" />
+                ) : null}
+              </span>
+              <span className="min-w-0 flex-1 truncate">{primaryScript.name}</span>
+            </ThreadDetailsControl>
           ) : (
             <ThreadDetailsControl onClick={openAddDialog}>
-              <PlusIcon />
+              <SquareTerminalIcon />
               <MenuItemLabel>Add project action…</MenuItemLabel>
             </ThreadDetailsControl>
           )}
+          {supportsStop && runningScriptServer?.pid != null ? (
+            <ThreadDetailsControl
+              part="icon"
+              aria-label={`Stop ${primaryScript?.name}`}
+              disabled={!canStopServer || stoppingServer}
+              onClick={async () => {
+                setStoppingServer(true);
+                await stopServer({
+                  environmentId,
+                  input: { pid: runningScriptServer.pid!, port: runningScriptServer.port },
+                });
+                setStoppingServer(false);
+              }}
+            >
+              <SquareIcon />
+            </ThreadDetailsControl>
+          ) : null}
+          <Menu
+            open={actionsMenuOpen.scripts}
+            onOpenChange={(open) =>
+              setActionsMenuOpen({ presentation, scripts: open, imports: false })
+            }
+          >
+            <MenuTrigger render={<ThreadDetailsControl part="icon" aria-label="Project actions" />}>
+              <ChevronDownIcon />
+            </MenuTrigger>
+            <MenuPopup side="bottom" align="end">
+              {scriptItems}
+            </MenuPopup>
+          </Menu>
         </div>
       ) : primaryScript ? (
         <Group role="group" aria-label="Project scripts">
