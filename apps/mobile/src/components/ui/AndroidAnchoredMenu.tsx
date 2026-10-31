@@ -1,12 +1,13 @@
 import type { MenuAction, MenuComponentProps } from "@react-native-menu/menu";
 import type { ReactNode } from "react";
-import { use, useRef, useState } from "react";
+import { use, useEffect, useEffectEvent, useRef, useState } from "react";
 import type { StyleProp, ViewInstance, ViewStyle } from "react-native";
 import { Pressable, ScrollView, View } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
 import Animated, { FadeIn } from "react-native-reanimated";
 
 import { useHardwareBack } from "../../lib/backHandler";
+import type { VerticalHinge } from "../../lib/layout";
 import { deriveMenuHorizontalPlacement } from "../../lib/menu-placement";
 import { WindowHingeContext } from "../../native/window-hinge-context";
 import { OverlayPortal } from "./OverlayPortal";
@@ -17,11 +18,13 @@ const SCREEN_MARGIN = 12;
 const ANCHOR_GAP = 6;
 
 // Freeze both snapshots at opening so keyboard and screen reflows cannot flip menu direction.
+// A hinge change moves the anchor with its pane, so both are re-measured once the panes settle.
 type AnchorSnapshot = {
   readonly x: number;
   readonly y: number;
   readonly width: number;
   readonly height: number;
+  readonly hinge: VerticalHinge | null;
   readonly keyboardWasVisible: boolean;
 };
 
@@ -47,7 +50,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const [path, setPath] = useState<readonly MenuAction[]>([]);
   const [rootHeight, setRootHeight] = useState<number | null>(null);
   const [overlay, setOverlay] = useState<OverlayFrame | null>(null);
-  const windowHinge = use(WindowHingeContext);
+  const { hinge: windowHinge, panesSettled } = use(WindowHingeContext);
   // State, not a ref: `open` reaches render-prop children, and the compiler
   // bails out of the whole component when a ref might be read during render.
   const [anchorNode, setAnchorNode] = useState<ViewInstance | null>(null);
@@ -55,18 +58,33 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
 
   const keyboardVisible = useKeyboardState((state) => state.isVisible);
   const keyboardHeight = useKeyboardState((state) => state.height);
+  const [opening, setOpening] = useState<{ readonly keyboardWasVisible: boolean } | null>(null);
   const close = () => {
+    setOpening(null);
     setAnchor(null);
     setPath([]);
     setOverlay(null);
     setRootHeight(null);
   };
 
-  const open = () => {
-    anchorNode?.measureInWindow((x, y, width, height) => {
-      setAnchor({ x, y, width, height, keyboardWasVisible: keyboardVisible });
+  const open = () => setOpening({ keyboardWasVisible: keyboardVisible });
+
+  const placeAnchor = useEffectEvent(
+    (x: number, y: number, width: number, height: number, keyboardWasVisible: boolean) =>
+      setAnchor({ x, y, width, height, hinge: windowHinge, keyboardWasVisible }),
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the native anchor view; cleanup drops a superseded or closed measurement
+  useEffect(() => {
+    if (opening === null || anchorNode === null) return;
+    let current = true;
+    anchorNode.measureInWindow((x, y, width, height) => {
+      if (current) placeAnchor(x, y, width, height, opening.keyboardWasVisible);
     });
-  };
+    return () => {
+      current = false;
+    };
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A pane settle moves the anchor, so it is measured again.
+  }, [opening, anchorNode, panesSettled]);
 
   const measureOverlay = () => {
     overlayRef.current?.measureInWindow((x, y, width, height) => {
@@ -91,6 +109,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
     (action) => !(action.attributes?.hidden ?? false),
   );
 
+  const hinge = anchor?.hinge ?? null;
   const local =
     anchor === null || overlay === null
       ? null
@@ -109,7 +128,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
           overlayWidth: overlay.width,
           desiredWidth: desiredMenuWidth,
           margin: SCREEN_MARGIN,
-          hinge: windowHinge && { x: windowHinge.x - overlay.x, width: windowHinge.width },
+          hinge: hinge && { x: hinge.x - overlay.x, width: hinge.width },
         });
   // This in-window menu preserves keyboard focus; subtract the IME area so its items remain tappable.
   const usableBottom =
@@ -171,7 +190,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
             {!placeable || local === null ? null : !anchor.keyboardWasVisible ? (
               <MenuPopup
                 // Compose aligns to the trigger's start if it fits; hinge-safe triggers keep menus on their side.
-                anchor={windowHinge ? { ...local, x: left, width: menuWidth } : local}
+                anchor={hinge ? { ...local, x: left, width: menuWidth } : local}
                 menuWidth={menuWidth}
                 actions={levelActions}
                 title={props.title}

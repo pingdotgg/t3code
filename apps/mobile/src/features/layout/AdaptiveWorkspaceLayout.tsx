@@ -684,14 +684,16 @@ function AdaptiveWorkspaceLayoutContent(
     listPaneFloor: layout.listPaneWidth,
     listPaneCeiling: layout.listPaneWidth,
     revision: 0,
+    hinge: windowHinge,
+    // Counts settles that moved a pane edge, so open overlays re-measure their anchors.
+    settled: 0,
   });
-  if (
-    Platform.OS === "android" &&
-    (listPaneSizing.viewportWidth !== viewportWidth ||
-      listPaneSizing.workspacePage !== workspacePage ||
-      listPaneSizing.sidebarVisible !== panes.primarySidebarVisible ||
-      listPaneSizing.listPaneTarget !== layout.listPaneWidth)
-  ) {
+  const listPaneChanged =
+    listPaneSizing.viewportWidth !== viewportWidth ||
+    listPaneSizing.workspacePage !== workspacePage ||
+    listPaneSizing.sidebarVisible !== panes.primarySidebarVisible ||
+    listPaneSizing.listPaneTarget !== layout.listPaneWidth;
+  if (Platform.OS === "android" && (listPaneChanged || listPaneSizing.hinge !== windowHinge)) {
     // A book-posture hinge resizes the visible list pane instead of revealing it.
     const resizingSidebar =
       listPaneSizing.viewportWidth === viewportWidth &&
@@ -711,7 +713,13 @@ function AdaptiveWorkspaceLayoutContent(
       listPaneCeiling: resizingSidebar
         ? Math.max(listPaneSizing.listPaneCeiling ?? 0, layout.listPaneWidth ?? 0)
         : layout.listPaneWidth,
-      revision: listPaneSizing.revision + 1,
+      revision: listPaneChanged ? listPaneSizing.revision + 1 : listPaneSizing.revision,
+      hinge: windowHinge,
+      // A crease the list doesn't slide to never settles, so overlays re-measure right away.
+      settled:
+        listPaneSizing.hinge !== windowHinge && !resizingSidebar
+          ? listPaneSizing.settled + 1
+          : listPaneSizing.settled,
     });
   }
   const settleListPane = (revision: number) => {
@@ -724,12 +732,18 @@ function AdaptiveWorkspaceLayoutContent(
             ...current,
             listPaneFloor: current.listPaneTarget,
             listPaneCeiling: current.listPaneTarget,
+            settled: current.settled + 1,
           },
     );
   };
   const listPaneFloor = listPaneSizing.listPaneFloor ?? 0;
   const listPaneCeiling = listPaneSizing.listPaneCeiling ?? 0;
   const listPaneRevision = listPaneSizing.revision;
+  const panesSettled = listPaneSizing.settled;
+  const windowHingeContext = useMemo(
+    () => ({ hinge: windowHinge, panesSettled }),
+    [windowHinge, panesSettled],
+  );
   // Android lays the content out at its new width as soon as a pane toggles, then holds it
   // against the edge that stays put while the other one slides, so nothing reflows after the
   // panes land. A sliding sidebar uncovers the strip it is about to fill, or covers the content
@@ -1064,7 +1078,7 @@ function AdaptiveWorkspaceLayoutContent(
       savedFilters={props.savedThreadListFilters}
     >
       <AdaptiveWorkspaceContext.Provider value={contextValue}>
-        <WindowHingeContext value={windowHinge}>
+        <WindowHingeContext value={windowHingeContext}>
           {usesPresentationHost ? (
             <WorkspaceColumnsRendererContext value={renderColumns}>
               {props.children}
