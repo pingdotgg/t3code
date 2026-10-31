@@ -14,6 +14,10 @@ import {
   AuthSourceControlWriteScope,
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
+  CommandId,
+  MessageId,
+  ORCHESTRATION_V2_WS_METHODS,
+  RunId,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -399,5 +403,66 @@ it.effect("denies manual cleanup before the handler without settings permission"
       requiredPermission: AuthSettingsWriteScope,
     });
     expect(handled).toBe(false);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("requires provider management to send /logout through chat", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof ORCHESTRATION_V2_WS_METHODS.dispatchCommand
+        > => tag !== ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+      ),
+    );
+    const handled: string[] = [];
+    const handler = group.toLayerHandler(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, (command) =>
+      Effect.sync(() => {
+        handled.push(command.commandId);
+        return { sequence: 1 };
+      }),
+    );
+    const message = (commandId: string, text: string) => ({
+      type: "message.dispatch" as const,
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+      commandId: CommandId.make(commandId),
+      threadId: ThreadId.make("thread"),
+      messageId: MessageId.make(commandId),
+      text,
+      attachments: [],
+      dispatchMode: { type: "start_immediately" as const },
+    });
+    const operator = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(Layer.merge(handler, RpcAuthorization.layer([AuthOrchestrationOperateScope]))),
+    );
+    yield* operator[ORCHESTRATION_V2_WS_METHODS.dispatchCommand](message("hello", "hello"));
+    for (const command of [
+      message("logout", " /LOGOUT "),
+      {
+        type: "queued-run.edit" as const,
+        commandId: CommandId.make("edit"),
+        threadId: ThreadId.make("thread"),
+        runId: RunId.make("run"),
+        text: "/logout",
+      },
+    ]) {
+      expect(
+        yield* operator[ORCHESTRATION_V2_WS_METHODS.dispatchCommand](command).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
+    }
+    const manager = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.merge(
+          handler,
+          RpcAuthorization.layer([AuthOrchestrationOperateScope, AuthProvidersManageScope]),
+        ),
+      ),
+    );
+    yield* manager[ORCHESTRATION_V2_WS_METHODS.dispatchCommand](message("manager", "/logout"));
+    expect(handled).toEqual(["hello", "manager"]);
   }).pipe(Effect.scoped),
 );
