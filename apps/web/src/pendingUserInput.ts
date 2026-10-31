@@ -1,5 +1,12 @@
-import type { ThreadContextRecord, UserInputQuestion } from "@t3tools/contracts";
-import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import type {
+  ComposerContextRecord,
+  ThreadContextRecord,
+  UserInputQuestion,
+} from "@t3tools/contracts";
+import {
+  projectComposerContextForProvider,
+  replaceComposerContextReferences,
+} from "@t3tools/shared/composerContextReferences";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import {
   buildPendingUserInputAnswers,
@@ -11,16 +18,23 @@ import {
 
 import { collectInlineContextIds } from "./lib/composerContextReferences";
 
+// Thread chips stay readable links; other chips carry their payload as a normal send does.
 export function projectPendingUserInputAnswer(
   answer: unknown,
-  threadContexts: ReadonlyArray<ThreadContextRecord>,
+  records: ReadonlyArray<ComposerContextRecord>,
 ) {
-  if (typeof answer !== "string" || threadContexts.length === 0) return answer;
-  const recordsById = new Map(threadContexts.map((record) => [record.contextId, record]));
-  return replaceComposerContextReferences(answer, (reference) => {
-    const record = reference.kind === "thread" ? recordsById.get(reference.contextId) : undefined;
-    return record ? formatThreadLink(record, reference.label) : reference.source;
+  if (typeof answer !== "string" || records.length === 0) return answer;
+  const recordsById = new Map(records.map((record) => [record.contextId, record]));
+  let expandsPayload = false;
+  const text = replaceComposerContextReferences(answer, (reference) => {
+    const record = recordsById.get(reference.contextId);
+    if (record?.kind === "thread" && "threadId" in record) {
+      return formatThreadLink(record, reference.label);
+    }
+    expandsPayload ||= record !== undefined;
+    return reference.source;
   });
+  return expandsPayload ? projectComposerContextForProvider({ text, records }) : text;
 }
 
 // Question drafts retain deleted chip records for undo; only transfer referenced records.

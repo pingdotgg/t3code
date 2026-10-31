@@ -25,6 +25,7 @@ import { useShallow } from "zustand/react/shallow";
 import { type DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { getUploadedAttachments, useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
+import { buildMessageContext } from "../../lib/composerContextRecords";
 import {
   buildPendingUserInputAnswers,
   setPendingUserInputCustomAnswer,
@@ -306,6 +307,8 @@ export function usePendingThreadRequests(input: {
     if (userInputResponsesInFlight.current.has(responseKey)) return;
     const attachmentsByQuestionId = new Map<string, UserInputAttachments[string]>();
     const providerAnswers = { ...answers };
+    const threadDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+    const threadDraftRecords = threadDraft ? (buildMessageContext(threadDraft)?.records ?? []) : [];
     for (const question of pendingInput.questions) {
       const target = questionAttachmentDraftId(
         environmentId,
@@ -315,10 +318,10 @@ export function usePendingThreadRequests(input: {
       );
       if ((useQuestionAttachmentPreparation.getState().counts[target] ?? 0) > 0) return;
       const draft = useComposerDraftStore.getState().getComposerDraft(target);
-      providerAnswers[question.id] = projectPendingUserInputAnswer(
-        answers[question.id],
-        draft?.threadContexts ?? [],
-      );
+      providerAnswers[question.id] = projectPendingUserInputAnswer(answers[question.id], [
+        ...threadDraftRecords,
+        ...(draft?.threadContexts ?? []),
+      ]);
       const attachments = draft ? [...draft.images, ...draft.files] : [];
       if (attachments.length === 0) continue;
       const uploaded = getUploadedAttachments({ environmentId, images: attachments });
