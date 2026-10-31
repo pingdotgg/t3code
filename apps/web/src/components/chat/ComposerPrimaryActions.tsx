@@ -47,7 +47,7 @@ interface ComposerPrimaryActionsProps {
   canSteer?: boolean;
   alternateShortcutLabel?: string | null;
   showPlanFollowUpPrompt: boolean;
-  onImplementPlanInNewThread?: () => void;
+  onImplementPlanInNewThread?: (() => void) | undefined;
   promptHasText: boolean;
   isSendBusy: boolean;
   sendDisabledReason: string | null;
