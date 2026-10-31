@@ -270,8 +270,7 @@ export type AcpRegistryProbeModel = typeof AcpRegistryProbeModel.Type;
 
 export const AcpRegistryProbeResult = Schema.Struct({
   instanceId: ProviderInstanceId,
-  // `ready` is only returned after a disposable ACP session/new probe completes.
-  // It does not imply that authentication was passively detected.
+  // `ready` requires a disposable ACP session/new probe, not passive auth detection.
   ready: Schema.Literal(true),
   icon: Schema.NullOr(AcpRegistryUrl),
   authMethods: Schema.Array(AcpRegistryProbeAuthMethod).check(Schema.isMaxLength(32)),

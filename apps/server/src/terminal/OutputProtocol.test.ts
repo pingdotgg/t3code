@@ -2,7 +2,6 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   type TerminalAttachStreamEvent,
   TerminalAttachStreamEvent as TerminalAttachStreamEventSchema,
-  TerminalEvent as TerminalEventSchema,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -20,7 +19,6 @@ describe("terminal output window", () => {
   it.effect.each([
     { tag: WS_METHODS.terminalAttach, size: 1, limit: 8 },
     { tag: WS_METHODS.terminalObserve, size: 1, limit: 8 },
-    { tag: WS_METHODS.subscribeTerminalEvents, size: 1, limit: 8 },
     { tag: WS_METHODS.terminalAttach, size: 64 * 1024, limit: 1 },
     { tag: WS_METHODS.terminalObserve, size: 64 * 1024, limit: 1 },
     { tag: WS_METHODS.subscribeTerminalMetadata, size: 1, limit: 1 },
@@ -146,111 +144,101 @@ const chunkBytes = (message: RpcMessage.FromServerEncoded) =>
   Buffer.byteLength(JSON.stringify(message));
 
 describe("terminal output stream", () => {
-  it.effect.each([
-    WS_METHODS.terminalAttach,
-    WS_METHODS.terminalObserve,
-    WS_METHODS.subscribeTerminalEvents,
-  ])("releases only the ACK-stalled subscriber on %s and resumes safely", (tag) =>
-    Effect.gen(function* () {
-      const legacy = tag === WS_METHODS.subscribeTerminalEvents;
-      const group = RpcGroup.make(
-        Rpc.make(tag, {
-          success: legacy ? TerminalEventSchema : TerminalAttachStreamEventSchema,
-          stream: true,
-        }),
-      );
-      const publisher = makePublisher();
-      const stalled = yield* Queue.unbounded<RpcMessage.FromServerEncoded>();
-      const healthy = yield* Queue.unbounded<RpcMessage.FromServerEncoded>();
-      const receive = yield* Deferred.make<Parameters<RpcServer.Protocol["Service"]["run"]>[0]>();
-      const protocol = yield* RpcServer.Protocol.make((write) =>
-        Effect.gen(function* () {
-          yield* Deferred.succeed(receive, write);
-          const serialization = yield* RpcSerialization.RpcSerialization;
-          return {
-            disconnects: yield* Queue.unbounded<number>(),
-            send: (clientId, response) => Queue.offer(clientId === 0 ? stalled : healthy, response),
-            end: () => Effect.void,
-            clientIds: Effect.succeed(new Set([0, 1])),
-            initialMessage: Effect.succeedNone,
-            supportsAck: true,
-            supportsTransferables: false,
-            supportsSpanPropagation: false,
-            supportsNotifications: true,
-            codecFor: serialization.codecFor,
-          };
-        }),
-      );
-      const initial = legacy ? output("ready") : snapshot("");
-      yield* RpcServer.make(group).pipe(
-        Effect.provide(
-          group.toLayerHandler(tag, () =>
-            terminalOutputStream(
-              (listener, registerCleanup) =>
-                publisher
-                  .subscribe(listener, registerCleanup)
-                  .pipe(Effect.tap(() => listener(initial))),
-              legacy ? undefined : attach(publisher, "fresh history"),
-              256 * 1024,
+  it.effect.each([WS_METHODS.terminalAttach, WS_METHODS.terminalObserve])(
+    "releases only the ACK-stalled subscriber on %s and resumes safely",
+    (tag) =>
+      Effect.gen(function* () {
+        const group = RpcGroup.make(
+          Rpc.make(tag, {
+            success: TerminalAttachStreamEventSchema,
+            stream: true,
+          }),
+        );
+        const publisher = makePublisher();
+        const stalled = yield* Queue.unbounded<RpcMessage.FromServerEncoded>();
+        const healthy = yield* Queue.unbounded<RpcMessage.FromServerEncoded>();
+        const receive = yield* Deferred.make<Parameters<RpcServer.Protocol["Service"]["run"]>[0]>();
+        const protocol = yield* RpcServer.Protocol.make((write) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(receive, write);
+            const serialization = yield* RpcSerialization.RpcSerialization;
+            return {
+              disconnects: yield* Queue.unbounded<number>(),
+              send: (clientId, response) =>
+                Queue.offer(clientId === 0 ? stalled : healthy, response),
+              end: () => Effect.void,
+              clientIds: Effect.succeed(new Set([0, 1])),
+              initialMessage: Effect.succeedNone,
+              supportsAck: true,
+              supportsTransferables: false,
+              supportsSpanPropagation: false,
+              supportsNotifications: true,
+              codecFor: serialization.codecFor,
+            };
+          }),
+        );
+        const initial = snapshot("");
+        yield* RpcServer.make(group).pipe(
+          Effect.provide(
+            group.toLayerHandler(tag, () =>
+              terminalOutputStream(
+                (listener, registerCleanup) =>
+                  publisher
+                    .subscribe(listener, registerCleanup)
+                    .pipe(Effect.tap(() => listener(initial))),
+                attach(publisher, "fresh history"),
+                256 * 1024,
+              ),
             ),
           ),
-        ),
-        Effect.provideService(RpcServer.Protocol, withTerminalOutputWindow(protocol)),
-        Effect.forkScoped,
-      );
-      const write = yield* Deferred.await(receive);
-      const takeChunk = Effect.fnUntraced(function* (queue: typeof stalled) {
-        const response = yield* Queue.take(queue);
-        assert.equal(response._tag, "Chunk");
-        if (response._tag !== "Chunk") throw new Error("Expected an RPC chunk");
-        assert.isAtMost(chunkBytes(response), 70 * 1024);
-        return response.values;
-      });
-      yield* write(0, { _tag: "Request", id: "1", tag, payload: null, headers: [] });
-      assert.deepEqual(yield* takeChunk(stalled), [initial]);
-      yield* write(1, { _tag: "Request", id: "2", tag, payload: null, headers: [] });
-      assert.deepEqual(yield* takeChunk(healthy), [initial]);
-      yield* write(1, { _tag: "Ack", requestId: "2" });
-
-      // Eight unacknowledged chunks fill only client 0's output window.
-      for (let index = 0; index < 7; index++) {
-        const event = output("before-stall-" + index);
-        yield* publisher.publish(event);
-        assert.deepEqual(yield* takeChunk(stalled), [event]);
-        assert.deepEqual(yield* takeChunk(healthy), [event]);
-        yield* write(1, { _tag: "Ack", requestId: "2" });
-      }
-      assert.equal(publisher.listeners.size, 2);
-      for (let index = 0; index < 100; index++) {
-        const event = output(index + ":" + "界".repeat(1365));
-        yield* publisher.publish(event);
-        assert.deepEqual(yield* takeChunk(healthy), [event]);
-        yield* write(1, { _tag: "Ack", requestId: "2" });
-        if (index === 31) assert.equal(publisher.listeners.size, 2);
-      }
-      assert.equal(yield* Queue.size(stalled), 0);
-      assert.equal(publisher.listeners.size, 1);
-
-      yield* write(0, { _tag: "Ack", requestId: "1" });
-      if (legacy) {
-        assert.deepEqual(yield* Queue.take(stalled), {
-          _tag: "Exit",
-          requestId: "1",
-          exit: { _tag: "Success", value: null },
+          Effect.provideService(RpcServer.Protocol, withTerminalOutputWindow(protocol)),
+          Effect.forkScoped,
+        );
+        const write = yield* Deferred.await(receive);
+        const takeChunk = Effect.fnUntraced(function* (queue: typeof stalled) {
+          const response = yield* Queue.take(queue);
+          assert.equal(response._tag, "Chunk");
+          if (response._tag !== "Chunk") throw new Error("Expected an RPC chunk");
+          assert.isAtMost(chunkBytes(response), 70 * 1024);
+          return response.values;
         });
-      } else {
+        yield* write(0, { _tag: "Request", id: "1", tag, payload: null, headers: [] });
+        assert.deepEqual(yield* takeChunk(stalled), [initial]);
+        yield* write(1, { _tag: "Request", id: "2", tag, payload: null, headers: [] });
+        assert.deepEqual(yield* takeChunk(healthy), [initial]);
+        yield* write(1, { _tag: "Ack", requestId: "2" });
+
+        // Eight unacknowledged chunks fill only client 0's output window.
+        for (let index = 0; index < 7; index++) {
+          const event = output("before-stall-" + index);
+          yield* publisher.publish(event);
+          assert.deepEqual(yield* takeChunk(stalled), [event]);
+          assert.deepEqual(yield* takeChunk(healthy), [event]);
+          yield* write(1, { _tag: "Ack", requestId: "2" });
+        }
+        assert.equal(publisher.listeners.size, 2);
+        for (let index = 0; index < 100; index++) {
+          const event = output(index + ":" + "界".repeat(1365));
+          yield* publisher.publish(event);
+          assert.deepEqual(yield* takeChunk(healthy), [event]);
+          yield* write(1, { _tag: "Ack", requestId: "2" });
+          if (index === 31) assert.equal(publisher.listeners.size, 2);
+        }
+        assert.equal(yield* Queue.size(stalled), 0);
+        assert.equal(publisher.listeners.size, 1);
+
+        yield* write(0, { _tag: "Ack", requestId: "1" });
         assert.deepEqual(yield* takeChunk(stalled), [snapshot("fresh history")]);
         assert.equal(publisher.listeners.size, 2);
         for (let index = 0; index < 7; index++) {
           yield* write(0, { _tag: "Ack", requestId: "1" });
         }
-      }
-      const after = output("unique output after recovery");
-      yield* publisher.publish(after);
-      assert.deepEqual(yield* takeChunk(healthy), [after]);
-      if (!legacy) assert.deepEqual(yield* takeChunk(stalled), [after]);
-      assert.equal(yield* Queue.size(stalled), 0);
-    }).pipe(Effect.provide(RpcSerialization.layerJson), Effect.scoped),
+        const after = output("unique output after recovery");
+        yield* publisher.publish(after);
+        assert.deepEqual(yield* takeChunk(healthy), [after]);
+        assert.deepEqual(yield* takeChunk(stalled), [after]);
+        assert.equal(yield* Queue.size(stalled), 0);
+      }).pipe(Effect.provide(RpcSerialization.layerJson), Effect.scoped),
   );
 
   it.effect("interrupts recovery while its subscription is still waiting", () =>

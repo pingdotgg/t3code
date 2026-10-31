@@ -96,7 +96,7 @@ export class ProjectStoreV2 extends Context.Service<
   }
 >()("t3/orchestration-v2/ProjectStore/ProjectStoreV2") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const encodeRow = Schema.encodeEffect(ProjectDbRow);
@@ -266,11 +266,14 @@ export const make = Effect.gen(function* () {
     get,
     list,
     findActiveByWorkspaceRoot,
-    getShell: (projectId) => get(projectId).pipe(Effect.map(Option.map(toShell))),
-    listShells: (options) =>
-      list(options?.projectIds === undefined ? undefined : { projectIds: options.projectIds }).pipe(
-        Effect.map((rows) => rows.map(toShell)),
-      ),
+    getShell: Effect.fn("ProjectStoreV2.getShell")(function (projectId) {
+      return get(projectId).pipe(Effect.map(Option.map(toShell)));
+    }),
+    listShells: Effect.fn("ProjectStoreV2.listShells")(function (options) {
+      return list(
+        options?.projectIds === undefined ? undefined : { projectIds: options.projectIds },
+      ).pipe(Effect.map((rows) => rows.map(toShell)));
+    }),
   });
 });
 

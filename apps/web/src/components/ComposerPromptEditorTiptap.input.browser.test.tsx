@@ -13,14 +13,15 @@ import { createElement, createRef, useEffect, useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
-import { act, render } from "../../test/render";
+import { act, fakeTimers, render } from "../../test/render";
 
 import { serializeEditorDoc } from "~/composer-rich-text-doc";
+import { isMacPlatform } from "~/lib/utils";
 import {
-  ComposerPromptEditor,
+  ComposerPromptEditorTiptap as ComposerPromptEditor,
   type ComposerPromptEditorHandle,
   type ComposerPromptEditorProps,
-} from "./ComposerPromptEditor";
+} from "./ComposerPromptEditorTiptap";
 
 const babysit: ServerProviderSkill = {
   name: "babysit",
@@ -146,6 +147,25 @@ it.each([
   expect(serializeEditorDoc(editor.state.doc).value).toBe(`${value}_`);
   expect(textWithMark(editor, "italic")).toEqual([]);
   expect(textWithMark(editor, "code")).toEqual(code);
+});
+
+it("bolds with Mod+B only when text is selected", async () => {
+  await using screen = await mountEditor("ship it");
+  const { editor } = screen;
+  const modB = isMacPlatform(navigator.platform) ? "{Meta>}b{/Meta}" : "{Control>}b{/Control}";
+  await act(async () => {
+    editor.commands.focus("end");
+  });
+  await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+  await userEvent.keyboard(modB);
+  // Without the guard, Tiptap stores bold for the next typed text.
+  expect(editor.state.storedMarks).toBeNull();
+
+  await act(async () => {
+    editor.commands.setTextSelection({ from: 1, to: 5 });
+  });
+  await userEvent.keyboard(modB);
+  await vi.waitFor(() => expect(textWithMark(editor, "bold")).toEqual(["ship"]));
 });
 
 it.each([false, true])(
@@ -356,10 +376,14 @@ describe("composer context undo lifetime", () => {
 
 describe("an Arabic line", () => {
   async function focusEnd(editor: Editor) {
+    // ProseMirror rewrites the DOM caret 20ms after focus. Run that now, or it
+    // can undo the first arrow key before ProseMirror reads the native move.
+    using _timers = fakeTimers();
     await act(async () => {
       editor.commands.focus("end");
     });
     await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+    vi.runOnlyPendingTimers();
   }
 
   it("leaves inline code through its start with ArrowRight, which points back", async () => {
