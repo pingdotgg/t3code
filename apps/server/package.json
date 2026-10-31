@@ -68,6 +68,7 @@
     "saxes": "6.0.0",
     "stream-chain": "^4.2.5",
     "stream-json": "3.6.0",
+    "transcribe-cpp": "0.2.3",
     "undici": "catalog:",
     "yaml": "catalog:",
     "yauzl": "^3.4.0",

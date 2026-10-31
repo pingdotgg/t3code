@@ -12,6 +12,15 @@ import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection
 import "~/index.css";
 import { act, render } from "../../../test/render";
 
+vi.mock("~/speech/useTextFieldSpeech", () => ({
+  useTextFieldSpeech: () => ({
+    blocksSubmission: false,
+    freezesEditor: false,
+    setup: { open: false },
+  }),
+  TextFieldSpeechControls: () => null,
+}));
+
 const mocks = vi.hoisted(() => ({ observeSource: vi.fn(), dispose: vi.fn() }));
 vi.mock(import("./AssistantCitationSource"), async (importOriginal) => ({
   ...(await importOriginal()),

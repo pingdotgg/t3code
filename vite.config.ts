@@ -676,7 +676,7 @@ export default defineConfig({
         "apps/web/src/components/chat/TimelineWorkEntryRow.tsx": 2,
         "apps/web/src/components/chat/TimelineWorkGroupRows.tsx": 1,
         "apps/web/src/components/chat/UserMessageContextChips.tsx": 1,
-        "apps/web/src/components/chat/ChatComposer.tsx": 2,
+        "apps/web/src/components/chat/ChatComposer.tsx": 1,
         "apps/web/src/components/chat/ComposerAttachmentStrip.tsx": 3,
         "apps/web/src/components/chat/ComposerPrimaryActions.tsx": 3,
         "apps/web/src/components/settings/ThemeSettings.tsx": 5,
