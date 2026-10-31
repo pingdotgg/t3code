@@ -602,14 +602,22 @@ describe("thread action failure dialog", () => {
     ]);
   });
 
-  it("offers no partial retry when an Undo step fails", async () => {
-    await useThreadListActions().settleThread(makeThread({ pinnedAt: "2026-09-02T00:00:00.000Z" }));
-    state.failedAction = "unsettle";
-    await readThreadUndoNotice()!.undo();
+  it.each(["Server rejected action", "Thread thread is deleted."])(
+    "offers no partial retry when an Undo step fails: %s",
+    async (message) => {
+      await useThreadListActions().settleThread(
+        makeThread({ pinnedAt: "2026-09-02T00:00:00.000Z" }),
+      );
+      state.failedAction = "unsettle";
+      state.failureMessage = message;
+      await readThreadUndoNotice()!.undo();
 
-    expect(state.alerts.at(-1)?.title).toBe("Could not un-settle thread");
-    expect(state.alerts.at(-1)?.buttons?.map(({ text }) => text)).toEqual(["OK"]);
-  });
+      expect(state.alerts.at(-1)?.title).toBe(
+        message.includes("deleted") ? "Thread no longer exists" : "Could not un-settle thread",
+      );
+      expect(state.alerts.at(-1)?.buttons?.map(({ text }) => text)).toEqual(["OK"]);
+    },
+  );
 
   it("treats a deleted thread as missing", async () => {
     state.failedAction = "settle";

@@ -79,19 +79,21 @@ function showActionFailure(
     Dialog.alert(
       "Thread no longer exists",
       `“${thread.title}” is no longer on its server, so it can't be ${ACTION_VERBS[action]}. It was probably deleted on another device, and this list is showing an old copy.`,
-      [
-        { text: "Keep", style: "cancel" },
-        {
-          text: "Remove from list",
-          style: "destructive",
-          onPress: () => {
-            forgetThread(thread.environmentId, thread.id);
-            // Archive rows come from the server's archived snapshot, which reloads without it.
-            if (thread.archivedAt != null)
-              refreshArchivedThreadsForEnvironment(thread.environmentId);
-          },
-        },
-      ],
+      run === null
+        ? [{ text: "OK", style: "cancel" }]
+        : [
+            { text: "Keep", style: "cancel" },
+            {
+              text: "Remove from list",
+              style: "destructive",
+              onPress: () => {
+                forgetThread(thread.environmentId, thread.id);
+                // Archive rows come from the server's archived snapshot, which reloads without it.
+                if (thread.archivedAt != null)
+                  refreshArchivedThreadsForEnvironment(thread.environmentId);
+              },
+            },
+          ],
     );
     return;
   }
