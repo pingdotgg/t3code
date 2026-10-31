@@ -21,7 +21,7 @@ export function formatCount(value: number): string {
 }
 
 export function formatTokens(value: number): string {
-  const abs = Math.abs(value);
+  const abs = Number(Math.abs(value).toPrecision(3));
   if (abs >= 1e12) return `${trim(value / 1e12)}T`;
   if (abs >= 1e9) return `${trim(value / 1e9)}B`;
   if (abs >= 1e6) return `${trim(value / 1e6)}M`;
