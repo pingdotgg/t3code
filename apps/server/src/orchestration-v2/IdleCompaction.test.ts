@@ -308,4 +308,89 @@ describe("IdleCompactionService", () => {
       );
     },
   );
+
+  it.effect("keeps the latest run's compaction when an earlier run reports completed again", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const base = records({ cacheExpiresInMs: 10 * MINUTE_MS });
+        const laterRunId = RunId.make("run-2");
+        const laterMessageId = MessageId.make("message-2");
+        const earlierRun = base.runs[0]!;
+        const laterRun = {
+          ...earlierRun,
+          id: laterRunId,
+          ordinal: 2,
+          userMessageId: laterMessageId,
+        };
+        const data: OrchestrationV2ThreadProjection = {
+          ...base,
+          runs: [earlierRun, laterRun],
+          messages: [
+            ...base.messages,
+            { ...base.messages[0]!, id: laterMessageId, runId: laterRunId, text: "Keep going" },
+          ],
+          providerThreads: [{ ...base.providerThreads[0]!, lastRunOrdinal: 2 }],
+          attempts: [],
+          nodes: [],
+          subagents: [],
+          providerSessions: [],
+          plans: [],
+          checkpointScopes: [],
+          checkpoints: [],
+          contextHandoffs: [],
+          visibleTurnItems: [],
+          updatedAt: at(),
+        };
+        const completed = (run: typeof earlierRun) => ({
+          id: EventId.make(`completed-${run.id}`),
+          type: "run.updated" as const,
+          threadId,
+          runId: run.id,
+          occurredAt: at(),
+          payload: run,
+        });
+        const dispatched: Array<string> = [];
+        const streamDone = yield* Deferred.make<void>();
+        const dependencies = Layer.mergeAll(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            // A delegated completion on the earlier run lands after the later run completed.
+            streamDomainEvents: Stream.make(completed(laterRun), completed(earlierRun)).pipe(
+              Stream.ensuring(Deferred.succeed(streamDone, undefined)),
+            ),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatched.push(command.commandId);
+                return { sequence: 1, storedEvents: [] };
+              }),
+          }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getThread: () => Effect.succeed(data.thread),
+            getThreadRecords: (_threadId, _keys, options) =>
+              Effect.succeed({
+                ...data,
+                messages: data.messages.filter(
+                  (message) =>
+                    options?.messageRunIds === undefined ||
+                    (message.runId !== null && options.messageRunIds.includes(message.runId)),
+                ),
+              }),
+          }),
+          Layer.mock(ServerSettings.ServerSettingsService)({
+            getSettings: Effect.succeed({
+              ...DEFAULT_SERVER_SETTINGS,
+              idleCompaction: "beforeCacheExpires",
+            }),
+          }),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* IdleCompactionService.make;
+          yield* service.start();
+          yield* Deferred.await(streamDone);
+          yield* TestClock.adjust(9 * MINUTE_MS);
+        }).pipe(Effect.provide(dependencies));
+        expect(dispatched).toEqual(["server:idle-compact:idle-thread:run-2"]);
+      }),
+    ),
+  );
 });
