@@ -849,6 +849,45 @@ describe("buildThreadFeed", () => {
       label: "Worked for 2s",
     });
 
+    const hook: OrchestrationV2TurnItem = {
+      ...base("stop-hook", "2026-06-20T00:00:02.800Z", 4),
+      type: "notification",
+      source: { kind: "system" },
+      outcome: "updated",
+      summary: "Stop hook asked Claude to continue",
+      detail: "[./check.sh]: Run the formatter before finishing.",
+    };
+    const secondAnswer = {
+      ...assistantMessage("2026-06-20T00:00:02.900Z"),
+      id: TurnItemId.make("item-second"),
+      messageId: MessageId.make("message-second"),
+      text: "The formatter has run.",
+    };
+    const secondHook = {
+      ...hook,
+      ...base("stop-hook-2", "2026-06-20T00:00:02.950Z", 6),
+    };
+    const hookFeed = buildThreadFeed([
+      projected(userMessage(), 0),
+      projected(opening, 1),
+      projected(middle, 2),
+      projected(command("2026-06-20T00:00:02.600Z"), 3),
+      projected(hook, 4),
+      projected(secondAnswer, 5),
+      projected(secondHook, 6),
+      projected(assistantMessage(), 7),
+    ]);
+    const hookRows = deriveThreadFeedPresentation(hookFeed, latestRun, new Set());
+    expect(hookRows.map((entry) => entry.id)).toEqual([
+      "message-user",
+      "run-fold:run-1",
+      "message-middle",
+      "local:thread-1:stop-hook",
+      "message-second",
+      "local:thread-1:stop-hook-2",
+      "message-assistant",
+    ]);
+
     const expanded = deriveThreadFeedPresentation(feed, latestRun, new Set([runId]));
     expect(expanded.map((entry) => entry.type)).toEqual([
       "message",

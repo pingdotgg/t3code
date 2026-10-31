@@ -2658,6 +2658,74 @@ describe("v2 run and attempt history", () => {
       "assistant-final-entry",
     ]);
 
+    const hook = {
+      id: "stop-hook",
+      kind: "work" as const,
+      createdAt: "2026-01-01T00:00:09.500Z",
+      entry: {
+        id: "stop-hook",
+        createdAt: "2026-01-01T00:00:09.500Z",
+        runId: "turn-1" as never,
+        label: "Stop hook asked Claude to continue",
+        tone: "info" as const,
+        itemType: "notification" as const,
+        structuredPayload: {
+          type: "notification",
+          source: { kind: "system" },
+          summary: "Stop hook asked Claude to continue",
+          detail: "[./check.sh]: Run the formatter before finishing.",
+        } as never,
+      },
+    };
+    const secondAnswer = {
+      id: "assistant-second-entry",
+      kind: "message" as const,
+      createdAt: "2026-01-01T00:00:12Z",
+      message: {
+        id: "assistant-second" as never,
+        role: "assistant" as const,
+        text: "The formatter has run.",
+        runId: "turn-1" as never,
+        createdAt: "2026-01-01T00:00:12Z",
+        updatedAt: "2026-01-01T00:00:12Z",
+        streaming: false,
+      },
+    };
+    const secondHook = {
+      ...hook,
+      id: "stop-hook-2",
+      createdAt: "2026-01-01T00:00:15Z",
+      entry: { ...hook.entry, id: "stop-hook-2", createdAt: "2026-01-01T00:00:15Z" },
+    };
+    const hookRows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        ...timelineEntries.slice(0, 4),
+        hook,
+        ...timelineEntries.slice(4, -1),
+        secondAnswer,
+        secondHook,
+        timelineEntries.at(-1)!,
+      ],
+      isWorking: false,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(hookRows.map((row) => row.id)).toEqual([
+      "user-entry",
+      "turn-fold:turn-1",
+      "assistant-thought-entry",
+      "stop-hook",
+      "thread-created-entry",
+      "assistant-second-entry",
+      "stop-hook-2",
+      "assistant-final-entry",
+    ]);
+    expect(
+      hookRows
+        .filter((row) => row.kind === "message" && row.message.role === "assistant")
+        .map((row) => row.kind === "message" && row.showAssistantMeta),
+    ).toEqual([false, false, true]);
+
     const expandedRows = deriveMessagesTimelineRows({
       timelineEntries,
       expandedRunIds: new Set(["turn-1" as never]),
