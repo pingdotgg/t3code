@@ -4,6 +4,7 @@ import {
   parseThreadLinkPrompt,
   promptLinkAppPath,
   promptLinkDeepLink,
+  threadLinkMessageId,
 } from "@t3tools/shared/promptLinks";
 import { useLocation } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
@@ -33,9 +34,11 @@ function summarize(
   const url = new URL(appPath, window.location.origin);
   if (url.pathname !== "/new") {
     const prompt = parseThreadLinkPrompt(url.search);
-    return prompt.ok
-      ? { ok: true, value: { prompt: prompt.value, details: ["Opens one of your threads."] } }
-      : prompt;
+    const detail =
+      threadLinkMessageId(url.search) === null
+        ? "Opens one of your threads."
+        : "Opens one of your threads at a message.";
+    return prompt.ok ? { ok: true, value: { prompt: prompt.value, details: [detail] } } : prompt;
   }
   const link = parseNewThreadLink(url.search);
   if (!link.ok) return link;
@@ -120,11 +123,18 @@ function HostedPromptLinkLanding({
   }
 
   const { prompt, details } = summary.value;
+  // A thread link without a prompt only opens the thread. Every other link carries a draft.
+  const opensDraft =
+    prompt !== null || new URL(appPath, window.location.origin).pathname === "/new";
   return (
     <StandalonePage>
       <StandalonePageHeader
-        title="Open this prompt"
-        description="It opens as a draft. Nothing runs until you press Send."
+        title={opensDraft ? "Open this prompt" : "Open this thread"}
+        description={
+          opensDraft
+            ? "It opens as a draft. Nothing runs until you press Send."
+            : "It opens in T3 Code, on a machine you are connected to."
+        }
       />
       {prompt !== null && prompt.hiddenCharacters > 0 ? (
         <Alert className="mt-5" variant="error">

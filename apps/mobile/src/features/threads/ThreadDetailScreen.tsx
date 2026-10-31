@@ -250,7 +250,11 @@ export interface ThreadDetailScreenProps {
   readonly respondingUserInputId: RuntimeRequestId | null;
   readonly connectionStateLabel: EnvironmentConnectionPhase;
   readonly threadSyncStatus?: EnvironmentThreadStatus;
+  readonly threadSyncError?: string | null;
   readonly historyControls?: ThreadFeedHistoryControls;
+  /** A message link's target. See ThreadFeed. */
+  readonly linkedMessageId?: string | null;
+  readonly onLinkedMessageHandled?: () => void;
   readonly activeThreadBusy: boolean;
   readonly canStopThread: boolean;
   readonly queuedRunEdit: QueuedRunEdit | null;
@@ -822,6 +826,10 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   const jumpMessageLoaded =
     jumpMessageId !== null &&
     selectedThreadFeed.some((entry) => entry.type === "message" && entry.id === jumpMessageId);
+  const handleJumpedToMessage = useCallback(
+    () => finishThreadMessageJump(selectedThreadKey),
+    [selectedThreadKey],
+  );
   const historyForJump = props.historyControls;
   // History down to the message in one request; another page if it is not
   // there yet.
@@ -1402,7 +1410,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
               freeze={freeze}
               anchorMessageId={anchorMessageId}
               jumpToMessageId={jumpMessageLoaded ? jumpMessageId : null}
-              onJumpedToMessage={() => finishThreadMessageJump(selectedThreadKey)}
+              onJumpedToMessage={handleJumpedToMessage}
               ref={feedRef}
               contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
               keyboardOffset={composerKeyboardOffset}
@@ -1413,6 +1421,11 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
               }
               contentMaxWidth={contentMaxWidth}
               historyControls={props.historyControls}
+              linkedMessageId={props.linkedMessageId}
+              onLinkedMessageHandled={props.onLinkedMessageHandled}
+              threadSyncStatus={props.threadSyncStatus}
+              threadSyncError={props.threadSyncError}
+              connectionPhase={props.connectionStateLabel}
               contentSideInsets={nativeMetrics?.safeArea}
               layoutVariant={layoutVariant}
               usesAutomaticContentInsets={props.usesAutomaticContentInsets}
