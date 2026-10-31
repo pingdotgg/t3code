@@ -180,7 +180,8 @@ function newestInstalled(home) {
       try {
         const target =
           process.platform === "win32"
-            ? /^"([^"]+)"/m.exec(fs.readFileSync(launcher, "utf8"))?.[1]
+            ? // Only the exact shim T3 Code writes; a user's wrapper may set what t3 needs.
+              /^@echo off\r?\n"([^"]+)" %\*\s*$/.exec(fs.readFileSync(launcher, "utf8"))?.[1]
             : fs.realpathSync(launcher);
         const relative = target ? path.relative(base, target) : "..";
         const installed = relative.split(path.sep)[0];

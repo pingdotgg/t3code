@@ -95,7 +95,8 @@ export const renderCliShim = (input: {
     // Extract-and-run would make the runtime start the app instead of mounting it.
     "unset APPIMAGE_EXTRACT_AND_RUN",
     // The runtime stays mounted until killed; traps unmount it because background jobs ignore Ctrl-C.
-    "work=$(mktemp -d) || exit 1",
+    // 126 means T3 Code could not start, so the npm launcher runs its own copy instead.
+    "work=$(mktemp -d) || exit 126",
     '"$app" --appimage-mount >"$work/mount" 2>/dev/null &',
     "mounter=$!",
     `trap 'kill "$mounter" 2>/dev/null; wait "$mounter" 2>/dev/null; rm -rf "$work"' EXIT`,
@@ -110,7 +111,7 @@ export const renderCliShim = (input: {
     "done",
     // Without FUSE the runtime cannot mount (it prints why and exits); extracting the image still works.
     'if [ -z "$mount" ]; then',
-    '  (cd "$work" && "$app" --appimage-extract >/dev/null) || { echo "Could not open $app." >&2; exit 1; }',
+    '  (cd "$work" && "$app" --appimage-extract >/dev/null) || { echo "Could not open $app." >&2; exit 126; }',
     '  mount="$work/squashfs-root"',
     "fi",
     // The shell must outlive the CLI to unmount, so it forwards TERM and HUP; the terminal sends

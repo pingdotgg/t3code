@@ -219,7 +219,9 @@ export const make = Effect.gen(function* () {
     const setup =
       onPath ||
       Option.isNone(installed) ||
-      pathEntries(process.env.PATH, ":").includes(path.dirname(installed.value))
+      pathEntries(process.env.PATH, ":").some(
+        (entry) => entry.replace(/\/+$/, "") === path.dirname(installed.value),
+      )
         ? undefined
         : startupLine(installed.value);
     return {
@@ -266,18 +268,10 @@ export const make = Effect.gen(function* () {
       return yield* state;
     }
     const candidates = userCandidates(environment.homeDirectory);
-    const existing = yield* installedAt;
-    const replaced = Option.getOrUndefined(existing);
-    // A link in an older macOS folder stays until the new one exists, so a failure keeps a t3.
-    const legacy = replaced !== undefined && !candidates.includes(path.dirname(replaced));
+    const replaced = Option.getOrUndefined(yield* installedAt);
     if (replaced !== undefined) {
       const target = yield* fs.readLink(replaced).pipe(Effect.option);
       if (Option.getOrUndefined(target) === launcher) return yield* state;
-      if (!legacy) {
-        yield* fs
-          .remove(replaced)
-          .pipe(Effect.mapError(() => fail(`Could not replace ${replaced}.`)));
-      }
     }
     const shadowedBy = yield* foreignFirstOnPath;
     if (Option.isSome(shadowedBy)) {
@@ -285,6 +279,7 @@ export const make = Effect.gen(function* () {
         `Another t3 at ${shadowedBy.value} runs first in a new terminal. Remove it, or run the launcher directly at ${launcher}.`,
       );
     }
+    // An old link of ours stays until the new one exists, so a failure never leaves no t3.
     const onPath = pathEntries(process.env.PATH, ":");
     for (const directory of [
       ...candidates.filter((candidate) => onPath.includes(candidate)),
@@ -298,12 +293,24 @@ export const make = Effect.gen(function* () {
             Effect.orElseSucceed(() => false),
           );
       if (!created) continue;
-      const linked = yield* fs.symlink(launcher, link).pipe(
+      // Our own link is swapped in place; anything else there makes symlink fail and stays.
+      const staging = `${link}.staging`;
+      const linked = yield* (
+        link === replaced
+          ? fs.remove(staging, { force: true }).pipe(
+              Effect.andThen(fs.symlink(launcher, staging)),
+              Effect.andThen(fs.rename(staging, link)),
+              Effect.tapError(() => fs.remove(staging, { force: true }).pipe(Effect.ignore)),
+            )
+          : fs.symlink(launcher, link)
+      ).pipe(
         Effect.as(true),
         Effect.orElseSucceed(() => false),
       );
       if (!linked) continue;
-      if (legacy) yield* fs.remove(replaced).pipe(Effect.ignore);
+      if (replaced !== undefined && replaced !== link) {
+        yield* fs.remove(replaced).pipe(Effect.ignore);
+      }
       return yield* state;
     }
     return yield* fail(

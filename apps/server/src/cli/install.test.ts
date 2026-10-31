@@ -152,6 +152,7 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       yield* offer(false, { env: { TERM: "dumb" } });
       yield* offer(false, { foreground: false });
       yield* offer(false, { args: ["connect", "--help"] });
+      yield* offer(false, { args: ["--log-level", "debug", "install"] });
       yield* offer(false, { env: { T3CODE_USE_NPM: "1" } });
       const globalBin = path.join(root, "global-bin");
       yield* fs.makeDirectory(globalBin);

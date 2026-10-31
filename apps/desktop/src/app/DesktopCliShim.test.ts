@@ -107,12 +107,15 @@ describe("renderCliShim", () => {
   });
 
   it("extracts the AppImage where it cannot be mounted", () => {
-    const { shim } = fakeAppImage(false);
+    const { shim, appImage } = fakeAppImage(false);
     const result = run(shim, ["--version"], { APPIMAGE_EXTRACT_AND_RUN: "1" });
     expect(result.status).toBe(3);
     expect(result.stdout).toMatch(
       /squashfs-root\/resources\/app\.asar\/apps\/server\/dist\/bin\.mjs/,
     );
+    // Neither works: 126 tells the npm launcher to run its own copy instead.
+    writeExecutable(appImage, "#!/bin/sh\nexit 1\n");
+    expect(run(shim, ["--version"]).status).toBe(126);
   });
 
   it("keeps the install's T3 home under sudo, unless one is set", () => {

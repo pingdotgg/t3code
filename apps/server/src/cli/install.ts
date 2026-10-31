@@ -172,6 +172,16 @@ const minorRelease = (version: string) => version.split(".").slice(0, 2).join(".
 
 const SKIPPED_ARGUMENTS = new Set(["help", "--help", "-h", "--version", "-v"]);
 
+/** The subcommand, past global flags that may come first (two take a value). */
+const topLevelCommand = (args: ReadonlyArray<string>) => {
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]!;
+    if (arg === "--log-level" || arg === "--completions") index++;
+    else if (!arg.startsWith("-")) return arg;
+  }
+  return undefined;
+};
+
 /** Agents can run commands in a terminal that nobody answers; no answer counts as no. */
 const PROMPT_TIMEOUT = Duration.seconds(30);
 
@@ -232,7 +242,8 @@ export const offerCliInstall = Effect.fn("cli.install.offer")(function* <E, R, E
   if (!input.interactive || environment.CI || environment.SUDO_USER) return true;
   if (environment.T3CODE_USE_NPM === "1" || environment.TERM === "dumb") return true;
   if (input.args.some((arg) => SKIPPED_ARGUMENTS.has(arg))) return true;
-  if (input.args[0] === "install" || input.args[0] === "uninstall") return true;
+  const command = topLevelCommand(input.args);
+  if (command === "install" || command === "uninstall") return true;
   if (detectCliRunner(yield* resolveEntryPath) === null) return true;
   const runtime = yield* standaloneRuntime;
   if (Option.isNone(runtime)) return true;
