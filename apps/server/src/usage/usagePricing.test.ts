@@ -268,4 +268,14 @@ describe("usage pricing", () => {
 
     expect(lookupRate(table, "gemini-4-argon")).toEqual(lookupRate(table, "gemini/gemini-4-argon"));
   });
+
+  it("leaves a bare name unpriced when model makers' own entries disagree", () => {
+    const table = parseRateTable({
+      "openai/example-model": rate(1),
+      "xai/example-model": rate(3),
+      "kyma/example-model": rate(1),
+    });
+
+    expect(lookupRate(table, "example-model")).toBeNull();
+  });
 });
