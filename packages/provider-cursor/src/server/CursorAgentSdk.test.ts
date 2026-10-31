@@ -49,17 +49,34 @@ const cursorSdkMock = vi.hoisted(() => {
         agentId: "agent-cursor-agent-sdk-test",
         wait: runWait,
         cancel: runCancel,
+        stream: async function* () {},
       };
     },
   );
+  const summarize = vi.fn(async () => {
+    runOperations.push("run.summarize");
+    return {
+      id: "run-cursor-agent-sdk-summarize",
+      agentId: "agent-cursor-agent-sdk-test",
+      wait: runWait,
+      cancel: runCancel,
+      stream: async function* () {
+        yield { type: "summary", status: "running" };
+        yield { type: "summary", status: "completed" };
+        yield { type: "summary", status: "error" };
+      },
+    };
+  });
   const create = vi.fn(async () => ({
     agentId: "agent-cursor-agent-sdk-test",
     send,
+    summarize,
     close: agentClose,
   }));
   const resume = vi.fn(async () => ({
     agentId: "agent-cursor-agent-sdk-test",
     send,
+    summarize,
     close: agentClose,
   }));
   const listRuns = vi.fn(async () => {
@@ -84,6 +101,7 @@ const cursorSdkMock = vi.hoisted(() => {
     runCancel,
     runWait,
     send,
+    summarize,
     setAgentCloseFailure: (failure: unknown) => {
       agentCloseFailure = failure;
     },
@@ -169,6 +187,39 @@ describe("CursorAgentSdkRunner", () => {
           runtime: "local",
           cwd: process.cwd(),
         },
+      ]);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("pumps summarize stream updates without deadlocking wait", () =>
+    Effect.gen(function* () {
+      cursorSdkMock.runOperations.length = 0;
+      cursorSdkMock.summarize.mockClear();
+      cursorSdkMock.setStaleRunActive(false);
+
+      const updates: Array<unknown> = [];
+      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
+      const session = yield* runner.open({
+        operation: "create",
+        options: { model: { id: "default" }, mode: "agent", local: { cwd: process.cwd() } },
+        threadId: ThreadId.make("thread-cursor-agent-sdk-summarize-test"),
+        providerSessionId: ProviderSessionId.make(
+          "provider-session-cursor-agent-sdk-summarize-test",
+        ),
+      });
+      const run = yield* session.summarize({
+        onDelta: (update) =>
+          Effect.sync(() => {
+            updates.push(update);
+          }),
+      });
+      yield* run.wait;
+
+      assert.deepStrictEqual(cursorSdkMock.runOperations, ["run.summarize"]);
+      assert.deepStrictEqual(updates, [
+        { type: "summary-started" },
+        { type: "summary-completed" },
+        { type: "summary-completed", failed: true },
       ]);
     }).pipe(Effect.provide(layerTest)),
   );

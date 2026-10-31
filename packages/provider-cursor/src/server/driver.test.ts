@@ -116,6 +116,7 @@ it.layer(layerTest)("CursorDriver", (it) => {
                 return {
                   agentId: "browser-auth-agent",
                   listMessages: Effect.succeed([]),
+                  summarize: () => Effect.die("This test only opens a session"),
                   send: () => Effect.die("This test only opens a session"),
                   close: Effect.sync(() => {
                     closed += 1;
@@ -212,6 +213,20 @@ it.layer(layerTest)("CursorDriver", (it) => {
                 agentId: "native-cursor-window",
                 listMessages: Effect.succeed([]),
                 close: Effect.void,
+                summarize: () =>
+                  Effect.succeed({
+                    agentId: "native-cursor-window",
+                    runId: "native-cursor-window-summarize",
+                    cancel: Effect.void,
+                    wait: Effect.succeed({
+                      id: "native-cursor-window-summarize",
+                      requestId: "native-cursor-window-summarize",
+                      status: "finished" as const,
+                      model: { id: "claude-opus-5-5" },
+                      durationMs: 1,
+                      result: "summary",
+                    }),
+                  }),
                 send: (input) =>
                   Effect.sync(() => {
                     sentModels.push(input.options?.model);

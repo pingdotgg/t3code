@@ -288,7 +288,9 @@ export function makeCursorAgentSdkReplayRunner(
 
   const waitForRun = <Error>(
     runId: string,
-    sendInput: CursorAgentSdk.CursorAgentSdkSendInput<Error>,
+    runInput: {
+      readonly onDelta?: (update: InteractionUpdate) => Effect.Effect<void, Error>;
+    },
   ): Effect.Effect<RunResult, CursorAgentSdkReplayError> =>
     Effect.gen(function* () {
       while (true) {
@@ -364,7 +366,7 @@ export function makeCursorAgentSdkReplayRunner(
             );
           }
           advance();
-          yield* (sendInput.onDelta?.(frame.update) ?? Effect.void).pipe(
+          yield* (runInput.onDelta?.(frame.update) ?? Effect.void).pipe(
             Effect.mapError((cause) =>
               recordFailure(
                 new CursorReplayRuntimeError({
@@ -445,6 +447,34 @@ export function makeCursorAgentSdkReplayRunner(
                   return run;
                 },
                 catch: (cause) => replayRunnerError(transcript, cause, "replay.session.send"),
+              }),
+            summarize: (summarizeInput) =>
+              Effect.try({
+                try: () => {
+                  assertOutbound({
+                    type: "run.summarize",
+                  });
+                  const started = consumeInbound("run.started");
+                  const run: CursorAgentSdk.CursorAgentSdkRun = {
+                    runId: started.runId,
+                    agentId: started.agentId,
+                    wait: waitForRun(started.runId, summarizeInput ?? {}).pipe(
+                      Effect.mapError((cause) =>
+                        replayRunnerError(transcript, cause, "replay.run.wait"),
+                      ),
+                    ),
+                    cancel: Effect.try({
+                      try: () =>
+                        assertOutbound({
+                          type: "run.cancel",
+                          runId: started.runId,
+                        }),
+                      catch: (cause) => replayRunnerError(transcript, cause, "replay.run.cancel"),
+                    }),
+                  };
+                  return run;
+                },
+                catch: (cause) => replayRunnerError(transcript, cause, "replay.session.summarize"),
               }),
             listMessages: Effect.try({
               try: () => {

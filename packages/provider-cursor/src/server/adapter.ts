@@ -923,6 +923,15 @@ interface ActiveCursorTextStream {
   nextSegment: number;
 }
 
+interface ActiveCursorCompaction {
+  readonly nativeItemId: string;
+  readonly startedAt: DateTime.Utc;
+  summary?: string;
+  failed?: boolean;
+  fallback?: boolean;
+  status: "running" | "completed" | "failed";
+}
+
 interface ActiveCursorTurn {
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly run: CursorAgentSdk.CursorAgentSdkRun;
@@ -935,6 +944,8 @@ interface ActiveCursorTurn {
   readonly assistant: ActiveCursorTextStream;
   assistantReply: CursorTransportFailure;
   readonly reasoning: ActiveCursorTextStream;
+  /** Set when this turn is a native summarize/compaction run. */
+  compaction: ActiveCursorCompaction | null;
   interrupted: boolean;
   finalized: boolean;
   /** The agent's latest turn ended and no new work has started since. */
@@ -1984,6 +1995,97 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           return candidates.filter((value): value is string => typeof value === "string").join("");
         };
 
+        const emitCompactionItem = Effect.fnUntraced(function* (context: ActiveCursorTurn) {
+          const compaction = context.compaction;
+          if (compaction === null) return;
+          const now = yield* DateTime.now;
+          const ordinal = yield* resolveItemOrdinal(context, compaction.nativeItemId);
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: CursorAgentSdk.CURSOR_PROVIDER,
+            turnItem: {
+              id: idAllocator.derive.turnItemFromProviderItem({
+                driver: CursorAgentSdk.CURSOR_PROVIDER,
+                nativeItemId: compaction.nativeItemId,
+              }),
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId: context.input.rootNodeId,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: {
+                driver: CursorAgentSdk.CURSOR_PROVIDER,
+                nativeId: compaction.nativeItemId,
+                strength: "weak",
+              },
+              parentItemId: null,
+              ordinal,
+              type: "compaction",
+              driver: CursorAgentSdk.CURSOR_PROVIDER,
+              status: compaction.status,
+              title: compaction.failed
+                ? "Context compaction failed"
+                : compaction.fallback
+                  ? "Context trimmed"
+                  : "Context compacted",
+              startedAt: compaction.startedAt,
+              completedAt: compaction.status === "running" ? null : now,
+              updatedAt: now,
+              ...(compaction.summary === undefined ? {} : { summary: compaction.summary }),
+            },
+          });
+        });
+
+        const handleSummaryUpdate = Effect.fnUntraced(function* (
+          context: ActiveCursorTurn,
+          update: Extract<
+            InteractionUpdate,
+            { type: "summary-started" | "summary" | "summary-completed" }
+          >,
+        ) {
+          if (update.type === "summary-started") {
+            if (context.compaction === null) {
+              context.compaction = {
+                nativeItemId: `${context.providerTurnId}:compaction`,
+                startedAt: yield* DateTime.now,
+                status: "running",
+              };
+            } else {
+              context.compaction.status = "running";
+            }
+            yield* emitCompactionItem(context);
+            return;
+          }
+          if (update.type === "summary") {
+            if (context.compaction === null) {
+              context.compaction = {
+                nativeItemId: `${context.providerTurnId}:compaction`,
+                startedAt: yield* DateTime.now,
+                status: "running",
+                summary: update.summary,
+              };
+            } else {
+              context.compaction.summary = update.summary;
+            }
+            yield* emitCompactionItem(context);
+            return;
+          }
+          if (context.compaction === null) {
+            context.compaction = {
+              nativeItemId: `${context.providerTurnId}:compaction`,
+              startedAt: yield* DateTime.now,
+              status: update.failed === true ? "failed" : "completed",
+              ...(update.failed === true ? { failed: true } : {}),
+              ...(update.fallback === true ? { fallback: true } : {}),
+            };
+          } else {
+            context.compaction.failed = update.failed === true;
+            context.compaction.fallback = update.fallback === true;
+            context.compaction.status = update.failed === true ? "failed" : "completed";
+          }
+          yield* emitCompactionItem(context);
+        });
+
         const handleInteractionUpdate = Effect.fnUntraced(function* (
           context: ActiveCursorTurn,
           update: InteractionUpdate,
@@ -2070,6 +2172,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               });
               return;
             }
+            case "summary-started":
+            case "summary":
+            case "summary-completed":
+              yield* handleSummaryUpdate(context, update);
+              return;
             default:
               return;
           }
@@ -2386,13 +2493,14 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             );
             const pendingUpdates: Array<InteractionUpdate> = [];
             let context: ActiveCursorTurn | null = null;
-            // MCP send overrides replace the ambient servers loaded when the agent opens.
+            // Create-time and send-time mcpServers merge with settingSources (SDK >= 1.0.39).
             const sdkRun = yield* agent.session
               .send({
                 message,
                 options: {
                   model: cursorSdkModelSelection(turnInput.modelSelection),
                   mode: turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
+                  ...(mcpServers === undefined ? {} : { mcpServers }),
                 },
                 onDelta: (update) => {
                   if (context === null) {
@@ -2434,6 +2542,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 current: null,
                 nextSegment: 0,
               },
+              compaction: null,
               interrupted: false,
               finalized: false,
               turnEnded: false,
@@ -2656,11 +2765,183 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               ),
           ),
           startTurn,
-          compactThread: (turnInput) =>
-            startTurn({
-              ...turnInput,
-              message: { ...turnInput.message, text: "/compress" },
-            }),
+          compactThread: Effect.fn("CursorAdapterV2.compactThread")(
+            function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
+              const current = yield* Ref.get(activeTurn);
+              if (current !== null) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CursorAgentSdk.CURSOR_PROVIDER,
+                  detail: `Cursor provider turn ${current.providerTurnId} is still active.`,
+                  reason: "previous_turn_active",
+                });
+              }
+              const agentId = nativeThreadId(turnInput.providerThread);
+              const agent = yield* openAgent({
+                operation: "resume",
+                agentId,
+                threadId: turnInput.threadId,
+                modelSelection: turnInput.modelSelection,
+                runtimePolicy: turnInput.runtimePolicy,
+              });
+              yield* Ref.set(told, {
+                agent: agent.nativeThreadId,
+                orchestration: false,
+                device: false,
+              });
+              const pendingUpdates: Array<InteractionUpdate> = [];
+              let context: ActiveCursorTurn | null = null;
+              const sdkRun = yield* agent.session
+                .summarize({
+                  onDelta: (update) => {
+                    if (context === null) {
+                      return Effect.sync(() => {
+                        pendingUpdates.push(update);
+                      });
+                    }
+                    return handleInteractionUpdate(context, update);
+                  },
+                })
+                .pipe(Effect.mapError(classifyCursorModelRejection(turnInput.modelSelection)));
+              const startedAt = yield* DateTime.now;
+              const completed = yield* Deferred.make<void, never>();
+              const providerTurnId = idAllocator.derive.providerTurn({
+                driver: CursorAgentSdk.CURSOR_PROVIDER,
+                nativeTurnId: sdkRun.runId,
+              });
+              context = {
+                input: turnInput,
+                run: sdkRun,
+                providerTurnId,
+                startedAt,
+                completed,
+                itemOrdinals: new Map(),
+                tools: new Map(),
+                subagents: new Map(),
+                assistant: {
+                  current: null,
+                  nextSegment: 0,
+                },
+                assistantReply: new CursorTransportFailure(),
+                reasoning: {
+                  current: null,
+                  nextSegment: 0,
+                },
+                compaction: {
+                  nativeItemId: `${providerTurnId}:compaction`,
+                  startedAt,
+                  status: "running",
+                },
+                interrupted: false,
+                finalized: false,
+                turnEnded: false,
+              };
+              yield* Ref.set(activeTurn, context);
+              yield* emitProviderEvent({
+                type: "provider_turn.updated",
+                driver: CursorAgentSdk.CURSOR_PROVIDER,
+                providerTurn: providerTurnPayload({
+                  context,
+                  status: "running",
+                  completedAt: null,
+                }),
+              });
+              yield* emitProviderEvent({
+                type: "provider_thread.updated",
+                driver: CursorAgentSdk.CURSOR_PROVIDER,
+                providerThread: {
+                  ...turnInput.providerThread,
+                  providerSessionId: session.id,
+                  status: "active",
+                  updatedAt: startedAt,
+                },
+              });
+              yield* emitCompactionItem(context);
+              for (const update of pendingUpdates) {
+                yield* handleInteractionUpdate(context, update);
+              }
+              yield* sdkRun.wait.pipe(
+                Effect.flatMap((result) =>
+                  Effect.gen(function* () {
+                    if (context === null) return;
+                    if (result.result !== undefined && result.result.length > 0) {
+                      context.compaction!.summary = result.result;
+                    }
+                    if (context.compaction!.status === "running") {
+                      context.compaction!.status =
+                        result.status === "finished" ? "completed" : "failed";
+                      context.compaction!.failed = result.status !== "finished";
+                      yield* emitCompactionItem(context);
+                    } else if (result.result !== undefined && result.result.length > 0) {
+                      yield* emitCompactionItem(context);
+                    }
+                    yield* finalizeTurn({
+                      context,
+                      status: terminalStatus(context, result),
+                      ...(result.status === "error"
+                        ? {
+                            failure: makeProviderFailure({
+                              cause: result.error,
+                              message: result.error?.message,
+                              class: CursorAgentSdk.isCursorUsageLimitError(result.error)
+                                ? "usage_limit"
+                                : "provider_error",
+                            }),
+                          }
+                        : {}),
+                    });
+                  }),
+                ),
+                Effect.catch((cause) =>
+                  Effect.gen(function* () {
+                    if (context !== null) {
+                      if (context.compaction !== null && context.compaction.status === "running") {
+                        context.compaction.status = "failed";
+                        context.compaction.failed = true;
+                        yield* emitCompactionItem(context);
+                      }
+                      yield* finalizeTurn({
+                        context,
+                        status: context.interrupted ? "interrupted" : "failed",
+                        ...(context.interrupted
+                          ? {}
+                          : {
+                              failure: makeProviderFailure({
+                                cause,
+                                message: CursorAgentSdk.isCursorAgentSdkRunnerError(cause)
+                                  ? CursorAgentSdk.cursorSdkFailureMessage(cause)
+                                  : undefined,
+                                class: CursorAgentSdk.isCursorUsageLimitError(cause)
+                                  ? "usage_limit"
+                                  : "transport_error",
+                              }),
+                            }),
+                      });
+                    }
+                    yield* Effect.logWarning("orchestration-v2.cursor-summarize-failed", {
+                      providerSessionId: input.providerSessionId,
+                      providerThreadId: turnInput.providerThread.id,
+                      providerTurnId,
+                      cause,
+                    });
+                  }),
+                ),
+                Effect.forkIn(sessionScope),
+              );
+            },
+            (effect, turnInput) =>
+              effect.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterTurnStartError({
+                      driver: CursorAgentSdk.CURSOR_PROVIDER,
+                      threadId: turnInput.threadId,
+                      providerThreadId: turnInput.providerThread.id,
+                      runId: turnInput.runId,
+                      cause,
+                    }),
+                ),
+              ),
+          ),
           steerTurn: (turnInput) =>
             Effect.fail(
               new ProviderAdapter.ProviderAdapterSteerRunUnsupportedError({
