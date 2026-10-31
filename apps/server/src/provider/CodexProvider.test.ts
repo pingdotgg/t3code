@@ -3,6 +3,8 @@ import { assert, it } from "@effect/vitest";
 import {
   appendCustomCodexModels,
   applyPreferredCodexDefaultModel,
+  applyConfiguredCodexCyberAccess,
+  codexDefaultCyberAccessProgram,
   mapCodexModelCapabilities,
 } from "./CodexProvider.ts";
 
@@ -158,7 +160,7 @@ it("ignores custom models that shadow a preferred slug", () => {
   assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.4");
 });
 
-it("offers cyber access programs only when the catalog has a Daybreak program", () => {
+it("defaults cyber access to Standard when the catalog offers it", () => {
   const model = {
     additionalSpeedTiers: [],
     defaultReasoningEffort: "medium",
@@ -170,33 +172,86 @@ it("offers cyber access programs only when the catalog has a Daybreak program", 
     model: "gpt-test",
     supportedReasoningEfforts: [],
   };
+  const cyber = (programs?: ReadonlyArray<"standard" | "daybreakBlue">) =>
+    mapCodexModelCapabilities({
+      ...model,
+      ...(programs ? { availableAccessPrograms: { cyber: [...programs] } } : {}),
+    }).optionDescriptors?.[0];
 
-  assert.deepStrictEqual(
-    mapCodexModelCapabilities({
-      ...model,
-      availableAccessPrograms: { cyber: ["standard"] },
-    }).optionDescriptors,
-    [],
-  );
-  assert.deepStrictEqual(
-    mapCodexModelCapabilities({
-      ...model,
-      availableAccessPrograms: { cyber: ["standard", "daybreakBlue"] },
-    }).optionDescriptors,
-    [
-      {
-        id: "cyberAccessProgram",
-        label: "Cyber Access",
-        type: "select",
-        options: [
-          { id: "automatic", label: "Automatic", isDefault: true },
-          { id: "standard", label: "Standard" },
-          { id: "daybreakBlue", label: "Daybreak Blue" },
-        ],
-        currentValue: "automatic",
-      },
+  assert.strictEqual(cyber(), undefined);
+  assert.deepStrictEqual(cyber(["standard", "daybreakBlue"]), {
+    id: "cyberAccessProgram",
+    label: "Cyber Access",
+    type: "select",
+    options: [
+      { id: "standard", label: "Standard", isDefault: true },
+      { id: "daybreakBlue", label: "Daybreak Blue" },
     ],
-  );
+    currentValue: "standard",
+  });
+  assert.deepInclude(cyber(["standard"]), { currentValue: "standard" });
+  assert.deepInclude(cyber(["daybreakBlue"]), { currentValue: "daybreakBlue" });
+});
+
+it("finds the default cyber access program for a model", () => {
+  const capabilities = mapCodexModelCapabilities({
+    additionalSpeedTiers: [],
+    availableAccessPrograms: { cyber: ["standard", "daybreakBlue"] },
+    defaultReasoningEffort: "medium",
+    description: "Test model",
+    displayName: "GPT Test",
+    hidden: false,
+    id: "gpt-test",
+    isDefault: true,
+    model: "gpt-test",
+    supportedReasoningEfforts: [],
+  });
+  const models = [{ slug: "gpt-test", name: "GPT Test", isCustom: false, capabilities }];
+  assert.strictEqual(codexDefaultCyberAccessProgram(models, "gpt-test"), "standard");
+  assert.strictEqual(codexDefaultCyberAccessProgram(models, "my-model"), undefined);
+});
+
+it("follows Codex's daybreak setting for the default program", () => {
+  const capabilities = (cyber: ReadonlyArray<"standard" | "daybreakBlue">) =>
+    mapCodexModelCapabilities({
+      additionalSpeedTiers: [],
+      availableAccessPrograms: { cyber: [...cyber] },
+      defaultReasoningEffort: "medium",
+      description: "Test model",
+      displayName: "GPT Test",
+      hidden: false,
+      id: "gpt-test",
+      isDefault: true,
+      model: "gpt-test",
+      supportedReasoningEfforts: [],
+    });
+  const models = [
+    {
+      slug: "both",
+      name: "Both",
+      isCustom: false,
+      capabilities: capabilities(["standard", "daybreakBlue"]),
+    },
+    {
+      slug: "standard",
+      name: "Standard",
+      isCustom: false,
+      capabilities: capabilities(["standard"]),
+    },
+  ];
+
+  const on = applyConfiguredCodexCyberAccess(models, {
+    daybreakEnabled: true,
+    apiKeyProgramsDisabled: false,
+  });
+  assert.strictEqual(codexDefaultCyberAccessProgram(on, "both"), "daybreakBlue");
+  assert.strictEqual(codexDefaultCyberAccessProgram(on, "standard"), "standard");
+
+  const disabled = applyConfiguredCodexCyberAccess(models, {
+    daybreakEnabled: false,
+    apiKeyProgramsDisabled: true,
+  });
+  assert.strictEqual(codexDefaultCyberAccessProgram(disabled, "both"), undefined);
 });
 
 it("keeps Daybreak access off custom models that borrow built-in options", () => {
