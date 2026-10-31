@@ -734,6 +734,18 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     }
   });
 
+  // The hub fails stream setup that overlaps another on the same device, so its opens take turns.
+  const openLocks = new Map<string, Semaphore.Semaphore>();
+  const withOpenLock = (hostId: DeviceHostId, deviceId: DeviceId) => {
+    const key = `${hostId}\u0000${deviceId}`;
+    let lock = openLocks.get(key);
+    if (lock === undefined) {
+      lock = Semaphore.makeUnsafe(1);
+      openLocks.set(key, lock);
+    }
+    return lock.withPermit;
+  };
+
   const open: DeviceService["Service"]["open"] = Effect.fn("DeviceService.open")(
     function* (input, context) {
       const host = yield* resolveHost(input.hostId);
@@ -841,6 +853,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       );
       return session;
     },
+    (effect, input) => withOpenLock(input.hostId ?? LOCAL_DEVICE_HOST_ID, input.deviceId)(effect),
   );
 
   const refreshAfterShutdown = (ready: DeviceReadiness) =>
