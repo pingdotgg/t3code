@@ -1,4 +1,3 @@
-//! Exercise real D-Bus FD passing and reply types without accessing the desktop bus.
 use super::*;
 use std::{
     io::{BufRead, BufReader},

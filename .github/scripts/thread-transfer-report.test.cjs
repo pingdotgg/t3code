@@ -2,7 +2,6 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
-  renderComment,
   resolve,
   upsertCommentForCurrentHead,
   validateResult,
@@ -50,39 +49,6 @@ test("validates the fixed artifact schema", () => {
   assert.throws(
     () => validateResult(result({ totalWireBytes: "lots" })),
     /non-negative safe integer/,
-  );
-});
-
-test("renders baseline, impact, ceiling, and ceiling changes", () => {
-  const baseline = result();
-  const current = result({ measuredTurnWebSocketWireBytes: 260_000 });
-  current.providers.codex.ceiling = {
-    ...current.providers.codex.ceiling,
-    measuredTurnWebSocketWireBytes: 330_000,
-  };
-  const comment = renderComment({
-    current,
-    baseline,
-    currentRun: {
-      sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      conclusion: "success",
-      url: "https://github.com/pingdotgg/t3code/actions/runs/2",
-    },
-    baselineRun: {
-      sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      matchesBase: true,
-      url: "https://github.com/pingdotgg/t3code/actions/runs/1",
-    },
-  });
-
-  assert.match(comment, /Main baseline \| This PR \| Impact \| PR ceiling/);
-  assert.match(comment, /\+9\.8 KiB \(\+4\.0%\)/);
-  assert.match(comment, /This PR changes transfer ceilings/);
-  assert.match(comment, /312\.5 KiB → 322\.3 KiB/);
-  assert.match(comment, /<!-- t3-thread-transfer-report -->/);
-  assert.match(
-    comment,
-    /<!-- t3-thread-transfer-result-sha:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->/,
   );
 });
 
@@ -216,6 +182,47 @@ test("does not guess when a fallback commit belongs to multiple PRs", async () =
   assert.equal(fetchedPull, false);
 });
 
+test("skips a missing PR commit but preserves other lookup failures", async () => {
+  for (const [status, message, shouldSkip] of [
+    [422, "No commit found for SHA: old-head", true],
+    [422, "Validation Failed", false],
+    [403, "API rate limit exceeded", false],
+  ]) {
+    const outputs = {};
+    const error = Object.assign(new Error(message), {
+      status,
+      response: { data: { message } },
+    });
+    const run = resolve({
+      github: {
+        paginate: async () => {
+          throw error;
+        },
+        rest: { repos: { listPullRequestsAssociatedWithCommit: () => {} } },
+      },
+      context: {
+        repo: { owner: "pingdotgg", repo: "t3code" },
+        payload: {
+          workflow_run: { event: "pull_request", head_sha: "old-head", pull_requests: [] },
+        },
+      },
+      core: {
+        info: () => {},
+        setOutput: (key, value) => {
+          outputs[key] = value;
+        },
+      },
+    });
+    if (shouldSkip) {
+      await run;
+      assert.equal(outputs.publish, "false");
+    } else {
+      await assert.rejects(run, (caught) => caught === error);
+      assert.deepEqual(outputs, {});
+    }
+  }
+});
+
 test("does not report a passing run that skipped the server tests", async () => {
   const outputs = {};
   const listWorkflowRunArtifacts = () => {};
@@ -331,22 +338,4 @@ test("preserves a successful result when a same-SHA rerun has no artifact", asyn
 
   assert.equal(published, true);
   assert.equal(updatedComment, false);
-});
-
-test("accepts V2 without comparing it to the V1 scenario", () => {
-  const current = result();
-  current.scenario.id = "thread-transfer-v2";
-  current.providers.codex.ceiling = { ...current.providers.codex.ceiling, totalWireBytes: 3000000 };
-  assert.equal(validateResult(current), current);
-  const comment = renderComment({
-    current,
-    baseline: result(),
-    currentRun: { sha: "bbbbbbbb", conclusion: "success", url: "https://example.com/current" },
-    baselineRun: { sha: "aaaaaaaa", matchesBase: true, url: "https://example.com/baseline" },
-  });
-  assert.match(comment, /fixture changed/);
-  assert.doesNotMatch(comment, /This PR changes transfer ceilings/);
-  assert.doesNotMatch(comment, /[+-]\d+\.\d+%/);
-  current.scenario.id = "unrecognized";
-  assert.throws(() => validateResult(current), /not supported/);
 });

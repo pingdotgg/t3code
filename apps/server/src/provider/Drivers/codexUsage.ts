@@ -13,6 +13,7 @@ import {
 } from "@t3tools/provider-core/server/usage";
 import type { UsageTokenTotals } from "@t3tools/contracts";
 
+import * as CodexUsageHistory from "../../usage/CodexUsageHistory.ts";
 import { resolveCodexHomeLayout } from "./CodexHomeLayout.ts";
 
 const TokenCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
@@ -54,6 +55,12 @@ function readCodexTokenUsage(value: unknown): CodexTokenUsage | null {
   return isCodexTokenUsage(usage) ? usage : null;
 }
 
+// A zeroed baseline rebases the counters, so the sequence start measured against it is forgotten.
+function rebaseCodexUsage(state: CodexScanState, cumulative: CodexTokenUsage) {
+  state.lastCumulativeUsage = cumulative;
+  if (cumulative.input_tokens + cumulative.output_tokens === 0) delete state.sequenceStartSignature;
+}
+
 function advanceCodexUsage(previous: CodexTokenUsage | null, last: CodexTokenUsage) {
   return readCodexTokenUsage(
     Object.fromEntries(CODEX_USAGE_FIELDS.map((key) => [key, (previous?.[key] ?? 0) + last[key]])),
@@ -70,8 +77,13 @@ export const CodexScanState = Schema.Struct({
   sessionId: Schema.mutableKey(Schema.String),
   lastUsageSignature: Schema.mutableKey(Schema.NullOr(Schema.String)),
   lastCumulativeUsage: Schema.mutableKey(Schema.NullOr(CodexTokenUsage)),
+  // Optional so scan states cached before this field existed stay valid.
+  sequenceStartSignature: Schema.mutableKey(Schema.optionalKey(Schema.String)),
   malformedRecords: Schema.mutableKey(TokenCount),
   sawSessionMeta: Schema.mutableKey(Schema.Boolean),
+  modelProvider: Schema.mutableKey(Schema.String),
+  turnId: Schema.mutableKey(Schema.String),
+  sawThreadSettings: Schema.mutableKey(Schema.Boolean),
   suppressingForkCopies: Schema.mutableKey(Schema.Boolean),
   forkCopyAnchorMs: Schema.mutableKey(Schema.Finite),
 });
@@ -86,17 +98,15 @@ export function initialCodexScanState(): CodexScanState {
     lastCumulativeUsage: null,
     malformedRecords: 0,
     sawSessionMeta: false,
+    modelProvider: "",
+    turnId: "",
+    sawThreadSettings: false,
     suppressingForkCopies: false,
     forkCopyAnchorMs: 0,
   };
 }
 
-/**
- * A forked or subagent rollout opens with the parent's full history copied in,
- * every line re-stamped to the fork instant. Those copies are written in one
- * synchronous burst (observed gaps 0-40ms), while the child's first genuine
- * usage event only lands after a real model turn (observed 5s+).
- */
+/** Forks copy and restamp parent history in a burst (0-40ms gaps); genuine child usage follows a model turn (5s+ observed). */
 const FORK_COPY_MAX_GAP_MS = 1000;
 
 function isForkedSessionMeta(payload: Record<string, unknown>): boolean {
@@ -134,13 +144,14 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
   const payloadType = payloadRecord["type"];
 
   if (record["type"] === "session_meta") {
-    // Only the first meta describes this file's own session. A forked rollout
-    // repeats the ancestors' metas right after it; letting those through would
-    // reassign every subsequent record to an ancestor session.
+    // Only the first meta identifies this session; copied ancestor metas would misattribute later records.
     if (state.sawSessionMeta) return null;
     state.sawSessionMeta = true;
     const id = payloadRecord["id"] ?? payloadRecord["session_id"];
     if (typeof id === "string") state.sessionId = id;
+    if (typeof payloadRecord["model_provider"] === "string") {
+      state.modelProvider = payloadRecord["model_provider"];
+    }
     const metaTimestampMs = parseTimestampMs(record["timestamp"]);
     if (metaTimestampMs !== null && isForkedSessionMeta(payloadRecord)) {
       state.suppressingForkCopies = true;
@@ -151,10 +162,18 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
 
   if (record["type"] === "turn_context") {
     if (typeof payloadRecord["model"] === "string") state.model = payloadRecord["model"];
+    // Model carry is useful for usage, but history recovery needs this context's own identity.
+    state.turnId =
+      typeof payloadRecord["turn_id"] === "string" &&
+      typeof payloadRecord["model"] === "string" &&
+      payloadRecord["model"].length > 0
+        ? payloadRecord["turn_id"]
+        : "";
     return null;
   }
 
   if (payloadType === "thread_settings_applied") {
+    state.sawThreadSettings = true;
     const settings = payloadRecord["thread_settings"];
     if (typeof settings === "object" && settings !== null) {
       state.speed = codexSpeed((settings as Record<string, unknown>)["service_tier"]);
@@ -182,7 +201,7 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
       state.forkCopyAnchorMs = timestampMs;
       // Copied history is already billed in the parent, but establishes the child's baseline.
       const signature = last === null ? null : JSON.stringify(last);
-      if (cumulative !== null) state.lastCumulativeUsage = cumulative;
+      if (cumulative !== null) rebaseCodexUsage(state, cumulative);
       else if (!hasCumulative && last !== null && signature !== state.lastUsageSignature) {
         state.lastCumulativeUsage = advanceCodexUsage(state.lastCumulativeUsage, last);
       }
@@ -195,19 +214,15 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
 
   const previous = state.lastCumulativeUsage;
   // A valid snapshot remains the next baseline even when its paired request is malformed.
-  if (cumulative !== null) state.lastCumulativeUsage = cumulative;
+  if (cumulative !== null) rebaseCodexUsage(state, cumulative);
   if (last === null || (hasCumulative && cumulative === null)) {
     state.malformedRecords += 1;
     return null;
   }
 
-  // fill_to_context_window uses zero components and synthetic totals, then offsets future totals.
-  if (
-    cumulative !== null &&
-    last.input_tokens + last.output_tokens === 0 &&
-    cumulative.input_tokens + cumulative.output_tokens === 0 &&
-    cumulative.total_tokens === infoRecord["model_context_window"]
-  ) {
+  // Zero-component counters report context size, not a request: fill_to_context_window, or the
+  // post-compaction marker whose total is the new context size (its cumulative may reset to zero).
+  if (last.input_tokens + last.output_tokens === 0) {
     state.lastUsageSignature = null;
     return null;
   }
@@ -227,12 +242,27 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
 
   const signature = JSON.stringify(last);
   if (cumulative !== null) {
-    if (
-      !CODEX_USAGE_FIELDS.every((key) => cumulative[key] - (previous?.[key] ?? 0) === last[key])
-    ) {
+    // A session resumed in a new Codex process restarts its cumulative counters at this request.
+    const restarted = CODEX_USAGE_FIELDS.every((key) => cumulative[key] === last[key]);
+    const sequenceStart = JSON.stringify([timestampMs, last]);
+    // Only the same event is a replay; a later request can restart with identical counters.
+    if (restarted && sequenceStart === state.sequenceStartSignature) {
+      state.lastCumulativeUsage = previous;
+      return null;
+    }
+    // Forks and paginated continuations can inherit totals without copying a counter snapshot.
+    // Only bill the latest request, and require the unseen prefix to be valid usage too.
+    const reconciled =
+      previous === null
+        ? readCodexTokenUsage(
+            Object.fromEntries(CODEX_USAGE_FIELDS.map((key) => [key, cumulative[key] - last[key]])),
+          ) !== null
+        : CODEX_USAGE_FIELDS.every((key) => cumulative[key] - previous[key] === last[key]);
+    if (!restarted && !reconciled) {
       state.malformedRecords += 1;
       return null;
     }
+    if (restarted) state.sequenceStartSignature = sequenceStart;
   } else {
     if (signature === state.lastUsageSignature) return null;
     // Advance expected totals for billed legacy requests so a cumulative re-emission is stale.
@@ -270,14 +300,17 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
     totals,
     reportedCostUsd: null,
     speed: state.speed,
+    ...(!state.sawThreadSettings &&
+    state.modelProvider === "openai" &&
+    state.sessionId.length > 0 &&
+    state.turnId.length > 0
+      ? { unresolvedServiceTierTurnId: state.turnId }
+      : {}),
     dedupeKey: null,
   };
 }
 
-/**
- * Codex omits the field when no tier was requested, which bills as standard, as
- * do `default` and `standard`. `fast` is accepted as an alias of `priority`.
- */
+/** Missing, default and standard tiers bill as standard; fast aliases priority. */
 function codexSpeed(serviceTier: unknown): UsageSpeed {
   if (serviceTier === "priority" || serviceTier === "fast") return "fast";
   if (serviceTier === "ultrafast") return "ultrafast";
@@ -295,15 +328,16 @@ export const codexUsageFormat: TranscriptUsageFormat<CodexScanState> = {
       type: true,
       id: true,
       session_id: true,
+      model_provider: true,
+      turn_id: true,
       model: true,
       thread_settings: { service_tier: true },
       forked_from_id: true,
       source: { subagent: { thread_spawn: { parent_thread_id: true } } },
-      info: { last_token_usage: true, total_token_usage: true, model_context_window: true },
+      info: { last_token_usage: true, total_token_usage: true },
     },
   },
-  // `turn_context`, `thread_settings_applied` and `session_meta` lines hold no
-  // usage, but they carry the model, tier and session the reducer needs.
+  // Metadata lines carry model, tier and session even without usage.
   usageMarkers: ['"token_count"', '"turn_context"', '"thread_settings_applied"', '"session_meta"'],
   parseLine: (line, state) => orEmpty(parseCodexLine(line, state)),
   parseProjected: (projected, state) => orEmpty(parseCodexRecord(projected, state)),
@@ -313,10 +347,40 @@ export const codexUsageFormat: TranscriptUsageFormat<CodexScanState> = {
   sharedSessionsAcrossFiles: true,
 };
 
-export const codexUsageReader: ProviderUsageReader<CodexSettings, Path.Path> = {
+export const codexUsageReader: ProviderUsageReader<
+  CodexSettings,
+  Path.Path | CodexUsageHistory.CodexUsageHistory
+> = {
   kind: "transcripts",
   provider: "codex",
   format: codexUsageFormat,
+  resolveServiceTiers: Effect.fn("codexUsageReader.resolveServiceTiers")(function* (records) {
+    const history = yield* CodexUsageHistory.CodexUsageHistory;
+    const requests = new Map<CodexUsageHistory.CodexUsageHistoryRequest, UsageRecord>();
+    for (const record of records) {
+      if (record.unresolvedServiceTierTurnId === undefined) continue;
+      requests.set(
+        {
+          sessionId: record.sessionId,
+          nativeTurnId: record.unresolvedServiceTierTurnId,
+          model: record.model,
+        },
+        record,
+      );
+    }
+    const resolved = yield* history.resolve([...requests.keys()]).pipe(
+      Effect.catchTags({
+        CodexUsageHistoryReadError: () =>
+          Effect.succeed(new Map<CodexUsageHistory.CodexUsageHistoryRequest, UsageSpeed>()),
+      }),
+    );
+    const speeds = new Map<UsageRecord, UsageSpeed>();
+    for (const [request, speed] of resolved) {
+      const record = requests.get(request);
+      if (record !== undefined) speeds.set(record, speed);
+    }
+    return speeds;
+  }),
   directories: Effect.fn("codexUsageReader.directories")(function* ({ config, environment }) {
     if (config === undefined) return [];
     const path = yield* Path.Path;

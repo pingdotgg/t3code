@@ -14,6 +14,7 @@ import {
   resolveSelectableModel,
 } from "@t3tools/shared/model";
 import { fileBasename } from "@t3tools/shared/path";
+import { resolveModelShortName } from "../providerClients.ts";
 import { isTerminalSubagentStatus } from "./subagentRuntime.ts";
 
 export function subagentGroupSummary(
@@ -78,7 +79,7 @@ export function resolveSubagentMetadata(input: {
     : model;
   const catalogModel = input.provider?.models.find((candidate) => candidate.slug === slug);
   const reportedLabel = catalogModel
-    ? catalogModel.shortName || catalogModel.name
+    ? (resolveModelShortName(catalogModel, input.provider?.driver) ?? catalogModel.name)
     : model
       ? formatModelSlugName(model)
       : "Not reported";

@@ -1,6 +1,6 @@
 import * as NodeDnsPromises from "node:dns/promises";
 import * as NodeNet from "node:net";
-import type { SshDeviceHostConfig } from "@t3tools/contracts";
+import type { DeviceHostConfig, SshDeviceHostConfig } from "@t3tools/contracts";
 import * as NodeOS from "node:os";
 import * as Context from "effect/Context";
 import { runSshCommand } from "@t3tools/ssh/command";
@@ -59,12 +59,15 @@ export const isLocalSshDeviceHost = Effect.fn("isLocalSshDeviceHost")(function* 
   );
 });
 
-export const remoteSshDeviceHosts = Effect.fn("remoteSshDeviceHosts")(function* (
-  hosts: ReadonlyArray<SshDeviceHostConfig>,
-) {
-  return yield* Effect.filter(
-    hosts,
-    (host) => isLocalSshDeviceHost(host).pipe(Effect.map((local) => !local)),
-    { concurrency: 4 },
-  );
-});
+/** Drops SSH hosts that resolve to this machine; other host kinds pass through. */
+export const remoteSshDeviceHosts = Effect.fn("remoteSshDeviceHosts")(
+  <Host extends DeviceHostConfig>(hosts: ReadonlyArray<Host>) =>
+    Effect.filter(
+      hosts,
+      (host) =>
+        host.kind === "ssh"
+          ? isLocalSshDeviceHost(host).pipe(Effect.map((local) => !local))
+          : Effect.succeed(true),
+      { concurrency: 4 },
+    ),
+);

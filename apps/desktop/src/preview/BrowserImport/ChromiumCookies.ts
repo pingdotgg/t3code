@@ -73,12 +73,7 @@ const decodeSchemaVersion = Schema.decodeUnknownEffect(
   Schema.Tuple([Schema.Struct({ value: SchemaVersion })]),
 );
 
-/**
- * Unspecified is imported as Electron's own `unspecified` rather than pinned to
- * Lax, so the target browser applies its default just as the source did;
- * anything unrecognised lands there too, since guessing "none" would widen a
- * cookie's scope on import.
- */
+/** Preserve unspecified SameSite; guessing no_restriction would widen cookie scope. */
 const sameSiteFromColumn = (value: number): ImportedCookie["sameSite"] => {
   if (value === 0) return "no_restriction";
   if (value === 1) return "lax";
@@ -86,21 +81,14 @@ const sameSiteFromColumn = (value: number): ImportedCookie["sameSite"] => {
   return "unspecified";
 };
 
-/**
- * The microsecond value overflows JavaScript's safe integer range and
- * `node:sqlite` refuses to narrow it, so the division happens in SQL and this
- * only ever sees seconds.
- */
+/** Convert microseconds in SQL: node:sqlite refuses integers beyond JavaScript's safe range. */
 const WEBKIT_EPOCH_OFFSET_SECONDS = 11_644_473_600;
 const toUnixSeconds = (webkitSeconds: number): number | undefined => {
   if (webkitSeconds <= 0) return undefined;
   return webkitSeconds - WEBKIT_EPOCH_OFFSET_SECONDS;
 };
 
-/**
- * Chromium >= 127 prefixes the plaintext with SHA-256 of the host key, binding
- * a cookie to its domain.
- */
+// Chromium 127+ prefixes plaintext with the host-key SHA-256 to bind its domain.
 const stripDomainBinding = (
   plaintext: Buffer,
   domain: string,
@@ -161,17 +149,14 @@ export function decryptChromiumValue(
   const prefix = buffer.subarray(0, 3).toString("latin1");
   const payload = buffer.subarray(3);
 
-  // Windows' legacy v10 format is AES-256-GCM. App-bound records use v20 and
-  // intentionally have no key here, so they fall through as undecryptable.
+  // Windows v10 uses AES-256-GCM; app-bound v20 records have no key here.
   if (platform === "win32") {
     return prefix === "v10" && keys.gcmV10
       ? decryptGcm(payload, keys.gcmV10, domain, schemaVersion)
       : null;
   }
 
-  // Chromium retries a failed record with a key derived from an empty
-  // passphrase, because some Linux clients wrote data that way
-  // (crbug.com/1195256).
+  // Retry the empty-passphrase key used by some Linux clients (crbug.com/1195256).
   if (prefix === "v10") {
     if (!keys.cbcV10) return null;
     return (
@@ -200,14 +185,12 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
         Effect.flatMap(decodeSchemaVersion),
         Effect.map(([row]) => row.value),
       );
-      // SQLite's BLOB affinity still permits TEXT. Cast before Node decodes
-      // those bytes as UTF-8, which can corrupt an encrypted payload.
       const raw =
         schemaVersion >= 15
-          ? yield* sql`select host_key, name, value, cast(encrypted_value as blob) as encrypted_value, path,
+          ? yield* sql`select host_key, name, value, encrypted_value, path,
                 expires_utc / 1000000 as expires_seconds, is_secure, is_httponly,
                 samesite, top_frame_site_key from cookies`
-          : yield* sql`select host_key, name, value, cast(encrypted_value as blob) as encrypted_value, path,
+          : yield* sql`select host_key, name, value, encrypted_value, path,
                 expires_utc / 1000000 as expires_seconds, is_secure, is_httponly,
                 samesite, '' as top_frame_site_key from cookies`;
       return { rows: yield* decodeCookieRows(raw), schemaVersion };
