@@ -1300,19 +1300,21 @@ export function ChatComposer(props: ChatComposerProps) {
     : null;
   const showResumeAction =
     canResume && !composerDraftHasUserContent(composerDraft) && !isEditingQueuedMessage;
+  const collapsedComposerShowsStop = phase === "running" && !composerSendState.hasSendableContent;
   const collapsedComposerPrimaryActionDisabled =
-    phase === "running" ||
+    (collapsedComposerShowsStop ? !canInterrupt : isSendDisabled) ||
     isSendBusy ||
-    isSendDisabled ||
     noProviderAvailable ||
     projectSelectionRequired ||
     environmentUnavailable !== null ||
-    (!composerSendState.hasSendableContent && !showResumeAction);
-  const collapsedComposerPrimaryActionLabel = showResumeAction
-    ? "Resume thread"
-    : props.resumeCompactionTokens !== null && !props.keepFullHistory
-      ? "Open composer to compact and send"
-      : "Send message";
+    (!composerSendState.hasSendableContent && !showResumeAction && !collapsedComposerShowsStop);
+  const collapsedComposerPrimaryActionLabel = collapsedComposerShowsStop
+    ? "Stop"
+    : showResumeAction
+      ? "Resume thread"
+      : props.resumeCompactionTokens !== null && !props.keepFullHistory
+        ? "Open composer to compact and send"
+        : "Send message";
 
   const setPrompt = (nextPrompt: string) => {
     setComposerDraftPrompt(composerDraftTarget, nextPrompt);
@@ -3390,13 +3392,16 @@ export function ChatComposer(props: ChatComposerProps) {
                   onPointerDown={(event) => event.preventDefault()}
                   onClick={(event) => {
                     event.stopPropagation();
-                    if (showResumeAction) onResume();
+                    if (collapsedComposerShowsStop) onInterrupt();
+                    else if (showResumeAction) onResume();
                     else if (props.resumeCompactionTokens !== null && !props.keepFullHistory)
                       expandMobileComposer();
                     else submitComposer();
                   }}
                 >
-                  {showResumeAction ? (
+                  {collapsedComposerShowsStop ? (
+                    <span className="size-3 rounded-xs bg-current" aria-hidden="true" />
+                  ) : showResumeAction ? (
                     <PlayIcon className="size-4 fill-current" aria-hidden="true" />
                   ) : (
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
