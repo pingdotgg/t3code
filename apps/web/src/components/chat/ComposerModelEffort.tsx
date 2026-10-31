@@ -141,6 +141,8 @@ const COLUMN_LABEL = "px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs
 
 function ColumnRow(props: {
   label: string;
+  /** Shown on hover; the column is too narrow to print it under the label. */
+  description?: string | undefined;
   selected: boolean;
   isDefault?: boolean | undefined;
   disabled?: boolean;
@@ -148,23 +150,33 @@ function ColumnRow(props: {
   level: boolean;
   onPick: () => void;
 }) {
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={props.selected}
-      disabled={props.disabled}
-      data-effort-row
-      data-effort-level={props.level || undefined}
-      // The reasoning control holds the column's one tab stop; Up and Down move between rows.
-      tabIndex={props.selected && props.level ? 0 : -1}
-      className={COLUMN_ROW}
-      onClick={props.onPick}
-    >
+  const rowProps = {
+    type: "button",
+    role: "radio",
+    "aria-checked": props.selected,
+    disabled: props.disabled,
+    "data-effort-row": true,
+    "data-effort-level": props.level || undefined,
+    // The reasoning control holds the column's one tab stop; Up and Down move between rows.
+    tabIndex: props.selected && props.level ? 0 : -1,
+    className: COLUMN_ROW,
+    onClick: props.onPick,
+  } as const;
+  const content = (
+    <>
       <span className="min-w-0 flex-1 truncate">{props.label}</span>
       {props.isDefault ? <span className="text-muted-foreground/70 text-xs">Default</span> : null}
       <CheckIcon aria-hidden="true" className={cn("size-3.5", !props.selected && "invisible")} />
-    </button>
+    </>
+  );
+  if (!props.description) return <button {...rowProps}>{content}</button>;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<button {...rowProps} />}>{content}</TooltipTrigger>
+      <TooltipPopup side="right" className="max-w-56">
+        {props.description}
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -254,6 +266,7 @@ function EffortLevels(props: { traits: TraitsSelectionInput; onLevelPick: () => 
             key={option.id}
             label={option.label}
             selected={option.id === value}
+            description={option.description}
             isDefault={option.isDefault}
             disabled={locked}
             level={isEffort}
