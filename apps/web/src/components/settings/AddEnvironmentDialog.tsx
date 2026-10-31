@@ -1,5 +1,5 @@
 import { pipe } from "effect/Function";
-import { ChevronsLeftRightEllipsisIcon, PlusIcon, TerminalIcon } from "lucide-react";
+import { BoxIcon, ChevronsLeftRightEllipsisIcon, PlusIcon, TerminalIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import {
@@ -18,6 +18,7 @@ import * as Option from "effect/Option";
 
 import { cn } from "../../lib/utils";
 import { formatDesktopSshTarget } from "./EnvironmentRow";
+import { SandboxEnvironmentFields } from "./SandboxEnvironmentFields";
 import { Input } from "../ui/input";
 import { CommandShortcut } from "../ui/command";
 import {
@@ -49,7 +50,11 @@ import {
 } from "~/connection/onboarding";
 import { useEnvironmentQuery } from "~/state/query";
 import { desktopSshHostsStateAtom, filterDiscoveredSshHosts } from "~/state/desktopSshHosts";
-import { type EnvironmentPresentation, useRelayEnvironmentDiscovery } from "~/state/environments";
+import {
+  type EnvironmentPresentation,
+  usePrimaryEnvironment,
+  useRelayEnvironmentDiscovery,
+} from "~/state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import {
@@ -92,6 +97,7 @@ export function AddEnvironmentDialog({
     reportFailure: false,
   });
   const relayDiscoveryState = useRelayEnvironmentDiscovery();
+  const primaryEnvironment = usePrimaryEnvironment();
   const savedDesktopSshEnvironmentKeys = (() => {
     const keys = new Set<string>();
     for (const environment of savedEnvironments) {
@@ -109,7 +115,7 @@ export function AddEnvironmentDialog({
     }
     return keys;
   })();
-  const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
+  const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "sandbox" | "ssh">("remote");
   const [savedBackendHost, setSavedBackendHost] = useState("");
   const [savedBackendPairingCode, setSavedBackendPairingCode] = useState("");
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
@@ -348,7 +354,7 @@ export function AddEnvironmentDialog({
     setSavedBackendHost(value);
   };
   const renderConnectionModeCard = (input: {
-    readonly mode: "remote" | "ssh";
+    readonly mode: "remote" | "sandbox" | "ssh";
     readonly title: string;
     readonly description: string;
     readonly icon?: ReactNode;
@@ -642,6 +648,14 @@ export function AddEnvironmentDialog({
                 description: "Enter a backend host and pairing code.",
                 icon: <ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />,
               })}
+              {primaryEnvironment !== null && routeTarget === null
+                ? renderConnectionModeCard({
+                    mode: "sandbox",
+                    title: "Sandbox",
+                    description: "Provision a cloud machine with a provider API key.",
+                    icon: <BoxIcon aria-hidden className="size-4" />,
+                  })
+                : null}
               {desktopBridge
                 ? renderConnectionModeCard({
                     mode: "ssh",
@@ -652,7 +666,18 @@ export function AddEnvironmentDialog({
                 : null}
             </div>
             <AnimatedHeight>
-              {savedBackendMode === "ssh" ? renderSshFields() : renderRemoteModeBody()}
+              {savedBackendMode === "sandbox" && primaryEnvironment !== null ? (
+                <SandboxEnvironmentFields
+                  environmentId={primaryEnvironment.environmentId}
+                  error={error}
+                  onErrorChange={onErrorChange}
+                  onDone={() => onOpenChange(false)}
+                />
+              ) : savedBackendMode === "ssh" ? (
+                renderSshFields()
+              ) : (
+                renderRemoteModeBody()
+              )}
             </AnimatedHeight>
           </div>
         </DialogPanel>

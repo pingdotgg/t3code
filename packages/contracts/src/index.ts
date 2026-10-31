@@ -31,6 +31,7 @@ export * from "./settings.ts";
 export * from "./git.ts";
 export * from "./vcs.ts";
 export * from "./sourceControl.ts";
+export * from "./sandbox.ts";
 export * from "./projectClone.ts";
 export * from "./pullRequest.ts";
 export * from "./pullRequestReviewGuide.ts";

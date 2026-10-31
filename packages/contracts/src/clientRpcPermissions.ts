@@ -36,6 +36,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectsCreateFromThread]: AuthOrchestrationOperateScope,
   [WS_METHODS.sourceControlCloneRepository]: AuthSourceControlWriteScope,
   [WS_METHODS.sourceControlPublishRepository]: AuthSourceControlWriteScope,
+  // Creates a billable machine with the saved provider key.
+  [WS_METHODS.sandboxesCreate]: AuthSettingsWriteScope,
+  [WS_METHODS.sandboxesDelete]: AuthSettingsWriteScope,
   // Signing in replaces the server's GitHub credential, as saving a token in Settings does.
   [WS_METHODS.sourceControlSignInStart]: AuthSettingsWriteScope,
   [WS_METHODS.sourceControlSignInWait]: AuthSettingsWriteScope,
