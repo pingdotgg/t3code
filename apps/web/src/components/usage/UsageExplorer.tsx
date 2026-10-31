@@ -640,7 +640,7 @@ export function UsageExplorer(props: UsageExplorerProps) {
     setTimeout(() => URL.revokeObjectURL(anchor.href), 1000);
   };
 
-  // "/" jumps to search, Escape clears it.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- register document keyboard shortcuts while the explorer is mounted
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (

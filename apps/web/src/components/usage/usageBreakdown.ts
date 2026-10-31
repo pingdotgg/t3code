@@ -8,18 +8,6 @@ import {
 
 import type { ShareSegment } from "./UsageShareBar";
 
-export function sortModelsByTokens(models: readonly ModelTotals[]) {
-  return models.toSorted(
-    (left, right) => right.totalTokens - left.totalTokens || right.costUsd - left.costUsd,
-  );
-}
-
-/** Unknown cost yields null cost share; unpriced models still have token shares. */
-export function modelShare(model: ModelTotals, metric: "cost" | "tokens"): number | null {
-  if (metric === "tokens") return model.tokenShare;
-  return isModelCostUnknown(model) ? null : model.costShare;
-}
-
 /** Returns null without input; cache writes count as misses because input was fully processed. */
 export function cacheHitRate({ tokens }: ModelTotals): number | null {
   const input = tokens.uncachedInputTokens + tokens.cachedInputTokens + tokens.cacheCreationTokens;

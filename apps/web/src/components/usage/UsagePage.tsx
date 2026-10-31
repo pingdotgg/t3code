@@ -84,7 +84,6 @@ import {
   resolveUsageShortcut,
   type UsageMetric,
 } from "./usageShortcuts";
-import { useEscapeToGoBack } from "../../hooks/useNavigateBack";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
 import {
   readUsageExplorerPreferences,
@@ -154,7 +153,6 @@ function UsageModelDialogHost({
 export function UsagePage() {
   const [preferences, setPreferences] = useState(readUsagePagePreferences);
   const [explorerPreferences, setExplorerPreferences] = useState(readUsageExplorerPreferences);
-  useEscapeToGoBack();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const hour12 = usePrimarySettings((settings) => resolveHour12(settings.timestampFormat));
   const shortcutTitle = (
@@ -182,11 +180,8 @@ export function UsagePage() {
     useState<ReadonlySet<EnvironmentId> | null>(null);
   const { range, window: requested } = windowSelection;
   const periodDays = range.kind === "period" ? range.days : null;
-  // Servers from before week-long hourly reads answer such a span only by day.
-  // Once one does, every environment reads it by day, so totals, the range and
-  // the comparison window all cover the same whole days.
-  // The environments that needed days are remembered per range, so the page
-  // goes back to hours as soon as none of them is selected.
+  // Older servers require day buckets for long ranges; all selected environments
+  // must use the same granularity, returning to hours when those servers leave.
   const [daysNeeded, setDaysNeeded] = useState<{
     readonly for: UsageSummaryInput;
     readonly ids: ReadonlySet<EnvironmentId>;
@@ -757,12 +752,13 @@ function UsageRangePicker({
   readonly onChange: (sinceDay: string, untilDay: string) => void;
   readonly compact?: boolean;
 }) {
+  const [now, setNow] = useState(() => Date.now());
   const today = new Intl.DateTimeFormat("en-CA", {
     timeZone: window.timeZone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).format(new Date());
+  }).format(new Date(now));
   const [open, setOpen] = useState(false);
   const [since, setSince] = useState<string>(window.sinceDay);
   const [until, setUntil] = useState<string>(window.untilDay);
@@ -773,6 +769,7 @@ function UsageRangePicker({
       onOpenChange={(next) => {
         setOpen(next);
         if (!next) return;
+        setNow(Date.now());
         setSince(window.sinceDay);
         setUntil(window.untilDay);
       }}

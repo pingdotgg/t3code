@@ -73,16 +73,8 @@ export interface TranscriptUsageFormat<State> {
   };
   /** Enable cross-file deduplication when session records can appear in multiple files. */
   readonly sharedSessionsAcrossFiles?: true;
-  /**
-   * Present for formats whose transcripts name the working directory their
-   * session ran in. The server places usage run outside T3 Code in the project
-   * at that folder.
-   *
-   * The engine reads a file's lines that contain one of `markers` until one
-   * names the folder, and keeps that first answer, so lines that only name the
-   * folder need not match `usageMarkers`. A line too large to parse whole is
-   * projected to `selectFields`, which must keep the fields `fromProjected`
-   * reads.
+  /** Capture the first session folder, including folder-only lines.
+   * Projected reads must retain the fields consumed by fromProjected.
    */
   readonly workingDirectory?: {
     readonly markers: readonly [string, ...string[]];

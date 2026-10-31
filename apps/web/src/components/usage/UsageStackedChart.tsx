@@ -217,6 +217,7 @@ export function UsageStackedChart({
     );
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- position the measured tooltip after its hover contents render
   useLayoutEffect(() => {
     if (hoverIndex !== null) positionTooltip();
   }, [hoverIndex, positionTooltip]);

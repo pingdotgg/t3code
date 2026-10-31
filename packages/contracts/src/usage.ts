@@ -1,14 +1,4 @@
-/**
- * Usage reporting contract.
- *
- * Each environment scans native session files and databases, including work
- * driven outside T3 Code. Source status describes gaps in local coverage.
- *
- * Environments return pre-aggregated `(day, hourStart?, provider, model, sourcePath?)`
- * buckets. Raw transcript records never cross the wire. A summary read with
- * `groupByThread` also splits buckets by provider account and thread, and lists
- * those threads with their projects.
- *
+/** Aggregated native usage crosses the wire; raw transcript records stay in the environment.
  * @module usage
  */
 import * as Schema from "effect/Schema";

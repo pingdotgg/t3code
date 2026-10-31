@@ -136,13 +136,7 @@ export class UsageAggregator {
     }
   }
 
-  /**
-   * Folds one record in. Returns whether it actually contributed, so callers
-   * can derive per-window facts (distinct sessions, for one) from the records
-   * that landed rather than everything the mtime prefilter happened to admit.
-   * `group` splits buckets further by account and thread. It is resolved only
-   * for records inside the window, so out-of-window sessions add no threads.
-   */
+  /** Return whether a record contributed; resolve groups only inside the window so other sessions add no threads. */
   add(
     input: UsageRecord,
     sourcePath?: string,

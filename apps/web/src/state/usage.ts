@@ -238,14 +238,7 @@ export interface UsageView {
   readonly refresh: (input?: UsageSummaryInput) => Promise<void>;
 }
 
-/**
- * Merges every environment that has answered, or that is offline and has
- * saved usage. Saved reads are trimmed so each history folder is counted from
- * one place, a usable live read first. `keepBucket` narrows the merge,
- * for example to one model; source ownership still applies, so the result
- * matches that slice of the full merge. Session counts are per directory and
- * are not narrowed.
- */
+/** Claim live and offline history folders before filtering buckets, so slices match full totals. */
 export function mergeAnsweredUsage(
   environments: readonly EnvironmentUsageStatus[],
   keepBucket?: (bucket: UsageBucket) => boolean,
@@ -422,7 +415,7 @@ export function useUsage(
     });
   };
 
-  // Keep each live read, so an environment's usage still shows while it is offline.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- persist completed live summaries to offline usage storage
   useEffect(() => {
     for (const status of environments) {
       if (status.offline || status.isPending || status.summary === null) continue;

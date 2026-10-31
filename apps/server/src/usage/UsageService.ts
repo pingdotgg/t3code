@@ -769,11 +769,7 @@ export const make = Effect.gen(function* () {
 
     const retentionCutoffMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
-    // Pricing only matters once records are aggregated, so the rate table
-    // loads while transcripts stream instead of gating them: a cold rates
-    // fetch on a slow network no longer delays the scan by its own timeout.
-    // Attribution reads T3's own records. A failure there costs the thread
-    // breakdown, never the totals.
+    // Scan while pricing loads; attribution failures lose the breakdown, never totals.
     const [, scannedDirs, attributionIndex] = yield* Effect.all(
       [
         ensureRates(false),

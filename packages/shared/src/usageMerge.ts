@@ -207,23 +207,8 @@ function recordsInT3Threads(summary: UsageSummary, source: UsageSource): number 
   return records;
 }
 
-/**
- * Decides which environment owns each physical transcript directory.
- *
- * Several environments on one machine (worktree servers, for instance) resolve
- * the same provider home and would otherwise double count every token.
- * Complete scans claim a fingerprint ahead of partial scans. Within a status,
- * a server that splits usage by thread wins over one that cannot, then the
- * environment that ran most of the directory's work in its own T3 threads,
- * so threads and projects keep their usage and the owner does not change
- * between refreshes; then the most recently read scan, then the environment
- * id. Attribution only decides among scans read within
- * {@link ATTRIBUTION_MAX_AGE_MS} of the newest, so an older owner misses at
- * most the usage recorded in between, which the next refresh shows. A newer
- * partial scan can still contribute cells absent from an older complete scan.
- *
- * Ownership is decided on whole summaries, so narrowing the buckets
- * afterwards (to one model, say) keeps the same owners as the full merge.
+/** Claim shared physical folders once; prefer complete, attributed scans within the freshness bound.
+ * Claim whole summaries before narrowing buckets so slices retain the full merge's owners.
  */
 function claimSources(environments: readonly EnvironmentUsage[]): {
   readonly ownerByFingerprint: ReadonlyMap<string, EnvironmentId>;
@@ -417,17 +402,8 @@ const EMPTY_MERGED: MergedUsage = {
   contributions: [],
 };
 
-/**
- * Merges every connected environment's summary.
- *
- * `expectedContractVersion` guards against incompatible server code: rather
- * than blocking the page, its data is excluded and the mismatch direction is
- * reported so the UI can identify which side needs updating. Versions in
- * [{@link USAGE_MERGE_COMPATIBLE_SINCE}, expected] still merge, so an additive
- * provider expansion does not drop Claude/Codex totals from older servers.
- *
- * `keepBucket` narrows the result, to one model for instance, after sources
- * are claimed, so the slice matches the same part of the full merge.
+/** Exclude incompatible contracts while merging additive provider versions.
+ * Filter buckets only after folder ownership is decided, so slices match the full merge.
  */
 export function mergeUsage(
   environments: readonly EnvironmentUsage[],
