@@ -46,6 +46,29 @@ function splitSpeed(
   };
 }
 
+type ColumnControl =
+  | { kind: "select"; descriptor: SelectDescriptor }
+  | { kind: "boolean"; descriptor: BooleanDescriptor };
+
+/**
+ * The column lists the model's reasoning control first, under the header that names it, then
+ * its other options. Picking a level of that control finishes the job and closes the popup.
+ */
+function columnControls(
+  provider: TraitsSelectionInput["provider"],
+  selects: ReadonlyArray<SelectDescriptor>,
+  toggles: ReadonlyArray<BooleanDescriptor>,
+) {
+  const { columnSelects, columnToggles } = splitSpeed(provider, selects, toggles);
+  const controls: ReadonlyArray<ColumnControl> = [
+    ...columnSelects.map((descriptor) => ({ kind: "select" as const, descriptor })),
+    ...columnToggles.map((descriptor) => ({ kind: "boolean" as const, descriptor })),
+  ];
+  const effort =
+    controls.find((control) => REASONING_SELECT_DESCRIPTOR_IDS.has(control.descriptor.id)) ?? null;
+  return { effort, others: controls.filter((control) => control !== effort) };
+}
+
 /**
  * What the model trigger shows after the model name: the effort word (or bars, per the
  * Appearance setting), a bolt for Fast, and other traits such as a context window.
@@ -80,12 +103,13 @@ export function describeComposerEffort(
             : getDescriptorStringValue(primary, modelSelection, traits.reportedModelSelection),
         )
       : null;
+  // Without a reasoning select the whole label is the word; it already names speed and the rest.
   // Workflow levels such as Ultracode always show their name; the setting names every level.
   const word = glyph
     ? (glyph.special ?? (effortDisplay === "label" ? glyph.label : null))
     : display.label;
   return {
-    detail: [display.label, display.speedLabel, ...display.otherLabels].filter(Boolean).join(" · "),
+    detail: display.label,
     suffix: (
       <span className="-ms-0.5 flex shrink-0 items-center gap-1.5 text-muted-foreground group-hover/model-trigger:text-foreground group-data-pressed/model-trigger:text-foreground group-data-popup-open/model-trigger:text-foreground">
         {word !== null ? (
@@ -93,10 +117,10 @@ export function describeComposerEffort(
         ) : glyph ? (
           <EffortGlyph count={glyph.count} filled={glyph.filled} size={size} />
         ) : null}
-        {display.speedLabel === "Fast" || display.speedLabel === "Ultrafast" ? (
+        {glyph && (display.speedLabel === "Fast" || display.speedLabel === "Ultrafast") ? (
           <FastBolt ultra={display.speedLabel === "Ultrafast"} />
         ) : null}
-        {display.otherLabels.length > 0 ? (
+        {glyph && display.otherLabels.length > 0 ? (
           <span
             // A label, so icon-only footers drop it; compacted rows drop it before the model.
             data-composer-control-label
@@ -120,6 +144,8 @@ function ColumnRow(props: {
   selected: boolean;
   isDefault?: boolean | undefined;
   disabled?: boolean;
+  /** A level of the reasoning control, where focus lands after a model pick. */
+  level: boolean;
   onPick: () => void;
 }) {
   return (
@@ -129,8 +155,9 @@ function ColumnRow(props: {
       aria-checked={props.selected}
       disabled={props.disabled}
       data-effort-row
-      // One tab stop per column; Up and Down move between rows.
-      tabIndex={props.selected ? 0 : -1}
+      data-effort-level={props.level || undefined}
+      // The reasoning control holds the column's one tab stop; Up and Down move between rows.
+      tabIndex={props.selected && props.level ? 0 : -1}
       className={COLUMN_ROW}
       onClick={props.onPick}
     >
@@ -158,7 +185,7 @@ function moveBetweenRows(event: KeyboardEvent<HTMLElement>) {
 
 function EffortLevels(props: { traits: TraitsSelectionInput; onLevelPick: () => void }) {
   const traits = useTraitsSelection(props.traits);
-  const { columnSelects, columnToggles } = splitSpeed(
+  const { effort, others } = columnControls(
     props.traits.provider,
     traits.selectDescriptors,
     traits.booleanDescriptors,
@@ -178,61 +205,71 @@ function EffortLevels(props: { traits: TraitsSelectionInput; onLevelPick: () => 
       </>
     );
   }
-  if (columnSelects.length === 0 && columnToggles.length === 0) return <NoEffortRow />;
-  return (
-    <>
-      {columnSelects.map((descriptor, index) => {
-        const isPrimary = descriptor.id === traits.primarySelectDescriptor?.id;
-        const locked = isPrimary && traits.ultrathinkInBodyText;
-        const value = traits.selectValue(descriptor);
-        return (
-          <div
-            key={descriptor.id}
-            role="radiogroup"
-            aria-label={descriptor.label}
-            className="flex flex-col gap-0.5"
-          >
-            {index > 0 ? <div className={COLUMN_LABEL}>{descriptor.label}</div> : null}
-            {locked ? (
-              <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">
-                {ULTRATHINK_IN_BODY_NOTE}
-              </div>
-            ) : null}
-            {selectableProviderOptionChoices(descriptor).map((option) => (
-              <ColumnRow
-                key={option.id}
-                label={option.label}
-                selected={option.id === value}
-                isDefault={option.isDefault}
-                disabled={locked}
-                onPick={() => {
-                  traits.changeSelect(descriptor, option.id);
-                  // Picking the effort level finishes the job; other options keep the popup open.
-                  if (isPrimary) props.onLevelPick();
-                }}
-              />
-            ))}
-          </div>
-        );
-      })}
-      {columnToggles.map((descriptor) => (
+  if (!effort && others.length === 0) return <NoEffortRow />;
+  const renderControl = (control: ColumnControl) => {
+    const isEffort = control === effort;
+    const { descriptor } = control;
+    if (control.kind === "boolean") {
+      return (
         <div
           key={descriptor.id}
           role="radiogroup"
           aria-label={descriptor.label}
           className="flex flex-col gap-0.5"
         >
-          <div className={COLUMN_LABEL}>{descriptor.label}</div>
+          {isEffort ? null : <div className={COLUMN_LABEL}>{descriptor.label}</div>}
           {([true, false] as const).map((value) => (
             <ColumnRow
               key={String(value)}
               label={value ? "On" : "Off"}
-              selected={(descriptor.currentValue === true) === value}
-              onPick={() => traits.changeBoolean(descriptor.id, value)}
+              selected={(control.descriptor.currentValue === true) === value}
+              level={isEffort}
+              onPick={() => {
+                traits.changeBoolean(descriptor.id, value);
+                if (isEffort) props.onLevelPick();
+              }}
             />
           ))}
         </div>
-      ))}
+      );
+    }
+    const locked =
+      descriptor.id === traits.primarySelectDescriptor?.id && traits.ultrathinkInBodyText;
+    const value = traits.selectValue(control.descriptor);
+    return (
+      <div
+        key={descriptor.id}
+        role="radiogroup"
+        aria-label={descriptor.label}
+        className="flex flex-col gap-0.5"
+      >
+        {isEffort ? null : <div className={COLUMN_LABEL}>{descriptor.label}</div>}
+        {locked ? (
+          <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">
+            {ULTRATHINK_IN_BODY_NOTE}
+          </div>
+        ) : null}
+        {selectableProviderOptionChoices(control.descriptor).map((option) => (
+          <ColumnRow
+            key={option.id}
+            label={option.label}
+            selected={option.id === value}
+            isDefault={option.isDefault}
+            disabled={locked}
+            level={isEffort}
+            onPick={() => {
+              traits.changeSelect(control.descriptor, option.id);
+              if (isEffort) props.onLevelPick();
+            }}
+          />
+        ))}
+      </div>
+    );
+  };
+  return (
+    <>
+      {effort ? renderControl(effort) : null}
+      {others.map(renderControl)}
     </>
   );
 }
@@ -246,15 +283,21 @@ function NoEffortRow() {
 /** The model picker's effort column: the selected model's levels and its other options. */
 export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | null }) {
   const picker = use(DockedPickerContext);
-  const primary = props.traits
-    ? getTraitsSectionVisibility(props.traits).primarySelectDescriptor
-    : null;
+  const visibility = props.traits ? getTraitsSectionVisibility(props.traits) : null;
+  const effort =
+    props.traits && visibility
+      ? columnControls(
+          props.traits.provider,
+          visibility.selectDescriptors,
+          visibility.booleanDescriptors,
+        ).effort
+      : null;
   return (
     <>
       {/* Matches the search row's box, so one rule runs across the top of the popup. */}
       <div className="shrink-0 px-3 pt-2.5">
         <div className="flex h-8.25 -translate-y-px items-center gap-2 border-b border-border/70 pb-1.5 text-sm">
-          <span className="text-muted-foreground">{primary?.label ?? "Effort"}</span>
+          <span className="text-muted-foreground">{effort?.descriptor.label ?? "Effort"}</span>
           <span className="ms-auto min-w-0 truncate text-muted-foreground text-xs">
             {picker.modelLabel}
           </span>
@@ -353,6 +396,7 @@ function PermissionsMenu(props: {
   options: ReadonlyArray<RuntimeModeOption>;
   onChange: (mode: RuntimeMode) => void;
 }) {
+  const picker = use(DockedPickerContext);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const current = props.options.find((option) => option.mode === props.runtimeMode);
   if (!current) return null;
@@ -382,7 +426,11 @@ function PermissionsMenu(props: {
         <ComposerPermissionsSection
           runtimeMode={props.runtimeMode}
           runtimeModeOptions={props.options}
-          onRuntimeModeChange={props.onChange}
+          // A mode change hands focus back to the prompt, so the whole picker closes with it.
+          onRuntimeModeChange={(mode) => {
+            props.onChange(mode);
+            picker.close();
+          }}
         />
       </MenuPopup>
     </Menu>

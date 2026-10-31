@@ -69,6 +69,8 @@ export const ModelListRow = memo(function ModelListRow(props: {
       <div className="flex min-w-0 flex-1 items-center gap-2 text-left">
         <div className="min-w-0 truncate text-sm font-normal leading-snug">
           {getDisplayModelName(model)}
+          {/* The logo is decorative, so name the provider for screen readers. */}
+          <span className="sr-only">, {props.providerDisplayName}</span>
         </div>
         {props.subProvider ? (
           <span className="min-w-0 shrink truncate text-xs text-muted-foreground/70">

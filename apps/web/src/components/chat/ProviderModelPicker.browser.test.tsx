@@ -142,6 +142,7 @@ it("keeps a docked picker open after a pick and hands focus to that model's effo
             role="radio"
             aria-checked={index === all.length - 1}
             data-effort-row
+            data-effort-level
           >
             {level}
           </button>

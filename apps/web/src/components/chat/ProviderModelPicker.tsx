@@ -154,14 +154,28 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     }
   };
 
-  /** Focuses the selected effort level, or the first row; false when the column has none. */
-  const focusEffort = () => {
+  /**
+   * Focuses the selected reasoning level, else the first level. With `rows: "any"` it falls back
+   * to the column's other options. False when nothing took focus.
+   */
+  const focusEffort = (rows: "levels" | "any") => {
     const column = popupRef.current?.querySelector("[data-model-picker-effort]");
+    const first = (selector: string) =>
+      column?.querySelector<HTMLElement>(`${selector}[aria-checked="true"]:not(:disabled)`) ??
+      column?.querySelector<HTMLElement>(`${selector}:not(:disabled)`);
     const row =
-      column?.querySelector<HTMLElement>('[data-effort-row][aria-checked="true"]:not(:disabled)') ??
-      column?.querySelector<HTMLElement>("[data-effort-row]:not(:disabled)");
+      first("[data-effort-level]") ?? (rows === "any" ? first("[data-effort-row]") : null);
     row?.focus({ preventScroll: true });
     return row != null;
+  };
+  const openTarget = (target: "effort" | "permissions") => {
+    if (target === "effort") {
+      focusEffort("any");
+      return;
+    }
+    popupRef.current
+      ?.querySelector<HTMLButtonElement>("[data-composer-permissions-trigger]")
+      ?.click();
   };
 
   const handleInstanceModelChange = (instanceId: ProviderInstanceId, model: string) => {
@@ -173,7 +187,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     }
     // The column renders the new model's levels on commit; a model with none closes the popup.
     window.requestAnimationFrame(() => {
-      if (!focusEffort()) setIsMenuOpen(false);
+      if (!focusEffort("levels")) setIsMenuOpen(false);
     });
   };
 
@@ -246,7 +260,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           : (props.getModelDisabledReason?.(instanceId, model) ?? null)
       }
       onInstanceModelChange={handleInstanceModelChange}
-      {...(docked ? { docked, onFocusEffort: () => void focusEffort() } : {})}
+      {...(docked ? { docked, onFocusEffort: () => void focusEffort("any") } : {})}
     />
   );
 
@@ -262,14 +276,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       }}
       onOpenChangeComplete={(open) => {
         const target = takeOpenTarget(triggerRef.current);
-        if (!open || !docked || !target) return;
-        if (target === "effort") {
-          focusEffort();
-          return;
-        }
-        popupRef.current
-          ?.querySelector<HTMLButtonElement>("[data-composer-permissions-trigger]")
-          ?.click();
+        if (open && docked && target) openTarget(target);
       }}
     >
       <PopoverTrigger
@@ -285,6 +292,16 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             size={size}
             data-chat-provider-model-picker="true"
             data-composer-shortcut={props.triggerShortcuts}
+            onClick={(event) => {
+              if (!isMenuOpen || !docked) return;
+              const target = takeOpenTarget(triggerRef.current);
+              if (!target) return;
+              // A shortcut aimed at the open picker moves within it instead of closing it.
+              (
+                event as typeof event & { preventBaseUIHandler?: () => void }
+              ).preventBaseUIHandler?.();
+              openTarget(target);
+            }}
             className={cn(
               "min-w-0 shrink justify-between whitespace-nowrap",
               props.compact
@@ -385,29 +402,29 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         touchBackdrop
       >
         {props.effortColumn ? (
-          <div className="flex flex-col">
-            <div className="flex max-h-86.5 max-sm:max-h-none max-sm:flex-col">
-              {picker}
-              <div
-                data-model-picker-effort
-                className="flex min-h-0 w-48 shrink-0 flex-col border-l border-border/70 bg-muted/40 max-sm:max-h-64 max-sm:w-full max-sm:border-t max-sm:border-l-0"
-                onKeyDown={(event) => {
-                  if (event.key !== "ArrowLeft" || event.altKey || event.ctrlKey || event.metaKey)
-                    return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  searchInputRef.current?.focus();
-                }}
-              >
-                <DockedPickerContext
-                  value={{ modelLabel: triggerLabel, close: () => setIsMenuOpen(false) }}
+          <DockedPickerContext
+            value={{ modelLabel: triggerLabel, close: () => setIsMenuOpen(false) }}
+          >
+            <div className="flex flex-col">
+              <div className="flex max-h-86.5 max-sm:max-h-none max-sm:flex-col">
+                {picker}
+                <div
+                  data-model-picker-effort
+                  className="flex min-h-0 w-48 shrink-0 flex-col border-l border-border/70 bg-muted/40 max-sm:max-h-64 max-sm:w-full max-sm:border-t max-sm:border-l-0"
+                  onKeyDown={(event) => {
+                    if (event.key !== "ArrowLeft" || event.altKey || event.ctrlKey || event.metaKey)
+                      return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    searchInputRef.current?.focus();
+                  }}
                 >
                   {props.effortColumn}
-                </DockedPickerContext>
+                </div>
               </div>
+              {props.footer}
             </div>
-            {props.footer}
-          </div>
+          </DockedPickerContext>
         ) : (
           picker
         )}
