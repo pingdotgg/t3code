@@ -154,6 +154,30 @@ describe("assistant citation references", () => {
     );
   });
 
+  it("round-trips citations of provider messages whose IDs nest the thread ID", () => {
+    const threadId = ThreadId.make(
+      "thread:project:7a0c2f3e-5b1d-4c8a-9e6f-2d4b8a1c3e5f:0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f",
+    );
+    const nest = (outer: string, inner: string) => `${outer}:${encodeURIComponent(inner)}`;
+    const providerTurnId = nest(
+      "provider-turn:provider:pi:native-turn",
+      nest(threadId, `${threadId}:run:1`),
+    );
+    const messageId = MessageId.make(
+      nest(
+        "message:provider:pi:native-item",
+        nest(providerTurnId, `${providerTurnId}:assistant:0`),
+      ),
+    );
+    const piCitation: AssistantCitation = { ...citation, threadId, messageId };
+    const marker = serializeAssistantCitation(piCitation);
+
+    expect(messageId.length).toBeGreaterThan(512);
+    expect(collectAssistantCitations(marker)).toEqual([
+      { citation: piCitation, source: marker, start: 0, end: marker.length },
+    ]);
+  });
+
   it("edits only the bound comment and trims only its outer whitespace", () => {
     const original = Object.freeze({ ...citation, comment: "Previous comment" });
     const comment = ' \n\tPlease keep "日本語".\n  Preserve indentation and `code`.\t ';
