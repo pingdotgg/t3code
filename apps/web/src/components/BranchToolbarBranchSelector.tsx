@@ -15,7 +15,7 @@ import {
   type VcsRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import { GitBranchIcon } from "lucide-react";
+import { ChevronDownIcon, GitBranchIcon } from "lucide-react";
 import {
   useEffect,
   useImperativeHandle,
@@ -75,8 +75,13 @@ interface BranchToolbarBranchSelectorProps {
   ref?: Ref<BranchToolbarBranchSelectorHandle>;
   className?: string;
   displayMode?: "toolbar" | "panel";
-  /** Rendered just before the branch trigger, in place of its branch icon. */
   leading?: ReactNode;
+  /** Composer only: one chip for the branch, workspace mode, and machine. */
+  renderWorkspaceMenu?: (branch: {
+    label: string;
+    onChooseRef: () => void;
+    disabled: boolean;
+  }) => ReactNode;
   environmentId: EnvironmentId;
   threadId: ThreadId;
   draftId?: DraftId;
@@ -105,6 +110,7 @@ export function BranchToolbarBranchSelector({
   ref,
   className,
   displayMode = "toolbar",
+  renderWorkspaceMenu,
   leading,
   environmentId,
   threadId,
@@ -722,33 +728,49 @@ export function BranchToolbarBranchSelector({
           }}
           onContextMenu={(event) => handleBranchContextMenu(event, resolvedActiveBranch)}
         >
-          <ComboboxTrigger
-            render={
-              displayMode === "panel" ? (
-                <ThreadDetailsControl part="row" />
-              ) : (
-                <ComposerControl size="xs" className={leading ? "ps-0.75" : undefined} />
-              )
-            }
-            className="min-w-0 max-w-full active:scale-100"
-            disabled={isInitialBranchesLoadPending || isBranchActionPending}
-          >
-            {leading ? null : (
-              <GitBranchIcon
-                className={cn(
-                  "size-3 shrink-0",
-                  displayMode === "panel" && THREAD_DETAILS_PANEL_ICON_CLASS,
-                )}
-              />
-            )}
-            <ComposerContextLabel displayMode={displayMode} compactable={false}>
-              {isActiveBranchResolving ? (
-                <Skeleton className="h-3 w-24" />
-              ) : (
-                <MiddleTruncate value={triggerLabel} variant="cap-aligned" className="w-full" />
+          {displayMode === "toolbar" && renderWorkspaceMenu ? (
+            renderWorkspaceMenu({
+              label:
+                resolvedActiveBranch ?? (isActiveBranchResolving ? "Loading ref…" : "Select ref"),
+              onChooseRef: () => handleOpenChange(true),
+              disabled: isInitialBranchesLoadPending || isBranchActionPending,
+            })
+          ) : (
+            <ComboboxTrigger
+              render={
+                displayMode === "panel" ? (
+                  <ThreadDetailsControl part="row" />
+                ) : (
+                  <ComposerControl size="xs" />
+                )
+              }
+              className="min-w-0 max-w-full active:scale-100"
+              disabled={isInitialBranchesLoadPending || isBranchActionPending}
+            >
+              {leading ? null : (
+                <GitBranchIcon
+                  className={cn(
+                    "size-3 shrink-0",
+                    displayMode === "panel" && THREAD_DETAILS_PANEL_ICON_CLASS,
+                  )}
+                />
               )}
-            </ComposerContextLabel>
-          </ComboboxTrigger>
+              <ComposerContextLabel displayMode={displayMode} compactable={false}>
+                {isActiveBranchResolving ? (
+                  <Skeleton className="h-3 w-24" />
+                ) : (
+                  <MiddleTruncate value={triggerLabel} variant="cap-aligned" className="w-full" />
+                )}
+              </ComposerContextLabel>
+              {displayMode === "toolbar" ? (
+                <ChevronDownIcon
+                  aria-hidden
+                  data-composer-chevron
+                  className="size-2.5 shrink-0 text-muted-foreground"
+                />
+              ) : null}
+            </ComboboxTrigger>
+          )}
         </span>
         {displayMode === "panel" &&
         prNumber !== undefined &&
