@@ -3,6 +3,7 @@ import {
   autoBalanceCandidates,
   eligiblePipelineMachines,
   logicalProjectCounterparts,
+  pipelineInstanceIds,
   pipelineProvidersReady,
   resolveAutoMachineState,
   resolvePipelineMachineChoice,
@@ -19,7 +20,7 @@ import { useEffect, useState } from "react";
 import { useLoadBalancedEnvironment } from "../../hooks/useLoadBalancedEnvironment";
 import { useClientSettings, useClientSettingsHydrated } from "../../hooks/useSettings";
 import { useProjects } from "../../state/entities";
-import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
+import { useEnvironments } from "../../state/environments";
 import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
 
 // A primitive key, so config pushes that leave the answer alone do not re-render the dialog.
@@ -34,6 +35,40 @@ const startableEnvironmentsAtom = Atom.make((get) =>
     .join("\n"),
 ).pipe(Atom.withLabel("web-linear-pipeline-startable-environments"));
 
+const remoteLinksAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make(
+    (get) =>
+      get(serverEnvironment.configValueAtom(environmentId))?.environment.capabilities
+        .linearRemoteLinks === true,
+  ).pipe(Atom.withLabel("web-linear-remote-links")),
+);
+
+interface ReadyMachinesKey {
+  readonly instanceIds: ReadonlyArray<string>;
+  readonly machines: ReadonlyArray<Pick<PipelineMachine, "environmentId" | "projectId">>;
+}
+
+// Provider statuses change on every push; answering with a string keeps those pushes from
+// re-rendering the dialog. Keyed by JSON of `ReadyMachinesKey`; "" reads nothing.
+const readyMachinesAtom = Atom.family((key: string) =>
+  Atom.make((get) => {
+    if (key === "") return "";
+    const { instanceIds, machines } = JSON.parse(key) as ReadyMachinesKey;
+    return machines
+      .filter((machine) => {
+        const config = get(serverEnvironment.configValueAtom(machine.environmentId));
+        return pipelineProvidersReady({
+          instanceIds,
+          providers: config?.providers,
+          settings: config?.settings ?? null,
+          projectId: machine.projectId,
+        });
+      })
+      .map((machine) => machine.environmentId)
+      .join("\n");
+  }).pipe(Atom.withLabel("web-linear-pipeline-ready-machines")),
+);
+
 /** Machines that can run the pipeline for the resolved project, and which one the person picked. */
 export function useLinearPipelineMachines(
   primaryEnvironmentId: EnvironmentId,
@@ -45,6 +80,7 @@ export function useLinearPipelineMachines(
   const loadBalancingEnabled = useClientSettings((settings) => settings.loadBalancingEnabled);
   const hydrated = useClientSettingsHydrated();
   const startable = new Set(useAtomValue(startableEnvironmentsAtom).split("\n"));
+  const primarySupportsRemoteLinks = useAtomValue(remoteLinksAtom(primaryEnvironmentId));
   const [choice, setChoice] = useState<PipelineMachineChoice>(null);
   const [latched, setLatched] = useState<EnvironmentId | null>(null);
 
@@ -72,6 +108,7 @@ export function useLinearPipelineMachines(
     effective === "auto" ? (live ?? primaryEnvironmentId) : (effective ?? primaryEnvironmentId);
   return {
     machines,
+    primarySupportsRemoteLinks,
     autoOffered: autoOffered && machines.length >= 2,
     effective,
     live,
@@ -92,26 +129,34 @@ export function useLinearAutoMachine(input: {
   readonly machines: ReadonlyArray<PipelineMachine>;
   readonly active: boolean;
   readonly live: EnvironmentId | null;
+  /** False until the listed machine's pipelines load. */
+  readonly pipelineKnown: boolean;
   readonly pipeline: Pick<PipelineDefinition, "steps"> | null;
   readonly latch: (environmentId: EnvironmentId) => void;
 }) {
-  const { environments } = useEnvironments();
-  const providersByEnvironment = useEnvironmentProviders();
   const weights = useClientSettings((settings) => settings.loadBalancingWeights);
-  const environmentById = new Map(environments.map((entry) => [entry.environmentId, entry]));
-  const needsPick = input.active && input.live === null;
+  const needsPick = input.active && input.live === null && input.pipelineKnown;
+  const ready = new Set(
+    useAtomValue(
+      readyMachinesAtom(
+        needsPick
+          ? JSON.stringify({
+              instanceIds: pipelineInstanceIds(input.pipeline),
+              machines: input.machines.map(({ environmentId, projectId }) => ({
+                environmentId,
+                projectId,
+              })),
+            } satisfies ReadyMachinesKey)
+          : "",
+      ),
+    ).split("\n"),
+  );
   const candidates = needsPick
     ? autoBalanceCandidates({
         machines: input.machines,
         weights,
         defaultWeight: DEFAULT_LOAD_BALANCING_WEIGHT,
-        providersReady: (machine) =>
-          pipelineProvidersReady({
-            pipeline: input.pipeline,
-            providers: providersByEnvironment.get(machine.environmentId),
-            settings: environmentById.get(machine.environmentId)?.serverConfig?.settings ?? null,
-            projectId: machine.projectId,
-          }),
+        providersReady: (machine) => ready.has(machine.environmentId),
       })
     : [];
   const balanced = useLoadBalancedEnvironment(candidates, weights);
@@ -125,6 +170,7 @@ export function useLinearAutoMachine(input: {
   return {
     state: resolveAutoMachineState({
       latched: input.live,
+      pipelineKnown: input.pipelineKnown,
       pending: balanced.pending,
       picked: balanced.environmentId,
       candidateCount: candidates.length,

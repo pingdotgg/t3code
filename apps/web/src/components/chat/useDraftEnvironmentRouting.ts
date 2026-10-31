@@ -6,10 +6,10 @@ import {
   type EnvironmentId,
   type ProviderDriverKind,
   ProviderInstanceId,
-  resolveProjectProviderInstanceEnabled,
   type ThreadContextRecord,
 } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { providerInstanceReady } from "@t3tools/client-runtime/load-balancing";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { toastManager } from "../ui/toast";
 import {
@@ -84,25 +84,17 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
             referencedThreadContexts.every(
               (record) => record.environmentId === candidate.environmentId,
             ) &&
-            providersByEnvironment
-              .get(candidate.environmentId)
-              ?.some(
-                (provider) =>
-                  (activeProviderInstanceId === null ||
-                    provider.instanceId === activeProviderInstanceId) &&
-                  provider.driver === selectedProvider &&
-                  (environment.serverConfig?.settings
-                    ? resolveProjectProviderInstanceEnabled(
-                        environment.serverConfig.settings,
-                        candidate.projectId,
-                        provider.instanceId,
-                      )
-                    : provider.enabled) &&
-                  provider.installed &&
-                  provider.status !== "error" &&
-                  provider.auth.status !== "unauthenticated" &&
-                  provider.availability !== "unavailable",
-              )
+            providersByEnvironment.get(candidate.environmentId)?.some(
+              (provider) =>
+                (activeProviderInstanceId === null ||
+                  provider.instanceId === activeProviderInstanceId) &&
+                provider.driver === selectedProvider &&
+                providerInstanceReady({
+                  provider,
+                  settings: environment.serverConfig?.settings ?? null,
+                  projectId: candidate.projectId,
+                }),
+            )
           );
         })
         .map((candidate) => candidate.environmentId)

@@ -3,6 +3,7 @@ import {
   autoBalanceCandidates,
   eligiblePipelineMachines,
   logicalProjectCounterparts,
+  pipelineInstanceIds,
   pipelineProvidersReady,
   resolveAutoMachineState,
   resolvePipelineMachineChoice,
@@ -38,6 +39,14 @@ const startableEnvironmentsAtom = Atom.make((get) =>
     .join("\n"),
 ).pipe(Atom.withLabel("mobile-linear-pipeline-startable-environments"));
 
+const remoteLinksAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make(
+    (get) =>
+      get(serverEnvironment.configValueAtom(environmentId))?.environment.capabilities
+        .linearRemoteLinks === true,
+  ).pipe(Atom.withLabel("mobile-linear-remote-links")),
+);
+
 /**
  * Machines that can run the pipeline for the resolved project. Auto balance is offered with two or
  * more, but the primary stays the default: mobile has no load-balancing preferences.
@@ -50,6 +59,7 @@ export function useLinearPipelineMachines(
   const projects = useProjects();
   const groupingSettings = useMobileProjectGroupingSettings();
   const startable = new Set(useAtomValue(startableEnvironmentsAtom).split("\n"));
+  const primarySupportsRemoteLinks = useAtomValue(remoteLinksAtom(primaryEnvironmentId));
   const [choice, setChoice] = useState<PipelineMachineChoice>(null);
   const [latched, setLatched] = useState<EnvironmentId | null>(null);
 
@@ -81,6 +91,7 @@ export function useLinearPipelineMachines(
     effective === "auto" ? (live ?? primaryEnvironmentId) : (effective ?? primaryEnvironmentId);
   return {
     machines,
+    primarySupportsRemoteLinks,
     effective,
     live,
     listEnvironmentId,
@@ -102,12 +113,15 @@ export function useLinearAutoMachine(input: {
   readonly machines: ReadonlyArray<PipelineMachine>;
   readonly active: boolean;
   readonly live: EnvironmentId | null;
+  /** False until the listed machine's pipelines load. */
+  readonly pipelineKnown: boolean;
   readonly pipeline: Pick<PipelineDefinition, "steps"> | null;
   readonly latch: (environmentId: EnvironmentId) => void;
 }) {
   const registry = useContext(RegistryContext);
   const configs = useServerConfigs();
-  const needsPick = input.active && input.live === null;
+  const needsPick = input.active && input.live === null && input.pipelineKnown;
+  const instanceIds = pipelineInstanceIds(input.pipeline);
   const candidates = needsPick
     ? autoBalanceCandidates({
         machines: input.machines,
@@ -116,7 +130,7 @@ export function useLinearAutoMachine(input: {
         providersReady: (machine) => {
           const config = configs.get(machine.environmentId);
           return pipelineProvidersReady({
-            pipeline: input.pipeline,
+            instanceIds,
             providers: config?.providers,
             settings: config?.settings ?? null,
             projectId: machine.projectId,
@@ -136,6 +150,7 @@ export function useLinearAutoMachine(input: {
   return {
     state: resolveAutoMachineState({
       latched: input.live,
+      pipelineKnown: input.pipelineKnown,
       pending: balanced.pending,
       picked: balanced.environmentId,
       candidateCount: candidates.length,

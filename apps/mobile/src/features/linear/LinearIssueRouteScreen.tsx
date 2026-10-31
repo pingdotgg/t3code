@@ -1,6 +1,6 @@
 import type { StaticScreenProps } from "@react-navigation/native";
 import {
-  activityStatusLabel,
+  activityItemStatusLabel,
   activityItemEnvironmentId,
   pickActivityPill,
   stepTone,
@@ -104,17 +104,18 @@ function ActivityRow(props: {
 }) {
   const { item } = props;
   const pipeline = item.pipeline;
+  const isRun = item.link.targetKind === "pipeline_run";
   const failed = item.status === "failed";
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${pipeline ? "Pipeline run" : "Chat"} ${pipeline?.name ?? item.title}, ${activityStatusLabel(item.status)}`}
+      accessibilityLabel={`${isRun ? "Pipeline run" : "Chat"} ${pipeline?.name ?? item.title}, ${activityItemStatusLabel(item)}`}
       onPress={() => props.onOpen(item)}
       className="flex-row items-start gap-3 border-b border-border-subtle px-3.5 py-3 active:bg-row-hover"
     >
       <View className="pt-0.5">
         <SymbolView
-          name={pipeline ? "point.3.connected.trianglepath.dotted" : "bubble.left"}
+          name={isRun ? "point.3.connected.trianglepath.dotted" : "bubble.left"}
           size={16}
           tintColorClassName={failed ? "accent-danger-foreground" : "accent-icon-muted"}
         />
@@ -155,7 +156,7 @@ function ActivityRow(props: {
             failed ? "text-danger-foreground" : "text-foreground-muted",
           )}
         >
-          {activityStatusLabel(item.status)}
+          {activityItemStatusLabel(item)}
         </Text>
         <Text className="text-2xs tabular-nums text-foreground-tertiary">
           {relativeTime(item.updatedAt)}

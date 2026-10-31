@@ -67,6 +67,7 @@ export function createLinearEnvironmentAtoms<R, E>(
   const refreshes = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
     label: "environment-data:linear:refreshes",
     tag: WS_METHODS.linearSubscribeRefreshes,
+    idleTtlMs: LINEAR_IDLE_TTL_MS,
   });
   const commandScheduler = createAtomCommandScheduler();
   const serialPerEnvironment = {

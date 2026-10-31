@@ -50,7 +50,7 @@ import {
 import { formatProgressPercent } from "@t3tools/client-runtime/linear/issue-list";
 import { linearIssueMatchesRoute } from "@t3tools/client-runtime/linear/issue-link";
 import {
-  activityStatusLabel,
+  activityItemStatusLabel,
   activityItemEnvironmentId,
   pickActivityPill,
   stepTone,
@@ -117,7 +117,7 @@ function ActivityRow({
       className="flex w-full cursor-pointer items-start gap-2 border-b border-border px-2.5 py-2 text-left last:border-b-0 hover:bg-accent/60"
     >
       <span className="mt-0.5 text-muted-foreground">
-        {pipeline ? (
+        {item.link.targetKind === "pipeline_run" ? (
           <WorkflowIcon
             aria-hidden
             className={cn("size-3.5", failed && "text-destructive-foreground")}
@@ -160,7 +160,7 @@ function ActivityRow({
             item.status === "running" && "text-info-foreground",
           )}
         >
-          {activityStatusLabel(item.status)}
+          {activityItemStatusLabel(item)}
         </span>
         <span className="tabular-nums">
           <RelativeTime timestamp={item.updatedAt} />

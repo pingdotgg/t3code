@@ -2,15 +2,12 @@
 import type { EnvironmentId, HostResourcesSnapshot } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
-import { chooseLoadBalancedEnvironment } from "../load-balancing.ts";
+import { chooseLoadBalancedEnvironment, HOST_RESOURCES_FRESH_MS } from "../load-balancing.ts";
 import type { createServerEnvironmentAtoms } from "./server.ts";
 
 type HostResourcesQuery = ReturnType<
   typeof createServerEnvironmentAtoms<never, never>
 >["hostResources"];
-
-// Mirrors the freshness window in chooseLoadBalancedEnvironment.
-const HOST_RESOURCES_FRESH_MS = 15_000;
 
 export const DEFAULT_LOAD_BALANCING_WEIGHT = 50;
 

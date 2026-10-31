@@ -6,10 +6,12 @@ import type {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import type { EnvironmentProject } from "../state/models.ts";
 import {
   autoBalanceCandidates,
   eligiblePipelineMachines,
-  pipelineCommentDescription,
+  logicalProjectCounterparts,
+  pipelineInstanceIds,
   pipelineProvidersReady,
   resolveAutoMachineState,
   resolveLinearWriteBackRoute,
@@ -34,6 +36,29 @@ const input = (
   canStart: true,
   projectId: project(`p-${id}`),
   ...overrides,
+});
+
+describe("logicalProjectCounterparts", () => {
+  it("keeps the chosen project on its machine when one repository holds several", () => {
+    const inRepo = (environmentId: string, id: string, workspaceRoot: string) =>
+      ({
+        environmentId: env(environmentId),
+        id: project(id),
+        workspaceRoot,
+        repositoryIdentity: { canonicalKey: "github.com/acme/app" },
+      }) as unknown as EnvironmentProject;
+    const projects = [
+      inRepo("a", "a-root", "/repo"),
+      inRepo("a", "a-web", "/repo/apps/web"),
+      inRepo("b", "b-root", "/repo"),
+    ];
+    const counterparts = logicalProjectCounterparts(projects[1]!, projects, {
+      sidebarProjectGroupingMode: "repository",
+      sidebarProjectGroupingOverrides: {},
+    });
+    expect(counterparts.get(env("a"))).toBe("a-web");
+    expect(counterparts.get(env("b"))).toBe("b-root");
+  });
 });
 
 describe("eligiblePipelineMachines", () => {
@@ -122,8 +147,17 @@ describe("autoBalanceCandidates", () => {
 
 describe("resolveAutoMachineState", () => {
   it("checks, picks, latches and reports unavailable", () => {
-    const base = { latched: null, pending: false, picked: null, candidateCount: 2 };
+    const base = {
+      latched: null,
+      pipelineKnown: true,
+      pending: false,
+      picked: null,
+      candidateCount: 2,
+    };
     expect(resolveAutoMachineState({ ...base, pending: true })).toEqual({ kind: "checking" });
+    expect(resolveAutoMachineState({ ...base, pipelineKnown: false, candidateCount: 0 })).toEqual({
+      kind: "checking",
+    });
     expect(resolveAutoMachineState({ ...base, picked: env("b") })).toEqual({
       kind: "picked",
       environmentId: "b",
@@ -144,6 +178,7 @@ describe("pipelineProvidersReady", () => {
     steps: [
       { modelSelection: { instanceId: "codex" } },
       { modelSelection: { instanceId: "claude" } },
+      { modelSelection: { instanceId: "codex" } },
     ],
   } as unknown as PipelineDefinition;
   const provider = (instanceId: string, overrides: object = {}) =>
@@ -156,88 +191,94 @@ describe("pipelineProvidersReady", () => {
       availability: "available",
       ...overrides,
     }) as unknown as ServerProvider;
+  const ready = (providers: ReadonlyArray<ServerProvider>) =>
+    pipelineProvidersReady({
+      instanceIds: pipelineInstanceIds(pipeline),
+      providers,
+      settings: null,
+      projectId: project("p"),
+    });
 
   it("needs every step's provider ready", () => {
-    const ready = [provider("codex"), provider("claude")];
+    expect(pipelineInstanceIds(pipeline)).toEqual(["codex", "claude"]);
+    expect(ready([provider("codex"), provider("claude")])).toBe(true);
     expect(
-      pipelineProvidersReady({
-        pipeline,
-        providers: ready,
-        settings: null,
-        projectId: project("p"),
-      }),
-    ).toBe(true);
-    expect(
-      pipelineProvidersReady({
-        pipeline,
-        providers: [provider("codex"), provider("claude", { auth: { status: "unauthenticated" } })],
-        settings: null,
-        projectId: project("p"),
-      }),
+      ready([provider("codex"), provider("claude", { auth: { status: "unauthenticated" } })]),
     ).toBe(false);
-    expect(
-      pipelineProvidersReady({
-        pipeline,
-        providers: [provider("codex")],
-        settings: null,
-        projectId: project("p"),
-      }),
-    ).toBe(false);
+    expect(ready([provider("codex")])).toBe(false);
   });
 });
 
 describe("resolvePipelineSelection", () => {
+  const primaryPipelines = [
+    { id: "a1", name: "Build" },
+    { id: "a2", name: "Ship" },
+  ];
   const pipelines = [
     { id: "x1", name: "Review" },
     { id: "x2", name: "Ship" },
     { id: "x3", name: "Ship" },
   ];
-  const none = { chosenName: null, requestedName: null, lastUsedName: null };
+  const none = { primaryPipelines, chosen: null, requestedId: null, lastUsedName: null };
 
-  it("keeps the chosen pipeline by name, first match on collisions", () => {
-    expect(resolvePipelineSelection({ pipelines, ...none, chosenName: "Ship" }).pipeline?.id).toBe(
-      "x2",
-    );
+  it("keeps the pick by id, else by name with the first match on collisions", () => {
+    const pick = (chosen: { id: string; name: string }) =>
+      resolvePipelineSelection({ pipelines, ...none, chosen }).pipeline?.id;
+    expect(pick({ id: "x3", name: "Ship" })).toBe("x3");
+    expect(pick({ id: "a2", name: "Ship" })).toBe("x2");
   });
 
-  it("falls back to requested, last used, then the first, and flags a lost choice", () => {
-    expect(
-      resolvePipelineSelection({ pipelines, ...none, requestedName: "Ship" }).pipeline?.id,
-    ).toBe("x2");
+  it("keeps the primary's default by name on another machine and says when it is missing", () => {
+    expect(resolvePipelineSelection({ pipelines, ...none, requestedId: "a2" }).pipeline?.id).toBe(
+      "x2",
+    );
     expect(
       resolvePipelineSelection({ pipelines, ...none, lastUsedName: "Ship" }).pipeline?.id,
     ).toBe("x2");
-    expect(resolvePipelineSelection({ pipelines, ...none }).pipeline?.id).toBe("x1");
-    const lost = resolvePipelineSelection({
-      pipelines,
-      ...none,
-      chosenName: "Gone",
-      lastUsedName: "Ship",
-    });
-    expect(lost.pipeline?.id).toBe("x2");
-    expect(lost.unmatchedName).toBe("Gone");
-    expect(resolvePipelineSelection({ pipelines: [], ...none, chosenName: "Gone" })).toEqual({
+    const lost = resolvePipelineSelection({ pipelines, ...none, lastUsedName: "Review" });
+    expect(lost.pipeline?.id).toBe("x1");
+    expect(lost.unmatchedName).toBe("Build");
+    expect(
+      resolvePipelineSelection({
+        pipelines,
+        ...none,
+        chosen: { id: "a1", name: "Build" },
+        requestedId: "a2",
+      }).unmatchedName,
+    ).toBe("Build");
+    expect(resolvePipelineSelection({ ...none, pipelines: [], requestedId: "a2" })).toEqual({
       pipeline: null,
       unmatchedName: null,
+      lastUsedId: null,
     });
+  });
+
+  it("marks one pipeline as last used when names repeat", () => {
+    expect(resolvePipelineSelection({ pipelines, ...none, lastUsedName: "Ship" }).lastUsedId).toBe(
+      "x2",
+    );
   });
 });
 
 describe("resolveLinearWriteBackRoute", () => {
+  const base = {
+    runEnvironmentId: env("b"),
+    runMachineName: "Studio",
+    primaryEnvironmentId: env("a"),
+    primaryOrganizationId: "org-1" as string | null,
+    primarySupportsRemoteLinks: true,
+    statusPending: false,
+  };
   const route = (
     runLinear: { state: string; organizationId: string | null } | null,
-    runEnvironmentId = "b",
-  ) =>
-    resolveLinearWriteBackRoute({
-      runEnvironmentId: env(runEnvironmentId),
-      runMachineName: "Studio",
-      primaryEnvironmentId: env("a"),
-      primaryOrganizationId: "org-1",
-      runLinear,
-    });
+    overrides: Partial<typeof base> = {},
+  ) => resolveLinearWriteBackRoute({ ...base, runLinear, ...overrides });
 
   it("leaves a run on the primary alone", () => {
-    expect(route(null, "a")).toEqual({ kind: "primary", recordOn: "a" });
+    expect(route(null, { runEnvironmentId: env("a"), statusPending: true })).toEqual({
+      kind: "primary",
+      recordOn: "a",
+    });
   });
 
   it("lets the run's machine record when it is connected to the same organization", () => {
@@ -247,20 +288,31 @@ describe("resolveLinearWriteBackRoute", () => {
     });
   });
 
+  it("decides nothing while a Linear status is still loading", () => {
+    expect(route(null, { statusPending: true })).toBeNull();
+  });
+
   it("falls back to the primary for another organization, a bad connection or no answer", () => {
     const fallback = { kind: "fallback", recordOn: "a", machineName: "Studio" };
     expect(route({ state: "connected", organizationId: "org-2" })).toEqual(fallback);
     expect(route({ state: "invalid", organizationId: "org-1" })).toEqual(fallback);
     expect(route({ state: "connected", organizationId: null })).toEqual(fallback);
+    expect(
+      route({ state: "connected", organizationId: null }, { primaryOrganizationId: null }),
+    ).toEqual(fallback);
     expect(route(null)).toEqual(fallback);
   });
 
-  it("says in the comment row when the comment will not be updated", () => {
-    expect(
-      pipelineCommentDescription(route({ state: "connected", organizationId: "org-1" })),
-    ).toContain("updated as each step");
-    expect(pipelineCommentDescription(route(null))).toBe(
-      "One comment with a link (not updated: Studio has no matching Linear connection)",
-    );
+  it("records nothing when the primary predates links to other machines", () => {
+    expect(route(null, { primarySupportsRemoteLinks: false })).toEqual({ kind: "unlinked" });
+  });
+
+  it("stores a single-line machine name the link schema accepts", () => {
+    expect(route(null, { runMachineName: `  Mac\n${"x".repeat(200)}` })).toMatchObject({
+      machineName: `Mac ${"x".repeat(124)}`,
+    });
+    expect(route(null, { runMachineName: "   " })).toMatchObject({
+      machineName: "another machine",
+    });
   });
 });

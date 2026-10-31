@@ -1,5 +1,4 @@
 import {
-  resolveProjectProviderInstanceEnabled,
   type EnvironmentId,
   type PipelineDefinition,
   type ProjectId,
@@ -7,20 +6,24 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 
+import { providerInstanceReady } from "../load-balancing.ts";
 import {
   deriveLogicalProjectKeyFromSettings,
   type ProjectGroupingSettings,
 } from "../state/projectGrouping.ts";
 import type { EnvironmentProject } from "../state/models.ts";
 
-/** The first project per environment in the same logical group as `project`. */
+/**
+ * `project` on its own machine, and the first project in the same logical group on every other
+ * machine. One repository can hold several projects, so the chosen one must win on its machine.
+ */
 export function logicalProjectCounterparts(
   project: EnvironmentProject,
   projects: ReadonlyArray<EnvironmentProject>,
   settings: ProjectGroupingSettings,
 ): ReadonlyMap<EnvironmentId, ProjectId> {
   const key = deriveLogicalProjectKeyFromSettings(project, settings);
-  const byEnvironment = new Map<EnvironmentId, ProjectId>();
+  const byEnvironment = new Map<EnvironmentId, ProjectId>([[project.environmentId, project.id]]);
   for (const candidate of projects) {
     if (byEnvironment.has(candidate.environmentId)) continue;
     if (deriveLogicalProjectKeyFromSettings(candidate, settings) === key) {
@@ -100,38 +103,27 @@ export function resolvePipelineMachineChoice(input: {
   return (machines.find((machine) => machine.isPrimary) ?? machines[0])?.environmentId ?? null;
 }
 
-/** Whether a step's provider instance can take a turn on the machine, as the composer decides it. */
-function providerInstanceReady(input: {
-  readonly provider: ServerProvider;
-  readonly settings: ServerSettings | null;
-  readonly projectId: ProjectId;
-}): boolean {
-  const { provider } = input;
-  const enabled = input.settings
-    ? resolveProjectProviderInstanceEnabled(input.settings, input.projectId, provider.instanceId)
-    : provider.enabled;
-  return (
-    enabled &&
-    provider.installed &&
-    provider.status !== "error" &&
-    provider.auth.status !== "unauthenticated" &&
-    provider.availability !== "unavailable"
-  );
+/** The provider instances a pipeline's steps run on. */
+export function pipelineInstanceIds(
+  pipeline: Pick<PipelineDefinition, "steps"> | null,
+): ReadonlyArray<string> {
+  return pipeline === null
+    ? []
+    : [...new Set(pipeline.steps.map((step) => step.modelSelection.instanceId))];
 }
 
 /** Every provider instance the pipeline's steps use is ready on the machine. */
 export function pipelineProvidersReady(input: {
-  readonly pipeline: Pick<PipelineDefinition, "steps"> | null;
+  readonly instanceIds: ReadonlyArray<string>;
   readonly providers: ReadonlyArray<ServerProvider> | undefined;
   readonly settings: ServerSettings | null;
   readonly projectId: ProjectId;
 }): boolean {
-  if (input.pipeline === null) return true;
   const providers = input.providers ?? [];
-  return input.pipeline.steps.every((step) =>
+  return input.instanceIds.every((instanceId) =>
     providers.some(
       (provider) =>
-        provider.instanceId === step.modelSelection.instanceId &&
+        provider.instanceId === instanceId &&
         providerInstanceReady({ provider, settings: input.settings, projectId: input.projectId }),
     ),
   );
@@ -164,11 +156,14 @@ export type AutoMachineState =
 /** What the control shows for Auto: a latched pick wins over later resource reads. */
 export function resolveAutoMachineState(input: {
   readonly latched: EnvironmentId | null;
+  /** False until the pipeline list loads: provider readiness cannot be judged before. */
+  readonly pipelineKnown: boolean;
   readonly pending: boolean;
   readonly picked: EnvironmentId | null;
   readonly candidateCount: number;
 }): AutoMachineState {
   if (input.latched !== null) return { kind: "picked", environmentId: input.latched };
+  if (!input.pipelineKnown) return { kind: "checking" };
   if (input.candidateCount === 0) return { kind: "unavailable" };
   if (input.pending) return { kind: "checking" };
   return input.picked === null
@@ -176,28 +171,51 @@ export function resolveAutoMachineState(input: {
     : { kind: "picked", environmentId: input.picked };
 }
 
-/** Keeps the pipeline the person picked, by name, when they switch machine. */
-export function resolvePipelineSelection<
-  P extends { readonly id: string; readonly name: string },
->(input: {
+export interface PipelineRef {
+  readonly id: string;
+  readonly name: string;
+}
+
+/**
+ * The pipeline to show on the selected machine. Ids differ per machine, so the pipeline on screen
+ * (the person's pick, else the primary's default) is kept by name when the machine changes.
+ */
+export function resolvePipelineSelection<P extends PipelineRef>(input: {
   readonly pipelines: ReadonlyArray<P>;
-  /** The pick on screen; ids differ per machine, names do not. */
-  readonly chosenName: string | null;
-  /** The pipeline the launch entry point asked for, by name. */
-  readonly requestedName: string | null;
+  /** The list of the machine that serves Linear, which the launch entry point's id belongs to. */
+  readonly primaryPipelines: ReadonlyArray<PipelineRef>;
+  readonly chosen: PipelineRef | null;
+  readonly requestedId: string | null;
   readonly lastUsedName: string | null;
-}): { readonly pipeline: P | null; readonly unmatchedName: string | null } {
-  const byName = (name: string | null) =>
-    name === null ? undefined : input.pipelines.find((candidate) => candidate.name === name);
-  const chosen = byName(input.chosenName);
+}): {
+  readonly pipeline: P | null;
+  /** Set when the pipeline on screen is missing here and another one was selected instead. */
+  readonly unmatchedName: string | null;
+  /** The one pipeline to mark "Last used"; the first match when names repeat. */
+  readonly lastUsedId: string | null;
+} {
+  const byName = <T extends PipelineRef>(list: ReadonlyArray<T>, name: string | null) =>
+    name === null ? undefined : list.find((candidate) => candidate.name === name);
+  const { chosen, pipelines, primaryPipelines } = input;
+  const shownName =
+    chosen?.name ??
+    (
+      primaryPipelines.find((candidate) => candidate.id === input.requestedId) ??
+      byName(primaryPipelines, input.lastUsedName) ??
+      primaryPipelines[0]
+    )?.name ??
+    null;
   const pipeline =
-    chosen ?? byName(input.requestedName) ?? byName(input.lastUsedName) ?? input.pipelines[0];
+    (chosen === null ? undefined : pipelines.find((candidate) => candidate.id === chosen.id)) ??
+    byName(pipelines, shownName) ??
+    byName(pipelines, input.lastUsedName) ??
+    pipelines[0] ??
+    null;
   return {
-    pipeline: pipeline ?? null,
+    pipeline,
     unmatchedName:
-      input.chosenName !== null && chosen === undefined && input.pipelines.length > 0
-        ? input.chosenName
-        : null,
+      shownName !== null && pipeline !== null && pipeline.name !== shownName ? shownName : null,
+    lastUsedId: byName(pipelines, input.lastUsedName)?.id ?? null,
   };
 }
 
@@ -207,26 +225,41 @@ export type LinearWriteBackRoute =
   /** The run's machine has the same Linear workspace connected and keeps the link itself. */
   | { readonly kind: "seamless"; readonly recordOn: EnvironmentId }
   /** The primary records the launch and notes the machine; the comment is never updated. */
-  | { readonly kind: "fallback"; readonly recordOn: EnvironmentId; readonly machineName: string };
+  | { readonly kind: "fallback"; readonly recordOn: EnvironmentId; readonly machineName: string }
+  /** The primary predates links to other machines, so nothing is recorded. */
+  | { readonly kind: "unlinked" };
+
+const MAX_MACHINE_NAME_LENGTH = 128;
+
+/** Labels are free text; the link stores a bounded, non-empty, single-line name. */
+function linkMachineName(label: string): string {
+  const name = label.replace(/\s+/gu, " ").trim().slice(0, MAX_MACHINE_NAME_LENGTH).trim();
+  return name.length > 0 ? name : "another machine";
+}
 
 /**
  * Exactly one machine records a launch. The run's machine does when it is connected to the same
  * Linear organization as the primary; otherwise the primary does and remembers where the run is.
+ * Null while a Linear status is still loading, so a quick Start cannot pick the wrong machine.
  */
 export function resolveLinearWriteBackRoute(input: {
   readonly runEnvironmentId: EnvironmentId;
   readonly runMachineName: string;
   readonly primaryEnvironmentId: EnvironmentId;
   readonly primaryOrganizationId: string | null;
+  /** `capabilities.linearRemoteLinks` of the primary; older servers drop `remote`. */
+  readonly primarySupportsRemoteLinks: boolean;
+  readonly statusPending: boolean;
   /** The run machine's Linear connection; null when unknown or unreadable. */
   readonly runLinear: {
     readonly state: string;
     readonly organizationId: string | null;
   } | null;
-}): LinearWriteBackRoute {
+}): LinearWriteBackRoute | null {
   if (input.runEnvironmentId === input.primaryEnvironmentId) {
     return { kind: "primary", recordOn: input.primaryEnvironmentId };
   }
+  if (input.statusPending) return null;
   const { runLinear } = input;
   if (
     runLinear !== null &&
@@ -236,16 +269,22 @@ export function resolveLinearWriteBackRoute(input: {
   ) {
     return { kind: "seamless", recordOn: input.runEnvironmentId };
   }
+  if (!input.primarySupportsRemoteLinks) return { kind: "unlinked" };
   return {
     kind: "fallback",
     recordOn: input.primaryEnvironmentId,
-    machineName: input.runMachineName,
+    machineName: linkMachineName(input.runMachineName),
   };
 }
 
 /** The dialog's comment row text, which says up front when the comment will not be updated. */
-export function pipelineCommentDescription(route: LinearWriteBackRoute): string {
-  return route.kind === "fallback"
-    ? `One comment with a link (not updated: ${route.machineName} has no matching Linear connection)`
-    : "One comment with a link, updated as each step finishes";
+export function pipelineCommentDescription(route: LinearWriteBackRoute | null): string {
+  switch (route?.kind) {
+    case "fallback":
+      return `One comment with a link (not updated: ${route.machineName} has no matching Linear connection)`;
+    case "unlinked":
+      return "Unavailable: update the machine that serves Linear to link runs on other machines";
+    default:
+      return "One comment with a link, updated as each step finishes";
+  }
 }

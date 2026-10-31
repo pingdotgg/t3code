@@ -13,6 +13,7 @@ import {
   pipelineCommentDescription,
   resolveLinearWriteBackRoute,
   resolvePipelineSelection,
+  type PipelineRef,
 } from "@t3tools/client-runtime/linear/pipeline-machines";
 import { nextPipelineStartAttempt } from "@t3tools/client-runtime/pipeline-start";
 import {
@@ -131,8 +132,7 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
   const lastUsed = AsyncResult.isSuccess(preferences)
     ? (preferences.value.linearLastPipelineName ?? null)
     : null;
-  // Remembered by name: the same pipeline has a different id on every machine.
-  const [pipelineChoice, setPipelineChoice] = useState<string | null>(null);
+  const [pipelineChoice, setPipelineChoice] = useState<PipelineRef | null>(null);
   const [tab, setTab] = useState<"preview" | "edit">("preview");
   const [edited, setEdited] = useState<string | null>(null);
   const [includeChoice, setIncludeChoice] = useState<LinearIssueIncludes | null>(null);
@@ -176,14 +176,14 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
       : null,
   );
   const pipelines = pipelinesQuery.data?.pipelines ?? [];
-  const requestedName =
-    (primaryPipelinesQuery.data?.pipelines ?? []).find(
-      (candidate) => candidate.id === params.pipelineId,
-    )?.name ?? null;
-  const { pipeline, unmatchedName } = resolvePipelineSelection({
+  const listMachineLabel =
+    machines.find((candidate) => candidate.environmentId === machineState.listEnvironmentId)
+      ?.label ?? null;
+  const { pipeline, unmatchedName, lastUsedId } = resolvePipelineSelection({
     pipelines,
-    chosenName: pipelineChoice,
-    requestedName,
+    primaryPipelines: primaryPipelinesQuery.data?.pipelines ?? [],
+    chosen: pipelineChoice,
+    requestedId: params.pipelineId ?? null,
     lastUsedName: lastUsed,
   });
   const pipelineId = pipeline?.id ?? null;
@@ -192,6 +192,7 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
     machines,
     active: machineState.effective === "auto",
     live: machineState.live,
+    pipelineKnown: pipelinesQuery.data !== null || pipelinesQuery.error !== null,
     pipeline,
     latch: machineState.latch,
   });
@@ -211,12 +212,14 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
             candidate.environmentId === machine.environmentId && candidate.id === machine.projectId,
         ) ?? null);
 
-  const primaryLinear = useLinearStatus(environmentId).data;
-  const machineLinear = useEnvironmentQuery(
+  const primaryStatus = useLinearStatus(environmentId);
+  const primaryLinear = primaryStatus.data;
+  const machineStatus = useEnvironmentQuery(
     machine !== null && machine.environmentId !== environmentId
       ? linearEnvironment.status({ environmentId: machine.environmentId, input: {} })
       : null,
-  ).data;
+  );
+  const machineLinear = machineStatus.data;
   const writeBackRoute =
     machine === null
       ? null
@@ -225,6 +228,10 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
           runMachineName: machine.label,
           primaryEnvironmentId: environmentId,
           primaryOrganizationId: primaryLinear?.organization?.id ?? null,
+          primarySupportsRemoteLinks: machineState.primarySupportsRemoteLinks,
+          statusPending:
+            (primaryLinear === null && primaryStatus.error === null) ||
+            (machineLinear === null && machineStatus.error === null),
           runLinear:
             machineLinear === null
               ? null
@@ -252,7 +259,9 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
     pipeline !== null &&
     machine !== null &&
     project !== null &&
+    writeBackRoute !== null &&
     summary?.startable === true;
+  const unlinked = writeBackRoute?.kind === "unlinked";
 
   const start = async () => {
     if (!canStart || issue === null || pipeline === null || project === null || machine === null) {
@@ -292,17 +301,16 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
     const run = result.value.run;
     attemptRef.current = null;
     savePreferences({ linearLastPipelineName: pipeline.name });
+    const record = pipelineLaunchRecord({
+      environmentId: machine.environmentId,
+      issue,
+      pipelineName: pipeline.name,
+      run,
+      writeBack: { moveTo: moveTarget, moveEnabled, commentEnabled },
+      ...(writeBackRoute === null ? {} : { route: writeBackRoute }),
+    });
     // The run exists; linking it is best effort and never delays or blocks the launch.
-    void recordLinearLaunch(
-      pipelineLaunchRecord({
-        environmentId: machine.environmentId,
-        issue,
-        pipelineName: pipeline.name,
-        run,
-        writeBack: { moveTo: moveTarget, moveEnabled, commentEnabled },
-        ...(writeBackRoute === null ? {} : { route: writeBackRoute }),
-      }),
-    );
+    if (record !== null) void recordLinearLaunch(record);
     // The thread route treats a shell that has not arrived yet as an unavailable thread.
     const shellReady = await waitForThreadShell(
       { environmentId: machine.environmentId, threadId: run.parentThreadId },
@@ -392,6 +400,11 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
                   </View>
                 ) : pipelinesQuery.data === null ? (
                   <Text className="text-sm text-foreground-muted">Couldn't load pipelines.</Text>
+                ) : machineState.listEnvironmentId !== environmentId &&
+                  listMachineLabel !== null ? (
+                  <Text className="text-sm text-foreground-muted">
+                    No pipelines on {listMachineLabel}. Choose another machine.
+                  </Text>
                 ) : (
                   <Text className="text-sm text-foreground-muted">
                     No pipelines yet. Create one in T3 Code on your computer.
@@ -405,7 +418,7 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
                       accessibilityRole="radio"
                       accessibilityLabel={candidate.name}
                       accessibilityState={{ selected }}
-                      onPress={() => setPipelineChoice(candidate.name)}
+                      onPress={() => setPipelineChoice(candidate)}
                       className="min-h-12 flex-row items-center gap-3 border-t border-border-subtle py-2"
                     >
                       <View
@@ -425,7 +438,7 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
                       <View className="min-w-0 flex-1">
                         <Text numberOfLines={1} className="text-sm font-t3-medium text-foreground">
                           {candidate.name}
-                          {candidate.name === lastUsed ? "  ·  Last used" : ""}
+                          {candidate.id === lastUsedId ? "  ·  Last used" : ""}
                         </Text>
                         <Text className="text-xs text-foreground-muted">
                           {candidate.steps.map((step) => step.name).join(" → ")}
@@ -436,7 +449,8 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
                 })}
                 {unmatchedName !== null && pipeline !== null ? (
                   <Text className="pt-1 text-xs text-foreground-muted">
-                    "{unmatchedName}" isn't on this machine, so {pipeline.name} is selected.
+                    "{unmatchedName}" isn't on {listMachineLabel ?? "this machine"}, so{" "}
+                    {pipeline.name} is selected.
                   </Text>
                 ) : null}
               </View>
@@ -613,18 +627,15 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
                       ? `Currently ${issue.state.name}`
                       : `Not applicable: ${issue.identifier} is ${issue.state.name}`
                   }
-                  value={moveEnabled}
-                  disabled={moveTarget === null}
+                  value={moveEnabled && !unlinked}
+                  disabled={moveTarget === null || unlinked}
                   onValueChange={setMoveChoice}
                 />
                 <ToggleRow
                   title="Comment on the issue"
-                  description={
-                    writeBackRoute === null
-                      ? "One comment with a link, updated as each step finishes"
-                      : pipelineCommentDescription(writeBackRoute)
-                  }
-                  value={commentEnabled}
+                  description={pipelineCommentDescription(writeBackRoute)}
+                  value={commentEnabled && !unlinked}
+                  disabled={unlinked}
                   onValueChange={setCommentChoice}
                 />
               </View>

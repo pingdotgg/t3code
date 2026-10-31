@@ -1,4 +1,4 @@
-import { threadIdentifiersFromActivity } from "@t3tools/client-runtime/linear/activity";
+import { activityItemEnvironmentId } from "@t3tools/client-runtime/linear/activity";
 import { createLinearEnvironmentAtoms } from "@t3tools/client-runtime/state/linear";
 import type { LinearSearch } from "@t3tools/client-runtime/linear/search";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -58,8 +58,14 @@ const linearThreadIdentifiersAtom = Atom.make((get) => {
   );
   if (activity === null || activity.issues.length === 0) return NO_THREAD_IDENTIFIERS;
   const identifiers = new Map<string, string>();
-  for (const [threadId, identifier] of threadIdentifiersFromActivity(activity.issues)) {
-    identifiers.set(linearThreadKey(environmentId, threadId), identifier);
+  for (const issue of activity.issues) {
+    for (const item of issue.items) {
+      // A run on another machine lists under that machine's thread.
+      identifiers.set(
+        linearThreadKey(activityItemEnvironmentId(item, environmentId), item.link.threadId),
+        issue.issueIdentifier,
+      );
+    }
   }
   return identifiers;
 }).pipe(Atom.withLabel("mobile:linear-thread-identifiers"));

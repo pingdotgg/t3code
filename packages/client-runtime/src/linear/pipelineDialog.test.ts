@@ -230,23 +230,21 @@ describe("pipelineLaunchRecord routing", () => {
     writeBack: { moveTo: null, moveEnabled: false, commentEnabled: true },
   };
 
-  it("records on the run's machine for a seamless route", () => {
-    const record = pipelineLaunchRecord({
+  it("records on the run's machine, on the primary with the machine, or not at all", () => {
+    const seamless = pipelineLaunchRecord({
       ...base,
       route: { kind: "seamless", recordOn: "env-b" as EnvironmentId },
     });
-    expect(record.recordOn).toBe("env-b");
-    expect(record.remote).toBeUndefined();
-  });
-
-  it("records on the primary and remembers the machine for a fallback route", () => {
-    const record = pipelineLaunchRecord({
+    expect(seamless?.recordOn).toBe("env-b");
+    expect(seamless?.remote).toBeUndefined();
+    const fallback = pipelineLaunchRecord({
       ...base,
       route: { kind: "fallback", recordOn: "env-a" as EnvironmentId, machineName: "Studio" },
     });
-    expect(record.environmentId).toBe("env-b");
-    expect(record.recordOn).toBe("env-a");
-    expect(record.remote).toEqual({ machineName: "Studio", pipelineName: "Ship it" });
+    expect(fallback?.environmentId).toBe("env-b");
+    expect(fallback?.recordOn).toBe("env-a");
+    expect(fallback?.remote).toEqual({ machineName: "Studio", pipelineName: "Ship it" });
+    expect(pipelineLaunchRecord({ ...base, route: { kind: "unlinked" } })).toBeNull();
   });
 });
 

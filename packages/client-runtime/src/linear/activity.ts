@@ -140,8 +140,13 @@ const ACTIVITY_STATUS_LABEL: Record<string, string> = {
   cancelled: "Cancelled",
 };
 
-export function activityStatusLabel(status: string): string {
+function activityStatusLabel(status: string): string {
   return ACTIVITY_STATUS_LABEL[status] ?? status;
+}
+
+/** An item's status label; a run on another machine has none to show until its state is read. */
+export function activityItemStatusLabel(item: LinearActivityItem): string {
+  return isUnreadRemoteRun(item) ? "Other machine" : activityStatusLabel(item.status);
 }
 
 /** A pipeline run on another machine whose state this client has not read (yet). */
@@ -151,6 +156,26 @@ function isUnreadRemoteRun(item: LinearActivityItem): boolean {
     item.link.environmentId != null &&
     item.pipeline === null
   );
+}
+
+/**
+ * The connected machines holding runs whose state only they know, as a sorted "\n"-joined key, so
+ * live-run streams open just for them and the same set always reuses the same subscription.
+ */
+export function remoteRunEnvironmentsKey(
+  issues: ReadonlyArray<LinearIssueActivity>,
+  connected: ReadonlyArray<EnvironmentId>,
+): string {
+  const ids = new Set<EnvironmentId>();
+  for (const entry of issues) {
+    for (const item of entry.items) {
+      const environmentId = item.link.environmentId;
+      if (isUnreadRemoteRun(item) && environmentId != null && connected.includes(environmentId)) {
+        ids.add(environmentId);
+      }
+    }
+  }
+  return [...ids].sort().join("\n");
 }
 
 /** The machine an activity item opens on: its own, else the one that serves Linear. */

@@ -9,6 +9,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   applyRemoteRunStatus,
   mergeLinearActivity,
+  remoteRunEnvironmentsKey,
   pickActivityPill,
   jumpBackInIssueIds,
   orderJumpBackInIssues,
@@ -207,6 +208,9 @@ describe("remote pipeline activity", () => {
         ["run-2", "env-b"],
       ],
     );
+    expect(merged.find((issue) => issue.issueId === "b")?.items[0]?.link.environmentId).toBe(
+      "env-b",
+    );
   });
 
   it("shows a pipeline pill for a run on another machine and its live state when streamed", () => {
@@ -230,5 +234,17 @@ describe("remote pipeline activity", () => {
     expect(updated[0]?.pipelineFailed).toBe(true);
     expect(pickActivityPill(issue("a"), updated[0])?.kind).toBe("pipeline-failed");
     expect(applyRemoteRunStatus(issues, new Map())).toBe(issues);
+  });
+
+  it("streams live runs only from connected machines holding unread runs", () => {
+    const envC = "env-c" as EnvironmentId;
+    const issues = [
+      entry("a", "run-1", "env-c"),
+      entry("b", "run-2", "env-b"),
+      entry("c", "run-3", null),
+      entry("d", "run-4", "env-d"),
+    ];
+    expect(remoteRunEnvironmentsKey(issues, [envC, envB])).toBe("env-b\nenv-c");
+    expect(remoteRunEnvironmentsKey(issues, [])).toBe("");
   });
 });

@@ -22,6 +22,7 @@ import {
   applyRemoteRunStatus,
   indexActivityByIssueId,
   mergeLinearActivity,
+  remoteRunEnvironmentsKey,
 } from "@t3tools/client-runtime/linear/activity";
 import { useAtomValue } from "@effect/atom-react";
 
@@ -138,18 +139,9 @@ export function useLinearActivity(enabled = true) {
     ),
   );
   const merged = mergeLinearActivity({ primary: query.data?.issues ?? EMPTY_ACTIVITY, peers });
-  const remoteIds = [
-    ...new Set(
-      merged
-        .flatMap((entry) => entry.items)
-        .flatMap((item) =>
-          item.link.environmentId != null && connectedPeers.includes(item.link.environmentId)
-            ? [item.link.environmentId]
-            : [],
-        ),
-    ),
-  ];
-  const liveRuns = useAtomValue(serverEnvironment.pipelineLiveRunsAtom(remoteIds.join("\n")));
+  const liveRuns = useAtomValue(
+    serverEnvironment.pipelineLiveRunsAtom(remoteRunEnvironmentsKey(merged, connectedPeers)),
+  );
   const issues = applyRemoteRunStatus(merged, liveRuns);
   const byIssueId = indexActivityByIssueId(issues);
   return { ...query, issues, byIssueId };

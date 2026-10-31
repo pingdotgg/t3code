@@ -1,4 +1,32 @@
-import type { HostResourcesSnapshot } from "@t3tools/contracts";
+import {
+  resolveProjectProviderInstanceEnabled,
+  type HostResourcesSnapshot,
+  type ProjectId,
+  type ServerProvider,
+  type ServerSettings,
+} from "@t3tools/contracts";
+
+/** How long a host-resources sample counts for a pick. */
+export const HOST_RESOURCES_FRESH_MS = 15_000;
+
+/** Whether a provider instance can take a turn for the project on its machine. */
+export function providerInstanceReady(input: {
+  readonly provider: ServerProvider;
+  readonly settings: ServerSettings | null;
+  readonly projectId: ProjectId | null;
+}): boolean {
+  const { provider } = input;
+  const enabled = input.settings
+    ? resolveProjectProviderInstanceEnabled(input.settings, input.projectId, provider.instanceId)
+    : provider.enabled;
+  return (
+    enabled &&
+    provider.installed &&
+    provider.status !== "error" &&
+    provider.auth.status !== "unauthenticated" &&
+    provider.availability !== "unavailable"
+  );
+}
 
 /** Callers supply only connected machines hosting the project and selected provider. */
 export function chooseLoadBalancedEnvironment(
@@ -19,7 +47,7 @@ export function chooseLoadBalancedEnvironment(
       !resources ||
       !Number.isFinite(weight) ||
       weight <= 0 ||
-      now - sampledAt > 15_000 ||
+      now - sampledAt > HOST_RESOURCES_FRESH_MS ||
       sampledAt > now + 5_000 ||
       resources.cpuUtilization === null ||
       resources.cpuUtilization >= 0.95 ||

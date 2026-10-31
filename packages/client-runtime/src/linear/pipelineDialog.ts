@@ -132,7 +132,7 @@ export function resolvePipelineLaunch(input: {
   };
 }
 
-/** The launch record for a pipeline run started from an issue. */
+/** The launch record for a pipeline run started from an issue; null when nothing can record it. */
 export function pipelineLaunchRecord(input: {
   readonly environmentId: EnvironmentId;
   readonly issue: Pick<LinearIssue, "id" | "identifier" | "title" | "team" | "project">;
@@ -141,8 +141,9 @@ export function pipelineLaunchRecord(input: {
   readonly writeBack: Pick<LinearDraftIssue, "moveTo" | "moveEnabled" | "commentEnabled">;
   /** Where the launch is recorded; omitted when the run's own machine records it. */
   readonly route?: LinearWriteBackRoute;
-}): RecordLinearLaunchInput {
+}): RecordLinearLaunchInput | null {
   const { issue, route } = input;
+  if (route?.kind === "unlinked") return null;
   return {
     environmentId: input.environmentId,
     ...(route === undefined ? {} : { recordOn: route.recordOn }),
