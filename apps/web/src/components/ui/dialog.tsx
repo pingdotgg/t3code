@@ -185,7 +185,7 @@ function DialogFooter({
   return (
     <div
       className={cn(
-        "flex flex-col-reverse gap-2 px-5 pb-5 sm:flex-row sm:justify-end sm:rounded-b-[calc(var(--radius-pane)-1px)]",
+        "flex flex-col-reverse gap-2 px-5 pb-4 sm:flex-row sm:justify-end sm:rounded-b-[calc(var(--radius-pane)-1px)]",
         className,
       )}
       data-slot="dialog-footer"
@@ -199,7 +199,7 @@ function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
   return (
     <DialogPrimitive.Title
       className={cn(
-        "wrap-anywhere text-label font-semibold text-strong-foreground leading-snug",
+        "wrap-anywhere text-label [font-size:0.9375rem] font-semibold text-strong-foreground leading-snug",
         className,
       )}
       data-slot="dialog-title"
@@ -211,7 +211,10 @@ function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
 function DialogDescription({ className, ...props }: DialogPrimitive.Description.Props) {
   return (
     <DialogPrimitive.Description
-      className={cn("text-body text-muted-foreground", className)}
+      className={cn(
+        "text-body sm:[font-size:0.8125rem] leading-[1.45] text-muted-foreground",
+        className,
+      )}
       data-slot="dialog-description"
       {...props}
     />
