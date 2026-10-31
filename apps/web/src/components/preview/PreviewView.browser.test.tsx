@@ -7,6 +7,7 @@ import {
   FILL_PREVIEW_VIEWPORT,
   ThreadId,
 } from "@t3tools/contracts";
+import type { createPreviewStreamClient } from "@t3tools/client-runtime/preview/server-browser-stream";
 import { type ComponentProps } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -32,6 +33,8 @@ const mocks = vi.hoisted(() => ({
   showEmptyState: false,
   loading: false,
   nativeServerTab: false,
+  streamedTab: false,
+  connect: vi.fn<typeof createPreviewStreamClient>(),
   serverEpoch: null as string | null,
   servers: [] as PreviewableServer[],
   recordingTabIds: new Set<string>(),
@@ -92,7 +95,7 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
   ...(await original()),
   rememberPreviewUrl: mocks.rememberPreviewUrl,
   useThreadPreviewState: (() => ({
-    activeTabId: "tab-1",
+    activeTabId: mocks.streamedTab ? null : "tab-1",
     serverEpoch: mocks.serverEpoch,
     desktopByTabId: {
       "tab-1": {
@@ -115,7 +118,7 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
           "tab-1": {
             threadId: "thread-1",
             tabId: "tab-1",
-            runtime: mocks.nativeServerTab ? "server" : "desktop",
+            runtime: mocks.nativeServerTab || mocks.streamedTab ? "server" : "desktop",
             navStatus: { _tag: "Success", url: "http://example.com/", title: "Example" },
             canGoBack: false,
             canGoForward: false,
@@ -149,12 +152,25 @@ vi.mock(import("~/browser/previewRuntime"), async (original) => ({
   useRendersServerTabNatively: () => mocks.nativeServerTab,
 }));
 
+vi.mock(import("@t3tools/client-runtime/preview/server-browser-stream"), async (original) => ({
+  ...(await original()),
+  createPreviewStreamClient: mocks.connect,
+}));
+vi.mock(import("~/state/previewStream"), async (original) => {
+  const access = { httpBase: "", wsBase: "", query: {}, credentials: false };
+  return { ...(await original()), usePreviewStreamAccess: () => access };
+});
+
 vi.mock(import("~/browser/browserViewportActions"), { spy: true });
 
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
-import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
+import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
+import { selectActiveRightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
+import { createChatCanvasStore } from "../chat/canvasStore";
+import { ChatCanvas } from "../chat/ChatCanvas";
+import { ThreadPreviewMiniPlayer, useThreadPreviewCanvasSource } from "./ThreadPreviewMiniPlayer";
 import { dispatchPreviewAction } from "./previewActionBus";
 import { PreviewView } from "./PreviewView";
 import { ToastProvider } from "~/components/ui/toast";
@@ -202,6 +218,9 @@ function setup() {
   mocks.showEmptyState = false;
   mocks.loading = false;
   mocks.nativeServerTab = false;
+  mocks.streamedTab = false;
+  mocks.connect.mockReset();
+  useRightPanelStore.getState().removeThread(TEST_THREAD_REF);
   mocks.serverEpoch = null;
   mocks.servers = [];
   mocks.recordingTabIds = new Set();
@@ -215,6 +234,74 @@ function setup() {
 }
 
 describe("PreviewView", () => {
+  it("hands control and keyboard focus from the floating preview to the same panel tab", async () => {
+    setup();
+    mocks.streamedTab = true;
+    const canvas = createChatCanvasStore();
+    usePreviewMiniPlayerStore.getState().open(TEST_THREAD_REF, { kind: "browser", tabId: "tab-1" });
+    function Workspace() {
+      const mini = usePreviewMiniPlayerStore((s) =>
+        selectThreadPreviewMiniPlayer(s.byThreadKey, TEST_THREAD_REF),
+      );
+      const panel = useRightPanelStore((s) =>
+        selectActiveRightPanelSurface(s.byThreadKey, TEST_THREAD_REF),
+      );
+      const preview = useThreadPreviewCanvasSource(TEST_THREAD_REF, mini);
+      return (
+        <div className="flex h-96">
+          {mini && (
+            <ChatCanvas
+              store={canvas}
+              threadRef={TEST_THREAD_REF}
+              preview={preview}
+              composerOverlayElement={null}
+            >
+              <ThreadPreviewMiniPlayer threadRef={TEST_THREAD_REF} miniPlayer={mini} />
+            </ChatCanvas>
+          )}
+          {panel?.kind === "preview" && (
+            <PreviewView threadRef={TEST_THREAD_REF} tabId={panel.resourceId} visible />
+          )}
+        </div>
+      );
+    }
+    const floatingSend = vi.fn(() => true);
+    const panelSend = vi.fn(() => true);
+    mocks.connect
+      .mockReturnValueOnce({ send: floatingSend, stop: () => {} })
+      .mockReturnValue({ send: panelSend, stop: () => {} });
+    await using screen = await render(<Workspace />);
+    const agentControl = {
+      controller: "agent",
+      canOperate: true,
+      generation: 1,
+      dialog: null,
+    } as const;
+    await vi.waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
+    await act(() => mocks.connect.mock.calls[0]![1].onControl?.(agentControl));
+    await screen.getByRole("button", { name: "Take control" }).click();
+    await expect
+      .element(screen.getByRole("region", { name: "Floating browser preview" }))
+      .not.toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect(mocks.connect).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ tabId: "tab-1" }),
+        expect.anything(),
+      ),
+    );
+    const panel = mocks.connect.mock.calls[1]![1];
+    await act(() => panel.onControl?.(agentControl));
+    await vi.waitFor(() => {
+      expect(panelSend).toHaveBeenCalledWith({ type: "takeControl" });
+      expect(floatingSend).not.toHaveBeenCalledWith({ type: "takeControl" });
+    });
+    const input = screen.getByRole("textbox", { name: "Browser page" });
+    await expect.element(input).not.toHaveFocus();
+    await act(() => panel.onControl?.({ ...agentControl, controller: "you" }));
+    await expect.element(input).toHaveFocus();
+  });
+
   it.each(["mailto:alice@example.com", "http://"])(
     "reports rejected address %s without navigating or recording it",
     async (address) => {
