@@ -195,6 +195,136 @@ describe("ConnectionCatalogDocument", () => {
     }),
   );
 
+  it("re-pairing refreshes only direct bearer owners, including after removing the new route", () => {
+    const other = new BearerConnectionTarget({
+      ...BEARER_TARGET,
+      environmentId: EnvironmentId.make("environment-2"),
+      connectionId: "bearer:other",
+    });
+    const ssh = new SshConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "SSH",
+      connectionId: "ssh:remote",
+    });
+    const tailnet = new BearerConnectionTarget({
+      ...BEARER_TARGET,
+      connectionId: "bearer:tailnet",
+    });
+    const learned = new BearerConnectionTarget({
+      ...BEARER_TARGET,
+      connectionId: `learned:${ENVIRONMENT_ID}:tailnet@${BEARER_TARGET.connectionId}`,
+    });
+    const relayLearned = new BearerConnectionTarget({
+      ...BEARER_TARGET,
+      connectionId: `learned:${ENVIRONMENT_ID}:relay`,
+    });
+    const routes = [BEARER_TARGET, tailnet, learned, relayLearned, ssh, RELAY_TARGET];
+    const document: ConnectionCatalogDocument = {
+      ...EMPTY_CONNECTION_CATALOG_DOCUMENT,
+      targets: [...routes, other],
+      profiles: [
+        BEARER_PROFILE,
+        new BearerConnectionProfile({ ...BEARER_PROFILE, connectionId: tailnet.connectionId }),
+        new BearerConnectionProfile({
+          ...BEARER_PROFILE,
+          connectionId: learned.connectionId,
+          learned: true,
+        }),
+        new BearerConnectionProfile({
+          ...BEARER_PROFILE,
+          connectionId: relayLearned.connectionId,
+          learned: true,
+          authorization: "t3-connect",
+        }),
+      ],
+      credentials: [BEARER_TARGET, tailnet, ssh, other].map((target) => ({
+        connectionId: target.connectionId,
+        credential: BEARER_CREDENTIAL,
+      })),
+      remoteDpopTokens: [REMOTE_TOKEN],
+      disabledEnvironmentIds: [ENVIRONMENT_ID],
+    };
+    const paired = new BearerConnectionTarget({ ...BEARER_TARGET, connectionId: "bearer:new-lan" });
+    const fresh = new BearerConnectionCredential({ token: "fresh-pairing-token" });
+    const sameRoute = registerConnectionInCatalog(
+      document,
+      new BearerConnectionRegistration({
+        target: BEARER_TARGET,
+        profile: BEARER_PROFILE,
+        credential: fresh,
+      }),
+      routes,
+    );
+    expect(
+      sameRoute.credentials.find((value) => value.connectionId === tailnet.connectionId)
+        ?.credential,
+    ).toEqual(fresh);
+    const refreshed = registerConnectionInCatalog(
+      document,
+      new BearerConnectionRegistration({
+        target: paired,
+        profile: new BearerConnectionProfile({
+          ...BEARER_PROFILE,
+          connectionId: paired.connectionId,
+          httpBaseUrl: "https://new-lan.example.test",
+        }),
+        credential: fresh,
+      }),
+      [paired, ...routes],
+    );
+    const schema = Schema.fromJsonString(ConnectionCatalogDocument);
+    const restored = Schema.decodeSync(schema)(
+      Schema.encodeSync(schema)(setRoutesInCatalog(refreshed, ENVIRONMENT_ID, routes)),
+    );
+
+    expect(
+      refreshed.credentials.find((value) => value.connectionId === paired.connectionId)?.credential,
+    ).toEqual(fresh);
+    expect(restored.credentials).toEqual(
+      expect.arrayContaining([
+        { connectionId: BEARER_TARGET.connectionId, credential: fresh },
+        { connectionId: tailnet.connectionId, credential: fresh },
+        { connectionId: ssh.connectionId, credential: BEARER_CREDENTIAL },
+        { connectionId: other.connectionId, credential: BEARER_CREDENTIAL },
+      ]),
+    );
+    expect(restored.credentials).toHaveLength(4);
+    expect(restored.targets).toEqual(document.targets);
+    expect(restored.profiles).toEqual(document.profiles);
+    expect(restored.remoteDpopTokens).toEqual(document.remoteDpopTokens);
+    expect(restored.disabledEnvironmentIds).toEqual(document.disabledEnvironmentIds);
+  });
+
+  it("editing a saved route does not copy its stale login to other routes", () => {
+    const other = new BearerConnectionTarget({
+      ...BEARER_TARGET,
+      connectionId: "bearer:other-route",
+    });
+    const fresh = new BearerConnectionCredential({ token: "fresh-token" });
+    const document: ConnectionCatalogDocument = {
+      ...EMPTY_CONNECTION_CATALOG_DOCUMENT,
+      targets: [BEARER_TARGET, other],
+      profiles: [BEARER_PROFILE],
+      credentials: [
+        { connectionId: BEARER_TARGET.connectionId, credential: BEARER_CREDENTIAL },
+        { connectionId: other.connectionId, credential: fresh },
+      ],
+    };
+    const edited = registerConnectionInCatalog(
+      document,
+      new BearerConnectionRegistration({
+        target: BEARER_TARGET,
+        profile: new BearerConnectionProfile({ ...BEARER_PROFILE, label: "Edited" }),
+        credential: BEARER_CREDENTIAL,
+      }),
+      document.targets,
+    );
+    expect(
+      edited.credentials.find((value) => value.connectionId === other.connectionId)?.credential,
+    ).toEqual(fresh);
+    expect(edited.profiles[0]?.label).toBe("Edited");
+  });
+
   it("replaces obsolete connection metadata without discarding a reusable DPoP token", () => {
     const bearer = registerConnectionInCatalog(
       {

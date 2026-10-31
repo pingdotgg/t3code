@@ -579,11 +579,11 @@ export const make = Effect.gen(function* () {
         if (previous !== undefined) {
           const existing = connectionRoutes(previous);
           const sameAddress = findRouteToSameAddress(existing, route);
-          const routes = existing.filter(
-            (existing) =>
-              existing !== sameAddress ||
-              connectionRouteId(existing.target) === connectionRouteId(route.target),
-          );
+          const routes =
+            sameAddress !== undefined &&
+            connectionRouteId(sameAddress.target) !== connectionRouteId(route.target)
+              ? routesAfterRemoving(existing, connectionRouteId(sameAddress.target))
+              : existing;
           const next = withRoutes(previous, upsertRoute(routes, route));
           if (next.addressesChanged) {
             yield* forgetRoutingTrust(environmentId, "register-connection");

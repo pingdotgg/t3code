@@ -134,7 +134,48 @@ export function registerConnectionInCatalog(
   switch (registration._tag) {
     case "RelayConnectionRegistration":
       return next;
-    case "BearerConnectionRegistration":
+    case "BearerConnectionRegistration": {
+      const profiles = replaceCatalogValue(
+        next.profiles,
+        (value) => value.connectionId,
+        registration.profile,
+      );
+      const learnedIds = new Set(
+        profiles.flatMap((profile) =>
+          profile._tag === "BearerConnectionProfile" &&
+          (profile.learned === true || profile.authorization === "t3-connect")
+            ? [profile.connectionId]
+            : [],
+        ),
+      );
+      const credentialChanged =
+        document.credentials.find(
+          (value) => value.connectionId === registration.target.connectionId,
+        )?.credential.token !== registration.credential.token;
+      // A pairing refreshes this environment's direct login. Learned routes
+      // borrow from these owners; SSH and T3 Connect keep their own auth.
+      const ownerIds = new Set([
+        registration.target.connectionId,
+        ...(credentialChanged && !learnedIds.has(registration.target.connectionId)
+          ? catalogRoutes(next, registration.target.environmentId).flatMap((target) =>
+              target._tag === "BearerConnectionTarget" && !learnedIds.has(target.connectionId)
+                ? [target.connectionId]
+                : [],
+            )
+          : []),
+      ]);
+      return {
+        ...next,
+        profiles,
+        credentials: [
+          ...next.credentials.filter((value) => !ownerIds.has(value.connectionId)),
+          ...Array.from(ownerIds, (connectionId) => ({
+            connectionId,
+            credential: registration.credential,
+          })),
+        ],
+      };
+    }
     case "SshConnectionRegistration":
       return {
         ...next,

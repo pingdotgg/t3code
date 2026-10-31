@@ -2062,15 +2062,45 @@ describe("EnvironmentRegistry routes", () => {
     }),
   );
 
-  it.effect("re-pairing the same address replaces that route rather than adding another", () =>
+  it.effect("re-pairing under a new id drops routes borrowing the replaced credential", () =>
     Effect.gen(function* () {
+      const learned = new BearerConnectionTarget({
+        ...LAN_TARGET,
+        connectionId: `learned:${LAN_TARGET.environmentId}:tailnet@${LAN_TARGET.connectionId}`,
+      });
+      const relayLearned = new BearerConnectionTarget({
+        ...LAN_TARGET,
+        connectionId: `learned:${LAN_TARGET.environmentId}:relay`,
+      });
       const harness = yield* makeHarness(
-        [LAN_TARGET, RELAY_TARGET],
-        [LAN_PROFILE],
+        [LAN_TARGET, learned, RELAY_TARGET, relayLearned],
+        [
+          LAN_PROFILE,
+          new BearerConnectionProfile({
+            ...LAN_PROFILE,
+            connectionId: learned.connectionId,
+            httpBaseUrl: "http://100.64.0.9:3773",
+            learned: true,
+          }),
+          new BearerConnectionProfile({
+            ...LAN_PROFILE,
+            connectionId: relayLearned.connectionId,
+            httpBaseUrl: "http://100.64.0.10:3773",
+            learned: true,
+            authorization: "t3-connect",
+          }),
+        ],
         [[LAN_TARGET.connectionId, BEARER_CREDENTIAL]],
       );
       yield* Effect.gen(function* () {
         const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.register(lanRegistration());
+        expect(routesOf(yield* Ref.get(harness.storedTargets), LAN_TARGET.environmentId)).toEqual([
+          LAN_TARGET,
+          learned,
+          RELAY_TARGET,
+          relayLearned,
+        ]);
         const repaired = new BearerConnectionTarget({
           ...LAN_TARGET,
           connectionId: "bearer:lan-again",
@@ -2085,6 +2115,13 @@ describe("EnvironmentRegistry routes", () => {
         expect(routesOf(yield* Ref.get(harness.storedTargets), LAN_TARGET.environmentId)).toEqual([
           repaired,
           RELAY_TARGET,
+          relayLearned,
+        ]);
+        const entry = (yield* SubscriptionRef.get(registry.entries)).get(LAN_TARGET.environmentId);
+        expect(entry?.target).toEqual(repaired);
+        expect(entry?.alternateRoutes?.map((route) => route.target)).toEqual([
+          RELAY_TARGET,
+          relayLearned,
         ]);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
