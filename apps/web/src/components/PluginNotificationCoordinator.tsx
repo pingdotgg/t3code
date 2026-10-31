@@ -7,20 +7,15 @@ import {
 } from "@t3tools/client-runtime/state/plugin-notifications";
 import { useEffect, useRef } from "react";
 
-import { useEnvironmentIds } from "../state/environments";
+import { useEnvironments } from "../state/environments";
 import { usePluginNotificationFrame } from "../state/pluginNotifications";
 import { toastManager } from "./ui/toast";
 
-/**
- * Shows plugin notifications as toasts, for every environment whose server
- * supports them. Only notifications that arrive while the app is open are
- * shown; a toast closes once the server no longer retains its notification
- * (its plugin stopped, it expired or was evicted, or the server restarted)
- * or its environment is removed.
- */
+// Toast only notifications arriving while this client is mounted; retained history is suppressed.
+// Close imperative handles when notifications are withdrawn or their environment is removed.
 export function PluginNotificationCoordinator() {
-  const environmentIds = useEnvironmentIds();
-  return environmentIds.map((environmentId) => (
+  const { environments } = useEnvironments();
+  return environments.map(({ environmentId }) => (
     <EnvironmentPluginNotifications key={environmentId} environmentId={environmentId} />
   ));
 }
@@ -33,6 +28,7 @@ function EnvironmentPluginNotifications({ environmentId }: { environmentId: Envi
   const toasts = useRef(new Map<string, ReturnType<typeof toastManager.add>>());
 
   // Unmounting means the environment was removed, so no later frame will close its toasts.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Close this environment’s imperative toast handles when its host unmounts.
   useEffect(() => {
     const open = toasts.current;
     return () => {
@@ -41,6 +37,7 @@ function EnvironmentPluginNotifications({ environmentId }: { environmentId: Envi
     };
   }, []);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Reconcile retained server notifications with imperative toast handles for this mounted client.
   useEffect(() => {
     const changes = pluginNotificationChanges(mark.current, frame);
     mark.current = changes.mark;

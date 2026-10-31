@@ -77,6 +77,7 @@ const makeSession = Effect.fn("makeSession")(function* (
     ),
     subscribeServerConfig: () => Stream.never,
     ready: Effect.void,
+    inboundFrames: Effect.succeed(0),
     probe: Effect.void,
     closed: Effect.never,
   };

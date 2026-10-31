@@ -29,13 +29,16 @@ export const registrationFor = (
 export const recordingSupervisor = () => {
   const methods = new Map<string, PluginSupervisor.PluginHostMethod>();
   const supervisor = PluginSupervisor.PluginSupervisor.of({
-    enable: () => Effect.void,
-    disable: () => Effect.void,
-    resume: () => Effect.void,
-    invoke: () => Effect.succeed(null),
-    state: () => Effect.succeedNone,
+    enable: Effect.fn("TestPluginHost.enable")(() => Effect.void),
+    disable: Effect.fn("TestPluginHost.disable")(() => Effect.void),
+    resume: Effect.fn("TestPluginHost.resume")(() => Effect.void),
+    invoke: Effect.fn("TestPluginHost.invoke")(() => Effect.succeed(null)),
+    state: Effect.fn("TestPluginHost.state")(() => Effect.succeedNone),
     subscribe: Effect.die("unused"),
-    serveHostMethod: (method, handler) => Effect.sync(() => void methods.set(method, handler)),
+    serveHostMethod: Effect.fn("TestPluginHost.serveHostMethod")(
+      (method: string, handler: PluginSupervisor.PluginHostMethod) =>
+        Effect.sync(() => void methods.set(method, handler)),
+    ),
   });
   /** Calls `method` as the plugin process whose lifetime is `lifetime` would. */
   const call = (

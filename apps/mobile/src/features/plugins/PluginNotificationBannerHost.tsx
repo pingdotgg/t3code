@@ -31,14 +31,8 @@ const TONE_DOT_CLASS = {
   error: "bg-adaptive-rose-600-400",
 } as const satisfies Record<ContributionStatusTone, string>;
 
-/**
- * Plugin notifications as an in-app banner under the status bar, one at a
- * time for a few seconds each. Only notifications that arrive while the app
- * is open are shown; tapping one about a thread opens it, and a banner goes
- * away once the server no longer retains its notification (its plugin
- * stopped, it expired or was evicted, or the server restarted) or its
- * environment is removed.
- */
+// Deliver transient notifications to the mounted native client; retained history is suppressed.
+// Withdraw banners with server retention or environment removal, and announce each fresh banner to accessibility.
 export function PluginNotificationBannerHost() {
   const { environments } = useEnvironments();
   const [queue, setQueue] = useState<ReadonlyArray<Banner>>([]);
@@ -61,6 +55,7 @@ export function PluginNotificationBannerHost() {
   );
   const head = queue[0];
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the dismissal timer for the currently displayed native banner.
   useEffect(() => {
     if (head === undefined) return;
     const timer = setTimeout(() => dismiss(head), SHOWN_MS);
@@ -104,8 +99,10 @@ function EnvironmentPluginNotifications(props: {
   const mark = useRef<PluginNotificationMark | undefined>(undefined);
 
   // Unmounting means the environment was removed, so no later frame will drop its banners.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Withdraw this environment’s delivered banners when its subscription host unmounts.
   useEffect(() => () => onRemoved(environmentId), [environmentId, onRemoved]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Consume retained server frames as delivery events while this notification host is mounted.
   useEffect(() => {
     const changes = pluginNotificationChanges(mark.current, frame);
     mark.current = changes.mark;
@@ -126,6 +123,7 @@ function PluginNotificationBanner(props: {
   const description = pluginNotificationDescription(banner.entry);
   // The banner leaves on its own, so it is announced rather than waiting for
   // focus: accessibilityLiveRegion reaches TalkBack, VoiceOver needs this.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Announce each newly mounted banner to the native VoiceOver service.
   useEffect(() => {
     if (Platform.OS === "ios")
       AccessibilityInfo.announceForAccessibility(`${title}. ${description}`);

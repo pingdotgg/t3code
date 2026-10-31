@@ -37,13 +37,8 @@ const EMPTY: PluginViewsView = { _tag: "available", views: [], problems: [] };
 
 const UNSUPPORTED: PluginViewsView = { _tag: "unsupported" };
 
-/**
- * Follows the environment's sessions and checks each server's capability
- * before subscribing, so a server without views never receives a view call.
- * Clears the previous session's views before waiting for the next server.
- * A host mounts only views in the latest `available` frame and tears down a
- * mount whose `(installationId, generation, viewId)` leaves it.
- */
+// Clear old views before awaiting the next session; call only servers advertising support.
+// Hosts revoke mounts whose (installationId, generation, viewId) leaves the latest available frame.
 export const pluginViewsStream = Stream.unwrap(
   EnvironmentSupervisor.EnvironmentSupervisor.pipe(
     Effect.map((supervisor) =>

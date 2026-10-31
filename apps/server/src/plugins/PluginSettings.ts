@@ -1,28 +1,6 @@
-/**
- * Saved settings, secrets, and private storage of plugin installations.
- *
- * Users save values for the fields an installation's manifest declares
- * (`plugins.settings.*`); the plugin reads them, and keeps its own small
- * key-value storage, through host methods its child process calls. Values
- * belong to the installation, so they outlive disable, re-enable, restarts
- * and source changes, and are deleted when the installation is removed.
- *
- * A secret's value lives in the server secret store and is only ever read by
- * the plugin; clients learn whether one is saved and nothing else. A row in
- * `plugin_setting_secrets` exists before its file is written and goes only
- * after the file is deleted, so a failure or crash at any step leaves a row
- * that the next clear, removal, or start finishes. Every write and the
- * removal cleanup run one at a time, and a write first checks that the
- * installation still exists, so nothing is saved for an installation after
- * its cleanup.
- *
- * Only the fields the installation declares now are kept: each update first
- * deletes values (and secrets) of keys that are no longer declared, or no
- * longer of that kind, and snapshots only carry declared fields. An update
- * whose retired secret cannot be deleted fails and saves nothing, keeping the
- * row for the next attempt, so what is stored and sent stays within one
- * declaration's bounds as manifests change, even while deletion fails.
- */
+// Secret rows precede file writes and outlive failed deletion, so startup or removal can finish cleanup.
+// Writes and removal serialize; retired fields are removed before saving, and failed secret cleanup prevents new writes.
+// Clients see secret presence only; installation values survive registration changes and end with removal.
 import {
   PLUGIN_SETTINGS_CAPABILITY,
   PluginCatalogError,
@@ -264,47 +242,53 @@ export const make = Effect.fn("PluginSettings.make")(function* (
         `;
   });
 
-  const update = Effect.fn("PluginSettings.update")(function* (input: PluginSettingsUpdateInput) {
-    const { installationId } = input;
-    const installation = yield* findInstallation(installationId);
-    if (installation === undefined) return yield* notFound(installationId);
-    const fields = installation.manifest?.settings ?? [];
-    const invalid = (message: string) => catalogError("invalid-setting", message, installationId);
-    const seen = new Set<string>();
-    const plan = [];
-    for (const change of input.changes) {
-      const field = fields.find((candidate) => candidate.key === change.key);
-      if (field === undefined) return yield* invalid(`This plugin has no setting "${change.key}".`);
-      if (seen.has(change.key)) return yield* invalid(`"${change.key}" is changed twice.`);
-      seen.add(change.key);
-      if (change.value !== null) {
-        const problem = pluginSettingValueProblem(field, change.value);
-        if (problem !== undefined) return yield* invalid(problem);
+  const update = Effect.fn("PluginSettings.update")(
+    function* (input: PluginSettingsUpdateInput) {
+      const { installationId } = input;
+      const installation = yield* findInstallation(installationId);
+      if (installation === undefined) return yield* notFound(installationId);
+      const fields = installation.manifest?.settings ?? [];
+      const invalid = (message: string) => catalogError("invalid-setting", message, installationId);
+      const seen = new Set<string>();
+      const plan = [];
+      for (const change of input.changes) {
+        const field = fields.find((candidate) => candidate.key === change.key);
+        if (field === undefined)
+          return yield* invalid(`This plugin has no setting "${change.key}".`);
+        if (seen.has(change.key)) return yield* invalid(`"${change.key}" is changed twice.`);
+        seen.add(change.key);
+        if (change.value !== null) {
+          const problem = pluginSettingValueProblem(field, change.value);
+          if (problem !== undefined) return yield* invalid(problem);
+        }
+        plan.push({ key: change.key, secret: field.type === "secret", value: change.value });
       }
-      plan.push({ key: change.key, secret: field.type === "secret", value: change.value });
-    }
-    const failed = storageFailed(installationId);
-    yield* retireUndeclared(installationId, fields).pipe(Effect.catch(failed));
-    for (const step of plan) {
-      if (step.secret && step.value !== null)
-        yield* saveSecret(installationId, step.key, String(step.value)).pipe(Effect.catch(failed));
-      else if (step.secret)
-        yield* deleteSecret(installationId, step.key).pipe(Effect.catch(failed));
-      else if (step.value !== null) {
-        const json = encodeSavedValue(step.value);
-        yield* sql`
+      const failed = storageFailed(installationId);
+      yield* retireUndeclared(installationId, fields).pipe(Effect.catch(failed));
+      for (const step of plan) {
+        if (step.secret && step.value !== null)
+          yield* saveSecret(installationId, step.key, String(step.value)).pipe(
+            Effect.catch(failed),
+          );
+        else if (step.secret)
+          yield* deleteSecret(installationId, step.key).pipe(Effect.catch(failed));
+        else if (step.value !== null) {
+          const json = encodeSavedValue(step.value);
+          yield* sql`
           INSERT INTO plugin_settings (installation_id, key, value_json)
           VALUES (${installationId}, ${step.key}, ${json})
           ON CONFLICT (installation_id, key) DO UPDATE SET value_json = excluded.value_json
         `.pipe(Effect.catch(failed));
-      } else {
-        yield* sql`
+        } else {
+          yield* sql`
           DELETE FROM plugin_settings WHERE installation_id = ${installationId} AND key = ${step.key}
         `.pipe(Effect.catch(failed));
+        }
       }
-    }
-    return yield* readValues(installationId, fields);
-  });
+      return yield* readValues(installationId, fields);
+    },
+    (effect) => lock.withPermit(effect).pipe(Effect.ensuring(PubSub.publish(events, undefined))),
+  );
 
   /** Deletes everything saved for an installation that no longer exists. */
   const purge = Effect.fnUntraced(function* (installationId: PluginInstallationId) {
@@ -538,8 +522,7 @@ export const make = Effect.fn("PluginSettings.make")(function* (
           ),
         ),
       ),
-    update: (input) =>
-      lock.withPermit(update(input)).pipe(Effect.ensuring(PubSub.publish(events, undefined))),
+    update,
   });
 });
 

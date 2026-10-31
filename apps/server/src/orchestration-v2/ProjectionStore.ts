@@ -256,6 +256,8 @@ export interface ProjectionCheckpointCaptureContext {
   readonly scope: OrchestrationV2CheckpointScope | undefined;
   readonly providerThread: OrchestrationV2ProviderThread | undefined;
   readonly readyCheckpointOrdinals: ReadonlyArray<number>;
+  /** Side chats share their parent's worktree and never snapshot it. */
+  readonly sideChat: boolean;
 }
 
 const RollbackTargetAttempts = Schema.Array(
@@ -1340,14 +1342,21 @@ function visibleTurnItemsThroughRun(input: {
   return [...inheritedPrefix, ...localPrefix];
 }
 
+// Side chats show only their own rows; the fork transfer carries the parent's context to the model.
+function inheritedRunFork(thread: Pick<OrchestrationV2AppThread, "forkedFrom" | "lineage">) {
+  return thread.forkedFrom?.type === "run" && thread.lineage.sideChat !== true
+    ? thread.forkedFrom
+    : null;
+}
+
 function buildVisibleTurnItems(input: {
   readonly projection: OrchestrationV2ThreadProjection;
   readonly sourceProjection: OrchestrationV2ThreadProjection | null;
   readonly inheritedRowCount?: number;
 }): Array<OrchestrationV2ProjectedTurnItem> {
-  const forkedFrom = input.projection.thread.forkedFrom;
+  const forkedFrom = inheritedRunFork(input.projection.thread);
   if (
-    forkedFrom?.type !== "run" ||
+    forkedFrom === null ||
     (input.sourceProjection === null && input.inheritedRowCount === undefined)
   ) {
     return localVisibleTurnItems(input.projection);
@@ -1726,8 +1735,8 @@ function visibleItemCountForShell(input: {
     return 0;
   }
 
-  const forkedFrom = state.thread.forkedFrom;
-  if (forkedFrom?.type !== "run") {
+  const forkedFrom = inheritedRunFork(state.thread);
+  if (forkedFrom === null) {
     return state.itemCount;
   }
 
@@ -1741,9 +1750,8 @@ function visibleItemCountForShell(input: {
     return state.itemCount;
   }
 
-  const sourceForkedFrom = sourceState.thread.forkedFrom;
   const inheritedPrefixCount =
-    sourceForkedFrom?.type === "run"
+    inheritedRunFork(sourceState.thread) !== null
       ? visibleItemCountForShell({
           threadId: sourceState.thread.id,
           statesByThreadId: input.statesByThreadId,
@@ -3639,8 +3647,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ? ["runs", "attempts", "turnItems"]
             : undefined,
         );
-        const forkedFrom = projection.thread.forkedFrom;
-        if (forkedFrom?.type !== "run" || seenThreadIds.has(forkedFrom.threadId)) {
+        const forkedFrom = inheritedRunFork(projection.thread);
+        if (forkedFrom === null || seenThreadIds.has(forkedFrom.threadId)) {
           return withLocalVisibleTurnItems(projection);
         }
 
@@ -4316,6 +4324,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 message_id IN (SELECT json_extract(payload_json, '$.userMessageId') FROM orchestration_v2_projection_runs
                   WHERE thread_id = ${threadId} AND run_id = ${runId})
                 OR (role = 'user' AND lower(trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace})) = '/compact')
+                -- Earlier /goal turns defer context too; parseGoalCommand narrows this prefix match.
+                OR (role = 'user' AND trim(json_extract(payload_json, '$.text'), ${javascriptTrimWhitespace}) GLOB '/goal*')
               ) ORDER BY created_at ASC, message_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeMessagePayload, threadId)));
             const conversation = yield* sql<{ present: number }>`
@@ -5075,7 +5085,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       sql
         .withTransaction(
           Effect.gen(function* () {
-            yield* requireThread(threadId);
+            const threadRows = yield* sql<{ readonly side_chat: number | null }>`
+          SELECT json_extract(payload_json, '$.lineage.sideChat') AS side_chat
+          FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId} LIMIT 1`;
+            if (threadRows[0] === undefined) {
+              return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+            }
             const runRows = yield* sql<PayloadRow>`
           SELECT payload_json FROM orchestration_v2_projection_runs
           WHERE thread_id = ${threadId} AND run_id = ${target.runId}`;
@@ -5112,6 +5127,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ? undefined
                   : yield* decodeProviderThreadPayload(providerRows[0].payload_json),
               readyCheckpointOrdinals: readyRows.map(({ ordinal }) => ordinal),
+              sideChat: threadRows[0].side_chat === 1,
             };
           }),
         )
@@ -5515,8 +5531,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           items,
         });
         const visible = local.filter((row) => isVisible(row.item));
-        const fork = records.thread.forkedFrom;
-        if (fork?.type !== "run" || seen.has(fork.threadId)) return { records, local, visible };
+        const fork = inheritedRunFork(records.thread);
+        if (fork === null || seen.has(fork.threadId)) return { records, local, visible };
         const source = yield* readTimelineIndex(
           fork.threadId,
           new Set([...seen, threadId]),
@@ -5876,6 +5892,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               t.payload_json,
               CASE
                 WHEN json_extract(t.payload_json, '$.forkedFrom.type') = 'run'
+                  AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
                   THEN json_extract(t.payload_json, '$.forkedFrom.threadId')
                 ELSE NULL
               END AS forked_from_run_source_thread_id,
@@ -6760,6 +6777,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly relationship_to_parent: string | null;
         readonly parent_thread_id: string | null;
         readonly root_thread_id: string;
+        readonly side_chat: number | null;
         readonly settled_override: string | null;
         readonly settled_at: string | null;
         readonly pinned_at: string | null;
@@ -6772,6 +6790,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           json_extract(t.payload_json, '$.lineage.relationshipToParent') AS relationship_to_parent,
           json_extract(t.payload_json, '$.lineage.parentThreadId') AS parent_thread_id,
           json_extract(t.payload_json, '$.lineage.rootThreadId') AS root_thread_id,
+          json_extract(t.payload_json, '$.lineage.sideChat') AS side_chat,
           json_extract(t.payload_json, '$.settledOverride') AS settled_override,
           json_extract(t.payload_json, '$.settledAt') AS settled_at,
           json_extract(t.payload_json, '$.pinnedAt') AS pinned_at,
@@ -6826,6 +6845,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? row.relationship_to_parent
               : null,
           rootThreadId: ThreadId.make(row.root_thread_id),
+          ...(row.side_chat === null ? {} : { sideChat: row.side_chat === 1 }),
         },
         settledOverride:
           row.settled_override === "settled" || row.settled_override === "active"
@@ -6861,6 +6881,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         WHERE t.deleted_at IS NULL
           AND json_extract(t.payload_json, '$.archivedAt') IS NULL
           AND json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
+          AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
           AND json_extract(t.payload_json, '$.settledOverride') = 'settled'
           AND json_extract(t.payload_json, '$.settledAt') IS NOT NULL${
             projectIds === undefined ? sql`` : sql` AND t.project_id IN ${sql.in(projectIds)}`

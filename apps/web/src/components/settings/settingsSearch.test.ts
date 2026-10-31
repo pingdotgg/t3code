@@ -160,6 +160,7 @@ describe("searchSettings", () => {
     const availability = {
       hasCloudPublicConfig: false,
       hasEnvironment: true,
+      hasPluginEnvironment: false,
       hasProviderSettingsEnvironment: true,
       hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: false,

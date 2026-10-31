@@ -8,6 +8,7 @@ const consent = vi.hoisted(() => vi.fn());
 const enable = vi.hoisted(() => vi.fn());
 vi.mock("../../state/plugins", () => ({
   pluginNpmEnvironment: {},
+  pluginSettingsEnvironment: { values: vi.fn(), update: "update" },
   pluginEnvironment: {
     add: "add",
     consent: "consent",

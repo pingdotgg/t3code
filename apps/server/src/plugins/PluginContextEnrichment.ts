@@ -1,14 +1,5 @@
-/**
- * Calls the `t3.transform.enrich` handler of enabled plugins for the run
- * context the orchestrator records (see `RunContextEnrichment`).
- *
- * A plugin takes part when it is enabled with consent that includes the
- * `transforms` capability and its manifest declares `transforms.enrich`.
- * Sources are read from the catalogue for every run, so disabling or removing
- * a plugin stops its enrichment from the next run on; a call in flight is
- * pinned to the registration it was listed with and fails if that is revoked.
- * Every failure becomes a `skipped` outcome with a reason the timeline shows.
- */
+// Pin each run’s enrichment to enabled, consented registrations; revocation must never redirect an in-flight call.
+// Convert failures into recorded skipped outcomes so provider startup can continue.
 import {
   type EnvironmentId,
   PLUGIN_ENRICH_HANDLER,
@@ -54,34 +45,8 @@ export const make = Effect.gen(function* () {
   const catalog = yield* PluginCatalog;
   const environmentId: EnvironmentId = yield* (yield* ServerEnvironment).getEnvironmentId;
 
-  return RunContextEnricherV2.of({
-    sources: catalog.ready.pipe(
-      Effect.andThen(catalog.list),
-      Effect.map(({ installations }) =>
-        installations.flatMap((installation) => {
-          const { manifest, consent } = installation;
-          const enrich = manifest?.transforms?.enrich;
-          if (
-            manifest === null ||
-            enrich === undefined ||
-            pluginInstallationStatus(installation) !== "enabled" ||
-            !manifest.capabilities.includes(PLUGIN_TRANSFORMS_CAPABILITY) ||
-            consent?.capabilities.includes(PLUGIN_TRANSFORMS_CAPABILITY) !== true
-          )
-            return [];
-          return [
-            {
-              installationId: installation.installationId,
-              generation: installation.generation,
-              pluginId: manifest.id,
-              name: manifest.name,
-              timeoutSeconds: enrich.timeoutSeconds ?? PLUGIN_ENRICH_LIMITS.defaultTimeoutSeconds,
-            },
-          ];
-        }),
-      ),
-    ),
-    enrich: (source, input) => {
+  const enrich: RunContextEnricherV2["Service"]["enrich"] = Effect.fn("PluginContextEnrichment.enrich")(
+(source, input) => {
       const timeout = `${source.timeoutSeconds} seconds` as const;
       return catalog
         .invoke(
@@ -122,7 +87,37 @@ export const make = Effect.gen(function* () {
           ),
           Effect.catchDefect(() => Effect.succeed(skipped(`${source.name} failed unexpectedly.`))),
         );
-    },
+    }
+  );
+
+  return RunContextEnricherV2.of({
+    sources: catalog.ready.pipe(
+      Effect.andThen(catalog.list),
+      Effect.map(({ installations }) =>
+        installations.flatMap((installation) => {
+          const { manifest, consent } = installation;
+          const enrich = manifest?.transforms?.enrich;
+          if (
+            manifest === null ||
+            enrich === undefined ||
+            pluginInstallationStatus(installation) !== "enabled" ||
+            !manifest.capabilities.includes(PLUGIN_TRANSFORMS_CAPABILITY) ||
+            consent?.capabilities.includes(PLUGIN_TRANSFORMS_CAPABILITY) !== true
+          )
+            return [];
+          return [
+            {
+              installationId: installation.installationId,
+              generation: installation.generation,
+              pluginId: manifest.id,
+              name: manifest.name,
+              timeoutSeconds: enrich.timeoutSeconds ?? PLUGIN_ENRICH_LIMITS.defaultTimeoutSeconds,
+            },
+          ];
+        }),
+      ),
+    ),
+    enrich,
   });
 });
 
