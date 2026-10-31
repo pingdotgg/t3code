@@ -19,7 +19,9 @@ import {
 } from "./themePalette";
 
 const THEME_STORAGE_KEY = "t3code:theme";
-const DEFAULT_DARK_CHROME = getDefaultThemeColors("dark").chrome;
+// A custom theme that omits the sidebar falls back to the runtime default, so
+// the boot copy of that default stays derived from the real palette.
+const DEFAULT_DARK_SIDEBAR = getDefaultThemeColors("dark").sidebar;
 
 const bootScript = (() => {
   const match = indexHtml.match(/<script>([\s\S]*?)<\/script>/);
@@ -257,7 +259,7 @@ describe("index.html boot script", () => {
   it("accepts exponent-form OKLCH before the runtime mounts", () => {
     const colors = {
       canvas: "oklch(9.5e-1 1e-2 2.8e2)",
-      chrome: "oklch(9.4e-1 1e-2 2.8e2)",
+      sidebar: "oklch(9.4e-1 1e-2 2.8e2)",
       text: "oklch(2e-1 0 0 / 9e-1)",
       accent: "oklch(6.2e-1 0.2 2.8e2)",
     };
@@ -276,11 +278,11 @@ describe("index.html boot script", () => {
       prefersDark: false,
     });
 
-    expect(boot.bootVariables["--boot-background"]).toBe(colors.canvas);
+    expect(boot.bootVariables["--boot-background"]).toBe(colors.sidebar);
     expect(boot.bootVariables["--boot-foreground"]).toBe(colors.text);
     expect(boot.bootVariables["--boot-accent"]).toBe(colors.accent);
-    expect(boot.backgroundColor).toBe(colors.chrome);
-    expect(boot.metaContent).toBe(colors.chrome);
+    expect(boot.backgroundColor).toBe(colors.sidebar);
+    expect(boot.metaContent).toBe(colors.sidebar);
   });
 
   it("keeps every built-in boot splash in sync with the real palettes", () => {
@@ -298,11 +300,11 @@ describe("index.html boot script", () => {
         });
         expect(boot.themeId).toBe(theme.id);
         expect(boot.isDark).toBe(mode === "dark");
-        expect(boot.bootVariables["--boot-background"]).toBe(colors!.canvas);
+        expect(boot.bootVariables["--boot-background"]).toBe(colors!.sidebar);
         expect(boot.bootVariables["--boot-foreground"]).toBe(colors!.text);
         expect(boot.bootVariables["--boot-accent"]).toBe(colors!.accent);
-        expect(boot.backgroundColor).toBe(colors!.chrome);
-        expect(boot.metaContent).toBe(colors!.chrome);
+        expect(boot.backgroundColor).toBe(colors!.sidebar);
+        expect(boot.metaContent).toBe(colors!.sidebar);
       }
     }
   });
@@ -318,14 +320,14 @@ describe("index.html boot script", () => {
     expect(dark.isDark).toBe(true);
     expect(dark.themeId).toBe(GROVE_THEME.id);
     expect(dark.bootVariables["--boot-background"]).toBe(
-      getThemeColorsForMode(GROVE_THEME, "dark")!.canvas,
+      getThemeColorsForMode(GROVE_THEME, "dark")!.sidebar,
     );
 
     const light = runBootScript({ storage, prefersDark: false });
     expect(light.isDark).toBe(false);
     expect(light.themeId).toBe("t3-chat");
     expect(light.bootVariables["--boot-background"]).toBe(
-      getThemeColorsForMode(T3_CHAT_THEME, "light")!.canvas,
+      getThemeColorsForMode(T3_CHAT_THEME, "light")!.sidebar,
     );
   });
 
@@ -342,7 +344,7 @@ describe("index.html boot script", () => {
     expect(boot.themeId).toBe(GROVE_THEME.id);
     expect(boot.themeSelected).toBe("true");
     expect(boot.bootVariables["--boot-background"]).toBe(
-      getThemeColorsForMode(GROVE_THEME, "dark")!.canvas,
+      getThemeColorsForMode(GROVE_THEME, "dark")!.sidebar,
     );
   });
 
@@ -356,7 +358,7 @@ describe("index.html boot script", () => {
             id: "partial",
             label: "Partial",
             appearance: "dark",
-            colors: { canvas: "not-a-color", text: "#fffaff", accent: "nope" },
+            colors: { sidebar: "not-a-color", text: "#fffaff", accent: "nope" },
           },
         ]),
       },
@@ -364,11 +366,11 @@ describe("index.html boot script", () => {
     });
 
     expect(boot.themeId).toBe("partial");
-    expect(boot.bootVariables["--boot-background"]).toBe(getDefaultThemeColors("dark").canvas);
+    expect(boot.bootVariables["--boot-background"]).toBe(DEFAULT_DARK_SIDEBAR);
     expect(boot.bootVariables["--boot-foreground"]).toBe("#fffaff");
     expect(boot.bootVariables["--boot-accent"]).toBe(getDefaultThemeColors("dark").accent);
-    expect(boot.backgroundColor).toBe(DEFAULT_DARK_CHROME);
-    expect(boot.metaContent).toBe(DEFAULT_DARK_CHROME);
+    expect(boot.backgroundColor).toBe(DEFAULT_DARK_SIDEBAR);
+    expect(boot.metaContent).toBe(DEFAULT_DARK_SIDEBAR);
   });
 
   it("follows the OS appearance when storage is unavailable", () => {

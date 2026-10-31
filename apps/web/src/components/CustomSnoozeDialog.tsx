@@ -131,7 +131,7 @@ function CustomSnoozeDialog() {
                           render={
                             <Button
                               id={`${id}-date`}
-                              variant="outline"
+                              variant="secondary"
                               className="w-full justify-between"
                             />
                           }
@@ -242,7 +242,7 @@ function CustomSnoozeDialog() {
               <Settings2Icon />
               Edit snooze options
             </Button>
-            <Button type="button" variant="outline" onClick={() => finish(null)}>
+            <Button type="button" variant="secondary" onClick={() => finish(null)}>
               Cancel
             </Button>
             <Button type="submit">Snooze</Button>

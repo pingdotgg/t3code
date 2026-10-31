@@ -140,7 +140,7 @@ function TimelineMarker({
 function IconMarker({ icon, className }: { icon: ReactNode; className?: string | undefined }) {
   return (
     <TimelineMarker className={className}>
-      <span className="flex size-7 items-center justify-center bg-background text-muted-foreground">
+      <span className="flex size-7 items-center justify-center bg-background text-dim-foreground">
         {icon}
       </span>
     </TimelineMarker>
@@ -401,8 +401,14 @@ function ConversationGroup({
                 {events.length.toLocaleString()} {events.length === 1 ? "comment" : "comments"}
               </span>
               <span className="block truncate text-3xs text-muted-foreground">
-                {actors.length.toLocaleString()} {actors.length === 1 ? "author" : "authors"} ·{" "}
-                <RelativeTime timestamp={first.at} />
+                <Tooltip>
+                  <TooltipTrigger render={<span tabIndex={0} />}>
+                    <RelativeTime timestamp={first.at} />
+                  </TooltipTrigger>
+                  <TooltipPopup>
+                    {actors.length.toLocaleString()} {actors.length === 1 ? "author" : "authors"}
+                  </TooltipPopup>
+                </Tooltip>
               </span>
             </span>
             <ChevronDownIcon
@@ -475,9 +481,10 @@ function ReviewThreadEvent({
         muted={!expanded}
       />
       <div className="flex min-w-0 items-center gap-1">
-        <button
-          type="button"
-          className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left text-2xs text-muted-foreground hover:text-foreground"
+        <Button
+          variant="ghost-muted"
+          size="xs"
+          className="min-w-0 flex-1"
           aria-expanded={expanded}
           onClick={() => setExpanded((current) => !current)}
         >
@@ -492,23 +499,22 @@ function ReviewThreadEvent({
             </>
           )}
           {thread.isResolved ? (
-            <span className="inline-flex shrink-0 items-center gap-1 font-medium text-success-foreground">
+            <span className="inline-flex shrink-0 items-center gap-1 text-caption text-success-foreground">
               <CircleCheckIcon aria-hidden className="size-3" />
               Resolved
             </span>
           ) : null}
-          {dismissed ? <span className="shrink-0 font-medium">Review dismissed</span> : null}
-          {thread.isOutdated ? <span className="shrink-0 font-medium">Outdated</span> : null}
+          {dismissed ? <span className="shrink-0 text-caption">Review dismissed</span> : null}
+          {thread.isOutdated ? <span className="shrink-0 text-caption">Outdated</span> : null}
           {expanded ? null : (
-            <span className="shrink-0">
-              · {event.actor?.login ?? "ghost"}
-              {replyCount > 0 ? (
-                <>
-                  {" "}
-                  · {replyCount.toLocaleString()} {replyCount === 1 ? "reply" : "replies"}
-                </>
-              ) : null}
-            </span>
+            <Tooltip>
+              <TooltipTrigger render={<span tabIndex={0} />}>
+                {replyCount > 0
+                  ? `${replyCount.toLocaleString()} ${replyCount === 1 ? "reply" : "replies"}`
+                  : (event.actor?.login ?? "ghost")}
+              </TooltipTrigger>
+              <TooltipPopup>{event.actor?.login ?? "ghost"}</TooltipPopup>
+            </Tooltip>
           )}
           <ChevronDownIcon
             aria-hidden
@@ -517,7 +523,7 @@ function ReviewThreadEvent({
               expanded && "rotate-180",
             )}
           />
-        </button>
+        </Button>
         {expanded ? (
           <PullRequestResolveThreadButton
             environmentId={reactions.environmentId}
@@ -902,10 +908,10 @@ export function PullRequestTimelineTab({
       renderItem={renderRow}
       estimatedItemSize={140}
       className="scrollbar-gutter-both h-full px-4"
-      contentContainerClassName="relative mx-auto w-full max-w-3xl before:absolute before:bottom-10 before:left-[15px] before:top-6 before:w-px before:bg-border/45"
+      contentContainerClassName="relative mx-auto w-full max-w-3xl before:absolute before:bottom-10 before:left-[15px] before:top-6 before:w-px before:bg-border"
       ListHeaderComponent={
         anchor !== null && targetIndex < 0 && revealUrl === undefined ? (
-          <p role="status" className="py-4 text-xs text-muted-foreground">
+          <p role="status" className="py-4 text-meta text-muted-foreground">
             The linked item is not in the loaded activity.
           </p>
         ) : (

@@ -172,7 +172,7 @@ export function CaptureShortcutConfig({
           </p>
           {diff ? (
             <div
-              className="max-h-80 overflow-auto rounded-lg border text-xs"
+              className="max-h-80 overflow-auto rounded-control border border-border/50 text-xs"
               aria-label="Shortcut changes"
             >
               <FileDiff
@@ -247,12 +247,12 @@ export function CaptureShortcutConfig({
         <div className="mt-3 space-y-3">
           {error?.detail || result?.warning ? (
             <div className="space-y-1">
-              <p className="font-medium text-foreground">Troubleshooting</p>
+              <p className="font-medium text-strong-foreground">Troubleshooting</p>
               <p className="break-words">{error?.detail ?? result?.warning}</p>
             </div>
           ) : null}
           <div className="space-y-1">
-            <p className="font-medium text-foreground">Settings file</p>
+            <p className="font-medium text-strong-foreground">Settings file</p>
             <p className="break-all font-mono">
               {preview?.path ??
                 state.shortcutConfigPath ??
@@ -266,7 +266,7 @@ export function CaptureShortcutConfig({
           <div className="flex flex-wrap gap-2">
             <Button
               size="sm"
-              variant="outline"
+              variant="secondary"
               disabled={actionBusy || !bridge}
               onClick={() => void read(true)}
             >
@@ -283,7 +283,7 @@ export function CaptureShortcutConfig({
             {result ? (
               <Button
                 size="sm"
-                variant="outline"
+                variant="secondary"
                 disabled={actionBusy || !bridge}
                 onClick={() => void read()}
               >
@@ -298,19 +298,19 @@ export function CaptureShortcutConfig({
               : "On Omarchy, use your own bindings file, not its defaults."}
           </p>
           {result?.backupPath ? <p className="break-all">Backup: {result.backupPath}</p> : null}
-          <p className="font-medium text-foreground">Manual setup</p>
+          <p className="font-medium text-strong-foreground">Manual setup</p>
           <p>
             {niri
               ? "Paste this inside binds { … } in your Niri config, then save."
               : "Add this binding to your Hyprland config, then save."}{" "}
             Change the keys if needed.
           </p>
-          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-xl bg-muted/50 p-3">
+          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-card surface-card-settings p-3">
             {state.shortcutBinding}
           </pre>
           <Button
             size="sm"
-            variant="outline"
+            variant="secondary"
             disabled={actionBusy || !state.shortcutBinding}
             onClick={() => {
               if (state.shortcutBinding) copyToClipboard(state.shortcutBinding);
@@ -328,7 +328,7 @@ export function CaptureShortcutConfig({
           {onComplete ? (
             <Button
               size="sm"
-              variant="outline"
+              variant="secondary"
               disabled={actionBusy || state.shortcutActionRegistered === false}
               onClick={() => void onComplete()}
             >
