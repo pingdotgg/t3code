@@ -258,4 +258,14 @@ describe("usage pricing", () => {
     expect(lookupRate(table, "provider-b/example-model")?.inputCostPerToken).toBe(3);
     expect(lookupRate(table, "example-model")).toBeNull();
   });
+
+  it("prices a bare name at the model maker's rate when a reseller marks it up", () => {
+    const table = parseRateTable({
+      "kyma/gemini-4-argon": rate(5.4e-6),
+      "gemini/gemini-4-argon": rate(2e-6, 1e-7),
+      "vertex_ai/gemini-4-argon": rate(2e-6, 1e-7),
+    });
+
+    expect(lookupRate(table, "gemini-4-argon")).toEqual(lookupRate(table, "gemini/gemini-4-argon"));
+  });
 });
