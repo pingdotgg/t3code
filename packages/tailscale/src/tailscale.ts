@@ -1,5 +1,5 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
+import { normalizeHostname } from "@t3tools/shared/hostClassification";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -446,105 +446,177 @@ export const ensureTailscaleServe = (input: {
   return runTailscaleCommand(args, TAILSCALE_SERVE_TIMEOUT);
 };
 
+/** A Serve route: a web handler at `mount` on `servePort`, or a TCP forward without one. */
+export interface TailscaleServeRoute {
+  readonly servePort: number;
+  readonly mount?: string;
+  /** The machine name a web route serves under. */
+  readonly host?: string;
+  /** The Tailscale Service it belongs to, or `foreground` for a `tailscale serve` still running. */
+  readonly owner?: string;
+}
+
 /**
- * Removes the Serve handler at `mount` on `servePort`, the root one `ensureTailscaleServe` adds by
- * default. Naming the path matters: without it the CLI removes every handler on the port, and
- * answers its own confirmation prompt with yes when nobody is there to answer.
+ * The `tailscale` arguments that turn `route` off; a foreground route has none, since it ends with
+ * its command. A web route names its path: without one the CLI removes every handler on the port,
+ * and answers its own confirmation prompt with yes when nobody is there to answer.
  */
+export const tailscaleServeOffArgs = (
+  route: TailscaleServeRoute,
+): ReadonlyArray<string> | undefined =>
+  route.owner === "foreground"
+    ? undefined
+    : [
+        "serve",
+        ...(route.owner === undefined ? [] : [`--service=${route.owner}`]),
+        ...(route.mount === undefined
+          ? [`--tcp=${route.servePort}`]
+          : [`--https=${route.servePort}`, `--set-path=${route.mount}`]),
+        "off",
+      ];
+
+/** Removes the web handler at `mount` on `servePort`, the root one `ensureTailscaleServe` adds by default. */
 export const disableTailscaleServe = Effect.fn("tailscale.disableTailscaleServe")(function* (
   input: {
     readonly servePort?: number;
     readonly mount?: string;
   } = {},
 ): Effect.fn.Return<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> {
-  const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
   return yield* runTailscaleCommand(
-    ["serve", `--https=${servePort}`, `--set-path=${input.mount ?? "/"}`, "off"],
+    tailscaleServeOffArgs({
+      servePort: input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT,
+      mount: input.mount ?? "/",
+    })!,
     TAILSCALE_SERVE_TIMEOUT,
   );
 });
 
-const TailscaleServeWebJson = Schema.optional(
-  Schema.Record(
-    Schema.String,
-    Schema.Struct({
-      Handlers: Schema.optional(
-        Schema.Record(Schema.String, Schema.Struct({ Proxy: Schema.optional(Schema.String) })),
-      ),
-    }),
+/** Removes a TCP forward on `servePort`; one port holds one forward, so nothing else goes. */
+export const disableTailscaleServeTcp = (servePort: number) =>
+  runTailscaleCommand(tailscaleServeOffArgs({ servePort })!, TAILSCALE_SERVE_TIMEOUT);
+
+const TailscaleServeConfigJson = Schema.Struct({
+  TCP: Schema.optional(
+    Schema.Record(Schema.String, Schema.Struct({ TCPForward: Schema.optional(Schema.String) })),
   ),
-);
+  Web: Schema.optional(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        Handlers: Schema.optional(
+          Schema.Record(Schema.String, Schema.Struct({ Proxy: Schema.optional(Schema.String) })),
+        ),
+      }),
+    ),
+  ),
+});
 const TailscaleServeStatusJson = Schema.Struct({
-  Web: TailscaleServeWebJson,
+  ...TailscaleServeConfigJson.fields,
   // A Tailscale Service's routes, and those of each `tailscale serve` still running in the foreground.
-  Services: Schema.optional(
-    Schema.Record(Schema.String, Schema.Struct({ Web: TailscaleServeWebJson })),
-  ),
-  Foreground: Schema.optional(
-    Schema.Record(Schema.String, Schema.Struct({ Web: TailscaleServeWebJson })),
-  ),
+  Services: Schema.optional(Schema.Record(Schema.String, TailscaleServeConfigJson)),
+  Foreground: Schema.optional(Schema.Record(Schema.String, TailscaleServeConfigJson)),
 });
 // A node without any Serve configuration prints `null`.
 const decodeTailscaleServeStatusJson = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.NullOr(TailscaleServeStatusJson)),
 );
-// Any loopback address the server may bind, or an unspecified one, which connects to loopback.
-const forwardsToThisMachine = (hostname: string) =>
-  isLocalLoopbackHost(hostname) || hostname === "0.0.0.0" || hostname === "[::]";
 
-/** A Serve web handler: the HTTPS port it listens on and the path it is mounted at. */
-export interface TailscaleServeMount {
-  readonly servePort: number;
-  readonly mount: string;
-  /** The Tailscale Service it belongs to, or `foreground` for a `tailscale serve` still running. */
-  readonly owner?: string;
+/** Whether a proxy to `hostname` dials `bindHost`: `localhost` and `0.0.0.0` reach the loopback. */
+const reaches = (hostname: string, bindHost: string) => {
+  let address = normalizeHostname(hostname);
+  // URLs write an IPv4-mapped address as hex, such as ::ffff:7f00:1 for 127.0.0.1.
+  const mapped = /^::ffff:([\da-f]{1,4}):([\da-f]{1,4})$/u.exec(address);
+  if (mapped !== null) {
+    const high = Number.parseInt(mapped[1]!, 16);
+    const low = Number.parseInt(mapped[2]!, 16);
+    address = [high >>> 8, high & 0xff, low >>> 8, low & 0xff].join(".");
+  } else if (address.startsWith("::ffff:")) {
+    address = address.slice("::ffff:".length);
+  }
+  if (address === "localhost") return bindHost === "127.0.0.1" || bindHost === "::1";
+  if (address === "0.0.0.0") return bindHost === "127.0.0.1";
+  if (address === "::") return bindHost === "::1";
+  return address === bindHost;
+};
+
+const reachesTarget = (url: string, target: { readonly host: string; readonly port: number }) => {
+  if (!URL.canParse(url)) return false;
+  const parsed = new URL(url);
+  const port = parsed.port || (parsed.protocol === "https:" ? "443" : "80");
+  return reaches(parsed.hostname, target.host) && port === String(target.port);
+};
+
+/** What Serve forwards to a server: its routes, and the machine names its own web routes use. */
+export interface TailscaleServeRoutesTo {
+  readonly routes: ReadonlyArray<TailscaleServeRoute>;
+  /** More than one when routes from a former machine name remain; `off` acts on the current one. */
+  readonly machineNames: ReadonlySet<string>;
 }
 
 /**
- * The Serve handlers that proxy to `localPort` on this machine's loopback, or undefined when the
- * status cannot be read.
+ * The Serve routes that forward to the server bound at `target`, or undefined when the status
+ * cannot be read.
  */
-export const parseTailscaleServeMountsProxyingTo = (
+export const parseTailscaleServeRoutesTo = (
   rawServeStatusJson: string,
-  localPort: number,
-): ReadonlyArray<TailscaleServeMount> | undefined => {
+  target: { readonly host: string; readonly port: number },
+): TailscaleServeRoutesTo | undefined => {
   const status = decodeTailscaleServeStatusJson(rawServeStatusJson);
   if (Option.isNone(status)) return undefined;
-  const mountsIn = (
-    web: typeof TailscaleServeWebJson.Type,
+  const routesIn = (
+    config: typeof TailscaleServeConfigJson.Type | undefined,
     owner?: string,
-  ): ReadonlyArray<TailscaleServeMount> =>
-    Object.entries(web ?? {}).flatMap(([hostPort, site]) => {
-      const servePort = Number(hostPort.slice(hostPort.lastIndexOf(":") + 1));
+  ): ReadonlyArray<TailscaleServeRoute> => {
+    const scope = owner === undefined ? {} : { owner };
+    const tcp = Object.entries(config?.TCP ?? {}).flatMap(([port, handler]) =>
+      handler.TCPForward !== undefined &&
+      Number.isInteger(Number(port)) &&
+      reachesTarget(`tcp://${handler.TCPForward}`, target)
+        ? [{ servePort: Number(port), ...scope }]
+        : [],
+    );
+    const web = Object.entries(config?.Web ?? {}).flatMap(([hostPort, site]) => {
+      const separator = hostPort.lastIndexOf(":");
+      const servePort = Number(hostPort.slice(separator + 1));
       if (!Number.isInteger(servePort)) return [];
-      return Object.entries(site.Handlers ?? {}).flatMap(([mount, handler]) => {
-        if (handler.Proxy === undefined || !URL.canParse(handler.Proxy)) return [];
-        const target = new URL(handler.Proxy);
-        const port = target.port || (target.protocol === "https:" ? "443" : "80");
-        return forwardsToThisMachine(target.hostname) && port === String(localPort)
-          ? [{ servePort, mount, ...(owner === undefined ? {} : { owner }) }]
-          : [];
-      });
+      const host = hostPort.slice(0, separator);
+      return Object.entries(site.Handlers ?? {}).flatMap(([mount, handler]) =>
+        handler.Proxy !== undefined && reachesTarget(handler.Proxy, target)
+          ? [{ servePort, mount, host, ...scope }]
+          : [],
+      );
     });
-  return [
-    ...mountsIn(status.value?.Web),
-    ...Object.entries(status.value?.Services ?? {}).flatMap(([name, service]) =>
-      mountsIn(service.Web, name),
+    return [...tcp, ...web];
+  };
+  return {
+    routes: [
+      ...routesIn(status.value ?? undefined),
+      ...Object.entries(status.value?.Services ?? {}).flatMap(([name, service]) =>
+        routesIn(service, name),
+      ),
+      ...Object.values(status.value?.Foreground ?? {}).flatMap((session) =>
+        routesIn(session, "foreground"),
+      ),
+    ],
+    machineNames: new Set(
+      Object.keys(status.value?.Web ?? {}).map((hostPort) =>
+        hostPort.slice(0, hostPort.lastIndexOf(":")),
+      ),
     ),
-    ...Object.values(status.value?.Foreground ?? {}).flatMap((session) =>
-      mountsIn(session.Web, "foreground"),
-    ),
-  ];
+  };
 };
 
-/** The HTTPS Serve handlers that forward to `localPort` on this machine. */
-export const readTailscaleServeMountsProxyingTo = (localPort: number) =>
+/** The Serve routes that forward to the server bound at `target` on this machine. */
+export const readTailscaleServeRoutesTo = (target: {
+  readonly host: string;
+  readonly port: number;
+}) =>
   readTailscaleOutput("serve", ["serve", "status", "--json"]).pipe(
     Effect.flatMap((status) => {
-      const mounts = parseTailscaleServeMountsProxyingTo(status, localPort);
-      return mounts === undefined
+      const routes = parseTailscaleServeRoutesTo(status, target);
+      return routes === undefined
         ? Effect.fail(new TailscaleStatusParseError({ cause: "unreadable serve status" }))
-        : Effect.succeed(mounts);
+        : Effect.succeed(routes);
     }),
   );
 

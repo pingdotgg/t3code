@@ -11,7 +11,11 @@ import type {
 } from "@t3tools/contracts";
 import {
   disableTailscaleServe,
-  readTailscaleServeMountsProxyingTo,
+  disableTailscaleServeTcp,
+  readTailscaleServeRoutesTo,
+  tailscaleServeOffArgs,
+  type TailscaleServeRoute,
+  type TailscaleServeRoutesTo,
   type TailscaleStderrDiagnostic,
 } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
@@ -84,6 +88,8 @@ const isMissingCli = (cause: unknown) =>
   (PlatformError.isPlatformError(cause) && cause.reason._tag === "NotFound") ||
   (cause instanceof Error && "code" in cause && cause.code === "ENOTDIR");
 
+const NOTHING_FORWARDED: TailscaleServeRoutesTo = { routes: [], machineNames: new Set() };
+
 /** Tailscale answers that leave nothing forwarding here right now. */
 const NOTHING_TO_CLOSE: ReadonlySet<TailscaleStderrDiagnostic | undefined> = new Set([
   "not-running",
@@ -91,23 +97,25 @@ const NOTHING_TO_CLOSE: ReadonlySet<TailscaleStderrDiagnostic | undefined> = new
 ]);
 
 /**
- * Turns off the Tailscale Serve routes that forward to `port`, such as one `t3 pair --tailscale`
- * left from before the policy, and keeps any other route on the same port. Runs before the server
- * binds, and fails unless a fresh read shows no route here, since `off` can exit 0 and leave it.
- * Without the CLI, or with Tailscale down or logged out, nothing forwards, so nothing is closed.
+ * Turns off the Tailscale Serve routes that forward to the server at `target`, such as one
+ * `t3 pair --tailscale` left from before the policy, and keeps every other route. Runs before the
+ * server binds, and fails unless a fresh read shows no route here, since `off` can exit 0 and
+ * leave it. Without the CLI, or with Tailscale down or logged out, nothing forwards.
  */
 export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServeTo")(function* (
   policy: PolicyDocument,
-  port: number,
+  target: { readonly host: string; readonly port: number },
 ) {
   if (allowsRemoteClients(policy)) return;
-  const readMounts = readTailscaleServeMountsProxyingTo(port).pipe(
+  const readRoutes = readTailscaleServeRoutesTo(target).pipe(
     Effect.catchTags({
       // Only a CLI that is not there; one that will not run might still front a daemon.
       TailscaleCommandSpawnError: (error) =>
-        isMissingCli(error.cause) ? Effect.succeed([]) : Effect.fail(error),
+        isMissingCli(error.cause) ? Effect.succeed(NOTHING_FORWARDED) : Effect.fail(error),
       TailscaleCommandExitError: (error) =>
-        NOTHING_TO_CLOSE.has(error.stderrDiagnostic) ? Effect.succeed([]) : Effect.fail(error),
+        NOTHING_TO_CLOSE.has(error.stderrDiagnostic)
+          ? Effect.succeed(NOTHING_FORWARDED)
+          : Effect.fail(error),
     }),
     // Tailscale errors carry only labelled diagnostics, never raw stderr, so they are safe to log.
     Effect.tapError((cause) =>
@@ -120,31 +128,43 @@ export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServ
       ),
     ),
   );
-  const mounts = yield* readMounts;
-  if (mounts.length === 0) return;
+  const found = yield* readRoutes;
+  if (found.routes.length === 0) return;
+  // `off` acts on the machine's current name, so a web route stays when another name has routes.
   // A Service is shared across the tailnet, and a foreground route lives as long as its command.
-  for (const mount of mounts.filter(({ owner }) => owner === undefined)) {
-    yield* disableTailscaleServe(mount).pipe(
+  const removable = (route: TailscaleServeRoute) =>
+    route.owner === undefined && (route.mount === undefined || found.machineNames.size <= 1);
+  for (const route of found.routes.filter(removable)) {
+    yield* (
+      route.mount === undefined
+        ? disableTailscaleServeTcp(route.servePort)
+        : disableTailscaleServe(route)
+    ).pipe(
       Effect.catch((cause) =>
-        Effect.logWarning("Tailscale Serve route could not be turned off", { ...mount, cause }),
+        Effect.logWarning("Tailscale Serve route could not be turned off", { ...route, cause }),
       ),
     );
   }
-  const left = yield* readMounts;
+  const left = (yield* readRoutes).routes;
   if (left.length > 0) {
+    const describe = (route: TailscaleServeRoute) => {
+      const where = `port ${route.servePort}${route.mount === undefined ? "" : ` at ${route.mount}`}${
+        found.machineNames.size > 1 && route.host !== undefined ? ` for ${route.host}` : ""
+      } here`;
+      const off = tailscaleServeOffArgs(route);
+      return off === undefined
+        ? `${where}; stop the "tailscale serve" command that runs it`
+        : route.owner === undefined && route.mount !== undefined && found.machineNames.size > 1
+          ? `${where}, and this machine has Serve routes under more than one name; remove that route yourself`
+          : `${where}; turn it off with "tailscale ${off.join(" ")}"`;
+    };
     return yield* refuseRemoteClients(
       policy,
-      `so the server does not start while Tailscale Serve forwards ${left
-        .map(({ servePort, mount, owner }) =>
-          owner === "foreground"
-            ? `port ${servePort} at ${mount} here; stop the "tailscale serve" command that runs it`
-            : `port ${servePort} at ${mount} here; turn it off with "tailscale serve ${owner === undefined ? "" : `--service=${owner} `}--https=${servePort} --set-path=${mount} off"`,
-        )
-        .join(", and ")}`,
+      `so the server does not start while Tailscale Serve forwards ${left.map(describe).join(", and ")}`,
     );
   }
   yield* Effect.logInfo("Turned off Tailscale Serve the managed policy does not allow", {
-    mounts,
+    routes: found.routes,
   });
 });
 

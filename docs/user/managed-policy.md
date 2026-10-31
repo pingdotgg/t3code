@@ -202,8 +202,8 @@ networks by default, so set `T3CODE_HOST=127.0.0.1` in its `service.env`. The de
 whatever the user chose. That also turns off T3 Connect. To keep other remote access but turn off
 T3 Connect alone, set `"connect": false`.
 
-When it starts, the server also turns off each Tailscale Serve HTTPS route that forwards to it,
-such as one `t3 pair --tailscale` set up, and leaves other routes alone. It does not start while
+When it starts, the server also turns off each Tailscale Serve route, HTTPS or TCP, that forwards
+to it, such as one `t3 pair --tailscale` set up, and leaves other routes alone. It does not start while
 such a route stays on, or while Tailscale's answer cannot be read; the error names the command
 that turns the route off. It does start when Tailscale is not installed, not running, or logged
 out, since nothing forwards then; a route Tailscale kept returns when Tailscale runs again, so

@@ -10,7 +10,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   ensureTailscaleServe,
   parseTailscaleExitNode,
-  parseTailscaleServeMountsProxyingTo,
+  parseTailscaleServeRoutesTo,
   parseTailscaleSshEnabled,
   parseTailscaleStatus,
   readTailscaleSshEnabled,
@@ -95,9 +95,13 @@ function layerMockSpawner(
 }
 
 describe("tailscale", () => {
-  it("finds the Serve handlers that forward to a local port, and only those", () => {
+  it("finds the Serve routes that forward to the bound address, and only those", () => {
     const status = JSON.stringify({
-      TCP: { "443": { HTTPS: true }, "8443": { HTTPS: true }, "9443": { HTTPS: true } },
+      TCP: {
+        "443": { HTTPS: true },
+        "7000": { TCPForward: "127.0.0.1:3773" },
+        "7001": { TCPForward: "127.0.0.2:3773" },
+      },
       Web: {
         "box.tailnet.ts.net:443": {
           Handlers: {
@@ -106,12 +110,15 @@ describe("tailscale", () => {
           },
         },
         "box.tailnet.ts.net:8443": { Handlers: { "/": { Proxy: "http://127.0.0.1:5173" } } },
-        "box.tailnet.ts.net:9443": { Handlers: { "/": { Proxy: "http://[::1]:3773" } } },
         "box.tailnet.ts.net:10000": {
           Handlers: {
+            // Another service on another loopback address, and one on the other family.
             "/a": { Proxy: "http://127.0.0.2:3773" },
-            "/b": { Proxy: "http://0.0.0.0:3773" },
+            "/b": { Proxy: "http://[::1]:3773" },
             "/c": { Proxy: "http://192.168.1.5:3773" },
+            "/d": { Proxy: "http://0.0.0.0:3773" },
+            "/e": { Proxy: "http://[::ffff:127.0.0.1]:3773" },
+            "/f": { Proxy: "http://localhost:3773" },
           },
         },
       },
@@ -123,33 +130,40 @@ describe("tailscale", () => {
         },
       },
       Foreground: {
-        session1: {
-          Web: {
-            "box.tailnet.ts.net:8443": { Handlers: { "/": { Proxy: "http://localhost:3773" } } },
-          },
-        },
+        session1: { TCP: { "9000": { TCPForward: "localhost:3773" } } },
       },
     });
-    assert.deepEqual(parseTailscaleServeMountsProxyingTo(status, 3773), [
-      { servePort: 443, mount: "/t3" },
-      { servePort: 9443, mount: "/" },
-      { servePort: 10000, mount: "/a" },
-      { servePort: 10000, mount: "/b" },
-      { servePort: 443, mount: "/", owner: "svc:t3" },
-      { servePort: 8443, mount: "/", owner: "foreground" },
+    const found = parseTailscaleServeRoutesTo(status, { host: "127.0.0.1", port: 3773 });
+    assert.deepEqual(found?.routes, [
+      { servePort: 7000 },
+      { servePort: 443, mount: "/t3", host: "box.tailnet.ts.net" },
+      ...["/d", "/e", "/f"].map((mount) => ({
+        servePort: 10000,
+        mount,
+        host: "box.tailnet.ts.net",
+      })),
+      { servePort: 443, mount: "/", host: "t3.tailnet.ts.net", owner: "svc:t3" },
+      { servePort: 9000, owner: "foreground" },
     ]);
+    assert.deepEqual([...(found?.machineNames ?? [])], ["box.tailnet.ts.net"]);
     assert.deepEqual(
-      parseTailscaleServeMountsProxyingTo(
+      parseTailscaleServeRoutesTo(
         JSON.stringify({
           Web: { "box:443": { Handlers: { "/": { Proxy: "http://127.0.0.1" } } } },
         }),
-        80,
-      ),
-      [{ servePort: 443, mount: "/" }],
+        { host: "127.0.0.1", port: 80 },
+      )?.routes,
+      [{ servePort: 443, mount: "/", host: "box" }],
     );
-    assert.deepEqual(parseTailscaleServeMountsProxyingTo("{}", 3773), []);
-    assert.deepEqual(parseTailscaleServeMountsProxyingTo("null", 3773), []);
-    assert.isUndefined(parseTailscaleServeMountsProxyingTo("not json", 3773));
+    assert.deepEqual(
+      parseTailscaleServeRoutesTo("{}", { host: "127.0.0.1", port: 3773 })?.routes,
+      [],
+    );
+    assert.deepEqual(
+      parseTailscaleServeRoutesTo("null", { host: "127.0.0.1", port: 3773 })?.routes,
+      [],
+    );
+    assert.isUndefined(parseTailscaleServeRoutesTo("not json", { host: "127.0.0.1", port: 3773 }));
   });
 
   it.effect("parses status facts", () =>

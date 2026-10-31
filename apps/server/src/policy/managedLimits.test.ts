@@ -133,6 +133,10 @@ it.effect(
     interface Answers {
       /** Serve handlers by host:port, then mount, to proxy target. */
       readonly web?: Web;
+      /** TCP forwards by port. */
+      readonly tcp?: Record<string, string>;
+      /** The name `off` acts on: the machine's current one. */
+      readonly currentName?: string;
       readonly status?: {
         readonly stdout: string;
         readonly exitCode: number;
@@ -142,13 +146,19 @@ it.effect(
       /** `off` exits as told but leaves the config alone. */
       readonly offIgnored?: boolean;
     }
-    // Acts as the real CLI: `serve status --json` prints the config, and `serve --https=<port> off`
-    // drops every handler on that port unless `--set-path` names one (serve_v2.go removeWebServe).
+    // Acts as the real CLI: `serve status --json` prints the config; `serve --https=<port> off`
+    // drops every handler on that port of the current name unless `--set-path` names one
+    // (serve_v2.go removeWebServe), and `serve --tcp=<port> off` drops that port's forward.
     const close = (answers: Answers, offCalls: Array<ReadonlyArray<string>> = []) => {
       const web: Web = answers.web ?? {
         "box.tailnet.ts.net:443": { "/": "http://127.0.0.1:3773" },
       };
-      return ManagedLimits.closeTailscaleServeTo(desktopAndLocal, 3773).pipe(
+      const tcp = answers.tcp ?? {};
+      const currentName = answers.currentName ?? "box.tailnet.ts.net";
+      return ManagedLimits.closeTailscaleServeTo(desktopAndLocal, {
+        host: "127.0.0.1",
+        port: 3773,
+      }).pipe(
         Effect.provideService(
           ChildProcessSpawner.ChildProcessSpawner,
           ChildProcessSpawner.make((command) => {
@@ -157,16 +167,21 @@ it.effect(
             if (!isStatus) {
               offCalls.push(args);
               const port = args.find((arg) => arg.startsWith("--https="))?.slice(8);
+              const tcpPort = args.find((arg) => arg.startsWith("--tcp="))?.slice(6);
               const mount = args.find((arg) => arg.startsWith("--set-path="))?.slice(11);
-              const site = Object.entries(web).find(([hostPort]) => hostPort.endsWith(`:${port}`));
-              if (site !== undefined && answers.offIgnored !== true) {
-                for (const handler of Object.keys(site[1])) {
-                  if (mount === undefined || mount === handler) delete site[1][handler];
+              const site = web[`${currentName}:${port}`];
+              if (answers.offIgnored !== true) {
+                if (tcpPort !== undefined) delete tcp[tcpPort];
+                for (const handler of Object.keys(site ?? {})) {
+                  if (mount === undefined || mount === handler) delete site![handler];
                 }
               }
             }
             const status = answers.status ?? {
               stdout: JSON.stringify({
+                TCP: Object.fromEntries(
+                  Object.entries(tcp).map(([port, forward]) => [port, { TCPForward: forward }]),
+                ),
                 Web: Object.fromEntries(
                   Object.entries(web).map(([hostPort, handlers]) => [
                     hostPort,
@@ -206,21 +221,47 @@ it.effect(
       );
     };
     return Effect.gen(function* () {
-      // A route that shares the port with this server's stays.
+      // A route that shares the port with this server's stays, as does one to another loopback
+      // address on the same port; a TCP forward here goes too.
       for (const mount of ["/t3", "/"]) {
         const web: Web = {
           "box.tailnet.ts.net:443": {
             [mount]: "http://127.0.0.1:3773",
             "/dashboard": "http://127.0.0.1:9000",
+            "/other": "http://127.0.0.2:3773",
           },
         };
+        const tcp: Record<string, string> = { "7000": "localhost:3773" };
         const offCalls: Array<ReadonlyArray<string>> = [];
-        yield* close({ web }, offCalls);
+        yield* close({ web, tcp }, offCalls);
         assert.deepEqual(web, {
-          "box.tailnet.ts.net:443": { "/dashboard": "http://127.0.0.1:9000" },
+          "box.tailnet.ts.net:443": {
+            "/dashboard": "http://127.0.0.1:9000",
+            "/other": "http://127.0.0.2:3773",
+          },
         });
-        assert.deepEqual(offCalls, [["serve", "--https=443", `--set-path=${mount}`, "off"]]);
+        assert.deepEqual(tcp, {});
+        assert.deepEqual(offCalls, [
+          ["serve", "--tcp=7000", "off"],
+          ["serve", "--https=443", `--set-path=${mount}`, "off"],
+        ]);
       }
+      // After a rename, `off` would act on the current name's route at the same path.
+      const renamed: Web = {
+        "old.tailnet.ts.net:443": { "/": "http://127.0.0.1:3773" },
+        "new.tailnet.ts.net:443": { "/": "http://127.0.0.1:9000" },
+      };
+      const renamedOffCalls: Array<ReadonlyArray<string>> = [];
+      const ambiguous = yield* close(
+        { web: renamed, currentName: "new.tailnet.ts.net" },
+        renamedOffCalls,
+      ).pipe(Effect.flip);
+      assert.deepEqual(renamedOffCalls, []);
+      assert.deepEqual(renamed["new.tailnet.ts.net:443"], { "/": "http://127.0.0.1:9000" });
+      assert.include(
+        ambiguous.message,
+        "port 443 at / for old.tailnet.ts.net here, and this machine has Serve routes under more than one name",
+      );
       // Only a fresh read confirms the route is gone, whatever `off` exits with.
       for (const answers of [{ offIgnored: true }, { offIgnored: true, offExitCode: 1 }]) {
         const stuck = yield* close(answers).pipe(Effect.flip);
@@ -274,7 +315,10 @@ it.effect(
         yield* close({ status: { stdout: "", exitCode: 1, stderr } });
       }
       const spawnFailing = (tag: "NotFound" | "PermissionDenied") =>
-        ManagedLimits.closeTailscaleServeTo(desktopAndLocal, 3773).pipe(
+        ManagedLimits.closeTailscaleServeTo(desktopAndLocal, {
+          host: "127.0.0.1",
+          port: 3773,
+        }).pipe(
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
             ChildProcessSpawner.make(() =>
@@ -286,7 +330,10 @@ it.effect(
         );
       yield* spawnFailing("NotFound");
       // Node throws this instead when PATH ends in a file.
-      yield* ManagedLimits.closeTailscaleServeTo(desktopAndLocal, 3773).pipe(
+      yield* ManagedLimits.closeTailscaleServeTo(desktopAndLocal, {
+        host: "127.0.0.1",
+        port: 3773,
+      }).pipe(
         Effect.provideService(
           ChildProcessSpawner.ChildProcessSpawner,
           ChildProcessSpawner.make(() =>
