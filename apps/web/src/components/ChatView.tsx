@@ -12,6 +12,7 @@ import {
   presentThreadShellFromProjection,
 } from "./ChatView.logic";
 import { usePullRequestDraftThread } from "./chat/usePullRequestDraftThread";
+import { usePullRequestLinking } from "../hooks/usePullRequestLinking";
 import { useComposerSelection } from "./chat/useComposerSelection";
 import { useProjectCloneBanner } from "./chat/useProjectCloneBanner";
 import { useAttachmentPreviewHandoff } from "./chat/useAttachmentPreviewHandoff";
@@ -1207,6 +1208,18 @@ export default function ChatView(props: ChatViewProps) {
     canPickEnvironment: hasMultipleEnvironments,
   });
 
+  const pullRequestLinking = usePullRequestLinking(environmentId);
+  // Links the pull request a checkout prepared to the thread it landed on, the same way the Link
+  // pull request dialog does. Best effort: the thread already exists, so a failure is only logged.
+  // Stable identity: a pending shell link can fire after this view unmounts.
+  const linkCheckoutPullRequest = useStableCallback((threadRef: ScopedThreadRef, url: string) => {
+    pullRequestLinking.changeLink(threadRef, url, true).catch((error: unknown) => {
+      console.warn("Failed to link the checked-out pull request to its thread.", error);
+    });
+  });
+  // Draft threads whose send already read the draft (see `checkoutLandedOnSentDraft`). The ref is
+  // passed, not the Set, so the value is not read during render.
+  const sentDraftThreadIdsRef = useRef(new Set<ThreadId>());
   const { handlePreparedPullRequestThreadStable, openPullRequestDialogStable } =
     usePullRequestDraftThread({
       routeKind,
@@ -1217,6 +1230,9 @@ export default function ChatView(props: ChatViewProps) {
       activeThreadKey,
       isServerThread,
       canCheckoutPullRequestIntoThread,
+      environmentId,
+      linkCheckoutPullRequest,
+      sentDraftThreadIds: sentDraftThreadIdsRef,
     });
   const serverConfig = activeThread
     ? (activeEnvironment?.serverConfig ?? null)
@@ -2967,6 +2983,8 @@ export default function ChatView(props: ChatViewProps) {
     sideChatDisabledReason,
     handleNewThreadInActiveProject,
     persistThreadSettingsForNextTurn,
+    linkCheckoutPullRequest,
+    sentDraftThreadIds: sentDraftThreadIdsRef,
   });
   const onImplementPlanInNewThreadStable = useStableCallback(onImplementPlanInNewThread);
 

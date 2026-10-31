@@ -43,7 +43,11 @@ interface PullRequestThreadDialogProps {
   cwd: string | null;
   initialReference: string | null;
   onOpenChange: (open: boolean) => void;
-  onPrepared: (input: { branch: string; worktreePath: string | null }) => Promise<void> | void;
+  onPrepared: (input: {
+    branch: string;
+    worktreePath: string | null;
+    pullRequestUrl: string;
+  }) => Promise<void> | void;
 }
 
 function pullRequestStatusTone(state: string | undefined): string {
@@ -160,6 +164,7 @@ export function PullRequestThreadDialog({
     await onPrepared({
       branch: result.value.branch,
       worktreePath: result.value.worktreePath,
+      pullRequestUrl: result.value.pullRequest.url,
     });
     if (!result.value.isOnPullRequestHead) {
       toastManager.add(offHeadPullRequestCheckoutToast(terminology));

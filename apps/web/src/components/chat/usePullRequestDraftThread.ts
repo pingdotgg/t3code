@@ -1,7 +1,11 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { UnifiedSettings } from "@t3tools/contracts";
 import { useStableCallback } from "../../hooks/useStableCallback";
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import {
+  scopeProjectRef,
+  scopeThreadRef,
+  scopedThreadKey,
+} from "@t3tools/client-runtime/environment";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
 import { DEFAULT_INTERACTION_MODE } from "../../types";
@@ -11,8 +15,16 @@ import {
   selectProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
 import { buildDraftThreadRouteParams } from "../../threadRoutes";
-import { type DraftThreadEnvMode, useComposerDraftStore, DraftId } from "../../composerDraftStore";
+import {
+  type DraftCheckoutPullRequest,
+  type DraftThreadEnvMode,
+  useComposerDraftStore,
+  DraftId,
+} from "../../composerDraftStore";
 import { openPullRequestThreadDialog } from "./ChatOverlayHosts";
+import { readThreadShell, untilThreadShell } from "../../state/entities";
+import { checkoutLandedOnSentDraft } from "../ChatView.logic";
+import { type EnvironmentId, type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
 interface PullRequestDraftThreadInput {
   readonly routeKind: "server" | "draft";
   readonly draftId: DraftId | null;
@@ -22,6 +34,40 @@ interface PullRequestDraftThreadInput {
   readonly activeThreadKey: string | null;
   readonly isServerThread: boolean;
   readonly canCheckoutPullRequestIntoThread: boolean;
+  readonly environmentId: EnvironmentId;
+  readonly linkCheckoutPullRequest: (threadRef: ScopedThreadRef, url: string) => void;
+  readonly sentDraftThreadIds: { readonly current: ReadonlySet<ThreadId> };
+}
+
+// Module scope: the thread shell can arrive after the draft's ChatView unmounts, and the link
+// must survive that.
+const pendingShellLinks = new Map<
+  string,
+  {
+    readonly threadRef: ScopedThreadRef;
+    readonly url: string;
+    readonly link: (threadRef: ScopedThreadRef, url: string) => void;
+  }
+>();
+const shellLinkSubscriptions = new Map<string, () => void>();
+
+function scheduleShellLink(
+  threadRef: ScopedThreadRef,
+  url: string,
+  link: (threadRef: ScopedThreadRef, url: string) => void,
+): void {
+  const threadKey = scopedThreadKey(threadRef);
+  pendingShellLinks.set(threadKey, { threadRef, url, link });
+  if (shellLinkSubscriptions.has(threadKey)) return;
+  shellLinkSubscriptions.set(
+    threadKey,
+    untilThreadShell(threadRef, () => {
+      const pending = pendingShellLinks.get(threadKey);
+      shellLinkSubscriptions.delete(threadKey);
+      pendingShellLinks.delete(threadKey);
+      if (pending) pending.link(pending.threadRef, pending.url);
+    }),
+  );
 }
 
 /**
@@ -38,6 +84,9 @@ export function usePullRequestDraftThread(input: PullRequestDraftThreadInput) {
     activeThreadKey,
     isServerThread,
     canCheckoutPullRequestIntoThread,
+    environmentId,
+    linkCheckoutPullRequest,
+    sentDraftThreadIds,
   } = input;
   const navigate = useNavigate();
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
@@ -62,6 +111,7 @@ export function usePullRequestDraftThread(input: PullRequestDraftThreadInput) {
     branch: string;
     worktreePath: string | null;
     envMode: DraftThreadEnvMode;
+    checkoutPullRequest: DraftCheckoutPullRequest;
   }) => {
     if (!activeProject) {
       throw new Error("No active project is available for this pull request.");
@@ -125,12 +175,30 @@ export function usePullRequestDraftThread(input: PullRequestDraftThreadInput) {
   const handlePreparedPullRequestThread = async (input: {
     branch: string;
     worktreePath: string | null;
+    pullRequestUrl: string;
   }) => {
-    await openOrReuseProjectDraftThread({
+    const threadId = await openOrReuseProjectDraftThread({
       branch: input.branch,
       worktreePath: input.worktreePath,
       envMode: input.worktreePath ? "worktree" : "local",
+      checkoutPullRequest: { url: input.pullRequestUrl, branch: input.branch },
     });
+    // The draft holds the pull request until its first send creates the thread. A draft sent
+    // while the checkout ran missed it, so its thread is linked here once it exists.
+    const threadRef = scopeThreadRef(environmentId, threadId);
+    if (
+      !checkoutLandedOnSentDraft({
+        threadId,
+        sentDraftThreadIds: sentDraftThreadIds.current,
+        draft: useComposerDraftStore.getState().getDraftSessionByRef(threadRef),
+        threadShellExists: readThreadShell(threadRef) !== null,
+      })
+    ) {
+      return;
+    }
+    // A send that fails never creates the thread; the draft keeps the pull request and its
+    // next send links it.
+    scheduleShellLink(threadRef, input.pullRequestUrl, linkCheckoutPullRequest);
   };
   const handlePreparedPullRequestThreadStable = useStableCallback(handlePreparedPullRequestThread);
   return {
