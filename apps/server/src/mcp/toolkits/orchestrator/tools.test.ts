@@ -3,6 +3,7 @@ import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import { Tool } from "effect/ai";
 
+import { advertisedJsonSchema } from "../../advertisedJsonSchema.ts";
 import { OrchestratorToolkit } from "./tools.ts";
 
 // Oversized page sizes clamp on decode, so the schema has no `maximum`; Codex also drops
@@ -26,4 +27,23 @@ it("refuses a t3_thread_update whose fields do not fit its action", () => {
   expect(Exit.isSuccess(decode({ action: "rename", title: "New", environmentId: undefined }))).toBe(
     true,
   );
+});
+
+it("tells agents where a target's providerInstanceId comes from", () => {
+  type Schema = {
+    readonly properties?: Record<string, Schema>;
+    readonly items?: Schema;
+    readonly description?: string;
+  };
+  const { delegate_task, create_threads } = OrchestratorToolkit.tools;
+  const delegate = advertisedJsonSchema(delegate_task) as Schema;
+  const threads = advertisedJsonSchema(create_threads) as Schema;
+  for (const target of [
+    delegate.properties?.target,
+    threads.properties?.threads?.items?.properties?.target,
+  ]) {
+    expect(target?.properties?.providerInstanceId?.description).toBe(
+      "From orchestrator_capabilities.",
+    );
+  }
 });
