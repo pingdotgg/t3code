@@ -278,6 +278,10 @@ describe("workspace area focus", () => {
     // A window switch can deliver a lone modifier key without moving focus.
     await userEvent.keyboard("{Shift}");
     expect(outline(), "a clicked area shows the focus ring after a bare key press").toBe("none");
+    // Window activation refocuses the element that had focus, with nothing focused in between.
+    home.blur();
+    home.focus();
+    expect(outline(), "a clicked area rings when the window regains focus").toBe("none");
 
     await userEvent.keyboard("{F6}");
     fixture.controller.move(-1);
@@ -286,6 +290,13 @@ describe("workspace area focus", () => {
     fixture.controller.move(1);
     expect(document.activeElement).toBe(home);
     expect(outline()).toBe("solid");
+
+    // A dialog opened from the keyboard returns focus to the area when it closes.
+    await userEvent.keyboard("{Enter}");
+    sidebar.button.focus();
+    await userEvent.keyboard("{Escape}");
+    home.focus();
+    expect(outline(), "an area loses its ring when keyboard focus returns to it").toBe("solid");
 
     await userEvent.click(home);
     expect(outline(), "clicking the ringed area removes its ring").toBe("none");
