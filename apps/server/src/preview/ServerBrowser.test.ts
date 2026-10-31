@@ -687,7 +687,11 @@ it.live.each(["load", "none"] as const)(
           operation: "navigate",
           input: { url: "http://localhost:5173/busy" },
         });
-        const { renderer } = contexts[0]!;
+        const { renderer, sessions } = contexts[0]!;
+        // On an idle renderer V8 would terminate the next script, which may be the new page's.
+        expect(
+          sessions.flatMap((session) => session.send.mock.calls.map(([method]) => method)),
+        ).not.toContain("Runtime.terminateExecution");
         renderer.busyScript = Promise.withResolvers<void>();
         renderer.gotoStarted = Promise.withResolvers<void>();
 
