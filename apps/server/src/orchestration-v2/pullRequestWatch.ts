@@ -41,8 +41,10 @@ export function evaluatePullRequestWatch(
   now: number,
 ): PullRequestWatchReport {
   const changes: Array<PullRequestWatchChange> = [];
-  const headSha = detail.headSha ?? null;
-  const headMoved = headSha !== watch.headSha;
+  // A read without a head says nothing about pushes, so it keeps the last known one.
+  const headSha = detail.headSha ?? watch.headSha;
+  const headMoved = watch.headSha !== null && headSha !== watch.headSha;
+  const checksBaseline = watch.awaitingBaseline !== undefined && !headMoved;
 
   // Hosts can return no checks on read failure; preserve prior state.
   let failedChecks = headMoved ? [] : watch.failedChecks;
@@ -52,7 +54,9 @@ export function evaluatePullRequestWatch(
   if (detail.checks.length > 0) {
     const failed = detail.checks.filter(isFailedCheck);
     const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
-    if (newlyFailed.length > 0) changes.push({ kind: "checks-failed", failed: newlyFailed });
+    if (!checksBaseline && newlyFailed.length > 0) {
+      changes.push({ kind: "checks-failed", failed: newlyFailed });
+    }
     failedChecks = failed.map((check) => check.name);
 
     const required = detail.checks.filter((check) => check.required === true);
@@ -74,7 +78,9 @@ export function evaluatePullRequestWatch(
       failed.length === 0 && detail.checks.every((check) => check.status !== "pending");
     owedChecks = owed;
     if (passedNow && (!passed || gateGrew)) {
-      changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
+      if (!checksBaseline) {
+        changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
+      }
       owedChecks =
         required.length > 0
           ? detail.checks
@@ -95,9 +101,10 @@ export function evaluatePullRequestWatch(
   // repository runs no checks at all, nothing waits.
   let checksAwaitedSince = watch.checksAwaitedSince;
   if (detail.capabilities.checksAlwaysReport === true) {
-    const awaitedBefore = headMoved
-      ? DateTime.formatIso(DateTime.makeUnsafe(now))
-      : (watch.checksAwaitedSince ?? null);
+    const awaitedBefore =
+      headMoved || watch.awaitingBaseline === "all"
+        ? DateTime.formatIso(DateTime.makeUnsafe(now))
+        : (watch.checksAwaitedSince ?? null);
     checksAwaitedSince = detail.checks.length > 0 ? null : awaitedBefore;
     const awaitedMs = checksAwaitedSince === null ? 0 : now - Date.parse(checksAwaitedSince);
     if (awaitedMs >= PULL_REQUEST_WATCH_NO_CHECKS_MS) {
@@ -126,7 +133,11 @@ export function evaluatePullRequestWatch(
     ...atLatest.map((remark) => remark.id),
   ];
 
-  if (detail.mergeability === "conflicting" && !watch.conflicting) {
+  if (
+    watch.awaitingBaseline !== "all" &&
+    detail.mergeability === "conflicting" &&
+    !watch.conflicting
+  ) {
     changes.push({ kind: "conflicting" });
   }
   // "unknown" is a host still computing after a push; only a clean answer clears a conflict.
@@ -149,6 +160,7 @@ export function evaluatePullRequestWatch(
       remarkIds,
       conflicting,
       wakes,
+      ...(checksBaseline && detail.checks.length === 0 && { awaitingBaseline: "checks" as const }),
       checksAwaitedSince,
     },
     exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
