@@ -127,10 +127,14 @@ jobs:
       # This pull_request_target job may fetch untrusted PR commits only as passive
       # git data. Do not add dependency installs, build/test scripts, or cache
       # actions here; use pull_request plus workflow_run for that pattern instead.
+      # Sizing reads git history, not files. sparse-checkout makes actions/checkout
+      # fetch with --filter=blob:none, and git diff fetches only the changed blobs.
       - name: Checkout base repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          sparse-checkout: /.github/
+          sparse-checkout-cone-mode: false
       - name: Sync PR size label
         uses: actions/github-script@v8
         env:
