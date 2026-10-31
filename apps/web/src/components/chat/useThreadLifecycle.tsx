@@ -12,6 +12,7 @@ import {
   makeThreadErrorSetter,
 } from "../ChatView.logic";
 import { useStableCallback } from "../../hooks/useStableCallback";
+import { useNowAfter } from "../../hooks/useDeadline";
 import type { usePendingThreadRequests } from "./usePendingThreadRequests";
 import {
   AuthOrchestrationOperateScope,
@@ -32,7 +33,7 @@ import { settleAndAdvance } from "../../settleAndAdvance";
 import type { ChatShortcutCommands } from "./useChatShortcuts";
 import { resolveThreadLastVisitedAt } from "../Sidebar.logic";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type SetStateAction, useEffect, useRef, useState } from "react";
+import { type SetStateAction, useRef, useState } from "react";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import {
   isAtomCommandInterrupted,
@@ -58,12 +59,21 @@ import { readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import {
-  backgroundWorkBannerItem,
-  childInputBannerItem,
-  goalBannerItem,
+  backgroundWorkNowItem,
+  childInputNowItem,
+  goalNowItem,
+  runStopNowItem,
 } from "./ThreadActivityBanners";
+import { useForceStopThread } from "./useForceStopThread";
+import { useAtomValue } from "@effect/atom-react";
+import type { RunStopPresentation } from "@t3tools/client-runtime/state/thread-execution";
+import { Atom } from "effect/reactivity";
+import { environmentThreadDetails } from "../../state/threads";
 import type { useLocalDispatchState } from "./useLocalDispatchState";
 const RELATED_THREAD_SHELL_WAIT_MS = 1_000;
+const NO_RUN_STOP_ATOM = Atom.make<RunStopPresentation | null>(null).pipe(
+  Atom.withLabel("web-thread-run-stop:empty"),
+);
 
 type PendingThreadRequests = ReturnType<typeof usePendingThreadRequests>;
 type LocalDispatchState = ReturnType<typeof useLocalDispatchState>;
@@ -77,6 +87,8 @@ interface ThreadLifecycleInput {
   readonly activeThread: EnvironmentThreadShell | undefined;
   readonly activeThreadId: ThreadId | null;
   readonly activeThreadRef: ScopedThreadRef | null;
+  /** Null until the thread's detail may load; see resolveThreadDetailRef. */
+  readonly threadDetailRef: ScopedThreadRef | null;
   readonly activeThreadKey: string | null;
   readonly activeThreadShell: EnvironmentThreadShell | null;
   readonly activeLatestRun: EnvironmentThreadShell["latestRun"];
@@ -84,7 +96,8 @@ interface ThreadLifecycleInput {
   readonly serverConfig: EnvironmentServerConfig | null;
   readonly runtimeMode: RuntimeMode;
   readonly isWorking: boolean;
-  readonly pendingBackgroundTasks: Parameters<typeof backgroundWorkBannerItem>[0]["tasks"];
+  readonly pendingBackgroundTasks: Parameters<typeof backgroundWorkNowItem>[0]["tasks"];
+  readonly turnItems: Parameters<typeof backgroundWorkNowItem>[0]["turnItems"];
   readonly activePendingApproval: PendingThreadRequests["activePendingApproval"];
   readonly activePendingUserInput: PendingThreadRequests["activePendingUserInput"];
   readonly localCheckoutBranchMismatch: {
@@ -101,7 +114,6 @@ interface ThreadLifecycleInput {
   readonly clearUsageLimitsFor: (threadKey: string) => void;
   readonly beginLocalDispatch: LocalDispatchState["beginLocalDispatch"];
   readonly resetLocalDispatch: LocalDispatchState["resetLocalDispatch"];
-  readonly scheduleComposerFocus: () => void;
   readonly scrollToEnd: (animated?: boolean) => void;
   readonly persistThreadSettingsForNextTurn: (input: {
     threadId: ThreadId;
@@ -127,6 +139,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     activeThread,
     activeThreadId,
     activeThreadRef,
+    threadDetailRef,
     activeThreadKey,
     activeThreadShell,
     activeLatestRun,
@@ -135,6 +148,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     runtimeMode,
     isWorking,
     pendingBackgroundTasks,
+    turnItems,
     activePendingApproval,
     activePendingUserInput,
     localCheckoutBranchMismatch,
@@ -148,7 +162,6 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     clearUsageLimitsFor,
     beginLocalDispatch,
     resetLocalDispatch,
-    scheduleComposerFocus,
     scrollToEnd,
     persistThreadSettingsForNextTurn,
   } = input;
@@ -167,39 +180,19 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     reportFailure: false,
   });
 
-  const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
-  const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
-  const supportsPinning = serverConfig?.environment.capabilities.threadPinning === true;
-  const activeThreadPinned = supportsPinning && activeThreadShell?.pinnedAt != null;
-  // The compiler caches render results on their inputs, so a clock read in render
-  // stays frozen until the shell changes. The clock is state: reset with the shell,
-  // and moved by the wake timer.
-  const [snoozeClockState, setSnoozeClockState] = useState(() => ({
-    shell: activeThreadShell,
-    now: new Date().toISOString(),
-  }));
-  if (snoozeClockState.shell !== activeThreadShell) {
-    // oxlint-disable-next-line react/purity -- Reseeds the snooze clock only in the render-phase adjustment that runs when the shell changes.
-    setSnoozeClockState({ shell: activeThreadShell, now: new Date().toISOString() });
-  }
-  const snoozeClock = snoozeClockState.now;
+  const serverConfigLoaded = serverConfig !== null;
+  const activeThreadPinned = serverConfigLoaded && activeThreadShell?.pinnedAt != null;
+  // A clock read in render would stay frozen in the compiler's cache, so the
+  // snooze checks read a snapshot that moves when the wake time changes or passes.
+  const snoozeClock = new Date(
+    useNowAfter(Date.parse(activeThreadShell?.snoozedUntil ?? "") || null),
+  ).toISOString();
   const activeThreadSnoozed =
     activeThreadShell !== null &&
-    supportsSnooze &&
+    serverConfigLoaded &&
     effectiveSnoozed(activeThreadShell, { now: snoozeClock });
-  useEffect(() => {
-    if (!activeThreadSnoozed) return;
-    const wakeAtMs = Date.parse(activeThreadShell?.snoozedUntil ?? "");
-    if (!Number.isFinite(wakeAtMs)) return;
-    const id = window.setTimeout(
-      () => setSnoozeClockState((clock) => ({ ...clock, now: new Date().toISOString() })),
-      Math.min(Math.max(0, wakeAtMs - Date.now()) + 50, 2_147_483_647),
-    );
-    return () => window.clearTimeout(id);
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A clock that lands before the wake time (timer clamping, clock skew) re-arms the timer.
-  }, [activeThreadShell?.snoozedUntil, activeThreadSnoozed, snoozeClock]);
   const activeThreadWokeAt =
-    activeThreadShell !== null && supportsSnooze
+    activeThreadShell !== null && serverConfigLoaded
       ? threadWokeAt(activeThreadShell, { now: snoozeClock })
       : null;
   const acknowledgeThreadWoke = useAcknowledgeThreadWoke();
@@ -222,7 +215,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     latestRunCompletedAt: activeLatestRun?.completedAt ?? null,
   });
   const activeThreadSettled =
-    supportsSettlement && activeThreadShell?.settledOverride === "settled";
+    serverConfigLoaded && activeThreadShell?.settledOverride === "settled";
   const unsettleThreadMutation = useOrchestrationCommand(threadEnvironment.unsettle, {
     reportFailure: false,
   });
@@ -299,7 +292,11 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     setUnsnoozingThreadKey((current) => (current === threadKey ? null : current));
   };
   const handleUnsnoozeActiveThreadStable = useStableCallback(handleUnsnoozeActiveThread);
-  const [isRestoringThreadBranch, setIsRestoringThreadBranch] = useState(false);
+  const [restoringBranchThreadKeys, setRestoringBranchThreadKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const isRestoringThreadBranch =
+    activeThreadKey !== null && restoringBranchThreadKeys.has(activeThreadKey);
   const [revealedBranchMismatchKey, setRevealedBranchMismatchKey] = useState<string | null>(null);
   const [, setBranchMismatchDismissTick] = useState(0);
   const composerHasDraftContent = useComposerDraftStore((store) =>
@@ -334,7 +331,14 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     ) {
       return;
     }
-    setIsRestoringThreadBranch(true);
+    const threadKey = scopedThreadKey(scopeThreadRef(environmentId, activeThread.id));
+    const finishRestore = () =>
+      setRestoringBranchThreadKeys((current) => {
+        const next = new Set(current);
+        next.delete(threadKey);
+        return next;
+      });
+    setRestoringBranchThreadKeys((current) => new Set(current).add(threadKey));
     const checkoutResult = await switchGitRef({
       environmentId,
       input: {
@@ -343,7 +347,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       },
     });
     if (checkoutResult._tag === "Failure") {
-      setIsRestoringThreadBranch(false);
+      finishRestore();
       if (!isAtomCommandInterrupted(checkoutResult)) {
         toastManager.add(
           stackedThreadToast({
@@ -357,7 +361,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     }
 
     if (!readEnvironmentScope(environmentId, AuthSourceControlWriteScope)) {
-      setIsRestoringThreadBranch(false);
+      finishRestore();
       return;
     }
     const nextBranch = checkoutResult.value.refName ?? localCheckoutBranchMismatch.threadBranch;
@@ -367,7 +371,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         input: { threadId: activeThread.id, branch: nextBranch, worktreePath: null },
       });
       if (updateResult._tag === "Failure") {
-        setIsRestoringThreadBranch(false);
+        finishRestore();
         if (!isAtomCommandInterrupted(updateResult)) {
           toastManager.add(
             stackedThreadToast({
@@ -382,8 +386,12 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       }
     }
     gitStatusQuery.refresh();
-    setIsRestoringThreadBranch(false);
-    scheduleComposerFocus();
+    finishRestore();
+    if (currentRouteThreadKeyRef.current === routeThreadKey) {
+      window.requestAnimationFrame(() => {
+        if (currentRouteThreadKeyRef.current === routeThreadKey) composerRef.current?.focusAtEnd();
+      });
+    }
   };
   const handleSwitchCheckoutToThreadStable = useStableCallback(() => {
     void handleSwitchCheckoutToThread();
@@ -450,7 +458,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   };
   const onOpenRelatedThreadStable = useStableCallback(onOpenRelatedThread);
   const childThreadInputs = useChildThreadInputs(activeThreadRef);
-  const childInputBanner = childInputBannerItem({
+  const childInputNow = childInputNowItem({
     childThreadInputs,
     parentAwaitingUser: Boolean(
       activePendingApproval || activePendingUserInput || activeThreadShell?.hasPendingUserInput,
@@ -520,9 +528,9 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   };
   const sendStandaloneCommandStable = useStableCallback(sendStandaloneCommand);
   const activeGoal = activeThreadShell?.goal ?? null;
-  const goalBanner =
+  const goalNow =
     activeThread && activeGoal !== null
-      ? goalBannerItem({
+      ? goalNowItem({
           threadId: activeThread.id,
           goal: activeGoal,
           isWorking,
@@ -530,10 +538,27 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         })
       : null;
 
-  const backgroundWorkBanner = activeThread
-    ? backgroundWorkBannerItem({
+  const forceStop = useForceStopThread(environmentId);
+  const anyRunStop = useAtomValue(
+    threadDetailRef ? environmentThreadDetails.runStopAtom(threadDetailRef) : NO_RUN_STOP_ATOM,
+  );
+  // A background Stop matters only while that work is still pending.
+  const runStop = anyRunStop?.background && activeBackgroundTasks.length === 0 ? null : anyRunStop;
+  const runStopNow =
+    activeThread && runStop !== null
+      ? runStopNowItem({
+          threadId: activeThread.id,
+          stop: runStop,
+          canForceStop: forceStop.canForceStop,
+          forceStopping: forceStop.stoppingThreadId === activeThread.id,
+          onForceStop: () => void forceStop.forceStopThread(activeThread.id, runStop.runId),
+        })
+      : null;
+  const backgroundWorkNow = activeThread
+    ? backgroundWorkNowItem({
         threadId: activeThread.id,
         tasks: activeBackgroundTasks,
+        turnItems,
         stopDisabled: !canOperateThread || isStoppingBackgroundWork,
         stopping: isStoppingBackgroundWork,
         onStop: handleStopBackgroundWorkStable,
@@ -588,7 +613,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const shortcuts = {
     "thread.settle": () => {
       if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
-      if (!activeThreadShell || !activeThreadRef || !supportsSettlement) return;
+      if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
       if (activeThreadSettled) {
         void handleUnsettleActiveThread();
         return;
@@ -598,7 +623,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     },
     "thread.pin": () => {
       if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
-      if (!activeThreadShell || !activeThreadRef || !supportsPinning) return;
+      if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
       void (
         activeThreadPinned ? confirmAndUnpinThread(activeThreadRef) : pinThread(activeThreadRef)
       ).then(
@@ -612,9 +637,11 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     shortcuts,
     acknowledgeActiveThreadWoke,
     activeBranchMismatchKey,
-    backgroundWorkBanner,
-    childInputBanner,
-    goalBanner,
+    // A Stop that went unanswered needs the user; one in progress is the thread's work.
+    attentionNow: runStop?.state === "unresponsive" ? runStopNow : childInputNow,
+    workNow: runStop?.state === "stopping" ? runStopNow : backgroundWorkNow,
+    childInputNow,
+    goalNow,
     handleSwitchCheckoutToThread,
     handleSwitchCheckoutToThreadStable,
     isRestoringThreadBranch,
