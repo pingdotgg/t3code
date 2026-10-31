@@ -36,22 +36,14 @@ interface GrokAcpRuntimeInput extends Omit<
   readonly runtimeMode?: RuntimeMode;
 }
 
-/**
- * The runtime modes `grok agent` can launch in: ask, its auto classifier, and
- * always-approve. It has no Auto-accept edits: `acceptEdits` only exists as a
- * settings-file `permissions.defaultMode`, and `grok agent` treats it as ask.
- */
+// grok agent treats settings-only acceptEdits as ask; it has no Auto-accept edits launch mode.
 export const GROK_SUPPORTED_RUNTIME_MODES = [
   "approval-required",
   "auto",
   "full-access",
 ] as const satisfies ReadonlyArray<RuntimeMode>;
 
-/**
- * Launch argv for a runtime mode. `--permission-mode` on the argv beats the
- * user's Grok config, so Supervised cannot inherit a configured always-approve.
- * A mode Grok does not offer launches asking.
- */
+// argv overrides Grok config so Supervised cannot inherit always-approve.
 export function grokAcpSpawnArgs(runtimeMode?: RuntimeMode): ReadonlyArray<string> {
   switch (runtimeMode) {
     case undefined:
@@ -65,7 +57,7 @@ export function grokAcpSpawnArgs(runtimeMode?: RuntimeMode): ReadonlyArray<strin
   }
 }
 
-export function buildGrokAcpSpawnInput(
+function buildGrokAcpSpawnInput(
   grokSettings: GrokAcpRuntimeGrokSettings | null | undefined,
   cwd: string,
   environment?: NodeJS.ProcessEnv,
@@ -88,51 +80,29 @@ function resolveGrokAuthMethodId(environment: NodeJS.ProcessEnv | undefined): st
     : GROK_AUTH_METHOD_CACHED_TOKEN;
 }
 
-export function grokAcpRuntimeProcessOwnership(
+function grokAcpRuntimeProcessOwnership(
   processGroupPlatform: NodeJS.Platform,
 ): Pick<
   AcpSessionRuntime.AcpSessionRuntimeOptions,
   "ownDescendantProcessGroups" | "ownDetachedProcessGroup" | "processGroupPlatform"
 > {
   return {
-    // macOS keeps the prior provider-group teardown until a stable libproc
-    // identity provider can cover Grok's nested detached tool groups.
+    // macOS lacks a stable libproc identity provider for Grok's nested detached tool groups.
     ownDescendantProcessGroups: processGroupPlatform === "linux",
     ownDetachedProcessGroup: true,
     processGroupPlatform,
   };
 }
 
-/**
- * Current Grok treats Ctrl+C cancellation as a barrier against stale
- * background-task wake prompts until the next genuine user turn. Replay sends
- * the same metadata so recorded cancels match.
- */
+// Grok Ctrl+C blocks stale background wakes until the next genuine user turn.
 export const GROK_ACP_CANCEL_META = { cancelTrigger: "ctrl_c" } as const;
 
-/**
- * Grok's Auto mode asks the client about an action its classifier blocks only
- * when the client declares a type that can show a prompt; the default
- * (`generic`) gets a silent denial instead. `extension` is the prompting type
- * that keeps the permission options T3 already maps (no always-approve row,
- * no per-command persistent grants).
- */
+// generic silently denies Auto refusals; extension prompts without persistent command grants.
 export const GROK_ACP_INITIALIZE_META = { clientType: "extension" } as const;
 
-/**
- * Grok's only session-scoped `allow_always` answer: "Yes, allow all edits
- * during this session" on an edit prompt. Its bash, monitor and MCP
- * `always-allow` rows instead save a grant for the whole project that outlives
- * the session (grok-build `crates/codegen/xai-grok-workspace/src/permission/`
- * `prompter.rs` `ALLOW_EDITS_SESSION_OPTION_ID`, `grants.rs`
- * `record_prompt_outcome`).
- */
+// Only allow-edits-session is session-scoped; other allow-always choices persist project grants.
 const GROK_ALLOW_EDITS_SESSION_OPTION_ID = "allow-edits-session";
 
-/**
- * The approval choices a Grok permission prompt can honor. The session choice
- * appears only where Grok's answer lasts for the session.
- */
 export function grokApprovalOptions(
   request: EffectAcpSchema.RequestPermissionRequest,
 ): ReadonlyArray<ProviderApprovalOption> {
@@ -151,42 +121,36 @@ export function grokApprovalOptions(
   ];
 }
 
-export const makeGrokAcpRuntime = (
+export const makeGrokAcpRuntime = Effect.fn("GrokAcpSupport.makeGrokAcpRuntime")(function* (
   input: GrokAcpRuntimeInput,
-): Effect.Effect<
+): Effect.fn.Return<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
   ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
-> =>
-  Effect.gen(function* () {
-    const processGroupPlatform = yield* HostProcess.Platform.pipe(
-      Effect.provide(NodeServices.layer),
-    );
-    const acpContext = yield* Layer.build(
-      AcpSessionRuntime.layer({
-        ...input,
-        spawn: buildGrokAcpSpawnInput(
-          input.grokSettings,
-          input.cwd,
-          input.environment,
-          input.runtimeMode,
-        ),
-        authMethodId: resolveGrokAuthMethodId(input.environment),
-        cancelMeta: { ...input.cancelMeta, ...GROK_ACP_CANCEL_META },
-        initializeMeta: GROK_ACP_INITIALIZE_META,
-        ...grokAcpRuntimeProcessOwnership(processGroupPlatform),
-      }),
-    );
-    const runtime = yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
-      Effect.provide(acpContext),
-    );
-    return yield* makeXAiPromptCompletionRuntime(runtime);
-  });
+> {
+  const processGroupPlatform = yield* HostProcess.Platform.pipe(Effect.provide(NodeServices.layer));
+  const acpContext = yield* Layer.build(
+    AcpSessionRuntime.layer({
+      ...input,
+      spawn: buildGrokAcpSpawnInput(
+        input.grokSettings,
+        input.cwd,
+        input.environment,
+        input.runtimeMode,
+      ),
+      authMethodId: resolveGrokAuthMethodId(input.environment),
+      cancelMeta: { ...input.cancelMeta, ...GROK_ACP_CANCEL_META },
+      initializeMeta: GROK_ACP_INITIALIZE_META,
+      ...grokAcpRuntimeProcessOwnership(processGroupPlatform),
+    }),
+  );
+  const runtime = yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
+    Effect.provide(acpContext),
+  );
+  return yield* makeXAiPromptCompletionRuntime(runtime);
+});
 
-/**
- * T3's built-in Grok slug. It is the CLI's product name, not a model id the ACP accepts,
- * so selecting it means "use whatever model the Grok session currently runs on".
- */
+// This product name is not an ACP model ID; it selects the current session model.
 export const GROK_DEFAULT_MODEL_SLUG = "grok-build";
 
 export function resolveGrokAcpBaseModelId(model: string | null | undefined): string {
@@ -246,7 +210,6 @@ export function applyGrokAcpModelSelection<E>(input: {
   readonly requestedReasoningEffort?: string | undefined;
   readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
 }): Effect.Effect<string | undefined, E> {
-  // The product slug is never sent over the wire; it keeps the session's current model.
   const requestedModelId =
     input.requestedModelId === GROK_DEFAULT_MODEL_SLUG ? undefined : input.requestedModelId;
   const modelChanged = requestedModelId !== undefined && requestedModelId !== input.currentModelId;
@@ -262,11 +225,6 @@ export function applyGrokAcpModelSelection<E>(input: {
   }
   const reasoningMeta =
     reasoningProvided && reasoningEffort !== undefined ? { reasoningEffort } : undefined;
-  // When reasoning was explicitly provided but invalid (normalize => undefined), we deliberately
-  // send no meta so the invalid value is dropped rather than forwarded. When reasoning was not
-  // provided at all, we also send no meta, but we only reach this call when the model itself
-  // changed - an omitted reasoning preference must not be treated as an explicit clear of the
-  // CLI-advertised default (e.g. Extra High) on same-model reselections.
   return input.runtime
     .setSessionModel(targetModelId, reasoningMeta)
     .pipe(Effect.mapError(input.mapError), Effect.as(targetModelId));

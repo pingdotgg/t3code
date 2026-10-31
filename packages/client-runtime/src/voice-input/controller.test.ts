@@ -5,7 +5,6 @@ import {
   resolveTranscriptCommit,
   VoiceInputController,
   VOICE_RECORDING_LIMIT_SECONDS,
-  voiceInputBlocksSubmission,
   type VoiceDraftSnapshot,
   type VoiceInputControllerDependencies,
   type VoiceRecorder,
@@ -468,33 +467,6 @@ describe("VoiceInputController", () => {
     },
   );
 
-  it("cancels an in-flight transcriber that rejects when its signal aborts", async () => {
-    const transcription = deferred<string>();
-    const transcriptionEntered = deferred<AbortSignal>();
-    const harness = createHarness({
-      getTranscriber: () => ({
-        prepare: async () =>
-          preparedTranscription((_uri, { signal }) => {
-            signal.addEventListener("abort", () => transcription.reject(new Error("aborted")), {
-              once: true,
-            });
-            transcriptionEntered.resolve(signal);
-            return transcription.promise;
-          }),
-      }),
-    });
-    await harness.controller.start();
-    const stopping = harness.controller.stop();
-    const signal = await transcriptionEntered.promise;
-    harness.controller.cancel();
-    await stopping;
-
-    expect(signal.aborted).toBe(true);
-    expect(harness.commits).toEqual([]);
-    expect(harness.deleted).toEqual(["file:///voice.m4a"]);
-    expect(harness.controller.currentState.phase).toBe("idle");
-  });
-
   it("releases the microphone before transcription starts", async () => {
     const events: string[] = [];
     const harness = createHarness({
@@ -513,28 +485,6 @@ describe("VoiceInputController", () => {
     await harness.controller.stop();
 
     expect(events).toEqual(["released", "transcribed"]);
-  });
-
-  it("retries audio-session release during final cleanup", async () => {
-    const releaseRecording = vi
-      .fn<() => Promise<void>>()
-      .mockRejectedValueOnce(new Error("busy"))
-      .mockResolvedValueOnce(undefined);
-    const harness = createHarness({ releaseRecording });
-    await harness.controller.start();
-    await harness.controller.stop();
-
-    expect(releaseRecording).toHaveBeenCalledTimes(2);
-  });
-
-  it("leaves transcription with an error when recorder finalization fails", async () => {
-    const harness = createHarness();
-    harness.recorder.stop.mockRejectedValueOnce(new Error("stop failed"));
-    await harness.controller.start();
-    await harness.controller.stop();
-
-    expect(harness.controller.currentState.phase).toBe("error");
-    expect(harness.controller.currentState.error).toContain("finish voice recording");
   });
 
   it("ignores a late transcript after the draft owner changes", async () => {

@@ -40,7 +40,6 @@ export async function startNativeCaptureFeedback(
     ready.resolve(undefined);
     landed.resolve();
     child.stdin.end('{"command":"close"}\n');
-    // Kill only our own child if the compositor fails to acknowledge cancellation.
     killTimer = setTimeout(() => child.kill(), 1000);
     killTimer.unref();
   };

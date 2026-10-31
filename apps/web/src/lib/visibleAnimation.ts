@@ -21,7 +21,6 @@ function updateAnimations() {
   for (const animation of animations.values()) updateAnimation(animation);
 }
 
-/** Attach to a stable animation container. All refs share visibility and motion listeners. */
 export function observeVisibleAnimation(element: HTMLElement | SVGElement | null) {
   if (element === null) return;
   element.style.setProperty("--visible-animation-state", "paused");

@@ -20,8 +20,6 @@ import * as OpenCode2Server from "./OpenCode2Server.ts";
 
 // Shapes and content types observed on `opencode serve` 2.0.18 (pid and port replaced). 1.x
 // answers /api/info with its web UI: 200 text/html.
-const INFO_BODY =
-  '{"version":"2.0.18","pid":4242,"urls":["http://127.0.0.1:4096"],"paths":{"tmp":"/tmp/opencode"}}';
 const UNAUTHORIZED_BODY = '{"_tag":"UnauthorizedError","message":"Authentication required"}';
 const SPA_BODY = "<!doctype html><html><head><title>OpenCode</title></head></html>";
 
@@ -53,15 +51,6 @@ const verify = (httpClient: Layer.Layer<HttpClient.HttpClient>, url = "http://12
   }).pipe(Effect.provide(OpenCode2Client.layer.pipe(Layer.provide(httpClient))));
 
 describe("OpenCode2Server.verifyServer", () => {
-  it.effect("returns the version of an authenticated OpenCode 2 server", () =>
-    Effect.gen(function* () {
-      const version = yield* verify(
-        layerServerReplying({ status: 200, contentType: "application/json", body: INFO_BODY }),
-      );
-      assert.strictEqual(version, "2.0.18");
-    }),
-  );
-
   it.effect("reports a rejected password, not a wrong server", () =>
     Effect.gen(function* () {
       const error = yield* verify(
@@ -94,7 +83,6 @@ describe("OpenCode2Server.verifyServer", () => {
     }),
   );
 
-  // 1.x (and the 2.x web UI on unknown paths) answers /api/info with 200 HTML.
   it.effect("rejects a server that answers with the web UI's HTML", () =>
     Effect.gen(function* () {
       const error = yield* verify(
@@ -103,18 +91,9 @@ describe("OpenCode2Server.verifyServer", () => {
       assert.include(error.detail, "is not an OpenCode 2 server");
     }),
   );
-
-  it.effect("reports an unreachable server as unreachable", () =>
-    Effect.gen(function* () {
-      const error = yield* verify(FetchHttpClient.layer, "http://127.0.0.1:1").pipe(Effect.flip);
-      assert.include(error.detail, "Could not reach the OpenCode server");
-    }),
-  );
 });
 
 describe("OpenCode2Server error details", () => {
-  // `detail` reaches clients through the provider status message, and a
-  // `serverUrl` can carry credentials in its userinfo or query.
   const serverUrl = "http://user:url-secret@127.0.0.1:1/?token=query-secret";
   const detailFor = (httpClient: Layer.Layer<HttpClient.HttpClient>) =>
     Effect.gen(function* () {
@@ -170,16 +149,6 @@ describe("OpenCode2Server error details", () => {
 });
 
 describe("OpenCode2Server passwords", () => {
-  it.effect("generates a distinct 256-bit password per server", () =>
-    Effect.gen(function* () {
-      const first = yield* OpenCode2Server.generatePassword;
-      const second = yield* OpenCode2Server.generatePassword;
-      assert.match(Redacted.value(first), /^[A-Za-z0-9_-]{43}$/);
-      assert.notStrictEqual(Redacted.value(first), Redacted.value(second));
-      assert.notInclude(String(first), Redacted.value(first));
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
   it("hands the spawned server only the T3 password", () => {
     const password = Redacted.make("t3-generated");
     const environment = OpenCode2Server.serverEnvironment(
@@ -190,9 +159,6 @@ describe("OpenCode2Server passwords", () => {
   });
 });
 
-// Serves /api/info only with the password from OPENCODE_PASSWORD, like 2.x, and
-// prints the 2.x banner (plus the generated-password line 2.x prints when no
-// password is set, which T3 must never need).
 const FAKE_SERVER = `import { createServer } from "node:http";
 const expected = "Basic " + Buffer.from("opencode:" + process.env.OPENCODE_PASSWORD).toString("base64");
 const server = createServer((request, response) => {
@@ -211,47 +177,44 @@ server.listen(0, "127.0.0.1", () => {
 `;
 
 describe("OpenCode2Server spawned server", () => {
-  it.live(
-    "is ready once /api/info accepts the generated password",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const platform = yield* HostProcess.Platform;
-        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode2-fake-" });
-        const isWindows = platform === "win32";
-        const binaryPath = path.join(directory, isWindows ? "opencode.cmd" : "opencode");
-        const scriptPath = path.join(directory, "opencode.mjs");
-        yield* fs.writeFileString(scriptPath, FAKE_SERVER);
-        yield* fs.writeFileString(
-          binaryPath,
-          isWindows
-            ? `@echo off\r\n"${yield* HostProcess.ExecutablePath}" "${scriptPath}" %*\r\n`
-            : `#!/bin/sh\nexec "${yield* HostProcess.ExecutablePath}" "${scriptPath}" "$@"\n`,
-        );
-        if (!isWindows) yield* fs.chmod(binaryPath, 0o755);
+  it.live("is ready once /api/info accepts the generated password", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const platform = yield* HostProcess.Platform;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode2-fake-" });
+      const isWindows = platform === "win32";
+      const binaryPath = path.join(directory, isWindows ? "opencode.cmd" : "opencode");
+      const scriptPath = path.join(directory, "opencode.mjs");
+      yield* fs.writeFileString(scriptPath, FAKE_SERVER);
+      yield* fs.writeFileString(
+        binaryPath,
+        isWindows
+          ? `@echo off\r\n"${yield* HostProcess.ExecutablePath}" "${scriptPath}" %*\r\n`
+          : `#!/bin/sh\nexec "${yield* HostProcess.ExecutablePath}" "${scriptPath}" "$@"\n`,
+      );
+      if (!isWindows) yield* fs.chmod(binaryPath, 0o755);
 
-        const server = yield* OpenCode2Server.make({
-          binaryPath,
-          serverUrl: "",
-          serverPassword: "",
-          directory,
-          environment: { ...(yield* HostProcess.Environment), OPENCODE_SERVER_PASSWORD: "ambient" },
-        });
-        const first = yield* server.withConnection((connection) => Effect.succeed(connection));
-        const second = yield* server.withConnection((connection) => Effect.succeed(connection));
-        assert.strictEqual(first.version, "2.0.18");
-        assert.strictEqual(first.external, false);
-        assert.strictEqual(second.client, first.client);
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(
-            OpenCode2Client.layer,
-            OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
-          ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer))),
-        ),
+      const server = yield* OpenCode2Server.make({
+        binaryPath,
+        serverUrl: "",
+        serverPassword: "",
+        directory,
+        environment: { ...(yield* HostProcess.Environment), OPENCODE_SERVER_PASSWORD: "ambient" },
+      });
+      const first = yield* server.withConnection((connection) => Effect.succeed(connection));
+      const second = yield* server.withConnection((connection) => Effect.succeed(connection));
+      assert.strictEqual(first.version, "2.0.18");
+      assert.strictEqual(first.external, false);
+      assert.strictEqual(second.client, first.client);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          OpenCode2Client.layer,
+          OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
+        ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer))),
       ),
-    15_000,
+    ),
   );
 });

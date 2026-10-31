@@ -1,12 +1,3 @@
-/**
- * Claude banked resets (the CLI's `cedar_ember` program). The CLI reads the
- * grants from the OAuth usage endpoint and claims one against the
- * organization; this module does the same with the credentials the CLI keeps
- * in its config directory. macOS keeps them in the keychain, so there the
- * feature is not offered.
- *
- * @module provider/claudeResetCredits
- */
 import type {
   ProviderConsumeResetCreditOutcome,
   ServerProviderResetCredits,
@@ -90,17 +81,12 @@ class ClaudeResetCreditError extends Schema.TaggedError<ClaudeResetCreditError>(
 
 const isClaudeResetCreditError = Schema.is(ClaudeResetCreditError);
 
-/**
- * Every reset failure except `requestFailed` and `unconfirmed` is final:
- * Claude answered, or nothing was sent. An unanswered or unconfirmed claim
- * retries with the same request id.
- */
+/** Retry unanswered or unconfirmed claims with the same request ID. */
 export const isSettledClaudeResetCreditFailure = (error: unknown) =>
   isClaudeResetCreditError(error) &&
   error.reason !== "requestFailed" &&
   error.reason !== "unconfirmed";
 
-/** Rejects unparseable and calendar-invalid timestamps such as February 30. */
 const isFutureTimestamp = (value: string, nowMs: number) => {
   if (!COMPLETE_TIMESTAMP.test(value)) return false;
   const [year, month, day] = value.slice(0, 10).split("-").map(Number);
@@ -109,7 +95,6 @@ const isFutureTimestamp = (value: string, nowMs: number) => {
   );
 };
 
-/** Grants that are paused or past `ends_at` cannot be claimed and do not count. */
 export function claudeResetCreditsToContract(
   block: unknown,
   nowMs: number,
@@ -135,25 +120,28 @@ export function claudeResetCreditsToContract(
   };
 }
 
-const readJson = <S extends Schema.Top>(schema: S, file: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    return yield* fs.readFileString(file).pipe(
-      Effect.catchTags({
-        PlatformError: (error) =>
-          error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
-      }),
-      Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(schema))),
-    );
-  });
+const readJson = Effect.fn("claudeResetCredits.readJson")(function* <S extends Schema.Top>(
+  schema: S,
+  file: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.readFileString(file).pipe(
+    Effect.catchTags({
+      PlatformError: (error) =>
+        error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
+    }),
+    Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(schema))),
+  );
+});
 
-const readAccessToken = (configDir: string) =>
-  Effect.gen(function* () {
-    if ((yield* HostProcess.Platform) === "darwin") return undefined;
-    const path = yield* Path.Path;
-    const credentials = yield* readJson(Credentials, path.join(configDir, ".credentials.json"));
-    return credentials.claudeAiOauth?.accessToken?.trim() || undefined;
-  });
+const readAccessToken = Effect.fn("claudeResetCredits.readAccessToken")(function* (
+  configDir: string,
+) {
+  if ((yield* HostProcess.Platform) === "darwin") return undefined;
+  const path = yield* Path.Path;
+  const credentials = yield* readJson(Credentials, path.join(configDir, ".credentials.json"));
+  return credentials.claudeAiOauth?.accessToken?.trim() || undefined;
+});
 
 const withClaudeHeaders = (token: string, version: string) =>
   HttpClientRequest.setHeaders({
@@ -162,10 +150,6 @@ const withClaudeHeaders = (token: string, version: string) =>
     "user-agent": `claude-cli/${version} (external, cli)`,
   });
 
-/**
- * Reads the banked resets for the login in `configDir`. Any failure reads as
- * "no resets" so the usage bars never break on this optional extra.
- */
 export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
   function* (configDir: string, version: string) {
     const token = yield* readAccessToken(configDir);
@@ -188,8 +172,6 @@ export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
   Effect.orElseSucceed(() => undefined),
 );
 
-/** The CLI keeps the account record beside its settings, or in the home directory by default. */
-/** The organization the login is signed in to; one email can belong to several. */
 export const readClaudeOrganizationId = (accountConfigPath: string) =>
   readJson(Config, accountConfigPath).pipe(
     Effect.map((config) => config.oauthAccount?.organizationUuid?.trim() || undefined),
@@ -212,10 +194,7 @@ const CLAIM_OUTCOMES = {
   ineligible: "noCredit",
 } as const satisfies Record<string, ProviderConsumeResetCreditOutcome>;
 
-/**
- * Claims `grantId`. `requestId` is the idempotency key: a retry with the same
- * id is the same claim. Ids are checked before anything is sent.
- */
+/** requestId is the claim's idempotency key. */
 export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(function* (input: {
   readonly configDir: string;
   readonly accountConfigPath: string;
@@ -271,8 +250,7 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
   if (body.result === "cooldown") {
     return yield* new ClaudeResetCreditError({ reason: "coolingDown" });
   }
-  // Claude could not say whether the claim landed, so, like the CLI, keep the
-  // request id and let the retry ask about the same claim.
+  // Unknown outcomes retain the request ID so retries address the same claim.
   if (body.result === "unavailable") {
     return yield* new ClaudeResetCreditError({ reason: "unconfirmed" });
   }

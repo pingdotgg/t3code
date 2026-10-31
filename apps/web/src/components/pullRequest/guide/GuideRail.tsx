@@ -6,10 +6,6 @@ import { cn } from "~/lib/utils";
 import { Badge } from "../../ui/badge";
 import { stopSubline } from "@t3tools/client-runtime/review-guide-tour";
 
-/**
- * The tour's table of contents: where the reader is and which stops they have read past. A stop
- * with a call to make is marked; that is the only sign of where to slow down.
- */
 export function GuideRail({
   stops,
   position,
@@ -18,7 +14,6 @@ export function GuideRail({
 }: {
   stops: ReadonlyArray<PullRequestReviewGuideStop>;
   position: number;
-  /** Stops the reader has moved on from. */
   seen: ReadonlySet<number>;
   onSelect: (position: number) => void;
 }) {
@@ -46,7 +41,6 @@ export function GuideRail({
 
   return (
     <nav aria-label="Review tour" className="flex min-h-0 flex-col gap-4">
-      {/* Beside the stop only; narrow, the stop's own header says where the reader is. */}
       <p className="text-xs text-muted-foreground tabular-nums @max-[56rem]/guide:hidden">
         {reviewed} of {stops.length} read
       </p>
@@ -57,7 +51,6 @@ export function GuideRail({
   );
 }
 
-/** A semantic row of the tour's list rather than a control styled as a button. */
 function RailRow({
   active,
   onClick,

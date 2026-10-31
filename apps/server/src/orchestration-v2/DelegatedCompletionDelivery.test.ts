@@ -1,8 +1,9 @@
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import {
+  CheckpointId,
   CommandId,
   EventId,
   MessageId,
@@ -14,11 +15,14 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
@@ -39,6 +43,7 @@ import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderTurnStartServiceTestkit from "./ProviderTurnStartService.testkit.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -86,7 +91,6 @@ const providerInstance = {
   },
   displayName: "Codex test",
   enabled: true,
-  // No supportedRuntimeModes: every runtime mode runs as stored.
   snapshot: { getSnapshot: Effect.succeed({}) } as unknown as ProviderInstance["snapshot"],
   orchestrationAdapter,
   textGeneration: {} as ProviderInstance["textGeneration"],
@@ -104,7 +108,11 @@ const layerTestProviderInstanceRegistry = Layer.succeed(
   },
 );
 
-const layerTest = Layer.mergeAll(RuntimeLayer.layer, RuntimeLayer.layerEventSink).pipe(
+const layerTest = Layer.mergeAll(
+  RuntimeLayer.layer,
+  RuntimeLayer.layerEventSink,
+  ThreadCommandExecutor.layer,
+).pipe(
   Layer.provideMerge(RuntimeLayer.layerProjectService),
   Layer.provide(
     Layer.mock(WorkspacePaths.WorkspacePaths)({
@@ -121,6 +129,7 @@ const layerTest = Layer.mergeAll(RuntimeLayer.layer, RuntimeLayer.layerEventSink
           repositoryIdentityResolved: false,
         }),
       request: () => Effect.void,
+      readRepositoryIdentity: () => Effect.succeed(null),
       getAvailable: () =>
         Effect.succeed({
           repositoryIdentity: null,
@@ -150,6 +159,11 @@ const seedParentWithTerminalTask = (input: {
   readonly deliveryState: "delivered" | "claimed" | "acknowledged" | "disposed";
   readonly completionWake?: "always" | "settled_only";
   readonly deliveryTaskIds?: ReadonlyArray<NodeId>;
+  readonly parentRunStatus?: "running" | "completed";
+  readonly siblingTasks?: ReadonlyArray<{
+    readonly id: NodeId;
+    readonly deliveryState: "delivered" | "claimed";
+  }>;
   readonly now: DateTime.Utc;
 }) =>
   Effect.gen(function* () {
@@ -232,10 +246,10 @@ const seedParentWithTerminalTask = (input: {
             userMessageId: MessageId.make(`message:seed-user:${input.threadId}`),
             rootNodeId: input.rootNodeId,
             activeAttemptId: null,
-            status: "running",
+            status: input.parentRunStatus ?? "running",
             requestedAt: input.now,
             startedAt: input.now,
-            completedAt: null,
+            completedAt: input.parentRunStatus === "completed" ? input.now : null,
             checkpointId: null,
             contextHandoffId: null,
             delegatedCompletion: {
@@ -252,22 +266,25 @@ const seedParentWithTerminalTask = (input: {
             },
           },
         },
-        {
-          id: EventId.make(`event:seed-task:${input.threadId}`),
-          type: "subagent.updated",
+        ...[
+          { id: input.taskId, deliveryState: input.deliveryState },
+          ...(input.siblingTasks ?? []),
+        ].map((task) => ({
+          id: EventId.make(`event:seed-task:${input.threadId}:${task.id}`),
+          type: "subagent.updated" as const,
           threadId: input.threadId,
           runId: input.runId,
-          nodeId: input.taskId,
+          nodeId: task.id,
           driver,
           providerInstanceId: modelSelection.instanceId,
           occurredAt: input.now,
           payload: {
-            id: input.taskId,
+            id: task.id,
             threadId: input.threadId,
             runId: input.runId,
             parentNodeId: input.rootNodeId,
-            origin: "app_owned",
-            createdBy: "agent",
+            origin: "app_owned" as const,
+            createdBy: "agent" as const,
             driver,
             providerInstanceId: modelSelection.instanceId,
             providerThreadId: null,
@@ -278,21 +295,167 @@ const seedParentWithTerminalTask = (input: {
             model: null,
             completionWake: input.completionWake ?? "settled_only",
             completionDelivery: {
-              state: input.deliveryState,
-              observedByRunId: input.deliveryState === "acknowledged" ? input.runId : null,
+              state: task.deliveryState,
+              observedByRunId: task.deliveryState === "acknowledged" ? input.runId : null,
             },
-            status: "completed",
+            status: "completed" as const,
             result: "child finished",
             startedAt: input.now,
             completedAt: input.now,
             updatedAt: input.now,
           },
-        },
+        })),
       ],
     });
   });
 
 it.layer(layerTest)("delegated completion delivery repairs", (it) => {
+  it.effect(
+    "interrupting a completion wake disposes both cohorts without reviving them on late results",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("stop-wake-parent");
+        const originRunId = RunId.make("stop-wake-origin");
+        const incomingTaskId = NodeId.make("stop-wake-incoming");
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId: ProjectId.make("stop-wake-project"),
+          runId: originRunId,
+          rootNodeId: NodeId.make("stop-wake-origin-root"),
+          taskId: incomingTaskId,
+          deliveryState: "claimed",
+          deliveryTaskIds: [incomingTaskId],
+          completionWake: "always",
+          now,
+        });
+        const origin = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        yield* sink.write({
+          events: [
+            {
+              ...runEvent({ threadId, runId: originRunId, ordinal: 1, status: "completed", now }),
+              payload: { ...origin, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        const delivery = origin.delegatedCompletion!.delivery!;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "server",
+          commandId: CommandId.make("stop-wake-start"),
+          threadId,
+          messageId: delivery.messageId,
+          text: "Delegated task completed",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "queue_after_active" },
+          delegatedCompletion: {
+            parentRunId: originRunId,
+            generation: delivery.generation,
+            taskIds: delivery.taskIds,
+          },
+        });
+        yield* orchestrator.resumeQueuedRuns;
+        const wake = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.userMessageId === delivery.messageId,
+        )!;
+        yield* orchestrator.dispatch({
+          type: "delegated_task.request",
+          createdBy: "agent",
+          creationSource: "mcp",
+          commandId: CommandId.make("stop-wake-delegate"),
+          parentThreadId: threadId,
+          parentRunId: wake.id,
+          parentNodeId: wake.rootNodeId!,
+          task: "Do the next round",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          completionWake: "always",
+        });
+        const delegated = (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
+          (task) => task.runId === wake.id,
+        )!;
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make("stop-wake-interrupt"),
+          threadId,
+          runId: wake.id,
+        });
+        const stopped = yield* orchestrator.getThreadProjection(threadId);
+        for (const runId of [originRunId, wake.id]) {
+          const run = stopped.runs.find((row) => row.id === runId)!;
+          assert.equal(run.delegatedCompletion?.disposition, "stopped");
+          assert.isNull(run.delegatedCompletion?.delivery);
+        }
+        assert.equal(stopped.runs.find((run) => run.id === wake.id)?.status, "interrupted");
+        for (const taskId of [incomingTaskId, delegated.id]) {
+          assert.equal(
+            stopped.subagents.find((task) => task.id === taskId)?.completionDelivery?.state,
+            "disposed",
+          );
+        }
+        assert.equal(
+          stopped.subagents.find((task) => task.id === incomingTaskId)?.result,
+          "child finished",
+        );
+
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("stop-wake-newer-work"),
+          threadId,
+          messageId: MessageId.make("stop-wake-newer-work"),
+          text: "Start unrelated work",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "queue_after_active" },
+        });
+        yield* orchestrator.resumeQueuedRuns;
+        const newer = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(newer.runs.at(-1)?.status, "starting");
+
+        const childThreadId = delegated.childThreadId!;
+        const childRun = (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]!;
+        const afterSequence = yield* sink.latestSequence();
+        yield* sink.write({
+          events: [
+            {
+              ...runEvent({
+                threadId: childThreadId,
+                runId: childRun.id,
+                ordinal: childRun.ordinal,
+                status: "completed",
+                now,
+              }),
+              payload: { ...childRun, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        yield* sink.stream({ afterSequence, eventType: "subagent.updated" }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "subagent.updated" &&
+              stored.event.payload.id === delegated.id &&
+              stored.event.payload.status === "completed",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        const finished = yield* orchestrator.getThreadProjection(threadId);
+        const lateTask = finished.subagents.find((task) => task.id === delegated.id)!;
+        assert.equal(lateTask.status, "completed");
+        assert.isNotNull(lateTask.result);
+        assert.equal(lateTask.completionDelivery?.state, "disposed");
+        assert.deepEqual(finished.runs, newer.runs);
+        assert.deepEqual(finished.messages, newer.messages);
+      }),
+  );
+
   it.effect("acceptance batches pending siblings without acknowledging their results", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -410,7 +573,6 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       const projection = yield* orchestrator.getThreadProjection(threadId);
       const task = projection.subagents[0]!;
       const spawningRun = projection.runs.find((row) => row.id === runId)!;
-      // A restart cut the spawning run; its continuation is the live run now.
       yield* sink.write({
         events: [
           {
@@ -525,6 +687,144 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       assert.include(message?.text ?? "", String(firstTaskId));
       assert.include(message?.text ?? "", String(secondTaskId));
       assert.include(message?.text ?? "", "task_status");
+      assert.include(message?.text ?? "", "child finished");
+    }),
+  );
+
+  it.effect("counts already delivered siblings in the completion notice", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:delegated-delivery-notice-count");
+      const runId = RunId.make("run:delegated-delivery-notice-count");
+      const firstTaskId = NodeId.make("node:delegated-delivery-notice-count-first");
+      const secondTaskId = NodeId.make("node:delegated-delivery-notice-count-second");
+
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId: ProjectId.make("project:delegated-delivery-notice-count"),
+        runId,
+        rootNodeId: NodeId.make("node:delegated-delivery-notice-count-root"),
+        taskId: firstTaskId,
+        deliveryState: "claimed",
+        completionWake: "always",
+        deliveryTaskIds: [firstTaskId, secondTaskId],
+        parentRunStatus: "completed",
+        siblingTasks: [
+          { id: secondTaskId, deliveryState: "claimed" },
+          {
+            id: NodeId.make("node:delegated-delivery-notice-count-earlier"),
+            deliveryState: "delivered",
+          },
+        ],
+        now,
+      });
+
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("command:delegated-delivery-notice-count"),
+        threadId,
+        messageId: MessageId.make(`message:delegated-delivery:${threadId}`),
+        text: "Delegated tasks reached a terminal state.",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+        delegatedCompletion: { parentRunId: runId, generation: 1, taskIds: [firstTaskId] },
+      });
+
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      const notice = projection.turnItems.find((item) => item.type === "notification");
+      assert.match(
+        notice?.type === "notification" ? notice.summary : "",
+        /^2 of 3 delegated tasks finished:/,
+      );
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "oversized UTF-8 result",
+      first: "界".repeat(6_000),
+      second: "small result",
+      inlineFirst: false,
+      inlineSecond: true,
+    },
+    {
+      name: "combined results",
+      first: "a".repeat(10_000),
+      second: "b".repeat(10_000),
+      inlineFirst: true,
+      inlineSecond: false,
+    },
+  ])("uses task_status for $name beyond the inline budget", (testCase) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make(`thread:inline-budget:${testCase.name}`);
+      const runId = RunId.make(`run:inline-budget:${testCase.name}`);
+      const firstTaskId = NodeId.make(`node:inline-first:${testCase.name}`);
+      const secondTaskId = NodeId.make(`node:inline-second:${testCase.name}`);
+      const messageId = MessageId.make(`message:delegated-delivery:${threadId}`);
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId: ProjectId.make(`project:inline-budget:${testCase.name}`),
+        runId,
+        rootNodeId: NodeId.make(`node:inline-budget:${testCase.name}`),
+        taskId: firstTaskId,
+        deliveryState: "claimed",
+        completionWake: "always",
+        deliveryTaskIds: [firstTaskId, secondTaskId],
+        now,
+      });
+      const parent = yield* orchestrator.getThreadProjection(threadId);
+      const task = parent.subagents[0]!;
+      yield* sink.write({
+        events: [
+          { id: firstTaskId, result: testCase.first, status: "failed" as const },
+          { id: secondTaskId, result: testCase.second, status: "cancelled" as const },
+        ].map(({ id, result, status }) => ({
+          id: EventId.make(`event:inline-budget:${id}`),
+          type: "subagent.updated" as const,
+          threadId,
+          runId,
+          nodeId: id,
+          occurredAt: now,
+          payload: { ...task, id, result, status, title: "Inspect regression" },
+        })),
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`command:inline-budget:${testCase.name}`),
+        threadId,
+        messageId,
+        text: "Delegated tasks completed.",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+        delegatedCompletion: {
+          parentRunId: runId,
+          generation: 1,
+          taskIds: [firstTaskId, secondTaskId],
+        },
+      });
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      const message = projection.messages.find((candidate) => candidate.id === messageId)!;
+      assert.equal(message.text.includes(testCase.first), testCase.inlineFirst);
+      assert.equal(message.text.includes(testCase.second), testCase.inlineSecond);
+      const deferredTaskId = testCase.inlineFirst ? secondTaskId : firstTaskId;
+      assert.include(
+        message.text,
+        `Delegated task ${deferredTaskId} (Inspect regression) [${testCase.inlineFirst ? "cancelled" : "failed"}]`,
+      );
+      assert.include(message.text, `Use task_status with taskId ${deferredTaskId}`);
+      assert.deepEqual(message.delegatedCompletion?.taskIds, [firstTaskId, secondTaskId]);
+      assert.equal(
+        projection.subagents.find((candidate) => candidate.id === deferredTaskId)?.result,
+        testCase.inlineFirst ? testCase.second : testCase.first,
+      );
     }),
   );
 
@@ -614,8 +914,6 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
           now,
         });
 
-        // Distinct command IDs mirror task_status vs t3_thread_read racing after
-        // their shared read preflight saw delivered ownership.
         const firstAck = yield* orchestrator.dispatch({
           type: "delegated_task.completion-delivery.acknowledge",
           commandId: CommandId.make("command:delegated-delivery-a2:ack-task-status"),
@@ -649,7 +947,6 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
         }
         assert.equal(firstAckTask.event.payload.completionDelivery?.state, "acknowledged");
         assert.equal(secondAckTask.event.payload.completionDelivery?.state, "acknowledged");
-        // Idempotent replay keeps the first observation's ownership and timestamp.
         assert.deepEqual(
           secondAckTask.event.payload.completionDelivery,
           firstAckTask.event.payload.completionDelivery,
@@ -745,10 +1042,146 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
         );
       }),
   );
+
+  it.effect.each([
+    { command: "acknowledge", before: "running", after: "failed", capture: false },
+    { command: "acknowledge", before: "waiting", after: "completed", capture: true },
+    { command: "accept", before: "waiting", after: "completed", capture: true },
+  ] as const)(
+    "keeps a $after run that settled between $command's read and commit",
+    ({ command, before, after, capture }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const race = `${command}-settle-race-${after}`;
+        const threadId = ThreadId.make(`thread:${race}`);
+        const runId = RunId.make(`run:${race}`);
+        const taskId = NodeId.make(`node:${race}-task`);
+        const checkpointId = CheckpointId.make(`checkpoint:${race}`);
+        const messageId = MessageId.make(`message:delegated-delivery:${threadId}`);
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId: ProjectId.make(`project:${race}`),
+          runId,
+          rootNodeId: NodeId.make(`node:${race}-root`),
+          taskId,
+          deliveryState: "claimed",
+          deliveryTaskIds: [taskId],
+          now,
+        });
+        const parent = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make(`event:${race}-before`),
+              type: "run.updated",
+              threadId,
+              runId,
+              occurredAt: now,
+              payload: { ...parent, status: before },
+            },
+            {
+              id: EventId.make(`event:${race}-message`),
+              type: "message.updated",
+              threadId,
+              runId,
+              occurredAt: now,
+              payload: {
+                id: messageId,
+                threadId,
+                runId,
+                nodeId: parent.rootNodeId,
+                role: "user",
+                text: "Background task finished",
+                attachments: [],
+                streaming: false,
+                createdBy: "agent",
+                creationSource: "server",
+                createdAt: now,
+                updatedAt: now,
+                delegatedCompletion: { parentRunId: runId, generation: 1, taskIds: [taskId] },
+              },
+            },
+          ],
+        });
+        const { delegatedCompletion: _cohort, ...settledRun } = parent;
+        const commit = sink.commitCommand;
+        let settled = false;
+        yield* Effect.acquireUseRelease(
+          Effect.sync(() =>
+            vi.spyOn(sink, "commitCommand").mockImplementation((input) =>
+              Effect.gen(function* () {
+                if (
+                  !settled &&
+                  input.commandType ===
+                    (command === "accept"
+                      ? "notification.delivery.accept"
+                      : "delegated_task.completion-delivery.acknowledge")
+                ) {
+                  settled = true;
+                  // The provider turn ends (or its checkpoint lands) after the command read the run.
+                  yield* commit({
+                    commandId: CommandId.make(`command:${race}`),
+                    threadId,
+                    commandType: capture ? "checkpoint.capture" : "provider.event",
+                    acceptedAt: now,
+                    effects: [],
+                    events: [
+                      {
+                        id: EventId.make(`event:${race}-settled`),
+                        type: "run.updated",
+                        threadId,
+                        runId,
+                        occurredAt: now,
+                        payload: {
+                          ...settledRun,
+                          status: after,
+                          completedAt: now,
+                          checkpointId: capture ? checkpointId : null,
+                        },
+                      },
+                    ],
+                  });
+                }
+                return yield* commit(input);
+              }),
+            ),
+          ),
+          () =>
+            orchestrator.dispatch(
+              command === "accept"
+                ? {
+                    type: "notification.delivery.accept",
+                    commandId: CommandId.make(`command:${race}:accept`),
+                    threadId,
+                    messageId,
+                  }
+                : {
+                    type: "delegated_task.completion-delivery.acknowledge",
+                    commandId: CommandId.make(`command:${race}:task-status`),
+                    parentThreadId: threadId,
+                    taskId,
+                    observedByRunId: runId,
+                  },
+            ),
+          (spy) => Effect.sync(() => spy.mockRestore()),
+        );
+        assert.isTrue(settled);
+        const finished = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          finished.subagents.find((row) => row.id === taskId)?.completionDelivery?.state,
+          command === "accept" ? "delivered" : "acknowledged",
+        );
+        const run = finished.runs.find((candidate) => candidate.id === runId)!;
+        assert.deepEqual(
+          { status: run.status, completedAt: run.completedAt, checkpointId: run.checkpointId },
+          { status: after, completedAt: now, checkpointId: capture ? checkpointId : null },
+        );
+      }),
+  );
 });
 
-// Runtime reconciliation writes restart cancellations under this command
-// prefix, which the live terminal-run listener skips.
 const reconcileCommandId = (name: string) => CommandId.make(`command:runtime-reconcile:${name}`);
 
 const parentProviderThreadId = (threadId: ThreadId) =>
@@ -792,7 +1225,6 @@ const runEvent = (input: {
   },
 });
 
-/** A running app-owned task whose child thread's first run the restart cancelled. */
 const seedRestartCancelledChild = (input: {
   readonly parentThreadId: ThreadId;
   readonly projectId: ProjectId;
@@ -801,8 +1233,8 @@ const seedRestartCancelledChild = (input: {
   readonly name: string;
   readonly completionWake: "always" | "settled_only";
   readonly continuationPending: boolean;
-  /** "completed" seeds a settled turn whose background work the restart cancelled. */
   readonly runStatus?: "cancelled" | "completed";
+  readonly lostWork?: OrchestrationV2Run["restartCancelledBackgroundWork"];
   readonly now: DateTime.Utc;
 }) =>
   Effect.gen(function* () {
@@ -880,16 +1312,22 @@ const seedRestartCancelledChild = (input: {
         },
       ],
     });
+    const childRun = runEvent({
+      threadId: childThreadId,
+      runId: childRunId,
+      ordinal: 1,
+      status: input.runStatus ?? "cancelled",
+      now: input.now,
+    });
     yield* eventSink.writeWithEffects({
       commandId: reconcileCommandId(input.name),
       events: [
-        runEvent({
-          threadId: childThreadId,
-          runId: childRunId,
-          ordinal: 1,
-          status: input.runStatus ?? "cancelled",
-          now: input.now,
-        }),
+        input.lostWork === undefined
+          ? childRun
+          : {
+              ...childRun,
+              payload: { ...childRun.payload, restartCancelledBackgroundWork: input.lostWork },
+            },
       ],
       effects: input.continuationPending
         ? [
@@ -908,6 +1346,402 @@ const seedRestartCancelledChild = (input: {
 it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   "subagent follow-ups",
   (it) => {
+    it.effect("keeps a checkpoint completion committed between finalize's read and write", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:completion-capture-race");
+        const projectId = ProjectId.make("project:completion-capture-race");
+        const runId = RunId.make("run:completion-capture-race");
+        const rootNodeId = NodeId.make("node:completion-capture-race");
+        const checkpointId = CheckpointId.make("checkpoint:completion-capture-race");
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId,
+          runId,
+          rootNodeId,
+          taskId: NodeId.make("node:completion-capture-seed"),
+          deliveryState: "acknowledged",
+          now,
+        });
+        const parent = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        const waiting = { ...parent, status: "waiting" as const };
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("event:completion-capture-waiting"),
+              type: "run.updated",
+              threadId,
+              runId,
+              occurredAt: now,
+              payload: waiting,
+            },
+          ],
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId: threadId,
+          projectId,
+          parentRunId: runId,
+          rootNodeId,
+          name: "completion-capture-child",
+          completionWake: "always",
+          continuationPending: false,
+          runStatus: "completed",
+          now,
+        });
+        const write = sink.writeWithEffects;
+        let captured = false;
+        const committedParentRuns: Array<OrchestrationV2Run> = [];
+        yield* Effect.acquireUseRelease(
+          Effect.sync(() =>
+            vi.spyOn(sink, "writeWithEffects").mockImplementation((input) =>
+              Effect.gen(function* () {
+                if (
+                  !captured &&
+                  input.events.some(
+                    (event) =>
+                      event.type === "run.updated" &&
+                      event.payload.id === runId &&
+                      event.payload.delegatedCompletion?.delivery != null,
+                  )
+                ) {
+                  captured = true;
+                  // Commit capture after finalize planned its stale waiting snapshot.
+                  const { delegatedCompletion: _cohort, ...captureRun } = waiting;
+                  yield* sink.commitCommand({
+                    commandId: CommandId.make("command:completion-capture-race"),
+                    threadId,
+                    commandType: "checkpoint.capture",
+                    acceptedAt: now,
+                    effects: [],
+                    events: [
+                      {
+                        id: EventId.make("event:completion-capture-completed"),
+                        type: "run.updated",
+                        threadId,
+                        runId,
+                        occurredAt: now,
+                        payload: {
+                          ...captureRun,
+                          status: "completed",
+                          completedAt: now,
+                          checkpointId,
+                        },
+                      },
+                    ],
+                  });
+                }
+                const stored = yield* write(input);
+                for (const { event } of stored) {
+                  if (event.type === "run.updated" && event.payload.id === runId) {
+                    committedParentRuns.push(event.payload);
+                  }
+                }
+                return stored;
+              }),
+            ),
+          ),
+          () => orchestrator.recoverDelegatedTasks,
+          (spy) => Effect.sync(() => spy.mockRestore()),
+        );
+        assert.isTrue(captured);
+        assert.equal(committedParentRuns.length, 1);
+        const committedParentRun = committedParentRuns[0];
+        assert.equal(committedParentRun?.status, "completed");
+        assert.deepEqual(committedParentRun?.completedAt, now);
+        assert.equal(committedParentRun?.checkpointId, checkpointId);
+        assert.deepEqual(committedParentRun?.delegatedCompletion?.delivery?.taskIds, [
+          child.taskId,
+        ]);
+        const finished = yield* orchestrator.getThreadProjection(threadId);
+        const completed = finished.runs.find((run) => run.id === runId)!;
+        assert.equal(completed.status, "completed");
+        assert.deepEqual(completed.completedAt, now);
+        assert.equal(completed.checkpointId, checkpointId);
+        assert.deepEqual(completed.delegatedCompletion?.delivery?.taskIds, [child.taskId]);
+        const wake = yield* requests.take;
+        assert.equal(wake.delegatedCompletion?.parentRunId, runId);
+        const delivery = completed.delegatedCompletion!.delivery!;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "server",
+          commandId: CommandId.make("command:completion-capture-delivery"),
+          threadId,
+          messageId: delivery.messageId,
+          text: "Child finished",
+          attachments: [],
+          delegatedCompletion: {
+            parentRunId: runId,
+            generation: delivery.generation,
+            taskIds: delivery.taskIds,
+          },
+          dispatchMode: { type: "queue_after_active" },
+        });
+        const delivered = yield* orchestrator.getThreadProjection(threadId);
+        const deliveryRun = delivered.runs.find((run) => run.userMessageId === delivery.messageId);
+        assert.isDefined(deliveryRun);
+        assert.notEqual(deliveryRun?.status, "queued");
+      }),
+    );
+    it.effect("pauses queued follow-up cards and resumes them", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const parentThreadId = ThreadId.make("thread:held-followup-parent");
+        const projectId = ProjectId.make("project:held-followup");
+        const parentRunId = RunId.make("run:held-followup-parent");
+        const rootNodeId = NodeId.make("node:held-followup-parent");
+        yield* seedParentWithTerminalTask({
+          threadId: parentThreadId,
+          projectId,
+          runId: parentRunId,
+          rootNodeId,
+          taskId: NodeId.make("node:held-followup-seed"),
+          deliveryState: "acknowledged",
+          now,
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId,
+          projectId,
+          parentRunId,
+          rootNodeId,
+          name: "held-followup-child",
+          completionWake: "always",
+          continuationPending: false,
+          runStatus: "completed",
+          now,
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        const send = (name: string) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "agent",
+            creationSource: "mcp",
+            commandId: CommandId.make(`command:held-followup:${name}`),
+            threadId: child.childThreadId,
+            senderThreadId: parentThreadId,
+            messageId: MessageId.make(`message:held-followup:${name}`),
+            text: name,
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+          });
+        yield* send("active");
+        yield* send("queued");
+        const before = yield* orchestrator.getThreadProjection(child.childThreadId);
+        const active = before.runs.find((run) => run.ordinal === 2)!;
+        const queued = before.runs.find((run) => run.ordinal === 3)!;
+        assert.equal(queued.status, "queued");
+        const waitForStatus = (afterSequence: number, status: string) =>
+          eventSink.stream({ afterSequence, eventType: "subagent.updated" }).pipe(
+            Stream.filter(
+              (stored) =>
+                stored.event.type === "subagent.updated" &&
+                stored.event.payload.id === queued.delegatedTaskId &&
+                stored.event.payload.status === status,
+            ),
+            Stream.take(1),
+            Stream.runHead,
+          );
+        const afterSequence = yield* eventSink.latestSequence();
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          threadId: child.childThreadId,
+          commandId: CommandId.make("command:held-followup:stop"),
+        });
+        yield* waitForStatus(afterSequence, "idle");
+        const paused = yield* orchestrator.getThreadProjection(parentThreadId);
+        const task = paused.subagents.find((row) => row.id === queued.delegatedTaskId)!;
+        assert.equal(task.status, "idle");
+        assert.isNull(task.result);
+        assert.equal(paused.nodes.find((row) => row.id === task.id)?.status, "idle");
+        assert.equal(
+          paused.turnItems.find((row) => row.type === "subagent" && row.subagentId === task.id)
+            ?.status,
+          "idle",
+        );
+        const endedSequence = yield* eventSink.latestSequence();
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("event:held-followup-active-ended"),
+              type: "run.updated",
+              threadId: child.childThreadId,
+              runId: active.id,
+              occurredAt: now,
+              payload: { ...active, status: "interrupted", startedAt: now, completedAt: now },
+            },
+          ],
+        });
+        const activeTask = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+          (row) => row.id === active.delegatedTaskId,
+        )!;
+        if (activeTask.result === null) {
+          yield* eventSink
+            .stream({ afterSequence: endedSequence, eventType: "subagent.updated" })
+            .pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.type === "subagent.updated" &&
+                  stored.event.payload.id === active.delegatedTaskId &&
+                  stored.event.payload.status === "interrupted",
+              ),
+              Stream.take(1),
+              Stream.runHead,
+            );
+        }
+        const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (row) => row.id === parentThreadId,
+        )!;
+        assert.isFalse((shell.pendingBackgroundTasks ?? []).some((row) => row.taskId === task.id));
+        const resumeSequence = yield* eventSink.latestSequence();
+        yield* orchestrator.dispatch({
+          type: "queue.resume",
+          threadId: child.childThreadId,
+          commandId: CommandId.make("command:held-followup:resume"),
+        });
+        yield* waitForStatus(resumeSequence, "running");
+        const resumed = yield* orchestrator.getThreadProjection(parentThreadId);
+        assert.equal(resumed.subagents.find((row) => row.id === task.id)?.status, "running");
+        assert.isNull(resumed.subagents.find((row) => row.id === task.id)?.result);
+      }),
+    );
+
+    it.effect("delivers the run a background command's wake starts after the original result", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        const now = yield* DateTime.now;
+        const parentThreadId = ThreadId.make("thread:background-wake-parent");
+        const projectId = ProjectId.make("project:background-wake");
+        const parentRunId = RunId.make("run:background-wake-parent");
+        const rootNodeId = NodeId.make("node:background-wake-parent");
+        yield* seedParentWithTerminalTask({
+          threadId: parentThreadId,
+          projectId,
+          runId: parentRunId,
+          rootNodeId,
+          taskId: NodeId.make("node:background-wake-seed"),
+          deliveryState: "acknowledged",
+          now,
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId,
+          projectId,
+          parentRunId,
+          rootNodeId,
+          name: "background-wake-child",
+          completionWake: "always",
+          continuationPending: false,
+          runStatus: "completed",
+          now,
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        let firstWake = yield* requests.take;
+        while (firstWake.threadId !== parentThreadId) firstWake = yield* requests.take;
+        yield* orchestrator.dispatch({
+          type: "delegated_task.completion-delivery.acknowledge",
+          commandId: CommandId.make("command:background-wake-ack"),
+          parentThreadId,
+          taskId: child.taskId,
+          observedByRunId: parentRunId,
+        });
+        const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs.find(
+          (run) => run.id === parentRunId,
+        )!;
+        yield* eventSink.write({
+          commandId: reconcileCommandId("background-wake-parent-finished"),
+          events: [
+            {
+              id: EventId.make("event:background-wake-parent-finished"),
+              type: "run.updated",
+              threadId: parentThreadId,
+              runId: parentRunId,
+              occurredAt: now,
+              payload: { ...parentRun, status: "completed", completedAt: now },
+            },
+          ],
+        });
+
+        // The shape ProviderContinuationService dispatches when the provider
+        // reports a background command (wire kind `background_command`) ended.
+        const wakeMessageId = MessageId.make("message:background-wake");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "provider",
+          commandId: CommandId.make("command:background-wake"),
+          threadId: child.childThreadId,
+          messageId: wakeMessageId,
+          text: "Background activity updated",
+          notification: {
+            source: { kind: "command" },
+            outcome: "completed",
+            summary: 'Command "sleep 60" finished',
+          },
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+        });
+        const run = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
+          (row) => row.userMessageId === wakeMessageId,
+        )!;
+        assert.isDefined(run.delegatedTaskId);
+        yield* eventSink.write({
+          commandId: reconcileCommandId("background-wake-finished"),
+          events: [
+            {
+              id: EventId.make("event:background-wake-result"),
+              type: "message.updated",
+              threadId: child.childThreadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: {
+                id: MessageId.make("message:background-wake-result"),
+                threadId: child.childThreadId,
+                runId: run.id,
+                nodeId: null,
+                role: "assistant",
+                text: "The background command finished cleanly.",
+                attachments: [],
+                streaming: false,
+                createdBy: "agent",
+                creationSource: "server",
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+            {
+              id: EventId.make("event:background-wake-finished"),
+              type: "run.updated",
+              threadId: child.childThreadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+            },
+          ],
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        const followup = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+          (task) => task.id === run.delegatedTaskId,
+        )!;
+        assert.equal(followup.status, "completed");
+        assert.equal(followup.result, "The background command finished cleanly.");
+        assert.equal(followup.completionDelivery?.state, "claimed");
+        let wake = yield* requests.take;
+        while (
+          wake.threadId !== parentThreadId ||
+          wake.delegatedCompletion?.messageId === firstWake.delegatedCompletion?.messageId
+        ) {
+          wake = yield* requests.take;
+        }
+        assert.equal(wake.delegatedCompletion?.parentRunId, parentRunId);
+      }),
+    );
+
     const outcomes = [
       "completed",
       "failed",
@@ -1068,7 +1902,6 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
               commandId: CommandId.make(`command:followup-stop-${outcome}`),
             });
           }
-          // Reconciliation skips the live terminal listener; recovery must finish this recorded task.
           yield* eventSink.write({
             commandId: reconcileCommandId(`followup-finish-${outcome}`),
             events: [
@@ -1214,10 +2047,265 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           }
         }),
     );
+
+    it.effect("serializes a recovered child answer with its parent and tracks the follow-up", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const parentThreadId = ThreadId.make("thread:question-answer-parent");
+        const projectId = ProjectId.make("project:question-answer");
+        const parentRunId = RunId.make("run:question-answer-parent");
+        const rootNodeId = NodeId.make("node:question-answer-parent");
+        yield* seedParentWithTerminalTask({
+          threadId: parentThreadId,
+          projectId,
+          runId: parentRunId,
+          rootNodeId,
+          taskId: NodeId.make("node:question-answer-seed"),
+          deliveryState: "acknowledged",
+          now,
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId,
+          projectId,
+          parentRunId,
+          rootNodeId,
+          name: "question-answer-child",
+          completionWake: "always",
+          continuationPending: false,
+          now,
+        });
+        // The cancelled result is published before anyone answers the question.
+        yield* orchestrator.recoverDelegatedTasks;
+        assert.isNotNull(
+          (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+            (task) => task.id === child.taskId,
+          )?.result,
+        );
+        const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs.find(
+          (run) => run.id === parentRunId,
+        )!;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("event:question-answer-parent-completed"),
+              type: "run.updated",
+              threadId: parentThreadId,
+              runId: parentRunId,
+              occurredAt: now,
+              payload: { ...parentRun, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        const requestId = RuntimeRequestId.make("request:question-answer");
+        const nodeId = NodeId.make("node:question-answer-request");
+        yield* eventSink.write({
+          commandId: CommandId.make("command:seed-question-answer"),
+          events: [
+            {
+              id: EventId.make("event:question-answer-request"),
+              type: "runtime-request.updated",
+              threadId: child.childThreadId,
+              nodeId,
+              occurredAt: now,
+              payload: {
+                id: requestId,
+                nodeId,
+                providerTurnId: null,
+                nativeRequestRef: null,
+                kind: "user_input",
+                status: "pending",
+                responseCapability: { type: "message" },
+                createdAt: now,
+                resolvedAt: null,
+              },
+            },
+            {
+              id: EventId.make("event:question-answer-item"),
+              type: "turn-item.updated",
+              threadId: child.childThreadId,
+              nodeId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make("turn-item:question-answer"),
+                type: "user_input_request",
+                threadId: child.childThreadId,
+                runId: child.childRunId,
+                nodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 0,
+                status: "waiting",
+                title: null,
+                startedAt: now,
+                completedAt: null,
+                updatedAt: now,
+                requestId,
+                questions: [
+                  { id: "color", header: "Color", question: "Which color?", options: [] },
+                ],
+              },
+            },
+          ],
+        });
+
+        const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+        const parentHeld = yield* Deferred.make<void>();
+        const releaseParent = yield* Deferred.make<void>();
+        const answerWaiting = yield* Deferred.make<void>();
+        const withLock = executor.withLock;
+        const parentMutation = yield* withLock(
+          parentThreadId,
+          Deferred.succeed(parentHeld, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseParent)),
+          ),
+        ).pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(parentHeld);
+        const observeLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withLock"] = (
+          key,
+          effect,
+        ) =>
+          key === parentThreadId
+            ? Deferred.succeed(answerWaiting, undefined).pipe(Effect.andThen(withLock(key, effect)))
+            : withLock(key, effect);
+        const spy = vi.spyOn(executor, "withLock").mockImplementation(observeLock);
+        yield* Effect.gen(function* () {
+          const answer = yield* orchestrator
+            .dispatch({
+              type: "runtime-request.respond",
+              commandId: CommandId.make("command:question-answer"),
+              threadId: child.childThreadId,
+              requestId,
+              answers: { color: "Blue" },
+            })
+            .pipe(Effect.forkScoped({ startImmediately: true }));
+          yield* Effect.raceFirst(Deferred.await(answerWaiting), Fiber.join(answer));
+          const waiting = yield* orchestrator.getThreadProjection(child.childThreadId);
+          assert.equal(
+            waiting.runtimeRequests.find((row) => row.id === requestId)?.status,
+            "pending",
+          );
+          assert.isFalse((yield* executor.activeKeys).includes(child.childThreadId));
+          yield* Deferred.succeed(releaseParent, undefined);
+          yield* Fiber.join(parentMutation);
+          yield* Fiber.join(answer);
+        }).pipe(Effect.ensuring(Effect.sync(() => spy.mockRestore())));
+
+        const answerRun = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
+          (run) => run.userMessageId === MessageId.make(`async-answer:${requestId}`),
+        );
+        assert.isDefined(answerRun?.delegatedTaskId);
+        const followup = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+          (task) => task.id === answerRun?.delegatedTaskId,
+        );
+        assert.equal(followup?.childThreadId, child.childThreadId);
+        assert.isNull(followup?.result);
+        assert.isTrue(
+          (yield* orchestrator.getThreadShell(parentThreadId))?.pendingBackgroundTasks?.some(
+            (task) => task.kind === "subagent" && task.childThreadId === child.childThreadId,
+          ),
+        );
+      }),
+    );
   },
 );
 
 it.layer(layerTest)("delegated tasks across a server restart", (it) => {
+  it.effect("queues a child result without creating a provider history handoff", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:result-message-parent");
+      const projectId = ProjectId.make("project:result-message");
+      const runId = RunId.make("run:result-message-parent");
+      const rootNodeId = NodeId.make("node:result-message-parent");
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId,
+        runId,
+        rootNodeId,
+        taskId: NodeId.make("node:result-message-seed"),
+        deliveryState: "acknowledged",
+        now,
+      });
+      const child = yield* seedRestartCancelledChild({
+        parentThreadId: threadId,
+        projectId,
+        parentRunId: runId,
+        rootNodeId,
+        name: "result-message-child",
+        completionWake: "always",
+        continuationPending: false,
+        runStatus: "completed",
+        now,
+      });
+      const parent = yield* orchestrator.getThreadProjection(threadId);
+      const childProjection = yield* orchestrator.getThreadProjection(child.childThreadId);
+      const providerThreadId = ProviderThreadId.make("provider-thread:result-message-child");
+      yield* eventSink.write({
+        commandId: CommandId.make("command:result-message-child-provider"),
+        events: [
+          {
+            id: EventId.make("event:result-message-child-provider"),
+            type: "provider-thread.updated",
+            threadId: child.childThreadId,
+            occurredAt: now,
+            payload: {
+              ...parent.providerThreads[0]!,
+              id: providerThreadId,
+              appThreadId: child.childThreadId,
+            },
+          },
+          {
+            id: EventId.make("event:result-message-child-run"),
+            type: "run.updated",
+            threadId: child.childThreadId,
+            runId: child.childRunId,
+            occurredAt: now,
+            payload: { ...childProjection.runs[0]!, providerThreadId },
+          },
+        ],
+      });
+
+      yield* orchestrator.recoverDelegatedTasks;
+      const recovered = yield* orchestrator.getThreadProjection(threadId);
+      const task = recovered.subagents.find((candidate) => candidate.id === child.taskId)!;
+      assert.equal(task.status, "completed");
+      assert.isNotNull(task.result);
+      assert.isEmpty(recovered.contextHandoffs);
+      assert.equal(recovered.contextTransfers.length, 1);
+
+      const delivery = recovered.runs.find((candidate) => candidate.id === runId)!
+        .delegatedCompletion!.delivery!;
+      const messageId = delivery.messageId;
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("command:result-message-delivery"),
+        threadId,
+        messageId,
+        text: "Delegated task finished.",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+        delegatedCompletion: {
+          parentRunId: runId,
+          generation: delivery.generation,
+          taskIds: [child.taskId],
+        },
+      });
+      const queued = yield* orchestrator.getThreadProjection(threadId);
+      assert.include(
+        queued.messages.find((message) => message.id === messageId)?.text ?? "",
+        task.result!,
+      );
+    }),
+  );
+
   it.effect("holds a restart-cancelled child for its continuation's result", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -1254,9 +2342,7 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         });
       const resumed = yield* child("restart-resumed-child", true);
       const stopped = yield* child("restart-stopped-child", false);
-      // Settled with only background work left: its interim reply is not the result.
       const backgrounded = yield* child("restart-backgrounded-child", true, "completed");
-      // A second restart cut the first continuation before it started.
       const recut = yield* child("restart-recut-child", false);
       const recutContinuationId = RunId.make("run:restart-recut-child:2");
       const recutCommandId = CommandId.make("command:restart-recut-child:reconcile");
@@ -1303,11 +2389,9 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       assert.isTrue(yield* orchestrator.delegatedTaskResultPending(recut.childThreadId));
       assert.isTrue(yield* orchestrator.delegatedTaskResultPending(resumed.childThreadId));
       assert.isFalse(yield* orchestrator.delegatedTaskResultPending(stopped.childThreadId));
-      // A replayed first continuation settling must not release the second one's hold.
       yield* orchestrator.recoverDelegatedTask(recut.childThreadId, recut.childRunId);
       const replayed = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(replayed.subagents.find((row) => row.id === recut.taskId)?.status, "running");
-      // A caller that read the cancelled run before the child resumed sees it as pending.
       yield* eventSink.write({
         commandId: CommandId.make("command:restart-stopped-child:resumed"),
         events: [
@@ -1327,7 +2411,6 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         ),
       );
 
-      // The continuation's own run finishing settles the task with its result.
       const afterSequence = yield* eventSink.latestSequence();
       const continuationRunId = RunId.make("run:restart-resumed-child:2");
       yield* eventSink.write({
@@ -1424,12 +2507,117 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       const task = settled.subagents.find((row) => row.id === child.taskId);
       assert.equal(task?.status, "cancelled");
       assert.equal(task?.completionDelivery?.state, "claimed");
+
+      // The parent's Stop committed, but the restart cut the effect that stops its children.
+      const stoppedChild = yield* seedRestartCancelledChild({
+        parentThreadId: threadId,
+        projectId,
+        parentRunId: runId,
+        rootNodeId,
+        name: "restart-parent-stopped-child",
+        completionWake: "always",
+        continuationPending: true,
+        now,
+      });
+      yield* (yield* EventSink.EventSinkV2).write({
+        commandId: CommandId.make("command:restart-declined-parent:stop"),
+        events: [
+          {
+            id: EventId.make("event:restart-declined-parent:interrupt-request"),
+            type: "turn-item.updated",
+            threadId,
+            runId,
+            nodeId: rootNodeId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make("turn-item:restart-declined-parent:interrupt-request"),
+              type: "run_interrupt_request",
+              threadId,
+              runId,
+              nodeId: rootNodeId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 90,
+              status: "completed",
+              title: "Interrupt requested",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              message: "Stopped by user",
+            },
+          },
+        ],
+      });
+      yield* continueRestartedRun({
+        threadId: stoppedChild.childThreadId,
+        sourceRunId: stoppedChild.childRunId,
+      }).pipe(Effect.provide(ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true })));
+      const afterStop = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(
+        afterStop.subagents.find((row) => row.id === stoppedChild.taskId)?.status,
+        "cancelled",
+      );
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(stoppedChild.childThreadId)).runs.map(
+          (run) => run.id,
+        ),
+        [stoppedChild.childRunId],
+      );
     }),
   );
 
-  // A running provider turn does not prove the provider consumed the delivery
-  // (Claude marks the turn running before it reads the prompt), so a cut
-  // delivery is offered again even when a continuation resumes that turn.
+  it.effect("reports a child whose monitor the restart cut as interrupted, not completed", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:restart-monitor-parent");
+      const projectId = ProjectId.make("project:restart-monitor-parent");
+      const runId = RunId.make("run:restart-monitor-parent");
+      const rootNodeId = NodeId.make("node:restart-monitor-parent-root");
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId,
+        runId,
+        rootNodeId,
+        taskId: NodeId.make("node:restart-monitor-parent-settled"),
+        deliveryState: "delivered",
+        now,
+      });
+      const child = yield* seedRestartCancelledChild({
+        parentThreadId: threadId,
+        projectId,
+        parentRunId: runId,
+        rootNodeId,
+        name: "restart-monitor-child",
+        completionWake: "always",
+        continuationPending: true,
+        runStatus: "completed",
+        lostWork: [{ kind: "monitor", label: "Gate attempt 9", awaited: true }],
+        now,
+      });
+      yield* orchestrator.recoverDelegatedTasks;
+      const held = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(held.subagents.find((row) => row.id === child.taskId)?.status, "running");
+
+      yield* continueRestartedRun({
+        threadId: child.childThreadId,
+        sourceRunId: child.childRunId,
+      }).pipe(
+        Effect.provide(ServerSettings.layerTest({ continueThreadsAfterServerUpdate: false })),
+      );
+
+      const settled = yield* orchestrator.getThreadProjection(threadId);
+      const task = settled.subagents.find((row) => row.id === child.taskId);
+      assert.equal(task?.status, "interrupted");
+      assert.equal(task?.result, "Child task ended with status interrupted.");
+      assert.equal(task?.completionDelivery?.state, "claimed");
+    }),
+  );
+
+  // Running does not prove prompt consumption in Claude; re-offer cut deliveries even when resuming the turn.
   it.effect("re-offers a cut delivery even when a continuation resumes its turn", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -1548,7 +2736,6 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         continuationPending: false,
         now,
       });
-      // Pull request watch wakes queued while the child ran; the restart held them.
       const held = runEvent({
         threadId: child.childThreadId,
         runId: RunId.make("run:held-wake-child:2"),
@@ -1579,7 +2766,6 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         ),
       );
       assert.isFalse(yield* orchestrator.delegatedTaskResultPending(child.childThreadId));
-      // The held wake stays held for the user to resume or discard.
       const childProjection = yield* orchestrator.getThreadProjection(child.childThreadId);
       assert.deepEqual(
         childProjection.runs.map((run) => [run.status, run.queueHeld ?? false]),
@@ -1619,7 +2805,6 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         continuationPending: false,
         now,
       });
-      // The child is resumed, and a wake queues behind its running turn.
       const activeRun = runEvent({
         threadId: child.childThreadId,
         runId: RunId.make("run:failed-hold-child:2"),
@@ -1685,7 +2870,6 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         ],
       });
 
-      // The failure holds the queue, which leaves the failure as the task's result.
       const settled = yield* eventSink
         .stream({ afterSequence, eventType: "subagent.updated" })
         .pipe(
@@ -1711,6 +2895,72 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
     }),
   );
 
+  it.effect(
+    "recovers an unpublished child failure after its completion delivery was disposed",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:unpublished-failure-parent");
+        const projectId = ProjectId.make("project:unpublished-failure-parent");
+        const runId = RunId.make("run:unpublished-failure-parent");
+        const rootNodeId = NodeId.make("node:unpublished-failure-parent-root");
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId,
+          runId,
+          rootNodeId,
+          taskId: NodeId.make("node:unpublished-failure-parent-settled"),
+          deliveryState: "delivered",
+          now,
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId: threadId,
+          projectId,
+          parentRunId: runId,
+          rootNodeId,
+          name: "unpublished-failure-child",
+          completionWake: "always",
+          continuationPending: false,
+          now,
+        });
+        // Skip the live terminal listener to model a committed failure whose
+        // publication was interrupted. task_cancel then disposed its delivery.
+        yield* eventSink.write({
+          commandId: reconcileCommandId("unpublished-failure"),
+          events: [
+            runEvent({
+              threadId: child.childThreadId,
+              runId: child.childRunId,
+              ordinal: 1,
+              status: "failed",
+              now,
+            }),
+          ],
+        });
+        yield* orchestrator.dispatch({
+          type: "delegated_task.completion-delivery.dispose",
+          commandId: CommandId.make("command:unpublished-failure-dispose"),
+          parentThreadId: threadId,
+          taskId: child.taskId,
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        const recovered = yield* orchestrator.getThreadProjection(threadId);
+        const task = recovered.subagents.find((row) => row.id === child.taskId);
+        assert.equal(task?.status, "failed");
+        assert.equal(task?.result, "Child task ended with status failed.");
+        assert.equal(task?.completionDelivery?.state, "disposed");
+        assert.lengthOf(recovered.runs, 1);
+        assert.lengthOf(
+          recovered.contextTransfers.filter((transfer) => transfer.type === "subagent_result"),
+          1,
+        );
+        yield* orchestrator.recoverDelegatedTasks;
+        assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), recovered);
+      }),
+  );
+
   it.effect("wakes the parent for a settled_only task once its spawning turn ended", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -1729,8 +2979,6 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         deliveryState: "delivered",
         now,
       });
-      // The restart cut the turn blocked in delegate_task(wait); its
-      // continuation is a new, live run.
       yield* eventSink.write({
         commandId: reconcileCommandId("settled-only-restart"),
         events: [
@@ -1777,5 +3025,225 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         [child.taskId],
       );
     }),
+  );
+
+  it.effect.each(["a background command", "a nested subagent"] as const)(
+    "finalizes a child whose run ended before %s settled",
+    (blocker) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const key = blocker === "a background command" ? "command" : "nested";
+        const threadId = ThreadId.make(`late-settle-parent-${key}`);
+        const runId = RunId.make(`late-settle-parent-run-${key}`);
+        const rootNodeId = NodeId.make(`late-settle-parent-root-${key}`);
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId: ProjectId.make(`late-settle-project-${key}`),
+          runId,
+          rootNodeId,
+          taskId: NodeId.make(`late-settle-seed-task-${key}`),
+          deliveryState: "acknowledged",
+          now,
+        });
+        // A delegated child with a running task on the parent and a running run of its own.
+        const delegate = (name: string) =>
+          Effect.gen(function* () {
+            const taskId = NodeId.make(`node:late-settle-${key}-${name}`);
+            const childThreadId = ThreadId.make(`thread:late-settle-${key}-${name}`);
+            const run = runEvent({
+              threadId: childThreadId,
+              runId: RunId.make(`run:late-settle-${key}-${name}`),
+              ordinal: 1,
+              status: "running",
+              now,
+            });
+            yield* sink.write({
+              events: [
+                {
+                  id: EventId.make(`event:late-settle-${key}-${name}:thread`),
+                  type: "thread.created",
+                  threadId: childThreadId,
+                  occurredAt: now,
+                  payload: {
+                    createdBy: "agent",
+                    creationSource: "server",
+                    id: childThreadId,
+                    projectId: ProjectId.make(`late-settle-project-${key}`),
+                    title: name,
+                    providerInstanceId: modelSelection.instanceId,
+                    modelSelection,
+                    runtimeMode: "full-access",
+                    interactionMode: "default",
+                    branch: null,
+                    worktreePath: null,
+                    activeProviderThreadId: null,
+                    lineage: {
+                      parentThreadId: threadId,
+                      relationshipToParent: "subagent",
+                      rootThreadId: threadId,
+                    },
+                    forkedFrom: { type: "node", nodeId: taskId },
+                    createdAt: now,
+                    updatedAt: now,
+                    archivedAt: null,
+                    settledOverride: null,
+                    settledAt: null,
+                    lastVisitedAt: null,
+                    deletedAt: null,
+                  },
+                },
+                {
+                  id: EventId.make(`event:late-settle-${key}-${name}:task`),
+                  type: "subagent.updated",
+                  threadId,
+                  runId,
+                  nodeId: taskId,
+                  driver,
+                  providerInstanceId: modelSelection.instanceId,
+                  occurredAt: now,
+                  payload: {
+                    id: taskId,
+                    threadId,
+                    runId,
+                    parentNodeId: rootNodeId,
+                    origin: "app_owned",
+                    createdBy: "agent",
+                    driver,
+                    providerInstanceId: modelSelection.instanceId,
+                    providerThreadId: null,
+                    childThreadId,
+                    nativeTaskRef: null,
+                    prompt: `Run ${name}.`,
+                    title: null,
+                    model: null,
+                    completionWake: "always",
+                    status: "running",
+                    result: null,
+                    startedAt: now,
+                    completedAt: null,
+                    updatedAt: now,
+                  },
+                },
+                run,
+              ],
+            });
+            return { task: { id: taskId }, childThreadId, run: run.payload };
+          });
+        const settled = (taskId: NodeId, afterSequence: number) =>
+          sink.stream({ afterSequence, eventType: "subagent.updated" }).pipe(
+            Stream.filter(
+              (stored) =>
+                stored.event.type === "subagent.updated" &&
+                stored.event.payload.id === taskId &&
+                stored.event.payload.status === "completed",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+          );
+        const blocked = yield* delegate("blocked");
+        const barrier = yield* delegate("barrier");
+        const providerThread = {
+          id: ProviderThreadId.make(`provider-thread:late-settle-child-${key}`),
+          driver,
+          providerInstanceId: modelSelection.instanceId,
+          providerSessionId: null,
+          appThreadId: blocked.childThreadId,
+          ownerNodeId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "idle" as const,
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 1,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        const nested = {
+          id: NodeId.make(`late-settle-nested-${key}`),
+          threadId: blocked.childThreadId,
+          runId: blocked.run.id,
+          parentNodeId: NodeId.make(`late-settle-child-root-${key}`),
+          origin: "provider_native" as const,
+          createdBy: "agent" as const,
+          driver,
+          providerInstanceId: modelSelection.instanceId,
+          providerThreadId: null,
+          childThreadId: null,
+          nativeTaskRef: null,
+          prompt: "Nested work",
+          title: null,
+          model: null,
+          status: "running" as const,
+          result: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        };
+        const blockerEvent = (open: boolean) =>
+          blocker === "a background command"
+            ? {
+                id: EventId.make(`event:late-settle-roster-${key}-${open}`),
+                type: "provider-thread.updated" as const,
+                threadId: blocked.childThreadId,
+                driver,
+                providerInstanceId: modelSelection.instanceId,
+                occurredAt: now,
+                payload: {
+                  ...providerThread,
+                  pendingBackgroundTasks: open
+                    ? [{ taskId: "sleep-900", kind: "command" as const }]
+                    : [],
+                },
+              }
+            : {
+                id: EventId.make(`event:late-settle-nested-${key}-${open}`),
+                type: "subagent.updated" as const,
+                threadId: blocked.childThreadId,
+                runId: blocked.run.id,
+                nodeId: nested.id,
+                driver,
+                providerInstanceId: modelSelection.instanceId,
+                occurredAt: now,
+                payload: open
+                  ? nested
+                  : { ...nested, status: "completed" as const, result: "done", completedAt: now },
+              };
+        const ended = (child: typeof blocked) => ({
+          ...runEvent({
+            threadId: child.childThreadId,
+            runId: child.run.id,
+            ordinal: child.run.ordinal,
+            status: "completed",
+            now,
+          }),
+          payload: { ...child.run, status: "completed" as const, startedAt: now, completedAt: now },
+        });
+
+        const beforeEnd = yield* sink.latestSequence();
+        yield* sink.write({ events: [blockerEvent(true)] });
+        yield* sink.write({ events: [ended(blocked)] });
+        yield* sink.write({ events: [ended(barrier)] });
+        // Run updates are handled in order, so the barrier settling means the blocked child's
+        // run end was handled too, while its work still ran.
+        yield* settled(barrier.task.id, beforeEnd);
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
+            (task) => task.id === blocked.task.id,
+          )?.status,
+          "running",
+        );
+
+        const beforeSettle = yield* sink.latestSequence();
+        yield* sink.write({ events: [blockerEvent(false)] });
+        yield* settled(blocked.task.id, beforeSettle);
+        const finished = (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
+          (task) => task.id === blocked.task.id,
+        );
+        assert.equal(finished?.status, "completed");
+        assert.notEqual(finished?.completionDelivery?.state, "disposed");
+      }),
   );
 });

@@ -11,12 +11,6 @@ export function releaseComposerDraftUploads(target: ScopedThreadRef | DraftId): 
   }
 }
 
-/**
- * Releases every upload a deleted project's drafts still hold. Draft-thread
- * sessions carry their project ref, but drafts on the project's real threads
- * live in `draftsByThreadKey` under scoped thread keys with no project in the
- * key, so the caller passes the project's thread refs alongside.
- */
 export function releaseProjectDraftUploads(
   projectRef: ScopedProjectRef,
   projectThreadRefs: ReadonlyArray<ScopedThreadRef> = [],

@@ -5,34 +5,18 @@ import * as NodePath from "node:path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 export interface FakeCliOptions {
-  /** Directory the launcher and its stub are written into. */
   readonly directory: string;
-  /** Command name as callers spawn it, e.g. `codex`. */
   readonly name: string;
-  /** ES module source the launcher runs with `node`. `process.argv.slice(2)` carries the CLI args. */
   readonly source: string;
-  /** Environment set for the stub before it runs, on top of the inherited environment. */
   readonly env?: Readonly<Record<string, string>>;
-  /**
-   * Platform the launcher is shaped for. Effect callers should pass the value
-   * they read from `HostProcess.Platform` so an injected override is honoured;
-   * defaults to the real host for plain tests.
-   */
   readonly platform?: NodeJS.Platform;
 }
 
-/**
- * Writes a fake CLI whose behaviour lives in a Node stub. On posix the
- * launcher is a `#!/bin/sh` script; on Windows it is a `.cmd` shim, since a
- * shebang file is not executable there and `resolveSpawnCommand` routes
- * `.cmd` through a shell. Returns the launcher path to hand to the code under
- * test, which on Windows carries the `.cmd` extension.
- */
+/** Returns a POSIX shell launcher or Windows .cmd shim; shebang files are not executable on Windows. */
 export function writeFakeCli(options: FakeCliOptions): string {
   NodeFS.mkdirSync(options.directory, { recursive: true });
   const stubPath = NodePath.join(options.directory, `${options.name}-stub.mjs`);
-  // The environment rides in a JSON sidecar the stub applies to itself, since
-  // neither sh nor cmd.exe can quote every value (newlines, quotes, `%`) safely.
+  // JSON sidecars avoid shell quoting failures for arbitrary environment values.
   const envPath = NodePath.join(options.directory, `${options.name}-env.json`);
   NodeFS.writeFileSync(envPath, JSON.stringify(options.env ?? {}), "utf8");
   NodeFS.writeFileSync(
@@ -67,34 +51,13 @@ export function writeFakeCli(options: FakeCliOptions): string {
   return launcherPath;
 }
 
-/**
- * Stub source that becomes `scriptPath`: after optionally requiring a leading
- * argv prefix, it imports the script into its own process so the stub is the
- * agent. Nothing sits between the code under test and the mock, so a kill or
- * a closed stdin reaches it directly and its exit log is faithful on every
- * host. The script must not read `process.argv`; the mock agents are driven
- * by environment and stdin.
- */
 export function execScriptSource(options: {
   readonly scriptPath: string;
   readonly expectedArgs?: ReadonlyArray<string>;
-  /** Tab-separated argv appended here per invocation, for launch-flag assertions. */
-  readonly argvLogPath?: string;
-  /** Wait before handing over, for tests that race a slow startup. */
-  readonly delayMs?: number;
 }): string {
   return [
-    'import { appendFileSync } from "node:fs";',
     'import { pathToFileURL } from "node:url";',
     "const args = process.argv.slice(2);",
-    ...(options.argvLogPath === undefined
-      ? []
-      : [
-          `appendFileSync(${JSON.stringify(options.argvLogPath)}, args.join(${JSON.stringify("\t")}) + ${JSON.stringify("\n")});`,
-        ]),
-    ...(options.delayMs === undefined
-      ? []
-      : [`Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${options.delayMs});`]),
     `const expected = ${JSON.stringify(options.expectedArgs ?? [])};`,
     "if (expected.some((value, index) => args[index] !== value)) {",
     '  process.stderr.write(`unexpected args: ${args.join(" ")}\\n`);',

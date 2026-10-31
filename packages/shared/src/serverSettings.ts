@@ -4,6 +4,8 @@ import {
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
+  globalIdleCompaction,
+  type IdleCompactionMode,
   isProviderAvailable,
   isUnconfiguredDefaultInstanceEnabled,
   resolveProjectProviderInstanceEnabled,
@@ -12,18 +14,19 @@ import {
   type ModelSelection,
   type ProjectId,
   type ProjectScopedServerSettingKey,
-  type ProjectSettingsOverrides,
+  ProjectSettingsOverrides,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
   ServerSettings,
   type ServerSettingsPatch,
+  withIdleCompaction,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { deepMerge } from "./Struct.ts";
 import { fromLenientJson } from "./schemaJson.ts";
-import { createModelSelection } from "./model.ts";
+import { createModelSelection, readCustomModelEntries } from "./model.ts";
 import {
   getBackgroundActivityBaseProfile,
   normalizeBackgroundActivitySettings,
@@ -33,38 +36,6 @@ import {
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 const decodeServerSettingsJson = Schema.decodeUnknownOption(ServerSettingsJson);
-
-/** @deprecated Read `resolveProjectSettings(...).settings.enableAgentBrowserAccess`. */
-export function resolveProjectAgentBrowserAccess(
-  settings: Pick<
-    ServerSettings,
-    "enableAgentBrowserAccess" | "projectAgentBrowserAccessOverrides" | "projectSettingsOverrides"
-  >,
-  projectId: ProjectId,
-): boolean {
-  return (
-    settings.projectSettingsOverrides[projectId]?.enableAgentBrowserAccess ??
-    settings.projectAgentBrowserAccessOverrides[projectId] ??
-    settings.enableAgentBrowserAccess
-  );
-}
-
-/** @deprecated Read `resolveProjectSettings(...).settings.defaultAutoPull`. */
-export function resolveProjectAutoPull(
-  settings: Pick<
-    ServerSettings,
-    "defaultAutoPull" | "projectAutoPullOverrides" | "projectSettingsOverrides"
-  >,
-  projectId: ProjectId,
-  legacyAutoPull: boolean | undefined,
-): boolean {
-  // Existing opt-ins stay enabled until explicitly overridden or reset.
-  return (
-    settings.projectSettingsOverrides[projectId]?.defaultAutoPull ??
-    settings.projectAutoPullOverrides[projectId] ??
-    (legacyAutoPull === true || settings.defaultAutoPull)
-  );
-}
 
 export function isModelSelectionProviderEnabled(
   settings: ServerSettings,
@@ -89,22 +60,14 @@ const TEXT_GENERATION_FALLBACK_DRIVERS = [
   "antigravity",
 ].map((driver) => ProviderDriverKind.make(driver));
 
-/**
- * The text generation model on the first instance `isEnabled` accepts: the
- * built-in default instances in preference order, then, when
- * `includeConfiguredInstances` is set, configured instances of those
- * drivers. `null` when none is.
- *
- * `includeConfiguredInstances` is for the project-scoped caller only: a
- * project that disabled every built-in instance should still be able to
- * fall back to one it configured itself. The machine-level caller leaves it
- * unset, since widening the candidates there would change behavior for
- * every user regardless of project scope.
- */
+/** Only project-scoped callers may include configured instances when falling back; machine-level callers leave it unset. */
 export function fallbackTextGenerationModelSelection(
   providerInstances: ServerSettings["providerInstances"],
   isEnabled: (instanceId: ProviderInstanceId, driver: ProviderDriverKind) => boolean,
-  options?: { readonly includeConfiguredInstances?: boolean },
+  options?: {
+    readonly includeConfiguredInstances?: boolean;
+    readonly defaultModelSelection?: ModelSelection | null;
+  },
 ): ModelSelection | null {
   const candidates = [
     ...TEXT_GENERATION_FALLBACK_DRIVERS.map(
@@ -121,21 +84,25 @@ export function fallbackTextGenerationModelSelection(
   const match = candidates.find(([instanceId, driver]) => isEnabled(instanceId, driver));
   if (match === undefined) return null;
   const [instanceId, driver] = match;
-  return {
-    instanceId,
-    model:
-      DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[driver] ??
-      DEFAULT_MODEL_BY_PROVIDER[driver] ??
-      DEFAULT_TEXT_GENERATION_MODEL,
-  };
+  const threadDefault = options?.defaultModelSelection;
+  const config = providerInstances[instanceId]?.config as { customModels?: unknown } | undefined;
+  if (
+    threadDefault?.instanceId === instanceId &&
+    readCustomModelEntries(config?.customModels).some((entry) => entry.slug === threadDefault.model)
+  ) {
+    return threadDefault;
+  }
+  return { instanceId, model: defaultTextGenerationModel(driver) };
 }
 
-/**
- * `projectId` has no default: a caller that forgets it would otherwise fall
- * back to the machine's own writer choice, silently ignoring a project that
- * turned the writer's instance off. Pass `null` explicitly outside a
- * project's scope.
- */
+export function defaultTextGenerationModel(driver: ProviderDriverKind): string {
+  return (
+    DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[driver] ??
+    DEFAULT_MODEL_BY_PROVIDER[driver] ??
+    DEFAULT_TEXT_GENERATION_MODEL
+  );
+}
+
 export function resolveSourceControlWriterModelSelection(
   settings: ServerSettings,
   providers: ReadonlyArray<ServerProvider> | undefined,
@@ -160,10 +127,6 @@ export function resolveSourceControlWriterModelSelection(
     : settings.textGenerationModelSelection;
 }
 
-/**
- * The model that writes review guides: its own setting when that provider can still run it,
- * otherwise whatever writes source control text.
- */
 export function resolveReviewGuideModelSelection(
   settings: ServerSettings,
   providers: ReadonlyArray<ServerProvider> | undefined,
@@ -248,7 +211,6 @@ function mergeModelSelectionOptionsById(input: {
   return [...merged.entries()].map(([id, value]) => ({ id, value }));
 }
 
-/** Upsert each patched entry; `null` removes it. Entries the patch omits are untouched. */
 function mergeSettingsEntries<Value>(
   current: Readonly<Record<string, Value>>,
   patch: Readonly<Record<string, Value | null>>,
@@ -264,15 +226,17 @@ function mergeSettingsEntries<Value>(
   return Object.fromEntries(next);
 }
 
-/**
- * `projectSettingsOverrides` entries otherwise replace whole (see the field's
- * doc comment in contracts), but `providerInstances` was added after clients
- * already round-trip a project's entry on every edit. A client built before
- * that addition sends an entry that never mentions the key, and a whole
- * replace would silently wipe it. When an incoming entry omits the key, keep
- * what is stored; a client that means to clear every provider override for
- * the project says so explicitly with `providerInstances: {}`.
- */
+const knownProjectOverrideKeys = new Set(Object.keys(ProjectSettingsOverrides.fields));
+
+function pickOverrideKeys(entry: ProjectSettingsOverrides | undefined, known: boolean) {
+  return Object.fromEntries(
+    Object.entries<unknown>(entry ?? {}).filter(
+      ([key]) => knownProjectOverrideKeys.has(key) === known,
+    ),
+  );
+}
+
+// Older clients omit providerInstances during whole-entry replacement; preserve it to avoid wiping overrides.
 function mergeProjectSettingsOverridesPatch(
   current: Readonly<Record<string, ProjectSettingsOverrides>>,
   patch: Readonly<Record<string, ProjectSettingsOverrides | null>>,
@@ -285,7 +249,9 @@ function mergeProjectSettingsOverridesPatch(
     }
     const storedProviderInstances = current[projectId]?.providerInstances;
     next.set(projectId, {
-      ...entry,
+      // Preserve downgraded storage, but reject new unknown writes so clients can detect unsupported settings.
+      ...pickOverrideKeys(current[projectId], false),
+      ...pickOverrideKeys(entry, true),
       ...(Object.hasOwn(entry, "providerInstances") || storedProviderInstances === undefined
         ? {}
         : { providerInstances: storedProviderInstances }),
@@ -294,11 +260,6 @@ function mergeProjectSettingsOverridesPatch(
   return Object.fromEntries(next);
 }
 
-/**
- * Derived views of `projectSettingsOverrides` for clients that still read
- * the legacy per-key maps. Recomputed on every patch and load so they
- * cannot drift from the generic record.
- */
 export function deriveLegacyProjectOverrides(
   settings: Pick<ServerSettings, "projectSettingsOverrides">,
 ): Pick<
@@ -322,12 +283,6 @@ export function deriveLegacyProjectOverrides(
   return { projectAgentBrowserAccessOverrides, projectAutoPullOverrides, projectScriptOverrides };
 }
 
-/**
- * Rewrite a patch that still uses the legacy per-key project maps into
- * entries of `projectSettingsOverrides`, so older clients keep editing the
- * values the server actually reads. `null` in a legacy map clears that one
- * override.
- */
 function translateLegacyProjectOverridePatch(
   current: Pick<ServerSettings, "projectSettingsOverrides">,
   patch: ServerSettingsPatch,
@@ -350,8 +305,7 @@ function translateLegacyProjectOverridePatch(
   const entries = new Map<string, ProjectSettingsOverrides | null>(
     Object.entries(rest.projectSettingsOverrides ?? {}),
   );
-  // A canonical entry in the same patch is the newer representation; a legacy
-  // map must not resurrect a key that entry deliberately omits.
+  // Canonical entries outrank legacy maps, including deliberately omitted keys.
   const canonicalProjectIds = new Set(Object.keys(rest.projectSettingsOverrides ?? {}));
   const applyKey = <K extends ProjectScopedServerSettingKey>(
     map: Readonly<Record<string, ProjectSettingsOverrides[K] | null>> | undefined,
@@ -361,7 +315,7 @@ function translateLegacyProjectOverridePatch(
     for (const [projectId, value] of Object.entries(map)) {
       if (canonicalProjectIds.has(projectId)) continue;
       const entry: ProjectSettingsOverrides = {
-        ...(entries.get(projectId) ?? currentEntries[projectId] ?? {}),
+        ...(entries.get(projectId) ?? currentEntries[projectId]),
       };
       if (value === null || value === undefined) {
         delete entry[key];
@@ -378,6 +332,22 @@ function translateLegacyProjectOverridePatch(
     ...rest,
     projectSettingsOverrides: Object.fromEntries(entries),
   } as ServerSettingsPatch;
+}
+
+/**
+ * A client from before `idleCompaction` patches the old boolean switch. Turning
+ * it off keeps "Never" rather than reverting to the default.
+ */
+function patchedIdleCompaction(
+  current: ServerSettings,
+  patch: ServerSettingsPatch,
+): IdleCompactionMode {
+  if (patch.idleCompaction !== undefined) return patch.idleCompaction;
+  const legacy = patch.compactIdleThreads;
+  if (legacy === undefined) return globalIdleCompaction(current);
+  if (typeof legacy === "string") return legacy;
+  if (legacy) return "beforeCacheExpires";
+  return globalIdleCompaction(current) === "off" ? "off" : "onReturn";
 }
 
 export function applyServerSettingsPatch(
@@ -399,13 +369,12 @@ export function applyServerSettingsPatch(
     worktreeCleanup: worktreeCleanupPatch,
     // Merged per entry below; its `null` removals must not reach deepMerge.
     usageLimitSources: usageLimitSourcesPatch,
+    secretProviders: secretProvidersPatch,
     sourceControlHosts: sourceControlHostsPatch,
     usagePriceOverrides: usagePriceOverridesPatch,
     usageModelAliases: usageModelAliasesPatch,
     // Entry replacement: deepMerge would keep keys the client meant to clear.
     projectSettingsOverrides: projectSettingsOverridesPatch,
-    // Already translated into `projectSettingsOverrides` above; the legacy
-    // maps are derived views and must never be merged directly.
     projectAgentBrowserAccessOverrides: _legacyBrowserAccess,
     projectAutoPullOverrides: _legacyAutoPull,
     projectScriptOverrides: _legacyScripts,
@@ -449,35 +418,41 @@ export function applyServerSettingsPatch(
   const initialFavorites =
     patch.favorites ?? current.favorites ?? migrateModelPreferences?.favorites ?? null;
   const favorites =
-    setModelFavorites?.reduce((current, change) => {
-      const exists = current.some(
-        (favorite) => favorite.provider === change.provider && favorite.model === change.model,
-      );
-      return change.favorite
-        ? exists
-          ? current
-          : [...current, { provider: change.provider, model: change.model }]
-        : current.filter(
-            (favorite) => favorite.provider !== change.provider || favorite.model !== change.model,
-          );
-    }, initialFavorites ?? []) ?? initialFavorites;
+    setModelFavorites?.reduce(
+      (current, change) => {
+        const exists = current.some(
+          (favorite) => favorite.provider === change.provider && favorite.model === change.model,
+        );
+        if (change.favorite) {
+          if (!exists) current.push({ provider: change.provider, model: change.model });
+          return current;
+        }
+        return current.filter(
+          (favorite) => favorite.provider !== change.provider || favorite.model !== change.model,
+        );
+      },
+      [...(initialFavorites ?? [])],
+    ) ?? initialFavorites;
   const initialModelPreferences =
     providerModelPreferences ??
     current.providerModelPreferences ??
     migrateModelPreferences?.providerModelPreferences ??
     null;
   let nextModelPreferences = initialModelPreferences;
-  for (const change of setModelsHidden ?? []) {
-    const preferences = nextModelPreferences?.[change.provider] ?? {
-      hiddenModels: [],
-      modelOrder: [],
-    };
-    const hiddenModels = preferences.hiddenModels.filter((model) => model !== change.model);
-    if (change.hidden) hiddenModels.push(change.model);
-    nextModelPreferences = {
-      ...nextModelPreferences,
-      [change.provider]: { ...preferences, hiddenModels },
-    };
+  if (setModelsHidden?.length) {
+    const updated = { ...initialModelPreferences };
+    for (const change of setModelsHidden) {
+      const preferences = (Object.hasOwn(updated, change.provider)
+        ? updated[change.provider]
+        : undefined) ?? {
+        hiddenModels: [],
+        modelOrder: [],
+      };
+      const hiddenModels = preferences.hiddenModels.filter((model) => model !== change.model);
+      if (change.hidden) hiddenModels.push(change.model);
+      updated[change.provider] = { ...preferences, hiddenModels };
+    }
+    nextModelPreferences = updated;
   }
   if (setProviderModelOrder) {
     const preferences = nextModelPreferences?.[setProviderModelOrder.provider] ?? {
@@ -507,6 +482,7 @@ export function applyServerSettingsPatch(
                   rules: {
                     worktreeKeepWhen: next.storageCleanup.worktreeKeepWhen,
                     worktreeAfterDays: next.storageCleanup.worktreeAfterDays,
+                    worktreeSettledAfterDays: next.storageCleanup.worktreeSettledAfterDays,
                     worktreeOnMerge: next.storageCleanup.worktreeOnMerge,
                     worktreeOnDelete: next.storageCleanup.worktreeOnDelete,
                     worktreeUnchanged: next.storageCleanup.worktreeUnchanged,
@@ -577,6 +553,9 @@ export function applyServerSettingsPatch(
     ...(patch.defaultModelSelection !== undefined
       ? { defaultModelSelection: patch.defaultModelSelection }
       : {}),
+    ...(patch.fallbackModelSelection !== undefined
+      ? { fallbackModelSelection: patch.fallbackModelSelection }
+      : {}),
     ...(patch.defaultProjectScripts !== undefined
       ? { defaultProjectScripts: patch.defaultProjectScripts }
       : {}),
@@ -587,6 +566,9 @@ export function applyServerSettingsPatch(
             usageLimitSourcesPatch,
           ),
         }
+      : {}),
+    ...(secretProvidersPatch !== undefined
+      ? { secretProviders: mergeSettingsEntries(current.secretProviders, secretProvidersPatch) }
       : {}),
     ...(usagePriceOverridesPatch !== undefined
       ? {
@@ -620,7 +602,7 @@ export function applyServerSettingsPatch(
     normalizedBackgroundActivity,
   );
   const nextWithReplacements = {
-    ...nextWithReplacementsBase,
+    ...withIdleCompaction(nextWithReplacementsBase, patchedIdleCompaction(current, patch)),
     ...deriveLegacyProjectOverrides(nextWithReplacementsBase),
     backgroundActivity: normalizedBackgroundActivity,
     automaticGitFetchInterval: resolvedBackgroundActivity.automaticGitFetchInterval,
@@ -646,7 +628,6 @@ export function applyServerSettingsPatch(
   };
 }
 
-/** Resolve legacy local preferences only until the environment has a saved value. */
 export function resolveModelPreferences(
   settings: Pick<ServerSettings, "favorites" | "providerModelPreferences">,
   legacy: Partial<ModelPreferences> = {},
