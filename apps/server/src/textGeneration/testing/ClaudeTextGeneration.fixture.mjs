@@ -25,7 +25,11 @@ if (!argv.includes("--disable-slash-commands")) {
 if (!argv.includes("--strict-mcp-config")) {
   fail("text generation must not load configured MCP servers", 9);
 }
-if (!argv.includes("--no-session-persistence")) {
+if (process.env.T3_FAKE_CLAUDE_REJECTS_NO_SESSION_PERSISTENCE === "1") {
+  if (argv.includes("--no-session-persistence")) {
+    fail("error: unknown option '--no-session-persistence'", 1);
+  }
+} else if (!argv.includes("--no-session-persistence")) {
   fail("text generation must not save a resumable session", 16);
 }
 const settingsIndex = argv.indexOf("--settings");

@@ -193,6 +193,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     );
     const textGeneration = yield* makeClaudeTextGeneration(
       effectiveConfig,
+      Effect.suspend(() => snapshot.getSnapshot).pipe(Effect.map((current) => current.version)),
       processEnv,
       modelCatalog,
     );

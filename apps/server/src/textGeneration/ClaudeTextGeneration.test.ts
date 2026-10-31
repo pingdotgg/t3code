@@ -57,6 +57,8 @@ function makeFakeClaudeBinary(dir: string, lifecyclePort?: number) {
 function withFakeClaudeEnv<A, E, R>(
   input: {
     output: string;
+    cliVersion?: string | null;
+    rejectsNoSessionPersistence?: boolean;
     lifecyclePort?: number;
     exitCode?: number;
     stderr?: string;
@@ -75,6 +77,8 @@ function withFakeClaudeEnv<A, E, R>(
     const binDir = yield* makeFakeClaudeBinary(tempDir, input.lifecyclePort);
     const pathDelimiter = (yield* HostProcess.isWindows) ? ";" : ":";
     const previousPath = process.env.PATH;
+    const previousRejectsNoSessionPersistence =
+      process.env.T3_FAKE_CLAUDE_REJECTS_NO_SESSION_PERSISTENCE;
     const previousOutput = process.env.T3_FAKE_CLAUDE_OUTPUT;
     const previousExitCode = process.env.T3_FAKE_CLAUDE_EXIT_CODE;
     const previousStderr = process.env.T3_FAKE_CLAUDE_STDERR;
@@ -88,6 +92,12 @@ function withFakeClaudeEnv<A, E, R>(
       Effect.sync(() => {
         process.env.PATH = `${binDir}${pathDelimiter}${previousPath ?? ""}`;
         process.env.T3_FAKE_CLAUDE_OUTPUT = input.output;
+
+        if (input.rejectsNoSessionPersistence) {
+          process.env.T3_FAKE_CLAUDE_REJECTS_NO_SESSION_PERSISTENCE = "1";
+        } else {
+          delete process.env.T3_FAKE_CLAUDE_REJECTS_NO_SESSION_PERSISTENCE;
+        }
 
         if (input.exitCode !== undefined) {
           process.env.T3_FAKE_CLAUDE_EXIT_CODE = String(input.exitCode);
@@ -134,6 +144,13 @@ function withFakeClaudeEnv<A, E, R>(
       () =>
         Effect.sync(() => {
           process.env.PATH = previousPath;
+
+          if (previousRejectsNoSessionPersistence === undefined) {
+            delete process.env.T3_FAKE_CLAUDE_REJECTS_NO_SESSION_PERSISTENCE;
+          } else {
+            process.env.T3_FAKE_CLAUDE_REJECTS_NO_SESSION_PERSISTENCE =
+              previousRejectsNoSessionPersistence;
+          }
 
           if (previousOutput === undefined) {
             delete process.env.T3_FAKE_CLAUDE_OUTPUT;
@@ -188,6 +205,7 @@ function withFakeClaudeEnv<A, E, R>(
     const config = decodeClaudeSettings(input.claudeConfig ?? {});
     const textGeneration = yield* makeClaudeTextGeneration(
       config,
+      Effect.succeed(input.cliVersion === undefined ? "2.1.316" : input.cliVersion),
       undefined,
       Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
     );
@@ -318,6 +336,37 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
           }),
       );
     }),
+  );
+
+  it.effect.each([
+    { cliVersion: "2.0.63", rejectsNoSessionPersistence: false, label: "passes it to 2.0.63" },
+    { cliVersion: "2.0.62", rejectsNoSessionPersistence: true, label: "omits it for 2.0.62" },
+    {
+      cliVersion: null,
+      rejectsNoSessionPersistence: true,
+      label: "omits it for an unknown version",
+    },
+  ])("--no-session-persistence $label", ({ cliVersion, rejectsNoSessionPersistence }) =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { title: "Reconnect failures" } }),
+        cliVersion,
+        rejectsNoSessionPersistence,
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Investigate reconnect failures",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+            },
+          });
+
+          expect(generated.title).toBe("Reconnect failures");
+        }),
+    ),
   );
 
   it.effect.each([
