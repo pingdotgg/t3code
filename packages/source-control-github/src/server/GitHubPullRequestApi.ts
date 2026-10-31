@@ -312,22 +312,37 @@ const isGraphQlClientError = (error: unknown): error is GraphQLClientError.Graph
 
 const { isNotFoundOnly } = GitHubGraphQlClient;
 
-const isRefusedRequestedReviewersOnly = (error: unknown): boolean =>
+type GraphQlPath = ReadonlyArray<string | number>;
+
+const isRequestedReviewerPath = (path: GraphQlPath): boolean =>
+  path.length === 6 &&
+  path[0] === "repository" &&
+  path[1] === "pullRequest" &&
+  path[2] === "reviewRequests" &&
+  path[3] === "nodes" &&
+  typeof path[4] === "number" &&
+  Number.isInteger(path[4]) &&
+  path[4] >= 0 &&
+  path[5] === "requestedReviewer";
+
+const isRequiredRulesPath = (path: GraphQlPath): boolean =>
+  path.length >= 4 &&
+  path[0] === "repository" &&
+  path[1] === "pullRequest" &&
+  path[2] === "baseRef" &&
+  (path[3] === "refUpdateRule" || path[3] === "rules");
+
+/** Some credentials, such as a GitHub App user token, are refused optional selections alone. */
+const isRefusedOnlyAt = (
+  error: unknown,
+  ...optional: ReadonlyArray<(path: GraphQlPath) => boolean>
+): boolean =>
   isGraphQlClientError(error) &&
   error.reason._tag === "ResponseError" &&
   error.reason.status === 200 &&
   error.reason.errors.every(
     ({ path, type }) =>
-      type === "FORBIDDEN" &&
-      path?.length === 6 &&
-      path[0] === "repository" &&
-      path[1] === "pullRequest" &&
-      path[2] === "reviewRequests" &&
-      path[3] === "nodes" &&
-      typeof path[4] === "number" &&
-      Number.isInteger(path[4]) &&
-      path[4] >= 0 &&
-      path[5] === "requestedReviewer",
+      type === "FORBIDDEN" && path != null && optional.some((isOptional) => isOptional(path)),
   );
 
 /** A large pull request can produce a multi-megabyte patch; past this it is truncated. */
@@ -1425,19 +1440,28 @@ export const make = Effect.gen(function* () {
   const getPullRequestDetail: GitHubPullRequestApi["Service"]["getPullRequestDetail"] = (input) => {
     const { owner, name } = parseRepositorySelector(input.repository);
     const operation = "getPullRequestDetail";
-    const read = (requestedReviewers: number) =>
+    const required = asksRequired(input.host);
+    const read = (requestedReviewers: number, requiredRules: boolean) =>
       client.PullRequestCore({
         owner,
         name,
         number: input.number,
         headRef: `refs/pull/${input.number}/head`,
-        required: asksRequired(input.host),
+        required,
+        requiredRules,
         requestedReviewers,
       });
     return SourceControlRateLimit.Interactive.pipe(
       Effect.flatMap((allowReserve) =>
-        read(100).pipe(
-          Effect.catchIf(isRefusedRequestedReviewersOnly, () => read(0)),
+        read(100, required).pipe(
+          Effect.catchIf(
+            (error) => isRefusedOnlyAt(error, isRequestedReviewerPath, isRequiredRulesPath),
+            (error) =>
+              read(
+                isRefusedOnlyAt(error, isRequiredRulesPath) ? 100 : 0,
+                required && isRefusedOnlyAt(error, isRequestedReviewerPath),
+              ),
+          ),
           graphql({ ...input, operation, allowReserve }),
           Effect.map(toPullRequestCore),
           Effect.flatMap(found({ ...input, operation })),
@@ -2165,7 +2189,7 @@ export const make = Effect.gen(function* () {
             client.ReviewThreads({ owner, name, number: input.number, after, requestedReviewers });
           return read().pipe(
             Effect.catchIf(
-              (error) => requestedReviewers > 0 && isRefusedRequestedReviewersOnly(error),
+              (error) => requestedReviewers > 0 && isRefusedOnlyAt(error, isRequestedReviewerPath),
               () => {
                 requestedReviewers = 0;
                 return read();

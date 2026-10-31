@@ -42,6 +42,10 @@ const refusedReviewer = {
   message: "Resource not accessible by integration",
   path: ["repository", "pullRequest", "reviewRequests", "nodes", 0, "requestedReviewer"],
 };
+const refusedRules = {
+  ...refusedReviewer,
+  path: ["repository", "pullRequest", "baseRef", "rules"],
+};
 const pullRequestInput = { cwd: "/w", repository: "acme/web", host: "github.com", number: 7 };
 type PullRequestRead = (
   input: typeof pullRequestInput,
@@ -3269,6 +3273,31 @@ layer("GitHubPullRequestApi.layer", (it) => {
           expect(error).toMatchObject({ status, githubErrors: errors.map((e) => e.message) });
         expect(mockedExecute).toHaveBeenCalledTimes(index + 1);
       }
+    }),
+  );
+
+  it.effect.each([
+    { name: "alone", errors: [refusedRules], requestedReviewers: 100 },
+    {
+      name: "with a reviewer refusal",
+      errors: [refusedRules, refusedReviewer],
+      requestedReviewers: 0,
+    },
+  ])("reads the detail without base branch rules refused $name", ({ errors, requestedReviewers }) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(encodeJson({ ...coreResponse(), errors }))),
+      );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(coreResponse()))));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const detail = yield* cli.getPullRequestDetail(pullRequestInput);
+      expect(detail.number).toBe(7);
+      expect(variablesOf("PullRequestCore").at(-1)).toMatchObject({
+        required: true,
+        requiredRules: false,
+        requestedReviewers,
+      });
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
     }),
   );
 

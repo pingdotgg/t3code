@@ -58,6 +58,7 @@ query PullRequestCore(
   $number: Int!
   $headRef: String!
   $required: Boolean!
+  $requiredRules: Boolean!
   $requestedReviewers: Int!
 ) {
   repository(owner: $owner, name: $name) {
@@ -120,10 +121,10 @@ query PullRequestCore(
         compare(headRef: $headRef) {
           behindBy
         }
-        refUpdateRule @include(if: $required) {
+        refUpdateRule @include(if: $requiredRules) {
           requiredStatusCheckContexts
         }
-        rules(first: 100) @include(if: $required) {
+        rules(first: 100) @include(if: $requiredRules) {
           nodes {
             parameters {
               ... on RequiredStatusChecksParameters {

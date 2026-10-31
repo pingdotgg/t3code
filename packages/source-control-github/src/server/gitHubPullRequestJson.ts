@@ -1208,8 +1208,10 @@ export function pullRequestChecksFromContexts(
 } {
   const checks = toChecks(contexts);
   const checksState = rollupChecksState(contexts);
+  // Raw names, since deduping prefixes same-named jobs of different workflows with the workflow.
+  const started = new Set(contexts.map((c) => trimmed(c.name) ?? trimmed(c.context)));
   const missing = requiredCheckNames.flatMap((name) =>
-    checks.some((check) => check.name === name)
+    started.has(name)
       ? []
       : [{ name, status: "pending", description: null, url: null, required: true } as const],
   );

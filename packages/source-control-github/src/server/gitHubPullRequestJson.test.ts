@@ -542,6 +542,18 @@ describe("pull request detail decoding", () => {
     expect(detail.checksState).toBe("pending");
   });
 
+  it("counts a required check as started when workflows share its name", () => {
+    const detail = detailOf(
+      ["linux", "windows"].map((workflowName) =>
+        inWorkflow({ workflowName, name: "build", status: "COMPLETED", conclusion: "SUCCESS" }),
+      ),
+      { baseRef: { compare: null, refUpdateRule: { requiredStatusCheckContexts: ["build"] } } },
+    );
+
+    expect(detail.checks.map((check) => check.name)).toEqual(["linux / build", "windows / build"]);
+    expect(detail.checksState).toBe("passing");
+  });
+
   it("reads an auto-merge request and strategy, and its null as off", () => {
     expect(detailOf([], { autoMergeRequest: { mergeMethod: "SQUASH" } })).toMatchObject({
       autoMergeEnabled: true,
