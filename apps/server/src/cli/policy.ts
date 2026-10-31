@@ -1,19 +1,25 @@
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import { Argument, Command } from "effect/cli";
+import * as Option from "effect/Option";
+import { Argument, Command, GlobalFlag } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
 
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
-const describePolicy = (policy: ManagedPolicy.ManagedPolicy["Service"]) => {
+const describePolicy = (
+  policy: ManagedPolicy.ManagedPolicy["Service"],
+  loaded: Effect.Success<ReturnType<typeof ManagedPolicy.loadedPolicy>>,
+) => {
   const { document } = policy;
-  if (document === undefined) {
+  if (document === undefined || loaded === null) {
     return "No managed policy on this machine. Every setting belongs to the user.\n";
   }
   const settings = Object.entries(document.settings ?? {});
   const lines = [
-    `Managed by ${document.organization} (${policy.path}).`,
+    `Managed by ${document.organization} (${policy.path}, fingerprint ${loaded.fingerprint}).`,
     ...(document.supportUrl === undefined ? [] : [`Support: ${document.supportUrl}`]),
     "",
     settings.length === 0 ? "No managed settings." : "Settings:",
@@ -28,13 +34,44 @@ const describePolicy = (policy: ManagedPolicy.ManagedPolicy["Service"]) => {
   return `${lines.join("\n")}\n`;
 };
 
-const showCommand = Command.make("show").pipe(
-  Command.withDescription("Show the policy that applies to T3 Code on this machine."),
-  Command.withHandler(() =>
-    ManagedPolicy.ManagedPolicy.pipe(
-      Effect.flatMap((policy) => Console.log(describePolicy(policy))),
-      Effect.provide(ManagedPolicy.layer),
-    ),
+/** Whether the server running from this T3 home loaded the installed policy, which waits for a restart. */
+export const describeRunningServer = Effect.fn("cli.policy.describeRunningServer")(function* (
+  statePath: string,
+  installed: Effect.Success<ReturnType<typeof ManagedPolicy.loadedPolicy>>,
+) {
+  const state = yield* readPersistedServerRuntimeState(statePath);
+  if (Option.isNone(state) || !isProcessAlive(state.value.pid)) {
+    return "No T3 Code server is running from this T3 home. The installed policy applies when one starts.";
+  }
+  const { pid, startedAt, managedPolicy: loaded } = state.value;
+  const server = `The running server (pid ${pid}, started ${startedAt})`;
+  if (loaded === undefined) {
+    return `${server} does not report which policy it loaded. Restart it to apply the installed policy.`;
+  }
+  if ((loaded?.fingerprint ?? null) === (installed?.fingerprint ?? null)) {
+    return loaded === null
+      ? `${server} runs without a policy, as installed.`
+      : `${server} loaded this policy.`;
+  }
+  const what =
+    loaded === null
+      ? "no policy"
+      : `${loaded.organization}'s policy from ${loaded.source} (fingerprint ${loaded.fingerprint})`;
+  return `${server} loaded ${what}. Restart T3 Code to apply the installed policy.`;
+});
+
+const showCommand = Command.make("show", projectLocationFlags).pipe(
+  Command.withDescription(
+    "Show the policy installed on this machine, and whether the running server loaded it.",
+  ),
+  Command.withHandler(
+    Effect.fn("cli.policy.show")(function* (flags) {
+      const policy = yield* ManagedPolicy.ManagedPolicy.pipe(Effect.provide(ManagedPolicy.layer));
+      const installed = yield* ManagedPolicy.loadedPolicy(policy);
+      yield* Console.log(describePolicy(policy, installed));
+      const config = yield* resolveCliAuthConfig(flags, yield* GlobalFlag.LogLevel);
+      yield* Console.log(yield* describeRunningServer(config.serverRuntimeStatePath, installed));
+    }),
   ),
 );
 
@@ -51,7 +88,8 @@ const checkCommand = Command.make("check", {
           userMessage: `No policy file at ${file}.`,
         });
       }
-      yield* Console.log(describePolicy(yield* ManagedPolicy.load(file)));
+      const policy = yield* ManagedPolicy.load(file);
+      yield* Console.log(describePolicy(policy, yield* ManagedPolicy.loadedPolicy(policy)));
     }),
   ),
 );

@@ -12,7 +12,7 @@ the desktop app, a browser, or the mobile app.
 3. Deploy the policy to each machine with your device management tool, in
    [one of the supported places](#where-the-policy-goes).
 4. Restart T3 Code on the machine. The server reads the policy only when it starts.
-5. Run `t3 policy show` on the machine to see the policy T3 Code found there.
+5. Run `t3 policy show` on the machine to [check what the server loaded](#check-what-the-server-loaded).
 
 The desktop app includes the `t3` command; see [The `t3` command](./install.md#the-t3-command).
 
@@ -76,16 +76,24 @@ New-Item -Path HKLM:\SOFTWARE\Policies\T3Tools\T3Code -Force | Out-Null
 Set-ItemProperty -Path HKLM:\SOFTWARE\Policies\T3Tools\T3Code -Name Policy -Value $json -Type String
 ```
 
+## Check what the server loaded
+
+Run `t3 policy show` as the user who runs T3 Code. It prints the installed policy and its
+fingerprint, then says whether the running server loaded that policy or an older one. The server
+reads the policy only when it starts, so "Restart T3 Code to apply the installed policy" means it
+still enforces the old one. In Settings, users see that your organization manages the environment,
+and each locked control shows **Managed by**.
+
 ## Change or remove a policy
 
 After you deploy, change, or remove a policy, restart the T3 Code server on the machine: quit and
 reopen the desktop app, or run `t3 service restart` for the
 [background service](./background-service.md). Reconnecting a phone or browser does not reload the
-policy. Run `t3 policy show` to confirm what applies.
+policy.
 
 To remove a policy, delete the file, remove the profile, or delete the registry value, then restart
-the server. T3 Code never writes policy values into the user's own settings, so users get back the
-settings they had chosen.
+the server. Users get back the settings they had chosen, since T3 Code never writes policy values
+into them.
 
 ## When T3 Code refuses to start
 
@@ -172,9 +180,7 @@ ACP agents' own mode menus have no effect under `maxRuntimeMode`, except Antigra
 T3 Code can place under the limit. Users still choose which ACP Registry agent runs; leave
 `acpRegistry` out of `allowedDrivers` to stop that.
 
-The limit decides which modes T3 Code asks the provider for. It is not a sandbox. Providers still
-read their own configuration from the user's home directory, such as `~/.claude` and `~/.codex`,
-and users can run the provider's CLI outside T3 Code. See
+The limit decides which modes T3 Code asks the provider for. It is not a sandbox; see
 [What a policy does not cover](#what-a-policy-does-not-cover).
 
 ### Clients and T3 Connect
@@ -189,16 +195,18 @@ and users can run the provider's CLI outside T3 Code. See
 this machine, and the two local kinds differ only in how T3 Code was started. On machines with the
 desktop app, keep `desktop` in the list, or the app cannot start.
 
-Without `remote`, the server listens only on this machine, creates no pairing links, and signs out
-devices that paired earlier. The desktop app starts with network access and Tailscale Serve off,
+Without `remote`, the server listens only on a loopback address, creates no pairing links, and
+signs out devices that paired earlier. It does not start with a host other than a loopback
+address or `localhost`. The desktop app starts with network access and Tailscale Serve off,
 whatever the user chose. That also turns off T3 Connect. To keep other remote access but turn off
 T3 Connect alone, set `"connect": false`.
 
-When it starts, the server also turns off Tailscale Serve HTTPS forwarding to its port, such as one
-`t3 pair --tailscale` set up. It does not start while that forwarding stays on, or while
-Tailscale's answer cannot be read. It does start when Tailscale is not installed, not running, or
-logged out, since nothing forwards then; a mapping Tailscale kept returns when Tailscale runs
-again, so restart T3 Code after that.
+When it starts, the server also turns off each Tailscale Serve HTTPS route that forwards to it,
+such as one `t3 pair --tailscale` set up, and leaves other routes alone. It does not start while
+such a route stays on, or while Tailscale's answer cannot be read; the error names the command
+that turns the route off. It does start when Tailscale is not installed, not running, or logged
+out, since nothing forwards then; a route Tailscale kept returns when Tailscale runs again, so
+restart T3 Code after that.
 
 ### Other capabilities
 
@@ -207,9 +215,8 @@ again, so restart T3 Code after that.
 - `browserCookieImport: false`: users cannot import cookies from another browser into T3 Code's
   browser.
 - `telemetry: false`: the server and desktop app send no [product usage data](./telemetry.md) or
-  relay connection traces, whatever the environment says. `true` cannot turn them on for a user who
-  turned them off. A browser that opens the server, such as app.t3.codes, still sends its own relay
-  traces.
+  relay connection traces. A policy cannot turn them on. A browser that opens the server, such as
+  app.t3.codes, still sends its own relay traces.
 
 ### Providers
 
@@ -238,9 +245,9 @@ your fields.
 
 ## What a policy does not cover
 
-The policy controls what T3 Code does. Agents run through each provider's own CLI, which a user
-can also run outside T3 Code. To restrict those CLIs, use their own managed configuration, such as
-Claude Code's managed settings.
+The policy controls what T3 Code does. Agents run through each provider's own CLI, which reads its
+own configuration, such as `~/.claude`, and which a user can also run outside T3 Code. To restrict
+those CLIs, use their own managed configuration, such as Claude Code's managed settings.
 
 On a managed Windows machine, the desktop app does not run a WSL environment. A T3 Code server a
 user starts inside WSL reads `/etc/t3code/policy.json` in that distro, not the Windows policy.

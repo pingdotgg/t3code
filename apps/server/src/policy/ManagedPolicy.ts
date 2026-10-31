@@ -4,12 +4,15 @@
  *
  * @module ManagedPolicy
  */
-import type { ManagedPolicyDocument, ManagedPolicySummary } from "@t3tools/contracts";
+import { ManagedPolicyDocument, type ManagedPolicySummary } from "@t3tools/contracts";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
@@ -39,6 +42,24 @@ export class ManagedPolicy extends Context.Service<
 >()("t3/policy/ManagedPolicy") {}
 
 type LimitsSummary = NonNullable<ManagedPolicySummary["limits"]>;
+
+const encodeDocumentJson = Schema.encodeEffect(Schema.fromJsonString(ManagedPolicyDocument));
+
+/** What `t3 policy show` compares to tell whether a running server loaded the installed policy. */
+export const loadedPolicy = Effect.fn("ManagedPolicy.loadedPolicy")(function* (
+  policy: Pick<ManagedPolicy["Service"], "path" | "document">,
+) {
+  if (policy.document === undefined) return null;
+  const json = yield* encodeDocumentJson(policy.document).pipe(Effect.orDie);
+  const digest = yield* (yield* Crypto.Crypto)
+    .digest("SHA-256", new TextEncoder().encode(json))
+    .pipe(Effect.orDie);
+  return {
+    source: policy.path,
+    organization: policy.document.organization,
+    fingerprint: Hex.encode(digest).slice(0, 12),
+  };
+});
 
 /**
  * The organization whose policy switches `capability` off, or undefined when it is allowed.
