@@ -116,6 +116,7 @@ async function settle<A, E>(command: Promise<AtomCommandResult<A, E>>): Promise<
 /** Lets callbacks created earlier (dialogs, multi-step actions) act only on what the screen still shows. */
 function usePluginActionGate(current: PluginActionSubject | null) {
   const [gate] = useState(createPluginActionGate);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Dialog callbacks retain a gate that must track the committed screen and revoke on unmount.
   useLayoutEffect(() => {
     gate.set(current);
     return () => gate.set(null);
