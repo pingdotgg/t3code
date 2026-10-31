@@ -9,7 +9,6 @@ import { cn } from "../../lib/utils";
 import { InlineButton } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { ToolActivityIconView, type WorkEntryIconName } from "./TimelineToolActivityIcon";
 import { TimelineRowCtx } from "./timelineRowContext";
 import { WorkLogRow } from "./WorkLog";
@@ -93,13 +92,9 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
 }: {
   approval: PendingApproval;
 }) {
-  const [allowSessionRequestId, setAllowSessionRequestId] = useState<
-    PendingApproval["requestId"] | null
-  >(null);
   const [diffRequestId, setDiffRequestId] = useState<PendingApproval["requestId"] | null>(null);
-  const alwaysAllow = allowSessionRequestId === approval.requestId;
   const diffOpen = diffRequestId === approval.requestId;
-  const { respondingRequestIds, canOperateThread, onRespondToApproval } = use(TimelineRowCtx);
+  const { onRespondToApproval } = use(TimelineRowCtx);
   const presentation = APPROVAL_PRESENTATION[approval.requestKind];
   const canRespond = approval.responseCapability === "live";
   const files = approval.requestKind === "file-change" ? (approval.files ?? []) : [];
@@ -213,18 +208,6 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
                       {diffOpen ? "Hide diff" : "Review diff"}
                     </InlineButton>
                   ) : null}
-                  <ComposerPendingApprovalActions
-                    alwaysAllow={alwaysAllow}
-                    onAlwaysAllowChange={(checked) =>
-                      setAllowSessionRequestId(checked ? approval.requestId : null)
-                    }
-                    requestId={approval.requestId}
-                    disabled={!canOperateThread}
-                    isResponding={respondingRequestIds.includes(approval.requestId)}
-                    canRespond={canRespond}
-                    options={approval.options}
-                    onRespondToApproval={onRespondToApproval}
-                  />
                 </>
               ) : null}
             </>
