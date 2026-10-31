@@ -252,14 +252,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function scheduledTaskWorkspaceStrategy(
-  boundToThread: boolean,
-): ScheduledTask["workspaceStrategy"] {
-  return boundToThread
-    ? { type: "root" }
-    : { type: "worktree", baseRef: "main", startFromOrigin: true };
-}
-
 function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): OrchestratorMcpScheduledTask {
   return {
     scheduledTaskId: task.id,
@@ -1793,6 +1785,50 @@ const make = Effect.gen(function* () {
       effect.pipe(Effect.timeoutOption(Duration.millis(timeoutMs)), Effect.map(Option.flatten)),
   );
 
+  const refExists = (cwd: string, revision: string) =>
+    gitDriver.resolveCommit({ cwd, revision }).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
+
+  const resolveScheduledTaskBaseRef = Effect.fn(
+    "OrchestratorMcpService.resolveScheduledTaskBaseRef",
+  )(function* (cwd: string) {
+    const remoteName = yield* gitDriver
+      .resolvePrimaryRemoteName(cwd)
+      .pipe(Effect.orElseSucceed(() => null));
+    // Launch fetches a bare name from `origin` only, so any other remote must be named.
+    const onRemote = (branch: string) =>
+      remoteName === "origin" ? branch : `${remoteName}/${branch}`;
+    const remoteDefault =
+      remoteName === null
+        ? null
+        : yield* gitDriver
+            .resolveDefaultBranchName(cwd, remoteName)
+            .pipe(Effect.orElseSucceed(() => null));
+    if (remoteDefault !== null) return onRemote(remoteDefault);
+    // Local-only repositories and remotes without a recorded HEAD report no default.
+    for (const branch of ["main", "master"]) {
+      if (remoteName !== null && (yield* refExists(cwd, `refs/remotes/${remoteName}/${branch}`))) {
+        return onRemote(branch);
+      }
+      if (yield* refExists(cwd, `refs/heads/${branch}`)) return branch;
+    }
+    return "main";
+  });
+
+  const scheduledTaskWorkspaceStrategy = Effect.fn(
+    "OrchestratorMcpService.scheduledTaskWorkspaceStrategy",
+  )(function* (boundToThread: boolean, projectId: ProjectId) {
+    if (boundToThread) return { type: "root" as const };
+    const { workspaceRoot } = yield* requireProject(projectId);
+    return {
+      type: "worktree" as const,
+      baseRef: yield* resolveScheduledTaskBaseRef(workspaceRoot),
+      startFromOrigin: true,
+    };
+  });
+
   const scheduledTaskRunModes = Effect.fn("OrchestratorMcpService.scheduledTaskRunModes")(
     function* (task: ScheduledTask) {
       const modes = [{ runtimeMode: task.runtimeMode, interactionMode: task.interactionMode }];
@@ -1904,7 +1940,7 @@ const make = Effect.gen(function* () {
         schedule: input.schedule,
         projectId,
         threadId: bindToCurrentThread && parent !== undefined ? parent.thread.id : null,
-        workspaceStrategy: scheduledTaskWorkspaceStrategy(bindToCurrentThread),
+        workspaceStrategy: yield* scheduledTaskWorkspaceStrategy(bindToCurrentThread, projectId),
         modelSelection,
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
@@ -1976,7 +2012,7 @@ const make = Effect.gen(function* () {
         const workspaceStrategy =
           input.bindToCurrentThread === undefined
             ? existing.workspaceStrategy
-            : scheduledTaskWorkspaceStrategy(input.bindToCurrentThread);
+            : yield* scheduledTaskWorkspaceStrategy(input.bindToCurrentThread, existing.projectId);
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           title: input.title ?? existing.title,
