@@ -42,7 +42,7 @@ import {
 import { deriveSubagentElapsedMs } from "@t3tools/shared/orchestrationTiming";
 import { groupBy } from "effect/Array";
 import * as DateTime from "effect/DateTime";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useRouter } from "@tanstack/react-router";
 import {
   ArrowRightIcon,
   BotIcon,
@@ -67,7 +67,7 @@ import {
 } from "../../state/entities";
 import { useEnvironment, useEnvironmentProviders } from "../../state/environments";
 import { threadEnvironment } from "../../state/threads";
-import { orchestrationEnvironment } from "../../state/orchestration";
+import { orchestrationEnvironment, threadProjectionRead } from "../../state/orchestration";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AgentElapsed } from "./AgentElapsed";
 import { ThreadRelationshipIcon, threadRelationshipStatusLabel } from "./ThreadRelationshipIcon";
@@ -301,13 +301,42 @@ function DelegatedFromRow(props: {
   readonly fallbackLabel: string | undefined;
 }) {
   const navigate = useNavigate();
+  const router = useRouter();
   const { delegatedFrom } = props;
   const environment = useEnvironment(delegatedFrom.environmentId);
   const parentRef = scopeThreadRef(delegatedFrom.environmentId, delegatedFrom.threadId);
   // The title it had at delegation, until this client sees the parent itself.
   const parent = useQuietThreadShell(parentRef);
+  const readParent = useAtomCommand(threadProjectionRead);
+  const [opening, setOpening] = useState(false);
   const label = environment?.label ?? props.fallbackLabel;
   const title = parent?.title ?? delegatedFrom.title;
+  // The parent may have been deleted there since delegation, and the shell can't
+  // tell a deleted parent from one this client never loaded, so ask its environment.
+  const openParent = async () => {
+    if (opening) return;
+    setOpening(true);
+    const location = router.latestLocation;
+    const result = await readParent({
+      environmentId: delegatedFrom.environmentId,
+      input: { threadId: delegatedFrom.threadId },
+    });
+    setOpening(false);
+    // The read can outlast the user's stay on this thread; a late answer must not pull them back.
+    if (router.latestLocation !== location) return;
+    if (result._tag === "Failure") {
+      toastManager.add({ type: "error", title: "Could not open the parent thread" });
+      return;
+    }
+    if (result.value.thread.deletedAt !== null) {
+      toastManager.add({ type: "info", title: "The parent thread was deleted" });
+      return;
+    }
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(parentRef),
+    });
+  };
   return (
     <li className="group relative flex h-8 items-center rounded-lg">
       <Tooltip>
@@ -319,12 +348,7 @@ function DelegatedFromRow(props: {
               variant="ghost"
               part="row"
               disabled={environment === null}
-              onClick={() =>
-                void navigate({
-                  to: "/$environmentId/$threadId",
-                  params: buildThreadRouteParams(parentRef),
-                })
-              }
+              onClick={() => void openParent()}
             />
           }
         >
