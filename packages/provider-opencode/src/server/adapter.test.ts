@@ -250,34 +250,64 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
-  it.effect("appends skill directives to the per-turn system prompt", () =>
+  it.effect.each([
+    {
+      message: "<none>",
+      statusCode: 503,
+      responseBody: "<title> Service\n unavailable </title>",
+      expected: "Service unavailable (HTTP 503).",
+    },
+    {
+      message: " <NoNe> ",
+      statusCode: 502,
+      responseBody: "bad gateway",
+      expected: "The model provider failed the request (HTTP 502).",
+    },
+    {
+      message: "<none>",
+      expected: "The model provider failed the request and did not include an error message.",
+    },
+    {
+      message: "provider says no",
+      statusCode: 503,
+      responseBody: "<title>Unavailable</title>",
+      expected: "provider says no",
+    },
+    {
+      message: "<none>",
+      statusCode: 503,
+      responseBody: "<title>https://user:secret@example.com/error?token=secret</title>",
+      expected: "https://example.com/error (HTTP 503).",
+    },
+  ])("reports readable and sanitized session and turn failures: $expected", (sample) =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
-      let promptInput: Parameters<OpencodeClient["session"]["promptAsync"]>[0] | undefined;
-      const harness = yield* makeOpenCodeRuntimeHarness("skill-directives", "root", {
+      const harness = yield* makeOpenCodeRuntimeHarness("provider-error", "root", {
         event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
         session: {
           create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
-          promptAsync: async (input: Parameters<OpencodeClient["session"]["promptAsync"]>[0]) => {
-            promptInput = input;
-            return { data: true };
-          },
+          promptAsync: async () => ({ data: true }),
           abort: async () => ({ data: true }),
           children: async () => ({ data: [] }),
         },
       });
-      const directive = "<t3_skill_variants>\nvariant instructions\n</t3_skill_variants>";
-      yield* harness.startTurn("hello", harness.providerThread, harness.policy, {
-        text: directive,
-        hash: "directive-hash",
-      });
-
-      assert.isDefined(promptInput);
-      const system = promptInput.system;
-      if (system === undefined) {
-        assert.fail("expected a per-turn system prompt");
-      }
-      assert.isTrue(system.endsWith(directive));
+      yield* harness.startTurn();
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.error",
+          properties: { sessionID: "root", error: { name: "APIError", data: sample } },
+        }),
+      );
+      const events = yield* Fiber.join(received);
+      const session = events.findLast((event) => event.type === "provider_session.updated");
+      const terminal = events.findLast((event) => event.type === "turn.terminal");
+      assert.strictEqual(session?.providerSession.lastError, sample.expected);
+      assert.strictEqual(terminal?.failure?.message, sample.expected);
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,
@@ -2775,6 +2805,40 @@ describe("OpenCodeAdapterV2", () => {
     );
     assert.isUndefined(openCodeBoundaryAfterProviderTurn([first, synthetic, third], third.id));
   });
+  it.effect("appends skill directives to the per-turn system prompt", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      let promptInput: Parameters<OpencodeClient["session"]["promptAsync"]>[0] | undefined;
+      const harness = yield* makeOpenCodeRuntimeHarness("skill-directives", "root", {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          promptAsync: async (input: Parameters<OpencodeClient["session"]["promptAsync"]>[0]) => {
+            promptInput = input;
+            return { data: true };
+          },
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+      });
+      const directive = "<t3_skill_variants>\nvariant instructions\n</t3_skill_variants>";
+      yield* harness.startTurn("hello", harness.providerThread, harness.policy, {
+        text: directive,
+        hash: "directive-hash",
+      });
+
+      assert.isDefined(promptInput);
+      const system = promptInput.system;
+      if (system === undefined) {
+        assert.fail("expected a per-turn system prompt");
+      }
+      assert.isTrue(system.endsWith(directive));
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
 });
 
 it.effect.each([false, true])(

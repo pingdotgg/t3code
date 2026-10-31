@@ -109,6 +109,9 @@ it("starts an off-rule evaluation with the off rule as treatment", async () => {
 
   await userEvent.click(screen.getByRole("button", { name: "Start evaluation" }));
   const dialog = page.getByRole("dialog");
+  await userEvent.fill(dialog.getByLabelText("Repeats"), "7");
+  await userEvent.click(dialog.getByRole("button", { name: "Cancel", exact: true }));
+  await userEvent.click(screen.getByRole("button", { name: "Start evaluation" }));
   await expect.element(dialog.getByLabelText("Repeats")).toHaveValue(3);
   await expect.element(dialog.getByLabelText("Judge samples")).toHaveValue(3);
   await userEvent.click(dialog.getByRole("button", { name: "Start run" }));

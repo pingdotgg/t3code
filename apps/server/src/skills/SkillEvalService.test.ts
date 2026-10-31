@@ -522,6 +522,7 @@ it.effect("freezes task content and an immutable base commit before inserting a 
       const summary = yield* service.start(
         SkillEvalRunConfig.make({
           ...config,
+          judge: null,
           arms: [
             { armId: "off", label: "Off", kind: "off", role: "control" },
             {
@@ -535,6 +536,7 @@ it.effect("freezes task content and an immutable base commit before inserting a 
           taskIds: [taskId],
         }),
       );
+      assert.deepEqual(summary.config.judge, { instanceId: judgeInstanceId, model: "claude-fable-5-1" });
       assert.deepEqual(summary.config.variantRevisions, { "rule:variant": 2 });
       yield* Deferred.await(launched);
 
@@ -560,6 +562,7 @@ it.effect("freezes task content and an immutable base commit before inserting a 
       const rows = yield* sql<{ readonly config_json: string }>`
         SELECT config_json FROM skill_eval_runs WHERE eval_run_id = ${summary.evalRunId}
       `;
+      assert.deepEqual((yield* decodeRunConfig(rows[0]!.config_json)).judge, summary.config.judge);
       assert.deepEqual((yield* decodeRunConfig(rows[0]!.config_json)).taskSnapshots, [
         {
           taskId,
@@ -724,6 +727,7 @@ it.effect("resume launches only missing trials from frozen task snapshots", () =
     const launches = yield* Ref.make<ReadonlyArray<ThreadLaunch.ThreadLaunchInput>>([]);
     const judgeCalls = yield* Ref.make(0);
     const archived = yield* Ref.make<ReadonlyArray<string>>([]);
+    const removed = yield* Ref.make<ReadonlyArray<string>>([]);
     const snapshots = [
       provider({ instanceId: candidateInstanceId, driver: "codex", model: "gpt-5.6-sol" }),
       provider({
@@ -767,13 +771,13 @@ it.effect("resume launches only missing trials from frozen task snapshots", () =
           command.type === "thread.archive"
             ? Ref.update(archived, (current) => [...current, command.threadId])
             : Effect.void,
-        getProjectThreadRecords: () => Effect.succeed({ thread: { worktreePath: null }, runs: [] }),
+        getProjectThreadRecords: (input: {threadId: string}) => Effect.succeed({ thread: { worktreePath: `/worktrees/${input.threadId}` }, runs: [] }),
       } as unknown as ThreadManagement.ThreadManagementService["Service"]),
       Layer.succeed(GitVcsDriver.GitVcsDriver, {
         statusDetailsRemote: () => Effect.die("base refs are frozen in this test"),
       } as unknown as GitVcsDriver.GitVcsDriver["Service"]),
       Layer.succeed(GitWorkflow.GitWorkflowService, {
-        removeWorktree: () => Effect.die("judging is not reached in this test"),
+        removeWorktree: (input: {path: string}) => Ref.update(removed, (paths) => [...paths, input.path]),
       } as unknown as GitWorkflow.GitWorkflowService["Service"]),
       Layer.succeed(SkillUsage.SkillUsageService, {
         finalizePending: () => Effect.succeed(0),
@@ -894,7 +898,9 @@ it.effect("resume launches only missing trials from frozen task snapshots", () =
       assert.notEqual(rows[1]?.thread_id, ThreadId.make("thread:old"));
       assert.equal(yield* Ref.get(judgeCalls), 0);
       assert.deepEqual(yield* Ref.get(archived), ["thread:old"]);
+      const removedBeforeCancel = yield* Ref.get(removed);
       assert.equal((yield* service.cancel(evalRunId)).status, "cancelled");
+      assert.include((yield* Ref.get(removed)).slice(removedBeforeCancel.length), "/worktrees/thread:control");
       assert.deepEqual(yield* Ref.get(archived), ["thread:old", rows[1]?.thread_id ?? ""]);
     }).pipe(Effect.provide(testLayer));
   }),

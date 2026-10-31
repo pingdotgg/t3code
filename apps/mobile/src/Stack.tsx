@@ -1017,6 +1017,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
         ...HORIZONTAL_FORM_SHEET_OPTIONS,
         sheetAllowedDetents: [0.55, 0.7],
         sheetGrabberVisible: true,
+        sheetCornerRadius: Platform.OS === "android" ? 28 : undefined,
       },
     }),
     NotFound: createNativeStackScreen({

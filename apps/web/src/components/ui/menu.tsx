@@ -4,6 +4,7 @@ import type * as React from "react";
 
 import { cn } from "~/lib/utils";
 import { buttonVariants } from "./button";
+import { renderClosingPositioner } from "./closing-positioner";
 import { Input, type InputProps } from "./input";
 import { Spinner } from "./spinner";
 
@@ -45,6 +46,7 @@ function MenuPopup({
         anchor={anchor}
         className="z-[130]"
         data-slot="menu-positioner"
+        render={renderClosingPositioner}
         side={side}
         sideOffset={sideOffset}
       >

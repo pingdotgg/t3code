@@ -137,6 +137,8 @@ layer("SkillVariantService", (it) => {
         body: "second",
       });
       assert.equal(entryBody(edited), "second");
+      yield* service.mutate({ action: "disable", ruleId: created.ruleId });
+      yield* service.mutate({ action: "enable", ruleId: created.ruleId });
       const reverted = yield* service.mutate({ action: "revert", ruleId: created.ruleId });
       assert.equal(entryBody(reverted), "first");
 
@@ -195,11 +197,13 @@ layer("SkillVariantService", (it) => {
           "enable",
           "disable",
           "revert",
+          "enable",
+          "disable",
           "edit",
           "create",
         ],
       );
-      assert.equal(reverted.revision, edited.revision + 1);
+      assert.equal(reverted.revision, edited.revision + 3);
     }),
   );
 
