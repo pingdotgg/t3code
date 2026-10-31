@@ -872,6 +872,71 @@ export function recallCheckoutIsRepo(
     : sessionCheckoutIsRepo.get(checkoutIsRepoKey(environmentId, cwd));
 }
 
+export type DraftSendState = {
+  readonly sendInFlight: { current: boolean };
+  readonly uncertainSubmissions: { current: Map<string, ThreadId> };
+  consumers: number;
+};
+
+// Kept per route so a send in flight, and a multiple-model request that may
+// already have started, survive ChatView remounting while the user navigates.
+// A route's entry is dropped once nothing holds it and neither is pending.
+const draftSendStateByRouteKey = new Map<string, DraftSendState>();
+
+/**
+ * The route's registered state, or a new one that only `retainDraftSendState`
+ * registers, so a render React abandons before commit leaves no entry behind.
+ */
+export function draftSendState(routeKey: string): DraftSendState {
+  const existing = draftSendStateByRouteKey.get(routeKey);
+  if (existing) return existing;
+  let sendInFlight = false;
+  const state: DraftSendState = {
+    sendInFlight: {
+      get current() {
+        return sendInFlight;
+      },
+      set current(value) {
+        sendInFlight = value;
+        if (!value) releaseDraftSendStateIfIdle(routeKey, state);
+      },
+    },
+    uncertainSubmissions: { current: new Map() },
+    consumers: 0,
+  };
+  return state;
+}
+
+/** Holds a route's send state until the returned release runs. */
+export function retainDraftSendState(routeKey: string, state: DraftSendState): () => void {
+  if (!draftSendStateByRouteKey.has(routeKey)) draftSendStateByRouteKey.set(routeKey, state);
+  state.consumers += 1;
+  return () => {
+    state.consumers -= 1;
+    releaseDraftSendStateIfIdle(routeKey, state);
+  };
+}
+
+export function releaseDraftSendStateIfIdle(routeKey: string, state: DraftSendState): void {
+  if (
+    state.consumers === 0 &&
+    !state.sendInFlight.current &&
+    state.uncertainSubmissions.current.size === 0 &&
+    draftSendStateByRouteKey.get(routeKey) === state
+  ) {
+    draftSendStateByRouteKey.delete(routeKey);
+  }
+}
+
+/** Whether the route's current send state has a send in flight. Never creates an entry. */
+export function routeSendInFlight(routeKey: string): boolean {
+  return draftSendStateByRouteKey.get(routeKey)?.sendInFlight.current === true;
+}
+
+export function countDraftSendStatesForTests(): number {
+  return draftSendStateByRouteKey.size;
+}
+
 function threadHasStarted(thread: Thread | null | undefined): boolean {
   return Boolean(thread && (thread.latestRun !== null || thread.itemCount > 0 || thread.runtime));
 }

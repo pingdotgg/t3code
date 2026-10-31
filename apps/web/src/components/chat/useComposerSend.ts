@@ -13,6 +13,7 @@ import {
   snapshotComposerSend,
   withMessageContext,
   makeThreadErrorSetter,
+  type DraftSendState,
 } from "../ChatView.logic";
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import {
@@ -118,7 +119,6 @@ import {
   threadContextsOutsideEnvironment,
 } from "@t3tools/shared/composerContextReferences";
 import {
-  draftSendState,
   type MultipleModelTarget,
   resolveMultipleModelTargets,
   prepareTurnAttachments,
@@ -167,6 +167,7 @@ type TimelineFollow = ReturnType<typeof useTimelineFollow>;
 interface ComposerSendInput {
   readonly environmentId: EnvironmentId;
   readonly routeThreadKey: string;
+  readonly routeSendState: DraftSendState;
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
   readonly draftId: DraftId | null;
   readonly draftThread: DraftSessionState | null;
@@ -265,6 +266,7 @@ export function useComposerSend(input: ComposerSendInput) {
   const {
     environmentId,
     routeThreadKey,
+    routeSendState,
     currentRouteThreadKeyRef,
     draftId,
     draftThread,
@@ -362,6 +364,7 @@ export function useComposerSend(input: ComposerSendInput) {
   const sendToMultipleModels = useMultipleModelSend({
     environmentId,
     routeThreadKey,
+    routeSendState,
     currentRouteThreadKeyRef,
     draftId,
     composerDraftTarget,
@@ -374,7 +377,7 @@ export function useComposerSend(input: ComposerSendInput) {
   });
   const submitPlanFollowUp = usePlanFollowUpSend({
     environmentId,
-    routeThreadKey,
+    routeSendState,
     activeThread,
     activeThreadBranch,
     activeProposedPlan,
@@ -390,7 +393,7 @@ export function useComposerSend(input: ComposerSendInput) {
     anchorNewTurn,
     persistThreadSettingsForNextTurn,
   });
-  const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
+  const { sendInFlight: sendInFlightRef } = routeSendState;
   const composerSendGenerationRef = useRef(0);
   const environmentUnavailableSendToastSlotRef = useRef(0);
   // A send awaits uploads before it declines, so it reads the approvals pending by then.
