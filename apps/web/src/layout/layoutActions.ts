@@ -2,6 +2,9 @@
  * Layout actions shared by the keyboard, the tab menu and the notch buttons.
  */
 import { closeThreadSurface } from "../components/ThreadSurfaceTab";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useClosedViewStore } from "../closedViewStore";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { getLayoutBehavior } from "./layoutBehavior";
 import {
   createLayoutLauncherContent,
@@ -83,11 +86,21 @@ export function splitLayoutTab(tabId: string, side: "right" | "down"): void {
  */
 export function closeLayoutTabByUser(tabId: string, options: { bulk?: boolean } = {}): void {
   const store = useLayoutStore.getState();
-  const tab = findLayoutTab(store.layout, (candidate) => candidate.id === tabId)?.tab;
+  const location = findLayoutTab(store.layout, (candidate) => candidate.id === tabId);
+  const tab = location?.tab;
   // A surface closes through its store, which closes its tab once it is done.
   if (tab?.content.kind === "surface") {
     void closeThreadSurface(tab.content.threadRef, tab.content.surfaceId, options);
     return;
+  }
+  if (location && tab?.content.kind === "chat") {
+    const target = tab.content.target;
+    const draft = target.kind === "draft" ? useComposerDraftStore.getState().getDraftSession(target.draftId) : null;
+    const threadRef = target.kind === "server" ? target.threadRef : draft ? draft.promotedTo ?? scopeThreadRef(draft.environmentId, draft.threadId) : null;
+    if (threadRef) useClosedViewStore.getState().remember({
+      kind: "chat", threadRef, paneId: location.pane.id, index: location.tabIndex,
+      ...(target.kind === "draft" ? { draftId: target.draftId } : {}),
+    });
   }
   store.closeTabByUser(tabId);
 }
