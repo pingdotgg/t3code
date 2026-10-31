@@ -45,6 +45,7 @@ import {
   syncDocumentWindowControlsOverlayClass,
 } from "./lib/windowControlsOverlay";
 import { startProviderAuthDelivery } from "./providerAuthDelivery";
+import { useRightPanelStore } from "./rightPanelStore";
 import { getRouter, type AppRouter } from "./router";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 import { primaryServerConfigAtom } from "./state/server";
@@ -116,6 +117,15 @@ function startClientAppearance(): void {
   apply();
 }
 
+function startThreadDetailsDefault(): void {
+  const apply = () =>
+    useRightPanelStore
+      .getState()
+      .setThreadPanelInlineOpenByDefault(getClientSettings().threadDetailsOpenByDefault);
+  subscribeClientSettings(apply);
+  apply();
+}
+
 function startDocumentTitle(): void {
   appAtomRegistry.subscribe(
     primaryServerConfigAtom,
@@ -179,6 +189,7 @@ export function startAppServices(): AppRouter {
   installDesktopPasteAsText(window.desktopBridge, window);
 
   startClientAppearance();
+  startThreadDetailsDefault();
   startDocumentTitle();
   startEnvironmentThemeRepaint();
   startBrowserChromeThemeSync(router);
