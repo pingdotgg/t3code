@@ -28,20 +28,27 @@ type PendingAnswerDraft = Pick<
 >;
 
 // Answers bypass the server's message-context expansion, so chips are expanded here.
-// `uploaded` holds the server attachments for the draft's images then files, in order.
+// Question attachments and thread links live separately from the composer's other context.
 export function projectPendingUserInputAnswer(
   answer: unknown,
-  draft: PendingAnswerDraft | null,
+  questionDraft: PendingAnswerDraft | null,
   uploaded: ReadonlyArray<{ readonly id: string }>,
+  composerDraft: PendingAnswerDraft | null,
 ) {
-  if (typeof answer !== "string" || !draft) return answer;
+  if (typeof answer !== "string") return answer;
   const records =
     buildMessageContext({
-      ...draft,
-      attachments: [...draft.images, ...draft.files].flatMap((attachment, index) => {
-        const upload = uploaded[index];
-        return upload ? [{ attachment, attachmentId: upload.id }] : [];
-      }),
+      terminalContexts: composerDraft?.terminalContexts ?? [],
+      reviewComments: composerDraft?.reviewComments ?? [],
+      previewAnnotations: composerDraft?.previewAnnotations ?? [],
+      environmentContexts: composerDraft?.environmentContexts ?? [],
+      threadContexts: questionDraft?.threadContexts ?? [],
+      attachments: [...(questionDraft?.images ?? []), ...(questionDraft?.files ?? [])].flatMap(
+        (attachment, index) => {
+          const upload = uploaded[index];
+          return upload ? [{ attachment, attachmentId: upload.id }] : [];
+        },
+      ),
     })?.records ?? [];
   const threadsById = new Map(
     records.flatMap((record) =>

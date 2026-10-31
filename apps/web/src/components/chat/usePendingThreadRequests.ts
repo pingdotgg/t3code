@@ -306,6 +306,7 @@ export function usePendingThreadRequests(input: {
     if (userInputResponsesInFlight.current.has(responseKey)) return;
     const attachmentsByQuestionId = new Map<string, UserInputAttachments[string]>();
     const providerAnswers = { ...answers };
+    const composerDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
     for (const question of pendingInput.questions) {
       const target = questionAttachmentDraftId(
         environmentId,
@@ -328,6 +329,7 @@ export function usePendingThreadRequests(input: {
         answers[question.id],
         draft,
         uploaded,
+        composerDraft,
       );
       if (uploaded.length > 0) {
         attachmentsByQuestionId.set(question.id, uploaded as UserInputAttachments[string]);
