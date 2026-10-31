@@ -3,6 +3,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import { AudioPreviewUnmountContext } from "../files/AudioPreview";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
+import { useChatChapterStore } from "~/chatChapterStore";
 import { MarkdownFindContext } from "./markdownFindContext";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock } from "./WorkLog";
@@ -1208,6 +1209,44 @@ const ConversationTimeline = memo(function ConversationTimeline({
     listRef,
     contentInsetEndAdjustment,
   });
+
+  const chapterReveal = useChatChapterStore((state) => state.revealRequest);
+  const handledChapterRevealRef = useRef<number | null>(null);
+  const historyRequestedForChapterRef = useRef<{ nonce: number; rowCount: number } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the list to a chapter chosen from the chapters menu, loading earlier history while it is missing
+  useEffect(() => {
+    if (
+      !chapterReveal ||
+      chapterReveal.threadKey !== routeThreadKey ||
+      handledChapterRevealRef.current === chapterReveal.nonce
+    ) {
+      return;
+    }
+    const rowIndex = rows.findIndex(
+      (row) => row.kind === "message" && row.message.id === chapterReveal.messageId,
+    );
+    if (rowIndex < 0) {
+      const requested = historyRequestedForChapterRef.current;
+      const alreadyRequested =
+        requested?.nonce === chapterReveal.nonce && requested.rowCount === rows.length;
+      if (
+        historyControls?.hasMoreHistory &&
+        !historyControls.loading &&
+        !historyControls.error &&
+        !alreadyRequested
+      ) {
+        historyRequestedForChapterRef.current = {
+          nonce: chapterReveal.nonce,
+          rowCount: rows.length,
+        };
+        historyControls.onLoadEarlier(chapterReveal.messageId);
+      }
+      return;
+    }
+    handledChapterRevealRef.current = chapterReveal.nonce;
+    navigateTimeline();
+    void listRef.current?.scrollToIndex({ index: rowIndex, animated: true, viewOffset: 96 });
+  }, [chapterReveal, historyControls, listRef, navigateTimeline, routeThreadKey, rows]);
 
   // LegendList moves rows one commit late; per-row providers prevent thread context leaks.
   const onAudioPlaybackChange = (rowId: string, event: SyntheticEvent) => {

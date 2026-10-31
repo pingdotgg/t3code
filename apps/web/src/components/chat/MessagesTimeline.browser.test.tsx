@@ -32,6 +32,8 @@ import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 import "~/index.css";
 
 import { environmentThreadDetails } from "../../state/threads";
+import { useChatChapterStore } from "~/chatChapterStore";
+import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
@@ -625,6 +627,30 @@ describe("MessagesTimeline citations", () => {
     );
     await expect.element(screen.getByText("the cited answer")).toBeVisible();
     expect(toast).not.toHaveBeenCalled();
+  });
+});
+
+describe("MessagesTimeline chapters", () => {
+  it("scrolls the list to a chapter's row when the chapter is chosen", async () => {
+    const props = baseProps();
+    const threadRef = parseScopedThreadKey(props.routeThreadKey);
+    if (!threadRef) throw new Error("routeThreadKey must be a scoped thread key");
+    const entries = Array.from({ length: 60 }, (_, index) =>
+      index === 30
+        ? message("Chapter target", {}, "chapter")
+        : message(`Note ${index}`, { role: "assistant" }, `note-${index}`),
+    );
+    await using _screen = await renderElement(
+      <MessagesTimeline {...props} timelineEntries={entries} />,
+    );
+    const list = props.listRef.current;
+    if (!list) throw new Error("the timeline list did not mount");
+    using scrollToIndex = vi.spyOn(list, "scrollToIndex");
+
+    act(() => useChatChapterStore.getState().requestReveal(threadRef, MessageId.make("chapter")));
+    await vi.waitFor(() =>
+      expect(scrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ index: 30 })),
+    );
   });
 });
 
