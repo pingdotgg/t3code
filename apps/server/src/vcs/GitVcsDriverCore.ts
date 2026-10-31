@@ -32,6 +32,7 @@ import {
   type ReviewDiffFileStat,
   type ReviewDiffPreviewSource,
   type VcsRef,
+  type VcsWorkingTreeFileStatus,
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -221,6 +222,13 @@ function parseReviewNumstat(stdout: string): ReviewDiffFileStat[] {
   return files;
 }
 
+function withFileStatus<T extends { path: string }>(
+  file: T,
+  status: VcsWorkingTreeFileStatus | null | undefined,
+): T & { status?: VcsWorkingTreeFileStatus } {
+  return status ? { ...file, status } : file;
+}
+
 // Space-separated fields precede the path in each porcelain v2 record type. The path itself
 // may contain spaces, so it is everything after them.
 const PORCELAIN_V2_FIELDS_BEFORE_PATH: Record<string, number> = {
@@ -236,6 +244,30 @@ function parsePorcelainPath(record: string): string | null {
   if (fieldsBeforePath === undefined) return null;
   const filePath = record.split(" ").slice(fieldsBeforePath).join(" ");
   return filePath.length > 0 ? filePath : null;
+}
+
+function parsePorcelainEntry(
+  record: string,
+): { path: string; status: VcsWorkingTreeFileStatus | null } | null {
+  const path = parsePorcelainPath(record);
+  if (path === null) return null;
+  const recordType = record[0];
+  const xy = record.split(" ")[1] ?? "";
+  const status: VcsWorkingTreeFileStatus | null =
+    recordType === "?"
+      ? "untracked"
+      : recordType === "!"
+        ? null
+        : recordType === "2"
+          ? "renamed"
+          : recordType === "u"
+            ? "modified"
+            : xy[1] === "D" || xy === "D."
+              ? "deleted"
+              : xy[0] === "A" || xy[1] === "A"
+                ? "added"
+                : "modified";
+  return { path, status };
 }
 
 function filterBranchesForListQuery(
@@ -2236,7 +2268,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     let behindCount = 0;
     let aheadOfDefaultCount = 0;
     let hasWorkingTreeChanges = false;
-    const changedFilesWithoutNumstat = new Set<string>();
+    const changedFileStatuses = new Map<string, VcsWorkingTreeFileStatus | null>();
     const untrackedRoots: string[] = [];
 
     const statusRecords = statusStdout.split("\0");
@@ -2261,16 +2293,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
       if (line.length > 0 && !line.startsWith("#")) {
         hasWorkingTreeChanges = true;
-        const pathValue = parsePorcelainPath(line);
-        if (pathValue) {
-          changedFilesWithoutNumstat.add(pathValue);
-          if (line.startsWith("? ")) untrackedRoots.push(pathValue);
+        const entry = parsePorcelainEntry(line);
+        if (entry) {
+          changedFileStatuses.set(entry.path, entry.status);
+          if (line.startsWith("? ")) untrackedRoots.push(entry.path);
         }
-        // A rename record is followed by its original path as a separate record. Listing it
-        // keeps the deletion selectable when committing only some files.
+        // Rename records carry a second NUL-delimited original path, selectable for partial commits.
         if (line.startsWith("2 ")) {
           const originalPath = statusRecords[++index];
-          if (originalPath) changedFilesWithoutNumstat.add(originalPath);
+          if (originalPath && !changedFileStatuses.has(originalPath))
+            changedFileStatuses.set(
+              originalPath,
+              line.split(" ")[1]?.includes("R") ? "deleted" : null,
+            );
         }
       }
     }
@@ -2319,12 +2354,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const files = Array.from(fileStatMap.entries()).map(([filePath, stat]) => {
       insertions += stat.insertions;
       deletions += stat.deletions;
-      return { path: filePath, insertions: stat.insertions, deletions: stat.deletions };
+      return withFileStatus(
+        { path: filePath, insertions: stat.insertions, deletions: stat.deletions },
+        changedFileStatuses.get(filePath),
+      );
     });
 
-    for (const filePath of changedFilesWithoutNumstat) {
+    for (const [filePath, status] of changedFileStatuses) {
       if (fileStatMap.has(filePath)) continue;
-      files.push({ path: filePath, insertions: 0, deletions: 0 });
+      files.push(withFileStatus({ path: filePath, insertions: 0, deletions: 0 }, status));
     }
     files.sort((a, b) => a.path.localeCompare(b.path));
 
