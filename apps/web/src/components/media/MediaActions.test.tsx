@@ -18,6 +18,7 @@ function deferred<T>() {
 
 const state = vi.hoisted(() => ({
   sessions: new Map<string, Pick<AuthSessionState, "authenticated" | "scopes">>(),
+  connection: vi.fn(),
   mint: vi.fn(),
   download: vi.fn(),
   png: vi.fn(),
@@ -42,7 +43,7 @@ vi.mock("../../state/assets", () => ({ assetEnvironment: { createUrl: {} } }));
 vi.mock("../../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => state.mint }));
 vi.mock("../../state/session", () => ({
   environmentSession: { sessionStateAtom: (environmentId: string) => environmentId },
-  readPreparedConnection: () => ({ httpBaseUrl: "https://host.test" }),
+  readPreparedConnection: (environmentId: string) => state.connection(environmentId),
 }));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: (environmentId: string) => ({
@@ -121,6 +122,7 @@ function openMenu(source: MediaActionSource) {
 beforeEach(() => {
   state.sessions.clear();
   state.sessions.set(environmentId, denied);
+  state.connection.mockReset().mockReturnValue({ httpBaseUrl: "https://host.test" });
   state.mint
     .mockReset()
     .mockResolvedValue(AsyncResult.success({ relativeUrl: "/api/assets/image.png", expiresAt: 1 }));
@@ -141,6 +143,56 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.unstubAllGlobals());
+
+it("copies a CORS-blocked image through its source environment while keeping the clipboard gesture", async () => {
+  const { readMediaPng } = await vi.importActual<typeof import("./mediaContent")>("./mediaContent");
+  state.png.mockImplementation(readMediaPng);
+  const fetching = deferred<void>();
+  const response = deferred<Response>();
+  const png = new Blob(["image bytes"], { type: "image/png" });
+  using fetch = vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementationOnce(() => {
+      fetching.resolve();
+      return response.promise;
+    })
+    .mockResolvedValueOnce(new Response(png));
+
+  const copying = useMediaActions({
+    kind: "image",
+    name: "remote.png",
+    src: "https://images.example.com/remote.png",
+    environmentId,
+  }).copyImage();
+
+  expect(state.clipboard).toHaveBeenCalledOnce();
+  await fetching.promise;
+  response.resolve(Promise.reject(new TypeError("Failed to fetch")));
+  await copying;
+
+  expect(state.mint).toHaveBeenCalledWith({
+    environmentId,
+    input: { resource: { _tag: "remote-image", url: "https://images.example.com/remote.png" } },
+  });
+  expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+    "https://images.example.com/remote.png",
+    "https://host.test/api/assets/image.png",
+  ]);
+  const [item] = state.clipboard.mock.calls[0]![0];
+  expect(await item.items["image/png"]).toEqual(png);
+});
+
+it("does not bypass host-file assets through their display URL when disconnected", async () => {
+  state.connection.mockReturnValue(null);
+  state.sessions.set(environmentId, granted);
+  const source = { ...hostSource(), src: "https://images.example.com/image.png" };
+
+  await expect(useMediaActions(source).copyImage()).rejects.toThrow("Reconnect");
+  await expect(useMediaActions(source).save()).rejects.toThrow("Reconnect");
+  expect(state.mint).not.toHaveBeenCalled();
+  expect(state.png).not.toHaveBeenCalled();
+  expect(state.download).not.toHaveBeenCalled();
+});
 
 it.each(["workspace-file", "media-file"] as const)(
   "disables denied %s byte actions and prevents imperative requests",

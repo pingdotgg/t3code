@@ -34,6 +34,7 @@ export interface MediaActionSource {
   readonly kind: "image" | "video";
   readonly name: string;
   readonly src: string | null;
+  readonly environmentId?: EnvironmentId;
   readonly reference?: MediaReference;
   readonly asset?: { readonly environmentId: EnvironmentId; readonly resource: AssetResource };
   readonly onOpenFile?: () => void;
@@ -76,13 +77,14 @@ export function useMediaActions(source: MediaActionSource) {
     reportFailure: false,
     refresh: true,
   });
-  const actionUrl = async () => {
+  const sourceAsset = source.asset;
+  const actionUrl = async (asset = sourceAsset) => {
     assertCanReadMedia();
-    if (!source.asset) {
+    if (!asset) {
       if (!source.src) throw new Error("This media is unavailable. Try reopening the preview.");
       return source.src;
     }
-    const { environmentId, resource } = source.asset;
+    const { environmentId, resource } = asset;
     const connection = readPreparedConnection(environmentId);
     if (!connection) throw new Error("Reconnect to this environment and try again.");
     const result = await createAssetUrl({ environmentId, input: { resource } });
@@ -97,6 +99,7 @@ export function useMediaActions(source: MediaActionSource) {
   };
   const copyImage = async () => {
     assertCanReadMedia();
+    const environmentId = source.environmentId ?? source.asset?.environmentId;
     if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
       throw new Error(
         "Image copying is unavailable. Use a secure browser connection or save the image.",
@@ -104,7 +107,20 @@ export function useMediaActions(source: MediaActionSource) {
     }
     // Start the clipboard write in the user gesture; fetching/decoding may finish later.
     await navigator.clipboard.write([
-      new ClipboardItem({ "image/png": actionUrl().then(readMediaPng) }),
+      new ClipboardItem({
+        "image/png": actionUrl().then((src) =>
+          readMediaPng(
+            src,
+            !source.asset && environmentId && /^https?:\/\//i.test(src)
+              ? () =>
+                  actionUrl({
+                    environmentId,
+                    resource: { _tag: "remote-image", url: src },
+                  })
+              : undefined,
+          ),
+        ),
+      }),
     ]);
   };
   return { save, copyImage, canReadMedia, assertCanReadMedia };

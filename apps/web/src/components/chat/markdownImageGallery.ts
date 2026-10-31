@@ -31,6 +31,9 @@ export function markdownImageGallery(
             kind: "image" as const,
             name: registered.name,
             src: linkedSource,
+            ...(registered.actionsSource?.environmentId
+              ? { environmentId: registered.actionsSource.environmentId }
+              : {}),
             ...(reference ? { reference } : {}),
           },
         }

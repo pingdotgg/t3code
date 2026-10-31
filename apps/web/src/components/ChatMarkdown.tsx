@@ -571,6 +571,7 @@ function useChatMarkdownState({
       source,
       resolvedFilePath,
       cwd,
+      environmentId,
       threadRef,
       // Read the connection on click; reconnect replaces it, and subscriptions would refresh every markdown
       // context.
@@ -1482,6 +1483,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         kind,
         name: altText || kind,
         src: mediaSrc,
+        ...(environmentId === null ? {} : { environmentId }),
         ...(reference ? { reference } : {}),
       };
       if (kind === "video") {
