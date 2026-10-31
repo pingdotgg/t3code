@@ -439,13 +439,13 @@ export const OpenInPicker = memo(function OpenInPicker({
           className={
             compact
               ? "sr-only"
-              : "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5"
+              : "sr-only @4xl/header-actions:not-sr-only @4xl/header-actions:ml-0.5"
           }
         >
           {primaryLabel}
         </span>
       </ThreadDetailsControl>
-      <GroupSeparator {...(!compact ? { className: "hidden @3xl/header-actions:block" } : {})} />
+      <GroupSeparator {...(!compact ? { className: "hidden @4xl/header-actions:block" } : {})} />
       <Menu open={menuOpen} onOpenChange={setMenuOpen}>
         <MenuTrigger
           disabled={isHostEditorDenied}
