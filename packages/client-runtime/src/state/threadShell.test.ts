@@ -13,6 +13,7 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import { PrimaryConnectionTarget } from "../connection/model.ts";
+import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
 import { v2Now, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
 import { isThreadWorking } from "./threadInbox.ts";
@@ -23,6 +24,9 @@ const remoteEnvironmentId = EnvironmentId.make("remote-environment-v2");
 const otherProjectId = ProjectId.make("other-project");
 
 function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environmentId]) {
+  const connectionPhaseAtom = Atom.family((_environmentId: EnvironmentId) =>
+    Atom.make<EnvironmentConnectionPhase>("connected"),
+  );
   const snapshotAtom = Atom.family((_environmentId: EnvironmentId) =>
     Atom.make<OrchestrationV2ShellSnapshot | null>(v2ShellSnapshot),
   );
@@ -48,11 +52,66 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
     registry: AtomRegistry.make(),
     snapshotAtom,
     catalogValueAtom,
-    threads: createEnvironmentThreadShellAtoms({ catalogValueAtom, snapshotAtom }),
+    connectionPhaseAtom,
+    threads: createEnvironmentThreadShellAtoms({
+      catalogValueAtom,
+      snapshotAtom,
+      connectionPhaseAtom,
+    }),
   };
 }
 
 describe("v2 thread shell lists", () => {
+  it("updates cached point and list reads on connection loss and recovery without changing runtime", () => {
+    const { registry, threads, snapshotAtom, connectionPhaseAtom } = makeHarness([
+      environmentId,
+      remoteEnvironmentId,
+    ]);
+    const raw = {
+      ...v2ThreadShell,
+      status: "running" as const,
+      activeRunId: RunId.make("run-disconnected"),
+      latestRunId: RunId.make("run-disconnected"),
+      pinnedAt: v2Now,
+    };
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [raw] });
+    const ref = { environmentId, threadId: raw.id };
+    const reads = Atom.make((get) =>
+      [
+        get(threads.threadShellAtom(ref)),
+        get(threads.quietThreadShellAtom(ref)),
+        ...get(threads.threadShellsAtom),
+        ...get(threads.quietThreadShellsAtom),
+        ...get(threads.navigationThreadShellsAtom),
+        ...get(
+          threads.threadShellsForProjectRefsAtom([{ environmentId, projectId: raw.projectId }]),
+        ),
+      ].filter((thread) => thread?.environmentId === environmentId),
+    );
+    const dispose = registry.mount(reads);
+    const before = registry.get(threads.threadShellAtom(ref));
+    const other = registry.get(
+      threads.threadShellAtom({ ...ref, environmentId: remoteEnvironmentId }),
+    );
+    for (const phase of ["reconnecting", "error", "offline", "connecting", "connected"] as const) {
+      registry.set(connectionPhaseAtom(environmentId), phase);
+      expect(registry.get(reads)).toHaveLength(6);
+      for (const thread of registry.get(reads)) {
+        expect(thread).toMatchObject({
+          connectionPhase: phase,
+          pinnedAt: DateTime.formatIso(v2Now),
+        });
+        expect(thread?.runtime).toEqual(before?.runtime);
+        expect(thread?.source).toBe(raw);
+      }
+      expect(
+        registry.get(threads.threadShellAtom({ ...ref, environmentId: remoteEnvironmentId })),
+      ).toBe(other);
+    }
+    dispose();
+    registry.dispose();
+  });
+
   it("preserves ordered reference arrays when a middle thread changes", () => {
     const { registry, threads, snapshotAtom } = makeHarness();
     const snapshot = {

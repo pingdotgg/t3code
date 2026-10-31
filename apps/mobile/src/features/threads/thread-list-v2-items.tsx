@@ -89,6 +89,24 @@ interface StatusLabel {
   readonly iconTintClassName: string;
 }
 const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> = {
+  connecting: {
+    label: "Connecting",
+    icon: "wifi.slash",
+    className: "text-foreground-muted",
+    iconTintClassName: "accent-foreground-muted",
+  },
+  reconnecting: {
+    label: "Reconnecting",
+    icon: "wifi.slash",
+    className: "text-foreground-muted",
+    iconTintClassName: "accent-foreground-muted",
+  },
+  offline: {
+    label: "Offline",
+    icon: "wifi.slash",
+    className: "text-foreground-muted",
+    iconTintClassName: "accent-foreground-muted",
+  },
   approval: {
     label: "Approval",
     icon: "exclamationmark.shield",
