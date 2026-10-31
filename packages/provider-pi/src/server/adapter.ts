@@ -3330,7 +3330,12 @@ function piQuestion(
     id: questionId,
     header: "Question",
     question:
-      title.trim() ||
+      title
+        .trim()
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/[\\`*_[\]{}()#+.!|~-]/g, "\\$&") ||
       (method === "select"
         ? "Choose an option"
         : method === "editor"

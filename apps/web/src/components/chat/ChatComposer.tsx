@@ -3374,7 +3374,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           ? isChoiceOnlyPendingQuestion
                             ? "Choose an option above"
                             : (activePendingProgress.activeQuestion?.placeholder ??
-                              "Type your own answer, or leave this blank to use the selected option")
+                              (isLiteralPendingAnswer
+                                ? "Type your answer"
+                                : "Type your own answer, or leave this blank to use the selected option"))
                           : showPlanFollowUpPrompt && activeProposedPlan
                             ? "Add feedback to refine the plan, or leave this blank to implement it"
                             : projectSelectionRequired

@@ -3342,9 +3342,21 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect.each([undefined, "", "1,3; custom answer"])(
+  it.effect.each([
+    {
+      placeholder: undefined,
+      title: "Enter <branch> & [name] *exact*",
+      question: String.raw`Enter &lt;branch&gt; &amp; \[name\] \*exact\*`,
+    },
+    {
+      placeholder: "",
+      title: "Where should this run?\n1. Current branch\n2. New worktree",
+      question: "Where should this run?\n1\\. Current branch\n2\\. New worktree",
+    },
+    { placeholder: "1,3; custom answer", title: "Enter a value", question: "Enter a value" },
+  ])(
     "maps native text input without turning its placeholder into an answer, placeholder=%s",
-    (placeholder) =>
+    ({ placeholder, title, question: expectedQuestion }) =>
       Effect.gen(function* () {
         const fake = yield* makeFakePi;
         const { runtime, takeEvent } = yield* openRuntime(fake);
@@ -3353,7 +3365,6 @@ describe("PiAdapterV2", () => {
           modelSelection: modelSelection("default"),
           runtimePolicy,
         });
-        const title = "Where should this run?\n1. Current branch\n2. New worktree";
         for (const [index, answer] of ["", "  exact answer\n"].entries()) {
           const id = `ui-input-${index}`;
           yield* fake.emit({
@@ -3375,7 +3386,7 @@ describe("PiAdapterV2", () => {
           }
           const [question] = decodeUserInputQuestions(event.turnItem.questions);
           assert.equal(question?.header, "Question");
-          assert.equal(question?.question, title);
+          assert.equal(question?.question, expectedQuestion);
           assert.deepEqual(question?.options, []);
           assert.equal(question?.initialAnswer, "");
           assert.equal(question?.placeholder, placeholder);
@@ -3414,7 +3425,10 @@ describe("PiAdapterV2", () => {
       if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request") {
         return assert.fail("expected a user input request");
       }
-      assert.equal(decodeUserInputQuestions(event.turnItem.questions)[0]?.question, title);
+      assert.equal(
+        decodeUserInputQuestions(event.turnItem.questions)[0]?.question,
+        "Which database?\n1\\. Postgres\n2\\. Type something\\.\nType your answer:",
+      );
       yield* runtime.respondToRuntimeRequest({
         requestId: event.turnItem.requestId,
         answers: { "ui-input": "SQLite" },
