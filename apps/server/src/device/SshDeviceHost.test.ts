@@ -1,6 +1,8 @@
 import { expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Net from "@t3tools/shared/Net";
+import * as Scope from "effect/Scope";
+import * as Exit from "effect/Exit";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -101,6 +103,8 @@ it.effect("preserves installed status after probes and cleans failed agent activ
         });
       }),
     );
+    const hostScope = yield* Scope.make();
+    yield* Effect.addFinalizer(() => Scope.close(hostScope, Exit.void));
     const host = yield* SshDeviceHost.make(
       { kind: "ssh", id: "test", label: "Test", target: "test.example" },
       () =>
@@ -114,6 +118,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
             )
           : Effect.void,
     ).pipe(
+      Effect.provideService(Scope.Scope, hostScope),
       Effect.provide(Layer.mergeAll(ServerConfig.layerTest(home, home), Net.layer)),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(
@@ -189,7 +194,13 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     for (const args of commandArgs) {
       for (const option of multiplexingOff) expect(args).not.toContain(option);
     }
-    yield* host.stop;
+    const retired = yield* host
+      .ensureAgentReady(() => Scope.close(hostScope, Exit.void))
+      .pipe(Effect.result);
+    expect(retired._tag).toBe("Failure");
     expect(forwards).toBe(0);
+    const modesAfterClose = [...modes];
+    expect((yield* host.ensureReady(() => Effect.void).pipe(Effect.result))._tag).toBe("Failure");
+    expect(modes).toEqual(modesAfterClose);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
