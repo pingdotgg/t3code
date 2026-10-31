@@ -43,7 +43,7 @@ export class DeviceToolchainInstallError extends Schema.TaggedError<DeviceToolch
 ) {
   override get message(): string {
     if (this.reason === "npm_not_found")
-      return "Device support needs npm, which is not on the T3 server's PATH. Install Node.js, which includes npm, then retry.";
+      return "Device support needs npm, which is not on the T3 server's PATH. Install npm (it comes with Node.js from nodejs.org), restart T3 Code, then retry.";
     const suffix = this.exitCode === undefined ? "" : ` (exit code ${this.exitCode})`;
     return `Installing ${this.tool} failed while ${this.step}${suffix}.`;
   }

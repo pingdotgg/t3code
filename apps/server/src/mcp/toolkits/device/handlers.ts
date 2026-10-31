@@ -121,6 +121,15 @@ const mapLocateErrors = <A, R>(
     }),
   );
 
+const failedHostDetails = (
+  state: { readonly hostStatuses: DeviceServiceState["hostStatuses"] },
+  hostIds: ReadonlyArray<string>,
+) =>
+  hostIds.flatMap((id) => {
+    const status = state.hostStatuses[id];
+    return status?.status === "failed" && status.detail ? [status.detail] : [];
+  });
+
 const pickDevice = Effect.fn("handlers.pickDevice")(function* (
   state: {
     readonly hosts: ReadonlyArray<DeviceHostSummary>;
@@ -138,8 +147,12 @@ const pickDevice = Effect.fn("handlers.pickDevice")(function* (
     const devices = yield* DeviceService.DeviceService;
     const located = yield* devices.locateDevice({ deviceId, hostId }).pipe(mapLocateErrors);
     if (Option.isSome(located)) return located.value;
+    const failures = failedHostDetails(
+      state,
+      hostId === undefined ? Object.keys(state.hostStatuses) : [hostId],
+    );
     return yield* new DeviceToolUnavailableError({
-      reason: `No device ${deviceId} on ${hostId === undefined ? "any host" : hostName(state.hosts.find((host) => host.id === hostId) ?? { id: hostId })}. Call device_list for current ids.`,
+      reason: `No device ${deviceId} on ${hostId === undefined ? "any host" : hostName(state.hosts.find((host) => host.id === hostId) ?? { id: hostId })}. ${failures.length > 0 ? failures.join(" ") : "Call device_list for current ids."}`,
     });
   }
   const hostId = input.hostId ?? LOCAL_DEVICE_HOST_ID;
@@ -149,11 +162,11 @@ const pickDevice = Effect.fn("handlers.pickDevice")(function* (
       (input.platform === undefined || device.platform === input.platform),
   );
   if (candidates.length === 0) {
-    const status = state.hostStatuses[hostId];
+    const [failure] = failedHostDetails(state, [hostId]);
     return yield* new DeviceToolUnavailableError({
       reason:
-        status?.status === "failed" && status.detail
-          ? status.detail
+        failure !== undefined
+          ? failure
           : input.platform === undefined
             ? "No simulators or emulators were found. Call device_list to see why."
             : `No ${input.platform} devices were found on host ${hostId}. Call device_list to see why.`,

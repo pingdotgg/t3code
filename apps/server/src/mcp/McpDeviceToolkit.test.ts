@@ -281,22 +281,25 @@ it.effect("device_open reports a failed host's setup error instead of no devices
   const layerFailed = Layer.mock(DeviceService.DeviceService)({
     state: Effect.succeed(failedState),
     list: Effect.succeed(failedState),
+    locateDevice: () => Effect.succeedNone,
     open: () => Effect.die("Must not open a device on a host whose setup failed"),
   });
   return Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
-    const result = yield* server
-      .callTool({ name: "device_open", arguments: { platform: "android" } })
-      .pipe(
-        Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(["device"])),
-        Effect.provideService(McpSchema.McpServerClient, client),
-      );
-    const text = result.content
-      .flatMap((entry) => (entry.type === "text" ? [entry.text] : []))
-      .join("\n");
-    expect(result.isError).toBe(true);
-    expect(text).not.toContain("No android devices were found");
-    expect(text).toContain(failure);
+    for (const args of [{ platform: "android" }, { deviceId: "Pixel_API_35", hostId: "local" }]) {
+      const result = yield* server
+        .callTool({ name: "device_open", arguments: args })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(["device"])),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      const text = result.content
+        .flatMap((entry) => (entry.type === "text" ? [entry.text] : []))
+        .join("\n");
+      expect(result.isError).toBe(true);
+      expect(text).not.toContain("No android devices were found");
+      expect(text).toContain(failure);
+    }
   }).pipe(
     Effect.scoped,
     Effect.provide(
