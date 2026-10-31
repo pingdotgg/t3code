@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useLayoutEffect, useState, type CSSProperties } from "react";
 
 import { Kbd } from "../components/ui/kbd";
+import { trackBrowserSurfaceSlot } from "../browser/browserSurfaceTracking";
 import { shortcutLabelForCommand } from "../keybindings";
 import { cn } from "../lib/utils";
 import { observeResize } from "../lib/observeResize";
@@ -54,7 +55,6 @@ function useHintPlacement() {
   useLayoutEffect(() => {
     const host = hint?.offsetParent;
     if (!host) return;
-    const animations = new Set<Animation>();
     const place = () => {
       const pane = host.querySelector("[data-layout-pane-focused='true'][data-layout-pane-id]");
       if (!pane) return;
@@ -64,33 +64,35 @@ function useHintPlacement() {
       const floor = composer
         ? composer.getBoundingClientRect().top - HINT_GAP_PX
         : paneRect.bottom - HINT_EDGE_PX;
-      setStyle({
+      const next = {
         left: paneRect.left + paneRect.width / 2 - hostRect.left,
         bottom: hostRect.bottom - floor,
         maxWidth: paneRect.width - 2 * HINT_EDGE_PX,
-      });
-      // Camera and pane transforms move the anchor without resize or scroll events.
-      for (const animation of host.getAnimations({ subtree: true })) {
-        const target = (animation.effect as KeyframeEffect | null)?.target;
-        if (
-          animation.playState !== "running" ||
-          !(target instanceof Element) ||
-          !target.contains(pane) ||
-          animations.has(animation)
-        )
-          continue;
-        animations.add(animation);
-        animation.addEventListener("finish", place, { once: true });
-        animation.addEventListener("cancel", place, { once: true });
-      }
+      };
+      setStyle((current) =>
+        current?.left === next.left &&
+        current.bottom === next.bottom &&
+        current.maxWidth === next.maxWidth
+          ? current
+          : next,
+      );
     };
     place();
-    const pane = host.querySelector("[data-layout-pane-focused='true'][data-layout-pane-id]");
+    const pane = host.querySelector<HTMLElement>(
+      "[data-layout-pane-focused='true'][data-layout-pane-id]",
+    );
     const composer = pane?.querySelector('[data-chat-composer-stack="true"]');
     const stopResize = observeResize(
       [host, ...(pane ? [pane] : []), ...(composer ? [composer] : [])],
       place,
     );
+    // Share the bounded geometry tracker: compositor transforms emit no layout events.
+    const stopMotion = pane
+      ? trackBrowserSurfaceSlot(pane, () => {
+          place();
+          return false;
+        })
+      : () => {};
     // A pane that just landed can mount its composer a frame later.
     const frame = window.requestAnimationFrame(place);
     host.addEventListener("scroll", place, { capture: true, passive: true });
@@ -98,10 +100,7 @@ function useHintPlacement() {
     return () => {
       window.cancelAnimationFrame(frame);
       stopResize();
-      for (const animation of animations) {
-        animation.removeEventListener("finish", place);
-        animation.removeEventListener("cancel", place);
-      }
+      stopMotion();
       host.removeEventListener("scroll", place, { capture: true });
       window.removeEventListener("resize", place);
     };
