@@ -10,6 +10,8 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeReadline from "node:readline";
 
+import { stressTranscript } from "./dev-replay/stressTranscript.ts";
+
 interface LogicalFrame {
   readonly kind: "notification" | "request" | "response";
   readonly method: string;
@@ -64,6 +66,8 @@ export const SCENARIOS = [
     name: "Multi turn",
     file: `${FIXTURES}/multi_turn/registry_transcript.ndjson`,
   },
+  // Generated, so `vp run stress` can load the app without committing a large recording.
+  { id: "stress", name: "Stress", generate: stressTranscript },
 ] as const;
 
 // Session setup and vendor state stay out: they would replace the replay agent's own models.
@@ -92,6 +96,12 @@ function isReplayedFrame(frame: LogicalFrame): boolean {
   if (frame.kind !== "notification" || frame.method !== "session/update") return false;
   const update = (frame.params as { update?: { sessionUpdate?: unknown } } | undefined)?.update;
   return typeof update?.sessionUpdate === "string" && REPLAYED_UPDATES.has(update.sessionUpdate);
+}
+
+export function scenarioTranscript(scenario: (typeof SCENARIOS)[number]): string {
+  return "generate" in scenario
+    ? scenario.generate()
+    : NodeFS.readFileSync(new URL(scenario.file, import.meta.url), "utf8");
 }
 
 /** Splits a recorded transcript into the turns that follow each `session/prompt`. */
@@ -177,9 +187,7 @@ function runAgent(): void {
     const cached = turnsByScenario.get(scenarioId);
     if (cached !== undefined) return cached;
     const scenario = SCENARIOS.find((candidate) => candidate.id === scenarioId) ?? SCENARIOS[0];
-    const turns = parseReplayTurns(
-      NodeFS.readFileSync(new URL(scenario.file, import.meta.url), "utf8"),
-    );
+    const turns = parseReplayTurns(scenarioTranscript(scenario));
     turnsByScenario.set(scenarioId, turns);
     return turns;
   };
