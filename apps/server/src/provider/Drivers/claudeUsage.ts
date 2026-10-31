@@ -9,6 +9,7 @@ import {
   type ProviderUsageReader,
   type TranscriptUsageFormat,
   type UsageRecord,
+  workingDirectoryHook,
 } from "@t3tools/provider-core/server/usage";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
@@ -115,12 +116,16 @@ export const claudeUsageFormat: TranscriptUsageFormat<void> = {
     timestamp: true,
     requestId: true,
     sessionId: true,
+    cwd: true,
     costUSD: true,
     message: { id: true, model: true, usage: true },
   },
   usageMarkers: ['"usage"'],
   parseLine: (line) => parseClaudeLine(line),
   parseProjected: (projected) => parseClaudeRecord(projected),
+  // Every record names the folder, but the first usage line may come after
+  // records without usage, so any record naming it is read until one does.
+  workingDirectory: workingDirectoryHook(['"cwd"'], (record) => record["cwd"]),
 };
 
 export const claudeUsageReader: ProviderUsageReader<ClaudeSettings, Path.Path> = {
