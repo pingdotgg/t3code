@@ -23,13 +23,8 @@ import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-/**
- * One producer's statuses. A handle writes to at most one thread at a time and
- * is retired when the scope that opened it closes, clearing what it set. After
- * another handle with the same kind of source binds the same thread, this one
- * is stale: its writes are ignored until it binds again, so a late update from
- * a replaced provider session never reaches the replacement's statuses.
- */
+// Replacing a thread's source retires the previous handle until it binds again;
+// closing its scope clears its statuses without touching the replacement's.
 export interface ContributionStatusSourceHandle {
   /**
    * Moves this handle to `threadId`, clearing what it set on its previous
@@ -95,9 +90,7 @@ export class ContributionStatusStore extends Context.Reference<ContributionStatu
 ) {}
 
 // Line breaks, tabs, other C0/C1 controls, DEL, and Unicode line/paragraph separators.
-// eslint-disable-next-line no-control-regex
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
-// eslint-disable-next-line no-control-regex -- matches the control characters on purpose, as above
 const HAS_CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 
 /**
@@ -156,7 +149,7 @@ const compareStrings = (left: string, right: string) => (left < right ? -1 : lef
 const sourceRank = (source: ContributionStatusSource) =>
   source.kind === "provider-session" ? 0 : 1;
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.fn("contributions.status.make")(function* () {
   const threads = new Map<ThreadId, Map<string, SourceSlot>>();
   const changes = yield* PubSub.sliding<ContributionStatusSnapshot>(1);

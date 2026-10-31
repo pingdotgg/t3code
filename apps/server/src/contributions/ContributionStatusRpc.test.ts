@@ -18,6 +18,7 @@ import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
 import { RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
 
+import * as PortScanner from "../preview/PortScanner.ts";
 import * as RpcAuthorization from "../auth/RpcAuthorization.ts";
 import { RPC_REQUIRED_SCOPES } from "../auth/RpcAuthorization.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -184,8 +185,9 @@ describe("subscribeContributionStatus", () => {
       const runtime = ContributionStatusStore.layer.pipe(
         Layer.provideMerge(producer),
         Layer.provide(
-          Layer.merge(
+          Layer.mergeAll(
             NodeServices.layer,
+            PortScanner.layerTest,
             Layer.succeed(
               ProviderEventLoggers.ProviderEventLoggers,
               ProviderEventLoggers.NoOpProviderEventLoggers,

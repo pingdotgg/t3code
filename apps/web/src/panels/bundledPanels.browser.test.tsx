@@ -126,25 +126,28 @@ describe("bundled side panels", () => {
       terminalIds: ["term-1"],
       activeTerminalId: "term-1",
     };
-    await screen.rerender(
-      <PanelHostContext value={host}>
-        <Suspense fallback={null}>
-          <RegisteredSidePanel
-            id="terminal"
-            surface={surface}
-            launchContext={null}
-            focusRequestId={0}
-            onAddTerminalContext={() => undefined}
-            onSplitTerminal={() => undefined}
-            onSplitTerminalVertical={() => undefined}
-            onNewTerminal={() => undefined}
-            onActiveTerminalChange={() => undefined}
-            onCloseTerminal={() => undefined}
-          />
-        </Suspense>
-      </PanelHostContext>,
-    );
-    await act(() => imports.terminal.promise);
+    await act(async () => {
+      await screen.rerender(
+        <PanelHostContext value={host}>
+          <Suspense fallback={null}>
+            <RegisteredSidePanel
+              id="terminal"
+              surface={surface}
+              launchContext={null}
+              onAddTerminalContext={() => undefined}
+              onSplitTerminal={() => undefined}
+              onSplitTerminalVertical={() => undefined}
+              onNewTerminal={() => undefined}
+              onActiveTerminalChange={() => undefined}
+              onCloseTerminal={() => undefined}
+            />
+          </Suspense>
+        </PanelHostContext>,
+      );
+    });
+    await act(async () => {
+      await imports.terminal.promise;
+    });
     await expect.element(screen.getByText("Terminal body", { exact: true })).toBeVisible();
     expect(screen.container.textContent).toBe("Terminal body");
     expect(loaded).toMatchObject({
@@ -185,7 +188,6 @@ export function typeFixtures(
   const terminalProps = {
     surface: terminalSurface,
     launchContext: null,
-    focusRequestId: 0,
     onAddTerminalContext: () => undefined,
     onSplitTerminal: () => undefined,
     onSplitTerminalVertical: () => undefined,
