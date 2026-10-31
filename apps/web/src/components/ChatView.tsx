@@ -184,6 +184,7 @@ import { isEditableFocused } from "../lib/editableFocus";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { shortcutLabelForCommand } from "../keybindings";
 import { cn } from "~/lib/utils";
+import { isModelPickerOpen } from "../modelPickerVisibility";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
@@ -1847,7 +1848,8 @@ export default function ChatView(props: ChatViewProps) {
   );
   const scheduleComposerFocus = () => {
     window.requestAnimationFrame(() => {
-      focusComposer();
+      // The model picker stays open through its own changes, so it keeps focus.
+      if (!isModelPickerOpen()) focusComposer();
     });
   };
   const scheduleComposerFocusStable = useStableCallback(scheduleComposerFocus);

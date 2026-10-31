@@ -21,7 +21,6 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { ArchiveIcon, ChevronRightIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import { getProviderStatusMessage, hasProviderSetup } from "./ProviderStatusBanner";
@@ -748,11 +747,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     const modelKeys = visibleModels.map((model) =>
       modelPickerModelKey(model.instanceId, model.slug),
     );
-    if (!legacySection) {
-      return modelKeys;
-    }
-    modelKeys.splice(legacySection.currentModels.length, 0, legacySection.key);
-    return modelKeys;
+    // The toggle trails the list, so expanding it reveals older models above it.
+    return legacySection ? [...modelKeys, legacySection.key] : modelKeys;
   })();
   const filteredModelByKey = ((): ReadonlyMap<string, ModelPickerItem> =>
     new Map(
@@ -843,7 +839,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         className={cn(
           "relative flex w-screen max-w-90 flex-row overflow-hidden",
           props.docked
-            ? "h-full max-sm:h-56 max-sm:min-h-0! max-sm:w-full max-sm:max-w-none"
+            ? "max-sm:h-56 max-sm:min-h-0! max-sm:w-full max-sm:max-w-none"
             : "max-h-86.5",
         )}
         style={
@@ -1023,19 +1019,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       aria-expanded={legacySection.isExpanded}
                       className="group w-full cursor-pointer"
                     >
-                      <ArchiveIcon aria-hidden="true" className="size-4 opacity-70" />
-                      <div className="flex min-w-0 flex-1 items-center gap-2 text-left">
-                        <div className="text-sm font-normal leading-snug">Legacy models</div>
-                        <div className="text-xs font-normal leading-snug text-muted-foreground/70">
-                          {legacySection.legacyModels.length}
-                        </div>
-                      </div>
-                      <ChevronRightIcon
-                        className={cn(
-                          "size-4 transition-transform",
-                          legacySection.isExpanded && "rotate-90",
-                        )}
-                      />
+                      <span className="text-sm leading-snug text-muted-foreground group-hover:text-foreground group-data-highlighted:text-foreground">
+                        {legacySection.isExpanded ? "Show less" : "Show more"}
+                      </span>
                     </ComboboxItem>
                   );
                 }
