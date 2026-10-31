@@ -1,12 +1,11 @@
+/* Clerk injects its component styles into the clerk layer (clerkAppearance.cssLayerName). */
+@layer theme, base, clerk, components, utilities;
 @import "tailwindcss";
 
 @custom-variant dark (&:is(.dark, .dark *));
 @custom-variant light (&:not(.dark, .dark *));
 /* Window Controls Overlay: active when Electron exposes native titlebar control geometry. */
 @custom-variant wco (&:is(.wco, .wco *));
-/* Beta "New design" (Settings -> Beta) sets data-redesign on <html>. The variant adds no
-   specificity, so it loses to dark:, hover: and other variants on the same property. */
-@custom-variant redesign (&:where([data-redesign] *));
 
 /* Secondary hovering pointers reveal sidebar actions on touch-primary devices. */
 @custom-variant any-hover {
@@ -240,7 +239,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-error-surface: var(--error-surface);
   --color-update-foreground: var(--update-foreground);
   --color-update: var(--update);
-  --color-update-surface: var(--update-surface);
   --color-success-foreground: var(--success-foreground);
   --color-success: var(--success);
   --color-diff-addition: var(--diff-addition);
@@ -273,10 +271,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-card-foreground: var(--contrast-card-foreground);
   --color-card: var(--card);
   --color-code: var(--code-background);
-  --color-code-foreground: var(--code-foreground);
   --color-foreground: var(--contrast-foreground);
   --color-background: var(--background);
-  --color-surface-raised: var(--surface-raised);
   --color-message: var(--message-surface);
   --color-message-foreground: var(--contrast-message-foreground);
   --color-message-action: var(--message-action);
@@ -946,10 +942,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     outline: none;
   }
 
-  .surface-subheader {
-    @apply flex h-10 min-h-10 shrink-0 items-center border-b border-border/60 bg-background;
-  }
-
   [data-preview-panel-mode="inline"] [data-right-panel-surface-content] [data-surface-subheader] {
     height: calc(var(--spacing) * 7);
     min-height: calc(var(--spacing) * 7);
@@ -1174,7 +1166,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --warning-surface: color-mix(in srgb, var(--warning) 8%, transparent);
   --update: var(--primary);
   --update-foreground: var(--primary);
-  --update-surface: color-mix(in srgb, var(--update) 12%, transparent);
   /* Keep every sidebar primitive on the same light surface hierarchy, including
      portaled mobile sheets and settings navigation outside the app sidebar. */
   --sidebar: var(--color-zinc-50);
@@ -1195,14 +1186,15 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   @variant dark {
     color-scheme: dark;
-    /* Keep controls and floating surfaces close to the neutral-black canvas.
-       Borders and hover states provide separation without milky gray fills. */
-    --background: var(--color-neutral-950);
-    --surface-raised: color-mix(in srgb, var(--background) 97%, var(--color-white));
+    /* The canvas is true black, matching the sidebar. Raised surfaces keep the tone they had
+       over neutral-950, so cards, popovers, and the composer still lift. Borders and hover
+       states provide separation without milky gray fills. */
+    --background: #000;
+    --surface-raised: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
     --foreground: var(--color-neutral-100);
-    --card: color-mix(in srgb, var(--background) 97%, var(--color-white));
+    --card: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
     --card-foreground: var(--color-neutral-100);
-    --popover: color-mix(in srgb, var(--background) 97%, var(--color-white));
+    --popover: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
     --popover-foreground: var(--color-neutral-100);
     --primary: oklch(0.571 0.21 264);
     --secondary: --alpha(var(--color-white) / 3%);
@@ -1211,7 +1203,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --muted-foreground: var(--color-neutral-400);
     --accent: --alpha(var(--color-white) / 4%);
     --accent-foreground: var(--color-neutral-100);
-    --message-surface: var(--accent);
+    /* A user turn sits above the composer tone, level with the selected sidebar row. */
+    --message-surface: color-mix(in srgb, var(--color-neutral-950) 92%, var(--color-white));
     --error: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
     --error-foreground: var(--color-red-400);
     --tool-error-icon: #fca5a5;
@@ -1224,7 +1217,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --warning-foreground: var(--color-amber-400);
     --warning-surface: color-mix(in srgb, var(--warning) 16%, transparent);
     --update-foreground: var(--color-blue-400);
-    --update-surface: color-mix(in srgb, var(--update) 18%, transparent);
     --sidebar: var(--card);
     --sidebar-control-surface: var(--muted);
     --sidebar-row-hover: var(--accent);
@@ -1280,55 +1272,47 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --sidebar-row-selected: color-mix(in srgb, var(--contrast-foreground) 7%, transparent);
     --sidebar-border: var(--border);
     --sidebar-stage-fade: var(--card);
+    /* Row metadata sits a step below read titles (75% white). */
+    --secondary-label: #8f8f8f;
   }
 }
 
-/* New design: modified files get a muted blue so added and deleted files lead. Built from the
-   info token, which themes do not override, so it stays blue in every theme. */
-html[data-redesign] {
+/* Modified files get a muted blue so added and deleted files lead. Built from the info token,
+   which themes do not override, so it stays blue in every theme. */
+:root {
   --diff-modified-icon: color-mix(in srgb, var(--info-foreground) 50%, var(--muted-foreground));
+
+  @variant dark {
+    /* On black a gray mix stays as bright as the blue, so dim with transparency instead. */
+    --diff-modified-icon: color-mix(in srgb, var(--info-foreground) 65%, transparent);
+    --diff-added-icon: var(--success-foreground);
+  }
 }
 
-html.dark[data-redesign] {
-  /* On black a gray mix stays as bright as the blue, so dim with transparency instead. */
-  --diff-modified-icon: color-mix(in srgb, var(--info-foreground) 65%, transparent);
-  --diff-added-icon: var(--success-foreground);
-}
-
-/* Blue-orange already spends blue on additions. */
-html[data-redesign][data-diff-color-scheme="blue-orange"] {
+/* Blue-orange already spends blue on additions. Same specificity as the dark block above and
+   later, so it wins there too. */
+:root[data-diff-color-scheme="blue-orange"] {
   --diff-modified-icon: var(--muted-foreground);
   --diff-added-icon: initial;
+
+  @variant dark {
+    --diff-modified-icon: color-mix(in srgb, var(--muted-foreground) 65%, transparent);
+  }
 }
 
-html.dark[data-redesign][data-diff-color-scheme="blue-orange"] {
-  --diff-modified-icon: color-mix(in srgb, var(--muted-foreground) 65%, transparent);
-}
-
-/* New design: sections in the provider detail pane sit flat in its card instead of nesting
-   cards inside it. Headings and row dividers still separate them. */
-[data-redesign] [data-provider-detail] [data-slot="settings-group"] {
+/* Sections in the provider detail pane sit flat in its card instead of nesting cards inside
+   it. Headings and row dividers still separate them. */
+[data-provider-detail] [data-slot="settings-group"] {
   border-color: transparent;
   background: transparent;
   box-shadow: none;
 }
 
-/* New design: a diff header's copy button shows on file hover or focus. */
+/* A diff header's copy button shows on file hover or focus. */
 @media (hover: hover) {
-  [data-redesign] diffs-container:not(:hover) [data-diff-copy-path]:not(:focus-within) {
+  diffs-container:not(:hover) [data-diff-copy-path]:not(:focus-within) {
     opacity: 0;
   }
-}
-
-/* New design: the default dark canvas is true black, matching the sidebar. Raised surfaces
-   keep the tone they had over neutral-950 so cards, popovers, and the composer still lift. */
-html.dark[data-redesign]:not([data-theme-id]) {
-  --background: #000;
-  --surface-raised: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
-  --card: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
-  --popover: color-mix(in srgb, var(--color-neutral-950) 97%, var(--color-white));
-  /* A user turn sits above the composer tone, level with the selected sidebar row. */
-  --message-surface: color-mix(in srgb, var(--color-neutral-950) 92%, var(--color-white));
 }
 
 /* Theme files are expressed in app color roles and mapped to the existing
@@ -1384,7 +1368,6 @@ html[data-theme-id]:not([data-theme-id=""]) {
   --warning-surface: var(--app-theme-warning-surface);
   --update: var(--app-theme-update);
   --update-foreground: var(--app-theme-update-foreground);
-  --update-surface: var(--app-theme-update-surface);
   --border: var(--app-theme-border);
   --input: var(--app-theme-input);
   --ring: var(--app-theme-focus);
@@ -1735,11 +1718,8 @@ body {
   padding: 0;
 }
 
-/* New design: sidebar row metadata sits a step below read titles (75% white). */
-[data-redesign] [data-app-sidebar] {
-  @variant dark {
-    --secondary-label: #8f8f8f;
-  }
+[data-preview-url-input] {
+  font-variant-ligatures: none;
 }
 
 /* Lighter default icon stroke. In the base layer so stroke-* utilities still win; any
@@ -2089,8 +2069,13 @@ code {
   margin: 0.65rem 0;
 }
 
-/* Preflight already draws the 1px rule, as it does in chat; only the block
-   spacing needs to match. */
+/* Surface borders can blend into dark message bubbles; rules need a readable color. */
+:is(.chat-markdown, .composer-tiptap) hr {
+  @variant dark {
+    border-color: var(--contrast-muted-foreground);
+  }
+}
+
 .composer-tiptap hr {
   margin: 0.65rem 0;
 }
@@ -2200,6 +2185,20 @@ code {
   background: transparent !important;
 }
 
+/* Plain-text fences override the highlighter's inline foreground colors. */
+:is(.chat-markdown, .composer-tiptap)
+  .chat-markdown-codeblock:is(
+    [data-language="text" i],
+    [data-language="txt" i],
+    [data-language="plain" i],
+    [data-language="plaintext" i]
+  ) {
+  &,
+  & :is(pre, pre *) {
+    color: inherit !important;
+  }
+}
+
 /* Paragraphs and code blocks arrive in chunks while a response streams. Fade
    each new block in so the chunk does not pop. @starting-style only applies
    when an element is first inserted, and the rule is gated on data-streaming,
@@ -2217,27 +2216,18 @@ code {
   }
 }
 
-/* Diagnostics-style tables: row separators only, uppercase headers, and a
-   scroll-fade container for horizontal overflow. The root chat-markdown
-   wrapping rules (overflow-wrap: anywhere) would let columns shrink to single
-   characters and defeat the overflow — restore word-boundary wrapping so the
-   min column width is the longest word. */
+/* Diagnostics-style tables: row separators only, and a scroll-fade container
+   for horizontal overflow. Cells wrap and the table fits its lane. The root
+   chat-markdown wrapping rules (overflow-wrap: anywhere) would let columns
+   shrink to single characters, so restore word-boundary wrapping: the min
+   column width is the longest word, and only wider content scrolls. */
 .chat-markdown table {
   width: 100%;
-  min-width: max-content;
   border-collapse: collapse;
   overflow-wrap: normal;
   word-break: normal;
-  font-size: 0.75rem;
-}
-
-/* New design: tables sit one step under 15px prose instead of three. */
-[data-redesign] .chat-markdown table {
+  /* One step under 15px prose. */
   font-size: 0.875rem;
-}
-
-[data-redesign] .chat-markdown :is(td, th) {
-  text-wrap: pretty;
 }
 
 /* Top-aligned so wrapped rows share a first line, and the outer columns sit
@@ -2245,6 +2235,7 @@ code {
 .chat-markdown th,
 .chat-markdown td {
   padding: 0.45rem 0.75rem;
+  text-wrap: pretty;
   text-align: start;
   vertical-align: top;
 }
@@ -2261,48 +2252,21 @@ code {
   border-bottom: 1px solid color-mix(in srgb, var(--contrast-border) 60%, transparent);
   padding-block: 0.55rem;
   font-weight: 600;
-  white-space: nowrap;
 }
 
 .chat-markdown tbody td {
   border-bottom: 1px solid color-mix(in srgb, var(--contrast-border) 60%, transparent);
 }
 
-/* Collapsed (default): single-line cells truncate so arbitrary chat content
-   cannot blow the column out; the footer toggle expands cells to wrap. */
-.chat-markdown .chat-markdown-table-container[data-expanded="false"] th,
-.chat-markdown .chat-markdown-table-container[data-expanded="false"] td {
-  overflow: hidden;
+/* Caps a long path, URL, or chip at 24rem; text past the cap wraps. */
+.chat-markdown :is(th, td) {
   max-width: 24rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.chat-markdown .chat-markdown-table-container[data-expanded="true"] td {
-  max-width: 24rem;
-  overflow-wrap: anywhere;
-}
-
-/* Fit expanded tables to wide timeline lanes; narrow lanes keep horizontal
-   scrolling so prose columns remain readable. */
-@container chat-lane (min-width: 36rem) {
-  .chat-markdown .chat-markdown-table-container[data-expanded="true"] table {
-    min-width: 0;
-  }
-
-  .chat-markdown .chat-markdown-table-container[data-expanded="true"] th {
-    white-space: normal;
-  }
-
-  .chat-markdown .chat-markdown-table-container[data-expanded="true"] td {
-    overflow-wrap: break-word;
-  }
+  overflow-wrap: break-word;
 }
 
 /* Formula cells keep their natural width and scroll with the table. */
-.chat-markdown .chat-markdown-table-container td:has([data-markdown-math]) {
+.chat-markdown :is(th, td):has([data-markdown-math]) {
   max-width: none;
-  overflow: visible;
 }
 
 :root {
@@ -2597,4 +2561,10 @@ code {
       );
     }
   }
+}
+
+/* A workspace area with no control of its own takes F6 focus itself; keep that visible. */
+[data-workspace-area]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
 }

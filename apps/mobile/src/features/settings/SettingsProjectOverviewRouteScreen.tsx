@@ -33,7 +33,7 @@ import {
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
-import { SettingsActionRow } from "./components/SettingsActionRow";
+import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import {
   AndroidSettingsEnvironmentFilter,
   SettingsEnvironmentFilterHeader,
@@ -83,7 +83,7 @@ export function SettingsProjectOverviewRouteScreen() {
   return (
     <>
       <SettingsEnvironmentFilterHeader />
-      <SettingsScreen title="Project overview" trailing={<AndroidSettingsEnvironmentFilter />}>
+      <SettingsScreen title="Projects" trailing={<AndroidSettingsEnvironmentFilter />}>
         <ScrollView
           contentInsetAdjustmentBehavior="automatic"
           showsVerticalScrollIndicator={false}
@@ -91,7 +91,11 @@ export function SettingsProjectOverviewRouteScreen() {
           contentContainerClassName="gap-6 px-5 pt-4"
           contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         >
-          {members.length === 0 ? (
+          {selectedProjectKey === null ? (
+            <Text className="px-2 text-base text-foreground-muted">
+              Choose a project with the filter above to manage its name, checkouts and removal.
+            </Text>
+          ) : members.length === 0 ? (
             <Text className="px-2 text-base text-foreground-muted">
               This project has no checkout on the selected connected environments. Change the filter
               above.

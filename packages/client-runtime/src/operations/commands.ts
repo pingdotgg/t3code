@@ -28,7 +28,6 @@ import {
   type UploadChatAttachment,
   type GuestMessageId,
 } from "@t3tools/contracts";
-import { modelSelectionCommandType } from "@t3tools/shared/model";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as Crypto from "effect/Crypto";
@@ -83,7 +82,10 @@ export interface ThreadCommandInput extends CommandMetadata {
   readonly threadId: ThreadId;
 }
 
-export type DeleteThreadInput = ThreadCommandInput;
+export interface DeleteThreadInput extends ThreadCommandInput {
+  /** The server deletes only a thread with no runs and no messages. */
+  readonly onlyIfUnused?: boolean;
+}
 export type ArchiveThreadInput = ThreadCommandInput;
 export type UnarchiveThreadInput = ThreadCommandInput;
 export type SettleThreadInput = ThreadCommandInput;
@@ -219,6 +221,12 @@ export interface ForkThreadFromRunInput extends CommandMetadata {
   readonly title?: string;
 }
 
+export interface ForkSideChatInput extends CommandMetadata {
+  readonly sourceThreadId: ThreadId;
+  readonly targetThreadId: ThreadId;
+  readonly title?: string;
+}
+
 export interface MergeThreadBackInput extends CommandMetadata {
   readonly sourceThreadId: ThreadId;
   readonly targetThreadId: ThreadId;
@@ -227,11 +235,6 @@ export interface MergeThreadBackInput extends CommandMetadata {
 
 export interface ResumeThreadQueueInput extends ThreadCommandInput {
   readonly runId?: RunId;
-}
-
-export interface ReorderQueuedRunInput extends ThreadCommandInput {
-  readonly runId: RunId;
-  readonly beforeRunId: RunId | null;
 }
 
 export interface PromoteQueuedRunInput extends ThreadCommandInput {
@@ -274,13 +277,6 @@ const dispatch = (command: OrchestrationV2Command) =>
 
 const getProjection = (threadId: ThreadId) =>
   request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, { threadId });
-
-const supportsServerResolvedCommandContext = Effect.fn(
-  "EnvironmentCommands.supportsServerResolvedCommandContext",
-)(function* () {
-  const config = yield* getInitialServerConfig();
-  return config.environment.capabilities.serverResolvedCommandContext === true;
-});
 
 const persistAttachments = Effect.fn("EnvironmentCommands.persistAttachments")(function* (
   threadId: ThreadId,
@@ -414,7 +410,6 @@ export const createThread = Effect.fn("EnvironmentCommands.createThread")(functi
 
 function simpleThreadCommand(
   type:
-    | "thread.delete"
     | "thread.archive"
     | "thread.unarchive"
     | "thread.settle"
@@ -431,7 +426,12 @@ function simpleThreadCommand(
 export const deleteThread = Effect.fn("EnvironmentCommands.deleteThread")(function* (
   input: DeleteThreadInput,
 ) {
-  return yield* simpleThreadCommand("thread.delete", input);
+  return yield* dispatch({
+    type: "thread.delete",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    ...(input.onlyIfUnused === undefined ? {} : { onlyIfUnused: input.onlyIfUnused }),
+  });
 });
 
 export type CloseGuestShareInput = ThreadCommandInput;
@@ -630,14 +630,8 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
       });
     }
     if (input.modelSelection !== undefined) {
-      const type = (yield* supportsServerResolvedCommandContext())
-        ? ("thread.model-selection.set" as const)
-        : modelSelectionCommandType(
-            (yield* getProjection(input.threadId)).thread.providerInstanceId,
-            input.modelSelection,
-          );
       result = yield* dispatch({
-        type,
+        type: "thread.model-selection.set",
         commandId: result === null ? commandId : CommandId.make(`${commandId}:model-selection`),
         threadId: input.threadId,
         modelSelection: input.modelSelection,
@@ -758,49 +752,10 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     });
   }
 
-  const serverResolvesCommandContext = yield* supportsServerResolvedCommandContext();
-  const projection = serverResolvesCommandContext ? null : yield* getProjection(input.threadId);
-  const activeRun = projection?.runs.findLast(
-    (run) =>
-      run.status === "preparing" ||
-      run.status === "starting" ||
-      run.status === "running" ||
-      run.status === "waiting",
-  );
-  const activeProviderThread =
-    activeRun === undefined
-      ? undefined
-      : projection?.providerThreads.find((thread) => thread.id === activeRun.providerThreadId);
-  const activeProviderSession =
-    activeProviderThread?.providerSessionId === null ||
-    activeProviderThread?.providerSessionId === undefined
-      ? undefined
-      : projection?.providerSessions.find(
-          (session) => session.id === activeProviderThread.providerSessionId,
-        );
-  const turnCapabilities = activeProviderSession?.capabilities.turns;
-  const dispatchMode = serverResolvesCommandContext
-    ? requestedMode === "queue"
+  const dispatchMode =
+    requestedMode === "queue"
       ? ({ type: "queue_after_active" } as const)
-      : ({ type: "start_immediately" } as const)
-    : activeRun === undefined
-      ? ({ type: "start_immediately" } as const)
-      : requestedMode === "steer"
-        ? ({ type: "steer_active", targetRunId: activeRun.id } as const)
-        : requestedMode === "restart"
-          ? ({ type: "restart_active", targetRunId: activeRun.id } as const)
-          : requestedMode === "queue"
-            ? ({ type: "queue_after_active" } as const)
-            : turnCapabilities?.supportsActiveSteering === true
-              ? ({ type: "steer_active", targetRunId: activeRun.id } as const)
-              : turnCapabilities?.supportsQueuedMessages === true
-                ? ({ type: "queue_after_active" } as const)
-                : turnCapabilities?.supportsSteeringByInterruptRestart === true
-                  ? ({ type: "restart_active", targetRunId: activeRun.id } as const)
-                  : ({ type: "queue_after_active" } as const);
-  const shouldSendTitleSeed =
-    input.titleSeed !== undefined &&
-    (serverResolvesCommandContext || projection?.messages.length === 0);
+      : ({ type: "start_immediately" } as const);
   return yield* dispatch({
     type: "message.dispatch",
     commandId,
@@ -814,12 +769,10 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       ? {}
       : { idleCompaction: input.message.idleCompaction }),
     attachments,
-    ...(shouldSendTitleSeed ? { titleSeed: input.titleSeed } : {}),
+    ...(input.titleSeed === undefined ? {} : { titleSeed: input.titleSeed }),
     ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
     ...(input.sourceProposedPlan === undefined ? {} : { sourcePlanRef: input.sourceProposedPlan }),
-    ...(serverResolvesCommandContext && requestedMode !== "queue"
-      ? { deliveryIntent: requestedMode }
-      : {}),
+    ...(requestedMode !== "queue" ? { deliveryIntent: requestedMode } : {}),
     dispatchMode,
   });
 });
@@ -960,11 +913,7 @@ export const dismissThreadUserInput = Effect.fn("EnvironmentCommands.dismissThre
 
 export const revertThreadCheckpoint = Effect.fn("EnvironmentCommands.revertThreadCheckpoint")(
   function* (input: RevertThreadCheckpointInput) {
-    if (
-      input.checkpointId !== undefined &&
-      input.scopeId !== undefined &&
-      (yield* supportsServerResolvedCommandContext())
-    ) {
+    if (input.checkpointId !== undefined && input.scopeId !== undefined) {
       return yield* dispatch({
         type: "checkpoint.rollback",
         ...(input.restoreFiles === undefined ? {} : { restoreFiles: input.restoreFiles }),
@@ -1038,6 +987,23 @@ export const forkThreadFromRun = Effect.fn("EnvironmentCommands.forkThreadFromRu
   });
 });
 
+/** Forks the thread's latest stable point into a hidden side chat; works while it runs. */
+export const forkSideChat = Effect.fn("EnvironmentCommands.forkSideChat")(function* (
+  input: ForkSideChatInput,
+) {
+  return yield* dispatch({
+    type: "thread.fork",
+    commandId: yield* allocateCommandId(input),
+    createdBy: "user",
+    creationSource: input.creationSource ?? "web",
+    sourceThreadId: input.sourceThreadId,
+    targetThreadId: input.targetThreadId,
+    sourcePoint: { type: "latest_stable" },
+    sideChat: true,
+    ...(input.title === undefined ? {} : { title: input.title }),
+  });
+});
+
 export const mergeThreadBack = Effect.fn("EnvironmentCommands.mergeThreadBack")(function* (
   input: MergeThreadBackInput,
 ) {
@@ -1061,18 +1027,6 @@ export const resumeThreadQueue = Effect.fn("EnvironmentCommands.resumeThreadQueu
       : { type: "queued-run.start" as const, runId: input.runId }),
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
-  });
-});
-
-export const reorderQueuedRun = Effect.fn("EnvironmentCommands.reorderQueuedRun")(function* (
-  input: ReorderQueuedRunInput,
-) {
-  return yield* dispatch({
-    type: "queued-run.reorder",
-    commandId: yield* allocateCommandId(input),
-    threadId: input.threadId,
-    runId: input.runId,
-    beforeRunId: input.beforeRunId,
   });
 });
 
