@@ -4672,6 +4672,7 @@ describe("turn fold endings", () => {
       createdAt: "2026-01-01T00:00:00Z",
       runIds,
       updateCount: 1,
+      updates: [],
       active: false,
       expanded,
     });
@@ -4786,7 +4787,13 @@ it.each([true, false])("groups consecutive notification responses, active=%s", (
   };
   const original = applyWorkingWindow(deriveMessagesTimelineRows(input), input);
   const collapsed = applyBackgroundActivityGroups(original, input);
-  expect(collapsed).toHaveLength(1);
+  const finalAnswer = original.filter(
+    (row) =>
+      (row.kind === "message" || row.kind === "assistant-meta") &&
+      row.message.runId === fixture.runId &&
+      !row.message.streaming,
+  );
+  expect(collapsed.slice(1)).toEqual(finalAnswer);
   expect(collapsed[0]).toMatchObject({
     kind: "background-activity",
     updateCount: 2,

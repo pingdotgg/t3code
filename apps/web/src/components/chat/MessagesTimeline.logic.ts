@@ -54,6 +54,7 @@ import {
   isCompactionCommandMessage,
   type MessageId,
   type OrchestrationV2IdleCompaction,
+  type OrchestrationV2Notification,
   type WorktreeSetupSnapshot,
   type OrchestrationV2ProjectedTurnItem,
   type RunAttemptId,
@@ -518,6 +519,7 @@ type MessagesTimelineRowContent =
       createdAt: string | null;
       runIds: readonly RunId[];
       updateCount: number;
+      updates: readonly OrchestrationV2Notification[];
       active: boolean;
       expanded: boolean;
     }
@@ -2901,7 +2903,7 @@ export function applyBackgroundActivityGroups(
   },
   previousRows: ReadonlyArray<MessagesTimelineRow> = [],
 ): MessagesTimelineRow[] {
-  const notifications = new Map<RunId, Set<string>>();
+  const notifications = new Map<RunId, Map<string, OrchestrationV2Notification>>();
   const excluded = new Set<RunId>();
   const entryRuns = new Map<string, RunId>();
   for (const entry of input.timelineEntries) {
@@ -2913,8 +2915,8 @@ export function applyBackgroundActivityGroups(
     if (runId == null) continue;
     entryRuns.set(entry.id, runId);
     if (item?.type === "notification") {
-      const ids = notifications.get(runId) ?? new Set<string>();
-      ids.add(item.id);
+      const ids = notifications.get(runId) ?? new Map<string, OrchestrationV2Notification>();
+      ids.set(item.id, item);
       notifications.set(runId, ids);
     }
     if (
@@ -2986,12 +2988,17 @@ export function applyBackgroundActivityGroups(
     const start = index;
     const runIds = new Set<RunId>();
     const updateIds = new Set<string>();
+    const updates: OrchestrationV2Notification[] = [];
     while (index < rows.length) {
       const nextRow = rows[index]!;
       const nextRunId = rowRunId(nextRow);
       if (nextRunId === null || !notifications.has(nextRunId)) break;
       runIds.add(nextRunId);
-      if (notifications.get(nextRunId)!.has(nextRow.id)) updateIds.add(nextRow.id);
+      const update = notifications.get(nextRunId)!.get(nextRow.id);
+      if (update) {
+        updateIds.add(nextRow.id);
+        updates.push(update);
+      }
       index += 1;
     }
     // Keep a mounted anchor across history prepends; restored open groups keep their key too.
@@ -3009,11 +3016,36 @@ export function applyBackgroundActivityGroups(
       createdAt: first.createdAt,
       runIds: [...runIds],
       updateCount: updateIds.size,
+      updates,
       active: activeRunId !== null && runIds.has(activeRunId),
       expanded,
     });
     // Expansion returns the original virtual rows, identities, disclosures and actions.
-    if (expanded) result.push(...rows.slice(start, index));
+    const groupRows = rows.slice(start, index);
+    if (expanded) {
+      result.push(...groupRows);
+    } else {
+      const lastRunId = [...runIds].at(-1);
+      const finalAnswer =
+        activeRunId === lastRunId
+          ? undefined
+          : groupRows.findLast(
+              (row) =>
+                row.kind === "message" &&
+                row.message.role === "assistant" &&
+                row.message.runId === lastRunId &&
+                !row.message.streaming,
+            );
+      if (finalAnswer?.kind === "message") {
+        result.push(
+          ...groupRows.filter(
+            (row) =>
+              row === finalAnswer ||
+              (row.kind === "assistant-meta" && row.message.id === finalAnswer.message.id),
+          ),
+        );
+      }
+    }
   }
   return result;
 }
@@ -3226,6 +3258,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return (
         a.createdAt === bg.createdAt &&
         a.updateCount === bg.updateCount &&
+        shallow(a.updates, bg.updates) &&
         a.active === bg.active &&
         a.expanded === bg.expanded &&
         shallow(a.runIds, bg.runIds)

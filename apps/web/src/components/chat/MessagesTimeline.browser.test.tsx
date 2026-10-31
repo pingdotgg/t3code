@@ -1703,7 +1703,7 @@ describe("MessagesTimeline work rows", () => {
       },
     };
     await using screen = await renderElement(<MessagesTimeline {...props} />);
-    const groups = () => screen.buttons("Handled 1 update");
+    const groups = () => screen.buttons("1 wake-up: Background task updated");
     await vi.waitFor(() =>
       expect(groups().map((node) => node.getAttribute("aria-expanded"))).toEqual([
         "false",
@@ -1711,7 +1711,7 @@ describe("MessagesTimeline work rows", () => {
       ]),
     );
     expect(screen.text()).toContain(feedback.message.text);
-    expect(screen.text()).not.toContain("Cited response");
+    expect(screen.text()).toContain("Cited response");
 
     await screen.rerender(<MessagesTimeline {...props} citationRequest={citationRequest} />);
     await vi.waitFor(() =>
@@ -1724,7 +1724,7 @@ describe("MessagesTimeline work rows", () => {
     await vi.waitFor(() =>
       expect(groups().map((node) => node.getAttribute("aria-expanded"))).toEqual(["true", "false"]),
     );
-    expect(screen.text()).not.toContain("Cited response");
+    expect(screen.text()).toContain("Cited response");
     expect(screen.text()).toContain(feedback.message.text);
   });
 });
