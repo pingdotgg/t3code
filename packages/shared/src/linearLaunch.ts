@@ -202,6 +202,22 @@ function buildLinearIssueSnapshot(
   };
 }
 
+/** "+ 3 sub-issues, 2 comments", or null when the snapshot carries neither. */
+export function linearIssueExtrasSummary(record: {
+  readonly subIssues: { readonly length: number };
+  readonly comments: { readonly length: number };
+}): string | null {
+  const parts = [
+    record.subIssues.length > 0
+      ? `${record.subIssues.length} sub-issue${record.subIssues.length === 1 ? "" : "s"}`
+      : null,
+    record.comments.length > 0
+      ? `${record.comments.length} comment${record.comments.length === 1 ? "" : "s"}`
+      : null,
+  ].filter((part): part is string => part !== null);
+  return parts.length === 0 ? null : `+ ${parts.join(", ")}`;
+}
+
 /** Frozen copy of the issue for the agent: later Linear edits do not change what it reads. */
 export function buildLinearIssueContextRecord(
   detail: LinearIssueDetail,

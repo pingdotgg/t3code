@@ -6,6 +6,7 @@ import {
   recentActivityIssueIds,
   runningCountByTeam,
   stepTone,
+  threadIdentifiersFromActivity,
 } from "./activity.ts";
 
 function issue(
@@ -117,6 +118,20 @@ describe("activity summaries", () => {
         2,
       ),
     ).toEqual(["new", "mid"]);
+  });
+
+  it("maps every linked thread, pipeline parents included, to its issue identifier", () => {
+    const item = (threadId: string) =>
+      ({ link: { threadId } }) as LinearIssueActivity["items"][number];
+    const identifiers = threadIdentifiersFromActivity([
+      activity({ issueIdentifier: "ATT-1", items: [item("t1"), item("t2")] }),
+      activity({ issueId: "b", issueIdentifier: "ATT-2", items: [item("t3")] }),
+    ]);
+    expect([...identifiers]).toEqual([
+      ["t1", "ATT-1"],
+      ["t2", "ATT-1"],
+      ["t3", "ATT-2"],
+    ]);
   });
 
   it("maps step statuses to tones", () => {

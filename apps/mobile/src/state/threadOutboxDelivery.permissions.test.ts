@@ -20,6 +20,7 @@ const state = vi.hoisted(() => ({
     readonly dispose: () => void;
   } | null,
   start: vi.fn(),
+  recordLinearLaunch: vi.fn(),
   metadata: vi.fn(),
   runtime: vi.fn(),
   interaction: vi.fn(),
@@ -46,6 +47,9 @@ const state = vi.hoisted(() => ({
   },
 }));
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
+vi.mock("../features/linear/recordLinearLaunch", () => ({
+  recordLinearLaunch: state.recordLinearLaunch,
+}));
 vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
   runAtomCommand: (_registry: unknown, command: (input: unknown) => unknown, input: unknown) =>
@@ -223,6 +227,7 @@ beforeEach(() => {
     state.runtime,
     state.interaction,
     state.checkout,
+    state.recordLinearLaunch,
   ]) {
     command.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   }
@@ -323,6 +328,64 @@ describe("queued PR checkout", () => {
     expect(remaining()).toEqual([edited]);
   });
 });
+describe("queued launch from a Linear issue", () => {
+  const linearIssue = {
+    issueId: "issue-1",
+    identifier: "ATT-612",
+    teamId: "team-1",
+    branchName: "jan/att-612-fix",
+    mappedProjectId: null,
+    moveTo: { id: "state-started", name: "In Progress" },
+    moveEnabled: true,
+    commentEnabled: false,
+  };
+  const queuedLaunch = () =>
+    message({
+      threadId: ThreadId.make("new-linear-thread"),
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+      creation: {
+        projectId: ProjectId.make("project"),
+        projectCwd: "/repo",
+        workspaceMode: "worktree",
+        branch: "main",
+        worktreePath: null,
+        worktreeBranchName: linearIssue.branchName,
+        linearIssue,
+      },
+    });
+
+  it("names the worktree after the issue and links the thread once it is created", async () => {
+    setOperateGrant("secondary", true);
+    await state.manager.enqueue(queuedLaunch());
+    await runDrain();
+    const bootstrap = state.start.mock.calls[0]?.[0].input.bootstrap;
+    expect(bootstrap.prepareWorktree).toMatchObject({
+      baseBranch: "main",
+      branch: "jan/att-612-fix",
+    });
+    expect(state.recordLinearLaunch).toHaveBeenCalledOnce();
+    expect(state.recordLinearLaunch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        environmentId: "secondary",
+        issueId: "issue-1",
+        identifier: "ATT-612",
+        target: expect.objectContaining({ kind: "thread", threadId: "new-linear-thread" }),
+        writeBack: { moveToStateId: "state-started", comment: false },
+      }),
+    );
+  });
+
+  it("records nothing while the thread could not be created", async () => {
+    setOperateGrant("secondary", true);
+    await state.manager.enqueue(queuedLaunch());
+    state.start.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("Socket is not connected"))),
+    );
+    await runDrain();
+    expect(state.recordLinearLaunch).not.toHaveBeenCalled();
+  });
+});
+
 afterEach(() => {
   state.cleanups.splice(0).forEach((cleanup) => cleanup());
 });

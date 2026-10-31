@@ -32,6 +32,8 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import { draftModelPickMatchesThread } from "@t3tools/shared/model";
 
+import type { LinearDraftIssue } from "@t3tools/client-runtime/linear/launch-plan";
+import { LinearDraftIssueSchema } from "../features/linear/linearDraftIssueSchema";
 import { writeFileAtomically } from "../lib/atomic-file";
 import { createComposerContextHistory, referencedComposerContext } from "../lib/composerContext";
 import { isQueuedEditDraftKey } from "./queued-edit-draft-key";
@@ -399,6 +401,8 @@ const isComposerDraftPersistenceError = Schema.is(ComposerDraftPersistenceError)
 export interface ComposerDraft {
   readonly text: string;
   readonly context?: OrchestrationMessageContext;
+  /** Set on a draft started from a Linear issue until it is sent. */
+  readonly linearIssue?: LinearDraftIssue;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly importedShareIds?: ReadonlyArray<string>;
   readonly modelSelection?: ModelSelection;
@@ -445,6 +449,7 @@ export type ComposerDraftSettingsUpdate = Pick<
   | "freshContext"
   | "workspaceSelection"
   | "project"
+  | "linearIssue"
 >;
 
 const ComposerDraftWorkspaceSelectionSchema = Schema.Struct({
@@ -471,6 +476,7 @@ const PersistedComposerContextSchema = Schema.Struct({
 const ComposerDraftSchema = Schema.Struct({
   text: Schema.String,
   context: Schema.optional(PersistedComposerContextSchema),
+  linearIssue: Schema.optional(LinearDraftIssueSchema),
   attachments: Schema.Array(DraftComposerAttachmentSchema),
   importedShareIds: Schema.optional(Schema.Array(Schema.String)),
   modelSelection: Schema.optional(ModelSelectionSchema),
@@ -1646,6 +1652,7 @@ export function clearComposerDraftContentState(
   const {
     importedShareIds: _importedShareIds,
     context: _context,
+    linearIssue: _linearIssue,
     modelSelection,
     workspaceSelection,
     project: _project,
@@ -1943,6 +1950,20 @@ export function removeComposerDraftsForEnvironment(
         !draftKey.startsWith(environmentPrefix) && draft.project?.environmentId !== environmentId,
     ),
   );
+}
+
+export function setComposerDraftLinearIssue(
+  draftKey: string,
+  linearIssue: LinearDraftIssue | null,
+): void {
+  updateComposerDrafts((current) => {
+    const { linearIssue: _previous, ...rest } = normalizeDraft(current[draftKey]);
+    return withComposerDraft(
+      current,
+      draftKey,
+      linearIssue === null ? rest : { ...rest, linearIssue },
+    );
+  });
 }
 
 export function createNewTaskDraft(project: {

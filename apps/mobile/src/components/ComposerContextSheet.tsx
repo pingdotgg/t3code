@@ -13,7 +13,8 @@ import type {
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { videoMimeType } from "@t3tools/shared/video";
-import { Pressable, ScrollView, View } from "react-native";
+import type { LinearIssueContextRecord } from "@t3tools/contracts";
+import { Linking, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { REVIEW_MONO_FONT_FAMILY } from "../features/review/reviewDiffRendering";
 import { ReviewCommentCard, useReviewCommentColors } from "../features/review/ReviewCommentCard";
@@ -72,6 +73,60 @@ function ContextSource(props: { source: ElementContextSource | null }) {
       value={[source.functionName, location].filter(Boolean).join("\n")}
       code
     />
+  );
+}
+
+function LinearIssueSnapshot(props: { readonly record: LinearIssueContextRecord }) {
+  const { record } = props;
+  const breadcrumb = [record.teamName, record.projectName, record.milestoneName].filter(
+    (part): part is string => part !== null && part.length > 0,
+  );
+  const meta = [record.stateName, record.priorityLabel, record.assigneeName].filter(
+    (part): part is string => part !== null && part.length > 0,
+  );
+  const excerpt = record.description.trim().slice(0, 600);
+  return (
+    <View className="gap-4">
+      <ContextField label={breadcrumb.join(" › ")} value={`${record.identifier} ${record.title}`} />
+      <ContextField label="Status" value={meta.join(" · ")} />
+      <ContextField label="Labels" value={record.labels.join(", ")} />
+      <ContextField
+        label="Description"
+        value={excerpt.length < record.description.trim().length ? `${excerpt}…` : excerpt}
+      />
+      {record.subIssues.length > 0 ? (
+        <ContextField
+          label={`Sub-issues (${record.subIssues.length})`}
+          value={record.subIssues
+            .slice(0, 5)
+            .map((sub) => `${sub.identifier} ${sub.title}`)
+            .concat(record.subIssues.length > 5 ? [`and ${record.subIssues.length - 5} more`] : [])
+            .join("\n")}
+        />
+      ) : null}
+      {record.comments.length > 0 ? (
+        <ContextField
+          label={`Comments (${record.comments.length})`}
+          value={record.comments
+            .slice(-2)
+            .map(
+              (comment) => `${comment.author ?? "Unknown"}: ${comment.body.trim().slice(0, 200)}`,
+            )
+            .join("\n")}
+        />
+      ) : null}
+      <Text className="text-xs text-foreground-muted">
+        Snapshot taken when attached; later edits in Linear are not included.
+      </Text>
+      {/^https?:\/\//i.test(record.url) ? (
+        <Button
+          label="Open in Linear"
+          tone="secondary"
+          onPress={() => void Linking.openURL(record.url).catch(() => undefined)}
+          fullWidth
+        />
+      ) : null}
+    </View>
   );
 }
 
@@ -324,6 +379,7 @@ export function ComposerContextSheet(props: {
                 ) : null}
               </View>
             ) : null}
+            {record.kind === "linear-issue" ? <LinearIssueSnapshot record={record} /> : null}
             {record.kind === "environment" ? (
               <ContextField label="Machine" value={record.label} />
             ) : null}

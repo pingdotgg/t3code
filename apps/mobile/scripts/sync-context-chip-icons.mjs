@@ -32,6 +32,20 @@ if (!skillSvg) {
   );
 }
 
+const linearIconSource = NodeFS.readFileSync(
+  NodePath.join(repositoryRoot, "apps/web/src/components/linear/linearIcons.tsx"),
+  "utf8",
+);
+const linearLogoPath = linearIconSource.match(/LINEAR_LOGO_PATH =\s*"([^"]*)"/)?.[1];
+
+if (!linearLogoPath) {
+  throw new Error(
+    "Could not read LINEAR_LOGO_PATH from apps/web/src/components/linear/linearIcons.tsx",
+  );
+}
+
+const linearSvg = `<svg viewBox="0 0 100 100" fill="currentColor"><path d="${linearLogoPath}"/></svg>`;
+
 const lucideIcons = [
   "bot",
   "circle-dashed",
@@ -84,6 +98,7 @@ for (const name of lucideIcons) {
   await renderIcon(name, await lucideSvg(name));
 }
 await renderIcon("skill", skillSvg);
+await renderIcon("linear", linearSvg);
 
 // Provider logos, so a model chip can show what the model menu shows. Native chips take images,
 // not SVG. Logos that swap between black and white per theme take the text color, like the chip;
@@ -157,7 +172,7 @@ for (const { driverKind, svg } of providerLogos) {
   await renderIcon(`provider-${driverKind}`, svg);
 }
 
-const tokens = [...lucideIcons, "skill"].sort();
+const tokens = [...lucideIcons, "skill", "linear"].sort();
 const generatedSource = `import type { ImageSourcePropType } from "react-native";\n\nexport const CONTEXT_CHIP_ICON_SOURCES = {\n${tokens
   .map(
     (token) =>

@@ -46,6 +46,17 @@ export function indexActivityByIssueId(
   return new Map(issues.map((entry) => [entry.issueId, entry]));
 }
 
+/** Thread id -> issue identifier ("ATT-615") for every thread or pipeline-run parent thread linked to an issue. */
+export function threadIdentifiersFromActivity(
+  issues: ReadonlyArray<LinearIssueActivity>,
+): ReadonlyMap<string, string> {
+  const identifiers = new Map<string, string>();
+  for (const issue of issues) {
+    for (const item of issue.items) identifiers.set(item.link.threadId, issue.issueIdentifier);
+  }
+  return identifiers;
+}
+
 /** Running T3 items per team, for the workspace-level team cards. */
 export function runningCountByTeam(
   issues: ReadonlyArray<LinearIssueActivity>,

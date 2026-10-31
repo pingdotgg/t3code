@@ -58,10 +58,17 @@ describe("workspace root navigation", () => {
     expect(workspaceUsesColumns("usage", true)).toBe(true);
     expect(workspaceUsesColumns("threads")).toBe(true);
     expect(workspaceUsesColumns("pullRequests")).toBe(true);
+    expect(workspaceUsesColumns("linear")).toBe(false);
+    expect(workspaceUsesColumns("linear", true)).toBe(true);
   });
 
   it("keeps the registered defaults while customization is unavailable", () => {
-    expect(resolveWorkspaceTabOrder(undefined)).toEqual(["threads", "pullRequests", "usage"]);
+    expect(resolveWorkspaceTabOrder(undefined)).toEqual([
+      "threads",
+      "pullRequests",
+      "linear",
+      "usage",
+    ]);
     expect(resolveWorkspaceTabOrder(["home", "usage", "issues", "threads"])).toEqual(
       resolveWorkspaceTabOrder(undefined),
     );
@@ -170,11 +177,25 @@ describe("workspace root navigation", () => {
     state = workspaceTabsReducer(state, { type: "select", tab: "threads" });
     expect(state.tabs.threads.query).toBe("retained");
   });
+  it("searches the Linear tab on its own and keeps the query when another tab is selected", () => {
+    let state = workspaceTabsReducer(initialWorkspaceTabsState(), {
+      type: "select",
+      tab: "linear",
+    });
+    state = workspaceTabsReducer(state, { type: "search" });
+    state = workspaceTabsReducer(state, { type: "query", query: "ATT-6" });
+    expect(state.tabs.linear).toMatchObject({ query: "ATT-6", searchMode: "active" });
+    state = workspaceTabsReducer(state, { type: "select", tab: "threads" });
+    expect(state.tabs.linear.query).toBe("ATT-6");
+    state = workspaceTabsReducer(state, { type: "cancel", tab: "linear" });
+    expect(state.tabs.linear).toMatchObject({ query: "", searchMode: "resting" });
+  });
   it("opens Settings on native reselection instead of selecting its overflow section", () => {
-    const order = ["threads", "pullRequests", "usage"] as const;
+    const order = ["threads", "pullRequests", "linear", "usage"] as const;
     expect(workspaceTabForNativeSlot(order, "settings")).toBe("settings");
     expect(workspaceTabForNativeSlot(order, "first")).toBe("threads");
-    expect(workspaceTabForNativeSlot(order, "third")).toBe("usage");
+    expect(workspaceTabForNativeSlot(order, "third")).toBe("linear");
+    expect(workspaceTabForNativeSlot(order, "fourth")).toBe("usage");
     expect(workspaceTabForNativeSlot(order, "removed")).toBeNull();
   });
 });

@@ -15,7 +15,7 @@ export function WorkspaceEmptyDetail(props: {
 }) {
   const pullRequests = props.tab === "pullRequests";
   const settings = props.tab === "settings";
-  if (props.tab === "usage") return <View className="flex-1 bg-screen" />;
+  if (props.tab === "usage" || props.tab === "linear") return <View className="flex-1 bg-screen" />;
   return (
     <ScreenContent surface="screen">
       <View

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { classifyLinearFailure, resolveLinearDegradation } from "./degradation.ts";
+import {
+  classifyLinearFailure,
+  isLinearUnsupportedFailure,
+  resolveLinearDegradation,
+} from "./degradation.ts";
 
 const linearError = (reason: string) => ({ _tag: "LinearError", reason });
 const now = Date.parse("2026-01-01T00:00:00.000Z");
@@ -13,6 +17,14 @@ describe("classifyLinearFailure", () => {
     expect(classifyLinearFailure(linearError("not_found"))).toBe("other");
     expect(classifyLinearFailure(new Error("socket closed"))).toBe("unavailable");
     expect(classifyLinearFailure(null)).toBe("other");
+  });
+
+  it("recognizes a server that predates the Linear RPCs", () => {
+    expect(isLinearUnsupportedFailure("Unknown request tag: linear.status")).toBe(true);
+    expect(isLinearUnsupportedFailure(new Error("Unknown request tag: linear.status"))).toBe(true);
+    expect(isLinearUnsupportedFailure(linearError("unauthorized"))).toBe(false);
+    expect(isLinearUnsupportedFailure(new Error("socket closed"))).toBe(false);
+    expect(isLinearUnsupportedFailure(null)).toBe(false);
   });
 });
 

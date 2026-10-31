@@ -1,3 +1,4 @@
+import { threadIdentifiersFromActivity } from "@t3tools/client-runtime/linear/activity";
 import { createLinearEnvironmentAtoms } from "@t3tools/client-runtime/state/linear";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -30,9 +31,5 @@ export const linearThreadIdentifiersAtom = Atom.make((get) => {
     () => null,
   );
   if (activity === null || activity.issues.length === 0) return NO_THREAD_IDENTIFIERS;
-  const identifiers = new Map<string, string>();
-  for (const issue of activity.issues) {
-    for (const item of issue.items) identifiers.set(item.link.threadId, issue.issueIdentifier);
-  }
-  return identifiers;
+  return threadIdentifiersFromActivity(activity.issues);
 }).pipe(Atom.withLabel("web-linear-thread-identifiers"));

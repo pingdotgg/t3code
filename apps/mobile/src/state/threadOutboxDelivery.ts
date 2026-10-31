@@ -1,3 +1,5 @@
+import { linearWriteBackOf } from "@t3tools/client-runtime/linear/launch-plan";
+import { recordLinearLaunch } from "../features/linear/recordLinearLaunch";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import * as Dialog from "../components/ui/Dialog";
 import {
@@ -475,6 +477,9 @@ export async function restoreRejectedQueuedMessage(
                 ? { startFromOrigin: queuedMessage.creation.startFromOrigin }
                 : {}),
             },
+            ...(queuedMessage.creation.linearIssue
+              ? { linearIssue: queuedMessage.creation.linearIssue }
+              : {}),
           }
         : {}),
     });
@@ -1118,7 +1123,8 @@ export function createThreadOutboxDelivery(): {
         branch: workspace.branch,
         worktreePath: workspace.worktreePath,
         startFromOrigin: workspace.startFromOrigin ?? false,
-        worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+        worktreeBranchName:
+          workspace.worktreeBranchName ?? buildTemporaryWorktreeBranchName(randomHex),
       }),
     });
     if (AsyncResult.isFailure(deliveryResult) && !hasAccess()) return true;
@@ -1130,6 +1136,26 @@ export function createThreadOutboxDelivery(): {
       return restoreQueuedMessage(persistedMessage, failure.message);
     }
     recordPendingThreadCreationOutcome({ kind: "delivered", message: persistedMessage });
+    // The thread now exists, so a task started from a Linear issue links to it.
+    if (creation.linearIssue) {
+      void recordLinearLaunch({
+        environmentId: queuedMessage.environmentId,
+        issueId: creation.linearIssue.issueId,
+        identifier: creation.linearIssue.identifier,
+        teamId: creation.linearIssue.teamId,
+        projectId: creation.linearIssue.projectId,
+        target: {
+          kind: "thread",
+          targetId: queuedMessage.threadId,
+          threadId: queuedMessage.threadId,
+          title: deriveThreadTitleSeed({
+            text: queuedMessage.text,
+            attachments: queuedMessage.attachments,
+          }),
+        },
+        writeBack: linearWriteBackOf(creation.linearIssue),
+      });
+    }
     const outcome = await completeQueuedMessageDelivery(
       persistedMessage,
       deliveryRevision,

@@ -1,4 +1,5 @@
 import type { LinearIssueContextRecord, LinearStateType } from "@t3tools/contracts";
+import { linearIssueExtrasSummary } from "@t3tools/shared/linearLaunch";
 
 import { ContextChip, ContextChipLabel } from "./ContextChip";
 import ChatMarkdown from "./ChatMarkdown";
@@ -16,21 +17,6 @@ const LINEAR_STATE_TYPES: ReadonlySet<string> = new Set([
 
 function asStateType(value: string): LinearStateType {
   return LINEAR_STATE_TYPES.has(value) ? (value as LinearStateType) : "unstarted";
-}
-
-/** "+ 3 sub-issues, 2 comments", or null when the snapshot carries neither. */
-function linearIssueExtrasSummary(
-  record: Pick<LinearIssueContextRecord, "subIssues" | "comments">,
-): string | null {
-  const parts = [
-    record.subIssues.length > 0
-      ? `${record.subIssues.length} sub-issue${record.subIssues.length === 1 ? "" : "s"}`
-      : null,
-    record.comments.length > 0
-      ? `${record.comments.length} comment${record.comments.length === 1 ? "" : "s"}`
-      : null,
-  ].filter((part): part is string => part !== null);
-  return parts.length === 0 ? null : `+ ${parts.join(", ")}`;
 }
 
 function LinearIssuePreview({ record }: { readonly record: LinearIssueContextRecord }) {

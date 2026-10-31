@@ -12,6 +12,8 @@ import { WorkspaceEmptyDetail } from "../WorkspaceEmptyDetail";
 import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { useAndroidControlSizing } from "../../../components/ui/useAndroidControlSizing";
 import { HomeRouteScreen } from "../../home/HomeRouteScreen";
+import { LinearTabScreen } from "../../linear/LinearTabScreen";
+import { LinearToolbar } from "../../linear/LinearToolbar.android";
 import { PullRequestsScreen } from "../../pull-requests/PullRequestsScreen";
 import { PullRequestToolbar } from "./PullRequestToolbar.android";
 import { useAdaptiveWorkspaceLayout } from "../AdaptiveWorkspaceLayout";
@@ -81,6 +83,15 @@ function WorkspaceRoot() {
                 renderTab={(tab) =>
                   tab === "threads" ? (
                     <HomeRouteScreen />
+                  ) : tab === "linear" ? (
+                    <LinearTabScreen
+                      renderFrame={(list) => (
+                        <>
+                          <LinearToolbar />
+                          <ScreenContent>{list}</ScreenContent>
+                        </>
+                      )}
+                    />
                   ) : tab !== "pullRequests" ? (
                     <WorkspacePageFrame width={workspacePageWidth ?? null}>
                       <WorkspaceExtraTab tab={tab} />

@@ -48,3 +48,19 @@ export function resolveLinearDegradation(input: {
   if (kinds.includes("unavailable")) return "unavailable";
   return input.stale ? "unavailable" : null;
 }
+
+/**
+ * A server that predates Linear answers its RPCs with an "Unknown request tag" defect rather
+ * than a LinearError, which clients show as "update the server" instead of "Linear is down".
+ */
+export function isLinearUnsupportedFailure(failure: unknown): boolean {
+  const message =
+    typeof failure === "string"
+      ? failure
+      : failure instanceof Error
+        ? failure.message
+        : typeof failure === "object" && failure !== null && "message" in failure
+          ? String((failure as { readonly message: unknown }).message)
+          : "";
+  return /unknown request tag/iu.test(message);
+}

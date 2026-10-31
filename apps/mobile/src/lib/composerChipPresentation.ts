@@ -1,5 +1,6 @@
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { imageMimeType } from "@t3tools/shared/image";
+import { linearIssueExtrasSummary } from "@t3tools/shared/linearLaunch";
 import { videoMimeType } from "@t3tools/shared/video";
 
 import type { CONTEXT_CHIP_ICON_SOURCES } from "./contextChipIcons.generated";
@@ -45,6 +46,7 @@ const CONTEXT_CHIP_PRESENTATIONS = {
   },
   // A machine: the record carries only its identity, so every machine wears one glyph.
   environment: { accent: "#3f9a4f", icon: "server" },
+  "linear-issue": { accent: "#7079e4", icon: "linear" },
 } as const satisfies Record<string, ContextChipPresentation>;
 
 const CHIP_CONTRAST = 5;
@@ -90,7 +92,17 @@ export const UNAVAILABLE_CONTEXT_CHIP_PRESENTATION: ContextChipPresentation = {
 export function composerChipSizeSuffix(record?: {
   readonly kind?: string;
   readonly sizeBytes?: number;
+  readonly subIssues?: ReadonlyArray<unknown>;
+  readonly comments?: ReadonlyArray<unknown>;
 }): string {
+  if (record?.kind === "linear-issue") {
+    return (
+      linearIssueExtrasSummary({
+        subIssues: record.subIssues ?? [],
+        comments: record.comments ?? [],
+      }) ?? ""
+    );
+  }
   if (record?.kind !== "file" && record?.kind !== "image") return "";
   return typeof record.sizeBytes === "number" ? formatAttachmentSize(record.sizeBytes) : "";
 }

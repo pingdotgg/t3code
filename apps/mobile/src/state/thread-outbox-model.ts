@@ -25,6 +25,8 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import type { LinearDraftIssue } from "@t3tools/client-runtime/linear/launch-plan";
+import { LinearDraftIssueSchema } from "../features/linear/linearDraftIssueSchema";
 import { DraftComposerAttachmentSchema } from "../lib/composer-image-schema";
 import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { DraftComposerAttachment } from "../lib/composerImages";
@@ -43,6 +45,8 @@ const QueuedThreadCreationSchema = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   startFromOrigin: Schema.optional(Schema.Boolean),
   pullRequestReference: Schema.optional(Schema.String),
+  worktreeBranchName: Schema.optional(Schema.String),
+  linearIssue: Schema.optional(LinearDraftIssueSchema),
 });
 
 export const QueuedThreadMessageSchema = Schema.Struct({
@@ -76,6 +80,10 @@ export interface QueuedThreadCreation {
   readonly worktreePath: string | null;
   readonly startFromOrigin?: boolean;
   readonly pullRequestReference?: string;
+  /** Names the new worktree's branch instead of a temporary one. */
+  readonly worktreeBranchName?: string;
+  /** Linked to this thread, with its write-backs, once the thread is created. */
+  readonly linearIssue?: LinearDraftIssue;
 }
 
 export interface QueuedThreadMessage {

@@ -106,6 +106,10 @@ describe("opening a workspace tab", () => {
         workspaceTabNavigationState(state, "settings", { settings: "SettingsMicrophone" }, columns),
       ),
     ).toEqual(["Home", "Settings", "SettingsVoice"]);
+    // Linear and Usage are single pages, so they never reopen a remembered detail.
+    for (const tab of ["linear", "usage"] as const) {
+      expect(names(workspaceTabNavigationState(state, tab, selections, columns))).toEqual(["Home"]);
+    }
   });
 
   it("keeps the route that is already open, so re-selecting a tab doesn't rebuild it", () => {

@@ -750,6 +750,14 @@ export function NewTaskFlowProvider(
         ...((workspaceSelection?.startFromOrigin ?? startFromOrigin)
           ? { startFromOrigin: true }
           : {}),
+        ...(draft.linearIssue
+          ? {
+              linearIssue: draft.linearIssue,
+              ...(mode === "worktree" && draft.linearIssue.branchName.length > 0
+                ? { worktreeBranchName: draft.linearIssue.branchName }
+                : {}),
+            }
+          : {}),
       },
       createdAt: metadata.createdAt,
     };
