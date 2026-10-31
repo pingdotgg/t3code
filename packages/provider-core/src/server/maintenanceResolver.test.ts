@@ -678,6 +678,39 @@ it.layer(
     }),
   );
 
+  it.effect.each([
+    {
+      name: "a system profile link",
+      definition: claudeUpdate,
+      resolved: "/etc/profiles/per-user/me/bin/claude",
+      real: "/nix/store/0c2kbzqz3m0m4hcx2g7hq1n5wfs9a6xd-claude-code-with-bun/bin/claude",
+    },
+    {
+      name: "a user profile link",
+      definition: claudeUpdate,
+      resolved: "/home/me/.nix-profile/bin/claude",
+      real: "/nix/store/7r4j5v0h3qkl9yw2d1c8xpz6ma0bnsfi-claude-code-2.1.312/bin/claude",
+    },
+    {
+      name: "a home-manager link in the native location",
+      definition: claudeUpdate,
+      resolved: "/home/me/.local/bin/claude",
+      real: "/nix/store/0c2kbzqz3m0m4hcx2g7hq1n5wfs9a6xd-claude-code-with-bun/bin/claude",
+    },
+    {
+      name: "another provider's profile link",
+      definition: otherProviderUpdate,
+      resolved: "/etc/profiles/per-user/me/bin/native-package-tool",
+      real: "/nix/store/0c2kbzqz3m0m4hcx2g7hq1n5wfs9a6xd-native-package-tool-1.0.0/bin/native-package-tool",
+    },
+  ] as const)("keeps a Nix store install manual-only through $name", (fixture) =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolveInstall({ ...fixture, platform: "linux" });
+
+      expect(capabilities.update).toBeNull();
+    }),
+  );
+
   it.effect("proves Windows npm ownership from the package manifest beside the shim", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-npm-windows-capabilities");

@@ -88,9 +88,9 @@ either the resolved path or its real target, since those installers place real f
 symlinks there. Volta is proven by its `volta-shim` link plus the package's image directory. When
 nothing is proven, the provider's own updater (`claude update`, `codex update`, `opencode upgrade`,
 `pi update --self`, `grok update`) runs instead, because each one detects its installer itself;
-the runner's version check catches an updater that exits 0 without updating. Mise installs stay
-manual-only because their version is pinned in mise's config. A Grok cask whose Homebrew prefix
-cannot be verified also stays manual-only: `grok update` would install a second copy. npm updates pin `--prefix` because the
+the runner's version check catches an updater that exits 0 without updating. Mise and Nix store
+installs stay manual-only: mise pins their version in its config, and the Nix store is read-only. A
+Grok cask whose Homebrew prefix cannot be verified also stays manual-only: `grok update` would install a second copy. npm updates pin `--prefix` because the
 `npm` on `PATH` can belong to a different Node than the one that owns the provider. Homebrew
 compares against `brew info` since casks trail npm by hours; native installs share npm's version
 train, so the registry stays authoritative for them.
