@@ -103,6 +103,15 @@ export async function refreshAssetUrl(
   resource: AssetResource,
   signal?: AbortSignal,
 ): Promise<string | null> {
+  return (await refreshAssetUrlState(environmentId, resource, signal))?.url ?? null;
+}
+
+/** {@link refreshAssetUrl}, keeping the `fileRevision` that keys an image's cache. */
+export async function refreshAssetUrlState(
+  environmentId: EnvironmentId,
+  resource: AssetResource,
+  signal?: AbortSignal,
+) {
   const connectionAtom = environmentSession.preparedConnectionValueAtom(environmentId);
   if (appAtomRegistry.get(connectionAtom)._tag === "None") return null;
   const atom = assetEnvironment.createUrl({ environmentId, input: { resource } });
@@ -116,7 +125,7 @@ export async function refreshAssetUrl(
   const connection = appAtomRegistry.get(connectionAtom);
   if (connection._tag === "None") return null;
   const state = assetUrlStateFromResult(result, connection.value.httpBaseUrl);
-  return state._tag === "Success" ? state.url : null;
+  return state._tag === "Success" ? state : null;
 }
 
 export interface AuthorizedAssetUrl {
