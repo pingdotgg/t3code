@@ -13,6 +13,10 @@ const POSITION_HASH_PATTERN = /^#L(\d+)(?:C(\d+))?$/i;
 export function parseFileUrlHref(
   href: string,
 ): { readonly path: string; readonly hash: string } | null {
+  // Chromium on Windows parses any one-letter scheme as a drive letter
+  // (`new URL("d:x")` is `file:///D:/x`), so the protocol check alone would turn
+  // such links into file links only on Windows.
+  if (!href.trim().toLowerCase().startsWith("file:")) return null;
   try {
     const parsed = new URL(href);
     if (parsed.protocol.toLowerCase() !== "file:") return null;
