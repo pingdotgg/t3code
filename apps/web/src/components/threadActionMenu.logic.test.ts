@@ -35,6 +35,7 @@ describe("buildThreadActionMenuItems", () => {
         isPinned: reversed,
         isSettled: reversed,
         isSnoozed: reversed,
+        projectFilter: { label: "Example project", isActive: reversed },
       });
       const expected = reversed
         ? [
@@ -62,19 +63,6 @@ describe("buildThreadActionMenuItems", () => {
         items.find((item) => item.id === "snooze")?.children?.every((child) => child.disabled) ??
           true,
       ).toBe(true);
-    },
-  );
-
-  it.each([false, true])(
-    "keeps project filtering available without permission (active: %s)",
-    (isActive) => {
-      const filter = buildThreadActionMenuItems({
-        ...baseState,
-        canOperate: false,
-        projectFilter: { label: "Example project", isActive },
-      }).find((item) => item.id === "filter-by-project");
-      expect(filter).toBeDefined();
-      expect(filter?.disabled).not.toBe(true);
     },
   );
 
