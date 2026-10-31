@@ -24,6 +24,7 @@ export function LabsSettingsPanel() {
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
+        <PromptSuggestionsRow />
         <SimlockHostsRow />
       </SettingsSection>
       <LegacyFeaturesSection />
@@ -158,6 +159,29 @@ function LinkedEnvironmentsRow() {
             updateSettings({ linkedEnvironmentsEnabled: Boolean(checked) })
           }
           aria-label="Linked environments"
+        />
+      }
+    />
+  );
+}
+
+function PromptSuggestionsRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("prompt-suggestions-beta")}
+      settingKeys={["promptSuggestionsEnabled"]}
+      description="After a Claude or Codex turn, show a predicted next message in the empty composer. Press Tab to use it. Each suggestion is one extra cached request, so it uses some of your plan. Applies to new sessions."
+      control={
+        <ScopedSwitch
+          settingKeys={["promptSuggestionsEnabled"]}
+          checked={settings.promptSuggestionsEnabled}
+          onCheckedChange={(checked) =>
+            updateSettings({ promptSuggestionsEnabled: Boolean(checked) })
+          }
+          aria-label="Suggest next prompt"
         />
       }
     />
