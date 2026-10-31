@@ -66,6 +66,10 @@ viewing. Discarding an unsent draft from the sidebar works the same way: Undo br
 back its text and attachments. `mod+z` triggers the most recent Undo, even from the composer; see
 [Keybindings](./keybindings.md#commands-with-special-behavior).
 
+To archive several threads together on web and desktop, select them with `mod`-click
+(or `shift`-click for a range), then choose **Archive (count)** from the context menu.
+Running threads stay in the list, and the Undo notice restores the whole group.
+
 On web and desktop, you can also drag files from your computer onto any thread row:
 the thread opens and the files are attached in its composer, ready for
 your next message. The same per-message file limits apply as when attaching
