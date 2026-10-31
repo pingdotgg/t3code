@@ -1316,7 +1316,7 @@ it.layer(
 
   // POSIX exec failures are asynchronous in node-pty; ConPTY has a separate readiness protocol.
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "falls back from missing and non-executable configured paths with the real PTY adapter",
+    "resolves configured shells and falls back from invalid paths with the real PTY adapter",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -1326,7 +1326,18 @@ it.layer(
         yield* fs.writeFileString(nonExecutable, "#!/bin/sh\nexit 0\n");
         yield* fs.chmod(nonExecutable, 0o644);
         const ptyAdapter = yield* PtyAdapter.PtyAdapter.pipe(Effect.provide(NodePtyAdapter.layer));
-        for (const shell of [path.join(baseDir, "missing"), nonExecutable]) {
+        const toolsDir = path.join(baseDir, "tools");
+        const customShell = path.join(toolsDir, "custom-shell");
+        yield* fs.makeDirectory(toolsDir);
+        yield* fs.writeFileString(customShell, "#!/bin/sh\nexec /bin/sh\n");
+        yield* fs.chmod(customShell, 0o755);
+        for (const { shell, searchPath, expectedShell } of [
+          { shell: path.join(baseDir, "missing"), searchPath: "/bin", expectedShell: "/bin/sh" },
+          { shell: nonExecutable, searchPath: "/bin", expectedShell: "/bin/sh" },
+          { shell: "custom-shell", searchPath: "./tools", expectedShell: customShell },
+          { shell: "custom-shell", searchPath: toolsDir, expectedShell: customShell },
+          { shell: "custom-shell", searchPath: '"./tools"', expectedShell: customShell },
+        ]) {
           const spawnedShells: string[] = [];
           const manager = yield* TerminalManager.makeWithOptions({
             logsDir: path.join(baseDir, "logs"),
@@ -1337,10 +1348,10 @@ it.layer(
               },
             },
             shellResolver: () => "/bin/sh",
-            env: { ...process.env, T3CODE_TERMINAL_SHELL: shell },
+            env: { ...process.env, T3CODE_TERMINAL_SHELL: shell, PATH: searchPath },
           });
           const snapshot = yield* manager.open(openInput({ cwd: baseDir }));
-          expect(spawnedShells).toEqual(["/bin/sh"]);
+          expect(spawnedShells).toEqual([expectedShell]);
           expect(snapshot.status).toBe("running");
           yield* manager.close({ threadId: "thread-1" });
         }

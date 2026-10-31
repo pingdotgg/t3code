@@ -2402,6 +2402,19 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       );
     }
 
+    // PATH lookup must use the child's working directory, not the server's.
+    const lookupEnv =
+      platform === "win32"
+        ? spawnEnv
+        : {
+            ...spawnEnv,
+            PATH: (spawnEnv.PATH ?? spawnEnv.Path ?? spawnEnv.path ?? "")
+              .split(":")
+              .map((entry) => entry.trim().replace(/^"+|"+$/g, ""))
+              .filter((entry) => entry.length > 0)
+              .map((entry) => path.resolve(session.cwd, entry))
+              .join(":"),
+          };
     // POSIX node-pty can return a PTY before exec fails, so validate before accepting a candidate.
     const executable =
       platform !== "win32"
@@ -2410,7 +2423,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               ? path.resolve(session.cwd, candidate.shell)
               : candidate.shell,
             platform,
-            spawnEnv,
+            lookupEnv,
           )
         : candidate.shell;
     if (executable === undefined) {
