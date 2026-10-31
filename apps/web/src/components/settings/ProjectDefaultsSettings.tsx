@@ -79,6 +79,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const mixedModel = useScopedSettingsMixed(["defaultModelSelection"]);
   const mixedFallback = useScopedSettingsMixed(["fallbackModelSelection"]);
   const fallbackSelection = settings.fallbackModelSelection ?? selection;
+  const fallbackEntry = entries.find((entry) => entry.instanceId === fallbackSelection?.instanceId);
   const fallbackModelOptions = getCustomModelOptionsByInstance(
     settings,
     providers,
@@ -242,34 +243,56 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       }
       control={
         fallbackSelection ? (
-          <ProviderModelPicker
-            environmentId={representative?.environmentId ?? null}
-            activeInstanceId={fallbackSelection.instanceId}
-            model={fallbackSelection.model}
-            lockedProvider={null}
-            instanceEntries={entries}
-            modelOptionsByInstance={fallbackModelOptions}
-            triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-            triggerAriaLabel="Fallback model"
-            {...(mixedFallback
-              ? { triggerLabel: "Mixed" }
-              : settings.fallbackModelSelection === null
-                ? { triggerLabel: "None" }
-                : {})}
-            getModelDisabledReason={modelDisabledReason}
-            onInstanceModelChange={(instanceId, model) => {
-              const reason = modelDisabledReason(instanceId, model);
-              if (reason) {
-                toastManager.add({
-                  type: "error",
-                  title: "Fallback model not saved",
-                  description: reason,
-                });
-                return;
-              }
-              updateSettings({ fallbackModelSelection: createModelSelection(instanceId, model) });
-            }}
-          />
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+            <ProviderModelPicker
+              environmentId={representative?.environmentId ?? null}
+              activeInstanceId={fallbackSelection.instanceId}
+              model={fallbackSelection.model}
+              lockedProvider={null}
+              instanceEntries={entries}
+              modelOptionsByInstance={fallbackModelOptions}
+              triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+              triggerAriaLabel="Fallback model"
+              {...(mixedFallback
+                ? { triggerLabel: "Mixed" }
+                : settings.fallbackModelSelection === null
+                  ? { triggerLabel: "None" }
+                  : {})}
+              getModelDisabledReason={modelDisabledReason}
+              onInstanceModelChange={(instanceId, model) => {
+                const reason = modelDisabledReason(instanceId, model);
+                if (reason) {
+                  toastManager.add({
+                    type: "error",
+                    title: "Fallback model not saved",
+                    description: reason,
+                  });
+                  return;
+                }
+                updateSettings({ fallbackModelSelection: createModelSelection(instanceId, model) });
+              }}
+            />
+            {settings.fallbackModelSelection !== null && fallbackEntry && !mixedFallback ? (
+              <TraitsPicker
+                provider={fallbackEntry.driverKind}
+                models={fallbackEntry.models}
+                model={fallbackSelection.model}
+                modelOptions={fallbackSelection.options ?? []}
+                allowPromptInjectedEffort={false}
+                planModeEnabled={settings.planModeEnabled}
+                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                onModelOptionsChange={(options) =>
+                  updateSettings({
+                    fallbackModelSelection: createModelSelection(
+                      fallbackSelection.instanceId,
+                      fallbackSelection.model,
+                      options,
+                    ),
+                  })
+                }
+              />
+            ) : null}
+          </div>
         ) : (
           <span className="text-sm text-muted-foreground">No providers available</span>
         )
