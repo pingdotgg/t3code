@@ -1,4 +1,5 @@
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
+import { ComposerTaskStatus } from "./chat/ComposerTaskStatus";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
@@ -323,7 +324,7 @@ import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullReq
 import { useProactivePanels } from "../hooks/useProactivePanels";
 import { useIncrementalTimelineEntries } from "../hooks/useIncrementalTimelineEntries";
 import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
-import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import { type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { modelFallbackBannerItem } from "./chat/ComposerUsageLimits";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import { resolveThreadSyncPhase } from "../threadSync";
@@ -823,6 +824,10 @@ export default function ChatView(props: ChatViewProps) {
     serverThread !== null && isProviderNativeSubagentThread(serverThread.source);
   const supportsProviderSwitchingViaHandoff = threadSupportsProviderHandoff(serverProjection);
   const activeLatestRun = isServerThread ? serverLatestRun : (activeThread?.latestRun ?? null);
+  const composerTasks = serverProjection?.turnItems.findLast(
+    (item) => item.type === "todo_list" && item.runId === activeLatestRun?.runId,
+  );
+
   const activeActivityRun = isServerThread ? serverActivityRun : (activeThread?.latestRun ?? null);
   const activeRuntime = isServerThread ? serverRuntime : (activeThread?.runtime ?? null);
   const hasHeldQueuedRuns =
@@ -3269,13 +3274,6 @@ export default function ChatView(props: ChatViewProps) {
             />
           </div>
         )}
-        <ThreadNow
-          key={routeThreadKey}
-          attention={attentionNow}
-          work={workNow}
-          syncPhase={shownThreadSyncPhase}
-          goal={goalNow}
-        />
         {threadStatusLine}
         {pendingGuestMessageCount > 0 && isServerThread && activeThread ? (
           <GuestPendingMessages
@@ -3683,7 +3681,24 @@ export default function ChatView(props: ChatViewProps) {
                         data-chat-composer-request-host="true"
                         className="empty:hidden"
                       />
+                      {hasThreadNow ? (
+                        <div className="px-3.5 pt-2">
+                          <ThreadNow
+                            key={routeThreadKey}
+                            attention={attentionNow}
+                            work={workNow}
+                            syncPhase={shownThreadSyncPhase}
+                            goal={goalNow}
+                          />
+                        </div>
+                      ) : null}
                       {hasQueuedTurns ? queuedRunsControl : null}
+                      {composerTasks?.type === "todo_list" ? (
+                        <ComposerTaskStatus
+                          key={composerTasks.planId}
+                          steps={composerTasks.steps}
+                        />
+                      ) : null}
                       <ComposerSurface.Host
                         inert={queuedRunEdit.isSaving}
                         aria-busy={queuedRunEdit.isSaving}
@@ -3771,7 +3786,7 @@ export default function ChatView(props: ChatViewProps) {
                               }
                               isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
                               bannerItems={
-                                isDraftHeroState || trayBannerItems.length === 0
+                                trayBannerItems.length === 0
                                   ? EMPTY_COMPOSER_BANNER_ITEMS
                                   : trayBannerItems
                               }
@@ -3931,12 +3946,6 @@ export default function ChatView(props: ChatViewProps) {
                           )}
                         </div>
                       </div>
-                      {isDraftHeroState && trayBannerItems.length > 0 ? (
-                        // Out of flow, like the headline, so a notice never moves the centered composer.
-                        <div className="absolute inset-x-0 top-full flex flex-col gap-1 pt-4">
-                          <ComposerBannerStack items={trayBannerItems} detached />
-                        </div>
-                      ) : null}
                     </ComposerSurface.Shell>
                     <div
                       aria-hidden
