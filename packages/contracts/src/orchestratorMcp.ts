@@ -193,6 +193,17 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
     }),
   ),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
+  resultSchema: Schema.optional(
+    Schema.Record(Schema.String, Schema.Unknown)
+      .annotate({
+        description: "Child's final JSON schema; not validated.",
+      })
+      .check(
+        Schema.makeFilter((schema) =>
+          JSON.stringify(schema).length <= 8_000 ? true : "resultSchema is over 8,000 characters.",
+        ),
+      ),
+  ),
 });
 export type OrchestratorMcpDelegateTaskInput = typeof OrchestratorMcpDelegateTaskInput.Type;
 

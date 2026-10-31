@@ -103,6 +103,43 @@ const failed = (expect: Parameters<typeof gradeSample>[0], run: SampleRun) =>
     .filter((check) => !check.pass)
     .map((check) => check.check);
 
+it("passes the resultSchema case only for an accepted call with the whole verdict shape", () => {
+  const verdictCase = NodeFS.readFileSync(
+    new URL("./cases/orchestration.ndjson", import.meta.url),
+    "utf8",
+  )
+    .trim()
+    .split("\n")
+    .map((line) => decodeDeviceCase(line))
+    .find((c) => c.id === "review-verdict-uses-result-schema");
+  assert(verdictCase !== undefined);
+  const run = (resultSchema: unknown, failed: boolean): SampleRun => ({
+    calls: [
+      {
+        step: 0,
+        tool: "delegate_task",
+        input: { task: "Review.", target: { model: "muse-wonder-full" }, resultSchema },
+        failed,
+      },
+    ],
+    text: "",
+    stopReason: "end_turn",
+  });
+  const verdict = {
+    type: "object",
+    properties: {
+      verdict: { type: "string", enum: ["accept", "revise"] },
+      reasons: { type: "array", items: { type: "string" } },
+    },
+    required: ["verdict", "reasons"],
+  };
+  const calls = (sample: SampleRun) =>
+    failed(verdictCase.expect, sample).filter((check) => check.startsWith("calls "));
+  expect(calls(run({ properties: { verdict: { description: "revise" } } }, true))).toHaveLength(1);
+  expect(calls(run(verdict, true))).toHaveLength(1);
+  expect(calls(run(verdict, false))).toEqual([]);
+});
+
 it("passes a good run and names every rule a bad run breaks", () => {
   const expect = {
     calls: [{ tool: "delegate_task", args: { task: "~FINDING", "target.options": "~max" } }],

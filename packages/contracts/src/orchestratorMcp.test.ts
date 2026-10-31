@@ -10,6 +10,15 @@ const decodeDelegateTaskInput = Schema.decodeUnknownSync(OrchestratorMcpDelegate
 const decodeDelegateTaskResult = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskResult);
 
 describe("orchestrator MCP contracts", () => {
+  it("caps a delegated task's resultSchema at 8,000 characters", () => {
+    const schema = (length: number) => ({ type: "string", description: "x".repeat(length) });
+    const fits = 8_000 - JSON.stringify(schema(0)).length;
+    expect(decodeDelegateTaskInput({ task: "Review.", resultSchema: schema(fits) })).toBeTruthy();
+    expect(() =>
+      decodeDelegateTaskInput({ task: "Review.", resultSchema: schema(fits + 1) }),
+    ).toThrow("resultSchema is over 8,000 characters.");
+  });
+
   it("decodes cross-provider delegated task requests and durable results", () => {
     const request = decodeDelegateTaskInput({
       task: "Inspect the workspace and report the result.",

@@ -89,7 +89,11 @@ export function resolveInteractionMode(
 
 /** The task as its child receives it, with the role the caller asked for. */
 export function taskPrompt(input: OrchestratorMcpDelegateTaskInput): string {
+  const task =
+    input.resultSchema === undefined
+      ? input.task
+      : `${input.task}\n\nEnd your final message with one \`\`\`json block matching this JSON Schema:\n${JSON.stringify(input.resultSchema)}`;
   return input.role === undefined || input.role === "general"
-    ? input.task
-    : `Act as the ${input.role} sub-agent for this task.\n\n${input.task}`;
+    ? task
+    : `Act as the ${input.role} sub-agent for this task.\n\n${task}`;
 }
