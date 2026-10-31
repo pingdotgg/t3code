@@ -175,11 +175,17 @@ export function AddProviderInstanceDialog({
   const [localEnvironment, setLocalEnvironment] = useState<
     ReadonlyArray<ProviderInstanceEnvironmentVariable>
   >([]);
+  const [environmentByDriver, setEnvironmentByDriver] = useState<
+    Record<string, ReadonlyArray<ProviderInstanceEnvironmentVariable>>
+  >({});
   const [isManualAcpConfiguration, setIsManualAcpConfiguration] = useState(false);
   const [showMoreProviders, setShowMoreProviders] = useState(false);
   const [configByDriver, setConfigByDriver] = useState<Record<string, Record<string, unknown>>>({});
-  const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
+  const [environmentDraftInvalidByDriver, setEnvironmentDraftInvalidByDriver] = useState<
+    Record<string, boolean>
+  >({});
   const [createdInstanceId, setCreatedInstanceId] = useState<ProviderInstanceId | null>(null);
 
   // Reserve Codex/Claude default ids because they run before configuration; other unconfigured slots are
@@ -254,7 +260,14 @@ export function AddProviderInstanceDialog({
       return next;
     });
   };
+  const setProviderEnvironment = (
+    environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>,
+  ) => {
+    setEnvironmentByDriver((existing) => ({ ...existing, [driver]: environment }));
+    setEnvironmentDraftInvalidByDriver((existing) => ({ ...existing, [driver]: false }));
+  };
   const selectDriver = (value: string) => {
+    setEnvironmentDraftInvalidByDriver((existing) => ({ ...existing, [driver]: false }));
     setDriver(ProviderDriverKind.make(value));
     setIsManualAcpConfiguration(false);
     setHasAttemptedSubmit(false);
@@ -366,6 +379,7 @@ export function AddProviderInstanceDialog({
     if (isSaving || createdInstanceId) return;
     setHasAttemptedSubmit(true);
     if (instanceIdError !== null || (isAcpRegistry && acpSelectionError !== null)) return;
+    if (!isLocalAcp && environmentDraftInvalidByDriver[driver]) return;
 
     const config =
       driver === "codex"
@@ -380,7 +394,9 @@ export function AddProviderInstanceDialog({
       ...(label.trim().length > 0 ? { displayName: label.trim() } : {}),
       ...(normalizedAccentColor ? { accentColor: normalizedAccentColor } : {}),
       ...(hasConfig ? { config } : {}),
-      ...(isLocalAcp && localEnvironment.length > 0 ? { environment: localEnvironment } : {}),
+      ...((isLocalAcp ? localEnvironment : (environmentByDriver[driver] ?? [])).length > 0
+        ? { environment: isLocalAcp ? localEnvironment : environmentByDriver[driver] }
+        : {}),
     };
     const brandedId = ProviderInstanceId.make(instanceId);
     setIsSaving(true);
@@ -676,23 +692,36 @@ export function AddProviderInstanceDialog({
                 />
               </SettingsGroup>
 
-              {!isAcpRegistry && driverSettingsFields.length > 0 ? (
+              {!isAcpRegistry ? (
                 <SettingsGroup variant="plain" className={cn(wizardStep !== 2 && "hidden")}>
-                  <ProviderSettingsForm
-                    definition={driverOption}
-                    value={configDraft}
-                    idPrefix={`add-provider-${driver}`}
-                    variant="settings"
-                    onChange={setConfigDraft}
-                    environmentId={environmentId}
+                  {driverSettingsFields.length > 0 ? (
+                    <ProviderSettingsForm
+                      definition={driverOption}
+                      value={configDraft}
+                      idPrefix={`add-provider-${driver}`}
+                      variant="settings"
+                      onChange={setConfigDraft}
+                      environmentId={environmentId}
+                    />
+                  ) : null}
+                  <ProviderEnvironmentSection
+                    key={driver}
+                    environment={environmentByDriver[driver] ?? []}
+                    onChange={setProviderEnvironment}
+                    onInvalidDraft={(invalid) =>
+                      setEnvironmentDraftInvalidByDriver((existing) => ({
+                        ...existing,
+                        [driver]: invalid,
+                      }))
+                    }
+                    secretSources={secretSources}
                   />
+                  {environmentDraftInvalidByDriver[driver] ? (
+                    <p role="alert" className="text-xs text-destructive">
+                      Fix or remove the invalid variable name before adding this provider.
+                    </p>
+                  ) : null}
                 </SettingsGroup>
-              ) : !isAcpRegistry && wizardStep === 2 ? (
-                <div className="grid gap-2">
-                  <p className="text-sm text-muted-foreground">
-                    This driver has no required configuration. You can add the instance now.
-                  </p>
-                </div>
               ) : null}
             </WizardPanel>
 

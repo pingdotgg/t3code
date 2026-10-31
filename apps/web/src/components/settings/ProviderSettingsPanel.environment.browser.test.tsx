@@ -161,6 +161,44 @@ vi.mock(import("../ProviderUpdatesAction"), async (original) => ({
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { EnvironmentProviderSettings } from "./ProviderSettingsPanel";
+import { ProviderEnvironmentSection } from "./ProviderInstanceCard";
+
+describe("ProviderEnvironmentSection", () => {
+  it.each(["INVALID-NAME", "1INVALID", "INVALID NAME", ""])(
+    "reports invalid name %j without publishing stale environment and clears the error after correction",
+    async (invalidName) => {
+      const environment = [{ name: "EXISTING_KEY", value: "original", sensitive: false }];
+      const onChange = vi.fn();
+      const onInvalidDraft = vi.fn();
+      await using _screen = await render(
+        <ProviderEnvironmentSection
+          environment={environment}
+          onChange={onChange}
+          onInvalidDraft={onInvalidDraft}
+        />,
+      );
+      const name = page.getByRole("textbox", { name: "Environment variable name 1" });
+      const value = page.getByRole("textbox", { name: "Environment variable value 1" });
+
+      await userEvent.fill(name, invalidName);
+      await act(async () => name.element().blur());
+      expect(onInvalidDraft).toHaveBeenLastCalledWith(true);
+      expect(onChange).not.toHaveBeenCalled();
+
+      await userEvent.fill(value, "updated");
+      await act(async () => value.element().blur());
+      expect(onInvalidDraft).toHaveBeenLastCalledWith(true);
+      expect(onChange).not.toHaveBeenCalled();
+
+      await userEvent.fill(name, "CORRECTED_KEY");
+      await act(async () => name.element().blur());
+      expect(onInvalidDraft).toHaveBeenLastCalledWith(false);
+      expect(onChange).toHaveBeenCalledExactlyOnceWith([
+        { name: "CORRECTED_KEY", value: "updated", sensitive: false, valueRedacted: false },
+      ]);
+    },
+  );
+});
 
 const environmentId = EnvironmentId.make("remote-device");
 const codexId = ProviderInstanceId.make("codex");

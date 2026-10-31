@@ -334,6 +334,7 @@ function ProviderEnvironmentFieldRow(props: {
 export function ProviderEnvironmentSection(props: {
   readonly environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
   readonly onChange: (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => void;
+  readonly onInvalidDraft?: (invalid: boolean) => void;
   readonly secretSources?: ReadonlyArray<SecretSource>;
 }) {
   const [storedDraft, setDraft] = useState(() =>
@@ -361,6 +362,7 @@ export function ProviderEnvironmentSection(props: {
           row.sensitive !== true ||
           row.valueRedacted !== undefined
         ) {
+          props.onInvalidDraft?.(true);
           return;
         }
         continue;
@@ -368,6 +370,7 @@ export function ProviderEnvironmentSection(props: {
       const { id: _id, ...rest } = row;
       published.push({ ...rest, name });
     }
+    props.onInvalidDraft?.(false);
     setDraft({ rows: nextRows, seen: draft.seen, lastPublished: published });
     props.onChange(published);
   };

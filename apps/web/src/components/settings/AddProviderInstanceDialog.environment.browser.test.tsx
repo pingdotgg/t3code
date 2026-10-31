@@ -170,6 +170,160 @@ describe("AddProviderInstanceDialog environment routing", () => {
     });
   });
 
+  it("creates a provider instance with custom endpoint variables", async () => {
+    setup();
+    await using _screen = await render(dialog());
+    await click("Configure manually");
+    await type("#add-provider-label", "Gateway");
+    await click("Next");
+    await click("Add variable");
+    await type('input[aria-label="Environment variable name 1"]', "OPENAI_BASE_URL");
+    await type('input[aria-label="Environment variable value 1"]', "https://gateway.example/v1");
+    await click("Add variable");
+    await type('input[aria-label="Environment variable name 2"]', "OPENAI_API_KEY");
+    await type('input[aria-label="Environment variable value 2"]', "gateway-secret");
+    await click("Add instance");
+
+    expect(settingsHooks.mutate).toHaveBeenCalledWith({
+      operation: "create",
+      instanceId: "codex_gateway",
+      instance: {
+        driver: "codex",
+        enabled: true,
+        displayName: "Gateway",
+        config: { setupMode: "existing" },
+        environment: [
+          {
+            name: "OPENAI_BASE_URL",
+            value: "https://gateway.example/v1",
+            sensitive: true,
+            valueRedacted: false,
+          },
+          {
+            name: "OPENAI_API_KEY",
+            value: "gateway-secret",
+            sensitive: true,
+            valueRedacted: false,
+          },
+        ],
+      },
+    });
+  });
+
+  it("does not carry endpoint credentials across driver changes", async () => {
+    setup();
+    await using _screen = await render(dialog());
+    await click("Configure manually");
+    await click("Next");
+    await click("Add variable");
+    await type('input[aria-label="Environment variable name 1"]', "OPENAI_API_KEY");
+    await type('input[aria-label="Environment variable value 1"]', "codex-secret");
+    await click("Provider");
+    await click("Show more");
+    await click("Use Kilo Code");
+    await type("#add-provider-label", "Kilo Custom");
+    await click("Continue to sign-in");
+
+    expect(settingsHooks.mutate).toHaveBeenCalledWith({
+      operation: "create",
+      instanceId: "acpRegistry_kilo_code",
+      instance: expect.not.objectContaining({
+        environment: expect.arrayContaining([expect.objectContaining({ name: "OPENAI_API_KEY" })]),
+      }),
+    });
+  });
+
+  it.each(["INVALID-NAME", "1INVALID", "INVALID NAME", ""])(
+    "blocks creation with invalid variable name %j until corrected",
+    async (invalidName) => {
+      setup();
+      await using _screen = await prepareCodexInstance();
+      await click("Add variable");
+      await type('input[aria-label="Environment variable name 1"]', "OPENAI_API_KEY");
+      await type('input[aria-label="Environment variable value 1"]', "secret");
+      await type('input[aria-label="Environment variable name 1"]', invalidName);
+      await click("Add instance");
+      expect(settingsHooks.mutate).not.toHaveBeenCalled();
+      expect(document.body.textContent).toContain("Fix or remove the invalid variable name");
+
+      await type('input[aria-label="Environment variable name 1"]', "CORRECTED_KEY");
+      await click("Add instance");
+      expect(settingsHooks.mutate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          instance: expect.objectContaining({
+            environment: [
+              { name: "CORRECTED_KEY", value: "secret", sensitive: true, valueRedacted: false },
+            ],
+          }),
+        }),
+      );
+    },
+  );
+
+  it("does not retain editor rows or credentials when switching native drivers", async () => {
+    setup();
+    await using _screen = await prepareCodexInstance();
+    await click("Add variable");
+    await type('input[aria-label="Environment variable name 1"]', "OPENAI_API_KEY");
+    await type('input[aria-label="Environment variable value 1"]', "codex-secret");
+    await click("Provider");
+    await click("Show more");
+    await act(async () => radio("fx")!.click());
+    await click("Next");
+    await click("Next");
+    expect(document.querySelector('input[aria-label="Environment variable name 1"]')).toBeNull();
+    await click("Add variable");
+    await type('input[aria-label="Environment variable name 1"]', "FX_KEY");
+    await type('input[aria-label="Environment variable value 1"]', "fx-secret");
+    await click("Add instance");
+    expect(settingsHooks.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instance: expect.objectContaining({
+          driver: "fx",
+          environment: [
+            { name: "FX_KEY", value: "fx-secret", sensitive: true, valueRedacted: false },
+          ],
+        }),
+      }),
+    );
+  });
+
+  it("clears discarded invalid environment drafts when switching drivers", async () => {
+    setup();
+    await using _screen = await prepareCodexInstance();
+    await click("Add variable");
+    await type('input[aria-label="Environment variable name 1"]', "INVALID-NAME");
+    await click("Add instance");
+    expect(settingsHooks.mutate).not.toHaveBeenCalled();
+
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label^="Provider, step 1"]')!.click(),
+    );
+    await click("Show more");
+    await act(async () => radio("fx")!.click());
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label^="Identity, step 2"]')!.click(),
+    );
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label^="Provider, step 1"]')!.click(),
+    );
+    await act(async () => radio("Codex")!.click());
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label^="Identity, step 2"]')!.click(),
+    );
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label^="Config, step 3"]')!.click(),
+    );
+    await click("Add instance");
+
+    expect(settingsHooks.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instanceId: "codex_work",
+        instance: expect.objectContaining({ driver: "codex" }),
+      }),
+    );
+  });
+
   it("includes the explicitly added default accent color when creating a provider", async () => {
     setup();
     await using _screen = await render(dialog());
