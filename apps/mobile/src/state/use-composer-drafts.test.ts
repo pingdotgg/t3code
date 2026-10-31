@@ -1929,6 +1929,15 @@ describe("mobile composer drafts", () => {
         ...getComposerDraftSnapshot(key),
         runtimeMode: "approval-required",
         workspaceSelection: { mode: "worktree", branch: "feature/a", worktreePath: null },
+        linearIssue: {
+          issueId: "issue-1",
+          identifier: "ATT-612",
+          branchName: "ada/att-612",
+          mappedProjectId: null,
+          moveTo: null,
+          moveEnabled: false,
+          commentEnabled: true,
+        },
       },
     });
     const createdAt = getComposerDraftSnapshot(key).project?.createdAt;
@@ -1940,6 +1949,7 @@ describe("mobile composer drafts", () => {
     expect(moved.runtimeMode).toBe("approval-required");
 
     expect(moved.workspaceSelection).toBeUndefined();
+    expect(moved.linearIssue).toBeUndefined();
     expect(moved.project).toEqual({ ...to, createdAt });
     expect(findNewTaskDraftKeys(appAtomRegistry.get(composerDraftsAtom), from)).toEqual([]);
     expect(findNewTaskDraftKeys(appAtomRegistry.get(composerDraftsAtom), to)).toEqual([key]);

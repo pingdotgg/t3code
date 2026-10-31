@@ -1,4 +1,5 @@
 import type {
+  ComposerContextRecord,
   EnvironmentId,
   LinearIssueDetail,
   LinearLaunchTarget,
@@ -89,6 +90,20 @@ export function buildDraftLinearIssue(input: {
     moveEnabled: input.settings.moveToStateEnabled && moveTarget !== null,
     commentEnabled: input.settings.commentEnabled,
   };
+}
+
+/** A draft's launch counts only while its issue is still attached; removing the chip opts out. */
+export function attachedLinearDraftIssue<Launch extends Pick<LinearDraftIssue, "issueId">>(
+  launch: Launch | null | undefined,
+  records: ReadonlyArray<ComposerContextRecord>,
+): Launch | null {
+  if (!launch) return null;
+  return records.some(
+    (record) =>
+      record.kind === "linear-issue" && "issueId" in record && record.issueId === launch.issueId,
+  )
+    ? launch
+    : null;
 }
 
 /** The write-back the server is asked to perform for one launch. */

@@ -1,3 +1,4 @@
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { LinearLaunchWorkspace } from "@t3tools/client-runtime/linear/launch-plan";
 import {
@@ -6,10 +7,8 @@ import {
   pipelineInputText,
   pipelineLaunchRecord,
   pipelineWorkspaceStrategy,
-  readLastUsedPipelineId,
   resolveInitialPipelineId,
   resolvePipelineLaunch,
-  writeLastUsedPipelineId,
 } from "@t3tools/client-runtime/linear/pipeline-dialog";
 import { nextPipelineStartAttempt } from "@t3tools/client-runtime/pipeline-start";
 import {
@@ -19,11 +18,12 @@ import {
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { EnvironmentId, type PipelineId, type ProjectId } from "@t3tools/contracts";
 import type { LinearIssueIncludes } from "@t3tools/shared/linearLaunch";
-import * as SecureStore from "expo-secure-store";
+import { AsyncResult } from "effect/reactivity";
 import { useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
 import { Chip } from "../../components/ui/Chip";
@@ -37,6 +37,7 @@ import { cn } from "../../lib/cn";
 import { uuidv4 } from "../../lib/uuid";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useProjects, useServerConfigs } from "../../state/entities";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -52,13 +53,6 @@ type LinearPipelineRouteParams = {
   readonly environmentId: string;
   readonly issueId: string;
   readonly pipelineId?: string;
-};
-
-// Keychain keys allow letters, digits, ".", "-" and "_"; the shared helpers use colons.
-const lastPipelineStorage = {
-  getItem: (key: string) => SecureStore.getItem(key.replaceAll(/[^\w.-]/gu, "_")),
-  setItem: (key: string, value: string) =>
-    SecureStore.setItem(key.replaceAll(/[^\w.-]/gu, "_"), value),
 };
 
 function PickerRow(props: {
@@ -110,15 +104,15 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
-  const { canRunPipeline } = useLinearLaunch();
+  const { canRunPipeline } = useLinearLaunch(environmentId);
   const detail = useLinearIssueDetail(environmentId, params.issueId).data;
   const settings = linearSettingsOf(useServerConfigs().get(environmentId));
   const teamStates =
     useLinearTeamMetadata(environmentId, detail?.issue.team.id).data?.states ?? null;
-  const pipelines =
-    useEnvironmentQuery(
-      canRunPipeline ? serverEnvironment.pipelinesLive({ environmentId, input: {} }) : null,
-    ).data?.pipelines ?? [];
+  const pipelinesQuery = useEnvironmentQuery(
+    canRunPipeline ? serverEnvironment.pipelinesLive({ environmentId, input: {} }) : null,
+  );
+  const pipelines = pipelinesQuery.data?.pipelines ?? [];
   const scratchRoot = useServerConfigs().get(environmentId)?.scratchWorkspaceRoot;
   const projects = useProjects().filter(
     (project) => project.environmentId === environmentId && !isScratchProject(project, scratchRoot),
@@ -129,7 +123,11 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
   });
   const attemptRef = useRef<ReturnType<typeof nextPipelineStartAttempt> | null>(null);
 
-  const [lastUsed] = useState(() => readLastUsedPipelineId(lastPipelineStorage));
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const lastUsed = AsyncResult.isSuccess(preferences)
+    ? (preferences.value.linearLastPipelineId ?? null)
+    : null;
   const [pipelineChoice, setPipelineChoice] = useState<string | null>(null);
   const [tab, setTab] = useState<"preview" | "edit">("preview");
   const [edited, setEdited] = useState<string | null>(null);
@@ -213,7 +211,7 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
     }
     const run = result.value.run;
     attemptRef.current = null;
-    writeLastUsedPipelineId(lastPipelineStorage, pipeline.id);
+    savePreferences({ linearLastPipelineId: pipeline.id });
     // The run exists; linking it is best effort and never delays or blocks the launch.
     void recordLinearLaunch(
       pipelineLaunchRecord({
@@ -300,11 +298,23 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
             <>
               <View className="gap-1">
                 <Text className="pb-1 text-sm font-t3-medium text-foreground">Pipeline</Text>
-                {pipelines.length === 0 ? (
+                {pipelines.length > 0 ? null : pipelinesQuery.data === null &&
+                  pipelinesQuery.error === null ? (
+                  <View
+                    className="min-h-12 flex-row items-center gap-2"
+                    accessibilityLabel="Loading pipelines"
+                    accessibilityState={{ busy: true }}
+                  >
+                    <AppActivityIndicator size="small" colorClassName="accent-icon-muted" />
+                    <Text className="text-sm text-foreground-muted">Loading pipelines…</Text>
+                  </View>
+                ) : pipelinesQuery.data === null ? (
+                  <Text className="text-sm text-foreground-muted">Couldn't load pipelines.</Text>
+                ) : (
                   <Text className="text-sm text-foreground-muted">
                     No pipelines yet. Create one in T3 Code on your computer.
                   </Text>
-                ) : null}
+                )}
                 {pipelines.map((candidate) => {
                   const selected = candidate.id === pipelineId;
                   return (
@@ -348,7 +358,11 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
                 <View className="flex-row items-center justify-between gap-2">
                   <Text className="text-sm font-t3-medium text-foreground">Input</Text>
                   {edited !== null ? (
-                    <Pressable accessibilityRole="button" onPress={() => setEdited(null)}>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => setEdited(null)}
+                      hitSlop={12}
+                    >
                       <Text className="text-sm text-primary">Reset edits</Text>
                     </Pressable>
                   ) : null}

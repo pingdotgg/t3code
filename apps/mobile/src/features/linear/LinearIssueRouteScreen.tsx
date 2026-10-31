@@ -1,4 +1,4 @@
-import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import type { StaticScreenProps } from "@react-navigation/native";
 import {
   activityStatusLabel,
   pickActivityPill,
@@ -15,10 +15,11 @@ import {
   type LinearIssueDetail,
   type LinearViewer,
 } from "@t3tools/contracts";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Pressable, RefreshControl, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { Button } from "../../components/ui/Button";
@@ -26,13 +27,12 @@ import { Menu } from "../../components/ui/Menu";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
-import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
+import { tryOpenWebLink } from "../../lib/openExternalUrl";
 import { relativeTime } from "../../lib/time";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
-import { useProjects, useServerConfigs } from "../../state/entities";
+import { useNavigateToPullRequest } from "../../native/useOpenPullRequest";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
-import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { LinearActivityPill } from "./LinearIssueRow";
 import {
   LinearAvatar,
@@ -44,11 +44,9 @@ import {
 } from "./linearIcons";
 import { LinearBanner } from "./LinearPanels";
 import { LinearScreen } from "./LinearScreen";
-import { linearPullRequestRoute } from "./linearPullRequestRoute";
 import type { LinearRouteParams } from "./linearRoutes";
-import { useLinearLaunch } from "./useLinearLaunch";
+import { useLinearLaunch, useOpenLinearThread } from "./useLinearLaunch";
 import {
-  useAdoptLinearEnvironment,
   useLinearActivity,
   useLinearAutoRefresh,
   useLinearDegradation,
@@ -178,7 +176,7 @@ function CommentRow(props: { readonly comment: LinearComment }) {
         <SelectableMarkdownText
           markdown={comment.body}
           textStyle={styles.nativeTextStyle}
-          onLinkPress={(href) => void tryOpenExternalUrl(href, "markdown-link")}
+          onLinkPress={(href) => void tryOpenWebLink(href, "markdown-link")}
         />
       </View>
     </View>
@@ -214,39 +212,31 @@ function DetailBody(props: {
 }) {
   const { detail, viewer, environmentId } = props;
   const { issue } = detail;
-  const navigation = useNavigation();
-  const selectDetail = useSelectWorkspaceDetail();
   const linearNavigation = useLinearNavigation(environmentId, {});
-  const launch = useLinearLaunch();
+  const launch = useLinearLaunch(environmentId);
+  const openThread = useOpenLinearThread();
+  const navigateToPullRequest = useNavigateToPullRequest();
   const activityQuery = useLinearActivity(environmentId);
-  const projects = useProjects();
-  const serverConfigs = useServerConfigs();
   const markdownStyles = useMarkdownPreviewStyles();
   const [branchCopied, setBranchCopied] = useState(false);
   const activityLoaded = activityQuery.data !== null;
   const activity = activityQuery.byIssueId.get(issue.id);
   const pill = pickActivityPill(issue, activity);
   const items = activity?.items ?? [];
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the "Copied" confirmation expires on a timer, cleared on unmount
+  useEffect(() => {
+    if (!branchCopied) return;
+    const timeout = setTimeout(() => setBranchCopied(false), 1_600);
+    return () => clearTimeout(timeout);
+  }, [branchCopied]);
   const copyBranch = () => {
     copyTextWithHaptic(issue.branchName, { target: "branch name" });
     setBranchCopied(true);
-    setTimeout(() => setBranchCopied(false), 1_600);
   };
-  const openActivity = (item: LinearActivityItem) => {
-    // A pipeline run opens through its parent thread, like every other run entry point.
-    selectDetail({
-      name: "Thread",
-      params: { environmentId, threadId: ThreadId.make(item.link.threadId) },
-    });
-  };
-  const openPullRequest = (url: string) => {
-    const route = linearPullRequestRoute(url, projects, {
-      environmentId,
-      configLoaded: (id) => serverConfigs.has(id),
-    });
-    if (route === null) void tryOpenExternalUrl(url, "pull-request");
-    else navigation.dispatch(StackActions.push("PullRequest", route));
-  };
+  // A pipeline run opens through its parent thread, like every other run entry point.
+  const openActivity = (item: LinearActivityItem) =>
+    openThread({ environmentId, threadId: ThreadId.make(item.link.threadId) });
+  const openPullRequest = (url: string) => void navigateToPullRequest(url, { environmentId });
   return (
     <View className="gap-5 px-4 pt-3 pb-10">
       <View className="gap-1.5">
@@ -265,7 +255,7 @@ function DetailBody(props: {
           <Pressable
             accessibilityRole="button"
             onPress={() => linearNavigation.openIssue(issue.parent!.id)}
-            className="self-start active:opacity-60"
+            className="min-h-11 justify-center self-start active:opacity-60"
           >
             <Text className="text-xs text-foreground-muted">
               Sub-issue of {issue.parent.identifier}
@@ -292,14 +282,23 @@ function DetailBody(props: {
             accessibilityRole="button"
             accessibilityLabel="Start chat"
             accessibilityHint="Touch and hold to choose a new worktree or the local checkout."
+            accessibilityState={{ disabled: launch.startingChat, busy: launch.startingChat }}
+            disabled={launch.startingChat}
             onPress={() => launch.startChat(issue.id)}
-            className="min-h-12 flex-row items-center gap-2 rounded-full bg-primary px-6 active:opacity-70"
+            className={cn(
+              "min-h-12 flex-row items-center gap-2 rounded-full bg-primary px-6 active:opacity-70",
+              launch.startingChat && "opacity-70",
+            )}
           >
-            <SymbolView
-              name="bubble.left"
-              size={18}
-              tintColorClassName="accent-primary-foreground"
-            />
+            {launch.startingChat ? (
+              <AppActivityIndicator size="small" colorClassName="accent-primary-foreground" />
+            ) : (
+              <SymbolView
+                name="bubble.left"
+                size={18}
+                tintColorClassName="accent-primary-foreground"
+              />
+            )}
             <Text className="font-t3-medium text-primary-foreground">Start chat</Text>
           </Pressable>
         </Menu>
@@ -393,7 +392,7 @@ function DetailBody(props: {
           <SelectableMarkdownText
             markdown={detail.description}
             textStyle={markdownStyles.nativeTextStyle}
-            onLinkPress={(href) => void tryOpenExternalUrl(href, "markdown-link")}
+            onLinkPress={(href) => void tryOpenWebLink(href, "markdown-link")}
           />
         </View>
       )}
@@ -487,8 +486,8 @@ function DetailBody(props: {
 
       <Pressable
         accessibilityRole="link"
-        onPress={() => void tryOpenExternalUrl(issue.url, "markdown-link")}
-        className="flex-row items-center gap-1.5 self-start active:opacity-60"
+        onPress={() => void tryOpenWebLink(issue.url, "markdown-link")}
+        className="min-h-11 flex-row items-center gap-1.5 self-start active:opacity-60"
       >
         <LinearGlyph size={12} />
         <Text className="text-xs text-foreground-muted">Open in Linear</Text>
@@ -521,8 +520,9 @@ export function LinearIssueRouteScreen({
   const status = useLinearStatus(environmentId);
   const query = useLinearIssueDetail(environmentId, issueId);
   const { refresh, refreshing } = useLinearRefresh(environmentId);
-  useAdoptLinearEnvironment(environmentId);
-  useLinearAutoRefresh(true);
+  // DetailBody reads the same activity query; polling it here covers the whole page.
+  const activity = useLinearActivity(environmentId);
+  useLinearAutoRefresh(true, [status, query, activity]);
   const degradation = useLinearDegradation(environmentId, [query.failure], false);
   // The issue switched but its answer has not landed: never show the previous issue's body.
   const detail = query.data?.issue.id === issueId ? query.data : null;
@@ -546,7 +546,7 @@ export function LinearIssueRouteScreen({
                   {
                     id: "open",
                     title: "Open in Linear",
-                    onPress: () => void tryOpenExternalUrl(issue.url, "markdown-link"),
+                    onPress: () => void tryOpenWebLink(issue.url, "markdown-link"),
                   },
                   {
                     id: "branch",

@@ -203,7 +203,7 @@ export function LinearGroupHeader(props: {
       accessibilityLabel={`${props.label}, ${props.count} issues`}
       accessibilityState={{ expanded: !props.collapsed }}
       onPress={props.onToggle}
-      className="h-9 flex-row items-center gap-2 bg-subtle px-4 active:opacity-70"
+      className="min-h-11 flex-row items-center gap-2 bg-subtle px-4 active:opacity-70"
     >
       <SymbolView
         name={props.collapsed ? "chevron.right" : "chevron.down"}

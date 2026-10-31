@@ -17,7 +17,11 @@ import { useDebouncedValue } from "../../state/queries";
 import { useWorkspaceEnvironments } from "../../state/workspace";
 import { ListFilterMenu } from "../layout/workspace/ListFilterMenu";
 import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
-import { LinearIssueRow, type LinearIssueRowContext } from "./LinearIssueRow";
+import {
+  LinearIssueRow,
+  useLinearExpandedIssues,
+  type LinearIssueRowContext,
+} from "./LinearIssueRow";
 import { LinearTeamCard } from "./LinearLevels";
 import {
   LinearBanner,
@@ -46,7 +50,6 @@ const JUMP_SEARCH_DEBOUNCE_MS = 200;
 const NO_SCOPE: LinearScope = {};
 
 type TabItem =
-  | { readonly type: "environment"; readonly key: string }
   | { readonly type: "title"; readonly key: string; readonly text: string }
   | { readonly type: "team"; readonly key: string; readonly team: LinearTeam }
   | { readonly type: "issue"; readonly key: string; readonly issue: LinearIssue }
@@ -105,9 +108,9 @@ export function LinearTabScreen(props: {
     hasError: status.error !== null,
   });
   const connected = state === "connected";
-  useLinearAutoRefresh(visible);
   const { refresh, refreshing } = useLinearRefresh(environmentId);
   const navigation = useLinearNavigation(environmentId, NO_SCOPE);
+  const expansion = useLinearExpandedIssues();
   const activity = useLinearActivity(environmentId, connected);
   const term = tab.searchMode === "resting" ? "" : tab.query.trim();
   const debouncedTerm = useDebouncedValue(term, JUMP_SEARCH_DEBOUNCE_MS);
@@ -120,6 +123,7 @@ export function LinearTabScreen(props: {
   );
   const jumpIssues = useLinearSearchIssues(environmentId, connected ? debouncedTerm : "");
   const allProjects = useLinearProjects(environmentId, undefined, connected && term !== "");
+  useLinearAutoRefresh(visible, [status, activity, jumpBackIn]);
   const degradation = useLinearDegradation(
     environmentId,
     [activity.failure, jumpBackIn.failure],
@@ -132,7 +136,10 @@ export function LinearTabScreen(props: {
     environmentId,
     activityByIssueId: activity.byIssueId,
     onSelect: navigation.openIssue,
+    ...expansion,
   };
+  // Until the debounced search lands, an empty list means "not asked yet", not "nothing found".
+  const searching = term !== debouncedTerm || jumpIssues.isPending || allProjects.isPending;
   const jumpTargets = buildLinearJumpTargets(term, {
     teams,
     projects: allProjects.data ?? EMPTY_LIST,
@@ -158,9 +165,6 @@ export function LinearTabScreen(props: {
           target,
         }))
       : [
-          ...(connectedEnvironments.length > 1
-            ? [{ type: "environment", key: "environment" } as const]
-            : []),
           { type: "title", key: "teams", text: "Teams" },
           ...teams.map((team) => ({ type: "team", key: team.id, team }) as const),
           ...(jumpBackInIssues.length > 0
@@ -178,28 +182,28 @@ export function LinearTabScreen(props: {
     title: environment.environmentLabel,
     state: environment.environmentId === environmentId ? ("on" as const) : ("off" as const),
   }));
+  // Outside the items: it is the way to another environment when this one isn't connected.
+  const environmentPill =
+    connectedEnvironments.length > 1 && term === "" ? (
+      <View className="flex-row px-4 pb-1">
+        <ListFilterMenu
+          label={
+            connectedEnvironments.find((environment) => environment.environmentId === environmentId)
+              ?.environmentLabel ?? "Environment"
+          }
+          accessibilityLabel="Choose Linear environment"
+          actions={environmentActions}
+          onSelect={(id) => {
+            const next = connectedEnvironments.find(
+              (environment) => environment.environmentId === id,
+            );
+            if (next) setSelectedEnvironment(next.environmentId);
+          }}
+        />
+      </View>
+    ) : null;
   const renderItem = ({ item }: { readonly item: TabItem }) => {
     switch (item.type) {
-      case "environment":
-        return (
-          <View className="flex-row px-4 pb-1">
-            <ListFilterMenu
-              label={
-                connectedEnvironments.find(
-                  (environment) => environment.environmentId === environmentId,
-                )?.environmentLabel ?? "Environment"
-              }
-              accessibilityLabel="Choose Linear environment"
-              actions={environmentActions}
-              onSelect={(id) => {
-                const next = connectedEnvironments.find(
-                  (environment) => environment.environmentId === id,
-                );
-                if (next) setSelectedEnvironment(next.environmentId);
-              }}
-            />
-          </View>
-        );
       case "title":
         return <LinearSectionTitle>{item.text}</LinearSectionTitle>;
       case "team":
@@ -228,9 +232,12 @@ export function LinearTabScreen(props: {
       bottomInset={workspace.bottomClearance}
       renderItem={renderItem}
       ListHeaderComponent={
-        connected && degradation && term === "" ? (
-          <LinearBanner degradation={degradation} onRetry={refresh} retrying={refreshing} />
-        ) : null
+        <View>
+          {environmentPill}
+          {connected && degradation && term === "" ? (
+            <LinearBanner degradation={degradation} onRetry={refresh} retrying={refreshing} />
+          ) : null}
+        </View>
       }
       ListEmptyComponent={
         state === "loading" ? (
@@ -238,7 +245,7 @@ export function LinearTabScreen(props: {
         ) : connected ? (
           term !== "" ? (
             <Text className="px-8 py-12 text-center text-sm text-foreground-muted">
-              {jumpIssues.isPending ? "Searching…" : "No results."}
+              {searching ? "Searching…" : "No results."}
             </Text>
           ) : (
             <View className="items-center gap-3 px-8 py-12">

@@ -31,6 +31,19 @@ export function useWorkspaceBackNavigation(tab: WorkspaceTab) {
   };
 }
 
+/**
+ * Keeps a pushed page's tab selected on Android, so Back from a deep link lands on that tab's
+ * list rather than whichever tab was showing.
+ */
+export function useAndroidWorkspaceTab(tab: WorkspaceTab) {
+  const dispatch = useWorkspaceTabs()?.dispatch;
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS === "android") dispatch?.({ type: "select", tab });
+    }, [dispatch, tab]),
+  );
+}
+
 export function useAndroidWorkspaceBack(tab: WorkspaceTab) {
   const dispatch = useWorkspaceTabs()?.dispatch;
   const goBack = useWorkspaceBackNavigation(tab);

@@ -88,6 +88,7 @@ import {
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
 import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
+import { linearThreadCreationFields } from "../linear/linearLaunchHelpers";
 import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
 import { resolveNewThreadRuntimeMode } from "./thread-settings-options";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
@@ -750,14 +751,7 @@ export function NewTaskFlowProvider(
         ...((workspaceSelection?.startFromOrigin ?? startFromOrigin)
           ? { startFromOrigin: true }
           : {}),
-        ...(draft.linearIssue
-          ? {
-              linearIssue: draft.linearIssue,
-              ...(mode === "worktree" && draft.linearIssue.branchName.length > 0
-                ? { worktreeBranchName: draft.linearIssue.branchName }
-                : {}),
-            }
-          : {}),
+        ...linearThreadCreationFields(draft, mode),
       },
       createdAt: metadata.createdAt,
     };

@@ -24,7 +24,11 @@ import {
   LinearProgressSummary,
   LinearProjectRow,
 } from "./LinearLevels";
-import { LinearIssueRow, type LinearIssueRowContext } from "./LinearIssueRow";
+import {
+  LinearIssueRow,
+  useLinearExpandedIssues,
+  type LinearIssueRowContext,
+} from "./LinearIssueRow";
 import { buildLinearFilterPills, linearFilterPatch } from "./linearFilterMenu";
 import { linearIssueListItems, type LinearIssueListItem } from "./linearIssueItems";
 import {
@@ -34,7 +38,6 @@ import {
   type LinearRouteParams,
 } from "./linearRoutes";
 import {
-  useAdoptLinearEnvironment,
   useLinearActivity,
   useLinearAutoRefresh,
   useLinearDegradation,
@@ -59,8 +62,7 @@ export function LinearTeamScreen({ route }: StaticScreenProps<LinearRouteParams[
   const projects = useLinearProjects(environmentId, scope.team);
   const { refresh, refreshing } = useLinearRefresh(environmentId);
   const navigation = useLinearNavigation(environmentId, scope);
-  useAdoptLinearEnvironment(environmentId);
-  useLinearAutoRefresh(true);
+  useLinearAutoRefresh(true, [status, projects]);
   const degradation = useLinearDegradation(environmentId, [projects.failure], false);
   const team = status.data?.teams.find((entry) => entry.id === scope.team);
   return (
@@ -116,8 +118,7 @@ export function LinearProjectScreen({
   const { refresh, refreshing } = useLinearRefresh(environmentId);
   const navigation = useLinearNavigation(environmentId, scope);
   const { filters, patch } = useLinearFilters();
-  useAdoptLinearEnvironment(environmentId);
-  useLinearAutoRefresh(true);
+  useLinearAutoRefresh(true, [status, projects, milestones]);
   const degradation = useLinearDegradation(
     environmentId,
     [milestones.failure, projects.failure],
@@ -203,8 +204,7 @@ export function LinearMilestoneScreen({
   const [text, setText] = useState("");
   const debouncedText = useDebouncedValue(text.trim(), SEARCH_DEBOUNCE_MS);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
-  useAdoptLinearEnvironment(environmentId);
-  useLinearAutoRefresh(true);
+  const expansion = useLinearExpandedIssues();
 
   const search = linearSearchFor(scope, {
     ...filters,
@@ -218,6 +218,7 @@ export function LinearMilestoneScreen({
     environmentId,
     noActivity ? null : linearIssueFilter(search, { activityIssueIds }),
   );
+  useLinearAutoRefresh(true, [status, metadata, views, milestones, activity, issues]);
   const degradation = useLinearDegradation(
     environmentId,
     [issues.failure, metadata.failure, views.failure],
@@ -249,6 +250,7 @@ export function LinearMilestoneScreen({
     environmentId,
     activityByIssueId: activity.byIssueId,
     onSelect: navigation.openIssue,
+    ...expansion,
   };
   const completedHidden = search.showCompleted !== true && (search.states?.length ?? 0) === 0;
   const toggleGroup = (key: string) =>

@@ -7,11 +7,13 @@ function HintToggle({
   label,
   shortLabel,
   enabled,
+  shrink = false,
   onToggle,
 }: {
   readonly label: string;
   readonly shortLabel: string;
   readonly enabled: boolean;
+  readonly shrink?: boolean;
   readonly onToggle: () => void;
 }) {
   return (
@@ -24,7 +26,8 @@ function HintToggle({
             aria-checked={enabled}
             onClick={onToggle}
             className={cn(
-              "shrink-0 truncate rounded-sm px-0.5 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+              "truncate rounded-sm px-0.5 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+              shrink ? "min-w-0 shrink" : "shrink-0",
               !enabled && "line-through opacity-60",
             )}
           />
@@ -52,7 +55,7 @@ export function LinearLaunchHint({ draftTarget }: { readonly draftTarget: Compos
   return (
     <div
       data-chat-composer-linear-hint="true"
-      className="flex min-w-0 max-w-80 shrink items-center gap-1 text-xs text-muted-foreground"
+      className="flex min-w-0 max-w-80 shrink items-center gap-1 overflow-hidden text-xs text-muted-foreground"
     >
       {moveLabel !== null && launch.moveTo ? (
         <>
@@ -60,11 +63,14 @@ export function LinearLaunchHint({ draftTarget }: { readonly draftTarget: Compos
             label={moveLabel}
             shortLabel={`→ ${launch.moveTo.name}`}
             enabled={launch.moveEnabled}
+            shrink
             onToggle={() =>
               setDraftLinearIssue(draftTarget, { ...launch, moveEnabled: !launch.moveEnabled })
             }
           />
-          <span aria-hidden>·</span>
+          <span aria-hidden className="shrink-0">
+            ·
+          </span>
         </>
       ) : null}
       <HintToggle

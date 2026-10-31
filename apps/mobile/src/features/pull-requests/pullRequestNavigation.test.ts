@@ -21,7 +21,7 @@ const projects = [
 
 const nativePullRequestDestination = (
   url: string,
-  linkContext: typeof context | null,
+  linkContext: Parameters<typeof destination>[1],
   linkProjects: typeof projects,
   configLoaded: Parameters<typeof destination>[3] = () => true,
 ) => destination(url, linkContext, linkProjects, configLoaded);
@@ -58,6 +58,23 @@ describe("native PR entry points", () => {
     expect(
       nativePullRequestDestination("https://github.com/someone/else/pull/12", context, projects),
     ).toEqual({ ...context, host: "github.com", repository: "someone/else", number: 12 });
+  });
+
+  it("opens a link from an environment alone under one of its projects", () => {
+    expect(
+      nativePullRequestDestination(
+        "https://git.example/group/sub/repo/-/merge_requests/9",
+        { environmentId: "remote" },
+        projects,
+      ),
+    ).toMatchObject({ environmentId: "remote", projectId: "gitlab", number: 9 });
+    expect(
+      nativePullRequestDestination(
+        "https://github.com/org/repo/pull/12",
+        { environmentId: "elsewhere" },
+        projects,
+      ),
+    ).toBeNull();
   });
 
   it("leaves links to the external opener when the environment cannot show them", () => {

@@ -3,14 +3,17 @@ import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { Chip } from "../../components/ui/Chip";
-import { setComposerDraftLinearIssue, useComposerDraft } from "../../state/use-composer-drafts";
+import {
+  updateComposerDraftSettings,
+  useComposerDraftLinearIssue,
+} from "../../state/use-composer-drafts";
 
 /** Under the new-task heading of a draft started from an issue: where its project came from. */
 export function LinearDraftProjectHint(props: {
   readonly draftKey: string | null;
   readonly projectId: string | null;
 }) {
-  const launch = useComposerDraft(props.draftKey).linearIssue;
+  const launch = useComposerDraftLinearIssue(props.draftKey);
   if (!launch) return null;
   const fromMapping = launch.mappedProjectId !== null && launch.mappedProjectId === props.projectId;
   return (
@@ -24,7 +27,7 @@ export function LinearDraftProjectHint(props: {
 /** What sending will write back to Linear; each part toggles for this launch only. */
 export function LinearWriteBackRow(props: { readonly draftKey: string | null }) {
   const { draftKey } = props;
-  const launch = useComposerDraft(draftKey).linearIssue;
+  const launch = useComposerDraftLinearIssue(draftKey);
   if (!launch || draftKey === null) return null;
   const moveLabel = linearMoveHint(launch);
   return (
@@ -36,19 +39,20 @@ export function LinearWriteBackRow(props: { readonly draftKey: string | null }) 
           selected={launch.moveEnabled}
           accessibilityLabel={`${moveLabel}, ${launch.moveEnabled ? "on" : "off"} for this launch`}
           onPress={() =>
-            setComposerDraftLinearIssue(draftKey, { ...launch, moveEnabled: !launch.moveEnabled })
+            updateComposerDraftSettings(draftKey, {
+              linearIssue: { ...launch, moveEnabled: !launch.moveEnabled },
+            })
           }
         />
       ) : null}
       <Chip
         size="small"
-        label="Comment with a link"
+        label="comments link"
         selected={launch.commentEnabled}
         accessibilityLabel={`Comment on ${launch.identifier} with a link, ${launch.commentEnabled ? "on" : "off"} for this launch`}
         onPress={() =>
-          setComposerDraftLinearIssue(draftKey, {
-            ...launch,
-            commentEnabled: !launch.commentEnabled,
+          updateComposerDraftSettings(draftKey, {
+            linearIssue: { ...launch, commentEnabled: !launch.commentEnabled },
           })
         }
       />

@@ -35,7 +35,7 @@ const NO_THREAD_IDENTIFIERS: ReadonlyMap<string, string> = new Map();
 /**
  * Thread -> Linear issue identifier for the thread list. One shared derivation so list rows do
  * not each read the activity query; empty while Linear is not connected. It never polls: only
- * the visible Linear tab bumps the poll tick.
+ * the focused Linear screen re-reads activity.
  */
 const linearThreadIdentifiersAtom = Atom.make((get) => {
   const environmentId = get(linearEnvironmentIdAtom);

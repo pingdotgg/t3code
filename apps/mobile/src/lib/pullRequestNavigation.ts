@@ -3,10 +3,13 @@ import { resolveChangeRequestLinkTarget } from "@t3tools/client-runtime/change-r
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
-/** The PullRequest route for a change request link from a project, or null for the browser. */
+/**
+ * The PullRequest route for a change request link from a project, or from an environment alone
+ * (a Linear issue), or null for the browser.
+ */
 export function nativePullRequestDestination(
   url: string,
-  context: { environmentId: string; projectId: string } | null,
+  context: { environmentId: string; projectId?: string | undefined } | null,
   projects: ReadonlyArray<Pick<EnvironmentProject, "id" | "environmentId" | "repositoryIdentity">>,
   configLoaded: (environmentId: EnvironmentId) => boolean,
 ) {
@@ -16,7 +19,7 @@ export function nativePullRequestDestination(
     projects,
     configLoaded,
     environmentId: EnvironmentId.make(context.environmentId),
-    projectId: ProjectId.make(context.projectId),
+    projectId: context.projectId === undefined ? undefined : ProjectId.make(context.projectId),
     lendHostProject: true,
   });
   if (target === null) return null;

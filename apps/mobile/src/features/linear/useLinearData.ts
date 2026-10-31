@@ -1,4 +1,4 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { useIsFocused } from "@react-navigation/native";
 import { indexActivityByIssueId } from "@t3tools/client-runtime/linear/activity";
 import {
@@ -12,35 +12,17 @@ import type {
   LinearIssueActivity,
   LinearIssueFilter,
 } from "@t3tools/contracts";
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { useAppActive } from "../../lib/appState";
 import { useNowAfter } from "../../lib/clock";
-import { appAtomRegistry } from "../../state/atom-registry";
-import {
-  linearEnvironment,
-  linearEnvironmentIdAtom,
-  linearSelectedEnvironmentIdAtom,
-} from "../../state/linear";
+import { linearEnvironment, linearEnvironmentIdAtom } from "../../state/linear";
 import { useEnvironmentQuery, type EnvironmentQueryView } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 
 /** Linear is read through one connected environment (see `resolveLinearEnvironmentId`). */
 export function useLinearEnvironmentId(): EnvironmentId | null {
   return useAtomValue(linearEnvironmentIdAtom);
-}
-
-/**
- * A pushed Linear screen names its environment in its route; the launch flows read the shared
- * pick, so a deep link to another environment makes it the pick.
- */
-export function useAdoptLinearEnvironment(environmentId: EnvironmentId) {
-  const current = useLinearEnvironmentId();
-  const select = useAtomSet(linearSelectedEnvironmentIdAtom);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a route's environment becomes the session's Linear environment pick
-  useEffect(() => {
-    if (current !== environmentId) select(environmentId);
-  }, [current, environmentId, select]);
 }
 
 export function useLinearStatus(
@@ -151,31 +133,35 @@ export function useLinearActivity(environmentId: EnvironmentId | null, enabled =
   return { ...query, issues, byIssueId: indexActivityByIssueId(issues) };
 }
 
-let lastPollBumpAt = 0;
-
-function bumpLinearPollTick() {
-  lastPollBumpAt = Date.now();
-  appAtomRegistry.update(linearEnvironment.pollTick, (tick) => tick + 1);
-}
-
 const RETURN_REFRESH_MIN_GAP_MS = 15_000;
 
 /**
- * Re-reads Linear when the screen comes into view or the app returns to the foreground, then
- * every 60s while it stays that way. Nothing runs in the background or on a hidden tab.
+ * Re-reads the given queries of the focused Linear screen when it comes into view or the app
+ * returns to the foreground, then every 60s while it stays that way. Screens left underneath in
+ * the stack, hidden tabs and the background never poll; server pushes still reach every query.
  */
-export function useLinearAutoRefresh(visible: boolean) {
+export function useLinearAutoRefresh(
+  visible: boolean,
+  queries: ReadonlyArray<{ readonly refresh: () => void }>,
+) {
   const focused = useIsFocused();
   const appActive = useAppActive();
   const enabled = visible && focused && appActive;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- timer that bumps the shared poll tick while the Linear screen is visible and the app is foregrounded
+  // Mounting already reads every query, so the first poll waits for a later return.
+  const [mountedAt] = useState(Date.now);
+  const lastPollAt = useRef<number | null>(null);
+  const poll = useEffectEvent(() => {
+    lastPollAt.current = Date.now();
+    for (const query of queries) query.refresh();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- timer that re-reads this screen's queries while it is focused and the app is foregrounded
   useEffect(() => {
     if (!enabled) return;
     // Focus and AppState changes arrive in bursts (Control Center, app switching).
-    if (Date.now() - lastPollBumpAt >= RETURN_REFRESH_MIN_GAP_MS) bumpLinearPollTick();
-    const interval = setInterval(bumpLinearPollTick, LINEAR_POLL_INTERVAL_MS);
+    if (Date.now() - (lastPollAt.current ?? mountedAt) >= RETURN_REFRESH_MIN_GAP_MS) poll();
+    const interval = setInterval(poll, LINEAR_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [enabled]);
+  }, [enabled, mountedAt]);
 }
 
 /** Commands bound to the Linear environment. */

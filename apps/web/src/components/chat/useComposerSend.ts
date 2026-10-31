@@ -1330,7 +1330,9 @@ export function useComposerSend(input: ComposerSendInput) {
                       projectCwd: activeProject.workspaceRoot,
                       baseBranch: baseBranchForWorktree,
                       // A launch from a Linear issue names its branch so Linear links the PR.
-                      ...(isLocalDraftThread && draftThread?.linearIssue
+                      ...(isLocalDraftThread &&
+                      draftThread?.linearIssue &&
+                      linearIssueIdAtSend !== null
                         ? { branch: draftThread.linearIssue.branchName }
                         : {}),
                       ...(startFromOrigin ? { startFromOrigin: true } : {}),

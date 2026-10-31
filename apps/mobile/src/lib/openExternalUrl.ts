@@ -57,3 +57,10 @@ export async function tryOpenExternalUrl(url: string, target: ExternalUrlTarget)
     return false;
   }
 }
+
+const WEB_LINK = /^(?:https?:\/\/|mailto:)/iu;
+
+/** For links in untrusted text (an issue, a comment): only web and mail links leave the app. */
+export async function tryOpenWebLink(url: string, target: ExternalUrlTarget): Promise<boolean> {
+  return WEB_LINK.test(url.trim()) ? tryOpenExternalUrl(url, target) : false;
+}

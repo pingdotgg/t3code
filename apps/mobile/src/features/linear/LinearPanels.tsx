@@ -39,7 +39,7 @@ export function LinearBanner(props: {
         accessibilityState={{ disabled: props.retrying, busy: props.retrying }}
         disabled={props.retrying}
         onPress={props.onRetry}
-        hitSlop={8}
+        hitSlop={12}
         className="active:opacity-60"
       >
         <Text className="text-sm font-t3-bold text-warning-foreground">

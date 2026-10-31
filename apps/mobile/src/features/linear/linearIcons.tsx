@@ -3,7 +3,8 @@ import {
   linearBadgeTextTone,
 } from "@t3tools/client-runtime/linear/issue-list";
 import type { LinearPriority, LinearStateType } from "@t3tools/contracts";
-import { Image, View } from "react-native";
+import { Image } from "expo-image";
+import { View } from "react-native";
 import Svg, { Circle, Path, Rect } from "react-native-svg";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -219,7 +220,9 @@ export function LinearAvatar(props: {
       <Image
         accessibilityLabel={props.user.name}
         source={{ uri: props.user.avatarUrl }}
+        recyclingKey={props.user.avatarUrl}
         style={frame}
+        cachePolicy="memory-disk"
       />
     );
   }

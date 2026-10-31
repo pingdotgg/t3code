@@ -14,7 +14,7 @@ import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments"
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { videoMimeType } from "@t3tools/shared/video";
 import type { LinearIssueContextRecord } from "@t3tools/contracts";
-import { Linking, Pressable, ScrollView, View } from "react-native";
+import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { REVIEW_MONO_FONT_FAMILY } from "../features/review/reviewDiffRendering";
 import { ReviewCommentCard, useReviewCommentColors } from "../features/review/ReviewCommentCard";
@@ -24,6 +24,7 @@ import {
   type DraftComposerAttachment,
 } from "../lib/composerImages";
 import { contextImageGallery } from "../lib/contextImageGallery";
+import { tryOpenWebLink } from "../lib/openExternalUrl";
 import { FilePreviewModal } from "./ui/FilePreviewModal";
 import { VideoPreviewModal } from "./ui/VideoPreviewModal";
 import { ComposerContextAttachment } from "./ComposerContextAttachment";
@@ -122,7 +123,7 @@ function LinearIssueSnapshot(props: { readonly record: LinearIssueContextRecord 
         <Button
           label="Open in Linear"
           tone="secondary"
-          onPress={() => void Linking.openURL(record.url).catch(() => undefined)}
+          onPress={() => void tryOpenWebLink(record.url, "markdown-link")}
           fullWidth
         />
       ) : null}

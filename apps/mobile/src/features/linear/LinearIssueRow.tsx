@@ -62,6 +62,21 @@ export interface LinearIssueRowContext {
   readonly environmentId: EnvironmentId | null;
   readonly activityByIssueId: ReadonlyMap<string, LinearIssueActivity>;
   readonly onSelect: (issueId: string) => void;
+  /** Kept by the screen: recycled list rows must not carry another issue's expansion. */
+  readonly expandedIds: ReadonlySet<string>;
+  readonly onToggleExpanded: (issueId: string) => void;
+}
+
+/** Which issue rows show their sub-issues, for one screen's list. */
+export function useLinearExpandedIssues() {
+  const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
+  const onToggleExpanded = (issueId: string) =>
+    setExpandedIds((previous) => {
+      const next = new Set(previous);
+      if (!next.delete(issueId)) next.add(issueId);
+      return next;
+    });
+  return { expandedIds, onToggleExpanded };
 }
 
 function LinearSubIssueTree(props: {
@@ -89,7 +104,7 @@ function LinearSubIssueTree(props: {
           accessibilityRole="button"
           onPress={subIssues.refresh}
           style={{ paddingLeft: 56 + depth * 20 }}
-          className="py-2"
+          className="min-h-11 justify-center"
         >
           <Text className="text-xs text-foreground-muted">Couldn't load sub-issues. Retry</Text>
         </Pressable>
@@ -105,11 +120,11 @@ export const LinearIssueRow = memo(function LinearIssueRowView(props: {
 }) {
   const { issue, context } = props;
   const depth = props.depth ?? 0;
-  const [expanded, setExpanded] = useState(false);
   const pill = pickActivityPill(issue, context.activityByIssueId.get(issue.id));
   const pullRequest = issue.linkedPullRequests[0];
   const finished = issue.state.type === "completed" || issue.state.type === "canceled";
   const hasChildren = issue.subIssueCount > 0;
+  const expanded = hasChildren && context.expandedIds.has(issue.id);
   return (
     <View>
       <View className="flex-row" style={{ paddingLeft: depth * 20 }}>
@@ -182,7 +197,7 @@ export const LinearIssueRow = memo(function LinearIssueRowView(props: {
             accessibilityRole="button"
             accessibilityLabel={expanded ? "Collapse sub-issues" : "Expand sub-issues"}
             accessibilityState={{ expanded }}
-            onPress={() => setExpanded((open) => !open)}
+            onPress={() => context.onToggleExpanded(issue.id)}
             hitSlop={4}
             className="w-9 items-center pt-3 active:opacity-60"
           >

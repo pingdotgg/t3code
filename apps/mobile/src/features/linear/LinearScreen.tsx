@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppBar } from "../../components/ui/AppBar";
 import type { AppBarProps } from "../../components/ui/AppBar.types";
 import { ListFilterMenu } from "../layout/workspace/ListFilterMenu";
+import { useAndroidWorkspaceTab } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import type { LinearFilterPill } from "./linearFilterMenu";
@@ -18,6 +19,7 @@ export function LinearScreen(
   },
 ) {
   const navigation = useNavigation();
+  useAndroidWorkspaceTab("linear");
   return (
     <View className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-screen"}>
       <AppBar
