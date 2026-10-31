@@ -65,6 +65,8 @@ export interface DraftState {
   readonly timeOfDay: string;
   /** Local date and time as a `datetime-local` input value, such as 2026-11-02T15:00. */
   readonly runAt: string;
+  /** The stored ISO run time, sent back unchanged when the field was not edited. */
+  readonly savedRunAt: string;
   readonly weekdays: ReadonlySet<number>;
   readonly projectId: string;
   readonly threadId: string;
@@ -158,8 +160,13 @@ export function webhookDeliveryLabel(delivery: {
 export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedule | null {
   if (scheduleDraftErrors(draft).length > 0) return null;
   if (draft.scheduleMode === "once") {
+    const unchanged =
+      draft.savedRunAt && toDateTimeLocalValue(new Date(draft.savedRunAt)) === draft.runAt;
     // A `datetime-local` value has no offset, so Date reads it as local time.
-    return { type: "once", runAt: new Date(draft.runAt).toISOString() };
+    return {
+      type: "once",
+      runAt: unchanged ? draft.savedRunAt : new Date(draft.runAt).toISOString(),
+    };
   }
   if (draft.scheduleMode === "webhook") {
     const maxDeliveryAgeMinutes = parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes);
@@ -227,6 +234,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
       schedule.type === "interval" ? String(Math.max(1, schedule.everyMs / 60_000)) : "15",
     timeOfDay: schedule.type === "fixed_time" ? schedule.timeOfDay : "09:00",
     runAt: schedule.type === "once" ? toDateTimeLocalValue(new Date(schedule.runAt)) : "",
+    savedRunAt: schedule.type === "once" ? schedule.runAt : "",
     weekdays,
     projectId: task.projectId,
     threadId: task.threadId ?? "",
