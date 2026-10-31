@@ -26,7 +26,7 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { expandedImageKey } from "./ExpandedImagePreview";
 import { registerThreadOverlay } from "./threadOverlayRetention";
 import { mediaReferenceFileName } from "@t3tools/client-runtime/media-reference";
-import { mediaMimeType } from "@t3tools/shared/mediaPreview";
+import { mediaMimeType, mediaMimeTypeFromExtension } from "@t3tools/shared/mediaPreview";
 
 interface ExpandedImageDialogProps {
   preview: ExpandedImagePreview;
@@ -47,9 +47,11 @@ function ExpandedMediaFailure({ children }: { children: ReactNode }) {
 function itemMimeType(item: ExpandedImageItem): string | undefined {
   if (item.mimeType) return item.mimeType;
   const reference = item.actionsSource?.reference;
-  return (
-    mediaMimeType((reference && mediaReferenceFileName(reference)) || item.src || "") ?? undefined
-  );
+  const fileName = reference && mediaReferenceFileName(reference);
+  if (fileName) {
+    return mediaMimeTypeFromExtension(fileName.slice(fileName.lastIndexOf("."))) ?? undefined;
+  }
+  return mediaMimeType(item.src ?? "") ?? undefined;
 }
 
 function ExpandedVideo({ item }: { readonly item: ExpandedImageItem }) {
