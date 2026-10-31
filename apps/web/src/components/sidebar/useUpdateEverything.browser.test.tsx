@@ -8,42 +8,40 @@ import { useUpdateEverything } from "./useUpdateEverything";
 const mocks = vi.hoisted(() => ({
   updateProviders: vi.fn(),
   updateServer: vi.fn(),
-  hasServerUpdate: false,
+  remoteCount: 0,
 }));
 
 vi.mock("~/state/environments", () => ({
   useEnvironments: () => ({
-    environments: mocks.hasServerUpdate
-      ? [
-          {
-            environmentId: EnvironmentId.make("remote"),
-            label: "Remote",
-            connection: { phase: "connected" },
-            serverConfig: {
-              environment: {
-                serverVersion: "0.0.1",
-                capabilities: { serverSelfUpdate: "boot-service" },
-              },
-              settings: { continueThreadsAfterServerUpdate: false },
-            },
-          },
-        ]
-      : [],
+    environments: Array.from({ length: mocks.remoteCount }, (_, index) => ({
+      environmentId: EnvironmentId.make(`remote-${index}`),
+      label: `Remote ${index}`,
+      connection: { phase: "connected" },
+      serverConfig: {
+        environment: {
+          serverVersion: "0.0.1",
+          capabilities: { serverSelfUpdate: "boot-service" },
+        },
+        settings: { continueThreadsAfterServerUpdate: false },
+      },
+    })),
   }),
 }));
-vi.mock("~/state/session", () => ({ environmentSessionStatesAtom: () => Atom.make([null]) }));
+vi.mock("~/state/session", () => ({
+  environmentSessionStatesAtom: () =>
+    Atom.make(Array.from({ length: mocks.remoteCount }, () => null)),
+}));
 vi.mock("~/state/server", () => ({
-  environmentUpdateStatesAtom: () => Atom.make([{ status: "idle" }]),
+  environmentUpdateStatesAtom: () =>
+    Atom.make(Array.from({ length: mocks.remoteCount }, () => ({ status: "idle" }))),
 }));
 vi.mock("../ProviderUpdatesAction", () => ({
   useProviderUpdates: () => ({
-    machines: [
-      {
-        environmentId: EnvironmentId.make("remote"),
-        label: "Remote",
-        candidates: [{ driver: ProviderDriverKind.make("claudeAgent") }],
-      },
-    ],
+    machines: Array.from({ length: Math.max(1, mocks.remoteCount) }, (_, index) => ({
+      environmentId: EnvironmentId.make(`remote-${index}`),
+      label: `Remote ${index}`,
+      candidates: [{ driver: ProviderDriverKind.make("claudeAgent") }],
+    })),
     updateAll: mocks.updateProviders,
   }),
 }));
@@ -61,10 +59,10 @@ vi.mock("./updateEverythingRun", () => ({
   waitForUpdateRestart: vi.fn(),
 }));
 
-function setup(hasServerUpdate = false) {
+function setup(remoteCount = 0) {
   mocks.updateProviders.mockReset().mockResolvedValue([]);
   mocks.updateServer.mockReset().mockResolvedValue({ status: "updated" });
-  mocks.hasServerUpdate = hasServerUpdate;
+  mocks.remoteCount = remoteCount;
 }
 
 function UpdatePlan({
@@ -83,6 +81,8 @@ function UpdatePlan({
       </output>
       <output aria-label="Provider count">{plan.providerCount}</output>
       <output aria-label="Providers">{plan.rows.flatMap((row) => row.providers).join(", ")}</output>
+      <output aria-label="App updates">{plan.rows.filter((row) => row.app !== null).length}</output>
+      <output aria-label="Restarting machines">{plan.restarts.length}</output>
       <button type="button" onClick={() => void plan.run({})}>
         Update
       </button>
@@ -92,28 +92,41 @@ function UpdatePlan({
 
 describe("useUpdateEverything provider selection", () => {
   it.each([
-    { included: undefined, calls: 1, count: 1, remote: false },
-    { included: true, calls: 1, count: 1, remote: false },
-    { included: false, calls: 0, count: 0, remote: false },
-    { included: false, calls: 0, count: 0, remote: true },
+    { included: undefined, calls: 1, count: 1, remote: 0, local: true },
+    { included: true, calls: 1, count: 1, remote: 0, local: true },
+    { included: false, calls: 0, count: 0, remote: 0, local: true },
+    { included: false, calls: 0, count: 0, remote: 1, local: false },
+    { included: true, calls: 1, count: 3, remote: 3, local: true },
+    { included: false, calls: 0, count: 0, remote: 3, local: true },
   ])(
-    "selects providers consistently (included=$included, remote=$remote)",
-    async ({ included, calls, count, remote }) => {
+    "selects providers consistently (included=$included, remote=$remote, local=$local)",
+    async ({ included, calls, count, remote, local }) => {
       setup(remote);
       await using screen = await render(
         <UpdatePlan
-          localVersion={remote ? null : "9.0.0"}
+          localVersion={local ? "9.0.0" : null}
           options={included === undefined ? {} : { includeProviderUpdates: included }}
         />,
       );
       expect(screen.getByLabelText("Updates available").element().textContent).toBe("true");
       expect(screen.getByLabelText("Provider choice available").element().textContent).toBe("true");
       expect(screen.getByLabelText("Provider count").element().textContent).toBe(String(count));
-      expect(screen.getByLabelText("Providers").element().textContent).toBe(count ? "Claude" : "");
+      expect(screen.getByLabelText("Providers").element().textContent).toBe(
+        Array.from({ length: count }, () => "Claude").join(", "),
+      );
+      expect(screen.getByLabelText("App updates").element().textContent).toBe(
+        String(remote + Number(local)),
+      );
+      expect(screen.getByLabelText("Restarting machines").element().textContent).toBe(
+        String(remote),
+      );
 
       await act(() => screen.container.querySelector<HTMLButtonElement>("button")!.click());
       expect(mocks.updateProviders).toHaveBeenCalledTimes(calls);
-      expect(mocks.updateServer).toHaveBeenCalledTimes(remote ? 1 : 0);
+      expect(mocks.updateServer).toHaveBeenCalledTimes(remote);
+      expect(mocks.updateServer.mock.calls.map(([target]) => target.environmentId)).toEqual(
+        Array.from({ length: remote }, (_, index) => `remote-${index}`),
+      );
     },
   );
 
