@@ -264,20 +264,6 @@ export function liveWorkEntryLabel(
   return workEntryDisplayLabel(entry, workspaceRoot);
 }
 
-/** The action word for a command row: "Running" while live, then how it ended. */
-export function fileChangeEntryVerb(lifecycleStatus: WorkLogEntry["toolLifecycleStatus"]) {
-  const status = liveActivityToolStatus(lifecycleStatus, false);
-  return status === "inProgress"
-    ? "Editing"
-    : status === "failed"
-      ? "Failed"
-      : status === "declined"
-        ? "Declined"
-        : status === "stopped"
-          ? "Stopped"
-          : "Edited";
-}
-
 function commandEntryVerb(lifecycleStatus: WorkLogEntry["toolLifecycleStatus"], active: boolean) {
   const status = liveActivityToolStatus(lifecycleStatus, active);
   return status === "inProgress"
