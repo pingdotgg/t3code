@@ -159,18 +159,21 @@ describe("DesktopAppIdentity", () => {
     ),
   );
 
-  it.effect("keeps using the legacy development profile", () =>
+  it.effect.each([
+    { t3Home: undefined, profile: "/Users/alice/.t3/dev/electron" },
+    { t3Home: "/repo/worktree-a/.t3", profile: "/repo/worktree-a/.t3/userdata/electron" },
+    { t3Home: "/repo/worktree-b/.t3", profile: "/repo/worktree-b/.t3/userdata/electron" },
+  ])("keeps the development profile in T3 home $t3Home", ({ t3Home, profile }) =>
     withIdentity(
       Effect.gen(function* () {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
-        assert.equal(
-          yield* identity.resolveUserDataPath,
-          "/Users/alice/Library/Application Support/T3 Code (Dev)",
-        );
+        assert.equal(yield* identity.resolveUserDataPath, profile);
       }),
       {
         legacyPathExists: true,
-        environment: { env: { VITE_DEV_SERVER_URL: "http://localhost:5173" } },
+        environment: {
+          env: { VITE_DEV_SERVER_URL: "http://localhost:5173", T3CODE_HOME: t3Home },
+        },
       },
     ),
   );

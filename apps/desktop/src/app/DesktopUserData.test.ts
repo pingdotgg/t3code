@@ -6,34 +6,40 @@ import * as Path from "effect/Path";
 
 import { resolveUserDataPath } from "./DesktopUserData.ts";
 
-it.effect.each(["t3code", "T3 Code (Alpha)"])(
-  "preserves Windows credential keys from %s without copying browser databases",
-  (sourceName) =>
+it.effect.each([
+  { isDevelopment: false, sourceName: "t3code", legacyName: "T3 Code (Alpha)" },
+  { isDevelopment: false, sourceName: "T3 Code (Alpha)", legacyName: "T3 Code (Alpha)" },
+  { isDevelopment: true, sourceName: "t3code-dev", legacyName: "T3 Code (Dev)" },
+  { isDevelopment: true, sourceName: "T3 Code (Dev)", legacyName: "T3 Code (Dev)" },
+])(
+  "preserves Windows credential keys from $sourceName without copying browser databases",
+  ({ isDevelopment, sourceName, legacyName }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-profile-" });
+      const stateDir = path.join(directory, "home", "userdata");
       const source = path.join(directory, sourceName);
-      const destination = path.join(directory, "t3code-v2");
+      const destination = isDevelopment
+        ? path.join(stateDir, "electron")
+        : path.join(directory, "t3code-v2");
       const state = '{"os_crypt":{"encrypted_key":"test-encrypted-key"}}';
-      yield* fs.makeDirectory(path.join(directory, "T3 Code (Alpha)"), { recursive: true });
+      const resolve = resolveUserDataPath({
+        appDataDirectory: directory,
+        isDevelopment,
+        platform: "win32",
+        stateDir,
+      });
+      yield* fs.makeDirectory(path.join(directory, legacyName), { recursive: true });
       yield* fs.makeDirectory(path.join(source, "IndexedDB"), { recursive: true });
       yield* fs.writeFileString(path.join(source, "Local State"), state);
       yield* fs.writeFileString(path.join(source, "IndexedDB", "LOCK"), "V1 owns this database");
-      yield* resolveUserDataPath({
-        appDataDirectory: directory,
-        isDevelopment: false,
-        platform: "win32",
-      });
+      assert.equal(yield* resolve, destination);
       assert.equal(yield* fs.readFileString(path.join(destination, "Local State")), state);
       assert.equal(yield* fs.readFileString(path.join(source, "Local State")), state);
       assert.isFalse(yield* fs.exists(path.join(destination, "IndexedDB")));
       yield* fs.writeFileString(path.join(destination, "Local State"), "existing V2 state");
-      yield* resolveUserDataPath({
-        appDataDirectory: directory,
-        isDevelopment: false,
-        platform: "win32",
-      });
+      yield* resolve;
       assert.equal(
         yield* fs.readFileString(path.join(destination, "Local State")),
         "existing V2 state",
