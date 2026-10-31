@@ -7,6 +7,7 @@ import {
   NodeId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
   type OrchestratorMcpCapabilitiesResult,
+  type OrchestratorMcpRuntimeMode,
   OrchestratorMcpTarget,
   type OrchestrationV2ThreadShell,
   type ScheduledTask,
@@ -2634,11 +2635,42 @@ describe("OrchestratorMcpService provider resolution", () => {
           checkedAt: "1970-01-01T00:00:00.000Z",
           windows: [{ id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 100 }],
         } as const;
-        const healthyClaude = providerSnapshot({
-          instanceId: claudeInstanceId,
-          driver: ProviderDriverKind.make("claudeAgent"),
-          model: fallback.model,
+        const selectOption = (id: string, choices: ReadonlyArray<string>) => ({
+          id,
+          label: id,
+          type: "select" as const,
+          options: choices.map((choice) => ({ id: choice, label: choice })),
         });
+        const withOptions = (
+          provider: ServerProvider,
+          descriptor: ReturnType<typeof selectOption>,
+          supportedRuntimeModes: ServerProvider["supportedRuntimeModes"],
+        ): ServerProvider => ({
+          ...provider,
+          supportedRuntimeModes,
+          models: provider.models.map((model) => ({
+            ...model,
+            capabilities: { optionDescriptors: [descriptor] },
+          })),
+        });
+        const healthyClaude = withOptions(
+          providerSnapshot({
+            instanceId: claudeInstanceId,
+            driver: ProviderDriverKind.make("claudeAgent"),
+            model: fallback.model,
+          }),
+          selectOption("effort", ["high", "max"]),
+          ["approval-required", "auto", "full-access"],
+        );
+        const codex = withOptions(
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: inherited.model,
+          }),
+          selectOption("reasoningEffort", ["high", "low"]),
+          ["approval-required", "full-access"],
+        );
         const cases = [
           { name: "implicit, inherited exhausted", target: undefined, expected: fallback },
           {
@@ -2651,6 +2683,18 @@ describe("OrchestratorMcpService provider resolution", () => {
             name: "options only",
             target: { options: { effort: "max" } },
             expected: { ...fallback, options: [{ id: "effort", value: "max" }] },
+          },
+          {
+            name: "options only, inherited has usage",
+            target: { options: { effort: "max" } },
+            codexUsage: false,
+            expected: { error: "invalid_request" },
+          },
+          {
+            name: "runtime mode only the fallback offers",
+            target: undefined,
+            runtimeMode: "auto",
+            expected: fallback,
           },
           {
             name: "explicit instance",
@@ -2688,6 +2732,12 @@ describe("OrchestratorMcpService provider resolution", () => {
             expected: inherited,
           },
           {
+            name: "fallback option not advertised",
+            target: undefined,
+            fallbackOptions: [{ id: "effort", value: "not-advertised" }],
+            expected: inherited,
+          },
+          {
             name: "fallback without adapter",
             target: undefined,
             adapters: [codexInstanceId],
@@ -2699,38 +2749,38 @@ describe("OrchestratorMcpService provider resolution", () => {
             projectDisablesFallback: true,
             expected: inherited,
           },
-          { name: "receipt replay", target: undefined, replay: true, expected: inherited },
         ] as const satisfies ReadonlyArray<{
           name: string;
           target: unknown;
           expected: unknown;
           codexUsage?: boolean;
+          runtimeMode?: OrchestratorMcpRuntimeMode;
           claude?: unknown;
+          fallbackOptions?: ReadonlyArray<{ id: string; value: string }>;
           adapters?: ReadonlyArray<ProviderInstanceId>;
           projectDisablesFallback?: boolean;
-          replay?: boolean;
         }>;
         for (const testCase of cases) {
-          const commands: Array<unknown> = [];
+          const commands: Array<{ commandId: unknown; modelSelection: unknown }> = [];
+          const expected = testCase.expected;
+          const savedFallback =
+            "fallbackOptions" in testCase
+              ? { ...fallback, options: testCase.fallbackOptions }
+              : fallback;
           const task = {
             id: taskId,
             threadId: parentThreadId,
             origin: "app_owned",
             childThreadId,
-            providerInstanceId: testCase.expected.instanceId,
-            model: testCase.expected.model,
+            providerInstanceId: "error" in expected ? codexInstanceId : expected.instanceId,
+            model: "error" in expected ? inherited.model : expected.model,
             status: "running",
             result: null,
           };
-          const codex = providerSnapshot({
-            instanceId: codexInstanceId,
-            driver: ProviderDriverKind.make("codex"),
-            model: inherited.model,
-          });
           const dependencies = Layer.mergeAll(
             NodeServices.layer,
             Layer.mock(ThreadManagementService.ThreadManagementService)({
-              hasReceipt: () => Effect.succeed("replay" in testCase),
+              hasReceipt: () => Effect.sync(() => commands.length > 0),
               assertProviderInstanceEnabled: () => Effect.void,
               isProviderInstanceEnabledForProject: () => Effect.succeed(true),
               getThreadRecords: (threadId) =>
@@ -2741,7 +2791,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 ),
               dispatch: (command) =>
                 Effect.sync(() => {
-                  commands.push(command);
+                  commands.push(command as never);
                   return {
                     sequence: 1,
                     storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
@@ -2749,7 +2799,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 }),
             }),
             ServerSettings.layerTest({
-              fallbackModelSelection: fallback,
+              fallbackModelSelection: savedFallback,
               ...("projectDisablesFallback" in testCase
                 ? {
                     projectSettingsOverrides: {
@@ -2774,33 +2824,48 @@ describe("OrchestratorMcpService provider resolution", () => {
           );
           yield* Effect.gen(function* () {
             const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+            const settings = yield* ServerSettings.ServerSettingsService;
             const capabilities = yield* service.capabilities(scope);
             assert.deepEqual(
               capabilities.fallback,
               {
-                providerInstanceId: fallback.instanceId,
-                model: fallback.model,
-                options: fallback.options,
-                active: !["codexUsage", "claude", "adapters", "projectDisablesFallback"].some(
-                  (key) => key in testCase,
-                ),
+                providerInstanceId: savedFallback.instanceId,
+                model: savedFallback.model,
+                options: savedFallback.options,
+                active: ![
+                  "codexUsage",
+                  "claude",
+                  "fallbackOptions",
+                  "adapters",
+                  "projectDisablesFallback",
+                ].some((key) => key in testCase),
               },
               testCase.name,
             );
-            yield* service.delegateTask(scope, {
+            const request = {
               task: "Review the change.",
               ...(testCase.target === undefined
                 ? {}
                 : { target: yield* decodeTarget(testCase.target) }),
-              mode: "async",
+              ...("runtimeMode" in testCase ? { runtimeMode: testCase.runtimeMode } : {}),
+              mode: "async" as const,
               clientRequestId: testCase.name,
-            });
-            assert.deepEqual(
-              (commands[0] as { modelSelection: unknown }).modelSelection,
-              testCase.expected,
-              testCase.name,
-            );
-          }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+            };
+            if ("error" in expected) {
+              const error = yield* service.delegateTask(scope, request).pipe(Effect.flip);
+              assert.equal(error.code, expected.error, testCase.name);
+              assert.equal(commands.length, 0, testCase.name);
+              return;
+            }
+            yield* service.delegateTask(scope, request);
+            assert.deepEqual(commands[0]?.modelSelection, expected, testCase.name);
+
+            // The retry replays the accepted task even though the fallback has since been cleared.
+            yield* settings.updateSettings({ fallbackModelSelection: null });
+            yield* service.delegateTask(scope, request);
+            assert.equal(commands.length, 2, testCase.name);
+            assert.equal(commands[1]?.commandId, commands[0]?.commandId, testCase.name);
+          }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provideMerge(dependencies))));
         }
       }),
   );

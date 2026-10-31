@@ -639,7 +639,7 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
       providerInstanceId: ProviderInstanceId,
       model: Schema.String,
       options: Schema.optional(Schema.Array(ProviderOptionSelection)),
-      /** The inherited model is out of usage and this one can run, so a target without provider, driver, or model uses it. */
+      /** The inherited model is out of usage and this one can run, so a delegate_task target without provider, driver, or model uses it. */
       active: Schema.Boolean,
     }),
   ),

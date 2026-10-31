@@ -393,11 +393,17 @@ function activeFallback(input: {
   });
   if (fallback === null || selection === null) return undefined;
   const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
-  return provider !== undefined &&
+  if (
+    provider === undefined ||
     providerConstraints(provider, input.orchestrationCapableInstanceIds.has(provider.instanceId))
-      .length === 0 &&
-    (provider.models.length === 0 ||
-      provider.models.some((model) => model.slug === selection.model))
+      .length > 0
+  ) {
+    return undefined;
+  }
+  const model = provider.models.find((entry) => entry.slug === selection.model);
+  return (provider.models.length === 0 || model !== undefined) &&
+    invalidOptionSelections(selection.options ?? [], model?.capabilities?.optionDescriptors)
+      .length === 0
     ? selection
     : undefined;
 }
@@ -1323,8 +1329,10 @@ const make = Effect.gen(function* () {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
-    /** Receipt replays bypass current settings, including the fallback, because they start no work. Dispatch must reuse the checked command ID. */
+    /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
     readonly skipProjectEnablementFilter?: boolean;
+    /** Use the configured fallback when the target leaves provider, driver, and model to inheritance. */
+    readonly applyFallback?: boolean;
   }): Effect.fn.Return<ResolvedTarget, OrchestratorMcpFailure> {
     const requestedInstanceId = input.target?.providerInstanceId;
     const requestedDriver = input.target?.driverKind;
@@ -1334,7 +1342,7 @@ const make = Effect.gen(function* () {
       (requestedInstanceId === undefined &&
       requestedDriver === undefined &&
       requestedModel === undefined &&
-      input.skipProjectEnablementFilter !== true
+      input.applyFallback === true
         ? activeFallback({
             parent: input.parent,
             providers: input.providers,
@@ -2332,21 +2340,30 @@ const make = Effect.gen(function* () {
         operation: "delegate-task",
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
-      const target = yield* resolveTargetRechecking({
-        parent,
-        target: input.target,
-        providers,
-        skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
-      });
-      const runtimeMode = yield* resolveRuntimeMode(
-        parent.thread.runtimeMode,
-        input.runtimeMode,
-        target,
-      );
-      const interactionMode = yield* resolveInteractionMode(
-        parent.thread.interactionMode,
-        input.interactionMode,
-      );
+      // The receipt replays the committed task and ignores this payload, so a retry
+      // skips checks that changed settings or provider metadata could now fail.
+      const { modelSelection, runtimeMode, interactionMode } = isRetryOfAcceptedDelegation
+        ? parent.thread
+        : yield* Effect.gen(function* () {
+            const target = yield* resolveTargetRechecking({
+              parent,
+              target: input.target,
+              providers,
+              applyFallback: true,
+            });
+            return {
+              modelSelection: target.modelSelection,
+              runtimeMode: yield* resolveRuntimeMode(
+                parent.thread.runtimeMode,
+                input.runtimeMode,
+                target,
+              ),
+              interactionMode: yield* resolveInteractionMode(
+                parent.thread.interactionMode,
+                input.interactionMode,
+              ),
+            };
+          });
       let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
       if (input.isolation === "worktree" && !isRetryOfAcceptedDelegation) {
         const project = yield* requireProject(parent.thread.projectId);
@@ -2391,7 +2408,7 @@ const make = Effect.gen(function* () {
           parentNodeId: parentRun.rootNodeId,
           task: taskPrompt(input),
           ...(input.title === undefined ? {} : { title: input.title }),
-          modelSelection: target.modelSelection,
+          modelSelection,
           runtimeMode,
           interactionMode,
           ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
