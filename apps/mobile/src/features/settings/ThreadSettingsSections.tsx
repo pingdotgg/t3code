@@ -1,10 +1,6 @@
+import { codexAutoResetSettingsInstances } from "@t3tools/shared/serverSettings";
 import { Button } from "../../components/ui/Button";
-import {
-  AuthSettingsWriteScope,
-  ProviderDriverKind,
-  ProviderInstanceId,
-  type ServerSettingsPatch,
-} from "@t3tools/contracts";
+import { AuthSettingsWriteScope, type ServerSettingsPatch } from "@t3tools/contracts";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { AutoSettleDaysField } from "./components/AutoSettleDaysField";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
@@ -81,18 +77,7 @@ export function AutoSettleSettingsRows(props: {
     return null;
   }
 
-  const codexInstances = Object.entries(referenceSettings.providerInstances).filter(
-    ([, instance]) => {
-      if (instance.driver !== ProviderDriverKind.make("codex")) return false;
-      const config = instance.config;
-      return !(
-        typeof config === "object" &&
-        config !== null &&
-        "setupMode" in config &&
-        config.setupMode === "managed"
-      );
-    },
-  );
+  const codexInstances = codexAutoResetSettingsInstances(referenceSettings);
 
   const writeToAll = (
     patch: Partial<AutoSettleSettings> & {
@@ -142,8 +127,7 @@ export function AutoSettleSettingsRows(props: {
               Select one server to change per-account reset settings.
             </Text>
           ) : displayTargets.length === 1 ? (
-            codexInstances.map(([rawInstanceId, instance]) => {
-              const instanceId = ProviderInstanceId.make(rawInstanceId);
+            codexInstances.map(([instanceId, instance]) => {
               return (
                 <SettingsSwitchRow
                   key={instanceId}

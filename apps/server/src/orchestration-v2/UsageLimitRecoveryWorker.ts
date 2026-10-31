@@ -273,9 +273,8 @@ export const makeSweep = Effect.gen(function* () {
           DateTime.makeUnsafe(nowMs + AUTO_REDEEM_RETRY_BACKOFF_MS),
         );
         yield* projections.updateCodexResetAttempt({ ...row, nextCheckAt });
-        let driverAllowanceCleared = false;
-        let driverCheckedAt: string | undefined;
-        let driverLimitsMatch = false;
+        let driverAllowanceCleared = row.allowanceCleared;
+        let driverCheckedAt = row.checkedAt;
         for (const candidate of candidatesForGroup) {
           const instanceId = candidate.providerInstanceId;
           let candidateProvider = knownProviders.get(instanceId);
@@ -301,18 +300,20 @@ export const makeSweep = Effect.gen(function* () {
           const limits = candidateProvider?.usageLimits;
           const checkedAt =
             limits?.credentialFingerprint === fingerprint ? limits.checkedAt : undefined;
-          const freshAndClear =
+          const freshCheck =
             candidateProvider?.driver === "codex" &&
             limits?.credentialFingerprint === fingerprint &&
             checkedAt !== undefined &&
             Date.parse(checkedAt) > Date.parse(row.attemptedAt) &&
-            limits.unavailable === undefined &&
+            limits.unavailable === undefined;
+          const freshAndClear =
+            freshCheck &&
+            candidateProvider !== undefined &&
             exhaustedUsageWindow(candidateProvider, nowMs, candidate.modelSelection.model) ===
               undefined;
-          if (candidate.id === driverThread.id) {
+          if (candidate.id === driverThread.id && freshCheck) {
             driverAllowanceCleared = freshAndClear;
             driverCheckedAt = checkedAt;
-            driverLimitsMatch = limits?.credentialFingerprint === fingerprint;
           }
           const report = {
             providerInstanceId: candidate.providerInstanceId,
@@ -363,9 +364,7 @@ export const makeSweep = Effect.gen(function* () {
         yield* projections.updateCodexResetAttempt({
           ...row,
           allowanceCleared: driverAllowanceCleared,
-          ...(driverLimitsMatch && driverCheckedAt !== undefined
-            ? { checkedAt: driverCheckedAt }
-            : {}),
+          ...(driverCheckedAt !== undefined ? { checkedAt: driverCheckedAt } : {}),
           nextCheckAt,
         });
         retryAt = Math.min(retryAt ?? Infinity, nowMs + AUTO_REDEEM_RETRY_BACKOFF_MS);

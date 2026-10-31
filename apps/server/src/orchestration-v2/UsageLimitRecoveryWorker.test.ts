@@ -203,157 +203,173 @@ it.effect("reports the driver's fresh redemption timestamp and credit count", ()
   }),
 );
 
-it.effect("resumes a cleared account instance after a reset while the driver remains limited", () =>
-  Effect.gen(function* () {
-    yield* TestClock.setTime(nowMs);
-    const base = failedThread(0, -HOUR_MS);
-    const driverInstanceId = base.providerInstanceId;
-    const secondInstanceId = ProviderInstanceId.make("provider-codex-second-instance");
-    const fingerprint = "codex-account:follow-up";
-    const attemptedAt = DateTime.formatIso(DateTime.makeUnsafe(nowMs - 120_000));
-    const checkedAt = DateTime.formatIso(DateTime.makeUnsafe(nowMs - 60_000));
-    const threadFor = (input: { readonly id: string; readonly instanceId: ProviderInstanceId }) => {
-      const threadId = ThreadId.make(input.id);
-      const runId = RunId.make(`run:${input.id}`);
-      return {
-        ...base,
-        id: threadId,
-        providerInstanceId: input.instanceId,
-        modelSelection: { ...base.modelSelection, instanceId: input.instanceId },
-        latestRunId: runId,
-        limitRecovery: {
-          runId,
-          resetAt: base.usageLimitResetAt!,
-          autoResume: true,
-          codexResetRedemption: {
-            providerInstanceId: input.instanceId,
-            redeemedByProviderInstanceId: driverInstanceId,
-            accountFingerprint: fingerprint,
-            idempotencyKey: "codex-auto-reset:follow-up",
-            attemptedAt,
-            creditsBefore: 1,
-            outcome: "reset" as const,
-            checkedAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs - 180_000)),
-            allowanceCleared: false,
+it.effect.each(["limited", "probeFailed", "stale"] as const)(
+  "resumes another instance and preserves ledger proof when the driver is %s",
+  (probe) =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(nowMs);
+      const base = failedThread(0, -HOUR_MS);
+      const driverInstanceId = base.providerInstanceId;
+      const secondInstanceId = ProviderInstanceId.make("provider-codex-second-instance");
+      const fingerprint = "codex-account:follow-up";
+      const attemptedAt = DateTime.formatIso(DateTime.makeUnsafe(nowMs - 120_000));
+      const checkedAt = DateTime.formatIso(DateTime.makeUnsafe(nowMs - 60_000));
+      const threadFor = (input: {
+        readonly id: string;
+        readonly instanceId: ProviderInstanceId;
+      }) => {
+        const threadId = ThreadId.make(input.id);
+        const runId = RunId.make(`run:${input.id}`);
+        return {
+          ...base,
+          id: threadId,
+          providerInstanceId: input.instanceId,
+          modelSelection: { ...base.modelSelection, instanceId: input.instanceId },
+          latestRunId: runId,
+          limitRecovery: {
+            runId,
+            resetAt: base.usageLimitResetAt!,
+            autoResume: true,
+            codexResetRedemption: {
+              providerInstanceId: input.instanceId,
+              redeemedByProviderInstanceId: driverInstanceId,
+              accountFingerprint: fingerprint,
+              idempotencyKey: "codex-auto-reset:follow-up",
+              attemptedAt,
+              creditsBefore: 1,
+              outcome: "reset" as const,
+              checkedAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs - 180_000)),
+              allowanceCleared: false,
+            },
           },
-        },
+        };
       };
-    };
-    const driverThread = threadFor({ id: "thread:follow-up-driver", instanceId: driverInstanceId });
-    const secondThread = threadFor({ id: "thread:follow-up-second", instanceId: secondInstanceId });
-    const candidates = [driverThread, secondThread];
-    const previousAttempt: ProjectionStore.CodexResetAttempt = {
-      accountFingerprint: fingerprint,
-      resetAt: base.usageLimitResetAt!,
-      idempotencyKey: "codex-auto-reset:follow-up",
-      attemptedAt,
-      outcome: "reset",
-      allowanceCleared: false,
-      checkedAt,
-      nextCheckAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs - 1_000)),
-    };
-    const ledger = yield* Ref.make(previousAttempt);
-    const cachedProvider = (instanceId: ProviderInstanceId) =>
-      ({
-        instanceId,
-        driver: ProviderDriverKind.make("codex"),
+      const driverThread = threadFor({
+        id: "thread:follow-up-driver",
+        instanceId: driverInstanceId,
+      });
+      const secondThread = threadFor({
+        id: "thread:follow-up-second",
+        instanceId: secondInstanceId,
+      });
+      const candidates = [driverThread, secondThread];
+      const previousAttempt: ProjectionStore.CodexResetAttempt = {
+        accountFingerprint: fingerprint,
+        resetAt: base.usageLimitResetAt!,
+        idempotencyKey: "codex-auto-reset:follow-up",
+        attemptedAt,
+        outcome: "reset",
+        allowanceCleared: true,
+        checkedAt,
+        nextCheckAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs - 1_000)),
+      };
+      const ledger = yield* Ref.make(previousAttempt);
+      const cachedProvider = (instanceId: ProviderInstanceId) =>
+        ({
+          instanceId,
+          driver: ProviderDriverKind.make("codex"),
+          usageLimits: {
+            credentialFingerprint: fingerprint,
+            checkedAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs - 180_000)),
+            windows: [],
+            resetCredits: { availableCount: 1 },
+          },
+        }) as unknown as ServerProvider;
+      const refreshedDriver = {
+        ...cachedProvider(driverInstanceId),
         usageLimits: {
           credentialFingerprint: fingerprint,
-          checkedAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs - 180_000)),
+          checkedAt,
+          windows: [
+            {
+              id: "session",
+              label: "Session",
+              usedPercent: 100,
+              resetsAt: base.usageLimitResetAt,
+            },
+          ],
+          resetCredits: { availableCount: 1 },
+        },
+      } as unknown as ServerProvider;
+      const refreshedSecond = {
+        ...cachedProvider(secondInstanceId),
+        usageLimits: {
+          credentialFingerprint: fingerprint,
+          checkedAt,
           windows: [],
           resetCredits: { availableCount: 1 },
         },
-      }) as unknown as ServerProvider;
-    const refreshedDriver = {
-      ...cachedProvider(driverInstanceId),
-      usageLimits: {
-        credentialFingerprint: fingerprint,
-        checkedAt,
-        windows: [
-          {
-            id: "session",
-            label: "Session",
-            usedPercent: 100,
-            resetsAt: base.usageLimitResetAt,
-          },
-        ],
-        resetCredits: { availableCount: 1 },
-      },
-    } as unknown as ServerProvider;
-    const refreshedSecond = {
-      ...cachedProvider(secondInstanceId),
-      usageLimits: {
-        credentialFingerprint: fingerprint,
-        checkedAt,
-        windows: [],
-        resetCredits: { availableCount: 1 },
-      },
-    } as unknown as ServerProvider;
-    const reports = yield* Ref.make<
-      ReadonlyArray<{
-        readonly threadId: ThreadId;
-        readonly report: NonNullable<OrchestrationV2LimitRecovery["codexResetRedemption"]>;
-      }>
-    >([]);
-    const dispatches = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
-    const layer = Layer.mergeAll(
-      Layer.succeed(ProjectionStore.ProjectionStoreV2, {
-        getLimitRecoveryCandidates: () => Effect.succeed(candidates),
-        getLimitRecoveryWakeAt: () => Effect.succeed(nowMs + HOUR_MS),
-        getCodexResetAttempt: () => Ref.get(ledger),
-        updateCodexResetAttempt: (attempt: ProjectionStore.CodexResetAttempt) =>
-          Ref.set(ledger, attempt),
-      } as never),
-      Layer.mock(ThreadManagement.ThreadManagementService)({
-        dispatch: (command) =>
-          command.type === "message.dispatch"
-            ? Ref.update(dispatches, (ids) => [...ids, command.threadId]).pipe(
-                Effect.as({ sequence: 1, storedEvents: [] }),
-              )
-            : Effect.die("expected a limit continuation"),
-      }),
-      Layer.mock(Orchestrator.OrchestratorV2)({
-        streamDomainEvents: Stream.never,
-        recordCodexResetRedemption: (input) =>
-          Ref.update(reports, (entries) => [
-            ...entries,
-            { threadId: input.threadId, report: input.codexResetRedemption },
-          ]).pipe(Effect.as(true)),
-      }),
-      Layer.mock(ServerSettings.ServerSettingsService)({
-        getSettings: Effect.succeed({
-          autoResumeLimitedThreads: true,
-          snoozeLimitedThreads: false,
-          autoRedeemCodexResetCredits: {
-            [driverInstanceId]: true,
-            [secondInstanceId]: true,
-          },
+      } as unknown as ServerProvider;
+      const reports = yield* Ref.make<
+        ReadonlyArray<{
+          readonly threadId: ThreadId;
+          readonly report: NonNullable<OrchestrationV2LimitRecovery["codexResetRedemption"]>;
+        }>
+      >([]);
+      const dispatches = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
+      const layer = Layer.mergeAll(
+        Layer.succeed(ProjectionStore.ProjectionStoreV2, {
+          getLimitRecoveryCandidates: () => Effect.succeed(candidates),
+          getLimitRecoveryWakeAt: () => Effect.succeed(nowMs + HOUR_MS),
+          getCodexResetAttempt: () => Ref.get(ledger),
+          updateCodexResetAttempt: (attempt: ProjectionStore.CodexResetAttempt) =>
+            Ref.set(ledger, attempt),
         } as never),
-        streamChanges: Stream.never,
-      }),
-      Layer.mock(ProviderRegistry.ProviderRegistry)({
-        getProviders: Effect.succeed([
-          cachedProvider(driverInstanceId),
-          cachedProvider(secondInstanceId),
-        ]),
-        refreshInstance: (instanceId) =>
-          Effect.succeed([instanceId === driverInstanceId ? refreshedDriver : refreshedSecond]),
-        supportsAutoRedeemResetCredit: () => Effect.succeed(true),
-      }),
-    );
-    const sweep = yield* UsageLimitRecoveryWorker.makeSweep.pipe(Effect.provide(layer));
-    yield* sweep();
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          dispatch: (command) =>
+            command.type === "message.dispatch"
+              ? Ref.update(dispatches, (ids) => [...ids, command.threadId]).pipe(
+                  Effect.as({ sequence: 1, storedEvents: [] }),
+                )
+              : Effect.die("expected a limit continuation"),
+        }),
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          streamDomainEvents: Stream.never,
+          recordCodexResetRedemption: (input) =>
+            Ref.update(reports, (entries) => [
+              ...entries,
+              { threadId: input.threadId, report: input.codexResetRedemption },
+            ]).pipe(Effect.as(true)),
+        }),
+        Layer.mock(ServerSettings.ServerSettingsService)({
+          getSettings: Effect.succeed({
+            autoResumeLimitedThreads: true,
+            snoozeLimitedThreads: false,
+            autoRedeemCodexResetCredits: {
+              [driverInstanceId]: true,
+              [secondInstanceId]: true,
+            },
+          } as never),
+          streamChanges: Stream.never,
+        }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([
+            cachedProvider(driverInstanceId),
+            cachedProvider(secondInstanceId),
+          ]),
+          refreshInstance: (instanceId) =>
+            instanceId === driverInstanceId
+              ? probe === "probeFailed"
+                ? Effect.die("fixture probe failed")
+                : Effect.succeed([probe === "stale" ? cachedProvider(instanceId) : refreshedDriver])
+              : Effect.succeed([refreshedSecond]),
+          supportsAutoRedeemResetCredit: () => Effect.succeed(true),
+        }),
+      );
+      const sweep = yield* UsageLimitRecoveryWorker.makeSweep.pipe(Effect.provide(layer));
+      yield* sweep();
 
-    const results = yield* Ref.get(reports);
-    const driverReport = results.find((entry) => entry.threadId === driverThread.id);
-    const secondReport = results.find((entry) => entry.threadId === secondThread.id);
-    assert.isDefined(driverReport);
-    assert.isDefined(secondReport);
-    assert.isFalse(driverReport.report.allowanceCleared);
-    assert.isTrue(secondReport.report.allowanceCleared);
-    assert.equal(secondReport.report.checkedAt, checkedAt);
-    assert.deepEqual(yield* Ref.get(dispatches), [secondThread.id]);
-  }),
+      const results = yield* Ref.get(reports);
+      const driverReport = results.find((entry) => entry.threadId === driverThread.id);
+      const secondReport = results.find((entry) => entry.threadId === secondThread.id);
+      assert.isDefined(driverReport);
+      assert.isDefined(secondReport);
+      assert.isFalse(driverReport.report.allowanceCleared);
+      assert.isTrue(secondReport.report.allowanceCleared);
+      assert.equal(secondReport.report.checkedAt, checkedAt);
+      assert.deepEqual(yield* Ref.get(dispatches), [secondThread.id]);
+      assert.equal((yield* Ref.get(ledger)).allowanceCleared, probe !== "limited");
+    }),
 );
 
 it.effect(
