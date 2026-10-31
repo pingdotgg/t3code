@@ -1,21 +1,5 @@
-/**
- * PluginEvents - The curated event projection delivered to plugins that
- * declare the `events` capability.
- *
- * The server reads its durable event log for each such plugin from a
- * persisted, per-installation cursor and hands the plugin small, ordered
- * pages. A page is acknowledged only when the plugin's handlers return for
- * every event in it; the cursor then moves past the page. Delivery is
- * at-least-once: a crash or failure after a side effect and before the
- * acknowledgement delivers the same events again, so handlers deduplicate by
- * `deliveryId`.
- *
- * The projection carries identifiers, outcomes and the thread title, never
- * message bodies. New event types and new optional fields are additive:
- * handlers must ignore types they do not know.
- *
- * @module PluginEvents
- */
+// At-least-once delivery requires deduplication by deliveryId; the projection omits message bodies.
+// Handlers must ignore additive event types and optional fields.
 import * as Schema from "effect/Schema";
 
 import {
@@ -105,17 +89,8 @@ export type PluginEventPage = typeof PluginEventPage.Type;
 
 const PluginEventDeliveryReason = Schema.String.check(Schema.isMaxLength(1000));
 
-/**
- * How delivery to one enabled installation that declares `events` is going.
- * It is separate from the plugin process's state: a running plugin can have
- * quarantined delivery. `plugins.resume` clears both.
- *
- * - `active`: delivering, or waiting for the next event.
- * - `retrying`: a page failed; the same page is tried again at `retryAt`.
- * - `quarantined`: stopped in front of a page after `failures` consecutive
- *   failures, or in front of an event the server cannot read (`failures` 0).
- *   Nothing is delivered until resume, a re-enable, or a server restart.
- */
+// Delivery quarantine is independent of process state; resume clears both.
+// Unreadable events quarantine with zero failures; retrying retains the same page until acknowledgment.
 export const PluginEventDeliveryState = Schema.Union([
   Schema.TaggedStruct("active", {}),
   Schema.TaggedStruct("retrying", {

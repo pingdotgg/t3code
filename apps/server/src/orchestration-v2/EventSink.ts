@@ -357,13 +357,8 @@ const layerBase: Layer.Layer<
         LIMIT 1
       `.pipe(Effect.map((rows) => rows.length > 0));
 
-    // A run records one finalization. A run whose checkpoint capture is due,
-    // running or done finalizes through RunFinalizationService. A run that
-    // never enqueued one finalizes in the commit that writes its terminal
-    // status, and one whose capture was abandoned without a record reports
-    // that failure there instead. Events are checked against stored state so
-    // a repeated write cannot record twice.
-    // The enclosing EventSink operation already traces this persistence work.
+    // Capture runs finalize through RunFinalizationService; uncaptured or abandoned runs finalize with their terminal write.
+    // Stored state prevents duplicate milestones; the enclosing EventSink operation owns tracing.
     const withRunFinalizedEvents = Effect.fnUntraced(function* (
       events: ReadonlyArray<OrchestrationV2DomainEvent>,
       effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>,
@@ -378,7 +373,7 @@ const layerBase: Layer.Layer<
           (effect) =>
             effect.request.type === "checkpoint.capture" && effect.request.runId === runId,
         )
-          ? Effect.succeed(Option.some<EffectOutbox.OrchestrationEffectStatusV2>("pending"))
+          ? Effect.succeedSome<EffectOutbox.OrchestrationEffectStatusV2>("pending")
           : effectOutbox
               .get(RunFinalized.checkpointCaptureEffectId(runId))
               .pipe(Effect.map(Option.map((effect) => effect.status)));

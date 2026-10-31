@@ -1,25 +1,5 @@
-/**
- * Delivers the curated event projection (contracts `PluginEvent`) to every
- * enabled plugin that declares the `events` capability.
- *
- * Each such installation has a durable cursor: the event log sequence it has
- * acknowledged through. Its worker reads the log after the cursor in bounded
- * windows and pages, calls the plugin's `t3.events` handler through the
- * catalogue, and moves the cursor past a page only after the plugin answered
- * it. A failed page is retried with backoff and, after `maxFailures`
- * consecutive failures, the worker is quarantined with the cursor unchanged
- * until `plugins.resume`, a re-enable, or a server restart. Delivery is
- * at-least-once. Each worker reports its state through `PluginEventDelivery`,
- * which the catalogue shows as the installation's `eventDelivery`.
- *
- * The cursor starts at the end of the log when an installation is first
- * enabled (the catalogue records it with the enable, through
- * `PluginEventDelivery`), so a new plugin sees exactly the later events. It
- * belongs to the installation: disable and re-enable, consent to changed
- * bytes, and restarts continue from it; remove forgets it. Workers never
- * subscribe to raw events: a commit of a projected event type only wakes
- * them, and they read the store.
- */
+// Delivery is at-least-once: acknowledge a page only after every handler returns; quarantine leaves its cursor unchanged.
+// Enable sets the initial cursor transactionally; disable and restarts retain it, while removal forgets it.
 import {
   OrchestrationV2RunFinalizationFailed,
   OrchestrationV2RunFinalized,
@@ -624,12 +604,13 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
   );
 
   return PluginEventFeed.of({
-    status: (installationId) =>
+    status: Effect.fn("PluginEventFeed.status")((installationId) =>
       Effect.sync(() =>
         Option.fromNullishOr(workers.get(installationId)).pipe(
           Option.map(({ generation, cursor, state }) => ({ generation, cursor, state })),
         ),
       ),
+    ),
     subscribe: PubSub.subscribe(receipts),
   });
 });
