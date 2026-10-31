@@ -4,6 +4,7 @@ import {
   resetVoiceInputGlobalsForTests,
   resolveTranscriptCommit,
   VoiceInputController,
+  voiceInputBlocksSubmission,
   VOICE_RECORDING_LIMIT_SECONDS,
   type VoiceDraftSnapshot,
   type VoiceInputControllerDependencies,
@@ -88,6 +89,7 @@ describe("resolveTranscriptCommit", () => {
       kind: "commit",
       text: "Fix 🧪 then use the mobile skill please",
       selection: { start: tokenStart + "use the mobile skill".length, end: tokenStart + 20 },
+      inserted: { start: tokenStart, end: tokenStart + 20 },
     });
   });
 
@@ -103,6 +105,97 @@ describe("resolveTranscriptCommit", () => {
     });
     expect(resolveTranscriptCommit(captured, draft({ revision: 2 }), "text", "en-US")).toEqual({
       kind: "stale",
+    });
+  });
+
+  it("adds English spacing at empty start, middle, and end caret boundaries", () => {
+    const atEnd = draft({
+      text: "Fix cache.",
+      selection: { start: "Fix cache.".length, end: "Fix cache.".length },
+    });
+    expect(resolveTranscriptCommit(atEnd, atEnd, "Also fix tests.", "en-US")).toMatchObject({
+      kind: "commit",
+      text: "Fix cache. Also fix tests.",
+    });
+    expect(resolveTranscriptCommit(atEnd, atEnd, "Also fix tests.", "en_US")).toMatchObject({
+      kind: "commit",
+      text: "Fix cache. Also fix tests.",
+    });
+
+    const atStart = draft({ text: "Fix cache.", selection: { start: 0, end: 0 } });
+    expect(resolveTranscriptCommit(atStart, atStart, "First", "en-US")).toMatchObject({
+      kind: "commit",
+      text: "First Fix cache.",
+    });
+
+    const inMiddle = draft({ text: "Fix cache.", selection: { start: 4, end: 4 } });
+    expect(resolveTranscriptCommit(inMiddle, inMiddle, "also", "en-US")).toMatchObject({
+      kind: "commit",
+      text: "Fix also cache.",
+    });
+  });
+
+  it("capitalizes text that starts the draft, a line, or a sentence, and nothing else", () => {
+    const at = (text: string, start: number) => draft({ text, selection: { start, end: start } });
+    const empty = at("", 0);
+    expect(resolveTranscriptCommit(empty, empty, "and also tests", "en-US")).toMatchObject({
+      text: "And also tests",
+    });
+    const afterSentence = at("Fix cache. ", 11);
+    expect(
+      resolveTranscriptCommit(afterSentence, afterSentence, "then tests", "en-US"),
+    ).toMatchObject({ text: "Fix cache. Then tests" });
+    const rightAfterPeriod = at("Fix cache.", 10);
+    expect(
+      resolveTranscriptCommit(rightAfterPeriod, rightAfterPeriod, "then tests", "en-US"),
+    ).toMatchObject({ text: "Fix cache. Then tests" });
+    const afterLine = at("Fix cache\n", 10);
+    expect(resolveTranscriptCommit(afterLine, afterLine, "then tests", "en-US")).toMatchObject({
+      text: "Fix cache\nThen tests",
+    });
+    expect(resolveTranscriptCommit(empty, empty, "iOS build fails", "en-US")).toMatchObject({
+      text: "iOS build fails",
+    });
+    expect(resolveTranscriptCommit(empty, empty, "ok then", "<|en|>")).toMatchObject({
+      text: "Ok then",
+    });
+    const beforeLowercase = at("before release", 0);
+    expect(
+      resolveTranscriptCommit(beforeLowercase, beforeLowercase, "Fix the bug.", "en-US"),
+    ).toMatchObject({ text: "Fix the bug before release" });
+    const continuing = at("Fix the bug before release.", 11);
+    expect(
+      resolveTranscriptCommit(continuing, continuing, "And check the tests.", "en-US"),
+    ).toMatchObject({ text: "Fix the bug and check the tests before release." });
+    expect(resolveTranscriptCommit(continuing, continuing, "I think so.", "en-US")).toMatchObject({
+      text: "Fix the bug I think so before release.",
+    });
+    expect(
+      resolveTranscriptCommit(continuing, continuing, "Und die Tests.", "de-DE"),
+    ).toMatchObject({ text: "Fix the bugUnd die Tests before release." });
+    const beforeName = at("ask ", 4);
+    expect(
+      resolveTranscriptCommit(beforeName, beforeName, "Maria to review.", "en-US"),
+    ).toMatchObject({
+      text: "ask Maria to review.",
+    });
+    const midSentence = at("Fix the bug before release.", 11);
+    expect(resolveTranscriptCommit(midSentence, midSentence, "and tests", "en-US")).toMatchObject({
+      text: "Fix the bug and tests before release.",
+    });
+  });
+
+  it("does not add English boundary spaces to CJK or selected inline text", () => {
+    const cjk = draft({ text: "修正キャッシュ", selection: { start: 8, end: 8 } });
+    expect(resolveTranscriptCommit(cjk, cjk, "テストも", "ja-JP")).toMatchObject({
+      kind: "commit",
+      text: "修正キャッシュテストも",
+    });
+
+    const selected = draft({ text: "one $skill two", selection: { start: 4, end: 10 } });
+    expect(resolveTranscriptCommit(selected, selected, "new", "en-US")).toMatchObject({
+      kind: "commit",
+      text: "one new two",
     });
   });
 });
@@ -122,6 +215,34 @@ describe("VoiceInputController", () => {
     await denied.controller.start();
     expect(denied.controller.currentState.errorAction).toBe("settings");
     expect(denied.recorder.record).not.toHaveBeenCalled();
+  });
+
+  it("shows the platform's reason when microphone access fails", async () => {
+    const harness = createHarness({
+      requestPermission: async () => ({
+        granted: false,
+        canAskAgain: true,
+        message: "This connection is not secure, so the browser blocks the microphone.",
+      }),
+    });
+    await harness.controller.start();
+    expect(harness.controller.currentState).toEqual({
+      phase: "error",
+      error: "This connection is not secure, so the browser blocks the microphone.",
+      errorAction: "retry",
+    });
+  });
+
+  it("spaces the transcript by the locale the engine reports", async () => {
+    const transcribe = async () => ({ text: "世界", locale: "ja-JP" });
+    const harness = createHarness(
+      { getTranscriber: () => ({ prepare: async () => preparedTranscription(transcribe) }) },
+      draft({ text: "hello", selection: { start: 5, end: 5 } }),
+    );
+    await harness.controller.start();
+    await harness.controller.stop();
+    // The prepared locale is en-US, which would have inserted a boundary space.
+    expect(harness.commits).toEqual([{ text: "hello世界", selection: { start: 7, end: 7 } }]);
   });
 
   it.each(["permission", "transcription"] as const)(
@@ -217,6 +338,56 @@ describe("VoiceInputController", () => {
       expect(preparationSignals[1]).not.toBe(preparationSignals[0]);
     },
   );
+
+  it("blocks submit while voice input can still change the draft", () => {
+    expect(voiceInputBlocksSubmission({ phase: "preparing", error: null, errorAction: null })).toBe(
+      true,
+    );
+    expect(voiceInputBlocksSubmission({ phase: "recording", error: null, errorAction: null })).toBe(
+      true,
+    );
+    expect(
+      voiceInputBlocksSubmission({ phase: "transcribing", error: null, errorAction: null }),
+    ).toBe(true);
+    expect(voiceInputBlocksSubmission({ phase: "idle", error: null, errorAction: null })).toBe(
+      false,
+    );
+  });
+
+  it("finishes a stop requested during preparation once recording starts", async () => {
+    const preparation = deferred<PreparedVoiceTranscription>();
+    const finished = deferred<void>();
+    const harness = createHarness({
+      getTranscriber: () => ({ prepare: () => preparation.promise }),
+      commitDraft: () => finished.resolve(undefined),
+    });
+    const starting = harness.controller.start();
+    await vi.waitFor(() => expect(harness.controller.currentState.phase).toBe("preparing"));
+    void harness.controller.stop();
+
+    preparation.resolve(preparedTranscription());
+    await starting;
+    await finished.promise;
+    expect(harness.recorder.record).toHaveBeenCalledOnce();
+    expect(harness.recorder.stop).toHaveBeenCalledOnce();
+  });
+
+  it("does not finish a requested stop after the recording is canceled", async () => {
+    const preparation = deferred<PreparedVoiceTranscription>();
+    const harness = createHarness({
+      getTranscriber: () => ({ prepare: () => preparation.promise }),
+    });
+    const starting = harness.controller.start();
+    await vi.waitFor(() => expect(harness.controller.currentState.phase).toBe("preparing"));
+    void harness.controller.stop();
+    harness.controller.cancel();
+
+    preparation.resolve(preparedTranscription());
+    await starting;
+    await harness.controller.start();
+    expect(harness.controller.currentState.phase).toBe("recording");
+    expect(harness.commits).toEqual([]);
+  });
 
   it("uses the native five-minute cap and commits one final transcript", async () => {
     const harness = createHarness();

@@ -3,9 +3,20 @@ export type VoiceTranscriptionOptions = {
   readonly signal: AbortSignal;
 };
 
+/** Text with the language an engine detected while transcribing it. */
+export type VoiceTranscript = {
+  readonly text: string;
+  readonly locale: string;
+};
+
+/** Binds a recording to its selected implementation and resolved locale. */
 export type PreparedVoiceTranscription = {
   readonly locale: string;
-  readonly transcribe: (uri: string, options: VoiceTranscriptionOptions) => Promise<string>;
+  /** A `VoiceTranscript` locale replaces `locale` when the engine detects the language itself. */
+  readonly transcribe: (
+    uri: string,
+    options: VoiceTranscriptionOptions,
+  ) => Promise<string | VoiceTranscript>;
 };
 
 export type VoiceTranscriber = {

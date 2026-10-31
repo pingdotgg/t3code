@@ -36,6 +36,7 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
+import { installMainWindowPermissions } from "./MainWindowPermissions.ts";
 
 const TITLEBAR_HEIGHT = 40;
 // Match --workspace-topbar-height in apps/web/src/index.css; native macOS buttons stay 14 points at any zoom.
@@ -408,6 +409,7 @@ export const make = Effect.gen(function* () {
     }
 
     yield* rendererHistory.register(window.webContents, { surface: "main" });
+    installMainWindowPermissions(window.webContents, environment.platform);
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
     }

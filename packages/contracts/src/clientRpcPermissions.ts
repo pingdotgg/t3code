@@ -60,6 +60,13 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRotateWebhookToken]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
+  [WS_METHODS.dictationInstall]: AuthOrchestrationOperateScope,
+  [WS_METHODS.dictationRemove]: AuthOrchestrationOperateScope,
+  [WS_METHODS.dictationStart]: AuthOrchestrationOperateScope,
+  [WS_METHODS.dictationWarm]: AuthOrchestrationOperateScope,
+  [WS_METHODS.dictationAppend]: AuthOrchestrationOperateScope,
+  [WS_METHODS.dictationFinish]: AuthOrchestrationOperateScope,
+  [WS_METHODS.dictationCancel]: AuthOrchestrationOperateScope,
   // Force stop kills agent processes, as Stop on a terminal does.
   [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: AuthOrchestrationOperateScope,
   // A guest link hands thread access to someone outside, like a pairing link.

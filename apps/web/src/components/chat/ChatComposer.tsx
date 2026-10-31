@@ -1,3 +1,4 @@
+import { closeSkillTokenAtCursor, replaceSpokenSkills } from "@t3tools/shared/inlineSkills";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
@@ -134,7 +135,13 @@ import {
 } from "../../lib/attachmentUploadQueue";
 import { attachmentUploadBlockReason } from "../../lib/attachmentUploadState";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
-import { shortcutLabelForCommand } from "../../keybindings";
+import { isCommandPaletteOpen } from "../../commandPaletteBus";
+import { isInSideChatPane } from "../../lib/sideChatPane";
+import {
+  resolveShortcutCommand,
+  shortcutLabelForCommand,
+  type ShortcutMatchContext,
+} from "../../keybindings";
 import {
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -200,6 +207,9 @@ import {
   ComposerRestingImagePreviews,
 } from "./ComposerAttachmentStrip";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
+import { ComposerDictationControl } from "./ComposerDictationControl";
+import { useComposerDictation } from "../../dictation/useComposerDictation";
+import { useDictationHoldShortcut } from "../../dictation/useDictationHoldShortcut";
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
@@ -255,6 +265,7 @@ import {
 } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { ContextWindowSnapshot } from "../../lib/contextWindow";
 import {
+  isProviderSkillUserInvocable,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
@@ -348,6 +359,7 @@ export interface ChatComposerHandle {
 }
 
 export interface ChatComposerProps {
+  getShortcutContext: (target: EventTarget | null) => Partial<ShortcutMatchContext>;
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
   canOperateThread: boolean;
@@ -918,7 +930,52 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderEntry?.snapshot,
     selectedModel,
   );
+  // These callbacks run after recording, once the handlers declared below exist.
+  const dictationInsertedRangeRef = useRef<{ start: number; end: number } | null>(null);
+  const dictation = useComposerDictation({
+    ownerKey: `${composerDraftTargetKey}:${activePendingProgress?.activeQuestion?.id ?? "prompt"}`,
+    draftEnvironmentId: environmentId,
+    // Spoken "review skill" becomes a $review chip, matching what typing would insert.
+    rewriteTranscript: (text) =>
+      replaceSpokenSkills(text, selectedProviderSkills.filter(isProviderSkillUserInvocable)),
+    readDraft: () => {
+      const text = promptRef.current;
+      return {
+        text,
+        selection: composerEditorRef.current?.readSelectionRange() ?? {
+          start: text.length,
+          end: text.length,
+        },
+      };
+    },
+    commitDraft: (text, selection, inserted) => {
+      const closed = closeSkillTokenAtCursor(
+        text,
+        selection.start,
+        selectedProviderSkills.filter(isProviderSkillUserInvocable),
+      );
+      // A space added after a trailing skill token belongs to the inserted range.
+      dictationInsertedRangeRef.current = {
+        start: inserted.start,
+        end: inserted.end + (closed.cursor - selection.start),
+      };
+      onPromptChange(
+        closed.text,
+        collapseExpandedComposerCursor(closed.text, closed.cursor, isLiteralPendingAnswer),
+        closed.cursor,
+        isLiteralPendingAnswer,
+        isLiteralPendingAnswer ? [] : collectInlineContextIds(closed.text),
+      );
+    },
+    onCommitted: () => {
+      composerEditorRef.current?.focusAt(composerCursor);
+      const inserted = dictationInsertedRangeRef.current;
+      dictationInsertedRangeRef.current = null;
+      if (inserted) composerEditorRef.current?.flashRange(inserted);
+    },
+  });
   const sendDisabledReason =
+    (dictation.active ? "Finish dictation first." : null) ??
     externalSendDisabledReason ??
     (multipleModelSelections?.length === 0 ? "Select at least one model." : null) ??
     (activePendingProgress
@@ -1014,6 +1071,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isMobileViewport = useMediaQuery("max-sm");
   const isSoftwareKeyboardOpen = useSoftwareKeyboardOpen();
   const [isComposerFocused, setIsComposerFocused] = useState(false);
+  const warmDictation = dictation.warm;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Warm the native speech model when the composer gains focus.
+  useEffect(() => {
+    if (isComposerFocused) warmDictation();
+  }, [isComposerFocused, warmDictation]);
   const [composerSubmissionError, setComposerSubmissionError] = useState<string | null>(null);
   const [providerInputSubmissionError, setProviderInputSubmissionError] = useState<string | null>(
     null,
@@ -1175,6 +1237,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const isChoiceOnlyPendingQuestion =
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
+  /** The editor refuses text for these reasons; dictation also freezes it while active. */
+  const composerTextUnavailable =
+    projectSelectionRequired || isChoiceOnlyPendingQuestion || activePendingIsResponding;
   const showComposerTopDrawer =
     pendingUserInputs.length > 0 ||
     (!isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan !== null);
@@ -2354,6 +2419,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       )
     : props.bannerItems;
 
+  useDictationHoldShortcut({
+    dictation,
+    enabled: !composerTextUnavailable,
+    isDictateShortcut: (event) =>
+      !isCommandPaletteOpen() &&
+      (backgroundThread
+        ? event.target instanceof Node && composerFormRef.current?.contains(event.target) === true
+        : !isInSideChatPane(event.target)) &&
+      resolveShortcutCommand(event, keybindings, {
+        context: props.getShortcutContext(event.target),
+      }) === "composer.dictate",
+  });
+
   const insertComposerText = (
     text: string,
     position: "cursor" | "end",
@@ -3381,11 +3459,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                 ? "Enable a provider in Settings to send a message"
                                 : DEFAULT_COMPOSER_PLACEHOLDER
                     }
-                    disabled={
-                      projectSelectionRequired ||
-                      isChoiceOnlyPendingQuestion ||
-                      activePendingIsResponding
-                    }
+                    disabled={composerTextUnavailable || dictation.active}
                   />
                 </ComposerContextActionsContext>
                 {showMobilePendingAnswerActions ? (
@@ -3442,6 +3516,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }
                   className="flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-2"
                 >
+                  <ComposerDictationControl
+                    dictation={dictation}
+                    disabled={composerTextUnavailable}
+                    shortcutLabel={shortcutLabelForCommand(keybindings, "composer.dictate")}
+                  />
                   <div
                     ref={attachExpandedComposerControls}
                     data-chat-composer-controls="footer"
