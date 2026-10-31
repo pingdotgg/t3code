@@ -41,7 +41,7 @@ it("lets keyboard users read why merging is blocked without performing a merge",
     .toHaveAccessibleDescription(
       "The repository's rules block merging until their requirements are met, such as resolving conversations",
     );
-  await expect.element(blocked).toBeDisabled();
+  await expect.element(blocked).toHaveAttribute("aria-disabled", "true");
   await userEvent.keyboard("{Enter} ");
   expect(perform).not.toHaveBeenCalled();
   await userEvent.tab();
