@@ -36,6 +36,9 @@ const HANDOFF_DELAY_MS = 2_000;
  */
 const PREPARED_TIMEOUT_MS = 30 * 60_000;
 const TERMINATE_GRACE_MS = 5_000;
+// Keep SQLite startup and journaling from turning a full filesystem into a restart loop.
+const MIN_SERVICE_START_FREE_BYTES = 64 * 1024 ** 2;
+const DISK_SPACE_RETRY_MS = 30_000;
 // Match contracts' SERVER_EXIT_CODE_STATE_DIR_OWNED without depending on Effect.
 const STATE_DIR_OWNED_EXIT_CODE = 78;
 
@@ -524,6 +527,53 @@ export class Launcher {
     this.#timer = undefined;
   }
 
+  async #serviceStartDiskSpaceBlocker(): Promise<string | undefined> {
+    const databasePath =
+      this.#state.update?.status === "pending"
+        ? this.#state.update.dbPath
+        : NodePath.join(this.#baseDir, "userdata", "statev2.sqlite");
+    const resolvedDatabasePath = await restoreTarget(databasePath).catch(() => databasePath);
+    const freeBytes = async (directory: string): Promise<number> => {
+      try {
+        return await filesystemBackupSpaceProbe.readFreeBytes(directory);
+      } catch (cause) {
+        const parent = NodePath.dirname(directory);
+        if ((cause as NodeJS.ErrnoException).code === "ENOENT" && parent !== directory) {
+          return freeBytes(parent);
+        }
+        return Number.POSITIVE_INFINITY;
+      }
+    };
+    const available = await Promise.all([
+      freeBytes(this.#baseDir),
+      freeBytes(NodePath.dirname(resolvedDatabasePath)),
+    ]);
+    const free = Math.min(...available);
+    return free < MIN_SERVICE_START_FREE_BYTES
+      ? `T3 Code needs at least ${MIN_SERVICE_START_FREE_BYTES} bytes free before starting the server; ${free} bytes available.`
+      : undefined;
+  }
+
+  async #deferForDiskSpace(retry: () => Promise<void>): Promise<boolean> {
+    if (this.#stopping || this.#stopRequested) return true;
+    const reason = await this.#serviceStartDiskSpaceBlocker();
+    if (this.#stopping || this.#stopRequested) return true;
+    if (reason === undefined) return false;
+    this.#clearTimer();
+    process.stderr.write(`[service-launcher] ${reason} Waiting for free space before retrying.\n`);
+    this.#timer = setInterval(
+      () =>
+        this.#enqueue(async () => {
+          if (this.#child !== null || this.#stopping) return;
+          if ((await this.#serviceStartDiskSpaceBlocker()) !== undefined) return;
+          this.#clearTimer();
+          await retry();
+        }),
+      DISK_SPACE_RETRY_MS,
+    );
+    return true;
+  }
+
   async #recover(): Promise<void> {
     // Clear old stop markers to preserve future tunnels; clear restart-pending only for the awaited version to avoid CLI races.
     await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
@@ -532,6 +582,7 @@ export class Launcher {
     if (awaitedVersion?.trim() === this.#state.activeVersion) {
       await NodeFSP.rm(restartPending, { force: true }).catch(() => undefined);
     }
+    if (await this.#deferForDiskSpace(() => this.#recover())) return;
     const update = this.#state.update;
     if (update?.status !== "pending") {
       if (update !== undefined) {
@@ -552,6 +603,7 @@ export class Launcher {
   }
 
   async #startTrial(pending: PendingServiceUpdate): Promise<void> {
+    if (await this.#deferForDiskSpace(() => this.#startTrial(pending))) return;
     try {
       await backupDatabaseOnce(this.#baseDir, pending);
     } catch {
@@ -567,6 +619,14 @@ export class Launcher {
 
   async #startChild(version: string, role: ChildRole, update?: ServiceUpdateRecord): Promise<void> {
     if (this.#stopping) return;
+    if (
+      await this.#deferForDiskSpace(() =>
+        role === "trial" && update?.status === "pending"
+          ? this.#startTrial(update)
+          : this.#startChild(version, role, update),
+      )
+    )
+      return;
     if (!(await runtimeExists(this.#baseDir, version))) {
       throw new Error(`Selected t3@${version} runtime is missing or incomplete.`);
     }
@@ -769,6 +829,12 @@ export class Launcher {
       await this.#startTrial(pending);
       return;
     }
+    if (
+      await this.#deferForDiskSpace(() =>
+        this.#startChild(child.version, "active", this.#state.update),
+      )
+    )
+      return;
     throw new Error(`Active child exited unexpectedly (${String(code ?? signal ?? "unknown")}).`);
   }
 
@@ -803,6 +869,8 @@ export class Launcher {
       this.#child = null;
       await terminateChild(child.process);
     }
+    if (await this.#deferForDiskSpace(() => this.#returnToPrevious(pending, status, reason)))
+      return;
     await restoreDatabaseBackup(this.#baseDir, pending);
     const outcome = terminalUpdate({ pending, status, reason });
     const next: ServiceState = {
