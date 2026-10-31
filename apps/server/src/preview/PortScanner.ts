@@ -25,6 +25,7 @@ import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/http";
 
 import * as ProcessRunner from "../processRunner.ts";
+import * as WindowsTcpListeners from "./WindowsTcpListeners.ts";
 
 export class PortDiscovery extends Context.Service<
   PortDiscovery,
@@ -330,14 +331,16 @@ const parseTasklistProcessName = (raw: string, pid: number): string | null => {
   return null;
 };
 
-const parseWindowsListenerOutput = (
-  raw: string,
+const projectWindowsListeners = (
+  rows: ReadonlyArray<{
+    readonly port: number;
+    readonly pid: number | null;
+    readonly processName: string | null;
+  }>,
   owners: ReadonlyMap<number, ServerOwner> = new Map(),
 ): ReadonlyArray<DiscoveredLocalServer> => {
   const seen = new Map<number, DiscoveredLocalServer>();
-  for (const line of raw.split(/\r?\n/g)) {
-    const parsed = parseWindowsListenerLine(line);
-    if (!parsed) continue;
+  for (const parsed of rows) {
     const { port, pid: normalizedPid, processName } = parsed;
     const owner = normalizedPid === null ? undefined : owners.get(normalizedPid);
     const existing = seen.get(port);
@@ -356,6 +359,15 @@ const parseWindowsListenerOutput = (
   }
   return [...seen.values()].toSorted((left, right) => left.port - right.port);
 };
+
+const parseWindowsListenerOutput = (raw: string, owners: ReadonlyMap<number, ServerOwner>) =>
+  projectWindowsListeners(
+    raw.split(/\r?\n/g).flatMap((line) => {
+      const parsed = parseWindowsListenerLine(line);
+      return parsed === null ? [] : [parsed];
+    }),
+    owners,
+  );
 
 const PROC_TCP_LISTEN = "0A";
 
@@ -504,6 +516,7 @@ const isCommandNotFound = (error: ProcessRunner.ProcessSpawnError): boolean =>
 /** @public */
 export const make = Effect.gen(function* PortDiscoveryMake() {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const windowsTcpListeners = yield* WindowsTcpListeners.WindowsTcpListeners;
   const fileSystem = yield* FileSystem.FileSystem;
   const hostPlatform = yield* HostProcess.Platform;
   const listenerDiscovery = (yield* HostProcess.Environment)[PORT_DISCOVERY_ENV] !== "0";
@@ -778,6 +791,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   // tasklist costs 200-300ms per PID; query visible servers with bounded concurrency and cache names.
   const withWindowsProcessNames = Effect.fn("PortDiscovery.withWindowsProcessNames")(function* (
     snapshot: WebProbeSnapshot,
+    nameSource: "native" | "tasklist",
   ) {
     const servers = [...snapshot.discovered, ...snapshot.configured.values()];
     const pids = new Set(servers.flatMap((server) => (server.pid === null ? [] : [server.pid])));
@@ -790,26 +804,32 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     const fetched = yield* Effect.forEach(
       [...pids].filter((pid) => !cachedPids.has(pid)),
       (pid) =>
-        processRunner
-          .run({
-            command: "tasklist.exe",
-            args: ["/FO", "CSV", "/NH", "/FI", `PID eq ${pid}`],
-            timeout: Duration.millis(WINDOWS_LISTENER_TIMEOUT_MS),
-            maxOutputBytes: 64 * 1024,
-          })
-          .pipe(
-            Effect.map((result) =>
-              exitedWithError(result)
-                ? []
-                : [
-                    [
-                      pid,
-                      { name: parseTasklistProcessName(result.stdout, pid), expiresAtMillis },
-                    ] as const,
-                  ],
-            ),
-            Effect.orElseSucceed(() => []),
-          ),
+        (nameSource === "native"
+          ? windowsTcpListeners.processName(pid).pipe(
+              Effect.map((name) => [name]),
+              Effect.catchTags({
+                WindowsTcpProbeError: (error) =>
+                  Effect.logDebug("preview native process name lookup failed", {
+                    operation: error.operation,
+                  }).pipe(Effect.as([])),
+              }),
+            )
+          : processRunner
+              .run({
+                command: "tasklist.exe",
+                args: ["/FO", "CSV", "/NH", "/FI", `PID eq ${pid}`],
+                timeout: Duration.millis(WINDOWS_LISTENER_TIMEOUT_MS),
+                maxOutputBytes: 64 * 1024,
+              })
+              .pipe(
+                Effect.map((result) =>
+                  exitedWithError(result) ? [] : [parseTasklistProcessName(result.stdout, pid)],
+                ),
+                Effect.orElseSucceed(() => []),
+              )
+        ).pipe(
+          Effect.map((names) => names.map((name) => [pid, { name, expiresAtMillis }] as const)),
+        ),
       { concurrency: WINDOWS_PROCESS_NAME_CONCURRENCY },
     );
     const names = new Map([...cached, ...fetched.flat()]);
@@ -856,6 +876,26 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     const resolveOwners = (pids: ReadonlyArray<number>) =>
       agentsPossible ? withAgentOwners(terminalOwners, pids) : Effect.succeed(terminalOwners);
     if (hostPlatform === "win32") {
+      const nativeListeners = yield* windowsTcpListeners.scan.pipe(
+        Effect.map((rows) =>
+          projectWindowsListeners(
+            rows.map((row) => ({ ...row, processName: null })),
+            terminalOwners,
+          ),
+        ),
+        Effect.catchTags({
+          WindowsTcpProbeError: (error) =>
+            Effect.logDebug("preview native listener scan failed; falling back to netstat", {
+              operation: error.operation,
+            }).pipe(Effect.as(null)),
+        }),
+      );
+      if (nativeListeners !== null) {
+        return yield* withWindowsProcessNames(
+          yield* probeWebServers(nativeListeners, configuredUrls),
+          "native",
+        );
+      }
       const recoverWindowsProbeFailure = recoverProcessProbeFailure("windows-listeners");
       const runNetstat = (protocol: "tcp" | "tcpv6") =>
         processRunner.run({
@@ -883,6 +923,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       );
       return yield* withWindowsProcessNames(
         yield* probeWebServers(listeners ?? [], configuredUrls),
+        "tasklist",
       );
     }
     const recoverLsofProbeFailure = recoverProcessProbeFailure("lsof");
@@ -1145,7 +1186,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   });
 }).pipe(Effect.withSpan("PortDiscovery.make"));
 
-export const layer = Layer.effect(PortDiscovery, make);
+export const layer = Layer.effect(PortDiscovery, make).pipe(
+  Layer.provide(WindowsTcpListeners.layer),
+);
 
 /** A scanner that tracks nothing, for tests that build provider runners without a host. */
 export const layerTest = Layer.mock(PortDiscovery)({ trackAgent: () => () => undefined });

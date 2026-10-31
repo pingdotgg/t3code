@@ -24,6 +24,7 @@ import { FetchHttpClient } from "effect/http";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "./PortScanner.ts";
+import * as WindowsTcpListeners from "./WindowsTcpListeners.ts";
 
 vi.mock("@t3tools/provider-core/server/processGroup", { spy: true });
 
@@ -507,10 +508,19 @@ effectIt.effect("ignores a partial Windows netstat snapshot when one query exits
     requests.push(String(input));
     return Promise.resolve(new Response("hello", { headers: { "content-type": "text/html" } }));
   }) as typeof globalThis.fetch;
-  const layer = PortScanner.layer.pipe(
+  const layer = Layer.effect(PortScanner.PortDiscovery, PortScanner.make).pipe(
     Layer.provide(
       Layer.mergeAll(
         layerNoProc,
+        Layer.succeed(WindowsTcpListeners.WindowsTcpListeners, {
+          scan: Effect.fail(
+            new WindowsTcpListeners.WindowsTcpProbeError({
+              operation: "load",
+              cause: new Error("Native API unavailable"),
+            }),
+          ),
+          processName: () => Effect.succeed(null),
+        }),
         Layer.succeed(ProcessRunner.ProcessRunner, {
           run: (input) => {
             if (input.command === "tasklist.exe") {
@@ -520,16 +530,12 @@ effectIt.effect("ignores a partial Windows netstat snapshot when one query exits
             }
             const isIpv6 = input.args.includes("tcpv6");
             return Effect.succeed({
-              stdout: isIpv6
-                ? ""
-                : "  TCP    127.0.0.1:5173         0.0.0.0:0              LISTENING       1234\r\n",
-              stderr: "",
+              ...processOutput(
+                isIpv6
+                  ? ""
+                  : "  TCP    127.0.0.1:5173         0.0.0.0:0              LISTENING       1234\r\n",
+              ),
               code: isIpv6 && ipv6Fails ? ChildProcessSpawner.ExitCode(1) : null,
-              timedOut: false,
-              stdoutTruncated: false,
-              stderrTruncated: false,
-              stdoutInvalidUtf8: false,
-              stderrInvalidUtf8: false,
             });
           },
         }),
@@ -540,18 +546,61 @@ effectIt.effect("ignores a partial Windows netstat snapshot when one query exits
   );
 
   return Effect.gen(function* () {
-    const scanner = yield* PortScanner.PortDiscovery;
-    yield* scanner.registerTerminalProcesses({
-      threadId: "scanner-thread",
-      terminalId: "scanner-terminal",
-      processIds: [1234],
-    });
+    const scanner = yield* ownedScanner();
     expect(yield* scanner.scan()).toEqual([]);
     ipv6Fails = false;
     expect(yield* scanner.scan()).toMatchObject([
       { port: 5173, pid: 1234, processName: "node", url: "http://localhost:5173" },
     ]);
     expect(requests).toEqual([]);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt.effect("filters native Windows ownership without probes and caches process names", () => {
+  const requests: string[] = [];
+  const nameLookups: number[] = [];
+  const layer = Layer.effect(PortScanner.PortDiscovery, PortScanner.make).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerNoProc,
+        Layer.succeed(HostProcess.Platform, "win32"),
+        Layer.succeed(ProcessRunner.ProcessRunner, { run: processProbeFailure }),
+        Layer.succeed(WindowsTcpListeners.WindowsTcpListeners, {
+          scan: Effect.succeed([
+            { port: 5173, pid: 1234 },
+            { port: 5173, pid: 1234 },
+            { port: 5174, pid: 1234 },
+            { port: 5174, pid: 9999 },
+            { port: 5175, pid: 9999 },
+          ]),
+          processName: (pid) =>
+            Effect.sync(() => {
+              nameLookups.push(pid);
+              return "node";
+            }),
+        }),
+        FetchHttpClient.layer.pipe(
+          Layer.provide(
+            Layer.succeed(FetchHttpClient.Fetch, (input) => {
+              requests.push(String(input));
+              return Promise.resolve(new Response("app"));
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const scanner = yield* ownedScanner();
+    const servers = yield* scanner.scan();
+    expect(servers).toMatchObject([{ port: 5173, pid: 1234, processName: "node" }]);
+    expect(servers).toHaveLength(1);
+    expect(yield* scanner.scan()).toEqual(servers);
+    expect(requests).toEqual([]);
+    const configuredUrl = "http://localhost:5173/docs";
+    expect(yield* scanner.scan([configuredUrl])).toMatchObject([{ url: configuredUrl }]);
+    expect(requests).toEqual([configuredUrl]);
+    expect(nameLookups).toEqual([1234]);
   }).pipe(Effect.provide(layer));
 });
 
