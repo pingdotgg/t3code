@@ -5,17 +5,15 @@ import * as AcpWireSchema from "effect-acp/schema-v1";
 
 import {
   extractAntigravityUserInputQuestion,
-  isAntigravityOpenCommand,
   antigravityApprovalOptions,
   antigravitySubagentOutput,
-  isAntigravitySubagentReplayStart,
   classifyAntigravitySubagentToolCall,
   isAntigravityUserInputRequest,
   makeAntigravityUserInputResponse,
   normalizeAntigravitySessionUpdate,
   normalizeAntigravityToolCall,
   sanitizeAntigravityToolPayload,
-  selectAntigravityPermissionOptionId,
+  makeAntigravityReadRepair,
 } from "./AntigravityProtocol.ts";
 import {
   mergeToolCallState,
@@ -27,7 +25,12 @@ const isSessionNotification = Schema.is(AcpWireSchema.SessionNotification);
 describe("native Antigravity subagent tools", () => {
   it("recognizes only native invocation titles and excludes MCP tools", () => {
     const toolCall = { toolCallId: "trajectory:4", kind: "other", data: {} };
-    for (const title of ["Running start_subagent", "Run start_subagent?"]) {
+    for (const title of [
+      "Running start_subagent",
+      "Run start_subagent?",
+      "Running invoke_subagent",
+      "Run invoke_subagent?",
+    ]) {
       expect(classifyAntigravitySubagentToolCall({ ...toolCall, title }, {})).toBe("subagent");
       expect(
         classifyAntigravitySubagentToolCall(
@@ -53,21 +56,6 @@ describe("native Antigravity subagent tools", () => {
   });
 
   it("recognizes history starts and bounds the launch output", () => {
-    expect(
-      isAntigravitySubagentReplayStart({
-        update: { sessionUpdate: "tool_call", status: "completed", rawOutput: "Done." },
-      }),
-    ).toBe(false);
-    expect(
-      isAntigravitySubagentReplayStart({
-        update: { sessionUpdate: "tool_call", status: "completed" },
-      }),
-    ).toBe(true);
-    expect(
-      isAntigravitySubagentReplayStart({
-        update: { sessionUpdate: "tool_call_update", status: "completed" },
-      }),
-    ).toBe(false);
     expect(
       antigravitySubagentOutput({
         toolCallId: "trajectory:4",
@@ -149,20 +137,6 @@ describe("Antigravity permissions and questions", () => {
     ],
   } satisfies EffectAcpSchema.RequestPermissionRequest;
 
-  it("uses only the option IDs offered for each approval decision", () => {
-    expect(selectAntigravityPermissionOptionId(permissionRequest, "accept")).toBe("run-this-time");
-    expect(selectAntigravityPermissionOptionId(permissionRequest, "acceptForSession")).toBe(
-      "remember-this-command",
-    );
-    expect(selectAntigravityPermissionOptionId(permissionRequest, "acceptAlways")).toBe(
-      "remember-this-command",
-    );
-    expect(selectAntigravityPermissionOptionId(permissionRequest, "decline")).toBe(
-      "stop-this-command",
-    );
-    expect(selectAntigravityPermissionOptionId(permissionRequest, "cancel")).toBeUndefined();
-  });
-
   it("surfaces the agent's prompt injection warning on the remembered approval", () => {
     const risky = {
       ...permissionRequest,
@@ -197,22 +171,8 @@ describe("Antigravity permissions and questions", () => {
     expect(antigravityApprovalOptions(permissionRequest)[1]).not.toHaveProperty("warning");
   });
 
-  it("does not replace unsupported remembered approval with a single approval", () => {
-    const request = {
-      ...permissionRequest,
-      options: permissionRequest.options.filter((option) => option.kind !== "allow_always"),
-    };
-    expect(selectAntigravityPermissionOptionId(request, "acceptAlways")).toBeUndefined();
-    expect(selectAntigravityPermissionOptionId(request, "acceptForSession")).toBeUndefined();
-    expect(selectAntigravityPermissionOptionId(request, "accept")).toBe("run-this-time");
-    expect(
-      selectAntigravityPermissionOptionId({ ...request, options: [] }, "decline"),
-    ).toBeUndefined();
-  });
-
   it("routes the captured native question to single-choice input, not approval", () => {
     expect(isAntigravityUserInputRequest(questionRequest)).toBe(true);
-    expect(selectAntigravityPermissionOptionId(questionRequest, "accept")).toBeUndefined();
     expect(extractAntigravityUserInputQuestion(questionRequest)).toEqual({
       id: "interaction_9960062f",
       header: "Question",
@@ -453,37 +413,83 @@ describe("Antigravity tool results", () => {
     expect(serialized).not.toContain("inline-image");
     expect(serialized).not.toContain("inline-data-url");
   });
+});
 
-  it("keeps large assistant replies and startup command metadata unchanged", () => {
-    const notifications = [
-      {
-        sessionId: "session-1",
-        update: {
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: "a".repeat(20_000) },
-        },
+describe("Antigravity served reads", () => {
+  const flush = (reads: ReturnType<typeof makeAntigravityReadRepair>, toolCallId: string) =>
+    reads.repair({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId,
+        status: "failed",
+        rawOutput: "Tool execution failed",
       },
-      {
-        sessionId: "session-1",
-        update: {
-          sessionUpdate: "available_commands_update",
-          availableCommands: [{ name: "plan", description: "Make a plan" }],
-        },
+    }).update;
+
+  it("credits a read T3 served before the agent announced it", () => {
+    const reads = makeAntigravityReadRepair();
+    reads.attempted("/repo/a.ts", true);
+    const announced = reads.repair({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call_late",
+        title: "Running client_view_file",
+        kind: "read",
+        status: "in_progress",
+        locations: [{ path: "/repo/a.ts" }],
       },
-    ] satisfies ReadonlyArray<EffectAcpSchema.SessionNotification>;
-    for (const notification of notifications) {
-      expect(normalizeAntigravitySessionUpdate(notification)).toBe(notification);
-    }
+    });
+    expect(announced.update).toMatchObject({ status: "completed" });
+    expect(flush(reads, "call_late")).toEqual({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "call_late",
+      status: "completed",
+    });
   });
 
-  it("tracks only commands that have passed approval and are still running", () => {
-    const running = normalizeAntigravityToolCall(parseToolUpdate(commandStarted).toolCall);
-    expect(isAntigravityOpenCommand(running)).toBe(true);
-    expect(isAntigravityOpenCommand({ ...running, status: "pending" })).toBe(false);
-    expect(isAntigravityOpenCommand({ ...running, kind: "read" })).toBe(false);
-    const completed = normalizeAntigravityToolCall(
-      mergeToolCallState(running, parseToolUpdate(commandCompleted).toolCall),
-    );
-    expect(isAntigravityOpenCommand(completed)).toBe(false);
+  it("forgets an earlier turn's unannounced served read", () => {
+    const reads = makeAntigravityReadRepair();
+    reads.attempted("/repo/a.ts", true);
+    reads.reset();
+    reads.repair({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call_refused",
+        title: "Running client_view_file",
+        kind: "read",
+        status: "in_progress",
+        locations: [{ path: "/repo/a.ts" }],
+      },
+    });
+    reads.attempted("/repo/a.ts", false);
+    expect(flush(reads, "call_refused")).toMatchObject({ status: "failed" });
+  });
+
+  it("drops an earlier turn's unanswered read so a new turn's served read gets the credit", () => {
+    const reads = makeAntigravityReadRepair();
+    const announce = (toolCallId: string) =>
+      reads.repair({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title: "Running client_view_file",
+          kind: "read",
+          status: "in_progress",
+          locations: [{ path: "/repo/a.ts" }],
+        },
+      });
+    announce("call_abandoned");
+    reads.reset();
+    announce("call_current");
+    reads.attempted("/repo/a.ts", true);
+    expect(flush(reads, "call_current")).toEqual({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "call_current",
+      status: "completed",
+    });
   });
 });

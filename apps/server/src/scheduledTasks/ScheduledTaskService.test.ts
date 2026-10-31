@@ -40,6 +40,7 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 
@@ -192,8 +193,6 @@ it.effect(
         yield* insertRow(sql, { ...row, enabled: 1 }, now);
       }
 
-      // it.effect freezes the clock; pin it just past the seeded due time so
-      // the poll sees the rows as due.
       yield* TestClock.setTime(Date.parse(now) + 1_000);
       const dispatched = yield* Ref.make(0);
       const lastDispatched = yield* Deferred.make<void>();
@@ -217,15 +216,24 @@ it.effect(
                       Effect.andThen(Effect.die(new Error("test launch failure"))),
                     ),
                 }),
-                Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+                Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                  namedProjectsRoot: "/projects",
+                  isScratchProject: () => Effect.succeed(false),
+                }),
+                Layer.mock(ThreadManagementService.ThreadManagementService)({
+                  streamStoredEventsFrom: () => Stream.empty,
+                }),
                 Layer.mock(SecretRequests.SecretRequests)({}),
+                Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                  namedProjectsRoot: "/projects",
+                  isScratchProject: () => Effect.succeed(false),
+                }),
                 NodeCrypto.layer,
                 Scheduler.layer,
               ),
             ),
           );
-          // The poll loop delays before its first pass, so the frozen test
-          // clock must advance once to trigger it.
+          // The poll delays before its first pass; advance the frozen clock once.
           yield* TestClock.adjust("6 seconds");
           yield* Deferred.await(lastDispatched);
           const inflight = yield* sql<{
@@ -311,8 +319,18 @@ it.effect(
                       Effect.andThen(Effect.die(new Error("test launch failure"))),
                     ),
                 }),
-                Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+                Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                  namedProjectsRoot: "/projects",
+                  isScratchProject: () => Effect.succeed(false),
+                }),
+                Layer.mock(ThreadManagementService.ThreadManagementService)({
+                  streamStoredEventsFrom: () => Stream.empty,
+                }),
                 Layer.mock(SecretRequests.SecretRequests)({}),
+                Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                  namedProjectsRoot: "/projects",
+                  isScratchProject: () => Effect.succeed(false),
+                }),
                 NodeCrypto.layer,
                 Scheduler.layer,
               ),
@@ -356,6 +374,10 @@ const updateTestDeps = Layer.mergeAll(
     streamStoredEventsFrom: () => Stream.empty,
   }),
   Layer.mock(SecretRequests.SecretRequests)({}),
+  Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+    namedProjectsRoot: "/projects",
+    isScratchProject: () => Effect.succeed(false),
+  }),
 );
 
 const updateTestLayer = ScheduledTaskService.layer.pipe(Layer.provide(updateTestDeps));
@@ -752,6 +774,10 @@ const gatedLaunchTestLayer = ScheduledTaskService.layer.pipe(
         streamStoredEventsFrom: () => Stream.empty,
       }),
       Layer.mock(SecretRequests.SecretRequests)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        isScratchProject: () => Effect.succeed(false),
+      }),
     ),
   ),
 );
@@ -1262,8 +1288,14 @@ const gatedDispatchLayer = ScheduledTaskService.layer.pipe(
       NodeCrypto.layer,
       Scheduler.layer,
       countingLaunchLayer,
-      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        streamStoredEventsFrom: () => Stream.empty,
+      }),
       Layer.mock(SecretRequests.SecretRequests)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        isScratchProject: () => Effect.succeed(false),
+      }),
     ),
   ),
 );
@@ -1276,7 +1308,7 @@ const isMarkRead = (statement: string) =>
   !statement.includes("AND project_id") &&
   !statement.includes("next_run_at <=");
 const isTerminalWrite = (statement: string) =>
-  statement.includes("UPDATE scheduled_tasks") && statement.includes("run_count = run_count + 1");
+  statement.includes("UPDATE scheduled_tasks") && statement.includes("run_count = run_count +");
 
 // Arms the due-read gate: the first non-empty due read parks the scheduler
 // between "found due" and "dispatch"; every later due read ticks nextPoll so
@@ -1289,6 +1321,8 @@ const armDueReadGate = (
 ) => {
   let dueSeen = false;
   sqlProbe = (statement, rows) => {
+    if (dueSeen && statement.includes("SELECT MIN(next_run_at)"))
+      return Deferred.succeed(nextPoll, undefined);
     if (isDueRead(statement)) {
       if (!dueSeen && rows.length > 0) {
         dueSeen = true;
@@ -1654,6 +1688,10 @@ const boundThreadTestDeps = Layer.mergeAll(
   Scheduler.layer,
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),
+  Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+    namedProjectsRoot: "/projects",
+    isScratchProject: () => Effect.succeed(false),
+  }),
   boundThreadManagementMock(Stream.never),
 );
 
@@ -1698,6 +1736,10 @@ const boundThreadTestDepsWithoutSqlite = Layer.mergeAll(
   Scheduler.layer,
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),
+  Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+    namedProjectsRoot: "/projects",
+    isScratchProject: () => Effect.succeed(false),
+  }),
   boundThreadManagementMock(Stream.never),
 );
 
@@ -2333,79 +2375,77 @@ it.effect("unbinding a voided binding restarts the interval on the launch path",
 );
 
 it.effect("an upsert whose write lands after a committed pause restarts fresh", () =>
-  Effect.gen(function* () {
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const entered = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        const gateArmed = yield* Ref.make(false);
-        const deps = yield* Layer.build(
-          Layer.mergeAll(
-            SqlitePersistence.layerMemory,
-            NodeCrypto.layer,
-            Scheduler.layer,
-            Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
-            Layer.mock(SecretRequests.SecretRequests)({}),
-            boundThreadManagementMock(Stream.never),
-          ),
-        );
-        const sqlClient = Context.get(deps, SqlClient.SqlClient);
-        const realWithTransaction = sqlClient.withTransaction;
-        Object.assign(sqlClient, {
-          withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-            Effect.suspend(() =>
-              Ref.modify(gateArmed, (armed) => (armed ? [true, false] : [false, armed])),
-            ).pipe(
-              Effect.flatMap((gated) =>
-                gated
-                  ? Deferred.succeed(entered, undefined).pipe(
-                      Effect.andThen(Deferred.await(release)),
-                      Effect.andThen(realWithTransaction(effect)),
-                    )
-                  : realWithTransaction(effect),
-              ),
+  Effect.scoped(
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const gateArmed = yield* Ref.make(false);
+      const deps = yield* Layer.build(
+        Layer.mergeAll(
+          SqlitePersistence.layerMemory,
+          NodeCrypto.layer,
+          Scheduler.layer,
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          boundThreadManagementMock(Stream.never),
+        ),
+      );
+      const sqlClient = Context.get(deps, SqlClient.SqlClient);
+      const realWithTransaction = sqlClient.withTransaction;
+      Object.assign(sqlClient, {
+        withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+          Effect.suspend(() =>
+            Ref.modify(gateArmed, (armed) => (armed ? [true, false] : [false, armed])),
+          ).pipe(
+            Effect.flatMap((gated) =>
+              gated
+                ? Deferred.succeed(entered, undefined).pipe(
+                    Effect.andThen(Deferred.await(release)),
+                    Effect.andThen(realWithTransaction(effect)),
+                  )
+                : realWithTransaction(effect),
             ),
-        });
-        const context = yield* Layer.build(
-          ScheduledTaskService.layer.pipe(Layer.provide(Layer.succeedContext(deps))),
-        );
-        const tasks = Context.get(context, ScheduledTaskService.ScheduledTaskService);
-        yield* setBoundThreadState(archiveBoundThreadId, "active");
-        const { task: seeded } = yield* tasks.upsert({ ...boundTaskInput, enabled: true });
-        yield* sqlClient`UPDATE scheduled_tasks SET next_run_at = ${overdueNextRunAt} WHERE task_id = ${seeded.id}`;
+          ),
+      });
+      const context = yield* Layer.build(
+        ScheduledTaskService.layer.pipe(Layer.provide(Layer.succeedContext(deps))),
+      );
+      const tasks = Context.get(context, ScheduledTaskService.ScheduledTaskService);
+      yield* setBoundThreadState(archiveBoundThreadId, "active");
+      const { task: seeded } = yield* tasks.upsert({ ...boundTaskInput, enabled: true });
+      yield* sqlClient`UPDATE scheduled_tasks SET next_run_at = ${overdueNextRunAt} WHERE task_id = ${seeded.id}`;
 
-        // The upsert's whole transaction is parked while the archive pause
-        // commits: the row it reads must already be the paused one, or the
-        // save would restore the overdue due time the pause just cleared.
-        yield* Ref.set(gateArmed, true);
-        const upsertExit = yield* tasks
-          .upsert({ ...boundTaskInput, id: seeded.id, enabled: true })
-          .pipe(Effect.exit, Effect.forkChild);
-        yield* Deferred.await(entered);
-        yield* insertThreadEvent(
-          archiveBoundThreadId,
-          "thread.archived",
-          "2026-01-01T00:00:01.000Z",
-        );
-        yield* setBoundThreadState(archiveBoundThreadId, "archived");
-        yield* tasks.pauseForThread(archiveBoundThreadId);
-        yield* insertThreadEvent(
-          archiveBoundThreadId,
-          "thread.unarchived",
-          "2026-01-01T00:00:02.000Z",
-        );
-        yield* setBoundThreadState(archiveBoundThreadId, "active");
-        yield* Deferred.succeed(release, undefined);
-        const saved = yield* Fiber.join(upsertExit);
-        assert.isTrue(Exit.isSuccess(saved));
-        if (Exit.isSuccess(saved)) {
-          assert.isTrue(saved.value.task.enabled);
-          assert.isNotNull(saved.value.task.nextRunAt);
-          assert.notEqual(saved.value.task.nextRunAt, overdueNextRunAt);
-        }
-      }),
-    );
-  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+      // The upsert's whole transaction is parked while the archive pause
+      // commits: the row it reads must already be the paused one, or the
+      // save would restore the overdue due time the pause just cleared.
+      yield* Ref.set(gateArmed, true);
+      const upsertExit = yield* tasks
+        .upsert({ ...boundTaskInput, id: seeded.id, enabled: true })
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* Deferred.await(entered);
+      yield* insertThreadEvent(archiveBoundThreadId, "thread.archived", "2026-01-01T00:00:01.000Z");
+      yield* setBoundThreadState(archiveBoundThreadId, "archived");
+      yield* tasks.pauseForThread(archiveBoundThreadId);
+      yield* insertThreadEvent(
+        archiveBoundThreadId,
+        "thread.unarchived",
+        "2026-01-01T00:00:02.000Z",
+      );
+      yield* setBoundThreadState(archiveBoundThreadId, "active");
+      yield* Deferred.succeed(release, undefined);
+      const saved = yield* Fiber.join(upsertExit);
+      assert.isTrue(Exit.isSuccess(saved));
+      if (Exit.isSuccess(saved)) {
+        assert.isTrue(saved.value.task.enabled);
+        assert.isNotNull(saved.value.task.nextRunAt);
+        assert.notEqual(saved.value.task.nextRunAt, overdueNextRunAt);
+      }
+    }),
+  ).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect("a binding-only update on a voided enablement restarts the interval", () =>
@@ -2503,83 +2543,85 @@ it.effect("update cannot enable or bind an archived-thread task, but unbinding s
 // and then enables the racing update's binding; inside the transaction it
 // re-reads the committed row and rejects.
 it.effect("an enable racing a committed rebind still validates the new binding", () =>
-  Effect.gen(function* () {
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const entered = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        const gateArmed = yield* Ref.make(false);
-        // Wrap the built SqlClient instance in place so the service sees the
-        // gate regardless of layer-merge precedence.
-        const deps = yield* Layer.build(
-          Layer.mergeAll(
-            SqlitePersistence.layerMemory,
-            NodeCrypto.layer,
-            Scheduler.layer,
-            Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
-            Layer.mock(SecretRequests.SecretRequests)({}),
-            boundThreadManagementMock(Stream.never),
-          ),
-        );
-        const sqlClient = Context.get(deps, SqlClient.SqlClient);
-        const realWithTransaction = sqlClient.withTransaction;
-        Object.assign(sqlClient, {
-          withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-            Effect.suspend(() =>
-              Ref.modify(gateArmed, (armed) => (armed ? [true, false] : [false, armed])),
-            ).pipe(
-              Effect.flatMap((gated) =>
-                gated
-                  ? Deferred.succeed(entered, undefined).pipe(
-                      Effect.andThen(Deferred.await(release)),
-                      Effect.andThen(realWithTransaction(effect)),
-                    )
-                  : realWithTransaction(effect),
-              ),
+  Effect.scoped(
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const gateArmed = yield* Ref.make(false);
+      // Wrap the built SqlClient instance in place so the service sees the
+      // gate regardless of layer-merge precedence.
+      const deps = yield* Layer.build(
+        Layer.mergeAll(
+          SqlitePersistence.layerMemory,
+          NodeCrypto.layer,
+          Scheduler.layer,
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          boundThreadManagementMock(Stream.never),
+        ),
+      );
+      const sqlClient = Context.get(deps, SqlClient.SqlClient);
+      const realWithTransaction = sqlClient.withTransaction;
+      Object.assign(sqlClient, {
+        withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+          Effect.suspend(() =>
+            Ref.modify(gateArmed, (armed) => (armed ? [true, false] : [false, armed])),
+          ).pipe(
+            Effect.flatMap((gated) =>
+              gated
+                ? Deferred.succeed(entered, undefined).pipe(
+                    Effect.andThen(Deferred.await(release)),
+                    Effect.andThen(realWithTransaction(effect)),
+                  )
+                : realWithTransaction(effect),
             ),
-        });
-        const context = yield* Layer.build(
-          ScheduledTaskService.layer.pipe(Layer.provide(Layer.succeedContext(deps))),
-        );
-        const tasks = Context.get(context, ScheduledTaskService.ScheduledTaskService);
-        const { task: seeded } = yield* tasks.upsert({
-          ...boundTaskInput,
-          enabled: false,
-          threadId: null,
-        });
-        // The service runs on the explicitly-built sqlClient — a second
-        // in-memory database — so the projection row must be written there,
-        // not through the test's ambient client.
-        yield* setBoundThreadState(archiveBoundThreadId, "archived").pipe(
-          Effect.provideService(SqlClient.SqlClient, sqlClient),
-        );
+          ),
+      });
+      const context = yield* Layer.build(
+        ScheduledTaskService.layer.pipe(Layer.provide(Layer.succeedContext(deps))),
+      );
+      const tasks = Context.get(context, ScheduledTaskService.ScheduledTaskService);
+      const { task: seeded } = yield* tasks.upsert({
+        ...boundTaskInput,
+        enabled: false,
+        threadId: null,
+      });
+      // The service runs on the explicitly-built sqlClient — a second
+      // in-memory database — so the projection row must be written there,
+      // not through the test's ambient client.
+      yield* setBoundThreadState(archiveBoundThreadId, "archived").pipe(
+        Effect.provideService(SqlClient.SqlClient, sqlClient),
+      );
 
-        // setEnabled parks just before its transaction; the concurrent
-        // update then commits the archived binding while the task is still
-        // disabled — the only interleaving the old outside-transaction check
-        // could miss.
-        yield* Ref.set(gateArmed, true);
-        const enableExit = yield* tasks
-          .setEnabled({ id: seeded.id, enabled: true })
-          .pipe(Effect.exit, Effect.forkChild);
-        yield* Deferred.await(entered);
-        const bound = yield* tasks.update({
-          id: seeded.id,
-          projectId: archivedBindingProjectId,
-          threadId: archiveBoundThreadId,
-        });
-        assert.isTrue(Option.isSome(bound));
-        yield* Deferred.succeed(release, undefined);
-        const enable = yield* Fiber.join(enableExit);
-        assert.isTrue(Exit.isFailure(enable));
-        const after = yield* Effect.map(tasks.list(), ({ tasks: all }) =>
-          all.find((candidate) => candidate.id === seeded.id),
-        );
-        assert.isDefined(after);
-        assert.isFalse(after!.enabled);
-      }),
-    );
-  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+      // setEnabled parks just before its transaction; the concurrent
+      // update then commits the archived binding while the task is still
+      // disabled — the only interleaving the old outside-transaction check
+      // could miss.
+      yield* Ref.set(gateArmed, true);
+      const enableExit = yield* tasks
+        .setEnabled({ id: seeded.id, enabled: true })
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* Deferred.await(entered);
+      const bound = yield* tasks.update({
+        id: seeded.id,
+        projectId: archivedBindingProjectId,
+        threadId: archiveBoundThreadId,
+      });
+      assert.isTrue(Option.isSome(bound));
+      yield* Deferred.succeed(release, undefined);
+      const enable = yield* Fiber.join(enableExit);
+      assert.isTrue(Exit.isFailure(enable));
+      const after = yield* Effect.map(tasks.list(), ({ tasks: all }) =>
+        all.find((candidate) => candidate.id === seeded.id),
+      );
+      assert.isDefined(after);
+      assert.isFalse(after!.enabled);
+    }),
+  ).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect("a binding committed while disabled is still caught when enabling", () =>
@@ -2770,303 +2812,307 @@ it.effect(
 );
 
 it.effect("the domain-event reactor pauses tasks on thread archive and delete", () =>
-  Effect.gen(function* () {
-    // scoped so the built layer's reactor fiber lives for the whole test body.
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        sendToThreadCalls = 0;
-        const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
-        // The reactor subscribes when the layer builds, so the service must come
-        // up inside the test with this queue already wired into the mock.
-        const context = yield* Layer.build(
-          ScheduledTaskService.layer.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                NodeCrypto.layer,
-                Scheduler.layer,
-                Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
-                Layer.mock(SecretRequests.SecretRequests)({}),
-                boundThreadManagementMock(Stream.fromQueue(domainEvents)),
-              ),
+  Effect.scoped(
+    Effect.gen(function* () {
+      sendToThreadCalls = 0;
+      const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+      // The reactor subscribes when the layer builds, so the service must come
+      // up inside the test with this queue already wired into the mock.
+      const context = yield* Layer.build(
+        ScheduledTaskService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              NodeCrypto.layer,
+              Scheduler.layer,
+              Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+              Layer.mock(SecretRequests.SecretRequests)({}),
+              Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                namedProjectsRoot: "/projects",
+                isScratchProject: () => Effect.succeed(false),
+              }),
+              boundThreadManagementMock(Stream.fromQueue(domainEvents)),
             ),
           ),
+        ),
+      );
+      const tasks = Context.get(context, ScheduledTaskService.ScheduledTaskService);
+      const archivedThreadId = ThreadId.make("thread:reactor-archived");
+      const deletedThreadId = ThreadId.make("thread:reactor-deleted");
+      yield* setBoundThreadState(archivedThreadId, "active");
+      yield* setBoundThreadState(deletedThreadId, "active");
+      const archivedTask = yield* tasks.upsert({
+        ...boundTaskInput,
+        enabled: true,
+        threadId: archivedThreadId,
+      });
+      const deletedTask = yield* tasks.upsert({
+        ...boundTaskInput,
+        enabled: true,
+        threadId: deletedThreadId,
+      });
+
+      const emittedAt = DateTime.makeUnsafe(boundThreadArchivedAt);
+      // The events mean the state change already committed — the mock must
+      // reflect it because the pause rechecks the live shell and ignores
+      // stale events (a thread unarchived before the event is consumed).
+      yield* setBoundThreadState(archivedThreadId, "archived");
+      yield* setBoundThreadState(deletedThreadId, "deleted");
+      yield* Queue.offer(domainEvents, {
+        id: EventId.make("event:reactor-archived"),
+        type: "thread.archived",
+        threadId: archivedThreadId,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        occurredAt: emittedAt,
+        payload: { id: archivedThreadId },
+      } as unknown as OrchestrationV2DomainEvent);
+      yield* Queue.offer(domainEvents, {
+        id: EventId.make("event:reactor-deleted"),
+        type: "thread.deleted",
+        threadId: deletedThreadId,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        occurredAt: emittedAt,
+        payload: { id: deletedThreadId, deletedAt: emittedAt },
+      } as unknown as OrchestrationV2DomainEvent);
+
+      // subscribeList re-emits on notifyChanged, so each pause is awaited on a
+      // real change receipt rather than a sleep.
+      const awaitPaused = (id: ScheduledTaskId) =>
+        tasks.subscribeList().pipe(
+          Stream.map(({ tasks: all }) => all.find((candidate) => candidate.id === id)),
+          Stream.filter((task) => task !== undefined && task.enabled === false),
+          Stream.runHead,
         );
-        const tasks = Context.get(context, ScheduledTaskService.ScheduledTaskService);
-        const archivedThreadId = ThreadId.make("thread:reactor-archived");
-        const deletedThreadId = ThreadId.make("thread:reactor-deleted");
-        yield* setBoundThreadState(archivedThreadId, "active");
-        yield* setBoundThreadState(deletedThreadId, "active");
-        const archivedTask = yield* tasks.upsert({
-          ...boundTaskInput,
-          enabled: true,
-          threadId: archivedThreadId,
-        });
-        const deletedTask = yield* tasks.upsert({
-          ...boundTaskInput,
-          enabled: true,
-          threadId: deletedThreadId,
-        });
-
-        const emittedAt = DateTime.makeUnsafe(boundThreadArchivedAt);
-        // The events mean the state change already committed — the mock must
-        // reflect it because the pause rechecks the live shell and ignores
-        // stale events (a thread unarchived before the event is consumed).
-        yield* setBoundThreadState(archivedThreadId, "archived");
-        yield* setBoundThreadState(deletedThreadId, "deleted");
-        yield* Queue.offer(domainEvents, {
-          id: EventId.make("event:reactor-archived"),
-          type: "thread.archived",
-          threadId: archivedThreadId,
-          providerInstanceId: ProviderInstanceId.make("codex"),
-          occurredAt: emittedAt,
-          payload: { id: archivedThreadId },
-        } as unknown as OrchestrationV2DomainEvent);
-        yield* Queue.offer(domainEvents, {
-          id: EventId.make("event:reactor-deleted"),
-          type: "thread.deleted",
-          threadId: deletedThreadId,
-          providerInstanceId: ProviderInstanceId.make("codex"),
-          occurredAt: emittedAt,
-          payload: { id: deletedThreadId, deletedAt: emittedAt },
-        } as unknown as OrchestrationV2DomainEvent);
-
-        // subscribeList re-emits on notifyChanged, so each pause is awaited on a
-        // real change receipt rather than a sleep.
-        const awaitPaused = (id: ScheduledTaskId) =>
-          tasks.subscribeList().pipe(
-            Stream.map(({ tasks: all }) => all.find((candidate) => candidate.id === id)),
-            Stream.filter((task) => task !== undefined && task.enabled === false),
-            Stream.runHead,
-          );
-        yield* awaitPaused(archivedTask.task.id);
-        yield* awaitPaused(deletedTask.task.id);
-        assert.equal(sendToThreadCalls, 0);
-      }),
-    );
-  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+      yield* awaitPaused(archivedTask.task.id);
+      yield* awaitPaused(deletedTask.task.id);
+      assert.equal(sendToThreadCalls, 0);
+    }),
+  ).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect("the domain-event reactor resumes after its event stream fails", () =>
-  Effect.gen(function* () {
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const threadId = ThreadId.make("thread:reactor-resumes");
-        const firstFailed = yield* Deferred.make<void>();
-        const cursors: Array<number | undefined> = [];
-        // The first subscription fails like a transient read error. The resumed
-        // one delivers the archive committed after the reactor's cursor.
-        const threadManagement = Layer.mock(ThreadManagementService.ThreadManagementService)({
-          streamStoredEventsFrom: (input) =>
-            Stream.unwrap(
-              Effect.gen(function* () {
-                cursors.push(input?.afterSequence);
-                if (cursors.length === 1) {
-                  yield* Deferred.succeed(firstFailed, undefined);
-                  return Stream.fail(
-                    new Orchestrator.OrchestratorDomainEventStreamError({
-                      cause: "database is locked",
-                    }),
-                  );
-                }
-                return Stream.make({
-                  sequence: (input?.afterSequence ?? 0) + 1,
-                  commandId: null,
-                  event: {
-                    id: EventId.make("event:reactor-resumes"),
-                    type: "thread.archived",
-                    threadId,
-                    providerInstanceId: ProviderInstanceId.make("codex"),
-                    occurredAt: DateTime.makeUnsafe(boundThreadArchivedAt),
-                    payload: { id: threadId },
-                  } as unknown as OrchestrationV2DomainEvent,
-                } satisfies OrchestrationV2StoredEvent).pipe(Stream.concat(Stream.never));
+  Effect.scoped(
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread:reactor-resumes");
+      const firstFailed = yield* Deferred.make<void>();
+      const cursors: Array<number | undefined> = [];
+      // The first subscription fails like a transient read error. The resumed
+      // one delivers the archive committed after the reactor's cursor.
+      const threadManagement = Layer.mock(ThreadManagementService.ThreadManagementService)({
+        streamStoredEventsFrom: (input) =>
+          Stream.unwrap(
+            Effect.gen(function* () {
+              cursors.push(input?.afterSequence);
+              if (cursors.length === 1) {
+                yield* Deferred.succeed(firstFailed, undefined);
+                return Stream.fail(
+                  new Orchestrator.OrchestratorDomainEventStreamError({
+                    cause: "database is locked",
+                  }),
+                );
+              }
+              return Stream.make({
+                sequence: (input?.afterSequence ?? 0) + 1,
+                commandId: null,
+                event: {
+                  id: EventId.make("event:reactor-resumes"),
+                  type: "thread.archived",
+                  threadId,
+                  providerInstanceId: ProviderInstanceId.make("codex"),
+                  occurredAt: DateTime.makeUnsafe(boundThreadArchivedAt),
+                  payload: { id: threadId },
+                } as unknown as OrchestrationV2DomainEvent,
+              } satisfies OrchestrationV2StoredEvent).pipe(Stream.concat(Stream.never));
+            }),
+          ),
+      });
+      const context = yield* Layer.build(
+        ScheduledTaskService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              NodeCrypto.layer,
+              Scheduler.layer,
+              Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+              Layer.mock(SecretRequests.SecretRequests)({}),
+              Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                namedProjectsRoot: "/projects",
+                isScratchProject: () => Effect.succeed(false),
               }),
-            ),
-        });
-        const context = yield* Layer.build(
-          ScheduledTaskService.layer.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                NodeCrypto.layer,
-                Scheduler.layer,
-                Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
-                Layer.mock(SecretRequests.SecretRequests)({}),
-                threadManagement,
-              ),
+              threadManagement,
             ),
           ),
-        );
-        const tasks = Context.get(context, ScheduledTaskService.ScheduledTaskService);
-        yield* setBoundThreadState(threadId, "active");
-        const task = yield* tasks.upsert({ ...boundTaskInput, enabled: true, threadId });
-        yield* setBoundThreadState(threadId, "archived");
-        yield* Deferred.await(firstFailed);
+        ),
+      );
+      const tasks = Context.get(context, ScheduledTaskService.ScheduledTaskService);
+      yield* setBoundThreadState(threadId, "active");
+      const task = yield* tasks.upsert({ ...boundTaskInput, enabled: true, threadId });
+      yield* setBoundThreadState(threadId, "archived");
+      yield* Deferred.await(firstFailed);
 
-        // Well before the task is due, so its fire-time check cannot pause it.
-        yield* TestClock.adjust("10 seconds");
+      // Well before the task is due, so its fire-time check cannot pause it.
+      yield* TestClock.adjust("10 seconds");
 
-        const paused = yield* tasks.subscribeList().pipe(
-          Stream.map(({ tasks: all }) => all.find((candidate) => candidate.id === task.task.id)),
-          Stream.filter((candidate) => candidate !== undefined && candidate.enabled === false),
-          Stream.runHead,
-        );
-        assert.isTrue(Option.isSome(paused));
-        assert.equal(cursors.length, 2);
-        assert.equal(cursors[1], cursors[0]);
-      }),
-    );
-  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+      const paused = yield* tasks.subscribeList().pipe(
+        Stream.map(({ tasks: all }) => all.find((candidate) => candidate.id === task.task.id)),
+        Stream.filter((candidate) => candidate !== undefined && candidate.enabled === false),
+        Stream.runHead,
+      );
+      assert.isTrue(Option.isSome(paused));
+      assert.equal(cursors.length, 2);
+      assert.equal(cursors[1], cursors[0]);
+    }),
+  ).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect("the reactor keeps a cursor it recovered after the startup read failed", () =>
-  Effect.gen(function* () {
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        const threadId = ThreadId.make("thread:reactor-recovered-cursor");
-        const reactorFailures = yield* Queue.unbounded<void>();
-        const secondSubscribed = yield* Deferred.make<void>();
-        const cursors: Array<number | undefined> = [];
-        const threadManagement = Layer.mock(ThreadManagementService.ThreadManagementService)({
-          streamStoredEventsFrom: (input) =>
-            Stream.unwrap(
-              Effect.gen(function* () {
-                cursors.push(input?.afterSequence);
-                if (cursors.length === 1) {
-                  return Stream.fail(
-                    new Orchestrator.OrchestratorDomainEventStreamError({
-                      cause: "database is locked",
-                    }),
-                  );
-                }
-                yield* Deferred.succeed(secondSubscribed, undefined);
-                const rows = yield* sql<{
-                  readonly sequence: number;
-                  readonly event_id: string;
-                  readonly event_type: string;
-                  readonly stream_id: string;
-                }>`
+  Effect.scoped(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread:reactor-recovered-cursor");
+      const reactorFailures = yield* Queue.unbounded<void>();
+      const secondSubscribed = yield* Deferred.make<void>();
+      const cursors: Array<number | undefined> = [];
+      const threadManagement = Layer.mock(ThreadManagementService.ThreadManagementService)({
+        streamStoredEventsFrom: (input) =>
+          Stream.unwrap(
+            Effect.gen(function* () {
+              cursors.push(input?.afterSequence);
+              if (cursors.length === 1) {
+                return Stream.fail(
+                  new Orchestrator.OrchestratorDomainEventStreamError({
+                    cause: "database is locked",
+                  }),
+                );
+              }
+              yield* Deferred.succeed(secondSubscribed, undefined);
+              const rows = yield* sql<{
+                readonly sequence: number;
+                readonly event_id: string;
+                readonly event_type: string;
+                readonly stream_id: string;
+              }>`
                   SELECT sequence, event_id, event_type, stream_id
                   FROM orchestration_events
                   WHERE sequence > ${input?.afterSequence ?? 0}
                   ORDER BY sequence
                 `;
-                return Stream.fromIterable(
-                  rows.map(
-                    (row) =>
-                      ({
-                        sequence: row.sequence,
-                        commandId: null,
-                        event: {
-                          id: EventId.make(row.event_id),
-                          type: row.event_type,
-                          threadId: ThreadId.make(row.stream_id),
-                          providerInstanceId: ProviderInstanceId.make("codex"),
-                          occurredAt: DateTime.makeUnsafe(boundThreadArchivedAt),
-                          payload: { id: row.stream_id },
-                        } as unknown as OrchestrationV2DomainEvent,
-                      }) satisfies OrchestrationV2StoredEvent,
-                  ),
-                ).pipe(Stream.concat(Stream.never));
-              }).pipe(Effect.orDie),
-            ),
-        });
-        // The event log is unreadable at startup, so the reactor has no cursor.
-        yield* sql.unsafe(`ALTER TABLE orchestration_events RENAME TO orchestration_events_hidden`);
-        const context = yield* Layer.build(
-          ScheduledTaskService.layer.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                NodeCrypto.layer,
-                Scheduler.layer,
-                Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
-                Layer.mock(SecretRequests.SecretRequests)({}),
-                threadManagement,
-                Logger.layer([
-                  Logger.make(({ message }) => {
-                    if (
-                      Array.isArray(message) &&
-                      message[0] === "Schedule task archive reactor failed; resubscribing"
-                    ) {
-                      Queue.offerUnsafe(reactorFailures, undefined);
-                    }
-                  }),
-                ]),
-              ),
+              return Stream.fromIterable(
+                rows.map(
+                  (row) =>
+                    ({
+                      sequence: row.sequence,
+                      commandId: null,
+                      event: {
+                        id: EventId.make(row.event_id),
+                        type: row.event_type,
+                        threadId: ThreadId.make(row.stream_id),
+                        providerInstanceId: ProviderInstanceId.make("codex"),
+                        occurredAt: DateTime.makeUnsafe(boundThreadArchivedAt),
+                        payload: { id: row.stream_id },
+                      } as unknown as OrchestrationV2DomainEvent,
+                    }) satisfies OrchestrationV2StoredEvent,
+                ),
+              ).pipe(Stream.concat(Stream.never));
+            }).pipe(Effect.orDie),
+          ),
+      });
+      // The event log is unreadable at startup, so the reactor has no cursor.
+      yield* sql.unsafe(`ALTER TABLE orchestration_events RENAME TO orchestration_events_hidden`);
+      const context = yield* Layer.build(
+        ScheduledTaskService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              NodeCrypto.layer,
+              Scheduler.layer,
+              Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+              Layer.mock(SecretRequests.SecretRequests)({}),
+              Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                namedProjectsRoot: "/projects",
+                isScratchProject: () => Effect.succeed(false),
+              }),
+              threadManagement,
+              Logger.layer([
+                Logger.make(({ message }) => {
+                  if (
+                    Array.isArray(message) &&
+                    message[0] === "Schedule task archive reactor failed; resubscribing"
+                  ) {
+                    Queue.offerUnsafe(reactorFailures, undefined);
+                  }
+                }),
+              ]),
             ),
           ),
-        );
-        const tasks = Context.get(context, ScheduledTaskService.ScheduledTaskService);
-        yield* Queue.take(reactorFailures);
-        yield* sql.unsafe(`ALTER TABLE orchestration_events_hidden RENAME TO orchestration_events`);
-        yield* setBoundThreadState(threadId, "active");
-        const task = yield* tasks.upsert({ ...boundTaskInput, enabled: true, threadId });
+        ),
+      );
+      const tasks = Context.get(context, ScheduledTaskService.ScheduledTaskService);
+      yield* Queue.take(reactorFailures);
+      yield* sql.unsafe(`ALTER TABLE orchestration_events_hidden RENAME TO orchestration_events`);
+      yield* setBoundThreadState(threadId, "active");
+      const task = yield* tasks.upsert({ ...boundTaskInput, enabled: true, threadId });
 
-        // The next attempt reads the cursor, then its subscription fails at once.
-        yield* TestClock.adjust("5 seconds");
-        yield* Queue.take(reactorFailures);
-        yield* setBoundThreadState(threadId, "archived");
-        yield* insertThreadEvent(threadId, "thread.archived", boundThreadArchivedAt);
-        yield* TestClock.adjust("5 seconds");
-        yield* Deferred.await(secondSubscribed);
+      // The next attempt reads the cursor, then its subscription fails at once.
+      yield* TestClock.adjust("5 seconds");
+      yield* Queue.take(reactorFailures);
+      yield* setBoundThreadState(threadId, "archived");
+      yield* insertThreadEvent(threadId, "thread.archived", boundThreadArchivedAt);
+      yield* TestClock.adjust("5 seconds");
+      yield* Deferred.await(secondSubscribed);
 
-        assert.deepEqual(cursors, [cursors[0], cursors[0]]);
-        const paused = yield* tasks.subscribeList().pipe(
-          Stream.map(({ tasks: all }) => all.find((candidate) => candidate.id === task.task.id)),
-          Stream.filter((candidate) => candidate !== undefined && candidate.enabled === false),
-          Stream.runHead,
-        );
-        assert.isTrue(Option.isSome(paused));
-      }),
-    );
-  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+      assert.deepEqual(cursors, [cursors[0], cursors[0]]);
+      const paused = yield* tasks.subscribeList().pipe(
+        Stream.map(({ tasks: all }) => all.find((candidate) => candidate.id === task.task.id)),
+        Stream.filter((candidate) => candidate !== undefined && candidate.enabled === false),
+        Stream.runHead,
+      );
+      assert.isTrue(Option.isSome(paused));
+    }),
+  ).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect("replays an archive committed after the startup sweep checked its thread", () =>
-  Effect.gen(function* () {
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        const now = "2026-09-09T12:00:00.000Z";
-        const seedTask = (taskId: string, threadId: ThreadId, nextRunAt: string) =>
-          sql`INSERT INTO scheduled_tasks ${sql.insert({
-            task_id: taskId,
-            title: taskId,
-            prompt: "prompt",
-            enabled: 1,
-            schedule_json: '{"type":"interval","everyMs":60000}',
-            project_id: archivedBindingProjectId,
-            thread_id: threadId,
-            workspace_strategy_json: '{"type":"root"}',
-            model_selection_json: '{"instanceId":"codex","model":"gpt-5"}',
-            runtime_mode: "full-access",
-            interaction_mode: "default",
-            created_by: "user",
-            creation_source: "web",
-            created_at: now,
-            updated_at: now,
-            next_run_at: nextRunAt,
-            last_run_at: null,
-            last_run_status: "never",
-            last_run_error: null,
-            run_count: 0,
-          })}`;
-        // The sweep visits the live thread first, then pauses the task whose
-        // thread was archived while the server was down.
-        const liveThreadId = ThreadId.make("thread:archived-during-sweep");
-        const downThreadId = ThreadId.make("thread:archived-while-down");
-        const liveTaskId = ScheduledTaskId.make("scheduled-task:archived-during-sweep");
-        const downTaskId = ScheduledTaskId.make("scheduled-task:archived-while-down");
-        yield* seedTask(liveTaskId, liveThreadId, "2027-09-09T12:00:00.000Z");
-        yield* seedTask(downTaskId, downThreadId, "2027-09-10T12:00:00.000Z");
-        yield* setBoundThreadState(liveThreadId, "active");
-        yield* setBoundThreadState(downThreadId, "archived");
-        // An event already in the log at startup sits at or before the cursor.
-        yield* insertThreadEvent(liveThreadId, "thread.created", now);
-        // The sweep's pause of the second task commits an archive of the first
-        // thread, after the sweep has already found that thread active. A
-        // cursor read after the sweep would start past this archive.
-        yield* sql.unsafe(`
+  Effect.scoped(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-09-09T12:00:00.000Z";
+      const seedTask = (taskId: string, threadId: ThreadId, nextRunAt: string) =>
+        sql`INSERT INTO scheduled_tasks ${sql.insert({
+          task_id: taskId,
+          title: taskId,
+          prompt: "prompt",
+          enabled: 1,
+          schedule_json: '{"type":"interval","everyMs":60000}',
+          project_id: archivedBindingProjectId,
+          thread_id: threadId,
+          workspace_strategy_json: '{"type":"root"}',
+          model_selection_json: '{"instanceId":"codex","model":"gpt-5"}',
+          runtime_mode: "full-access",
+          interaction_mode: "default",
+          created_by: "user",
+          creation_source: "web",
+          created_at: now,
+          updated_at: now,
+          next_run_at: nextRunAt,
+          last_run_at: null,
+          last_run_status: "never",
+          last_run_error: null,
+          run_count: 0,
+        })}`;
+      // The sweep visits the live thread first, then pauses the task whose
+      // thread was archived while the server was down.
+      const liveThreadId = ThreadId.make("thread:archived-during-sweep");
+      const downThreadId = ThreadId.make("thread:archived-while-down");
+      const liveTaskId = ScheduledTaskId.make("scheduled-task:archived-during-sweep");
+      const downTaskId = ScheduledTaskId.make("scheduled-task:archived-while-down");
+      yield* seedTask(liveTaskId, liveThreadId, "2027-09-09T12:00:00.000Z");
+      yield* seedTask(downTaskId, downThreadId, "2027-09-10T12:00:00.000Z");
+      yield* setBoundThreadState(liveThreadId, "active");
+      yield* setBoundThreadState(downThreadId, "archived");
+      // An event already in the log at startup sits at or before the cursor.
+      yield* insertThreadEvent(liveThreadId, "thread.created", now);
+      // The sweep's pause of the second task commits an archive of the first
+      // thread, after the sweep has already found that thread active. A
+      // cursor read after the sweep would start past this archive.
+      yield* sql.unsafe(`
           CREATE TRIGGER archive_live_thread_during_sweep
           AFTER UPDATE OF enabled ON scheduled_tasks
           WHEN NEW.task_id = '${downTaskId}' AND OLD.enabled = 1 AND NEW.enabled = 0
@@ -3085,87 +3131,88 @@ it.effect("replays an archive committed after the startup sweep checked its thre
           END
         `);
 
-        // The reactor's subscription parks on this gate, so it reads the log
-        // only after the sweep has finished.
-        const subscribed = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        let requestedCursor: number | undefined;
-        const storedEvents = Stream.unwrap(
-          Effect.gen(function* () {
-            yield* Deferred.succeed(subscribed, undefined);
-            yield* Deferred.await(release);
-            const rows = yield* sql<{
-              readonly sequence: number;
-              readonly event_id: string;
-              readonly event_type: string;
-              readonly stream_id: string;
-            }>`
+      // The reactor's subscription parks on this gate, so it reads the log
+      // only after the sweep has finished.
+      const subscribed = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let requestedCursor: number | undefined;
+      const storedEvents = Stream.unwrap(
+        Effect.gen(function* () {
+          yield* Deferred.succeed(subscribed, undefined);
+          yield* Deferred.await(release);
+          const rows = yield* sql<{
+            readonly sequence: number;
+            readonly event_id: string;
+            readonly event_type: string;
+            readonly stream_id: string;
+          }>`
               SELECT sequence, event_id, event_type, stream_id
               FROM orchestration_events ORDER BY sequence
             `;
-            return Stream.fromIterable(
-              rows.map(
-                (row) =>
-                  ({
-                    sequence: row.sequence,
-                    commandId: null,
-                    event: {
-                      id: EventId.make(row.event_id),
-                      type: row.event_type,
-                      threadId: ThreadId.make(row.stream_id),
-                      providerInstanceId: ProviderInstanceId.make("codex"),
-                      occurredAt: DateTime.makeUnsafe(boundThreadArchivedAt),
-                      payload: { id: row.stream_id },
-                    } as unknown as OrchestrationV2DomainEvent,
-                  }) satisfies OrchestrationV2StoredEvent,
-              ),
-            ).pipe(Stream.concat(Stream.never));
-          }).pipe(Effect.orDie),
-        );
+          return Stream.fromIterable(
+            rows.map(
+              (row) =>
+                ({
+                  sequence: row.sequence,
+                  commandId: null,
+                  event: {
+                    id: EventId.make(row.event_id),
+                    type: row.event_type,
+                    threadId: ThreadId.make(row.stream_id),
+                    providerInstanceId: ProviderInstanceId.make("codex"),
+                    occurredAt: DateTime.makeUnsafe(boundThreadArchivedAt),
+                    payload: { id: row.stream_id },
+                  } as unknown as OrchestrationV2DomainEvent,
+                }) satisfies OrchestrationV2StoredEvent,
+            ),
+          ).pipe(Stream.concat(Stream.never));
+        }).pipe(Effect.orDie),
+      );
 
-        const context = yield* Layer.build(
-          ScheduledTaskService.layer.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                NodeCrypto.layer,
-                Scheduler.layer,
-                Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
-                Layer.mock(SecretRequests.SecretRequests)({}),
-                boundThreadManagementMockFrom(storedEvents, (afterSequence) => {
-                  requestedCursor = afterSequence;
-                }),
-              ),
+      const context = yield* Layer.build(
+        ScheduledTaskService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              NodeCrypto.layer,
+              Scheduler.layer,
+              Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+              Layer.mock(SecretRequests.SecretRequests)({}),
+              Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                namedProjectsRoot: "/projects",
+                isScratchProject: () => Effect.succeed(false),
+              }),
+              boundThreadManagementMockFrom(storedEvents, (afterSequence) => {
+                requestedCursor = afterSequence;
+              }),
             ),
           ),
-        );
-        const tasks = Context.get(context, ScheduledTaskService.ScheduledTaskService);
-        yield* Deferred.await(subscribed);
-        const taskOf = (id: ScheduledTaskId) =>
-          Effect.map(tasks.list(), ({ tasks: all }) =>
-            all.find((candidate) => candidate.id === id),
-          );
-        // The sweep paused the task archived while down, and found the other
-        // thread still active, so only replay can pause that one.
-        assert.isFalse((yield* taskOf(downTaskId))?.enabled);
-        assert.isTrue((yield* taskOf(liveTaskId))?.enabled);
-        const archived = yield* sql<{ readonly sequence: number }>`
+        ),
+      );
+      const tasks = Context.get(context, ScheduledTaskService.ScheduledTaskService);
+      yield* Deferred.await(subscribed);
+      const taskOf = (id: ScheduledTaskId) =>
+        Effect.map(tasks.list(), ({ tasks: all }) => all.find((candidate) => candidate.id === id));
+      // The sweep paused the task archived while down, and found the other
+      // thread still active, so only replay can pause that one.
+      assert.isFalse((yield* taskOf(downTaskId))?.enabled);
+      assert.isTrue((yield* taskOf(liveTaskId))?.enabled);
+      const archived = yield* sql<{ readonly sequence: number }>`
           SELECT sequence FROM orchestration_events
           WHERE event_id = 'event:archived-during-sweep'
         `;
-        assert.isDefined(requestedCursor);
-        assert.isBelow(requestedCursor!, archived[0]!.sequence);
-        yield* Deferred.succeed(release, undefined);
+      assert.isDefined(requestedCursor);
+      assert.isBelow(requestedCursor!, archived[0]!.sequence);
+      yield* Deferred.succeed(release, undefined);
 
-        const paused = yield* tasks.subscribeList().pipe(
-          Stream.map(({ tasks: all }) => all.find((candidate) => candidate.id === liveTaskId)),
-          Stream.filter((task) => task !== undefined && task.enabled === false),
-          Stream.runHead,
-        );
-        assert.isTrue(Option.isSome(paused));
-        assert.isNull(Option.getOrThrow(paused)!.nextRunAt);
-      }),
-    );
-  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+      const paused = yield* tasks.subscribeList().pipe(
+        Stream.map(({ tasks: all }) => all.find((candidate) => candidate.id === liveTaskId)),
+        Stream.filter((task) => task !== undefined && task.enabled === false),
+        Stream.runHead,
+      );
+      assert.isTrue(Option.isSome(paused));
+      assert.isNull(Option.getOrThrow(paused)!.nextRunAt);
+    }),
+  ).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect("the startup sweep leaves a task alone when its thread shell is not reconciled yet", () =>
@@ -3250,5 +3297,150 @@ it.effect("the startup sweep pauses enabled tasks whose thread was archived whil
     assert.isDefined(swept);
     assert.isFalse(swept!.enabled);
     assert.isNull(swept!.nextRunAt);
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("thread cleanup notifies subscribers and a finishing run cannot recreate the task", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const subscribed = yield* Deferred.make<void>();
+    const running = yield* Deferred.make<void>();
+    const removed = yield* Deferred.make<void>();
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            streamStoredEventsFrom: () => Stream.empty,
+            sendToThread: () =>
+              Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.andThen(Effect.die("test dispatch failure")),
+              ),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Scheduler.layer,
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const threadId = ThreadId.make("thread:deleted-during-run");
+      yield* setBoundThreadState(threadId, "active", ProjectId.make("project:test"));
+      const { task } = yield* service.upsert({
+        id: ScheduledTaskId.make("task:deleted-during-run"),
+        title: "Check orchestration",
+        prompt: "Check progress",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: ProjectId.make("project:test"),
+        threadId,
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      yield* service.subscribeList().pipe(
+        Stream.runForEach(({ tasks }) => {
+          const current = tasks.find((candidate) => candidate.id === task.id);
+          if (current === undefined) return Deferred.succeed(removed, undefined);
+          return current.lastRunStatus === "running"
+            ? Deferred.succeed(running, undefined)
+            : Deferred.succeed(subscribed, undefined);
+        }),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(subscribed);
+      const run = yield* service.runNow({ id: task.id }).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* Deferred.await(running);
+      yield* service.deleteForThread(threadId);
+      yield* Deferred.await(removed);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(run);
+      assert.lengthOf((yield* service.list()).tasks, 0);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a bound run follows its thread when promotion moves it mid-send", () =>
+  Effect.gen(function* () {
+    const scratch = ProjectId.make("project:scratch");
+    const promoted = ProjectId.make("project:promoted");
+    const sends = yield* Ref.make<Array<{ projectId: ProjectId; commandId: string }>>([]);
+    // Rebind lands first, then the promotion commits between the shell read and the retry.
+    const shellProjects = yield* Ref.make([scratch, promoted]);
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            streamStoredEventsFrom: () => Stream.empty,
+            sendToThread: (input) =>
+              Ref.updateAndGet(sends, (all) => [
+                ...all,
+                { projectId: input.projectId, commandId: input.commandId },
+              ]).pipe(
+                Effect.flatMap((all) =>
+                  all.length < 3
+                    ? Effect.fail(
+                        new ThreadManagementService.ThreadManagementThreadNotFoundError({
+                          projectId: input.projectId,
+                          threadId: input.threadId,
+                        }),
+                      )
+                    : Effect.succeed({} as never),
+                ),
+              ),
+            getThreadShell: () =>
+              Ref.modify(shellProjects, ([next, ...rest]) => [
+                { projectId: next ?? promoted } as never,
+                rest,
+              ]),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Scheduler.layer,
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const threadId = ThreadId.make("thread:promoted-during-run");
+      yield* setBoundThreadState(threadId, "active", promoted);
+      const { task } = yield* service.upsert({
+        id: ScheduledTaskId.make("task:promoted-during-run"),
+        title: "Check in",
+        prompt: "Check progress",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: promoted,
+        threadId,
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+
+      const result = yield* service.runNow({ id: task.id });
+
+      assert.equal(result.threadId, threadId);
+      const attempts = yield* Ref.get(sends);
+      assert.deepEqual(
+        attempts.map((attempt) => attempt.projectId),
+        [promoted, scratch, promoted],
+      );
+      assert.equal(new Set(attempts.map((attempt) => attempt.commandId)).size, 1);
+    }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

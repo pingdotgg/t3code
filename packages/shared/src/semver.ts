@@ -8,7 +8,9 @@ interface ParsedSemver {
 const SEMVER_NUMBER_SEGMENT = /^\d+$/;
 
 export function normalizeSemverVersion(version: string): string {
-  const [main, prerelease] = version.trim().split("-", 2);
+  const [versionWithoutBuildMetadata = ""] = version.trim().split("+", 1);
+  const [main, ...prereleaseParts] = versionWithoutBuildMetadata.split("-");
+  const prerelease = prereleaseParts.join("-");
   const segments: string[] = [];
   for (const segment of (main ?? "").split(".")) {
     const trimmed = segment.trim();
@@ -26,7 +28,8 @@ export function normalizeSemverVersion(version: string): string {
 
 export function parseSemver(value: string): ParsedSemver | null {
   const normalized = normalizeSemverVersion(value).replace(/^v/, "");
-  const [main = "", prerelease] = normalized.split("-", 2);
+  const [main = "", ...prereleaseParts] = normalized.split("-");
+  const prerelease = prereleaseParts.join("-");
   const segments = main.split(".");
   if (segments.length !== 3) {
     return null;
@@ -135,10 +138,7 @@ export function compareSemverVersions(left: string, right: string): number {
   return 0;
 }
 
-/**
- * Keep the function body valid plain JavaScript: SSH startup stringifies this
- * function and runs it on remote Node versions before TypeScript support is known.
- */
+/** Keep plain JavaScript: SSH startup stringifies this for remote Node versions without known TS support. */
 export const satisfiesSemverRange: (rawVersion: string, range: string) => boolean =
   function satisfiesSemverRange(rawVersion, range) {
     const normalizedVersion = String(rawVersion).trim().replace(/^v/, "");
