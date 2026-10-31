@@ -652,6 +652,46 @@ describe("MessagesTimeline chapters", () => {
       expect(scrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ index: 30 })),
     );
   });
+
+  it("expands a collapsed superseded attempt to reveal a chapter folded inside it", async () => {
+    const props = baseProps();
+    const threadRef = parseScopedThreadKey(props.routeThreadKey);
+    if (!threadRef) throw new Error("routeThreadKey must be a scoped thread key");
+    const runId = RunId.make("run-steered");
+    const attempt = (id: string, ordinal: number, status: "superseded" | "running") => ({
+      id: RunAttemptId.make(id),
+      runId,
+      attemptOrdinal: ordinal,
+      rootNodeId: `node-${id}` as never,
+      status,
+      completedAt: null,
+    });
+    const superseded = attempt("attempt-1", 1, "superseded");
+    const active = attempt("attempt-2", 2, "running");
+    const inAttempt = (entry: Entry, entryAttempt: typeof superseded): Entry => ({
+      ...entry,
+      attempt: entryAttempt,
+    });
+    const entries = [
+      inAttempt(message("Build it", { runId }, "question"), superseded),
+      inAttempt(message("the folded chapter", { role: "assistant", runId }, "chapter"), superseded),
+      inAttempt(message("Change direction", { runId }, "steer"), active),
+      inAttempt(message("Current response", { role: "assistant", runId }, "current"), active),
+    ];
+    await using _screen = await renderElement(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={entries}
+        latestRun={{ runId, status: "running", startedAt: CREATED_AT, completedAt: null }}
+      />,
+    );
+    const list = props.listRef.current;
+    if (!list) throw new Error("the timeline list did not mount");
+    using scrollToIndex = vi.spyOn(list, "scrollToIndex");
+
+    act(() => useChatChapterStore.getState().requestReveal(threadRef, MessageId.make("chapter")));
+    await vi.waitFor(() => expect(scrollToIndex).toHaveBeenCalled());
+  });
 });
 
 describe("MessagesTimeline automation prompts", () => {

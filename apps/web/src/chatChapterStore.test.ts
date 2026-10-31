@@ -61,4 +61,24 @@ describe("chat chapters", () => {
     expect(first?.messageId).toBe(MessageId.make("m1"));
     expect(second?.nonce).toBe((first?.nonce ?? 0) + 1);
   });
+
+  it("clears a matching reveal request when the chapter is unpinned", () => {
+    const { togglePin, requestReveal, unpin } = useChatChapterStore.getState();
+    togglePin(threadRef, message("m1", "first", "2026-01-01T00:00:00.000Z"));
+    requestReveal(threadRef, MessageId.make("m1"));
+    expect(useChatChapterStore.getState().revealRequest?.messageId).toBe(MessageId.make("m1"));
+
+    unpin(threadRef, MessageId.make("m1"));
+    expect(useChatChapterStore.getState().revealRequest).toBeNull();
+  });
+
+  it("preserves an unrelated reveal request when another chapter is unpinned", () => {
+    const { togglePin, requestReveal, unpin } = useChatChapterStore.getState();
+    togglePin(threadRef, message("m1", "first", "2026-01-01T00:00:00.000Z"));
+    togglePin(threadRef, message("m2", "second", "2026-01-02T00:00:00.000Z"));
+    requestReveal(threadRef, MessageId.make("m2"));
+
+    unpin(threadRef, MessageId.make("m1"));
+    expect(useChatChapterStore.getState().revealRequest?.messageId).toBe(MessageId.make("m2"));
+  });
 });

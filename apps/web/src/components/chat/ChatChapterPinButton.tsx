@@ -15,13 +15,13 @@ export const ChatChapterPinButton = memo(function ChatChapterPinButton({
 }) {
   const pinned = useIsChapterPinned(threadRef, message.id);
   const togglePin = useChatChapterStore((state) => state.togglePin);
-  const label = pinned ? "Unpin chapter" : "Pin as chapter";
+  const tooltipLabel = pinned ? "Unpin chapter" : "Pin as chapter";
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <Button
-            aria-label={label}
+            aria-label="Pin as chapter"
             aria-pressed={pinned}
             onClick={() => togglePin(threadRef, message)}
             type="button"
@@ -32,7 +32,7 @@ export const ChatChapterPinButton = memo(function ChatChapterPinButton({
       >
         <PinIcon className={cn("size-3", pinned && "fill-current text-primary")} />
       </TooltipTrigger>
-      <TooltipPopup>{label}</TooltipPopup>
+      <TooltipPopup>{tooltipLabel}</TooltipPopup>
     </Tooltip>
   );
 });
