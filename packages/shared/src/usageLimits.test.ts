@@ -1172,8 +1172,8 @@ describe("/usage-limits", () => {
       limits: { resetCredits: { availableCount: 2 } },
     });
     expect(report?.accounts[2]).toMatchObject({
-      label: "Accounts · oss",
-      sourceLabel: "CLI Proxy",
+      label: "Codex account 1",
+      sourceLabel: "Accounts",
       plan: "Codex OSS",
     });
     expect(report?.notices).toEqual([]);

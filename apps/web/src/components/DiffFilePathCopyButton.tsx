@@ -33,7 +33,7 @@ export function DiffFilePathCopyButton({ filePath }: { filePath: string }) {
         }
       >
         <MorphIcon
-          className={cn("size-3", isCopied && "text-success")}
+          className={cn("size-3", isCopied ? "text-success" : "text-dim-foreground")}
           icon={isCopied ? Check : Copy}
         />
       </TooltipTrigger>

@@ -6,6 +6,7 @@ import { environmentIdsKey } from "~/state/environmentAtomList";
 import { environmentUpdateStatesAtom } from "~/state/server";
 import { useServerUpdate } from "../ServerUpdateAction";
 import { Button } from "../ui/button";
+import { SidebarMenuButton } from "../ui/sidebar";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
   describeUpdateCapsule,
@@ -95,31 +96,29 @@ export function SidebarUpdateCapsule({
       >
         <PopoverTrigger
           render={
-            <button
+            <SidebarMenuButton
               type="button"
               aria-label={
                 view.slow ? `${view.label} ${view.slow.status} ${view.slow.elapsed}` : view.label
               }
-              className="absolute inset-0 cursor-pointer rounded-full outline-hidden ring-ring hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset"
+              className="absolute inset-0 h-full"
             />
           }
         />
         {/* w-0 keeps the label out of the capsule's minimum width, so a shared footer row
             can squeeze the label but never push the action past the sidebar edge. */}
-        <span className="pointer-events-none relative w-0 min-w-0 flex-1 truncate pl-3 text-xs">
+        <span className="pointer-events-none relative w-0 min-w-0 flex-1 truncate pl-3 text-caption">
           <span className={cn(view.tone === "failed" && "text-destructive")}>{view.label}</span>
           {view.slow ? (
             <span className="text-warning tabular-nums"> {view.slow.elapsed}</span>
           ) : null}
         </span>
         {view.action !== null ? (
-          <button
-            type="button"
-            className="relative shrink-0 cursor-pointer pr-3 pl-1.5 text-xs underline decoration-muted-foreground/60 underline-offset-3 hover:decoration-current"
-            onClick={runAction}
-          >
-            {actionLabel}
-          </button>
+          <span className="relative shrink-0">
+            <Button size="xs" variant="link" onClick={runAction}>
+              {actionLabel}
+            </Button>
+          </span>
         ) : (
           <span className="pointer-events-none relative grid size-8 shrink-0 place-items-center">
             {icon}
@@ -127,7 +126,7 @@ export function SidebarUpdateCapsule({
         )}
       </div>
       <PopoverPopup side="top" align="end" padding="compact" width="sm">
-        <div className="flex flex-col gap-1 text-xs">
+        <div className="flex flex-col gap-1 text-caption">
           {run.localVersion !== null ? (
             <div className="flex items-center justify-between gap-3">
               <span>This app</span>
@@ -138,7 +137,7 @@ export function SidebarUpdateCapsule({
           ) : onRestart ? (
             <div className="flex items-center justify-between gap-3">
               <span>This app</span>
-              <Button size="xs" variant="outline" onClick={() => void onRestart()}>
+              <Button size="xs" variant="secondary" onClick={() => void onRestart()}>
                 Restart to update
               </Button>
             </div>
@@ -167,7 +166,7 @@ export function SidebarUpdateCapsule({
           {settled && failed ? (
             <div className="mt-1 flex justify-end gap-1">
               {view.action === "retry" ? (
-                <Button size="xs" variant="outline" onClick={runAction}>
+                <Button size="xs" variant="secondary" onClick={runAction}>
                   Retry
                 </Button>
               ) : null}
