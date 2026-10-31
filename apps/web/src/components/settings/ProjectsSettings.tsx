@@ -102,7 +102,7 @@ function ProjectChooser() {
   const scratchTarget = scratchEnvironmentId(primaryEnvironmentId);
   if (groups.length === 0) {
     return (
-      <SettingsPageContainer centered>
+      <SettingsPageContainer centered className="max-w-[648px] gap-4">
         <SettingsEmptyState
           icon={<FolderOpenIcon />}
           title="No projects yet"
@@ -149,7 +149,7 @@ function ProjectChooser() {
     );
   }
   return (
-    <SettingsPageContainer centered>
+    <SettingsPageContainer centered className="max-w-[648px] gap-4">
       <SettingsEmptyState
         icon={<FolderOpenIcon />}
         title="Choose a project"
