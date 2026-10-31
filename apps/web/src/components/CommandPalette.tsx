@@ -351,6 +351,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           setOpen={setOpen}
           openChildSearch={openChildSearch}
           initialContext={state.restoredSearch}
+          overlayEscapeLabel={state.parentSearch ? "Back" : "Close"}
         />
       </CommandDialog>
     </ComposerHandleContext>
@@ -367,6 +368,7 @@ function CommandPaletteDialog(props: {
     context: CommandPaletteReturnContext,
   ) => void;
   readonly initialContext: CommandPaletteReturnContext | undefined;
+  readonly overlayEscapeLabel: string;
 }) {
   const composerHandleRef = useComposerHandleContext();
 
@@ -401,9 +403,12 @@ function CommandPaletteDialog(props: {
       }}
     >
       {props.mode === "files" ? (
-        <ProjectFilePicker setOpen={props.setOpen} />
+        <ProjectFilePicker setOpen={props.setOpen} escapeLabel={props.overlayEscapeLabel} />
       ) : props.mode === "content" ? (
-        <ProjectContentSearchDialog onOpenChange={props.setOpen} />
+        <ProjectContentSearchDialog
+          onOpenChange={props.setOpen}
+          escapeLabel={props.overlayEscapeLabel}
+        />
       ) : (
         <OpenCommandPaletteDialog
           key={props.session}
