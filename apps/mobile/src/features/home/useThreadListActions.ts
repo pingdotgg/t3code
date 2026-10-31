@@ -174,6 +174,7 @@ function useThreadActionExecutor(
 function confirmThreadDeletion(
   executeAction: (action: ThreadListAction, thread: EnvironmentThreadShell) => Promise<boolean>,
   thread: EnvironmentThreadShell,
+  onDeleted?: () => void,
 ) {
   if (!checkThreadOperationPermission(thread, actionFailureTitle("delete"))) return;
   const title = "Delete thread?";
@@ -183,15 +184,16 @@ function confirmThreadDeletion(
     message,
     confirmText: "Delete",
     destructive: true,
-    onConfirm: () => {
-      void executeAction("delete", thread);
+    onConfirm: async () => {
+      if (await executeAction("delete", thread)) onDeleted?.();
     },
   });
 }
 
 export function useThreadListActions(): {
   readonly archiveThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
-  readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
+  /** `onDeleted` runs only after the server confirms the delete. */
+  readonly confirmDeleteThread: (thread: EnvironmentThreadShell, onDeleted?: () => void) => void;
   readonly settleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly snoozeThread: (thread: EnvironmentThreadShell, snoozedUntil: string) => Promise<boolean>;
   readonly unsnoozeThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
@@ -401,6 +403,11 @@ export function useThreadListActions(): {
       );
       return false;
     }
+    if (
+      (thread.settledOverride === "settled" || thread.settledAt != null) &&
+      !(await unsettleThread(thread))
+    )
+      return false;
     selectionHaptic();
     const shells = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
     let firstKey: string | null = null;
@@ -647,6 +654,7 @@ export function useThreadListActions(): {
     const reorder = section === "pinned" ? reorderPinnedMutation : reorderActiveMutation;
     const moved = await (async () => {
       if (crossSection) {
+        if (lifecycle.unsettle && !(await unsettleThread(thread))) return false;
         if (section === "pinned") {
           const orderKey = assignments.find(
             ({ id }) => id === scopedThreadKey(thread.environmentId, thread.id),
@@ -665,7 +673,6 @@ export function useThreadListActions(): {
           }
         } else {
           if (lifecycle.unpin && !(await unpinThread(thread))) return false;
-          if (lifecycle.unsettle && !(await unsettleThread(thread))) return false;
           if (lifecycle.unsnooze && !(await unsnoozeThread(thread))) return false;
         }
       }
@@ -705,8 +712,8 @@ export function useThreadListActions(): {
     return moved;
   };
 
-  const confirmDeleteThread = (thread: EnvironmentThreadShell) =>
-    confirmThreadDeletion(executeAction, thread);
+  const confirmDeleteThread = (thread: EnvironmentThreadShell, onDeleted?: () => void) =>
+    confirmThreadDeletion(executeAction, thread, onDeleted);
 
   return {
     archiveThread,

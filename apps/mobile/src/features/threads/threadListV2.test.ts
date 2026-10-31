@@ -189,6 +189,60 @@ describe("queued messages keep a settled thread active", () => {
   });
 });
 
+describe("timestamp-only settlement", () => {
+  const snoozed = { snoozedUntil: "2026-06-03T10:00:00.000Z", snoozedAt: NOW };
+  it.each([
+    { name: "a settled override", fields: { settledOverride: "settled" }, placement: "settled" },
+    { name: "a settle timestamp alone", fields: { settledAt: NOW }, placement: "settled" },
+    { name: "no settlement", fields: {}, placement: "active" },
+    {
+      name: "a settle timestamp with queued messages",
+      fields: { settledAt: NOW },
+      queued: true,
+      placement: "active",
+    },
+    {
+      name: "a settle timestamp without the settlement capability",
+      fields: { settledAt: NOW },
+      settlementUnsupported: true,
+      placement: "active",
+    },
+    {
+      name: "a snoozed settle timestamp",
+      fields: { settledAt: NOW, ...snoozed },
+      placement: "snoozed",
+    },
+  ] as const)("places a thread with $name in $placement", (row) => {
+    const thread = makeThread({ id: ThreadId.make("thread"), title: "Thread", ...row.fields });
+    const options = {
+      now: NOW,
+      ...("queued" in row ? { queuedThreadKeys: new Set([`${environmentId}:thread`]) } : {}),
+      ...("settlementUnsupported" in row
+        ? { settlementEnvironmentIds: new Set<EnvironmentId>() }
+        : {}),
+    };
+    const layout = buildThreadListV2Items({
+      ...options,
+      threads: [thread],
+      environmentId: null,
+      searchQuery: "",
+    });
+    const placement =
+      layout.snoozedCount > 0
+        ? "snoozed"
+        : layout.settledCount > 0
+          ? "settled"
+          : layout.items[0]?.variant === "card"
+            ? "active"
+            : "missing";
+
+    expect(placement).toBe(row.placement);
+    expect(
+      getThreadListV2OrderedSection({ ...options, threads: [thread], section: "active" }).length,
+    ).toBe(row.placement === "active" ? 1 : 0);
+  });
+});
+
 describe("search lists ranked matches", () => {
   const matchKey = (id: string) =>
     threadSearchMatchKey({ environmentId, threadId: ThreadId.make(id) });
@@ -1210,7 +1264,7 @@ describe("cross-section thread drops", () => {
     expect(threadDropLifecycle(thread, "pinned", NOW)).toEqual({
       pin: true,
       unpin: false,
-      unsettle: false,
+      unsettle: true,
       unsnooze: false,
     });
   });
