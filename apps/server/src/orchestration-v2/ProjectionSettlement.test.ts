@@ -72,6 +72,7 @@ const createRun = Effect.fn(function* (
   threadId: ThreadId,
   status: OrchestrationV2Run["status"] = "completed",
   ordinal = 1,
+  completedAt = old,
 ) {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const runId = RunId.make(`run:${threadId}:${ordinal}`);
@@ -93,7 +94,7 @@ const createRun = Effect.fn(function* (
       status,
       requestedAt: old,
       startedAt: status === "queued" ? null : old,
-      completedAt: ["completed", "rolled_back", "failed"].includes(status) ? old : null,
+      completedAt: ["completed", "rolled_back", "failed"].includes(status) ? completedAt : null,
       checkpointId: null,
       contextHandoffId: null,
     },
@@ -258,6 +259,18 @@ it.effect(
         "usage_limit",
       );
       yield* createRun(queuedBehindLimit, "queued", 2);
+      // Held queues run out of order; the run that ended last decides, not the ordinal.
+      const limitEndedLast = yield* createThread("limit-ended-last");
+      yield* createFailure(
+        limitEndedLast,
+        yield* createRun(limitEndedLast, "failed", 1, DateTime.add(old, { hours: 1 })),
+        "usage_limit",
+      );
+      yield* createFailure(
+        limitEndedLast,
+        yield* createRun(limitEndedLast, "failed", 2),
+        "provider_error",
+      );
       const providerFailed = yield* createThread("provider-failed");
       yield* createFailure(
         providerFailed,
