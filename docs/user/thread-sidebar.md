@@ -37,6 +37,12 @@ folder, so the files the agent wrote stay until you delete them. Branch, worktre
 these folders are not Git repositories. This is unavailable when the data
 directory itself sits inside a Git checkout.
 
+When the work grows into something real, pick **Turn into project** from the
+thread's menu. The thread's folder becomes a project where it is, so nothing
+moves and the agent keeps working in the same place. Other threads in that folder
+move with it. Rename the project in its settings, and use **Initialize Git** to
+get branch and diff controls.
+
 ### Start in the background
 
 In a desktop browser or the desktop app, press `Cmd+Enter` on macOS or `Ctrl+Enter`
@@ -264,12 +270,42 @@ Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it
 finishes; the call's own result shows its status.
 
-On web and desktop, the thread details card lists the web servers that the
-thread's terminals or its Claude agent started, with their ports. A server the
-agent started stays listed after the agent's turn ends.
+On web and desktop, the thread details card lists the local servers that the
+thread's terminals or its Claude agent started, with their ports. Not every one
+serves a web page. A server the agent started stays listed after the agent's
+turn ends.
 Select a server to open it in the browser panel. **Stop** ends the server's job
 and keeps the agent, the terminal, and T3 Code running. Stop needs terminal
 access to the environment and is not available on Windows.
+
+To choose what the thread details card shows, right-click the card or open
+**Settings → Appearance → Thread details**. Hidden rows keep their keyboard
+shortcuts, such as Open in editor and project scripts. **Reset to default** brings
+back the standard rows.
+
+## Side chats
+
+A side chat lets you ask a question about a thread without adding to it. It starts
+with what the thread knows, and the thread keeps working while you ask.
+
+On web and desktop, start a message with `/side` or `/btw`, then your question.
+You can also choose **Side chat** from the **+** menu in the right panel. The side
+chat opens as a tab there, with its own composer. Side chats do not show in the
+sidebar. Find one again under **Side chats** in thread details.
+
+A side chat works in the same folder as the thread. Its first reply asks before it
+edits files or runs commands. After that, it uses the permission mode you choose
+in its composer.
+
+To use what you learned, choose **Bring back**. The thread gets the side chat with
+your next message there. Bring back is available while the thread is idle.
+
+Closing a side chat you never sent a message in deletes it. To delete one you used,
+choose **Delete** at the top of the side chat. Deleting a thread also deletes its
+side chats.
+
+On mobile, a thread lists its side chats above the composer. Tap one to open it and
+answer its questions.
 
 ## Snooze until later
 
