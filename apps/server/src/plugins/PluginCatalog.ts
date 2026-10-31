@@ -164,17 +164,8 @@ export class PluginCatalog extends Context.Service<
     readonly resume: (
       input: PluginInstallationInput,
     ) => Effect.Effect<PluginInstallationResult, PluginCatalogError>;
-    /**
-     * Replaces the files in an installation's directory and consents to
-     * `digest`, as one management step: no other step, such as a disable from
-     * another client, runs in between, and the installation stays revoked
-     * throughout. The files are claimed first (see `changeFiles`), with
-     * `paths` naming everywhere `swap` and `restore` move files. `swap` puts
-     * the new files in place. If it fails, or the directory then does not hold
-     * `digest`, `restore` puts the old files back. Afterwards the installation
-     * is enabled again only if it was enabled and the bytes on disk have
-     * consent: the new ones, or the old ones still.
-     */
+    // Claim all move paths and keep registration revoked throughout the locked swap and consent commit.
+// Restore on precommit failure; re-enable only if previously enabled and the final bytes have consent.
     readonly replace: (
       input: PluginConsentInput & { readonly attemptId?: string },
       files: {
@@ -183,15 +174,8 @@ export class PluginCatalog extends Context.Service<
         readonly restore: Effect.Effect<void, PluginCatalogError>;
       },
     ) => Effect.Effect<PluginInstallationResult, PluginCatalogError>;
-    /**
-     * Settles a `replace` that was cut short, by a crash or a failed `restore`,
-     * as one management step. A persisted swap outcome records whether the
-     * replacement committed, independently of later consent. Otherwise
-     * `files.restore`,
-     * when given, puts the old files back after claiming `files.paths` (see
-     * `changeFiles`), and the files are inspected again. The installation
-     * stays disabled, and consent is never granted.
-     */
+    // The persisted attempt outcome decides commit versus rollback independently of later consent.
+// Recovery claims paths, waits for stop, and never grants consent or enables the installation.
     readonly settleReplace: (
       input: PluginConsentInput & { readonly attemptId?: string },
       files?: {
@@ -199,13 +183,7 @@ export class PluginCatalog extends Context.Service<
         readonly restore: Effect.Effect<void, PluginCatalogError>;
       },
     ) => Effect.Effect<"committed" | "rolled-back", PluginCatalogError>;
-    /**
-     * Runs `effect`, which moves or deletes files under `paths`, as one
-     * management step. It fails `already-added`, and touches nothing, if any
-     * installation is rooted in or around one of the paths. Otherwise every
-     * process that ran from files there has exited before `effect` starts,
-     * including one whose disable or remove was cut short.
-     */
+    // Claim paths before mutation; reject overlapping installations and await every process that used those files.
     readonly changeFiles: <A, E>(
       paths: ReadonlyArray<string>,
       effect: Effect.Effect<A, E>,

@@ -1,40 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Hashes a downloaded tarball with node:crypto to check its sha512 integrity.
-/**
- * Installs trusted plugins from an npm registry into directories the server
- * owns, then hands each one to the catalogue like any added directory.
- *
- * Installing runs nothing. One exact version is resolved, its tarball must
- * match the registry's sha512 integrity, and the archive is checked whole
- * before a byte is written (see `npmTarball.ts`). Package scripts never run
- * and dependencies are never installed: a package must bundle what it needs,
- * so a package with an install script, or whose dependencies (or theirs in
- * turn) do not resolve inside it, is refused. The catalogue then requires
- * consent to the unpacked digest before the plugin can be enabled.
- *
- * Layout under `<state>/plugins/npm/<key>/`:
- * - `package/` the installed version: the catalogue installation's directory.
- * - `npm.json` where it came from, and an update swap in progress, if any.
- * - `.staging-*` a version being unpacked or a staged update; never survives a restart.
- * - `.previous` the replaced version, only while an update is being applied.
- *
- * An update unpacks next to `package/` and leaves it running. Applying it
- * first journals the swap in `npm.json`, then hands the catalogue one step
- * (`PluginCatalog.replace`) that stops the installation, swaps the
- * directories, and persists the swap outcome with consent to the staged digest.
- * A failure before that commit point puts the old directory back. Another
- * catalogue step (`PluginCatalog.settleReplace`) uses the persisted outcome for that exact attempt to
- * finish or roll back the swap after the plugin has stopped. If cleanup fails,
- * the journal and `.previous` stay so settling can retry before every npm step,
- * after every catalogue change, and at startup.
- *
- * Every file move or deletion under the root is one catalogue step that
- * claims the paths first (`replace`, `settleReplace`, `changeFiles`): it is
- * refused while any installation is rooted there, whatever its id, and waits
- * until every process that ran from those files has exited. A deletion that
- * is refused or fails stays queued and is retried the same way.
- *
- * Removing the installation from the catalogue deletes its `<key>` directory.
- */
+// Verify integrity and the whole bounded archive before writing; run no package scripts or dependency installs.
+// Journal updates before the locked catalogue swap; persisted attempt outcomes decide crash recovery.
+// Retain journal and previous files until cleanup succeeds; every move/deletion claims paths and awaits old processes.
 import * as NodeCrypto from "node:crypto";
 
 import {
@@ -647,15 +614,8 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     for (const target of doomed) yield* release(target);
   });
 
-  /**
-   * Finishes or rolls back a journaled swap. The catalogue decides under its
-   * management lock, so a consent or enable from another client lands wholly
-   * before or after: finished when the persisted swap outcome is committed,
-   * otherwise `.previous` goes back once the plugin has stopped. The decision
-   * sets the reported version at once; the journal and `.previous` stay until
-   * the cleanup after it has worked, so a failure is retried later and never
-   * loses a version.
-   */
+  // The catalogue lock serializes recovery against consent/enable; persisted attempt outcomes decide the version.
+// Retain journal and previous files until cleanup succeeds so failures remain retryable.
   const settle = Effect.fnUntraced(function* (entry: Installed) {
     const swap = entry.swap;
     if (swap === undefined) return;
