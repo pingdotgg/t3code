@@ -261,6 +261,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   };
   if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
   const awaitingCompletion = yield* Ref.make(false);
+  const pendingCreationBudgetStartMillis = yield* Ref.make<number | undefined>(undefined);
   const applyLock = yield* Semaphore.make(1);
   // Save only completed data/cursor updates. A canceled scope must not cache
   // a cursor whose event has not reached the data yet.
@@ -410,6 +411,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   ) {
     const waiting = yield* Ref.get(awaitingCompletion);
     const sequence = yield* SubscriptionRef.get(lastSequence);
+    yield* Ref.set(pendingCreationBudgetStartMillis, undefined);
     // Atomic with concurrent history meta updates: never get-then-set the whole
     // state when only the projection changes. Bounded installs pass history so
     // projection + cursor persist together in one enqueue.
@@ -457,6 +459,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
   const setDeleted = Effect.fn("EnvironmentThreadState.setDeleted")(function* () {
     yield* Ref.set(awaitingCompletion, false);
+    yield* Ref.set(pendingCreationBudgetStartMillis, undefined);
     yield* SubscriptionRef.set(state, {
       data: Option.none(),
       status: "deleted",
@@ -973,7 +976,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               }),
             ),
           );
-          const budgetStartMillis = yield* Clock.currentTimeMillis;
+          let budgetStartMillis = yield* Ref.get(pendingCreationBudgetStartMillis);
+          if (budgetStartMillis === undefined) {
+            budgetStartMillis = yield* Clock.currentTimeMillis;
+            yield* Ref.set(pendingCreationBudgetStartMillis, budgetStartMillis);
+          }
           let missingProbes = 0;
           probe: for (;;) {
             const httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =

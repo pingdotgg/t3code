@@ -534,6 +534,27 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("preserves the pending-creation budget across foreground resubscriptions", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({
+        httpSnapshot: { _tag: "missing" },
+      });
+      yield* awaitThreadState(h.observed, (value) => value.status === "synchronizing");
+
+      // Spendmost of the budget in the first subscription attempt, then a
+      // foreground wakeup resubscribes; the deadline must not restart.
+      yield* TestClock.adjust("80 seconds");
+      yield* Queue.offer(h.wakeups, "application-active");
+      // A per-attempt budget would leave 70s to burn before deletion; the
+      // preserved one lapses within these 20 seconds.
+      yield* TestClock.adjust("20 seconds");
+      const state = yield* awaitThreadState(h.observed, (value) => value.status === "deleted");
+      expect(Option.isNone(state.data)).toBe(true);
+      // Neither attempt may have opened the socket while pending.
+      expect(yield* SubscriptionRef.get(h.subscriptionCount)).toBe(0);
+    }),
+  );
+
   it.effect("flushes newer data after an older background write completes", () =>
     Effect.gen(function* () {
       const writing = yield* Deferred.make<void>();
