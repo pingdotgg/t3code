@@ -92,11 +92,11 @@ export function ComposerPendingApprovalActions({
     );
 
   return (
-    <>
+    <div className="flex min-w-0 grow basis-72 items-center gap-2">
       {sessionCheckbox ? (
         <label
           htmlFor={checkboxId}
-          className="flex min-w-0 cursor-pointer items-center gap-2 text-muted-foreground has-disabled:cursor-default"
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-muted-foreground has-disabled:cursor-default"
         >
           <Checkbox
             id={checkboxId}
@@ -111,6 +111,7 @@ export function ComposerPendingApprovalActions({
           ) : null}
         </label>
       ) : null}
+      <div className="flex shrink-0 items-center gap-2">
       {moreOptions.length > 0 ? (
         <Menu>
           <MenuTrigger
@@ -163,7 +164,8 @@ export function ComposerPendingApprovalActions({
             </Button>,
           )
         : null}
-    </>
+      </div>
+    </div>
   );
 }
 
