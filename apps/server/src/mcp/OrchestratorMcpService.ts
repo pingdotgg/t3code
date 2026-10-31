@@ -16,6 +16,7 @@ import {
   OrchestratorMcpFailure,
   type OrchestratorMcpCapabilitiesInput,
   type OrchestratorMcpCapabilitiesResult,
+  type OrchestratorMcpUsageLimitsResult,
   type OrchestratorMcpModelOption,
   type OrchestratorMcpCreateThreadsInput,
   type OrchestratorMcpCreateThreadsResult,
@@ -59,6 +60,7 @@ import {
   type ScheduledTask,
   type ScheduledTaskUpsertInput,
   type ServerProvider,
+  type ServerProviderUsageLimits,
   type ServerProviderModel,
   ThreadId,
   isOrchestrationV2WorkActive,
@@ -66,6 +68,7 @@ import {
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
+import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
 import {
   normalizeThreadPullRequestKey,
   visibleThreadPullRequests,
@@ -121,6 +124,7 @@ import { isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
+import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
@@ -152,6 +156,9 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input?: OrchestratorMcpCapabilitiesInput,
   ) => Effect.Effect<OrchestratorMcpCapabilitiesResult, OrchestratorMcpFailure>;
+  readonly usageLimits: (
+    scope: McpInvocationScope,
+  ) => Effect.Effect<OrchestratorMcpUsageLimitsResult, OrchestratorMcpFailure>;
   readonly delegateTask: (
     scope: McpInvocationScope,
     input: OrchestratorMcpDelegateTaskInput,
@@ -220,6 +227,19 @@ const isThreadManagementError = Schema.is(ThreadManagementService.ThreadManageme
 
 function failure(code: OrchestratorMcpFailure["code"], message: string): OrchestratorMcpFailure {
   return new OrchestratorMcpFailure({ code, message });
+}
+
+// Keep account fingerprints, provider messages, and redemption handles off the MCP response.
+function publicUsageLimits(
+  limits: ServerProviderUsageLimits,
+): OrchestratorMcpUsageLimitsResult["providers"][number]["limits"] {
+  return {
+    checkedAt: limits.checkedAt,
+    windows: limits.windows,
+    ...(limits.unavailable === undefined
+      ? {}
+      : { unavailable: { reason: limits.unavailable.reason } }),
+  };
 }
 
 function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
@@ -996,6 +1016,7 @@ const make = Effect.gen(function* () {
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const remoteDelegation = yield* RemoteDelegation.RemoteDelegation;
+  const usageLimitSources = yield* Effect.serviceOption(UsageLimitSources.UsageLimitSources);
 
   const requireProject = (projectId: ProjectId) =>
     projects.getById(projectId).pipe(
@@ -2215,6 +2236,101 @@ const make = Effect.gen(function* () {
           scheduledTasks: true,
           maxBatchThreads: 20,
         },
+      };
+    }),
+    usageLimits: Effect.fn("OrchestratorMcpService.usageLimits")(function* (scope) {
+      yield* loadCaller(scope, false);
+      const providers = (yield* loadProviders).filter((provider) => provider.enabled);
+      const sources = yield* Option.match(usageLimitSources, {
+        onNone: () => Effect.succeed([]),
+        onSome: (service) => service.current,
+      });
+      const now = yield* Clock.currentTimeMillis;
+      const reports = new Map<string, NonNullable<ReturnType<typeof collectProviderUsageLimits>>>();
+      for (const provider of providers) {
+        const driver = String(provider.driver);
+        if (reports.has(driver)) continue;
+        const report = collectProviderUsageLimits(provider.instanceId, providers, sources, now);
+        if (report) reports.set(driver, report);
+      }
+
+      const accounts: OrchestratorMcpUsageLimitsResult["providers"][number][] = [];
+      const representedNativeInstances = new Set<string>();
+      for (const report of reports.values()) {
+        for (const account of report.accounts) {
+          accounts.push({
+            id: account.id,
+            driver: account.driver,
+            label: account.label,
+            ...(account.instanceId === undefined ? {} : { providerInstanceId: account.instanceId }),
+            ...(account.sourceLabel === undefined ? {} : { sourceLabel: account.sourceLabel }),
+            limits: publicUsageLimits(account.limits),
+          });
+          if (account.instanceId !== undefined) {
+            representedNativeInstances.add(account.instanceId);
+          }
+        }
+      }
+
+      for (const provider of providers) {
+        if (representedNativeInstances.has(provider.instanceId)) continue;
+        // The collector merges every available instance of a driver by account.
+        if (
+          provider.installed &&
+          isProviderAvailable(provider) &&
+          provider.usageLimits !== undefined &&
+          reports.has(String(provider.driver))
+        )
+          continue;
+        accounts.push({
+          id: provider.instanceId,
+          driver: provider.driver,
+          label: `${provider.displayName?.trim() || String(provider.driver)} [${provider.instanceId}]`,
+          providerInstanceId: provider.instanceId,
+          limits: provider.usageLimits
+            ? publicUsageLimits(provider.usageLimits)
+            : {
+                checkedAt: provider.checkedAt,
+                windows: [],
+              },
+        });
+      }
+
+      const nativeDrivers = new Set(providers.map((provider) => provider.driver));
+      for (const source of sources) {
+        for (const account of source.accounts) {
+          if (nativeDrivers.has(account.driver)) continue;
+          accounts.push({
+            id: `${source.id}:${account.id}`,
+            driver: account.driver,
+            label: `${source.label} · ${account.id}`,
+            sourceLabel: "CLI Proxy",
+            limits: publicUsageLimits(account.usageLimits),
+          });
+        }
+      }
+
+      const notices = new Set<string>();
+      for (const account of accounts) {
+        if (account.limits.unavailable?.reason === "unsupported") {
+          notices.add(`${account.label}: usage limits are not supported.`);
+        } else if (account.limits.unavailable?.reason === "probeFailed") {
+          notices.add(`${account.label}: usage limits could not be refreshed.`);
+        } else if (account.limits.windows.length === 0) {
+          notices.add(`${account.label}: no usage limits reported yet.`);
+        }
+      }
+      for (const source of sources) {
+        if (source.error !== undefined) {
+          notices.add(`${source.label}: unable to read provider usage limits.`);
+        }
+      }
+
+      return {
+        environmentId: scope.environmentId,
+        checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+        providers: accounts,
+        notices: [...notices],
       };
     }),
     delegateTask: Effect.fn("OrchestratorMcpService.delegateTask")(function* (callerScope, input) {
