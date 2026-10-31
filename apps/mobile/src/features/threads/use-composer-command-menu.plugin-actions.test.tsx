@@ -19,19 +19,19 @@ const fixture = vi.hoisted(() => ({
 }));
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 vi.mock("../../state/queries", () => ({
+  useThreadSearch: () => undefined,
   useComposerPathSearch: () => ({ entries: [], isPending: false }),
   useComposerPullRequestSearch: () => ({ entries: [], isPending: false, error: null }),
 }));
 vi.mock("../../state/use-composer-drafts", () => ({
   getComposerDraftSnapshot: vi.fn(),
-  readComposerDraftSelection: () => null,
+  useComposerDraftSelection: () => null,
   setComposerDraftContext: vi.fn(),
 }));
 vi.mock("../../lib/uuid", () => ({ uuidv4: () => "context-id" }));
 vi.mock("../../state/server", () => ({
-  serverEnvironment: { refreshProviders: Symbol("refreshProviders") },
+  serverEnvironment: { providersValueAtom: vi.fn(), refreshProviders: Symbol("refreshProviders") },
 }));
-vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../../state/session", () => ({
   useEnvironmentScope: () => fixture.canOperate,
 }));
@@ -92,7 +92,7 @@ function Composer(props: {
     onUpdateInteractionMode,
     onUsageLimits,
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed callbacks and draft state to the external test driver
+  // Publish only committed callbacks to the test driver.
   useLayoutEffect(() => {
     editDraft = setDraft;
     props.report(menu, draft);
