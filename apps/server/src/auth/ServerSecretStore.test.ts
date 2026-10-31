@@ -160,12 +160,18 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
         yield* fs.makeDirectory(config.secretsDir, { recursive: true });
         const final = `${config.secretsDir}/plugin-setting-test.bin`;
         const temporary = `${final}.00000000-0000-4000-8000-000000000001.tmp`;
+        const reusedPidTemporary = `${final}.${process.pid}-00000000.00000000-0000-4000-8000-000000000002.tmp`;
+        const legacyPidTemporary = `${final}.${process.pid}.00000000-0000-4000-8000-000000000003.tmp`;
         const unrelated = `${config.secretsDir}/notes.tmp`;
         if (hasFinal) yield* fs.writeFileString(final, "old-secret");
         yield* fs.writeFileString(temporary, "new-secret");
+        yield* fs.writeFileString(reusedPidTemporary, "old-instance-secret");
+        yield* fs.writeFileString(legacyPidTemporary, "legacy-instance-secret");
         yield* fs.writeFileString(unrelated, "keep");
         const store = yield* ServerSecretStore.make;
         assert.isFalse(yield* fs.exists(temporary));
+        assert.isFalse(yield* fs.exists(reusedPidTemporary));
+        assert.isFalse(yield* fs.exists(legacyPidTemporary));
         assert.isTrue(yield* fs.exists(unrelated));
         assert.equal(Option.isSome(yield* store.get("plugin-setting-test")), hasFinal);
         if (hasFinal) assert.equal(yield* fs.readFileString(final), "old-secret");
