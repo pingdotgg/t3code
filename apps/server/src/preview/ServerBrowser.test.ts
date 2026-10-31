@@ -506,6 +506,138 @@ it.live("preview_open reports its navigation timeout instead of the request budg
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a stalled tab request times out without disconnecting another agent", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const otherScope = asSession("agent-b");
+      const other = yield* broker.invoke<PreviewAutomationStatus>({
+        scope: otherScope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false, url: "https://example.com/peer" },
+      });
+      const started = Promise.withResolvers<void>();
+      const finish = Promise.withResolvers<void>();
+      const page = contexts[0]!.page;
+      page.goto.mockImplementationOnce(() => {
+        started.resolve();
+        return finish.promise;
+      });
+      const pending = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "navigate",
+          input: { url: "https://example.com/stalled" },
+          timeoutMs: 2_000,
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Effect.promise(() => started.promise);
+      const reading = Promise.withResolvers<void>();
+      const title = Promise.withResolvers<string>();
+      contexts[1]!.page.title.mockImplementationOnce(() => {
+        reading.resolve();
+        return title.promise;
+      });
+      const peer = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope: otherScope,
+          tabId: PreviewTabId.make(other.tabId!),
+          operation: "status",
+          input: {},
+          timeoutMs: 10_000,
+        })
+        .pipe(Effect.forkScoped);
+      yield* Effect.promise(() => reading.promise);
+      try {
+        yield* TestClock.adjust(3_001);
+        expect(yield* Fiber.join(pending)).toMatchObject({
+          _tag: "PreviewAutomationTimeoutError",
+        });
+        title.resolve("other agent's page");
+        expect(yield* Fiber.join(peer)).toMatchObject({
+          available: true,
+          title: "other agent's page",
+          tabId: other.tabId,
+        });
+        const status = yield* broker.invoke<PreviewAutomationStatus>({
+          scope: otherScope,
+          tabId: PreviewTabId.make(other.tabId!),
+          operation: "status",
+          input: {},
+        });
+        expect(status).toMatchObject({ available: true, tabId: other.tabId });
+      } finally {
+        finish.resolve();
+        title.resolve("other agent's page");
+      }
+      expect(page.goto).toHaveBeenCalledTimes(1);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("an expired queued navigation is not replayed after the blocked action finishes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      let now = 0;
+      const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+      const started = Promise.withResolvers<void>();
+      const finish = Promise.withResolvers<void>();
+      const page = contexts[0]!.page;
+      page.goto.mockImplementationOnce(() => {
+        started.resolve();
+        return finish.promise;
+      });
+      try {
+        const first = yield* broker
+          .invoke<PreviewAutomationStatus>({
+            scope,
+            tabId,
+            operation: "navigate",
+            input: { url: "https://example.com/first" },
+            timeoutMs: 10_000,
+          })
+          .pipe(Effect.forkScoped);
+        yield* Effect.promise(() => started.promise);
+        const queuedStarted = Promise.withResolvers<void>();
+        const queued = yield* broker
+          .invoke<PreviewAutomationStatus>({
+            scope,
+            tabId,
+            operation: "navigate",
+            input: { url: "https://example.com/expired" },
+            timeoutMs: 1_000,
+            onTargetTab: () => queuedStarted.resolve(),
+          })
+          .pipe(Effect.flip, Effect.forkScoped);
+        yield* Effect.promise(() => queuedStarted.promise);
+        yield* TestClock.adjust(2_001);
+        expect(yield* Fiber.join(queued)).toMatchObject({
+          _tag: "PreviewAutomationTimeoutError",
+        });
+        now = 2_000;
+        finish.resolve();
+        yield* Fiber.join(first);
+        const corrected = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "navigate",
+          input: { url: "https://example.com/corrected" },
+        });
+        expect(corrected.url).toBe("https://example.com/corrected");
+        expect(page.goto.mock.calls.map(([url]) => url)).toEqual([
+          "https://example.com/first",
+          "https://example.com/corrected",
+        ]);
+      } finally {
+        finish.resolve();
+        clock.mockRestore();
+      }
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live.each(["desktop" as const, undefined])(
   "explicit desktop targets ($0 runtime) fail without creating a server tab",
   (runtime) =>

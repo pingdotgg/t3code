@@ -2217,6 +2217,17 @@ const make = Effect.gen(function* () {
         ),
       catch: ServerBrowserPage.toOperationError,
     }).pipe(
+      // A stalled tab must not make the broker evict the shared browser host.
+      Effect.timeoutOrElse({
+        duration: request.timeoutMs,
+        orElse: () =>
+          Effect.fail(
+            new ServerBrowserPage.ServerBrowserOperationError(
+              "PreviewAutomationTimeoutError",
+              "The browser request exceeded its deadline. It may still complete; check the tab before retrying an action.",
+            ),
+          ),
+      }),
       Effect.match({
         onSuccess: (result) => ({ ok: true as const, result }),
         onFailure: (error) => ({
