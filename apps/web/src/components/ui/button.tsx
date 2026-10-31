@@ -18,6 +18,7 @@ const buttonVariants = cva(
           "h-7 gap-1 rounded-md px-[calc(--spacing(2)-1px)] text-meta before:rounded-[calc(var(--radius-md)-1px)] [&_svg:not([class*='size-'])]:size-3.5",
         default: "h-9 px-[calc(--spacing(3)-1px)] sm:h-8",
         standard: "h-7 gap-1.5 px-[calc(--spacing(3)-1px)] text-[0.8125rem]",
+        notice: "h-6.5 gap-1.5 px-[calc(--spacing(3)-1px)] text-meta",
         icon: "size-9 sm:size-8",
         "icon-micro":
           "size-5 rounded-sm p-0 before:rounded-[calc(var(--radius-sm)-1px)] [&_svg:not([class*='size-'])]:size-3",
