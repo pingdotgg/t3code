@@ -657,7 +657,10 @@ console.log(JSON.stringify({ resolved, resolvedGit }));
           ],
           { cwd, encoding: "utf8", env: {} },
         );
-        const { resolved, resolvedGit }: {
+        const {
+          resolved,
+          resolvedGit,
+        }: {
           resolved: Record<string, { effect: string | null; spawn: string | null }>;
           resolvedGit: Record<string, { command: string; args: string[]; shell: boolean }>;
         } = JSON.parse(stdout);
