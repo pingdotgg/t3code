@@ -286,7 +286,11 @@ it.effect("device_open reports a failed host's setup error instead of no devices
   });
   return Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
-    for (const args of [{ platform: "android" }, { deviceId: "Pixel_API_35", hostId: "local" }]) {
+    for (const args of [
+      { platform: "android" },
+      { deviceId: "Pixel_API_35", hostId: "local" },
+      { deviceId: "Pixel_API_35" },
+    ]) {
       const result = yield* server
         .callTool({ name: "device_open", arguments: args })
         .pipe(

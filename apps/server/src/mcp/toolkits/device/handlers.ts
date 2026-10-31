@@ -121,13 +121,13 @@ const mapLocateErrors = <A, R>(
     }),
   );
 
-const failedHostDetails = (
+const failedHosts = <H extends { readonly id: DeviceHostId }>(
   state: { readonly hostStatuses: DeviceServiceState["hostStatuses"] },
-  hostIds: ReadonlyArray<string>,
+  hosts: ReadonlyArray<H>,
 ) =>
-  hostIds.flatMap((id) => {
-    const status = state.hostStatuses[id];
-    return status?.status === "failed" && status.detail ? [status.detail] : [];
+  hosts.flatMap((host) => {
+    const status = state.hostStatuses[host.id];
+    return status?.status === "failed" && status.detail ? [{ host, detail: status.detail }] : [];
   });
 
 const pickDevice = Effect.fn("handlers.pickDevice")(function* (
@@ -147,12 +147,19 @@ const pickDevice = Effect.fn("handlers.pickDevice")(function* (
     const devices = yield* DeviceService.DeviceService;
     const located = yield* devices.locateDevice({ deviceId, hostId }).pipe(mapLocateErrors);
     if (Option.isSome(located)) return located.value;
-    const failures = failedHostDetails(
-      state,
-      hostId === undefined ? Object.keys(state.hostStatuses) : [hostId],
+    const target =
+      hostId === undefined
+        ? undefined
+        : (state.hosts.find((host) => host.id === hostId) ?? { id: hostId });
+    const failures = failedHosts(state, target === undefined ? state.hosts : [target]).map(
+      ({ host, detail }) => `${hostName(host)} failed to start: ${detail}`,
     );
     return yield* new DeviceToolUnavailableError({
-      reason: `No device ${deviceId} on ${hostId === undefined ? "any host" : hostName(state.hosts.find((host) => host.id === hostId) ?? { id: hostId })}. ${failures.length > 0 ? failures.join(" ") : "Call device_list for current ids."}`,
+      reason: [
+        `No device ${deviceId} on ${target === undefined ? "any host" : hostName(target)}.`,
+        ...failures,
+        "Call device_list for current ids.",
+      ].join(" "),
     });
   }
   const hostId = input.hostId ?? LOCAL_DEVICE_HOST_ID;
@@ -162,11 +169,11 @@ const pickDevice = Effect.fn("handlers.pickDevice")(function* (
       (input.platform === undefined || device.platform === input.platform),
   );
   if (candidates.length === 0) {
-    const [failure] = failedHostDetails(state, [hostId]);
+    const [failure] = failedHosts(state, [{ id: hostId }]);
     return yield* new DeviceToolUnavailableError({
       reason:
         failure !== undefined
-          ? failure
+          ? failure.detail
           : input.platform === undefined
             ? "No simulators or emulators were found. Call device_list to see why."
             : `No ${input.platform} devices were found on host ${hostId}. Call device_list to see why.`,
