@@ -47,9 +47,9 @@ function MenuPopup({
   collisionAvoidance?: MenuPrimitive.Positioner.Props["collisionAvoidance"];
   anchor?: MenuPrimitive.Positioner.Props["anchor"];
   keepMounted?: boolean;
-  width?: "default" | "content";
+  width?: "default" | "content" | "wide";
   variant?: "default" | "scope";
-  spacing?: "default" | "relaxed";
+  spacing?: "default" | "relaxed" | "compact";
 }) {
   return (
     <MenuPrimitive.Portal keepMounted={keepMounted}>
@@ -68,19 +68,30 @@ function MenuPopup({
           className={cn(
             "surface-popover kbd-in-popover relative flex origin-(--transform-origin) rounded-card outline-none focus:outline-none",
             variant === "scope" &&
-              "rounded-pane [&_[data-slot=menu-radio-item]:not([data-checked]):not([data-highlighted])]:text-muted-foreground [&_[data-slot=menu-radio-item-indicator]>svg]:size-3",
+              "rounded-pane [&_[data-slot=menu-radio-item]]:min-h-7 [&_[data-slot=menu-sub-trigger]]:min-h-7 [&_[data-slot=menu-radio-item]:not([data-checked]):not([data-highlighted])]:text-muted-foreground [&_[data-slot=menu-radio-item-indicator]>svg]:size-3",
             spacing === "relaxed" && RELAXED_PICKER_CLASS,
+            spacing === "compact" &&
+              "[&_[data-slot=menu-radio-item]]:min-h-7.5 [&_[data-slot=menu-radio-item]]:rounded-item [&_[data-slot=menu-radio-item]]:px-2 [&_[data-slot=menu-radio-item]]:py-1.5",
             // Electron drag hit-testing ignores z-index; opt portaled menus out to keep overlapping rows
             // hoverable.
             "[-webkit-app-region:no-drag]",
             "max-w-[calc(100vw-2rem)]",
-            width === "content" ? "w-max min-w-0" : "min-w-[min(10rem,calc(100vw-2rem))]",
+            width === "content"
+              ? "w-max min-w-0"
+              : width === "wide"
+                ? "w-60"
+                : "min-w-[min(10rem,calc(100vw-2rem))]",
             className,
           )}
           data-slot="menu-popup"
           {...props}
         >
-          <div className="max-h-(--available-height) flex w-full flex-col gap-px overflow-y-auto p-1.5">
+          <div
+            className={cn(
+              "max-h-(--available-height) flex w-full flex-col gap-px overflow-y-auto",
+              variant === "scope" || spacing === "compact" ? "p-1" : "p-1.5",
+            )}
+          >
             {children}
           </div>
         </MenuPrimitive.Popup>
@@ -374,6 +385,7 @@ function MenuSubPopup({
   align = "start",
   ...props
 }: MenuPrimitive.Popup.Props & {
+  variant?: "default" | "scope";
   align?: MenuPrimitive.Positioner.Props["align"];
   sideOffset?: MenuPrimitive.Positioner.Props["sideOffset"];
   alignOffset?: MenuPrimitive.Positioner.Props["alignOffset"];
