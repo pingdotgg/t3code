@@ -533,11 +533,13 @@ PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
 MANAGED_FILE="$STATE_DIR/managed"
 LOG_FILE="$STATE_DIR/server.log"
+CURRENT_LOG_FILE="$STATE_DIR/current-log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
+CURRENT_LOG_NEXT="$STATE_DIR/current-log.next.$$"
 mkdir -p "$STATE_DIR"
 cleanup_runner_next() {
-  rm -f "$RUNNER_NEXT"
+  rm -f "$RUNNER_NEXT" "$CURRENT_LOG_NEXT"
 }
 trap cleanup_runner_next EXIT
 cat >"$RUNNER_NEXT" <<'SH'
@@ -701,11 +703,16 @@ if [ -z "$REMOTE_PORT" ]; then
     fi
     exit 1
   fi
+  # Give this attempt its own log. A previous server may still hold its log
+  # descriptor, and another SSH client may launch against the same state.
+  LOG_FILE="$(mktemp "$STATE_DIR/server.log.XXXXXXXX")"
   nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
   printf 'managed\\n' >"$MANAGED_FILE"
+  printf '%s\\n%s\\n' "$REMOTE_PID" "\${LOG_FILE##*/}" >"$CURRENT_LOG_NEXT"
+  mv "$CURRENT_LOG_NEXT" "$CURRENT_LOG_FILE"
   if ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
     printf 'Remote T3 server did not become ready on 127.0.0.1:%s.\\n' "$REMOTE_PORT" >&2
     if [ -s "$LOG_FILE" ]; then
@@ -761,6 +768,31 @@ printf '{"stopped":true}\\n'
 const REMOTE_LOG_TAIL_SCRIPT = `set -eu
 STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
 LOG_FILE="$STATE_DIR/server.log"
+CURRENT_LOG_FILE="$STATE_DIR/current-log"
+if [ -f "$CURRENT_LOG_FILE" ] && {
+  IFS= read -r LOG_PID &&
+  IFS= read -r LOG_BASENAME &&
+  ! IFS= read -r EXTRA && [ -z "$EXTRA" ]
+} < "$CURRENT_LOG_FILE" 2>/dev/null; then
+  REMOTE_PID="$(cat "$STATE_DIR/pid" 2>/dev/null || true)"
+  REMOTE_MANAGED="$(cat "$STATE_DIR/managed" 2>/dev/null || true)"
+  # A stopped attempt has no PID; an older client or external server can
+  # replace it without updating the pointer, so use the legacy log then.
+  case "$LOG_PID" in
+    ""|0*|*[!0-9]*) ;;
+    *) case "$LOG_BASENAME" in
+      server.log.????????)
+        LOG_SUFFIX="\${LOG_BASENAME#server.log.}"
+        case "$LOG_SUFFIX" in
+          *[!A-Za-z0-9]*) ;;
+          *) if [ "$REMOTE_MANAGED" != "external" ] &&
+                 { [ -z "$REMOTE_PID" ] || [ "$REMOTE_PID" = "$LOG_PID" ]; }; then
+               LOG_FILE="$STATE_DIR/$LOG_BASENAME"
+             fi ;;
+        esac ;;
+    esac ;;
+  esac
+fi
 if [ -f "$LOG_FILE" ]; then
   tail -n 80 "$LOG_FILE" 2>/dev/null || true
 fi
@@ -853,7 +885,7 @@ function buildRemoteStopScript(stateKey: string): string {
   });
 }
 
-function buildRemoteLogTailScript(stateKey: string): string {
+export function buildRemoteLogTailScript(stateKey: string): string {
   return applyScriptPlaceholders(REMOTE_LOG_TAIL_SCRIPT, {
     T3_STATE_KEY: stateKey,
   });
