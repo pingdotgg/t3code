@@ -118,6 +118,21 @@ const layerGitWorkflowTest = Layer.mock(GitWorkflow.GitWorkflowService)({
   pruneWorktrees: () => Effect.void,
   createWorktree: () => Effect.succeed({} as never),
 });
+const layerMoveVcsDriverRegistryTest = Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+  detect: ({ cwd }) =>
+    Effect.succeed({
+      kind: "git",
+      repository: {
+        kind: "git",
+        rootPath: cwd,
+        metadataPath: cwd.endsWith("different-repository")
+          ? "/tmp/runtime-layer-move-different-repository/.git"
+          : "/tmp/runtime-layer-move-source-repository/.git",
+        freshness: {},
+      },
+      driver: {},
+    } as never),
+});
 const layerProjectServiceTest = Layer.mock(ProjectService.ProjectService)({
   getById: () => Effect.succeedNone,
 });
@@ -842,6 +857,7 @@ const layerSharedApplicationDataPlaneTest = Layer.mergeAll(
       subscribeChanges: Effect.never,
     }),
   ),
+  Layer.provide(layerMoveVcsDriverRegistryTest),
   Layer.provide(McpSessionRegistryTestkit.layer),
   Layer.provide(McpProviderSessions.layer),
   Layer.provideMerge(SqlitePersistence.layerMemory),
@@ -6834,9 +6850,13 @@ it.layer(layerSharedApplicationDataPlaneTest)("moving threads between projects",
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const sourceProjectId = ProjectId.make("runtime-layer-move-source");
       const otherRootProjectId = ProjectId.make("runtime-layer-move-other-root");
+      const differentRepositoryProjectId = ProjectId.make(
+        "runtime-layer-move-different-repository",
+      );
       const archivedProjectId = ProjectId.make("runtime-layer-move-archived");
       const sourceRoot = "/tmp/runtime-layer-move-source";
       const otherRoot = "/tmp/runtime-layer-move-other";
+      const differentRepositoryRoot = "/tmp/runtime-layer-move-different-repository";
       const createProject = (projectId: ProjectId, workspaceRoot: string) =>
         projects.create({
           commandId: CommandId.make(`${projectId}-create`),
@@ -6869,6 +6889,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("moving threads between projects",
 
       const sourceProject = yield* createProject(sourceProjectId, sourceRoot);
       yield* createProject(otherRootProjectId, otherRoot);
+      yield* createProject(differentRepositoryProjectId, differentRepositoryRoot);
       yield* createProject(archivedProjectId, "/tmp/runtime-layer-move-archived");
       yield* projects.update({
         commandId: CommandId.make("runtime-layer-move-archive"),
@@ -6878,18 +6899,28 @@ it.layer(layerSharedApplicationDataPlaneTest)("moving threads between projects",
 
       const rootThreadId = ThreadId.make("runtime-layer-move-root-thread");
       const worktreeThreadId = ThreadId.make("runtime-layer-move-worktree-thread");
+      const differentRepositoryThreadId = ThreadId.make(
+        "runtime-layer-move-different-repository-thread",
+      );
       const busyThreadId = ThreadId.make("runtime-layer-move-busy-thread");
       const deletedThreadId = ThreadId.make("runtime-layer-move-deleted-thread");
       const worktreePath = "/tmp/runtime-layer-move-worktree";
       yield* createThread(rootThreadId);
       yield* createThread(worktreeThreadId, worktreePath);
+      yield* createThread(differentRepositoryThreadId, worktreePath);
       yield* createThread(busyThreadId);
       yield* createThread(deletedThreadId);
 
-      yield* move(rootThreadId, otherRootProjectId, "move-root-success");
-      const movedRootThread = (yield* orchestrator.getThreadProjection(rootThreadId)).thread;
-      assert.equal(movedRootThread.projectId, otherRootProjectId);
-      assert.equal(movedRootThread.worktreePath, sourceRoot);
+      const rootMove = yield* move(rootThreadId, otherRootProjectId, "move-root-rejected").pipe(
+        Effect.flip,
+      );
+      assert.equal(
+        rootMove.cause,
+        `Thread ${rootThreadId} cannot move from a root workspace to project ${otherRootProjectId} with a different workspace root.`,
+      );
+      const unchangedRootThread = (yield* orchestrator.getThreadProjection(rootThreadId)).thread;
+      assert.equal(unchangedRootThread.projectId, sourceProjectId);
+      assert.isNull(unchangedRootThread.worktreePath);
       assert.equal(sourceProject.workspaceRoot, sourceRoot);
       const missing = yield* move(
         rootThreadId,
@@ -6938,7 +6969,22 @@ it.layer(layerSharedApplicationDataPlaneTest)("moving threads between projects",
       assert.equal(worktreeThread.projectId, otherRootProjectId);
       assert.equal(worktreeThread.worktreePath, worktreePath);
 
-      const noOp = yield* move(rootThreadId, otherRootProjectId, "move-same-project-no-op");
+      const differentRepositoryMove = yield* move(
+        differentRepositoryThreadId,
+        differentRepositoryProjectId,
+        "move-different-repository",
+      ).pipe(Effect.flip);
+      assert.equal(
+        differentRepositoryMove.cause,
+        `Thread ${differentRepositoryThreadId} cannot move its worktree to project ${differentRepositoryProjectId} because the repositories differ.`,
+      );
+      const unchangedWorktreeThread = (yield* orchestrator.getThreadProjection(
+        differentRepositoryThreadId,
+      )).thread;
+      assert.equal(unchangedWorktreeThread.projectId, sourceProjectId);
+      assert.equal(unchangedWorktreeThread.worktreePath, worktreePath);
+
+      const noOp = yield* move(rootThreadId, sourceProjectId, "move-same-project-no-op");
       assert.equal(noOp.storedEvents.length, 0);
     }),
   );

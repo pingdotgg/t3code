@@ -92,6 +92,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProjectStore from "./ProjectStore.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import {
   isCheckpointRestoreIsolated,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
@@ -979,6 +980,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const commandReceipts = yield* CommandReceiptStoreV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
+  const vcsDriverRegistry = yield* Effect.serviceOption(VcsDriverRegistry.VcsDriverRegistry);
   const projectionStore = yield* ProjectionStoreV2;
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
   const nextTurnItemOrdinal = (
@@ -4244,6 +4246,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (Option.isNone(current)) {
         return yield* reject(`cannot move from missing project ${thread.projectId}.`);
       }
+      if (
+        thread.worktreePath === null &&
+        current.value.workspaceRoot !== target.value.workspaceRoot
+      ) {
+        return yield* reject(
+          `cannot move from a root workspace to project ${command.projectId} with a different workspace root.`,
+        );
+      }
+      if (thread.worktreePath !== null) {
+        if (Option.isNone(vcsDriverRegistry)) {
+          return yield* reject("cannot verify the source repository for its worktree.");
+        }
+        const [sourceRepository, targetRepository] = yield* Effect.all([
+          vcsDriverRegistry.value.detect({ cwd: current.value.workspaceRoot }),
+          vcsDriverRegistry.value.detect({ cwd: target.value.workspaceRoot }),
+        ]).pipe(mapDispatchError(command));
+        const sourceCommonGitDirectory =
+          sourceRepository?.kind === "git" && sourceRepository.repository.metadataPath !== null
+            ? path.resolve(current.value.workspaceRoot, sourceRepository.repository.metadataPath)
+            : null;
+        const targetCommonGitDirectory =
+          targetRepository?.kind === "git" && targetRepository.repository.metadataPath !== null
+            ? path.resolve(target.value.workspaceRoot, targetRepository.repository.metadataPath)
+            : null;
+        if (
+          sourceCommonGitDirectory === null ||
+          sourceCommonGitDirectory !== targetCommonGitDirectory
+        ) {
+          return yield* reject(
+            `cannot move its worktree to project ${command.projectId} because the repositories differ.`,
+          );
+        }
+      }
       const now = yield* DateTime.now;
       yield* emit(
         events,
@@ -4256,7 +4291,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: {
           ...thread,
           projectId: command.projectId,
-          worktreePath: thread.worktreePath ?? current.value.workspaceRoot,
           updatedAt: now,
         },
       });
