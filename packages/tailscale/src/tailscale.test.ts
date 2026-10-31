@@ -125,6 +125,10 @@ describe("tailscale", () => {
             "/i": { Proxy: "http://[::]:3773" },
             // A name can resolve to any address, the bound one included.
             "/j": { Proxy: "http://ip6-localhost:3773" },
+            // Go resolves these as names; a WHATWG URL rejects the first and rewrites the second.
+            "/k": { Proxy: "http://box.1:3773" },
+            "/l": { Proxy: "http://127.1:3773" },
+            "/m": { Proxy: "unix:/run/app.sock" },
           },
         },
       },
@@ -152,6 +156,8 @@ describe("tailscale", () => {
           ["/h", "localhost"],
           ["/i", "[::]"],
           ["/j", "ip6-localhost"],
+          ["/k", "box.1"],
+          ["/l", "127.1"],
         ] as const
       ).map(([mount, ambiguous]) => ({
         servePort: 10000,

@@ -387,10 +387,14 @@ it.effect(
       );
       // A CLI that is there but will not run might still front a daemon with a mapping.
       yield* spawnFailing("PermissionDenied").pipe(Effect.flip);
-      // Another app holds the port: its route is not ours, and the bind fails anyway.
+      // Another app holds the port: its route is not ours, and it could let go before the bind.
       const heldOffCalls: Array<ReadonlyArray<string>> = [];
-      yield* close({}, heldOffCalls).pipe(Effect.provideService(NetService.NetService, portHeld));
+      const held = yield* close({}, heldOffCalls).pipe(
+        Effect.provideService(NetService.NetService, portHeld),
+        Effect.flip,
+      );
       assert.deepEqual(heldOffCalls, []);
+      assert.include(held.message, "while another app holds 127.0.0.1:3773");
     }).pipe(Effect.provideService(NetService.NetService, portFree));
   },
 );

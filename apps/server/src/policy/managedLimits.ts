@@ -109,8 +109,14 @@ export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServ
   target: { readonly host: string; readonly port: number },
 ) {
   if (allowsRemoteClients(policy)) return;
-  // Another app holds the port, so its routes are not ours, and the bind will fail anyway.
-  if (!(yield* (yield* NetService.NetService).canListenOnHost(target.port, target.host))) return;
+  // Another app holds the port, so its routes are not ours to remove. It could let go before the
+  // bind, which would then take over those routes, so the server does not start.
+  if (!(yield* (yield* NetService.NetService).canListenOnHost(target.port, target.host))) {
+    return yield* refuseRemoteClients(
+      policy,
+      `so the server does not start while another app holds ${target.host}:${target.port}, whose Tailscale Serve routes it would take over`,
+    );
+  }
   const readRoutes = readTailscaleServeRoutesTo(target).pipe(
     Effect.catchTags({
       // Only a CLI that is not there; one that will not run might still front a daemon.
@@ -172,6 +178,10 @@ export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServ
         return `${where} under ${route.host}, a former name of this machine, which "tailscale serve ... off" cannot reach; run "tailscale serve reset" and set up your other routes again`;
       }
       const command = `"tailscale ${off.join(" ")}"`;
+      // Without the current name, `off` might act on another name's route at this path.
+      if (currentName === null && route.owner === undefined && route.host !== undefined) {
+        return `${where} under ${route.host}; if that is this machine's current name, turn it off with ${command}`;
+      }
       return route.ambiguous !== undefined
         ? `${where}, and its target ${route.ambiguous} might be another service on this port; check it, then turn it off with ${command}`
         : `${where}; turn it off with ${command}`;

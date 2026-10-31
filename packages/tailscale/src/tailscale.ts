@@ -530,7 +530,7 @@ const decodeTailscaleServeStatusJson = Schema.decodeUnknownOption(
  */
 const reaches = (hostname: string, bindHost: string): "exact" | "either" | undefined => {
   let address = normalizeHostname(hostname);
-  // URLs write an IPv4-mapped address as hex, such as ::ffff:7f00:1 for 127.0.0.1.
+  // An IPv4-mapped address can be written as hex, such as ::ffff:7f00:1 for 127.0.0.1.
   const mapped = /^::ffff:([\da-f]{1,4}):([\da-f]{1,4})$/u.exec(address);
   if (mapped !== null) {
     const high = Number.parseInt(mapped[1]!, 16);
@@ -539,7 +539,10 @@ const reaches = (hostname: string, bindHost: string): "exact" | "either" | undef
   } else if (address.startsWith("::ffff:")) {
     address = address.slice("::ffff:".length);
   }
-  const literal = address.includes(":") || /^\d{1,3}(?:\.\d{1,3}){3}$/u.test(address);
+  // Strict, as Go's ParseIP is; anything else, such as `127.1` or `box.1`, goes to the resolver.
+  const literal =
+    address.includes(":") ||
+    /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?!$)|$)){4}$/u.test(address);
   if (!literal) return "either";
   if (address === "::")
     return bindHost === "127.0.0.1" || bindHost === "::1" ? "either" : undefined;
@@ -556,12 +559,22 @@ const expandProxy = (proxy: string) =>
         ? proxy
         : `http://${proxy}`;
 
+/**
+ * The host and port a proxy target dials, read as Go's url.Parse reads it rather than as a WHATWG
+ * URL, which rejects `box.1` and rewrites `127.1`; none for a Unix socket.
+ */
+const dialedHostPort = (url: string) => {
+  const match = /^(https?|tcp):\/\/(\[[^\]]*\]|[^/?#:]*)(?::(\d*))?/iu.exec(url);
+  if (match === null) return undefined;
+  const [, scheme = "", host = "", port] = match;
+  return { host, port: port || (scheme.toLowerCase() === "https" ? "443" : "80") };
+};
+
 const reachesTarget = (url: string, target: { readonly host: string; readonly port: number }) => {
-  if (!URL.canParse(url)) return undefined;
-  const parsed = new URL(url);
-  const port = parsed.port || (parsed.protocol === "https:" ? "443" : "80");
-  const reach = port === String(target.port) ? reaches(parsed.hostname, target.host) : undefined;
-  return reach === undefined ? undefined : { reach, hostname: parsed.hostname };
+  const dialed = dialedHostPort(url);
+  if (dialed === undefined || dialed.port !== String(target.port)) return undefined;
+  const reach = reaches(dialed.host, target.host);
+  return reach === undefined ? undefined : { reach, hostname: dialed.host };
 };
 
 /**
