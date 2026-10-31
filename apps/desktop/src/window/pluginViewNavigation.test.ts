@@ -7,11 +7,12 @@ const frame = (
   url: string,
   origin: string,
   parent: NavigationFrame | null,
-): NavigationFrame => ({ frameToken, url, origin, parent });
+  name = "",
+): NavigationFrame => ({ frameToken, url, origin, parent, name });
 
 const app = frame("app", "t3code-dev://app/", "t3code-dev://app", null);
-const view = frame("view", "about:srcdoc", "null", app);
-const wrapper = frame("wrapper", "about:srcdoc", "null", app);
+const view = frame("view", "about:srcdoc", "null", app, "t3-plugin-view");
+const wrapper = frame("wrapper", "about:srcdoc", "null", app, "t3-plugin-view");
 const wrappedView = frame("inner", "about:srcdoc", "null", wrapper);
 
 describe("shouldVetoViewFrameNavigation", () => {
@@ -67,13 +68,17 @@ describe("shouldVetoViewFrameNavigation", () => {
 
   it("leaves frames outside views alone", () => {
     const other = frame("other", "https://example.com/", "https://example.com", app);
-    expect(
-      shouldVetoViewFrameNavigation({
-        url: "https://example.com/next",
-        frame: other,
-        initiator: other,
-        mainFrame: app,
-      }),
-    ).toBe(false);
+    const font = frame("font", "about:srcdoc", "null", app);
+    const fontChild = frame("font-child", "about:srcdoc", "null", font);
+    for (const target of [other, font, fontChild]) {
+      expect(
+        shouldVetoViewFrameNavigation({
+          url: "https://example.com/next",
+          frame: target,
+          initiator: target,
+          mainFrame: app,
+        }),
+      ).toBe(false);
+    }
   });
 });
