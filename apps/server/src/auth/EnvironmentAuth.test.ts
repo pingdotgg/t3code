@@ -703,40 +703,44 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
         );
 
       const rpc = yield* serverAuth.issueWebSocketTicket(session, { use: "rpc" });
-      const bare = yield* Effect.flip(upgrade(rpc.ticket, "rpc"));
+      const bare = yield* Effect.flip(upgrade(Redacted.value(rpc.ticket), "rpc"));
       expect(bare._tag).toBe("ServerAuthInvalidCredentialError");
       const signed = yield* upgrade(
-        rpc.ticket,
+        Redacted.value(rpc.ticket),
         "rpc",
-        key.sign({ method: "GET", url: socketUrl, token: rpc.ticket, iat }),
+        key.sign({ method: "GET", url: socketUrl, token: Redacted.value(rpc.ticket), iat }),
       );
       expect(signed.sessionId).toBe(session.sessionId);
 
       const wrongKey = yield* Effect.flip(
         upgrade(
-          rpc.ticket,
+          Redacted.value(rpc.ticket),
           "rpc",
-          other.sign({ method: "GET", url: socketUrl, token: rpc.ticket, iat }),
+          other.sign({ method: "GET", url: socketUrl, token: Redacted.value(rpc.ticket), iat }),
         ),
       );
       expect(wrongKey._tag).toBe("ServerAuthInvalidCredentialError");
       const onMedia = yield* Effect.flip(
         upgrade(
-          rpc.ticket,
+          Redacted.value(rpc.ticket),
           "media",
-          key.sign({ method: "GET", url: socketUrl, token: rpc.ticket, iat }),
+          key.sign({ method: "GET", url: socketUrl, token: Redacted.value(rpc.ticket), iat }),
         ),
       );
       expect(onMedia._tag).toBe("ServerAuthInvalidCredentialError");
 
       const media = yield* serverAuth.issueWebSocketTicket(session, { use: "media" });
-      expect((yield* upgrade(media.ticket, "media")).sessionId).toBe(session.sessionId);
-      const mediaOnRpc = yield* Effect.flip(upgrade(media.ticket, "rpc"));
+      expect((yield* upgrade(Redacted.value(media.ticket), "media")).sessionId).toBe(
+        session.sessionId,
+      );
+      const mediaOnRpc = yield* Effect.flip(upgrade(Redacted.value(media.ticket), "rpc"));
       expect(mediaOnRpc._tag).toBe("ServerAuthInvalidCredentialError");
 
       // Clients that predate ticket binding still connect with the unbound ticket they mint.
       const legacy = yield* serverAuth.issueWebSocketTicket(session);
-      expect((yield* upgrade(legacy.ticket, "rpc")).sessionId).toBe(session.sessionId);
+      expect((yield* upgrade(Redacted.value(legacy.ticket), "rpc")).sessionId).toBe(
+        session.sessionId,
+      );
     }).pipe(
       Effect.provide(layerEnvironmentAuth({ desktopBootstrapToken: "desktop-bootstrap-token" })),
     ),
@@ -757,10 +761,10 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       const rpc = yield* serverAuth.issueWebSocketTicket(session, { use: "rpc" });
       const request = {
         method: "GET",
-        url: `/ws?wsTicket=${rpc.ticket}&dpop=${key.sign({
+        url: `/ws?wsTicket=${Redacted.value(rpc.ticket)}&dpop=${key.sign({
           method: "GET",
           url: "http://192.168.1.50:3773/ws",
-          token: rpc.ticket,
+          token: Redacted.value(rpc.ticket),
           iat: Math.floor((yield* DateTime.now).epochMilliseconds / 1_000),
         })}`,
         cookies: {},
