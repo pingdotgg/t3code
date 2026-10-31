@@ -16,6 +16,7 @@ import { afterEach, beforeEach, vi } from "vite-plus/test";
 import {
   AVAILABLE_CONNECTION_STATE,
   type PreparedConnection,
+  BearerConnectionTarget,
   PrimaryConnectionTarget,
   EnvironmentSupervisor,
 } from "@t3tools/client-runtime/connection";
@@ -25,13 +26,20 @@ import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 import { __resetDesktopPrimaryAuthForTests } from "../environments/primary/desktopAuth";
 
-import { readPrimaryCloudLinkState, type CloudLinkTarget } from "./linkEnvironment";
+import { readCloudLinkState } from "./linkEnvironment";
 
-const TARGET: CloudLinkTarget = {
+const TARGET = {
   environmentId: "environment-1",
   label: "Desktop",
   httpBaseUrl: "http://127.0.0.1:3000",
   wsBaseUrl: "ws://127.0.0.1:3000",
+};
+
+const SAVED_SERVICE_TARGET = {
+  environmentId: "saved-service",
+  label: "Service",
+  httpBaseUrl: "http://127.0.0.1:3773",
+  wsBaseUrl: "ws://127.0.0.1:3773",
 };
 
 const relayClientInstallDialog = vi.hoisted(() => ({
@@ -88,26 +96,73 @@ function layerRegistry(options?: {
         inboundFrames: Effect.succeed(0),
         closed: Effect.never,
       };
-      const target = new PrimaryConnectionTarget({
-        environmentId: EnvironmentId.make(TARGET.environmentId),
-        label: TARGET.label,
-        httpBaseUrl: TARGET.httpBaseUrl,
-        wsBaseUrl: TARGET.wsBaseUrl,
+      const makeSupervisor = Effect.fn(function* (prepared: Option.Option<PreparedConnection>) {
+        return EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target: new PrimaryConnectionTarget({
+            environmentId: EnvironmentId.make(TARGET.environmentId),
+            label: TARGET.label,
+            httpBaseUrl: TARGET.httpBaseUrl,
+            wsBaseUrl: TARGET.wsBaseUrl,
+          }),
+          state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+          session: yield* SubscriptionRef.make(Option.some(session)),
+          prepared: yield* SubscriptionRef.make(prepared),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       });
-      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
-        target,
-        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
-        session: yield* SubscriptionRef.make(Option.some(session)),
-        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
-        connect: Effect.void,
-        disconnect: Effect.void,
-        retryNow: Effect.void,
-      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const supervisors = new Map([
+        [
+          TARGET.environmentId,
+          yield* makeSupervisor(
+            Option.some({
+              environmentId: EnvironmentId.make(TARGET.environmentId),
+              label: TARGET.label,
+              httpBaseUrl: TARGET.httpBaseUrl,
+              socketUrl: `${TARGET.wsBaseUrl}/ws`,
+              httpAuthorization: { _tag: "Bearer", token: "desktop-bearer-token" },
+              target: new PrimaryConnectionTarget({
+                environmentId: EnvironmentId.make(TARGET.environmentId),
+                label: TARGET.label,
+                httpBaseUrl: TARGET.httpBaseUrl,
+                wsBaseUrl: TARGET.wsBaseUrl,
+              }),
+            }),
+          ),
+        ],
+        [
+          SAVED_SERVICE_TARGET.environmentId,
+          yield* makeSupervisor(
+            Option.some({
+              environmentId: EnvironmentId.make(SAVED_SERVICE_TARGET.environmentId),
+              label: SAVED_SERVICE_TARGET.label,
+              httpBaseUrl: SAVED_SERVICE_TARGET.httpBaseUrl,
+              socketUrl: `${SAVED_SERVICE_TARGET.wsBaseUrl}/ws`,
+              httpAuthorization: { _tag: "Bearer", token: "saved-service-token" },
+              target: new BearerConnectionTarget({
+                environmentId: EnvironmentId.make(SAVED_SERVICE_TARGET.environmentId),
+                label: SAVED_SERVICE_TARGET.label,
+                connectionId: "saved-service-connection",
+              }),
+            }),
+          ),
+        ],
+      ]);
+      const supervisorFor = (environmentId: EnvironmentId) => supervisors.get(environmentId)!;
       const registry = {
-        run: <A, E, R>(_environmentId: EnvironmentId, effect: Effect.Effect<A, E, R>) =>
-          Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-        runStream: <A, E, R>(_environmentId: EnvironmentId, stream: Stream.Stream<A, E, R>) =>
-          Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        run: <A, E, R>(environmentId: EnvironmentId, effect: Effect.Effect<A, E, R>) =>
+          Effect.provideService(
+            effect,
+            EnvironmentSupervisor.EnvironmentSupervisor,
+            supervisorFor(environmentId),
+          ),
+        runStream: <A, E, R>(environmentId: EnvironmentId, stream: Stream.Stream<A, E, R>) =>
+          Stream.provideService(
+            stream,
+            EnvironmentSupervisor.EnvironmentSupervisor,
+            supervisorFor(environmentId),
+          ),
       } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"];
       return EnvironmentRegistry.EnvironmentRegistry.of(registry);
     }),
@@ -145,9 +200,9 @@ afterEach(() => {
 });
 
 describe("web cloud link environment client", () => {
-  it.effect("uses desktop bearer auth for primary cloud link state", () =>
+  it.effect("reads link state from the chosen environment with its own credentials", () =>
     Effect.gen(function* () {
-      const fetchMock = vi.fn().mockResolvedValue(
+      const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
         Response.json({
           linked: true,
           cloudUserId: "user-1",
@@ -165,11 +220,23 @@ describe("web cloud link environment client", () => {
         } as unknown as DesktopBridge,
       });
 
-      yield* withServices(readPrimaryCloudLinkState({ target: TARGET }));
+      for (const [target, token] of [
+        [TARGET, "desktop-bearer-token"],
+        [SAVED_SERVICE_TARGET, "saved-service-token"],
+      ] as const) {
+        fetchMock.mockClear();
+        yield* withServices(
+          readCloudLinkState({
+            target: { environmentId: EnvironmentId.make(target.environmentId) },
+          }),
+        );
 
-      const request = new Request(fetchMock.mock.calls[0]?.[0], fetchMock.mock.calls[0]?.[1]);
-      expect(request.credentials).not.toBe("include");
-      expect(request.headers.get("authorization")).toBe("Bearer desktop-bearer-token");
+        const [input, init] = fetchMock.mock.calls[0]!;
+        const request = new Request(input, init);
+        expect(new URL(request.url).origin).toBe(target.httpBaseUrl);
+        expect(request.credentials).not.toBe("include");
+        expect(request.headers.get("authorization")).toBe(`Bearer ${token}`);
+      }
     }),
   );
 });
