@@ -11,6 +11,7 @@ import { pullRequestDetailToVcsStatus } from "@t3tools/client-runtime/state/pull
 import {
   resolveEnvironmentMachineKind,
   type EnvironmentId,
+  type ProjectId,
   type ScopedThreadRef,
   type ThreadLinkedPullRequest,
   type ThreadPullRequestLink,
@@ -29,7 +30,13 @@ import {
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
 import { useRender } from "@base-ui/react/use-render";
-import { type ReactNode, type AnimationEvent, type MouseEvent, type ReactElement } from "react";
+import {
+  type ReactNode,
+  type AnimationEvent,
+  type DragEvent,
+  type MouseEvent,
+  type ReactElement,
+} from "react";
 import { cn } from "../lib/utils";
 import { revealThreadTerminal } from "../lib/revealThreadTerminal";
 
@@ -57,6 +64,10 @@ import {
   type PullRequestGlyphIcon,
 } from "./pullRequest/pullRequestIcons";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
+import {
+  COMPOSER_PULL_REQUEST_DRAG_TYPE,
+  encodePullRequestDragPayload,
+} from "./chat/composerMentionDrag";
 
 export interface PrStatusIndicator {
   label: string;
@@ -81,20 +92,32 @@ export interface LinkedThreadPullRequestStatus {
   readonly sourceControlProvider: NonNullable<VcsStatusResult["sourceControlProvider"]>;
 }
 
-export function useLinkedThreadPullRequest(
-  environmentId: EnvironmentId | null,
-  linkedPullRequest: ThreadLinkedPullRequest | null | undefined,
+export function useLinkedThreadPullRequest({
+  environmentId,
+  projectId,
+  linkedPullRequest,
   enabled = true,
-  pullRequests?: ReadonlyArray<ThreadPullRequestLink>,
-  branchPullRequest?: ThreadLinkedPullRequest | null,
-): LinkedThreadPullRequestStatus | null {
+  pullRequests,
+  branchPullRequest,
+}: {
+  environmentId: EnvironmentId | null;
+  projectId: ProjectId | null;
+  linkedPullRequest: ThreadLinkedPullRequest | null | undefined;
+  enabled?: boolean | undefined;
+  pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
+  branchPullRequest?: ThreadLinkedPullRequest | null | undefined;
+}): LinkedThreadPullRequestStatus | null {
   const supportsLinks = useSupportsMultiplePullRequests(environmentId);
   const current = supportsLinks ? resolveThreadCurrentPullRequestLink(pullRequests ?? []) : null;
   const currentStatus = current === null ? null : linkedPullRequestSnapshotStatus(current);
-  const fallback =
-    current === null ? ((!supportsLinks ? linkedPullRequest : null) ?? branchPullRequest) : null;
   // Preserve reference identity so sidebar renders do not touch the summary cache.
-  const reference = fallback == null ? null : linkedPullRequestReference(fallback);
+  const reference = resolveLinkedThreadPullRequestReference({
+    current,
+    projectId,
+    supportsLinks,
+    linkedPullRequest,
+    branchPullRequest,
+  });
   // Mounted for its answers, which land in the shared summary read below.
   useEnvironmentQuery(
     !enabled || environmentId === null || reference === null
@@ -103,7 +126,7 @@ export function useLinkedThreadPullRequest(
   );
   const detail = useSharedPullRequestSummary(environmentId, reference);
 
-  if (current !== null) return currentStatus;
+  if (currentStatus !== null) return currentStatus;
   return detail === null
     ? null
     : {
@@ -114,6 +137,32 @@ export function useLinkedThreadPullRequest(
           baseUrl: "",
         },
       };
+}
+
+export function resolveLinkedThreadPullRequestReference({
+  current,
+  projectId,
+  supportsLinks,
+  linkedPullRequest,
+  branchPullRequest,
+}: {
+  current: ThreadPullRequestLink | null;
+  projectId: ProjectId | null;
+  supportsLinks: boolean;
+  linkedPullRequest: ThreadLinkedPullRequest | null | undefined;
+  branchPullRequest?: ThreadLinkedPullRequest | null | undefined;
+}) {
+  if (current !== null) {
+    if (current.snapshot !== null || projectId === null) return null;
+    return {
+      projectId,
+      host: current.host,
+      repository: current.repository,
+      number: current.number,
+    };
+  }
+  const fallback = (!supportsLinks ? linkedPullRequest : null) ?? branchPullRequest;
+  return fallback == null ? null : linkedPullRequestReference(fallback);
 }
 
 function linkedPullRequestReference(fallback: ThreadLinkedPullRequest) {
@@ -208,6 +257,7 @@ export function ThreadPullRequestBadgeControl({
   pullRequests,
   number,
   url,
+  pr,
   status,
   onOpenList,
   onOpenPullRequest,
@@ -217,6 +267,7 @@ export function ThreadPullRequestBadgeControl({
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
   number?: number | undefined;
   url?: string | undefined;
+  pr?: ThreadPr | undefined;
   status: PrStatusIndicator | null;
   onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
@@ -230,6 +281,7 @@ export function ThreadPullRequestBadgeControl({
       opensList={badge !== null && (badge.kind === "stack" || badge.others > 0)}
       url={url}
       number={number}
+      pr={pr}
       status={status}
       pullRequests={pullRequests}
       onOpenList={onOpenList}
@@ -244,6 +296,7 @@ function PullRequestBadge({
   opensList,
   url,
   number,
+  pr,
   status,
   pullRequests,
   onOpenList,
@@ -254,6 +307,7 @@ function PullRequestBadge({
   opensList: boolean;
   url: string | undefined;
   number: number | undefined;
+  pr: ThreadPr | undefined;
   status: PrStatusIndicator | null;
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
   onOpenList: () => void;
@@ -277,6 +331,27 @@ function PullRequestBadge({
       render: element,
       "aria-label": presentation.label,
       onPointerDown: (event: MouseEvent<HTMLElement>) => event.stopPropagation(),
+      onDragStart: (event: DragEvent<HTMLElement>) => {
+        if (opensList || number === undefined || url === undefined) return;
+        event.stopPropagation();
+        event.dataTransfer.clearData();
+        event.dataTransfer.setData("text/plain", `#${number}`);
+        event.dataTransfer.setData("text/uri-list", url);
+        if (pr) {
+          event.dataTransfer.setData(
+            COMPOSER_PULL_REQUEST_DRAG_TYPE,
+            encodePullRequestDragPayload({
+              number,
+              url,
+              title: pr.title,
+              headBranch: pr.headRef,
+              baseBranch: pr.baseRef,
+              state: pr.state,
+              isDraft: pr.isDraft === true,
+            }),
+          );
+        }
+      },
       onClick,
     },
   });
@@ -670,11 +745,12 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   const threadProject = useProject(scopeProjectRef(thread.environmentId, thread.projectId));
   const threadProjectCwd = threadProject?.workspaceRoot ?? null;
   const gitCwd = thread.worktreePath ?? threadProjectCwd;
-  const linkedPullRequest = useLinkedThreadPullRequest(
-    thread.environmentId,
-    thread.linkedPullRequest,
-    leaseLiveStatus,
-  );
+  const linkedPullRequest = useLinkedThreadPullRequest({
+    environmentId: thread.environmentId,
+    projectId: thread.projectId,
+    linkedPullRequest: thread.linkedPullRequest,
+    enabled: leaseLiveStatus,
+  });
   const gitStatus = useEnvironmentQuery(
     leaseLiveStatus &&
       thread.linkedPullRequest == null &&
@@ -833,13 +909,14 @@ export function ThreadSearchPullRequestNumber({
 }) {
   const matched = pullRequestMatchesSearchQuery(thread, query);
   const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
-  const linked = useLinkedThreadPullRequest(
-    thread.environmentId,
-    thread.linkedPullRequest,
-    enabled && matched,
-    thread.pullRequests,
-    thread.branchPullRequest,
-  );
+  const linked = useLinkedThreadPullRequest({
+    environmentId: thread.environmentId,
+    projectId: thread.projectId,
+    linkedPullRequest: thread.linkedPullRequest,
+    enabled: enabled && matched,
+    pullRequests: thread.pullRequests,
+    branchPullRequest: thread.branchPullRequest,
+  });
   if (!matched) return null;
   const badge = supportsMultiplePullRequests
     ? resolveThreadPullRequestBadge(thread.pullRequests)

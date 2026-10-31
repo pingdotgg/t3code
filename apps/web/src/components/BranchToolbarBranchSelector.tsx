@@ -543,13 +543,13 @@ export function BranchToolbarBranchSelector({
       ? (branchStatusQuery.data.pr ?? null)
       : null;
   const supportsMultiplePullRequests = useSupportsMultiplePullRequests(environmentId);
-  const linkedStatus = useLinkedThreadPullRequest(
+  const linkedStatus = useLinkedThreadPullRequest({
     environmentId,
-    serverThread?.linkedPullRequest,
-    true,
-    serverThread?.pullRequests,
-    serverThread?.branchPullRequest,
-  );
+    projectId: serverThread?.projectId ?? activeProject?.id ?? null,
+    linkedPullRequest: serverThread?.linkedPullRequest,
+    pullRequests: serverThread?.pullRequests,
+    branchPullRequest: serverThread?.branchPullRequest,
+  });
   const currentLinkedPr = supportsMultiplePullRequests
     ? resolveThreadCurrentPullRequestLink(serverThread?.pullRequests ?? [])
     : null;
@@ -692,6 +692,7 @@ export function BranchToolbarBranchSelector({
             pullRequests={serverThread?.pullRequests ?? []}
             number={prNumber}
             url={prUrl}
+            pr={displayedPr}
             status={displayedPrStatus}
             onOpenList={() => useRightPanelStore.getState().open(threadRef, "pull-requests")}
             onOpenPullRequest={(event, targetUrl = prUrl) => {
