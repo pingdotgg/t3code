@@ -132,12 +132,12 @@ export function SkillChipPopover(props: {
       accessibleLabel={`Skill ${props.label}`}
       copyMarkdown={props.copyMarkdown}
     >
-      <div className="space-y-3 p-2 text-sm">
-        <p className="font-medium">{props.label}</p>
+      <div className="space-y-3 p-2 text-body">
+        <p className="text-label">{props.label}</p>
         <p>{props.description || "No description is available for this skill."}</p>
         {props.onViewInstructions ? (
           <PopoverClose
-            render={<Button variant="outline" size="sm" />}
+            render={<Button variant="secondary" size="sm" />}
             onClick={props.onViewInstructions}
           >
             View instructions

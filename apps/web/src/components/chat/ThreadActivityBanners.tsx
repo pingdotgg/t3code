@@ -102,11 +102,13 @@ export function goalNowItem(input: {
     title: (
       <Popover>
         <PopoverTrigger openOnHover render={<InlineButton />}>
-          {presentation.title}
-          {presentation.usage === null ? null : ` · ${presentation.usage}`}
+          <span className="inline-flex flex-col">
+            <span>{presentation.title}</span>
+            {presentation.usage === null ? null : <span>{presentation.usage}</span>}
+          </span>
         </PopoverTrigger>
         <PopoverPopup side="top" width="md" padding="compact" aria-label="Goal objective">
-          <p className="whitespace-pre-wrap wrap-anywhere text-sm">{presentation.objective}</p>
+          <p className="whitespace-pre-wrap wrap-anywhere text-body">{presentation.objective}</p>
         </PopoverPopup>
       </Popover>
     ),
@@ -121,7 +123,6 @@ export function goalNowItem(input: {
             >
               Resume
             </InlineButton>
-            <span aria-hidden>·</span>
           </>
         ) : null}
         <InlineButton
@@ -226,7 +227,10 @@ export function backgroundWorkNowItem(input: {
     title:
       only && typeof only.label !== "string" && only.task.label !== only.task.kind ? (
         <>
-          {presentation.waiting ? "Waiting" : "Running"} · {only.label}
+          <span className="inline-flex flex-col">
+            <span>{presentation.waiting ? "Waiting" : "Running"}</span>
+            <span>{only.label}</span>
+          </span>
         </>
       ) : (
         presentation.title

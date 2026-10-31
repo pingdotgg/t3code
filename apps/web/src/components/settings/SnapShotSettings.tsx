@@ -370,7 +370,7 @@ export function SnapShotSettings() {
                 !snapShotSetupComplete(state, settings.snapShotIncludeAccessibility) ? (
                   <Button
                     size="xs"
-                    variant="outline"
+                    variant="secondary"
                     disabled={setupBusy}
                     onClick={() => void openSetup()}
                   >
@@ -422,7 +422,7 @@ export function SnapShotSettings() {
                   managedShortcut ? (
                     <Button
                       size="xs"
-                      variant="outline"
+                      variant="secondary"
                       disabled={setupBusy}
                       onClick={() => void openSetup("shortcut")}
                     >

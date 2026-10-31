@@ -69,7 +69,18 @@ export const liveShellEnvironmentIdsAtom = Atom.make((get) => {
 
 export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
   const catalog = AsyncResult.value(get(environmentCatalog.catalogAtom));
-  if (Option.isNone(catalog)) {
+  if (Option.isNone(catalog) || !catalog.value.isReady) {
+    return false;
+  }
+  // The persisted catalog emits before platform discovery registers the
+  // primary environment; that gap is "loading", not "no projects".
+  if (
+    !isHostedStaticApp() &&
+    !isLocalEnvironmentDisabled() &&
+    !Array.from(catalog.value.entries.values()).some(
+      (entry) => entry.target._tag === "PrimaryConnectionTarget",
+    )
+  ) {
     return false;
   }
   for (const environmentId of enabledEnvironmentIds(catalog.value)) {
@@ -80,7 +91,9 @@ export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
       get(environmentCatalog.stateAtom(environmentId)),
       () => AVAILABLE_CONNECTION_STATE,
     );
-    if (connectionProjectionPhase(connection) !== "disconnected") {
+    // An enabled environment is always asked to connect, so one not yet
+    // desired has not started its first attempt.
+    if (!connection.desired || connectionProjectionPhase(connection) !== "disconnected") {
       return false;
     }
     if (connection.phase === "backoff" && connection.desired && connection.attempt <= 2) {
