@@ -1,14 +1,18 @@
+import { type EnvironmentId, SourceControlProviderKind } from "@t3tools/contracts";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
 import { StarIcon } from "lucide-react";
 
 import { getLocalStorageItem, setLocalStorageItem } from "../hooks/useLocalStorage";
 import { readLocalApi } from "../localApi";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { sourceControlEnvironment } from "../state/sourceControl";
 import { toastManager } from "./ui/toast";
 
 // Separate keys so a count written by another tab can never undo a dismissal.
 const SENT_KEY = "t3code:github-star-prompt:sent";
 const DISMISSED_KEY = "t3code:github-star-prompt:dismissed";
-const REPO_URL = "https://github.com/pingdotgg/t3code";
+const REPOSITORY = "pingdotgg/t3code";
 const PROMPTS_BEFORE_ASKING = 5;
 
 let shownThisSession = false;
@@ -32,7 +36,7 @@ function showStarPrompt() {
       onClick: () => {
         close();
         void readLocalApi()
-          ?.shell.openExternal(REPO_URL)
+          ?.shell.openExternal(`https://github.com/${REPOSITORY}`)
           .catch(() => undefined);
       },
     },
@@ -45,8 +49,29 @@ function showStarPrompt() {
   });
 }
 
-/** Counts a sent prompt. After more than five, asks once per session for a star until dismissed. */
-export function recordPromptSent(): void {
+// The server's GitHub account stands in for the user's; it may not be theirs on a shared server.
+async function alreadyStarred(environmentId: EnvironmentId) {
+  const result = await runAtomCommand(
+    appAtomRegistry,
+    sourceControlEnvironment.checkStarred,
+    {
+      environmentId,
+      input: {
+        provider: SourceControlProviderKind.make("github"),
+        host: "github.com",
+        repository: REPOSITORY,
+      },
+    },
+    { label: "check GitHub star", reportFailure: false, reportDefect: false },
+  );
+  return result._tag === "Success" && result.value;
+}
+
+/**
+ * Counts a sent prompt. After more than five, asks once per session for a star until dismissed,
+ * unless the environment's GitHub account already starred the repo.
+ */
+export async function recordPromptSent(environmentId: EnvironmentId): Promise<void> {
   if (shownThisSession) return;
   try {
     if (getLocalStorageItem(DISMISSED_KEY, Schema.Boolean)) return;
@@ -58,5 +83,6 @@ export function recordPromptSent(): void {
     return;
   }
   shownThisSession = true;
-  showStarPrompt();
+  if (await alreadyStarred(environmentId)) dismiss();
+  else showStarPrompt();
 }

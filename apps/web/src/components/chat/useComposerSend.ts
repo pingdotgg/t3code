@@ -1369,7 +1369,7 @@ export function useComposerSend(input: ComposerSendInput) {
         ) {
           handleNewThreadInActiveProject();
         }
-        recordPromptSent();
+        void recordPromptSent(environmentId);
       }
     }
 

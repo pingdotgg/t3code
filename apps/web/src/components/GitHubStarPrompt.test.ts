@@ -1,12 +1,24 @@
+import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { toastManager } from "./ui/toast";
 
-const { add } = vi.hoisted(() => ({ add: vi.fn<typeof toastManager.add>() }));
+const { add, starred } = vi.hoisted(() => ({
+  add: vi.fn<typeof toastManager.add>(),
+  starred: { value: false },
+}));
 vi.mock("./ui/toast", () => ({ toastManager: { add, close: vi.fn() } }));
+vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
+vi.mock("../state/sourceControl", () => ({ sourceControlEnvironment: { checkStarred: {} } }));
+vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+  runAtomCommand: async () => ({ _tag: "Success", value: starred.value }),
+}));
 
-function setup({ sent = 0, writable = true } = {}) {
+const environmentId = EnvironmentId.make("environment-1");
+
+function setup({ sent = 0, writable = true, alreadyStarred = false } = {}) {
   add.mockReset();
+  starred.value = alreadyStarred;
   const store = new Map([["t3code:github-star-prompt:sent", String(sent)]]);
   vi.stubGlobal("window", {
     localStorage: {
@@ -22,35 +34,44 @@ function setup({ sent = 0, writable = true } = {}) {
 // A fresh module import stands in for an app reload; storage survives it.
 async function startSession() {
   vi.resetModules();
-  return import("./GitHubStarPrompt");
+  const session = await import("./GitHubStarPrompt");
+  return { send: () => session.recordPromptSent(environmentId) };
 }
 
 describe("recordPromptSent", () => {
   it("asks after five prompts, once per session, and never again once closed", async () => {
     setup();
     let session = await startSession();
-    for (let sent = 0; sent < 5; sent++) session.recordPromptSent();
+    for (let sent = 0; sent < 5; sent++) await session.send();
     expect(add).not.toHaveBeenCalled();
 
-    session.recordPromptSent();
-    session.recordPromptSent();
+    await session.send();
+    await session.send();
     expect(add).toHaveBeenCalledOnce();
 
     session = await startSession();
-    session.recordPromptSent();
+    await session.send();
     expect(add).toHaveBeenCalledTimes(2);
 
     add.mock.lastCall?.[0].onClose?.();
     session = await startSession();
-    for (let sent = 0; sent < 10; sent++) session.recordPromptSent();
+    for (let sent = 0; sent < 10; sent++) await session.send();
     expect(add).toHaveBeenCalledTimes(2);
     vi.unstubAllGlobals();
   });
 
   it("never asks when a dismissal could not be saved", async () => {
     setup({ sent: 5, writable: false });
-    const session = await startSession();
-    session.recordPromptSent();
+    await (await startSession()).send();
+    expect(add).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("never asks once the environment's GitHub account starred the repo", async () => {
+    setup({ sent: 5, alreadyStarred: true });
+    await (await startSession()).send();
+    starred.value = false;
+    await (await startSession()).send();
     expect(add).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
