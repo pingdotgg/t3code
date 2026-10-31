@@ -1,0 +1,155 @@
+[
+  {
+    "folder": "opt-in",
+    "manifest": {
+      "name": "opt-in",
+      "defaultEnabled": false
+    },
+    "files": {
+      "skills/review/SKILL.md": "---\ndescription: Inventory review.\n---\nReply only OK.\n"
+    }
+  },
+  {
+    "folder": "manifest-on",
+    "manifest": {
+      "name": "manifest-on",
+      "defaultEnabled": true
+    },
+    "files": {
+      "skills/review/SKILL.md": "---\ndescription: Inventory review.\n---\nReply only OK.\n"
+    }
+  },
+  {
+    "folder": "missing-manifest",
+    "manifest": null,
+    "files": {
+      "skills/review/SKILL.md": "---\ndescription: Inventory review.\n---\nReply only OK.\n"
+    }
+  },
+  {
+    "folder": "malformed-manifest",
+    "manifest": "{broken",
+    "files": {
+      "skills/review/SKILL.md": "---\ndescription: Inventory review.\n---\nReply only OK.\n"
+    }
+  },
+  {
+    "folder": "nameless-manifest",
+    "manifest": {},
+    "files": {
+      "skills/review/SKILL.md": "---\ndescription: Inventory review.\n---\nReply only OK.\n"
+    }
+  },
+  {
+    "folder": ".hidden",
+    "manifest": {
+      "name": "hidden-plugin"
+    },
+    "files": {
+      "skills/review/SKILL.md": "---\ndescription: Inventory review.\n---\nReply only OK.\n"
+    }
+  },
+  {
+    "folder": "ordinary",
+    "manifest": null,
+    "files": {
+      "skills/review/SKILL.md": "---\ndescription: Inventory review.\n---\nReply only OK.\n"
+    },
+    "marker": false
+  },
+  {
+    "folder": "root-masked",
+    "manifest": {
+      "name": "root-masked-plugin"
+    },
+    "files": {
+      "SKILL.md": "---\nname: root-masked-plugin:already-prefixed\n---\nReply only OK.\n",
+      "skills/review/SKILL.md": "# Must remain plain root skill\n"
+    }
+  },
+  {
+    "folder": "root-unnamed",
+    "manifest": {
+      "name": "root-unnamed-plugin"
+    },
+    "files": {
+      "SKILL.md": "# Ordinary root skill\n"
+    }
+  },
+  {
+    "folder": "empty-declared",
+    "manifest": {
+      "name": "empty-declared",
+      "skills": []
+    },
+    "files": {
+      "README.md": "No skill roots\n"
+    }
+  },
+  {
+    "folder": "string-root",
+    "manifest": {
+      "name": "string-root",
+      "skills": "./extra/single"
+    },
+    "files": {
+      "skills/default/SKILL.md": "# Default\n",
+      "extra/single/SKILL.md": "---\nname: string-root:prefixed name\n---\nReply only OK.\n"
+    }
+  },
+  {
+    "folder": "array-roots",
+    "manifest": {
+      "name": "array-roots",
+      "skills": [
+        "./skills",
+        "./extra",
+        "./single",
+        "../outside",
+        "/tmp/outside",
+        "./escape",
+        "./missing",
+        "./inside-link"
+      ]
+    },
+    "files": {
+      "skills/default/SKILL.md": "# First root wins\n",
+      "extra/container/SKILL.md": "# Container\n",
+      "single/SKILL.md": "---\nname: single-name\n---\nReply only OK.\n",
+      "extra/default/SKILL.md": "# Lower precedence duplicate\n"
+    },
+    "links": {
+      "escape": "{root}/outside",
+      "inside-link": "{plugin}/single"
+    }
+  },
+  {
+    "folder": "invalid-namespace",
+    "manifest": {
+      "name": "bad namespace"
+    },
+    "files": {
+      "skills/review/SKILL.md": "---\ndescription: Inventory review.\n---\nReply only OK.\n"
+    }
+  },
+  {
+    "folder": "colon-namespace",
+    "manifest": {
+      "name": "a:b"
+    },
+    "files": {
+      "skills/review/SKILL.md": "---\ndescription: Inventory review.\n---\nReply only OK.\n"
+    }
+  },
+  {
+    "folder": "bad-skill",
+    "manifest": {
+      "name": "bad-skill"
+    },
+    "files": {
+      "skills/malformed/SKILL.md": "---\n[broken\n---\n",
+      "skills/unreadable/SKILL.md": "# Unreadable\n"
+    },
+    "unreadable": ["skills/unreadable/SKILL.md"]
+  }
+]
