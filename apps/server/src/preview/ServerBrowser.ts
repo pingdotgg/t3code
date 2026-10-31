@@ -37,6 +37,7 @@ import {
   PreviewClearProfileError,
   type PreviewEvent,
   type PreviewNavStatus,
+  type PreviewAutomationSnapshotInput,
   type PreviewSessionSnapshot,
   type PreviewViewportSetting,
   ThreadId,
@@ -2156,6 +2157,7 @@ const make = Effect.gen(function* () {
           ServerBrowserPage.snapshot({
             ...tab,
             renderScale: tab.desktop ? "display" : RENDER_SCALE,
+            fullResolution: (input as PreviewAutomationSnapshotInput | undefined)?.fullResolution,
           }),
         );
       }

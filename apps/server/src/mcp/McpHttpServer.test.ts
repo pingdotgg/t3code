@@ -19,6 +19,7 @@ import {
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -604,6 +605,35 @@ it.effect("bounds large ARIA trees without dropping every server locator", () =>
       expect(Buffer.byteLength(body?.type === "text" ? body.text : "", "utf8")).toBeLessThanOrEqual(
         McpHttpServer.MAX_SNAPSHOT_TEXT_BYTES,
       );
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("saves the full-resolution screenshot while the agent sees the capped one", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const full = Buffer.from("full-resolution png");
+      const inputs = yield* serveSnapshots("mcp-save-full-client", {
+        ...snapshotResult,
+        fullResolutionScreenshot: {
+          ...snapshotResult.screenshot,
+          data: full.toString("base64"),
+          width: 20,
+          height: 10,
+        },
+      });
+
+      const snapshot = yield* callSnapshot({ includeImage: true, save: true });
+
+      expect(inputs).toEqual([{ fullResolution: "also" }]);
+      const { screenshotPath } = snapshot.structuredContent as { screenshotPath: string };
+      const fileSystem = yield* FileSystem.FileSystem;
+      expect(Buffer.from(yield* fileSystem.readFile(screenshotPath))).toEqual(full);
+      expect(snapshot.content.at(-1)).toEqual({
+        type: "image",
+        mimeType: "image/png",
+        data: new Uint8Array(Buffer.from(snapshotResult.screenshot.data, "base64")),
+      });
     }),
   ).pipe(Effect.provide(layerTest)),
 );

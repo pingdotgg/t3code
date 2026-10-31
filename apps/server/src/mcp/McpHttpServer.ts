@@ -282,6 +282,13 @@ type SnapshotMetadata = {
   readonly [key: string]: unknown;
 };
 
+type EncodedScreenshot = {
+  readonly mimeType: "image/png";
+  readonly data: string;
+  readonly width: number;
+  readonly height: number;
+};
+
 const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
   const omitted: Array<string> = [];
   const { accessibilityTree, ...withoutTree } = metadata;
@@ -535,17 +542,20 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
             Effect.gen(function* () {
               const snapshot = encodedResult as SnapshotMetadata & {
                 readonly url: string;
-                readonly screenshot: {
-                  readonly mimeType: "image/png";
-                  readonly data: string;
-                  readonly width: number;
-                  readonly height: number;
-                };
+                readonly screenshot: EncodedScreenshot;
+                readonly fullResolutionScreenshot?: EncodedScreenshot;
               };
-              const { screenshot, ...page } = snapshot;
+              const { screenshot, fullResolutionScreenshot, ...page } = snapshot;
               const png = new Uint8Array(Buffer.from(screenshot.data, "base64"));
               const screenshotPath =
-                payload?.save === true ? yield* saveScreenshot(snapshot.url, png) : undefined;
+                payload?.save === true
+                  ? yield* saveScreenshot(
+                      snapshot.url,
+                      fullResolutionScreenshot === undefined
+                        ? png
+                        : new Uint8Array(Buffer.from(fullResolutionScreenshot.data, "base64")),
+                    )
+                  : undefined;
               // Providers replay images on later requests, and some reject them; include images only when requested.
               const includeImage = payload?.includeImage === true;
               if (screenshotPath !== undefined && !includeImage) {

@@ -354,7 +354,7 @@ describe("server browser snapshot screenshot", () => {
       page,
       cdp: await context.newCDPSession(page),
       renderScale: 2,
-      fullResolution: true,
+      fullResolution: "also",
       consoleEntries: [],
       networkEntries: [],
       actionTimeline: [],

@@ -536,6 +536,13 @@ export const PreviewAutomationActionEvent = Schema.Struct({
 });
 export type PreviewAutomationActionEvent = typeof PreviewAutomationActionEvent.Type;
 
+const PreviewAutomationScreenshot = Schema.Struct({
+  mimeType: Schema.Literal("image/png"),
+  data: Schema.String,
+  width: Schema.Int,
+  height: Schema.Int,
+});
+
 export const PreviewAutomationSnapshot = Schema.Struct({
   url: Schema.String,
   title: Schema.String,
@@ -546,14 +553,16 @@ export const PreviewAutomationSnapshot = Schema.Struct({
   consoleEntries: Schema.Array(PreviewAutomationConsoleEntry),
   networkEntries: Schema.Array(PreviewAutomationNetworkEntry),
   actionTimeline: Schema.Array(PreviewAutomationActionEvent),
-  screenshot: Schema.Struct({
-    mimeType: Schema.Literal("image/png"),
-    data: Schema.String,
-    width: Schema.Int,
-    height: Schema.Int,
-  }),
+  screenshot: PreviewAutomationScreenshot,
+  /** The capture before it was shrunk for the agent, when the snapshot asked for both. */
+  fullResolutionScreenshot: Schema.optional(PreviewAutomationScreenshot),
 });
 export type PreviewAutomationSnapshot = typeof PreviewAutomationSnapshot.Type;
+
+/** A saved screenshot keeps the captured resolution, `also` beside the agent's capped copy or `only`. */
+export type PreviewAutomationSnapshotInput = {
+  readonly fullResolution?: "also" | "only";
+};
 
 export const PreviewAutomationRecordingStatus = Schema.Struct({
   tabId: PreviewTabId,
