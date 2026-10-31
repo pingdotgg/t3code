@@ -140,7 +140,10 @@ function LinkPullRequestDialog({
   useLayoutEffect(() => {
     const content = document.querySelector<HTMLElement>("main[data-slot=sidebar-inset]");
     if (!content) return;
-    const update = () => setContentInset(content.getBoundingClientRect().left);
+    const update = () => {
+      const bounds = content.getBoundingClientRect();
+      setContentInset(bounds.left - (window.innerWidth - bounds.right));
+    };
     update();
     return observeResize(content, update);
   }, []);
