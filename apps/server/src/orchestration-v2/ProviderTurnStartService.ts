@@ -799,6 +799,7 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
+      let nativeForkFellBack = false;
       const userText = projectComposerContextForProvider({
         text: message.text,
         records: message.context?.records ?? [],
@@ -1098,7 +1099,7 @@ export const layer: Layer.Layer<
               cause: `Native fork transfer ${nativeForkTransfer.id} has no source provider execution.`,
             });
           }
-          return yield* loadFromProvider(
+          const forked = yield* Effect.result(
             session.forkThread({
               sourceProviderThread,
               sourceProviderTurns: sourceProjection.providerTurns,
@@ -1110,6 +1111,91 @@ export const layer: Layer.Layer<
                 : { providerTurnId: sourceProviderTurn.id }),
             }),
           );
+          if (forked._tag === "Success") return forked.success;
+          if (input.willRetry === true) return yield* forked.failure;
+          if (!(yield* isCurrentAttemptInStatus("starting"))) return undefined;
+
+          // Native fork kept failing (e.g. the source session is gone): start fresh with the source history.
+          yield* Effect.logWarning("Starting a native fork in a fresh native session", {
+            driver: session.driver,
+            providerThreadId: providerThread.id,
+            sourceProviderThreadId: sourceProviderThread.id,
+            runId,
+            errorTag: forked.failure._tag,
+          });
+          const replacement = yield* loadFromProvider(
+            session.ensureThread({
+              threadId: projection.thread.id,
+              title: projection.thread.title,
+              modelSelection: run.modelSelection,
+              runtimePolicy: resolvedRuntimePolicy,
+              providerSessionId,
+              existingProviderThread: {
+                ...providerThread,
+                nativeThreadRef: null,
+                forkedFrom: null,
+              },
+              forceNewNativeThread: true,
+            }),
+          );
+          if (replacement === undefined) return undefined;
+          const sourceRunIds = new Set(
+            sourceProjection.runs
+              .filter((candidate) => candidate.ordinal <= sourceRun.ordinal)
+              .map((candidate) => candidate.id),
+          );
+          const includeImported = sourceProjection.thread.historyOrigin === "v1_import";
+          const createdAt = yield* DateTime.now;
+          const handoff = yield* contextHandoffService.prepareProviderHandoff({
+            threadId: projection.thread.id,
+            targetRunId: run.id,
+            transferId: nativeForkTransfer.id,
+            fromProviderThreadIds: [sourceProviderThread.id],
+            toProviderThreadId: providerThread.id,
+            fromProviderInstanceId: sourceRun.providerInstanceId,
+            toProviderInstanceId: run.providerInstanceId,
+            coveredRunOrdinals: { from: 1, to: sourceRun.ordinal },
+            strategy: "full_thread_summary",
+            runs: sourceProjection.runs,
+            items: (yield* projectionStore.getTurnStartHistory(sourceProjection.thread.id)).filter(
+              (item) => (item.runId === null ? includeImported : sourceRunIds.has(item.runId)),
+            ),
+            createdAt,
+          });
+          // Source history predates every other handoff to this fork.
+          effectiveHandoffs = [handoff, ...effectiveHandoffs];
+          nativeForkFellBack = true;
+          yield* eventSink.write({
+            events: [
+              {
+                id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                type: "context-handoff.updated",
+                threadId: projection.thread.id,
+                runId: run.id,
+                providerInstanceId: run.providerInstanceId,
+                occurredAt: createdAt,
+                payload: handoff,
+              },
+              {
+                id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                type: "context-transfer.updated",
+                threadId: projection.thread.id,
+                runId: run.id,
+                providerInstanceId: run.providerInstanceId,
+                occurredAt: createdAt,
+                payload: {
+                  ...nativeForkTransfer,
+                  targetProviderInstanceId: run.providerInstanceId,
+                  targetRunId: run.id,
+                  status: "resolved_portable",
+                  resolution: { strategy: "portable_context", contextHandoffId: handoff.id },
+                  error: null,
+                  updatedAt: createdAt,
+                },
+              },
+            ],
+          });
+          return replacement;
         }
         if (providerThread.nativeThreadRef === null) {
           // Pass the stored provider row for adoption; adapter-minted duplicates make activeProviderThreadId flap.
@@ -1300,7 +1386,8 @@ export const layer: Layer.Layer<
         firstRunOrdinal: providerThread.firstRunOrdinal ?? run.ordinal,
         lastRunOrdinal: run.ordinal,
         handoffIds: providerThread.handoffIds,
-        forkedFrom: providerThread.forkedFrom,
+        // A fresh session did not inherit the source's native history.
+        forkedFrom: nativeForkFellBack ? null : providerThread.forkedFrom,
         status: "active",
         createdAt: providerThread.createdAt,
         updatedAt: now,
@@ -1345,7 +1432,9 @@ export const layer: Layer.Layer<
           occurredAt: now,
           payload: runningProviderThread,
         },
-        ...(nativeForkTransfer === undefined || runningProviderThread.nativeThreadRef === null
+        ...(nativeForkTransfer === undefined ||
+        nativeForkFellBack ||
+        runningProviderThread.nativeThreadRef === null
           ? []
           : [
               {
