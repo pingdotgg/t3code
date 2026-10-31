@@ -1,5 +1,5 @@
 import "~/index.css";
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, SourceControlProviderKind } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { Cause } from "effect";
 import { expect, it, vi } from "vite-plus/test";
@@ -39,6 +39,28 @@ const environmentId = EnvironmentId.make("environment");
 type Detail = Parameters<typeof PullRequestActionsMenu>[0]["detail"];
 
 const openDetail: Detail = {
+  provider: SourceControlProviderKind.make("github"),
+  projectId: reference.projectId,
+  projectTitle: "Project",
+  workspaceRoot: "/workspace",
+  repository: reference.repository,
+  number: reference.number,
+  title: "Test pull request",
+  body: "Original description",
+  author: { login: "author", name: null, avatarUrl: null },
+  mergeability: "mergeable",
+  additions: 1,
+  deletions: 0,
+  changedFiles: 1,
+  baseBranch: "main",
+  createdAt: "2026-09-01T00:00:00Z",
+  updatedAt: "2026-09-01T00:00:00Z",
+  mergedAt: null,
+  closedAt: null,
+  reviewers: [],
+  labels: [],
+  checks: [],
+  mergeCapabilities: { merge: false, squash: false, rebase: false },
   url: "https://github.com/owner/repo/pull/7",
   state: "open",
   isDraft: false,
@@ -111,6 +133,15 @@ function setup() {
       perform={async () => true}
       openOnHostText="Open on GitHub"
       copyReference={() => {}}
+      inlineConfirm={{
+        isArmed: () => false,
+        props: () => ({ ref: undefined, onClick: () => {}, onBlur: () => {} }),
+      }}
+      showCheckout={false}
+      checkoutMenuItems={null}
+      onEditTitle={() => {}}
+      repositoryUrl={null}
+      checkoutCommand={null}
     />
   );
 }

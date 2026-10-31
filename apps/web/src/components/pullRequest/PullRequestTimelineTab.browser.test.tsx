@@ -75,10 +75,8 @@ it("mounts only the timeline rows near the viewport of a huge pull request", asy
         scrollerRef={() => {}}
         detail={detail}
         environmentId={EnvironmentId.make("environment")}
-        reference={detail}
         order="oldest"
         onOpenCommit={() => {}}
-        onRefresh={() => {}}
       />
     </div>,
   );
