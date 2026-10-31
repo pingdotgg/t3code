@@ -107,7 +107,7 @@ export function WorkLogTarget({ children, mono = false }: { children: ReactNode;
 const interactionClassName =
   "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70";
 
-function useRowClassName(interactive: boolean) {
+function rowClassName(interactive: boolean) {
   return cn(
     "group/timeline-row relative w-full min-w-0 rounded-md pe-1.5 text-left transition-colors",
     interactive && interactionClassName,
@@ -121,7 +121,7 @@ export function WorkLogButton({
   wrapLabel = false,
   ...buttonProps
 }: RowContent & Omit<ComponentProps<"button">, "className" | "style" | "children">) {
-  const className = useRowClassName(true);
+  const className = rowClassName(true);
   return (
     <button {...buttonProps} type="button" className={className}>
       <WorkLogLine icon={icon} label={label} trailing={trailing} wrapLabel={wrapLabel} />
@@ -138,7 +138,7 @@ export function WorkLogRow({
   children,
   ...rowProps
 }: RowContent & Omit<ComponentProps<"div">, "className" | "style">) {
-  const className = useRowClassName(rowProps.onClick !== undefined);
+  const className = rowClassName(rowProps.onClick !== undefined);
   return (
     <div {...rowProps} className={className}>
       <WorkLogLine icon={icon} label={label} trailing={trailing} wrapLabel={wrapLabel} />
