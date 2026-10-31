@@ -3825,6 +3825,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           // Only reads and storage are cancellable; remove partial writes. Once stored, attach the app or delete it if the item settled.
           Effect.uninterruptibleMask((restore) =>
             Effect.gen(function* () {
+              // Codex reports an `isError` result as failed. Apps still render
+              // for it: a write tool that defers to its form returns one.
               const reference =
                 item.result != null && item.error == null
                   ? yield* restore(

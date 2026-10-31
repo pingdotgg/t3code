@@ -2,8 +2,10 @@ import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CheckpointId,
+  CommandId,
   CheckpointRef,
   CheckpointScopeId,
+  EventId,
   MessageId,
   GitCommandError,
   type ModelSelection,
@@ -1645,6 +1647,156 @@ layer("ProviderEventIngestorV2", (it) => {
         ),
         [{ mimeType: "image/png", data: screenshotBase64 }],
       );
+    }),
+  );
+
+  it.effect("merges an MCP App's recorded call with the provider's latest tool call", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const eventStore = yield* EventStore.EventStoreV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
+      const providerOutput = {
+        t3McpApp: {
+          attachmentId: "thread-app-html",
+          server: "github",
+          tool: "issue_write",
+          resourceUri: "ui://github/issue-write",
+        },
+        result: { content: [{ type: "text", text: "Form shown" }], isError: true },
+      };
+      // The recorded result's image must survive the provider's image stripping.
+      const call = {
+        arguments: { title: "Shipped", _ui_submitted: true },
+        result: {
+          content: [
+            { type: "text", text: "Created issue #1" },
+            { type: "image", mimeType: "image/png", data: Buffer.alloc(300, 7).toString("base64") },
+          ],
+        },
+      };
+      const turnItem: OrchestrationV2TurnItem = {
+        id: TurnItemId.make("turn-item:mcp-app"),
+        threadId: threadEvent.threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "failed",
+        title: "github.issue_write",
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "dynamic_tool",
+        toolName: "github.issue_write",
+        input: { title: "Draft" },
+        output: providerOutput,
+      };
+      const ingest = (item = turnItem) =>
+        ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+          event: { type: "turn_item.updated", driver: CODEX_DRIVER, turnItem: item },
+        });
+
+      yield* eventSink.write({ events: [threadEvent] });
+      yield* ingest();
+      yield* projectionStore.apply({
+        id: EventId.make("event:mcp-app-call-recorded"),
+        type: "turn-item.updated",
+        threadId: threadEvent.threadId,
+        occurredAt: now,
+        payload: { ...turnItem, output: { ...providerOutput, t3McpAppCall: call } },
+      });
+      yield* ingest();
+
+      const projected = yield* projectionStore.getTurnItem({
+        threadId: threadEvent.threadId,
+        itemId: turnItem.id,
+      });
+      assert(projected?.type === "dynamic_tool");
+      assert.deepEqual(projected.output, { ...providerOutput, t3McpAppCall: call });
+      // The resent item's event carries the call too, so a replay keeps it.
+      const stored = yield* eventStore
+        .read({ threadId: threadEvent.threadId, eventType: "turn-item.updated" })
+        .pipe(Stream.runCollect);
+      const last = Array.from(stored).at(-1)?.event;
+      assert(last?.type === "turn-item.updated" && last.payload.type === "dynamic_tool");
+      assert.deepEqual(last.payload.output, { ...providerOutput, t3McpAppCall: call });
+
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("event:mcp-app-status-update"),
+            type: "turn-item.updated",
+            threadId: threadEvent.threadId,
+            occurredAt: now,
+            payload: { ...projected, status: "completed", title: "Provider completed" },
+          },
+        ],
+      });
+      const updated = yield* projectionStore.getTurnItem({
+        threadId: threadEvent.threadId,
+        itemId: turnItem.id,
+      });
+      assert.equal(updated?.status, "completed");
+      assert.equal(updated?.title, "Provider completed");
+
+      // An output that clients read whole on its own, but not with the call
+      // beside it, wins over the call.
+      const largeOutput = {
+        ...providerOutput,
+        result: { content: [{ type: "text", text: "x".repeat(256 * 1024 - 500) }] },
+      };
+      yield* ingest({ ...turnItem, output: largeOutput });
+      const resent = yield* projectionStore.getTurnItem({
+        threadId: threadEvent.threadId,
+        itemId: turnItem.id,
+      });
+      assert(resent?.type === "dynamic_tool");
+      assert.deepEqual(resent.output, largeOutput);
+
+      // A call recorded from a copy read before the provider's latest update
+      // lands on that update instead of restoring the copy.
+      const finalOutput = {
+        ...providerOutput,
+        result: { content: [{ type: "text", text: "Provider final" }] },
+      };
+      yield* ingest({ ...turnItem, status: "completed", output: finalOutput });
+      yield* eventSink.commitCommand({
+        commandId: CommandId.make("command:mcp-app-call"),
+        commandType: "mcp_app.call.record",
+        threadId: threadEvent.threadId,
+        acceptedAt: now,
+        effects: [],
+        events: [
+          {
+            id: EventId.make("event:mcp-app-call-from-stale-copy"),
+            type: "turn-item.updated",
+            threadId: threadEvent.threadId,
+            occurredAt: now,
+            payload: { ...turnItem, output: { ...providerOutput, t3McpAppCall: call } },
+          },
+        ],
+      });
+      const latest = yield* projectionStore.getTurnItem({
+        threadId: threadEvent.threadId,
+        itemId: turnItem.id,
+      });
+      assert(latest?.type === "dynamic_tool");
+      assert.equal(latest.status, "completed");
+      assert.deepEqual(latest.output, { ...finalOutput, t3McpAppCall: call });
     }),
   );
 
