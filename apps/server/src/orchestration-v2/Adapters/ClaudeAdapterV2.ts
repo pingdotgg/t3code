@@ -9707,19 +9707,41 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
               ),
             );
-            return callbackOptions.signal.aborted
-              ? ({
-                  behavior: "deny",
-                  message: "User cancelled tool execution.",
-                } satisfies PermissionResult)
-              : ({
-                  behavior: "allow",
-                  updatedInput: {
-                    questions: toolInput.questions,
-                    answers: claudeSdkUserInputAnswers(resolvedAnswers),
-                  },
-                  toolUseID: callbackOptions.toolUseID,
-                } satisfies PermissionResult);
+            if (callbackOptions.signal.aborted) {
+              const resolvedAt = yield* DateTime.now;
+              yield* emitProviderEvent({
+                type: "runtime_request.updated",
+                driver: CLAUDE_PROVIDER,
+                runtimeRequest: { ...artifacts.request, status: "cancelled", resolvedAt },
+              });
+              yield* emitProviderEvent({
+                type: "node.updated",
+                driver: CLAUDE_PROVIDER,
+                node: { ...artifacts.node, status: "cancelled", completedAt: resolvedAt },
+              });
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: {
+                  ...artifacts.turnItem,
+                  status: "cancelled",
+                  completedAt: resolvedAt,
+                  updatedAt: resolvedAt,
+                },
+              });
+              return {
+                behavior: "deny",
+                message: "User cancelled tool execution.",
+              } satisfies PermissionResult;
+            }
+            return {
+              behavior: "allow",
+              updatedInput: {
+                questions: toolInput.questions,
+                answers: claudeSdkUserInputAnswers(resolvedAnswers),
+              },
+              toolUseID: callbackOptions.toolUseID,
+            } satisfies PermissionResult;
           }
 
           if (toolName === "ExitPlanMode") {

@@ -3117,6 +3117,96 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
 
+  it.effect("withdraws an aborted AskUserQuestion while its replacement remains answerable", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-aborted-question"),
+          text: "Ask me to choose Red or Blue.",
+          attachments: [],
+        }),
+      );
+      const canUseTool = harness.getOpenedOptions()!.canUseTool!;
+      const questions = [
+        {
+          header: "Color",
+          question: "Red or Blue?",
+          options: [
+            { label: "Red", description: "Choose red." },
+            { label: "Blue", description: "Choose blue." },
+          ],
+          multiSelect: false,
+        },
+      ];
+      // @effect-diagnostics-next-line abortControllerInEffect:off - The test aborts the SDK callback directly to simulate Claude withdrawing the question.
+      const controller = new AbortController();
+      const original = yield* Effect.promise(() =>
+        canUseTool(
+          "AskUserQuestion",
+          { questions },
+          {
+            signal: controller.signal,
+            toolUseID: "question-original",
+            requestId: "request-original",
+          },
+        ),
+      ).pipe(Effect.forkScoped);
+      const pending = yield* Queue.take(harness.runtimeRequestReceipts);
+      assert.equal(pending.runtimeRequest.kind, "user_input");
+      assert.equal(pending.runtimeRequest.status, "pending");
+
+      controller.abort();
+      assert.equal((yield* Fiber.join(original))?.behavior, "deny");
+
+      const replacement = yield* Effect.promise(() =>
+        canUseTool(
+          "AskUserQuestion",
+          { questions },
+          {
+            signal: new AbortController().signal,
+            toolUseID: "question-replacement",
+            requestId: "request-replacement",
+          },
+        ),
+      ).pipe(Effect.forkScoped);
+      // The replacement receipt also drains any withdrawal emitted before the
+      // aborted callback returned, without waiting for an event that may be missing.
+      let next = yield* Queue.take(harness.runtimeRequestReceipts);
+      while (next.runtimeRequest.id === pending.runtimeRequest.id) {
+        next = yield* Queue.take(harness.runtimeRequestReceipts);
+      }
+      assert.equal(next.runtimeRequest.status, "pending");
+      yield* harness.runtime.respondToRuntimeRequest({
+        requestId: next.runtimeRequest.id,
+        answers: { "Red or Blue?": "Blue" },
+      });
+      assert.deepEqual(yield* Fiber.join(replacement), {
+        behavior: "allow",
+        updatedInput: { questions, answers: { "Red or Blue?": "Blue" } },
+        toolUseID: "question-replacement",
+      });
+      const originalUpdates = harness.events.filter(
+        (event) =>
+          event.type === "runtime_request.updated" &&
+          event.runtimeRequest.id === pending.runtimeRequest.id,
+      );
+      assert.deepEqual(
+        originalUpdates.map((event) =>
+          event.type === "runtime_request.updated" ? event.runtimeRequest.status : undefined,
+        ),
+        ["pending", "cancelled"],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect.each(["release-after", "cancel-after", "release-before", "resume-pending"] as const)(
     "keeps attachment reservations across compaction: %s boundary",
     (outcome) =>
