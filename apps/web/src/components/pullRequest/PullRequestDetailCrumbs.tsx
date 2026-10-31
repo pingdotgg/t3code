@@ -85,7 +85,7 @@ function NumberLink({
               aria-label={`Open ${sourceControlClients.get(detail.provider).changeRequest.singular} #${detail.number} on host`}
             >
               #{detail.number}
-              <ExternalLinkIcon aria-hidden className="size-2.5" />
+              <ExternalLinkIcon aria-hidden className="size-[13px]" />
             </InlineButton>
           }
         />
