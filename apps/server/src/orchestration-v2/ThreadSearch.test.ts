@@ -861,7 +861,8 @@ it.layer(layerTest)("ThreadSearch.searchOlderSettled", (it) => {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const search = yield* ThreadSearch.ThreadSearch;
       const sql = yield* SqlClient.SqlClient;
-      const project = ProjectId.make("project:petrel");
+      // The project title must not match the query, or the message-thread query is untested.
+      const project = ProjectId.make("project:cormorant");
       yield* createProject(project);
       const titled = ThreadId.make("thread:petrel-titled");
       const messaged = ThreadId.make("thread:petrel-messaged");
@@ -886,6 +887,14 @@ it.layer(layerTest)("ThreadSearch.searchOlderSettled", (it) => {
       });
       assert.include(found, titled);
       assert.include(found, messaged);
+      // messaged matches only through its message: without the scope it must not appear.
+      const titlesOnly = yield* search.searchOlderSettled({
+        query: "petrel",
+        before: DateTime.formatIso(at(30)),
+        messageThreadIds: [],
+      });
+      assert.include(titlesOnly, titled);
+      assert.notInclude(titlesOnly, messaged);
     }),
   );
 
