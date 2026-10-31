@@ -352,12 +352,54 @@ describe("SandboxProvisioner lifecycle", () => {
       expect(result.listed.sandboxes[0]?.state).toBe("running");
       expect(result.listed.sandboxes[0]?.ttlMinutes).toBe(480);
       expect(result.listed.sandboxes[0]?.hardDeadlineAt).not.toBeNull();
+      const deadline = result.listed.sandboxes[0]?.hardDeadlineAt;
       expect(result.stopped.sandbox.state).toBe("stopped");
-      expect(result.stopped.sandbox.hardDeadlineAt).toBeNull();
+      // The deadline is the sandbox's lifetime, so neither stop nor resume extends it.
+      expect(result.stopped.sandbox.hardDeadlineAt).toBe(deadline);
       expect(result.resumed.sandbox.state).toBe("running");
-      expect(result.resumed.sandbox.hardDeadlineAt).not.toBeNull();
+      expect(result.resumed.sandbox.hardDeadlineAt).toBe(deadline);
       expect(requests.some((request) => request.endsWith("/stop"))).toBe(true);
       expect(requests.some((request) => request.endsWith("/resume"))).toBe(true);
+    });
+  });
+
+  it.effect("refuses to resume a sandbox past its hard deadline", () => {
+    const expired: SandboxRecord = {
+      environmentId: testEnvironmentId,
+      provider: "boat",
+      sandboxId: boatSandboxId,
+      label: "Expired sandbox",
+      size: "small",
+      state: "stopped",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      httpBaseUrl: "https://boat.example/t3",
+      hardDeadlineAt: "1960-01-01T00:00:00.000Z",
+      ttlMinutes: 480,
+    };
+    const repository = memoryRepository([expired]);
+    const requests: Array<string> = [];
+    return Effect.gen(function* () {
+      const failure = yield* SandboxProvisioner.SandboxProvisioner.pipe(
+        Effect.flatMap((provisioner) =>
+          provisioner.resume({ environmentId: testEnvironmentId }).pipe(Effect.flip),
+        ),
+        Effect.provide(
+          SandboxProvisioner.layer.pipe(
+            Layer.provide(
+              ServerSettings.layerTest({
+                sandboxProviders: { boat: { apiKey: "boat_test" } },
+              }),
+            ),
+            Layer.provide(repository.layer),
+          ),
+        ),
+        Effect.provideService(HttpClient.HttpClient, lifecycleClient(requests)),
+      );
+
+      expect(failure.detail).toContain("8-hour limit");
+      expect(repository.records.get(testEnvironmentId)?.state).toBe("stopped");
+      expect(requests).toEqual([]);
     });
   });
 

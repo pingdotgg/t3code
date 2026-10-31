@@ -1516,7 +1516,11 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
           savedEnvironments={savedEnvironments}
         />
       </SettingsSection>
-      <SandboxManagementSection />
+      {/* Provisioning records the sandbox and pairs in one step; remounting on a new environment
+          re-reads the list instead of leaving the section with the snapshot it loaded earlier. */}
+      <SandboxManagementSection
+        key={savedEnvironments.map((environment) => environment.environmentId).join(",")}
+      />
       {hasCloudPublicConfig() ? (
         <RemoveT3ConnectEnvironmentDialog
           environmentLabel={pendingT3ConnectRemoval?.label ?? null}
