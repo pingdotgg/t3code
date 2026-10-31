@@ -559,6 +559,14 @@ it.effect(
             assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
           }
         }
+        if (mode === "live") {
+          yield* orchestrator.dispatch({
+            type: "thread.snooze",
+            commandId: CommandId.make("snooze-live-control"),
+            threadId,
+            snoozedUntil: "2099-07-25T09:00:00.000Z",
+          });
+        }
         yield* orchestrator.dispatch(
           mode === "live"
             ? {
@@ -583,6 +591,8 @@ it.effect(
         assert.equal(response.node?.status, mode === "live" ? "completed" : "cancelled");
         assert.equal(response.item?.status, mode === "live" ? "completed" : "cancelled");
         if (mode === "live") {
+          assert.isNull((yield* projections.getThread(threadId)).snoozedUntil);
+          assert.isNull((yield* projections.getThread(threadId)).snoozedAt);
           assert.deepEqual(response.request?.answers, normalizedAnswers);
           assert.equal(response.item?.type, "user_input_request");
           if (response.item?.type === "user_input_request") {
@@ -1485,6 +1495,92 @@ it.effect("explicit settle clears snooze atomically and stays idempotent after r
     } as const;
     assert.deepInclude(yield* projections.getThreadShell(threadId), active);
     assert.deepInclude((yield* projections.getThreadProjection(threadId)).thread, active);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps a snooze when a live question is cancelled or an approval is answered", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    const now = yield* DateTime.now;
+    for (const kind of ["user_input", "command"] as const) {
+      const threadId = ThreadId.make(`thread:snoozed-live-${kind}`);
+      const requestId = RuntimeRequestId.make(`request:snoozed-live-${kind}`);
+      const sessionId = ProviderSessionId.make(`session:snoozed-live-${kind}`);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create-snoozed-live-${kind}`),
+        threadId,
+        projectId: ProjectId.make("project:snoozed-live"),
+        title: "Deferred question",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.snooze",
+        commandId: CommandId.make(`snooze-live-${kind}`),
+        threadId,
+        snoozedUntil: "2099-07-25T09:00:00.000Z",
+      });
+      const before = yield* projections.getThread(threadId);
+      yield* projections.apply({
+        id: EventId.make(`attach-snoozed-live-${kind}`),
+        type: "provider-session.attached",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: sessionId,
+          driver: adapter.driver,
+          providerInstanceId: instanceId,
+          status: "ready",
+          cwd: "/repo",
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make(`request-snoozed-live-${kind}`),
+        type: "runtime-request.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: requestId,
+          nodeId: NodeId.make(`node:snoozed-live-${kind}`),
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind,
+          status: "pending",
+          responseCapability: { type: "live", providerSessionId: sessionId },
+          createdAt: now,
+          resolvedAt: null,
+        },
+      });
+      const commandId = CommandId.make(`respond-snoozed-live-${kind}`);
+      yield* orchestrator.dispatch({
+        type: "runtime-request.respond",
+        commandId,
+        threadId,
+        requestId,
+        decision: kind === "user_input" ? "cancel" : "accept",
+      });
+      const after = yield* projections.getThread(threadId);
+      assert.deepEqual(after.snoozedUntil, before.snoozedUntil);
+      assert.deepEqual(after.snoozedAt, before.snoozedAt);
+      assert.equal((yield* projections.getRuntimeRequest(threadId, requestId))?.status, "resolved");
+      assert.equal(
+        (yield* outbox.listByCommandId(commandId))[0]?.request.type,
+        "runtime-request.respond",
+      );
+    }
   }).pipe(Effect.provide(layerTest)),
 );
 
