@@ -190,7 +190,10 @@ describe("getChangeRequest", () => {
 });
 
 describe("getChangeRequestActivity", () => {
-  it.effect("carries the threads pinned to files for the diff", () =>
+  it.effect.each([
+    { iterations: "read", trackedTo: ITERATION.id },
+    { iterations: "failed", trackedTo: undefined },
+  ] as const)("carries the threads pinned to files when the push list is $iterations", (input) =>
     Effect.gen(function* () {
       const remark = {
         id: "4:1",
@@ -214,7 +217,16 @@ describe("getChangeRequestActivity", () => {
           Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
             getPullRequest: () => Effect.succeed(PULL_REQUEST),
             listIterations: () =>
-              Effect.succeed([{ ...ITERATION, id: 1 }, { ...ITERATION, id: 2 }, ITERATION]),
+              input.iterations === "read"
+                ? Effect.succeed([{ ...ITERATION, id: 1 }, { ...ITERATION, id: 2 }, ITERATION])
+                : Effect.fail(
+                    new AzureDevOpsPullRequestCli.AzureDevOpsPullRequestReadError({
+                      command: "az",
+                      cwd: "/w",
+                      operation: "listIterations",
+                      cause: "unavailable",
+                    }),
+                  ),
             listThreads: (threads) => {
               askedFor.push(threads.iterationId);
               return Effect.succeed({
@@ -237,8 +249,9 @@ describe("getChangeRequestActivity", () => {
 
       expect(activity.reviewThreads).toEqual([thread]);
       expect(activity.comments.map((comment) => comment.id)).toEqual(["4:1"]);
+      expect(activity.commentsTruncated).toBe(false);
       // The Code tab diffs the latest push, so the lines are the ones that push has.
-      expect(askedFor).toEqual([ITERATION.id]);
+      expect(askedFor).toEqual([input.trackedTo]);
     }),
   );
 });

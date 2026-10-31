@@ -400,12 +400,15 @@ export const make = Effect.gen(function* () {
                   number: input.number,
                 })
                 .pipe(
-                  Effect.flatMap((iterations) =>
+                  Effect.map((iterations) => iterations.at(-1)?.id),
+                  // Without a push to track to, threads keep the lines they were written on.
+                  Effect.orElseSucceed(() => undefined),
+                  Effect.flatMap((iterationId) =>
                     cli.listThreads({
                       cwd: input.cwd,
                       location,
                       number: input.number,
-                      iterationId: iterations.at(-1)?.id,
+                      iterationId,
                     }),
                   ),
                   Effect.map((threads) => ({ ...threads, truncated: false })),
