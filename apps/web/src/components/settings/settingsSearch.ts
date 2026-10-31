@@ -715,6 +715,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["telemetry analytics usage data tracking legal opt out"],
   },
   {
+    id: "product-usage-data",
+    title: "Product usage data",
+    to: "/settings/about",
+    scope: "environment",
+    searchTerms: ["telemetry analytics usage data tracking opt out disable posthog traces"],
+  },
+  {
     id: "telemetry-export",
     title: "OpenTelemetry export",
     to: "/settings/diagnostics",

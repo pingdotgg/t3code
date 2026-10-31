@@ -9,15 +9,16 @@ import * as Layer from "effect/Layer";
 import * as ServerConfig from "../config.ts";
 import { resolveRelayClientTracingConfig } from "./publicConfig.ts";
 
-const relayClientTracingConfig = resolveRelayClientTracingConfig();
-
 const relayLayer = (resource: Omit<RelayTracing.RelayClientTracingResource, "serviceInstanceId">) =>
   Layer.unwrap(
     Effect.map(ServerConfig.ServerConfig, (config) =>
-      RelayTracing.layer(relayClientTracingConfig, {
-        ...resource,
-        serviceInstanceId: processServiceInstanceId(config.otelEnvironment.resourceAttributes),
-      }),
+      RelayTracing.layer(
+        resolveRelayClientTracingConfig(process.env, undefined, config.telemetryEnabledInSettings),
+        {
+          ...resource,
+          serviceInstanceId: processServiceInstanceId(config.otelEnvironment.resourceAttributes),
+        },
+      ),
     ),
   );
 

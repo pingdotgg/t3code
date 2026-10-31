@@ -72,13 +72,15 @@ export const getAppBranding = DesktopIpc.makeSyncIpcMethod({
   }),
 });
 
-export const getRelayTelemetryEnabled = DesktopIpc.makeSyncIpcMethod({
-  channel: IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL,
-  result: Schema.Boolean,
-  handler: Effect.fn("desktop.ipc.window.getRelayTelemetryEnabled")(function* () {
-    return isRelayTracingEnabled(yield* HostProcess.Environment);
-  }),
-});
+/** `telemetrySetting` is the local server's `telemetryEnabled` when the app started. */
+export const makeGetRelayTelemetryEnabled = (telemetrySetting: boolean) =>
+  DesktopIpc.makeSyncIpcMethod({
+    channel: IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL,
+    result: Schema.Boolean,
+    handler: Effect.fn("desktop.ipc.window.getRelayTelemetryEnabled")(function* () {
+      return isRelayTracingEnabled(yield* HostProcess.Environment, telemetrySetting);
+    }),
+  });
 
 export const getSystemLocale = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_SYSTEM_LOCALE_CHANNEL,

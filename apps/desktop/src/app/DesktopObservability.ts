@@ -11,6 +11,7 @@ import * as SharedObservability from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { releaseChannelOf, releaseResourceAttributes } from "@t3tools/shared/releaseResource";
 import {
+  NO_PERSISTED_SERVER_OBSERVABILITY_SETTINGS,
   parsePersistedServerObservabilitySettings,
   type PersistedServerObservabilitySettings,
 } from "@t3tools/shared/serverSettings";
@@ -328,23 +329,24 @@ export const makeRotatingLogFileWriter = Effect.fn("makeRotatingLogFileWriter")(
   } satisfies RotatingLogFileWriter;
 });
 
-const noPersistedObservabilitySettings: PersistedServerObservabilitySettings = {
-  otlpTracesUrl: undefined,
-  otlpMetricsUrl: undefined,
-  otlpLogsUrl: undefined,
-};
-
-const readPersistedObservabilitySettings: Effect.Effect<
+export const readPersistedObservabilitySettings: Effect.Effect<
   PersistedServerObservabilitySettings,
   never,
   FileSystem.FileSystem | DesktopEnvironment.DesktopEnvironment
 > = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  const raw = yield* fileSystem.readFileString(environment.serverSettingsPath).pipe(Effect.option);
-  return Option.isNone(raw)
-    ? noPersistedObservabilitySettings
-    : parsePersistedServerObservabilitySettings(raw.value);
+  return yield* fileSystem.readFileString(environment.serverSettingsPath).pipe(
+    Effect.map(parsePersistedServerObservabilitySettings),
+    // A missing file saved nothing; an unreadable one may hold a telemetry opt-out.
+    Effect.catch((cause) =>
+      Effect.succeed(
+        cause.reason._tag === "NotFound"
+          ? NO_PERSISTED_SERVER_OBSERVABILITY_SETTINGS
+          : { ...NO_PERSISTED_SERVER_OBSERVABILITY_SETTINGS, telemetryEnabled: false },
+      ),
+    ),
+  );
 });
 
 const resolveOtlpEndpoints = Effect.gen(function* () {

@@ -119,6 +119,27 @@ const writeObservabilitySettings = Effect.fn(function* (
 });
 
 describe("DesktopObservability", () => {
+  it.effect("reads telemetry as on without a settings file and off when it is unreadable", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-telemetry-setting-test-",
+      });
+      const layerEnvironment = layerEnvironmentFor(baseDir);
+      const read = DesktopObservability.readPersistedObservabilitySettings.pipe(
+        Effect.provide(layerEnvironment),
+      );
+      assert.isTrue((yield* read).telemetryEnabled);
+
+      const { serverSettingsPath } = yield* DesktopEnvironment.DesktopEnvironment.pipe(
+        Effect.provide(layerEnvironment),
+      );
+      // A directory where the file should be fails to read without being missing.
+      yield* fileSystem.makeDirectory(serverSettingsPath, { recursive: true });
+      assert.isFalse((yield* read).telemetryEnabled);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("buffers backend child output and persists it only when a failure is reported", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

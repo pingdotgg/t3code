@@ -1984,6 +1984,63 @@ export function MaintenanceSettingsPanel() {
   );
 }
 
+function ProductUsageDataRow() {
+  return useOptionalSettingsScope() === null ? null : <ScopedProductUsageDataRow />;
+}
+
+function ScopedProductUsageDataRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const { connectedEnvironments } = useSettingsScope();
+  // Older servers ignore the setting, so a switch there would claim an opt-out that never happens.
+  if (
+    !connectedEnvironments.every(
+      (target) => target.serverConfig?.environment.capabilities.telemetrySetting === true,
+    )
+  ) {
+    return null;
+  }
+  const overrides = connectedEnvironments.flatMap((target) => {
+    const value = target.serverConfig?.observability.telemetryEnabledByEnvironment;
+    return value === undefined ? [] : [{ label: target.label, value }];
+  });
+  // The variable wins over the setting, so where it decides the switch shows its value instead.
+  const lockedEverywhere =
+    connectedEnvironments.length > 0 && overrides.length === connectedEnvironments.length;
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("product-usage-data")}
+      settingKeys={["telemetryEnabled"]}
+      description="Send anonymous usage events and T3 Connect connection traces from this environment. They never include prompts, responses, or file contents. Connection traces stop after a restart."
+      status={
+        overrides.length > 0
+          ? overrides
+              .map(({ label, value }) => `Set by T3CODE_TELEMETRY_ENABLED=${value} on ${label}.`)
+              .join(" ")
+          : undefined
+      }
+      control={
+        lockedEverywhere ? (
+          // Persisted values do not decide here, so they must not make the switch look mixed.
+          <Switch
+            checked={overrides.every(({ value }) => value)}
+            disabled
+            aria-label="Product usage data"
+          />
+        ) : (
+          <ScopedSwitch
+            settingKeys={["telemetryEnabled"]}
+            checked={settings.telemetryEnabled}
+            onCheckedChange={(checked) => updateSettings({ telemetryEnabled: Boolean(checked) })}
+            aria-label="Product usage data"
+          />
+        )
+      }
+    />
+  );
+}
+
 export function AboutSettingsPanel() {
   return (
     <SettingsPageContainer>
@@ -2016,6 +2073,7 @@ export function AboutSettingsPanel() {
             </Button>
           }
         />
+        <ProductUsageDataRow />
         <SettingsRow
           {...searchableSetting("open-source-licenses")}
           description="Notices for dependencies, assets, and optional tools used by T3 Code."

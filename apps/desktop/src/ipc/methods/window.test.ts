@@ -25,7 +25,7 @@ import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import {
   getLocalEnvironmentBootstraps,
-  getRelayTelemetryEnabled,
+  makeGetRelayTelemetryEnabled,
   pickProjectFavicon,
   probeRemoteEditors,
 } from "./window.ts";
@@ -181,16 +181,37 @@ describe("getRelayTelemetryEnabled", () => {
   it.effect("reads the desktop host opt-out before returning the renderer policy", () =>
     Effect.gen(function* () {
       assert.isFalse(
-        yield* getRelayTelemetryEnabled.handler().pipe(
-          Effect.provideService(HostProcess.Environment, {
-            T3CODE_TELEMETRY_ENABLED: "false",
-          }),
-        ),
+        yield* makeGetRelayTelemetryEnabled(true)
+          .handler()
+          .pipe(
+            Effect.provideService(HostProcess.Environment, {
+              T3CODE_TELEMETRY_ENABLED: "false",
+            }),
+          ),
       );
       assert.isTrue(
-        yield* getRelayTelemetryEnabled
+        yield* makeGetRelayTelemetryEnabled(true)
           .handler()
           .pipe(Effect.provideService(HostProcess.Environment, {})),
+      );
+    }),
+  );
+
+  it.effect("follows the server setting unless the host variable is set", () =>
+    Effect.gen(function* () {
+      assert.isFalse(
+        yield* makeGetRelayTelemetryEnabled(false)
+          .handler()
+          .pipe(Effect.provideService(HostProcess.Environment, {})),
+      );
+      assert.isTrue(
+        yield* makeGetRelayTelemetryEnabled(false)
+          .handler()
+          .pipe(
+            Effect.provideService(HostProcess.Environment, {
+              T3CODE_TELEMETRY_ENABLED: "true",
+            }),
+          ),
       );
     }),
   );
