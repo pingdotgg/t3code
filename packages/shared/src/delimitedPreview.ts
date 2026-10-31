@@ -69,3 +69,36 @@ export function parseDelimitedPreview(
   }
   return { rows, truncated: truncated || quoted };
 }
+
+export type DelimitedColumnKind = "number" | "date" | "text";
+
+const NUMERIC_CELL = /^[-+]?[$€£¥]?(?:\d{1,3}(?:,\d{3})+|\d+)?(?:\.\d+)?%?$/;
+const DATE_CELL =
+  /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+
+function delimitedCellKind(cell: string): DelimitedColumnKind {
+  if (/\d/.test(cell) && NUMERIC_CELL.test(cell)) return "number";
+  return DATE_CELL.test(cell) ? "date" : "text";
+}
+
+/**
+ * Classifies each column from its body cells (the header row excluded) so the
+ * table can set numbers and dates in mono and right-align numbers. Blank cells
+ * do not count, and a column with no filled cells stays text.
+ */
+export function delimitedColumnKinds(
+  bodyRows: ReadonlyArray<ReadonlyArray<string>>,
+  columnCount: number,
+): DelimitedColumnKind[] {
+  return Array.from({ length: columnCount }, (_, columnIndex) => {
+    let kind: DelimitedColumnKind | null = null;
+    for (const row of bodyRows) {
+      const cell = row[columnIndex]?.trim() ?? "";
+      if (cell === "") continue;
+      const cellKind = delimitedCellKind(cell);
+      if (cellKind === "text" || (kind !== null && kind !== cellKind)) return "text";
+      kind = cellKind;
+    }
+    return kind ?? "text";
+  });
+}
