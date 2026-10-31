@@ -45,8 +45,8 @@ function setup() {
 it("shows a failed decision and clears the error when the user retries", async () => {
   const thread = setup();
   await using screen = await render(<ChildThreadApprovals threadRef={thread} />);
-  await screen.getByRole("button", { name: "Allow", exact: true }).click();
+  await screen.getByRole("button", { name: "Approve", exact: true }).click();
   await expect.element(screen.getByRole("alert")).toHaveTextContent("Child environment offline");
-  await screen.getByRole("button", { name: "Allow", exact: true }).click();
+  await screen.getByRole("button", { name: "Approve", exact: true }).click();
   await expect.element(screen.getByRole("alert")).not.toBeInTheDocument();
 });
