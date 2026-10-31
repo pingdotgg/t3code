@@ -4,6 +4,7 @@ import * as NetService from "@t3tools/shared/Net";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
@@ -156,6 +157,158 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.provide(layerProcess));
   });
 
+  it.effect("closes local forwards without stopping remote servers, even on scope exit", () => {
+    let forwards = 0;
+    let remoteStops = 0;
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const args = commandArgs(command);
+        if (args.includes("-N")) {
+          forwards += 1;
+          return makeRunningProcess(() => {
+            forwards -= 1;
+          });
+        }
+        if (args.includes("sh") && !args.includes("-l")) remoteStops += 1;
+        return makeSuccessfulProcess('{"remotePort":3773}\n');
+      }),
+    );
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshAuth.SshPasswordPrompt.disabledLayer,
+      SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+    );
+
+    return Effect.gen(function* () {
+      const manager = yield* SshTunnel.SshEnvironmentManager;
+      yield* manager.ensureEnvironment({
+        alias: "devbox",
+        hostname: "devbox",
+        username: null,
+        port: null,
+      });
+      assert.equal(forwards, 1);
+      yield* manager.closeLocalForwards;
+      for (const alias of ["devbox", "another-host"]) {
+        const result = yield* Effect.exit(
+          manager.ensureEnvironment({
+            alias,
+            hostname: alias,
+            username: null,
+            port: null,
+          }),
+        );
+        assert.isTrue(Exit.isFailure(result), "update cleanup must reject new ensures");
+      }
+      assert.equal(forwards, 0);
+      assert.equal(remoteStops, 0);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.scoped,
+      Effect.andThen(
+        Effect.sync(() => {
+          assert.equal(forwards, 0);
+          assert.equal(remoteStops, 0);
+        }),
+      ),
+    );
+  });
+
+  it.effect.each(["completed", "interrupted"] as const)(
+    "%s cleanup of a forward still waiting for readiness",
+    (outcome) =>
+      Effect.gen(function* () {
+        const probing = yield* Deferred.make<void>();
+        const releaseProbe = yield* Deferred.make<void>();
+        let forwards = 0;
+        let remoteStops = 0;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.sync(() => {
+            const args = commandArgs(command);
+            if (args.includes("-N")) {
+              forwards += 1;
+              return makeRunningProcess(() => {
+                forwards -= 1;
+              });
+            }
+            if (args.includes("sh") && !args.includes("-l")) remoteStops += 1;
+            return makeSuccessfulProcess('{"remotePort":3773}\n');
+          }),
+        );
+        const httpClient = HttpClient.make((request) =>
+          Deferred.succeed(probing, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseProbe)),
+            Effect.as(HttpClientResponse.fromWeb(request, new Response("", { status: 200 }))),
+          ),
+        );
+        const layer = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Layer.succeed(HttpClient.HttpClient, httpClient),
+          Layer.succeed(NetService.NetService, testNetService),
+          SshAuth.SshPasswordPrompt.disabledLayer,
+          SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+        );
+        yield* Effect.gen(function* () {
+          const manager = yield* SshTunnel.SshEnvironmentManager;
+          const connecting = yield* manager
+            .ensureEnvironment({
+              alias: "devbox",
+              hostname: "devbox",
+              username: null,
+              port: null,
+            })
+            .pipe(Effect.forkScoped);
+          yield* Deferred.await(probing);
+          assert.equal(forwards, 1);
+
+          // Run cleanup to its first suspension while creation is held outside the registry.
+          const closing = yield* manager.closeLocalForwards.pipe(
+            Effect.forkScoped({ startImmediately: true }),
+          );
+          if (outcome === "interrupted") {
+            const cancelled = yield* Deferred.make<void>();
+            const interrupting = yield* Fiber.interrupt(closing).pipe(
+              Effect.andThen(Deferred.succeed(cancelled, undefined)),
+              Effect.forkScoped({ startImmediately: true }),
+            );
+            yield* TestClock.adjust(Duration.zero);
+            assert.isTrue(
+              yield* Deferred.isDone(cancelled),
+              "cleanup must be cancellable while an ensure holds the target lock",
+            );
+            yield* Fiber.join(interrupting);
+            yield* manager.reopenLocalForwards;
+          }
+          yield* Deferred.succeed(releaseProbe, undefined);
+          const connection = yield* Fiber.join(connecting);
+          if (outcome === "completed") {
+            yield* Fiber.join(closing);
+            assert.equal(forwards, 0, "an in-flight ensure must not escape update cleanup");
+          } else {
+            const reconnected = yield* manager.ensureEnvironment({
+              alias: "devbox",
+              hostname: "devbox",
+              username: null,
+              port: null,
+            });
+            assert.equal(reconnected.httpBaseUrl, connection.httpBaseUrl);
+            assert.equal(forwards, 1, "recovery must retain the late forward");
+          }
+          assert.equal(remoteStops, 0);
+        }).pipe(
+          Effect.ensuring(Deferred.succeed(releaseProbe, undefined)),
+          Effect.provide(layer),
+          Effect.scoped,
+        );
+        assert.equal(forwards, 0);
+        assert.equal(remoteStops, outcome === "interrupted" ? 1 : 0);
+      }),
+  );
+
   it.effect("retains a bounded diagnostic tail when the tunnel exits before readiness", () =>
     Effect.gen(function* () {
       const diagnostic = "Connection refused: café";
@@ -259,6 +412,65 @@ describe("ssh tunnel scripts", () => {
       }).pipe(Effect.provide(layer), Effect.scoped);
     }),
   );
+
+  it.effect("closeLocalForwards kills the forward without stopping the remote server", () => {
+    let tunnelKillCount = 0;
+    let stopCommandCount = 0;
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const args = commandArgs(command);
+        if (args.includes("-N")) {
+          return makeRunningProcess(() => {
+            tunnelKillCount += 1;
+          });
+        }
+        if (args.includes("sh") && args.includes("-l")) {
+          return makeSuccessfulProcess('{"remotePort":3773}\n');
+        }
+        if (args.includes("sh")) {
+          stopCommandCount += 1;
+          return makeSuccessfulProcess('{"stopped":true}\n');
+        }
+        return makeSuccessfulProcess("\n");
+      }),
+    );
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshAuth.SshPasswordPrompt.disabledLayer,
+      SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+    );
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+
+    return Effect.gen(function* () {
+      const manager = yield* SshTunnel.SshEnvironmentManager;
+      yield* manager.ensureEnvironment(target);
+
+      yield* manager.closeLocalForwards;
+      assert.equal(tunnelKillCount, 1);
+      assert.equal(stopCommandCount, 0);
+
+      yield* manager.reopenLocalForwards;
+      yield* manager.ensureEnvironment(target);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.scoped,
+      Effect.andThen(
+        Effect.sync(() => {
+          // Only the forward recreated after the close is left for the scope.
+          assert.equal(tunnelKillCount, 2);
+          assert.equal(stopCommandCount, 1);
+        }),
+      ),
+    );
+  });
 
   it.effect.each(["local tunnel", "remote server"] as const)(
     "waits for %s shutdown before reconnecting the same target",
