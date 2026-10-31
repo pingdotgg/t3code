@@ -165,29 +165,32 @@ export function resolveSubagentModelTraits(input: {
   const descriptors =
     provider?.models.find((candidate) => candidate.slug === modelSlug)?.capabilities
       ?.optionDescriptors ?? [];
+  // Claude native selections can contain inherited effort instead of the agent definition's value.
   const effortLabel =
-    EFFORT_OPTION_IDS.map((id) => {
-      const value = getModelSelectionStringOptionValue(selection, id);
-      if (value === undefined) return undefined;
-      const descriptor = descriptors.find((candidate) => candidate.id === id);
-      return descriptor?.type === "select"
-        ? (descriptor.options.find((option) => option.id === value)?.label ?? value)
-        : value;
-    }).find(Boolean) ?? null;
+    input.origin === "provider_native" && provider?.driver === "claudeAgent"
+      ? null
+      : (EFFORT_OPTION_IDS.map((id) => {
+          const value = getModelSelectionStringOptionValue(selection, id);
+          if (value === undefined) return undefined;
+          const descriptor = descriptors.find((candidate) => candidate.id === id);
+          return descriptor?.type === "select"
+            ? (descriptor.options.find((option) => option.id === value)?.label ?? value)
+            : value;
+        }).find(Boolean) ?? null);
   const fastMode =
     descriptors.some(({ id, type }) => id === "fastMode" && type === "boolean") &&
     getModelSelectionBooleanOptionValue(selection, "fastMode") === true;
-  // Only Codex runs on service tiers. Match by id: a catalog can list a fast
-  // tier under the same id as its generic Standard choice.
+  // A duplicated tier id does not identify which speed was selected.
   const tierDescriptor = descriptors.find(({ id }) => id === "serviceTier");
   const tier =
     provider?.driver === "codex"
       ? getModelSelectionStringOptionValue(selection, "serviceTier")
       : undefined;
-  const onTier = (label: string) =>
-    tier !== undefined &&
-    tierDescriptor?.type === "select" &&
-    tierDescriptor.options.some((option) => option.id === tier && option.label === label);
+  const tiers =
+    tierDescriptor?.type === "select"
+      ? tierDescriptor.options.filter((option) => option.id === tier)
+      : [];
+  const onTier = (label: string) => tiers.length === 1 && tiers[0]?.label === label;
   const speed = onTier("Ultrafast") ? "ultrafast" : fastMode || onTier("Fast") ? "fast" : null;
   return { effortLabel, speed };
 }
