@@ -79,6 +79,7 @@ vi.mock("~/state/use-atom-command", () => ({
 }));
 vi.mock("~/state/query", () => ({ formatEnvironmentQueryError: () => "Device failed" }));
 vi.mock("~/rightPanelStore", () => ({
+  selectThreadRightPanelState: () => ({ activeSurfaceId: null }),
   useRightPanelStore: {
     getState: () => ({ openDevice: mocks.openDevice, closeSurface: mocks.closeSurface }),
   },

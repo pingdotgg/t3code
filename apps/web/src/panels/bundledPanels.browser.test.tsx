@@ -100,7 +100,6 @@ describe("bundled side panels", async () => {
               id="terminal"
               surface={surface}
               launchContext={null}
-              focusRequestId={0}
               onAddTerminalContext={() => undefined}
               onSplitTerminal={() => undefined}
               onSplitTerminalVertical={() => undefined}
@@ -141,7 +140,6 @@ export function typeFixtures(
   const terminalProps = {
     surface: terminalSurface,
     launchContext: null,
-    focusRequestId: 0,
     onAddTerminalContext: () => undefined,
     onSplitTerminal: () => undefined,
     onSplitTerminalVertical: () => undefined,

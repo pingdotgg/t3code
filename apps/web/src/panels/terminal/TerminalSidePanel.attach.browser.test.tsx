@@ -74,6 +74,7 @@ vi.mock("~/state/entities", () => {
       worktreePath: null,
     }),
     useProject: () => project,
+    readProject: () => project,
   };
 });
 
@@ -113,7 +114,6 @@ async function renderTerminal(screen: Screen, threadRef: ScopedThreadRef) {
           id="terminal"
           surface={surface}
           launchContext={null}
-          focusRequestId={0}
           onAddTerminalContext={() => undefined}
           onSplitTerminal={() => undefined}
           onSplitTerminalVertical={() => undefined}
