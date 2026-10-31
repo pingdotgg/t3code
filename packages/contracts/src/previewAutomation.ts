@@ -770,7 +770,9 @@ export class PreviewAutomationTimeoutError extends Schema.TaggedError<PreviewAut
 ) {
   override get message(): string {
     if (this.remoteTag === "PreviewAutomationTimeoutError") {
-      return `Preview automation ${this.operation} exceeded the browser's operation deadline. The browser responded; check preview_status on the same tab before retrying.`;
+      return this.operation === "open"
+        ? "Preview automation open exceeded the browser's operation deadline. The browser responded; inspect preview_status.tabs for a newly created tab and use its tabId before retrying."
+        : `Preview automation ${this.operation} exceeded the browser's operation deadline. The browser responded; check preview_status on the same tab before retrying.`;
     }
     const summary = `Preview automation ${this.operation} timed out after ${this.timeoutMs}ms.`;
     return summary;
