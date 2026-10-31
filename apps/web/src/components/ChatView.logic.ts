@@ -1182,6 +1182,7 @@ export function composerDraftUserContentSignature(
     previewAnnotations: draft?.previewAnnotations ?? [],
     reviewComments: draft?.reviewComments ?? [],
     threadContexts: draft?.threadContexts ?? [],
+    environmentContexts: draft?.environmentContexts ?? [],
   });
 }
 

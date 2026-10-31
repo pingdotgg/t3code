@@ -1197,6 +1197,7 @@ describe("composerDraftUserContentSignature", () => {
     previewAnnotations: [],
     reviewComments: [],
     threadContexts: [],
+    environmentContexts: [],
     modelSelectionByProvider: {},
     activeProvider: null,
     runtimeMode: null,
@@ -1281,6 +1282,15 @@ describe("composerDraftUserContentSignature", () => {
           title: "before",
         },
       ],
+      environmentContexts: [
+        {
+          version: 1,
+          kind: "environment",
+          contextId: ComposerContextId.make("environment-context"),
+          label: "Before",
+          environmentId: target.environmentId,
+        },
+      ],
     };
     const before = composerDraftUserContentSignature(draft);
     const edits: ComposerThreadDraftState[] = [
@@ -1315,6 +1325,10 @@ describe("composerDraftUserContentSignature", () => {
       {
         ...draft,
         threadContexts: draft.threadContexts.map((entry) => ({ ...entry, title: "after" })),
+      },
+      {
+        ...draft,
+        environmentContexts: draft.environmentContexts.map((entry) => ({ ...entry, label: "After" })),
       },
     ];
     for (const edited of edits) expect(composerDraftUserContentSignature(edited)).not.toBe(before);
