@@ -215,7 +215,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               {collapsedPreview?.truncated ? (
                 <p
                   aria-hidden="true"
-                  className="mt-[0.65rem] text-sm leading-relaxed text-foreground/[calc(90%+var(--appearance-contrast-boost)/10)]"
+                  className="mt-[0.65rem] select-none text-sm leading-relaxed text-foreground/[calc(90%+var(--appearance-contrast-boost)/10)]"
                 >
                   ...
                 </p>
