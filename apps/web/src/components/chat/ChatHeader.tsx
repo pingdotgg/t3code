@@ -47,6 +47,7 @@ import {
   LAYOUT_TAB_ICON_CLASS,
   LAYOUT_TAB_SLOT_CLASS,
   LayoutPaneTab,
+  LayoutPaneTabStrip,
   LayoutTabCloseButton,
   buildLayoutTabMenuItems,
   closeLayoutTabOnMiddleClick,
@@ -310,8 +311,7 @@ export const ChatHeader = memo(function ChatHeader({
       onContextMenu={handleHeaderContextMenu}
     >
       <PaneNotch>
-        {/* Tabs that still do not fit clip here instead of running under "+". */}
-        <div className="flex min-w-0 items-center gap-1 overflow-hidden">
+        <LayoutPaneTabStrip>
           {siblingTabs.before.map((tab) => (
             <LayoutPaneTab key={tab.id} tab={tab} />
           ))}
@@ -416,7 +416,7 @@ export const ChatHeader = memo(function ChatHeader({
               </Tooltip>
             </span>
           ) : null}
-        </div>
+        </LayoutPaneTabStrip>
         {activeProject ? (
           <NewTabMenu
             projectName={activeProjectName ?? activeProject.title}
