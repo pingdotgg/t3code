@@ -3534,6 +3534,80 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  it.effect("confirms a retained answer completed after the turn cleanup flush", () =>
+    Effect.gen(function* () {
+      const scenario = "codex-late-answer-completion";
+      const base = finalAnswerTranscript(scenario, [
+        { id: "answer", text: "Done.", phase: "final_answer", streamed: true },
+      ]);
+      const completion = yield* Deferred.make<void>();
+      const drained = yield* Deferred.make<void>();
+      const notification = (type: "imageGeneration" | "contextCompaction", id: string) => ({
+        type: "emit_inbound" as const,
+        frame: {
+          method: type === "imageGeneration" ? "item/started" : "item/completed",
+          params: {
+            threadId: `native-${scenario}-thread`,
+            turnId: `native-${scenario}-turn`,
+            item:
+              type === "imageGeneration"
+                ? { type, id, status: "inProgress", result: "" }
+                : { type, id },
+          },
+        },
+      });
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...base.entries.slice(0, -2),
+            notification("imageGeneration", "background-image"),
+            ...base.entries.slice(-1),
+            ...base.entries.slice(-2, -1),
+            notification("contextCompaction", "drained"),
+          ],
+        }),
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "compaction" &&
+          event.turnItem.nativeItemRef?.nativeId === "drained"
+            ? Deferred.succeed(drained, undefined)
+            : Effect.void,
+        undefined,
+        undefined,
+        (entry) =>
+          entry.label === "item/completed/answer" ? Deferred.await(completion) : Effect.void,
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`attempt-${scenario}`),
+          text: "Reply with the requested recovery marker.",
+        }),
+      );
+      yield* harness.firstTerminal;
+      yield* Deferred.succeed(completion, undefined);
+      yield* Deferred.await(drained);
+      const items = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepEqual(
+        items.map((item) => item.phase),
+        ["commentary", "final_answer"],
+      );
+      assert.equal(items[0]?.id, items[1]?.id);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+      Effect.scoped,
+    ),
+  );
+
   it.effect.each([
     {
       name: "a text reply gains each saved image once",

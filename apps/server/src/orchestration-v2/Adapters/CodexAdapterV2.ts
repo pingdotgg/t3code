@@ -3416,13 +3416,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           emit:
             /* Provider events include streaming deltas; avoid a span for each update. */
             Effect.fnUntraced(function* (update) {
-              const context = yield* awaitActiveTurn(update.turnId);
+              const context = update.completed
+                ? (yield* resolveItemEventContext(update.turnId))?.context
+                : yield* awaitActiveTurn(update.turnId);
               if (context === undefined) {
                 return;
               }
-              const finalAnswerItem = (yield* Ref.get(finalAnswerItemIdsByTurn))
-                .get(update.turnId)
-                ?.has(update.itemId);
+              const finalAnswerItem =
+                (yield* Ref.get(finalAnswerItemIdsByTurn)).get(update.turnId)?.has(update.itemId) &&
+                (!update.completed ||
+                  context.assistantMessagePhases.get(update.itemId) !== "pending_final_answer");
               if (finalAnswerItem) {
                 const finalAnswerItemIds = (yield* Ref.get(finalAnswerItemIdsByTurn)).get(
                   update.turnId,
