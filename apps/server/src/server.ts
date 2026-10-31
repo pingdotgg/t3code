@@ -330,7 +330,7 @@ const layerHttpServer = Layer.unwrap(
     const config = yield* ServerConfig.ServerConfig;
     // Before binding: a host the policy does not allow must never listen, not even briefly.
     const policy = yield* ManagedPolicy.ManagedPolicy;
-    yield* ManagedLimits.checkServerReachability(policy, {
+    const bindHost = yield* ManagedLimits.checkServerReachability(policy, {
       authPolicy: EnvironmentAuthPolicy.resolveServerAuthPolicy(config),
       host: config.host,
       tailscaleServeEnabled: config.tailscaleServeEnabled,
@@ -351,7 +351,7 @@ const layerHttpServer = Layer.unwrap(
         return server;
       },
       {
-        host: config.host ?? "127.0.0.1",
+        host: bindHost,
         port: config.port,
         gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
         // Context takeover stays enabled (ws default) so the compression

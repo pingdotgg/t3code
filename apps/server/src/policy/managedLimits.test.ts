@@ -6,6 +6,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as EnvironmentAuthPolicy from "../auth/EnvironmentAuthPolicy.ts";
 import * as ManagedLimits from "./managedLimits.ts";
 import * as ManagedPolicy from "./ManagedPolicy.ts";
 
@@ -30,6 +31,35 @@ it.effect("refuses to listen on a non-loopback host when remote clients are not 
       error.message,
       "Example Corp's policy does not allow remote clients, so the server cannot listen on 0.0.0.0.",
     );
+  }),
+);
+
+it.effect("binds only the loopback address it approved when remote clients are not allowed", () =>
+  Effect.gen(function* () {
+    const bind = (
+      host: string | undefined,
+      policy: { readonly document: ManagedPolicyDocument | undefined } = desktopAndLocal,
+    ) =>
+      ManagedLimits.checkServerReachability(policy, {
+        authPolicy: EnvironmentAuthPolicy.resolveServerAuthPolicy({ mode: "web", host }),
+        host,
+        tailscaleServeEnabled: false,
+      });
+    // Node listens on every interface for an empty host, and a name resolves through DNS.
+    for (const host of ["", "127.office.example", "127.0.0.1e0", "0.0.0.0"]) {
+      const error = yield* bind(host).pipe(Effect.flip);
+      assert.include(error.message, "does not allow remote clients", host);
+    }
+    for (const [host, address] of [
+      [undefined, "127.0.0.1"],
+      ["localhost", "127.0.0.1"],
+      ["127.0.0.2", "127.0.0.2"],
+      ["[::1]", "::1"],
+    ] as const) {
+      assert.equal(yield* bind(host), address);
+    }
+    assert.equal(yield* bind("localhost", { document: undefined }), "localhost");
+    assert.equal(yield* bind(undefined, { document: undefined }), "127.0.0.1");
   }),
 );
 

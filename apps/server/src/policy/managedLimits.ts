@@ -18,6 +18,8 @@ import * as Effect from "effect/Effect";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
+import { loopbackBindAddress } from "../auth/utils.ts";
+
 type PolicyDocument = { readonly document: ManagedPolicyDocument | undefined };
 
 export class ManagedPolicyRefusedError extends Schema.TaggedError<ManagedPolicyRefusedError>()(
@@ -137,8 +139,9 @@ export const refuseRemoteClients = (policy: PolicyDocument, detail?: string) =>
   refuse(policy, AUTH_POLICY_ACTION["remote-reachable"], detail);
 
 /**
- * Fails when the server would accept clients the policy leaves out. Runs before the server binds,
- * so a refused configuration never listens, not even briefly.
+ * Fails when the server would accept clients the policy leaves out; otherwise returns the address
+ * to bind. Runs before the server binds, so a refused configuration never listens, not even
+ * briefly. Without `remote` that address is the loopback literal the check approved, never a name.
  */
 export const checkServerReachability = Effect.fn("managedLimits.checkServerReachability")(
   function* (
@@ -149,13 +152,20 @@ export const checkServerReachability = Effect.fn("managedLimits.checkServerReach
       readonly tailscaleServeEnabled: boolean;
     },
   ) {
+    const cannotListen = () =>
+      refuseRemoteClients(
+        policy,
+        `so the server cannot listen on ${input.host === "" ? "every interface" : (input.host ?? "this host")}`,
+      );
     if (!allowsAuthPolicy(policy, input.authPolicy)) {
       return yield* input.authPolicy === "remote-reachable"
-        ? refuseRemoteClients(policy, `so the server cannot listen on ${input.host ?? "this host"}`)
+        ? cannotListen()
         : refuse(policy, AUTH_POLICY_ACTION[input.authPolicy]);
     }
-    if (input.tailscaleServeEnabled && !allowsRemoteClients(policy)) {
+    if (allowsRemoteClients(policy)) return input.host ?? "127.0.0.1";
+    if (input.tailscaleServeEnabled) {
       return yield* refuseRemoteClients(policy, "so Tailscale Serve cannot be turned on");
     }
+    return loopbackBindAddress(input.host) ?? (yield* cannotListen());
   },
 );
