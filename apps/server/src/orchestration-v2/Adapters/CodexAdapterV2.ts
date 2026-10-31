@@ -1131,7 +1131,10 @@ interface ActiveCodexTurnContext {
   readonly subagent: CodexSubagentThreadContext | null;
   readonly startedAt: DateTime.Utc;
   readonly runningCompactionItemIds: Set<string>;
-  readonly assistantMessagePhases: Map<string, "commentary" | "final_answer">;
+  readonly assistantMessagePhases: Map<
+    string,
+    "commentary" | "pending_final_answer" | "final_answer"
+  >;
   // Modern approval requests omit paths; keep the kinds without retaining patch bodies.
   readonly fileChangeKindsByItem: Map<string, CodexFileChangeKinds>;
   readonly itemPositions: Map<
@@ -3292,6 +3295,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             createdAt: startedAt,
             updatedAt,
           };
+          const phase = context.assistantMessagePhases.get(item.id);
           const turnItem: OrchestrationV2TurnItem = {
             id: turnItemId,
             threadId: context.projectionThreadId,
@@ -3308,7 +3312,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             completedAt,
             updatedAt,
             type: "assistant_message",
-            phase: context.assistantMessagePhases.get(item.id),
+            phase: phase === "pending_final_answer" ? "commentary" : phase,
             messageId,
             text: item.text,
             streaming: !completed,
@@ -4778,7 +4782,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               if (payload.item.phase != null) {
                 context.assistantMessagePhases.set(
                   payload.item.id,
-                  payload.item.phase === "final_answer" ? "final_answer" : "commentary",
+                  payload.item.phase === "final_answer" ? "pending_final_answer" : "commentary",
                 );
               }
               if (payload.item.phase == null || payload.item.phase === "final_answer") {
@@ -5145,10 +5149,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             const finalAnswer = payload.item.phase == null || payload.item.phase === "final_answer";
-            if (payload.item.phase != null) {
+            // Turn cleanup also flushes text, so only item/completed confirms an answer.
+            if (
+              payload.item.phase != null ||
+              context.assistantMessagePhases.get(payload.item.id) === "pending_final_answer"
+            ) {
               context.assistantMessagePhases.set(
                 payload.item.id,
-                payload.item.phase === "final_answer" ? "final_answer" : "commentary",
+                payload.item.phase == null || payload.item.phase === "final_answer"
+                  ? "final_answer"
+                  : "commentary",
               );
             }
             if (finalAnswer) {

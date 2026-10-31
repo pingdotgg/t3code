@@ -3483,6 +3483,57 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  it.effect.each(["completed", "interrupted"] as const)(
+    "does not confirm unfinished final-answer text when the turn is %s",
+    (status) =>
+      Effect.gen(function* () {
+        const scenario = `codex-unfinished-answer-${status}`;
+        const base = finalAnswerTranscript(scenario, [
+          { id: "answer", text: "Unfinished answer", phase: "final_answer", streamed: true },
+        ]);
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...base.entries.slice(0, -2),
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: `native-${scenario}-thread`,
+                    turn: makeCodexReplayTurn({ id: `native-${scenario}-turn`, status }),
+                  },
+                },
+              },
+            ],
+          }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-${scenario}`),
+            text: "Reply with the requested recovery marker.",
+          }),
+        );
+        yield* harness.awaitTerminal(1);
+        const items = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+            ? [event.turnItem]
+            : [],
+        );
+        assert.equal(items.at(-1)?.text, "Unfinished answer");
+        assert.equal(items.at(-1)?.phase, "commentary");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+        Effect.scoped,
+      ),
+  );
+
   it.effect.each([
     {
       name: "a text reply gains each saved image once",
