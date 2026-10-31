@@ -10,6 +10,7 @@ import * as Path from "effect/Path";
 import { vi } from "vite-plus/test";
 
 import {
+  boundServiceLog,
   databaseBackupBlocker,
   Launcher,
   main,
@@ -28,12 +29,14 @@ import {
 } from "./cloud/serviceProtocol.ts";
 
 const spawnedChildren = vi.hoisted((): Array<NodeChildProcess.ChildProcess> => []);
+const spawnListeners = vi.hoisted(() => new Set<(child: NodeChildProcess.ChildProcess) => void>());
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeChildProcess>();
   const spawn = (...args: Parameters<typeof actual.spawn>) => {
     const child = actual.spawn(...args);
     spawnedChildren.push(child);
+    for (const listener of spawnListeners) listener(child);
     return child;
   };
   return { ...actual, spawn: spawn as typeof actual.spawn };
@@ -210,6 +213,112 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       yield* fs.writeFileString(restartPending, "1.0.0\n");
       yield* run();
       assert.isFalse(yield* fs.exists(restartPending));
+    }),
+  );
+
+  it.effect("bounds an oversized boot-service.log that the service manager still appends to", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-log-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const logPath = path.join(root, "userdata", "logs", "boot-service.log");
+      const seededSize = 17 * 1024 * 1024;
+      yield* writeFakeRuntime(
+        fs,
+        path,
+        path.join(root, "runtime", "versions", "1.0.0"),
+        "setInterval(() => {}, 1_000);\n",
+      );
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        }),
+      );
+      yield* fs.makeDirectory(path.dirname(logPath), { recursive: true });
+      yield* writeSparseFile(logPath, seededSize);
+      // systemd `StandardOutput=append:` and launchd keep this descriptor open across the launcher's life.
+      const serviceManagerWriter = yield* fs.open(logPath, { flag: "a" });
+
+      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const running = launcher.run();
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
+      yield* Effect.promise(() => running);
+      yield* serviceManagerWriter.writeAll(new TextEncoder().encode("Listening\n"));
+
+      const size = Number((yield* fs.stat(logPath)).size);
+      assert.isBelow(size, seededSize);
+      assert.isTrue((yield* fs.readFileString(logPath)).endsWith("Listening\n"));
+    }),
+  );
+
+  it.effect("truncates an oversized boot-service.log when the archive copy fails", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-log-" });
+      const logPath = path.join(root, "userdata", "logs", "boot-service.log");
+      yield* fs.makeDirectory(`${logPath}.1`, { recursive: true });
+      yield* writeSparseFile(logPath, 17 * 1024 * 1024);
+
+      yield* Effect.promise(() => boundServiceLog(root));
+
+      assert.equal(Number((yield* fs.stat(logPath)).size), 0);
+      assert.equal((yield* fs.stat(`${logPath}.1`)).type, "Directory");
+    }),
+  );
+
+  it.effect("keeps bounding boot-service.log while the service runs", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-log-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const logPath = path.join(root, "userdata", "logs", "boot-service.log");
+      const grownSize = 17 * 1024 * 1024;
+      // The child starts after the startup check, so this growth is only seen by recurring checks.
+      yield* writeFakeRuntime(
+        fs,
+        path,
+        path.join(root, "runtime", "versions", "1.0.0"),
+        [
+          'const fs = require("node:fs");',
+          `fs.writeFileSync(${JSON.stringify(logPath)}, "");`,
+          `fs.truncateSync(${JSON.stringify(logPath)}, ${grownSize});`,
+          'process.send("log-grown");',
+          "setInterval(() => {}, 1_000);",
+          "",
+        ].join("\n"),
+      );
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        }),
+      );
+      yield* fs.makeDirectory(path.dirname(logPath), { recursive: true });
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+      const logGrown = new Promise<void>((resolve) => {
+        const listener = (child: NodeChildProcess.ChildProcess) => {
+          spawnListeners.delete(listener);
+          child.once("message", () => resolve());
+        };
+        spawnListeners.add(listener);
+      });
+
+      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const running = launcher.run();
+      yield* Effect.promise(() => logGrown);
+      assert.equal(Number((yield* fs.stat(logPath)).size), grownSize);
+
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(10 * 60_000));
+      // Stop queues behind the recurring check, so the check has finished once the launcher exits.
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
+      yield* Effect.promise(() => running);
+
+      assert.equal(Number((yield* fs.stat(logPath)).size), 0);
     }),
   );
 
