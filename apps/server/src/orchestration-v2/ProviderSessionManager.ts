@@ -1480,7 +1480,7 @@ export const layerWithOptions = (
       const markIdle = (
         providerSessionId: ProviderSessionId,
         providerThreadId: ProviderThreadId,
-        runOrdinal: number,
+        turnKey: string,
       ) =>
         withActivityError(
           providerSessionId,
@@ -1492,7 +1492,7 @@ export const layerWithOptions = (
                 return current;
               }
               const busyTurns = new Set(entry.busyTurns);
-              busyTurns.delete(busyTurnKey(providerThreadId, runOrdinal));
+              busyTurns.delete(turnKey);
               const updated = new Map(current);
               updated.set(key, {
                 ...entry,
@@ -1793,7 +1793,11 @@ export const layerWithOptions = (
                     Exit.isFailure(exit)
                       ? observeActivity(
                           providerSessionId,
-                          markIdle(providerSessionId, input.providerThread.id, input.runOrdinal),
+                          markIdle(
+                            providerSessionId,
+                            input.providerThread.id,
+                            busyTurnKey(input.providerThread.id, input.runOrdinal),
+                          ),
                         )
                       : Effect.void,
                 ),
@@ -1903,6 +1907,19 @@ export const layerWithOptions = (
                 }),
               ),
             ),
+          // A rollback cut off by a settings-change release could rewind the native thread unrecorded.
+          rollbackThread: (input) => {
+            const rollbackKey = `${busyTurnPrefix(input.providerThread.id)}rollback`;
+            return Effect.acquireUseRelease(
+              markBusy(providerSessionId, rollbackKey, runtime).pipe(Effect.ignore),
+              () => runtime.rollbackThread(input),
+              () =>
+                observeActivity(
+                  providerSessionId,
+                  markIdle(providerSessionId, input.providerThread.id, rollbackKey),
+                ),
+            );
+          },
           startTurn: startTracked(runtime.startTurn, "send"),
           ...(runtime.compactThread === undefined
             ? {}
@@ -2007,7 +2024,7 @@ export const layerWithOptions = (
                 ? markIdle(
                     entry.runtime.providerSessionId,
                     event.providerThreadId,
-                    event.runOrdinal,
+                    busyTurnKey(event.providerThreadId, event.runOrdinal),
                   )
                 : touchActivity(entry.runtime.providerSessionId, { providerActivity: true }),
             ).pipe(

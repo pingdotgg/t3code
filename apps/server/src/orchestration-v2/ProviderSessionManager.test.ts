@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import {
+  CheckpointId,
   EnvironmentId,
   type ModelSelection,
   type OrchestrationV2AppThread,
@@ -338,6 +339,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
+    readonly rollbackThread?: Effect.Effect<void>;
     readonly interruptTurn?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
     readonly spawnBeforeOpen?: boolean;
@@ -454,7 +456,17 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
             ),
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () => unimplemented("readThreadSnapshot unused in test"),
-          rollbackThread: () => unimplemented("rollbackThread unused in test"),
+          rollbackThread: (rollbackInput) =>
+            options.rollbackThread === undefined
+              ? unimplemented("rollbackThread unused in test")
+              : options.rollbackThread.pipe(
+                  Effect.as({
+                    providerThread: rollbackInput.providerThread,
+                    providerTurns: [],
+                    messages: [],
+                    runtimeRequests: [],
+                  }),
+                ),
           forkThread: () => unimplemented("forkThread unused in test"),
         } satisfies ProviderAdapter.ProviderAdapterV2SessionRuntime;
       }),
@@ -487,6 +499,7 @@ function layerTest(input: {
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void>;
+  readonly rollbackThread?: Effect.Effect<void>;
   readonly interruptTurn?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
   readonly spawnBeforeOpen?: boolean;
@@ -527,6 +540,7 @@ function layerTest(input: {
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
       ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
+      ...(input.rollbackThread === undefined ? {} : { rollbackThread: input.rollbackThread }),
       ...(input.interruptTurn === undefined ? {} : { interruptTurn: input.interruptTurn }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
       ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
@@ -1197,6 +1211,80 @@ it.effect(
           layerTest({
             state,
             idleTimeoutMs: 60_000,
+            replacementAdapter: { state: replacementState, active: replaced },
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 retires a session settings made stale only after a rollback on it ends",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const replacementState = yield* Ref.make(emptyState);
+      const replaced = yield* Ref.make(false);
+      const rollbackStarted = yield* Deferred.make<void>();
+      const finishRollback = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const rollingBack = ThreadId.make("thread-provider-session-manager-settings-rollback");
+        const next = ThreadId.make("thread-provider-session-manager-settings-after-rollback");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const open = (threadId: ThreadId) =>
+          manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: rollingBack, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: next, now }),
+          ],
+        });
+        const runtime = yield* open(rollingBack);
+        const rollback = yield* runtime
+          .rollbackThread({
+            providerThread: makeProviderThread({
+              idAllocator,
+              threadId: rollingBack,
+              providerSessionId,
+              now,
+              nativeThreadId: `native-${rollingBack}`,
+            }),
+            target: {
+              type: "thread_start",
+              checkpointId: CheckpointId.make("checkpoint-settings-rollback"),
+              appRunOrdinal: 0,
+            },
+            providerThreadTurns: [],
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(rollbackStarted);
+        yield* Ref.set(replaced, true);
+
+        assert.strictEqual(yield* open(next), runtime);
+        assert.equal(
+          (yield* Ref.get(state)).closeCount,
+          0,
+          "a rollback in flight keeps its process",
+        );
+
+        yield* Deferred.succeed(finishRollback, undefined);
+        yield* Fiber.join(rollback);
+        assert.notStrictEqual(yield* open(next), runtime);
+        assert.equal((yield* Ref.get(replacementState)).openCount, 1);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            rollbackThread: Deferred.succeed(rollbackStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(finishRollback)),
+            ),
             replacementAdapter: { state: replacementState, active: replaced },
           }),
         ),
