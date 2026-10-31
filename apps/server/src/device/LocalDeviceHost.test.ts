@@ -287,6 +287,9 @@ const diagnose = (
   platform: NodeJS.Platform = "darwin",
 ) =>
   LocalDeviceHost.__testing.platformReason("android").pipe(
+    Effect.provideService(ProcessRunner.ProcessRunner, {
+      run: () => Effect.die("JDK metadata must not spawn Java"),
+    }),
     Effect.provideService(HostProcess.Environment, environment),
     Effect.provideService(HostProcess.Platform, platform),
     Effect.provideService(
@@ -471,6 +474,20 @@ describe("Android SDK availability", () => {
           Effect.provideService(HostProcess.Platform, "linux"),
         ),
       ).toBeNull();
+      yield* fs.remove(`${directory}/release`);
+      yield* fs.writeFileString(
+        `${directory}/bin/java`,
+        "#!/bin/sh\necho 'openjdk version \"17.0.1\"' >&2\n",
+      );
+      expect(
+        yield* LocalDeviceHost.__testing.androidJava.pipe(
+          Effect.provideService(HostProcess.Environment, {
+            HOME: directory,
+            PATH: `${directory}/bin`,
+          }),
+          Effect.provideService(HostProcess.Platform, "linux"),
+        ),
+      ).toBeUndefined();
       const studio = "/opt/android-studio/jbr";
       expect(
         yield* javaHome(["/jdk/bin/java", `${studio}/bin/java`], { JAVA_HOME: " /jdk " }, "linux"),
@@ -498,7 +515,10 @@ describe("Android SDK availability", () => {
           "darwin",
         ),
       ).toBe("/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+    ),
   );
 
   it.effect("reports an absent SDK without running or installing tools", () =>

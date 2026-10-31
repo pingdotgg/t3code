@@ -102,7 +102,11 @@ interface RunningHost {
 
 const platformReason = Effect.fn("LocalDeviceHost.platformReason")(function* (
   platform: DevicePlatform,
-): Effect.fn.Return<string | null, never, FileSystem.FileSystem | Path.Path> {
+): Effect.fn.Return<
+  string | null,
+  never,
+  FileSystem.FileSystem | Path.Path | ProcessRunner.ProcessRunner
+> {
   const hostPlatform = yield* HostProcess.Platform;
   if (platform === "ios") {
     if (hostPlatform !== "darwin") return "iOS Simulators need macOS with Xcode.";
@@ -152,7 +156,21 @@ const androidJava = Effect.gen(function* () {
   const java = yield* resolveCommandPath("java");
   if (java && !(platform === "darwin" && java === "/usr/bin/java")) {
     const resolved = yield* fs.realPath(java).pipe(Effect.orElseSucceed(() => java));
-    if (yield* supported(path.dirname(path.dirname(resolved)))) return undefined;
+    const directory = path.dirname(path.dirname(resolved));
+    if (yield* supported(directory)) return undefined;
+    if (
+      !(yield* fs.exists(path.join(directory, "release")).pipe(Effect.orElseSucceed(() => false)))
+    ) {
+      const runner = yield* ProcessRunner.ProcessRunner;
+      const result = yield* runner
+        .run({ command: java, args: ["-version"], env: environment, timeout: Duration.seconds(5) })
+        .pipe(Effect.orElseSucceed(() => null));
+      if (
+        result?.code === 0 &&
+        Number(/version\s+"(\d+)/.exec(`${result.stdout}\n${result.stderr}`)?.[1] ?? 0) >= 17
+      )
+        return undefined;
+    }
   }
   if (platform === "darwin") {
     // /usr/bin/java is a launcher stub that fails unless a JDK is registered here.
@@ -348,6 +366,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     })),
     Effect.provideService(FileSystem.FileSystem, fs),
     Effect.provideService(Path.Path, path),
+    Effect.provideService(ProcessRunner.ProcessRunner, runner),
     Effect.provideService(HostProcess.Environment, environment),
     Effect.provideService(HostProcess.Platform, hostPlatform),
   );
@@ -363,6 +382,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     const reason = yield* platformReason(platform).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
+      Effect.provideService(ProcessRunner.ProcessRunner, runner),
     );
     return reason === null ? { platform, available: true } : { platform, available: false, reason };
   });
