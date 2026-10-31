@@ -58,17 +58,27 @@ check the `orchestration` capability before reading or mutating state.
 
 ### Codex V2
 
-Codex app-server receives the remote MCP server through command-line config
-overrides:
+Codex app-server receives the MCP server in the per-thread `config` of its
+`thread/start`, `thread/resume` (including the rollback resume), and
+`thread/fork` requests, built by `codexThreadRuntimeParams` in
+`apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts`:
 
-```text
--c mcp_servers.t3-code.url=http://127.0.0.1:<port>/mcp
--c mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"
+```ts
+{
+  config: {
+    "mcp_servers.t3-code": {
+      url: "http://127.0.0.1:<port>/mcp",
+      tool_timeout_sec: 3900,
+      http_headers: {
+        Authorization: "Bearer <provider-session-token>",
+      },
+    },
+  },
+}
 ```
 
-The provider-session token is placed in `T3_MCP_BEARER_TOKEN`. Both the
-production Codex launcher and the injectable test launcher use the same
-projection helper.
+The dotted key overrides only T3's server, so MCP servers passed in Codex launch
+arguments survive. The tool timeout stays above T3's hour-long waits.
 
 ### Claude Agent SDK V2
 
