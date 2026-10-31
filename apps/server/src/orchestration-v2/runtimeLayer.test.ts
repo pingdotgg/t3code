@@ -5829,10 +5829,34 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ["completed", "queued", "queued"],
       );
 
+      // Sending another message now keeps the edit hold.
+      yield* orchestrator.dispatch({
+        type: "queued-run.start",
+        commandId: CommandId.make(`${threadId}:send-behind`),
+        threadId,
+        runId: behind!.id,
+      });
+      const sent = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(sent.runs.find((run) => run.id === behind!.id)?.status, "starting");
+      assert.isTrue(sent.runs.find((run) => run.id === edited!.id)?.editing);
+
       yield* setEditing(false);
+      const sentRun = sent.runs.find((run) => run.id === behind!.id)!;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:behind-completed`),
+            type: "run.updated",
+            threadId,
+            runId: sentRun.id,
+            occurredAt: now,
+            payload: { ...sentRun, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      yield* orchestrator.resumeQueuedRuns;
       const after = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(after.runs.find((run) => run.id === edited!.id)?.status, "starting");
-      assert.equal(after.runs.find((run) => run.id === behind!.id)?.status, "queued");
     }),
   );
 

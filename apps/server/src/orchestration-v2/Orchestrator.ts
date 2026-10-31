@@ -13184,8 +13184,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             runId: run.id,
             providerInstanceId: run.providerInstanceId,
             occurredAt: now,
-            // Also the way out of an edit hold left by a client that went away.
-            payload: { ...run, queueHeld: false, editing: false },
+            // Resume is also the way out of an edit hold left by a client that went away.
+            payload: {
+              ...run,
+              queueHeld: false,
+              ...(command.type === "queue.resume" ? { editing: false } : {}),
+            },
           });
         }
         if (queued.length === 0) {
