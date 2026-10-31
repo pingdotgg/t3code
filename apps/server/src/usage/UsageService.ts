@@ -878,13 +878,8 @@ export const make = Effect.gen(function* () {
         }),
       )
       .pipe(
-        Effect.catchCause(
-          (cause) =>
-            new UsageReadError({
-              reason: "scanFailed",
-              detail: "Server settings could not be read.",
-              cause: Cause.squash(cause),
-            }),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("failed to read settings before pruning the usage cache", { cause }),
         ),
       );
 
