@@ -403,8 +403,6 @@ export function PullRequestDetailPanel({
     readonly text: string;
   } | null>(null);
   const titleDraft = titleScope?.pullRequestKey === pullRequestKey ? titleScope.text : null;
-  // The header keeps the compact two-row form; it opens the full one only to edit the title.
-  const condensed = titleDraft === null;
   const lastSelectedMergeMethod = useUiStateStore((state) => state.pullRequestMergeMethod);
   const setLastSelectedMergeMethod = useUiStateStore((state) => state.setPullRequestMergeMethod);
   const resolveProjectDefaultMergeMethod = usePullRequestDefaultMergeMethodResolver(
@@ -1356,12 +1354,22 @@ export function PullRequestDetailPanel({
         <PullRequestDetailCrumbs
           detail={detail}
           toneClassName={statePresentation?.toneClassName ?? null}
-          condensed={condensed}
-          repositoryUrl={repositoryUrl}
           openOnHostText={openOnHostText}
           onBack={onBack}
-        />
-        <div className="mt-3 mr-3 flex h-8 shrink-0 select-none items-center justify-end gap-1">
+        >
+          {detail ? (
+            <>
+              {stackMenuProps !== null ? <PullRequestStackMenu {...stackMenuProps} display="trigger" /> : supportsStackActions && nativeStackQuery.error ? <Button variant="ghost" size="micro" onClick={nativeStackQuery.refresh}>Retry stack lookup</Button> : null}
+              <span className="ml-auto inline-flex shrink-0 items-baseline gap-1.5 text-caption text-muted-foreground">
+                <span className="inline-flex items-baseline gap-1 tabular-nums" aria-label={`${detail.changedFiles.toLocaleString()} changed ${detail.changedFiles === 1 ? "file" : "files"}`}>
+                  <FileDiffIcon aria-hidden className="size-3 self-center" />{detail.changedFiles.toLocaleString()}
+                </span>
+                <PullRequestChangeBreakdownStat environmentId={environmentId} reference={reference} additions={detail.additions} deletions={detail.deletions} className="shrink-0 font-mono text-caption" eager />
+              </span>
+            </>
+          ) : null}
+        </PullRequestDetailCrumbs>
+        <div className="mt-2 mr-3 flex h-6 shrink-0 select-none items-center justify-end gap-1">
           {detail && context === "page" ? (
             <TooltipProvider delay={150} closeDelay={150} timeout={400}>
               <PullRequestThreadLinks
@@ -1446,206 +1454,29 @@ export function PullRequestDetailPanel({
           ) : null}
         </div>
 
-        <div
-          className={cn(
-            "col-span-2 grid",
-            condensed
-              ? "grid-rows-[1fr]"
-              : "grid-rows-[0fr] transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
-          )}
-        >
-          <div
-            className={cn(
-              "min-h-0 overflow-hidden transition-[opacity,transform] duration-150 ease-out motion-reduce:transform-none motion-reduce:transition-none",
-              condensed
-                ? "translate-y-0 opacity-100 delay-50"
-                : "translate-y-1 opacity-0 duration-100",
-            )}
-            inert={!condensed}
-          >
-            {detail ? (
-              <div className="col-span-2 min-w-0 px-4 pt-1 pb-2">
-                <div className="flex min-h-8 min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
-                  <span className="flex min-w-0 shrink items-center gap-1.5 overflow-hidden">
-                    <PullRequestActorLabel
-                      actor={detail.author}
-                      profileUrl={authorProfileUrl}
-                      className="min-w-0 max-w-28"
-                    />
-                    <span className="shrink-0 font-normal">
-                      <RelativeTime timestamp={detail.updatedAt} />
-                    </span>
-                  </span>
-                  {stackMenuProps !== null ? (
-                    <TooltipProvider delay={150} closeDelay={150} timeout={400}>
-                      <PullRequestStackMenu {...stackMenuProps} display="trigger" />
-                    </TooltipProvider>
-                  ) : supportsStackActions && nativeStackQuery.error ? (
-                    <Button variant="ghost" size="micro" onClick={nativeStackQuery.refresh}>
-                      Retry stack lookup
-                    </Button>
-                  ) : null}
-                  <span aria-hidden className="h-3 w-px shrink-0 bg-border/70" />
-                  <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-caption font-normal text-dim-foreground">
-                    {
-                      <PullRequestBaseBranch
-                        compact
-                        baseBranch={detail.baseBranch}
-                        freshness={freshness}
-                        stacked={isStackedPullRequest}
-                        pending={actionPending}
-                        onUpdate={(method) => void perform("update-branch", undefined, method)}
-                        iconClassName="size-3"
-                      />
-                    }
-                    {/* Under 24rem both names cut to nothing, so an up-to-date base steps out and
-                        the head keeps the room. */}
-                    <ArrowLeftIcon
-                      aria-label="receives changes from"
-                      className={cn("size-3 shrink-0", !freshness && "@max-sm/pr-header:hidden")}
-                    />
-                    {/* Keeps a few characters in a narrow panel instead of shrinking to an
-                        empty pill; the author and time give way first. */}
-                    <PullRequestCopyableCode
-                      key={detail.headBranch}
-                      className="min-w-12 rounded-kbd bg-secondary px-1.5 py-px text-muted-foreground"
-                      value={detail.headBranch}
-                      target="branch name"
-                      copyLabel={`Copy ${terminology.singular} branch`}
-                      copiedLabel="Branch name copied"
-                    />
-                  </span>
-                  <span className="ml-auto inline-flex shrink-0 items-baseline justify-end gap-1.5 pl-1.5 text-caption font-normal">
-                    <span
-                      className="inline-flex items-baseline gap-1 tabular-nums"
-                      aria-label={`${detail.changedFiles.toLocaleString()} changed ${
-                        detail.changedFiles === 1 ? "file" : "files"
-                      }`}
-                    >
-                      <FileDiffIcon aria-hidden className="size-3 self-center" />
-                      {detail.changedFiles.toLocaleString()}
-                    </span>
-                    <PullRequestChangeBreakdownStat
-                      environmentId={environmentId}
-                      reference={reference}
-                      additions={detail.additions}
-                      deletions={detail.deletions}
-                      className="shrink-0 font-mono text-caption"
-                      eager
-                    />
-                  </span>
-                </div>
-              </div>
-            ) : null}
+        {detail ? (
+          <div className="col-span-2 flex min-w-0 flex-col gap-1.5 px-4 pt-1.5 pb-2.5">
+            <PullRequestTitleEditor
+              environmentId={environmentId}
+              reference={reference}
+              detail={detail}
+              canWriteSourceControl={canWriteSourceControl}
+              value={titleDraft}
+              onValueChange={(text) => setTitleScope(text === null ? null : { pullRequestKey, text })}
+              onSaved={refreshDetail}
+            />
+            <div className="flex min-h-5 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-meta text-muted-foreground">
+              <PullRequestActorLabel actor={detail.author} profileUrl={authorProfileUrl} />
+              <span className="shrink-0"><RelativeTime timestamp={detail.updatedAt} /></span>
+              <span aria-hidden className="h-3 w-px bg-border/70" />
+              <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-caption text-dim-foreground">
+                <PullRequestBaseBranch compact baseBranch={detail.baseBranch} freshness={freshness} stacked={isStackedPullRequest} pending={actionPending} onUpdate={(method) => void perform("update-branch", undefined, method)} iconClassName="size-3" />
+                <ArrowLeftIcon aria-label="receives changes from" className="size-3 shrink-0" />
+                <PullRequestCopyableCode key={detail.headBranch} className="min-w-12 rounded-kbd bg-secondary px-1.5 py-px text-muted-foreground" value={detail.headBranch} target="branch name" copyLabel={`Copy ${terminology.singular} branch`} copiedLabel="Branch name copied" />
+              </span>
+            </div>
           </div>
-        </div>
-
-        <div
-          className={cn(
-            "col-span-2 grid",
-            condensed
-              ? "grid-rows-[0fr]"
-              : "grid-rows-[1fr] transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
-          )}
-        >
-          <div
-            className={cn(
-              "min-h-0 overflow-hidden transition-[opacity,transform] duration-150 ease-out motion-reduce:transform-none motion-reduce:transition-none",
-              condensed
-                ? "-translate-y-1 opacity-0 duration-100"
-                : "translate-y-0 opacity-100 delay-50",
-            )}
-            inert={condensed}
-          >
-            {detail ? (
-              <div className="col-span-2 mt-1 min-w-0 px-4 pb-4">
-                {detail ? (
-                  <PullRequestTitleEditor
-                    environmentId={environmentId}
-                    reference={reference}
-                    detail={detail}
-                    canWriteSourceControl={canWriteSourceControl}
-                    value={titleDraft}
-                    onValueChange={(text) =>
-                      setTitleScope(text === null ? null : { pullRequestKey, text })
-                    }
-                    onSaved={refreshDetail}
-                  />
-                ) : null}
-                <div className="mt-2 flex min-h-5 min-w-0 items-center gap-2 text-meta text-muted-foreground">
-                  <PullRequestMetaLine className="min-w-0 whitespace-nowrap">
-                    <PullRequestActorLabel actor={detail.author} profileUrl={authorProfileUrl} />
-                    <span>
-                      updated <RelativeTime timestamp={detail.updatedAt} />
-                    </span>
-                  </PullRequestMetaLine>
-                  {checkoutCommand ? (
-                    <PullRequestCopyableCode
-                      key={checkoutCommand}
-                      value={checkoutCommand}
-                      target={`${terminology.singular} checkout command`}
-                      copyLabel="Copy checkout command"
-                      copiedLabel="Checkout command copied"
-                      className="ml-auto font-mono"
-                      tooltipSide="bottom"
-                      onError={reportCheckoutCommandError}
-                    />
-                  ) : null}
-                </div>
-
-                <div className="mt-4 flex min-h-5 min-w-0 items-center gap-2 text-meta text-muted-foreground">
-                  <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-meta text-muted-foreground">
-                    {
-                      <PullRequestBaseBranch
-                        baseBranch={detail.baseBranch}
-                        freshness={freshness}
-                        stacked={isStackedPullRequest}
-                        pending={actionPending}
-                        onUpdate={(method) => void perform("update-branch", undefined, method)}
-                      />
-                    }
-                    <ArrowLeftIcon
-                      aria-label="receives changes from"
-                      className="size-3.5 shrink-0 text-dim-foreground"
-                    />
-                    <PullRequestCopyableCode
-                      key={detail.headBranch}
-                      className="rounded-kbd bg-secondary"
-                      value={detail.headBranch}
-                      target="branch name"
-                      copyLabel={`Copy ${terminology.singular} branch`}
-                      copiedLabel="Branch name copied"
-                    />
-                    {stackMenuProps !== null ? (
-                      <TooltipProvider delay={150} closeDelay={150} timeout={400}>
-                        <PullRequestStackMenu {...stackMenuProps} display="trigger" />
-                      </TooltipProvider>
-                    ) : supportsStackActions && nativeStackQuery.error ? (
-                      <Button variant="ghost" size="xs" onClick={nativeStackQuery.refresh}>
-                        Retry stack lookup
-                      </Button>
-                    ) : null}
-                  </span>
-                  <span className="ml-auto inline-flex shrink-0 items-center justify-end gap-2">
-                    <span className="inline-flex min-w-16 items-center justify-end gap-1.5 tabular-nums">
-                      <FileDiffIcon className="size-3.5" />
-                      {detail.changedFiles.toLocaleString()}{" "}
-                      {detail.changedFiles === 1 ? "file" : "files"}
-                    </span>
-                    <PullRequestChangeBreakdownStat
-                      environmentId={environmentId}
-                      reference={reference}
-                      additions={detail.additions}
-                      deletions={detail.deletions}
-                      className="shrink-0 font-mono text-meta"
-                      eager
-                    />
-                  </span>
-                </div>
-              </div>
-            ) : null}
-          </div>
-        </div>
+        ) : null}
 
         {detail ? (
           <nav
