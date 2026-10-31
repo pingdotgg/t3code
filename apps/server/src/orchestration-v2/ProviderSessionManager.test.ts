@@ -1292,6 +1292,79 @@ it.effect(
     }),
 );
 
+it.effect(
+  "ProviderSessionManagerV2 does not send a rollback to a stale session already being released",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const replacementState = yield* Ref.make(emptyState);
+      const replaced = yield* Ref.make(false);
+      const rollbackSent = yield* Ref.make(false);
+      const scopeCloseReached = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const rollingBack = ThreadId.make("thread-provider-session-manager-released-rollback");
+        const next = ThreadId.make("thread-provider-session-manager-releasing-open");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const open = (threadId: ThreadId) =>
+          manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: rollingBack, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: next, now }),
+          ],
+        });
+        const runtime = yield* open(rollingBack);
+        yield* Ref.set(replaced, true);
+        const opening = yield* open(next).pipe(Effect.forkChild);
+        yield* Deferred.await(scopeCloseReached);
+
+        const rollback = yield* runtime
+          .rollbackThread({
+            providerThread: makeProviderThread({
+              idAllocator,
+              threadId: rollingBack,
+              providerSessionId,
+              now,
+              nativeThreadId: `native-${rollingBack}`,
+            }),
+            target: {
+              type: "thread_start",
+              checkpointId: CheckpointId.make("checkpoint-released-rollback"),
+              appRunOrdinal: 0,
+            },
+            providerThreadTurns: [],
+          })
+          .pipe(Effect.exit);
+
+        assert.isTrue(Exit.isFailure(rollback));
+        assert.isFalse(
+          yield* Ref.get(rollbackSent),
+          "a rollback must not reach a process that is being torn down",
+        );
+        yield* TestClock.adjust("31 seconds");
+        assert.notStrictEqual(yield* Fiber.join(opening), runtime);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            spawnBeforeOpen: true,
+            hangSessionScopeClose: true,
+            scopeCloseReached,
+            rollbackThread: Ref.set(rollbackSent, true),
+            replacementAdapter: { state: replacementState, active: replaced },
+          }),
+        ),
+      );
+    }),
+);
+
 it.effect("ProviderSessionManagerV2 opens a duplicate session only once", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);

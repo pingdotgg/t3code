@@ -1911,7 +1911,22 @@ export const layerWithOptions = (
           rollbackThread: (input) => {
             const rollbackKey = `${busyTurnPrefix(input.providerThread.id)}rollback`;
             return Effect.acquireUseRelease(
-              markBusy(providerSessionId, rollbackKey, runtime).pipe(Effect.ignore),
+              markBusy(providerSessionId, rollbackKey, runtime).pipe(
+                Effect.catchCause(() => Effect.succeed(true)),
+                // A released session's process may still answer, then die mid-rollback.
+                Effect.flatMap((marked) =>
+                  marked
+                    ? Effect.void
+                    : Effect.fail(
+                        new ProviderAdapter.ProviderAdapterRollbackThreadError({
+                          driver: runtime.driver,
+                          providerThreadId: input.providerThread.id,
+                          checkpointId: input.target.checkpointId,
+                          cause: "The provider session was released before the rollback started.",
+                        }),
+                      ),
+                ),
+              ),
               () => runtime.rollbackThread(input),
               () =>
                 observeActivity(
