@@ -377,12 +377,29 @@ export function createEnvironmentThreadShellAtoms(input: {
     }).pipe(Atom.withLabel(`environment-quiet-thread-shell:${key}`));
   });
 
+  const hasChildThreadInputsAtom = Atom.make((get) => {
+    for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
+      if (
+        get(environmentThreadsAtom(environmentId)).some(
+          (thread) => subagentRequest(thread) !== null,
+        )
+      ) {
+        return true;
+      }
+    }
+    return false;
+  });
+
   // Child approvals and questions are hidden with their sidebar rows. Read their
   // shell summaries, without subscribing to every child transcript. A task
   // delegated to a linked environment is a child too, with its own subagents.
   const childThreadInputsAtomFamily = Atom.family((key: string) => {
     let previous: ReadonlyArray<EnvironmentThreadShell> = [];
     return Atom.make((get) => {
+      if (!get(hasChildThreadInputsAtom)) {
+        if (previous.length !== 0) previous = [];
+        return previous;
+      }
       const children = new Map<
         string,
         Array<{ environmentId: EnvironmentId; thread: OrchestrationV2ThreadShell }>

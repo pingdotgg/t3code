@@ -13,6 +13,7 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import { PrimaryConnectionTarget } from "../connection/model.ts";
+import type { EnvironmentThreadShell } from "./models.ts";
 import { v2Now, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
 import { isThreadWorking } from "./threadInbox.ts";
@@ -22,7 +23,10 @@ const environmentId = EnvironmentId.make("environment-v2");
 const remoteEnvironmentId = EnvironmentId.make("remote-environment-v2");
 const otherProjectId = ProjectId.make("other-project");
 
-function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environmentId]) {
+function makeHarness(
+  environmentIds: ReadonlyArray<EnvironmentId> = [environmentId],
+  registry = AtomRegistry.make(),
+) {
   const snapshotAtom = Atom.family((_environmentId: EnvironmentId) =>
     Atom.make<OrchestrationV2ShellSnapshot | null>(v2ShellSnapshot),
   );
@@ -45,7 +49,7 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
     ),
   });
   return {
-    registry: AtomRegistry.make(),
+    registry,
     snapshotAtom,
     catalogValueAtom,
     threads: createEnvironmentThreadShellAtoms({ catalogValueAtom, snapshotAtom }),
@@ -53,6 +57,380 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
 }
 
 describe("v2 thread shell lists", () => {
+  it("skips child-index visits for distinct readers and row replacements with no requests", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    let childIndexVisits = 0;
+    const requestRowsRead = new Set<ThreadId>();
+    const measured = (thread: OrchestrationV2ThreadShell): OrchestrationV2ThreadShell => {
+      const parentThreadId = thread.lineage.parentThreadId;
+      const pendingRuntimeRequest = thread.pendingRuntimeRequest;
+      return Object.freeze({
+        ...thread,
+        get pendingRuntimeRequest() {
+          requestRowsRead.add(thread.id);
+          return pendingRuntimeRequest;
+        },
+        lineage: Object.freeze({
+          ...thread.lineage,
+          // With no requests, only the child index reads parent ids. The
+          // shared classifier exits before lineage. Unique request-row reads
+          // also prove that the shared classification still covers every row.
+          get parentThreadId() {
+            childIndexVisits++;
+            return parentThreadId;
+          },
+        }),
+      });
+    };
+    const roots = Array.from({ length: 800 }, (_, index) =>
+      measured({ ...v2ThreadShell, id: ThreadId.make(`root-${index}`) }),
+    );
+    const children = Array.from({ length: 200 }, (_, index) =>
+      measured({
+        ...v2ThreadShell,
+        id: ThreadId.make(`child-${index}`),
+        creationSource: "mcp",
+        lineage: {
+          rootThreadId: roots[index % 20]!.id,
+          parentThreadId: roots[index % 20]!.id,
+          relationshipToParent: "subagent",
+        },
+      }),
+    );
+    let snapshot: OrchestrationV2ShellSnapshot = {
+      ...v2ShellSnapshot,
+      threads: Object.freeze([...roots, ...children]),
+    };
+    childIndexVisits = 0;
+    requestRowsRead.clear();
+    registry.set(snapshotAtom(environmentId), snapshot);
+    const inputs = roots
+      .slice(0, 20)
+      .map((root) => threads.childThreadInputsAtom({ environmentId, threadId: root.id }));
+    const disposers = inputs.map((atom) => registry.mount(atom));
+    try {
+      const empty = inputs.map((atom) => registry.get(atom));
+      expect(empty).toEqual(Array.from({ length: 20 }, () => []));
+      expect.soft(childIndexVisits).toBe(0);
+      expect(requestRowsRead.size).toBe(1000);
+      const expectQuiet = () => {
+        inputs.forEach((atom, index) => expect(registry.get(atom)).toBe(empty[index]));
+        expect(childIndexVisits).toBe(0);
+        expect(requestRowsRead.size).toBe(0);
+      };
+      childIndexVisits = 0;
+      requestRowsRead.clear();
+      expectQuiet();
+      snapshot = { ...snapshot, snapshotSequence: snapshot.snapshotSequence + 1 };
+      registry.set(snapshotAtom(environmentId), snapshot);
+      expectQuiet();
+      const equivalent = applyShellStreamEvent(snapshot, {
+        kind: "thread.updated",
+        location: "active",
+        sequence: snapshot.snapshotSequence + 1,
+        thread: { ...children[0]! },
+      });
+      expect(equivalent.threads).toBe(snapshot.threads);
+      snapshot = equivalent;
+      childIndexVisits = 0;
+      requestRowsRead.clear();
+      registry.set(snapshotAtom(environmentId), snapshot);
+      expectQuiet();
+
+      for (let index = 0; index < 3; index++) {
+        const replacement = measured({ ...children[index]!, title: `Renamed ${index}` });
+        const next = applyShellStreamEvent(snapshot, {
+          kind: "thread.updated",
+          location: "active",
+          sequence: snapshot.snapshotSequence + 1,
+          thread: replacement,
+        });
+        expect(next.threads).not.toBe(snapshot.threads);
+        snapshot = next;
+        childIndexVisits = 0;
+        requestRowsRead.clear();
+        registry.set(snapshotAtom(environmentId), snapshot);
+        inputs.forEach((atom, reader) => expect(registry.get(atom)).toBe(empty[reader]));
+        expect.soft(childIndexVisits).toBe(0);
+        expect(requestRowsRead.size).toBe(1000);
+      }
+    } finally {
+      disposers.forEach((dispose) => dispose());
+      registry.dispose();
+    }
+  });
+
+  it("publishes nested input changes and reacquires titles after the empty branch", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const root = Object.freeze({ ...v2ThreadShell, activityRunStatus: null });
+    const child = Object.freeze({
+      ...root,
+      id: ThreadId.make("child"),
+      creationSource: "mcp" as const,
+      lineage: Object.freeze({
+        ...root.lineage,
+        parentThreadId: root.id,
+        relationshipToParent: "subagent" as const,
+      }),
+    });
+    const grandchild = Object.freeze({
+      ...child,
+      id: ThreadId.make("grandchild"),
+      title: "Nested question",
+      status: "running" as const,
+      activityRunStatus: "running" as const,
+      lineage: Object.freeze({ ...child.lineage, parentThreadId: child.id }),
+    });
+    let snapshot: OrchestrationV2ShellSnapshot = {
+      ...v2ShellSnapshot,
+      threads: Object.freeze([root, child, grandchild]),
+    };
+    registry.set(snapshotAtom(environmentId), snapshot);
+    const inputs = threads.childThreadInputsAtom({ environmentId, threadId: root.id });
+    const unrelated = threads.childThreadInputsAtom({
+      environmentId,
+      threadId: ThreadId.make("elsewhere"),
+    });
+    const published: Array<ReadonlyArray<EnvironmentThreadShell>> = [];
+    const dispose = registry.subscribe(inputs, (value) => published.push(value), {
+      immediate: true,
+    });
+    const disposeUnrelated = registry.mount(unrelated);
+    const update = (thread: OrchestrationV2ThreadShell) => {
+      snapshot = applyShellStreamEvent(snapshot, {
+        kind: "thread.updated",
+        location: "active",
+        sequence: snapshot.snapshotSequence + 1,
+        thread,
+      });
+      registry.set(snapshotAtom(environmentId), snapshot);
+      return registry.get(inputs);
+    };
+    try {
+      const empty = registry.get(inputs);
+      const unrelatedEmpty = registry.get(unrelated);
+      expect(empty).toEqual([]);
+      expect(update({ ...grandchild, title: "Quiet title" })).toBe(empty);
+      const question = Object.freeze({
+        ...grandchild,
+        pendingRuntimeRequest: Object.freeze({
+          id: RuntimeRequestId.make("nested-question"),
+          kind: "user_input" as const,
+          createdAt: v2Now,
+        }),
+      });
+      const asking = update(question);
+      expect(asking.map((thread) => [thread.id, thread.title, thread.hasPendingApprovals])).toEqual(
+        [[grandchild.id, "Nested question", false]],
+      );
+      const approval = Object.freeze({
+        ...child,
+        title: "Child approval",
+        status: "running" as const,
+        activityRunStatus: "running" as const,
+        pendingRuntimeRequest: Object.freeze({
+          id: RuntimeRequestId.make("child-approval"),
+          kind: "command" as const,
+          createdAt: v2Now,
+        }),
+      });
+      const both = update(approval);
+      expect(both.map((thread) => [thread.id, thread.title, thread.hasPendingApprovals])).toEqual([
+        [child.id, "Child approval", true],
+        [grandchild.id, "Nested question", false],
+      ]);
+      expect(childThreadInputsTitle(both)).toBe("2 subagents need you");
+      const renamed = update({ ...question, title: "Renamed question" });
+      expect(renamed).not.toBe(both);
+      expect(renamed.map((thread) => thread.title)).toEqual(["Child approval", "Renamed question"]);
+      expect(update({ ...question, title: "Renamed question", itemCount: 2 })).toBe(renamed);
+      expect(registry.get(unrelated)).toBe(unrelatedEmpty);
+      expect(update(grandchild).map((thread) => thread.id)).toEqual([child.id]);
+      const resolved = update(child);
+      expect(resolved).toEqual([]);
+      expect(resolved).not.toBe(renamed);
+      expect(published.at(-1)).toBe(resolved);
+      const publications = published.length;
+      expect(update({ ...grandchild, title: "Quiet again" })).toBe(resolved);
+      expect(published).toHaveLength(publications);
+      expect(update(question).map((thread) => thread.id)).toEqual([grandchild.id]);
+      const reopened = update({ ...question, title: "Reopened title" });
+      expect(reopened[0]?.title).toBe("Reopened title");
+      expect(published.at(-1)).toBe(reopened);
+    } finally {
+      disposeUnrelated();
+      dispose();
+      registry.dispose();
+    }
+  });
+
+  it("keeps snapshot demand until the last child-input reader disposes and remounts", () => {
+    const scheduled: Array<() => void> = [];
+    const registry = AtomRegistry.make({
+      scheduleTask: (task) => {
+        scheduled.push(task);
+        return () => {};
+      },
+    });
+    const flush = () => {
+      for (const task of scheduled.splice(0)) task();
+    };
+    const source = Atom.make<OrchestrationV2ShellSnapshot | null>(v2ShellSnapshot);
+    let starts = 0;
+    let stops = 0;
+    const demand = Atom.make((get) => {
+      starts++;
+      get.addFinalizer(() => stops++);
+      return undefined;
+    });
+    const snapshot = Atom.make((get) => {
+      get(demand);
+      return get(source);
+    });
+    const { catalogValueAtom } = makeHarness([environmentId], registry);
+    const threads = createEnvironmentThreadShellAtoms({
+      catalogValueAtom,
+      snapshotAtom: () => snapshot,
+    });
+    const inputs = threads.childThreadInputsAtom({ environmentId, threadId: v2ThreadShell.id });
+    const other = threads.childThreadInputsAtom({
+      environmentId,
+      threadId: ThreadId.make("other"),
+    });
+    const first = registry.mount(inputs);
+    const last = registry.mount(other);
+    try {
+      expect([starts, stops]).toEqual([1, 0]);
+      expect(registry.get(inputs)).toEqual([]);
+      first();
+      flush();
+      expect([starts, stops]).toEqual([1, 0]);
+      last();
+      flush();
+      expect([starts, stops]).toEqual([1, 1]);
+      registry.set(source, { ...v2ShellSnapshot, threads: [] });
+      const remount = registry.mount(inputs);
+      expect([starts, stops]).toEqual([2, 1]);
+      expect(registry.get(inputs)).toEqual([]);
+      remount();
+      flush();
+      expect([starts, stops]).toEqual([2, 2]);
+    } finally {
+      first();
+      last();
+      registry.dispose();
+    }
+  });
+
+  it("retains the nonempty path for a request in an unrelated tree", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    let unrelatedIndexVisits = 0;
+    const root = Object.freeze({
+      ...v2ThreadShell,
+      lineage: Object.freeze({
+        ...v2ThreadShell.lineage,
+        get parentThreadId() {
+          unrelatedIndexVisits++;
+          return null;
+        },
+      }),
+    });
+    const child = Object.freeze({
+      ...v2ThreadShell,
+      id: ThreadId.make("unrelated-child"),
+      creationSource: "mcp" as const,
+      status: "running" as const,
+      lineage: Object.freeze({
+        rootThreadId: ThreadId.make("missing-root"),
+        parentThreadId: ThreadId.make("missing-root"),
+        relationshipToParent: "subagent" as const,
+      }),
+      pendingRuntimeRequest: Object.freeze({
+        id: RuntimeRequestId.make("unrelated-question"),
+        kind: "user_input" as const,
+        createdAt: v2Now,
+      }),
+    });
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: Object.freeze([root, child]),
+    });
+    const inputs = threads.childThreadInputsAtom({ environmentId, threadId: root.id });
+    const dispose = registry.mount(inputs);
+    try {
+      expect(registry.get(inputs)).toEqual([]);
+      expect(unrelatedIndexVisits).toBe(1);
+    } finally {
+      dispose();
+      registry.dispose();
+    }
+  });
+
+  it.each([
+    {
+      creationSource: "provider",
+      relationshipToParent: "subagent",
+      kind: "user_input",
+      expected: false,
+    },
+    { creationSource: "mcp", relationshipToParent: "fork", kind: "user_input", expected: false },
+    {
+      creationSource: "mcp",
+      relationshipToParent: "subagent",
+      kind: "auth_refresh",
+      expected: false,
+    },
+    { creationSource: "mcp", relationshipToParent: "subagent", kind: "user_input", expected: true },
+  ] as const)(
+    "preserves $creationSource/$relationshipToParent/$kind eligibility",
+    ({ creationSource, relationshipToParent, kind, expected }) => {
+      const { registry, threads, snapshotAtom } = makeHarness();
+      const child = Object.freeze({
+        ...v2ThreadShell,
+        id: ThreadId.make("child"),
+        creationSource,
+        status: "running" as const,
+        lineage: Object.freeze({
+          ...v2ThreadShell.lineage,
+          parentThreadId: v2ThreadShell.id,
+          relationshipToParent,
+        }),
+        pendingRuntimeRequest: Object.freeze({
+          id: RuntimeRequestId.make("request"),
+          kind,
+          createdAt: v2Now,
+        }),
+      });
+      // The selected parent is absent; propagation still records its id.
+      registry.set(snapshotAtom(environmentId), {
+        ...v2ShellSnapshot,
+        threads: Object.freeze([child]),
+      });
+      const inputs = threads.childThreadInputsAtom({ environmentId, threadId: v2ThreadShell.id });
+      const dispose = registry.mount(inputs);
+      try {
+        expect(registry.get(inputs).map((thread) => thread.id)).toEqual(expected ? [child.id] : []);
+        if (expected) {
+          registry.set(snapshotAtom(environmentId), {
+            ...v2ShellSnapshot,
+            threads: Object.freeze([
+              child,
+              Object.freeze({
+                ...child,
+                id: v2ThreadShell.id,
+                lineage: Object.freeze({ ...child.lineage, parentThreadId: child.id }),
+              }),
+            ]),
+          });
+          expect(registry.get(inputs).map((thread) => thread.id)).toEqual([child.id]);
+        }
+      } finally {
+        dispose();
+        registry.dispose();
+      }
+    },
+  );
+
   it("preserves ordered reference arrays when a middle thread changes", () => {
     const { registry, threads, snapshotAtom } = makeHarness();
     const snapshot = {
