@@ -142,7 +142,7 @@ function groupLabel(
 ): string | null {
   switch (triggerKind) {
     case "pull-request":
-      return "Pull requests";
+      return "Pull requests and threads";
     case "slash-command":
       return "Commands";
     case "skill":
@@ -160,7 +160,7 @@ function emptyText(triggerKind: ComposerTriggerKind | null, isLoading: boolean):
   }
   switch (triggerKind) {
     case "pull-request":
-      return "No matching pull requests.";
+      return "No matching pull requests or threads.";
     case "path":
       return "No matching files or folders.";
     case "skill":

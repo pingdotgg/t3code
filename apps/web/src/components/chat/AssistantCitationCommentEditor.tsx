@@ -6,6 +6,7 @@ import { textDirection } from "~/textDirection";
 
 import { ComposerContextActionsContext } from "../composerContextActions";
 import { Button } from "../ui/button";
+import { Kbd } from "../ui/kbd";
 
 export function AssistantCitationCommentEditor({
   citation,
@@ -13,6 +14,7 @@ export function AssistantCitationCommentEditor({
   onSubmit,
   onSubmitAndSend,
   onCancel,
+  onViewSource,
   onDraftChange,
   onVoiceSetupOpenChange,
 }: {
@@ -20,7 +22,9 @@ export function AssistantCitationCommentEditor({
   inputRef?: RefObject<HTMLTextAreaElement | null>;
   onSubmit: (comment: string) => boolean;
   onSubmitAndSend?: (comment: string) => boolean;
+  /** Escape closes the editor; there is no Cancel button. */
   onCancel: () => void;
+  onViewSource?: () => void;
   onDraftChange?: (comment: string) => void;
   onVoiceSetupOpenChange?: (open: boolean) => void;
 }) {
@@ -68,6 +72,7 @@ export function AssistantCitationCommentEditor({
   return (
     <div
       data-citation-comment-editor="true"
+      className="flex flex-col gap-2.5"
       onKeyDown={(event) => {
         event.stopPropagation();
         if (event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -78,41 +83,49 @@ export function AssistantCitationCommentEditor({
         }
       }}
     >
-      <textarea
-        ref={textareaRef}
-        readOnly={speech.freezesEditor}
-        aria-label="Comment on selected text"
-        aria-description="Enter to save the citation comment; Command/Ctrl+Enter to save and send; Shift+Enter for a new line."
-        aria-invalid={commentTooLong || undefined}
-        placeholder="Add an optional comment..."
-        rows={2}
-        dir={textDirection(comment)}
-        className="field-sizing-content block max-h-40 min-h-16 w-full resize-none bg-transparent px-1 py-1.5 text-base outline-none text-foreground placeholder:text-placeholder sm:text-sm"
-        value={comment}
-        onChange={(event) => updateComment(event.currentTarget.value)}
-        onKeyDown={(event) => {
-          if (
-            event.key === "Enter" &&
-            !event.shiftKey &&
-            !event.nativeEvent.isComposing &&
-            event.keyCode !== 229
-          ) {
-            event.preventDefault();
-            if (event.metaKey || event.ctrlKey) {
-              submitAndSend();
-            } else {
-              submit();
+      <blockquote
+        dir={textDirection(citation.text)}
+        className="line-clamp-4 border-l-2 border-border pl-2.5 text-sm/[1.45] whitespace-pre-wrap text-muted-foreground"
+      >
+        {citation.text}
+      </blockquote>
+      <div className="rounded-control surface-well px-2.5 py-2 focus-within:surface-focus">
+        <textarea
+          ref={textareaRef}
+          readOnly={speech.freezesEditor}
+          aria-label="Comment on selected text"
+          aria-description="Enter to save the citation comment; Command/Ctrl+Enter to save and send; Shift+Enter for a new line."
+          aria-invalid={commentTooLong || undefined}
+          placeholder="Add an optional comment..."
+          rows={2}
+          dir={textDirection(comment)}
+          className="field-sizing-content block max-h-40 min-h-10 w-full resize-none bg-transparent text-base/normal outline-none text-foreground placeholder:text-placeholder sm:text-sm/normal"
+          value={comment}
+          onChange={(event) => updateComment(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (
+              event.key === "Enter" &&
+              !event.shiftKey &&
+              !event.nativeEvent.isComposing &&
+              event.keyCode !== 229
+            ) {
+              event.preventDefault();
+              if (event.metaKey || event.ctrlKey) {
+                submitAndSend();
+              } else {
+                submit();
+              }
             }
-          }
-        }}
-      />
+          }}
+        />
+      </div>
       {commentTooLong ? (
-        <p role="status" className="pt-1 text-xs text-error-foreground">
+        <p role="status" className="-mt-1 text-meta text-error-foreground">
           Comments can contain up to {ASSISTANT_CITATION_MAX_COMMENT_LENGTH.toLocaleString()}{" "}
           characters.
         </p>
       ) : null}
-      <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
         <div
           className={
             speech.state.phase === "idle"
@@ -122,21 +135,25 @@ export function AssistantCitationCommentEditor({
         >
           <TextFieldSpeechControls speech={speech} />
         </div>
-        <Button
-          variant="secondary"
-          size="xs"
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={onCancel}
-        >
-          Cancel
-        </Button>
+        {onViewSource ? (
+          <Button
+            variant="secondary"
+            size="xs"
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={onViewSource}
+          >
+            View source
+          </Button>
+        ) : null}
         <Button
           size="xs"
           disabled={speech.preparing || (commentTooLong && !speech.blocksSubmission)}
+          aria-keyshortcuts="Enter"
           onPointerDown={(event) => event.preventDefault()}
           onClick={submit}
         >
           {commentTooLong ? "Shorten comment" : "Save"}
+          {commentTooLong ? null : <Kbd aria-hidden="true">⏎</Kbd>}
         </Button>
       </div>
     </div>
