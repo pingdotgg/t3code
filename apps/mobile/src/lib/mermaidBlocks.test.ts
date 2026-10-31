@@ -118,4 +118,27 @@ describe("splitMarkdownWithMermaid", () => {
       expect(tail.markdown).not.toContain("[guide]: https://example.com");
     }
   });
+
+  it("collects definitions after an unclosed quoted fence", () => {
+    const segments = splitMarkdownWithMermaid(
+      [
+        "> ```ts",
+        "> [guide]: https://example.com",
+        "",
+        "[guide]: https://other.example",
+        "",
+        "```mermaid",
+        "A --> B",
+        "```",
+        "",
+        "[Open][guide]",
+      ].join("\n"),
+    );
+    const tail = segments[segments.length - 1];
+    expect(tail).toMatchObject({ kind: "markdown" });
+    if (tail?.kind === "markdown") {
+      expect(tail.markdown).toContain("[guide]: https://other.example");
+      expect(tail.markdown).not.toContain("[guide]: https://example.com");
+    }
+  });
 });

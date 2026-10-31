@@ -62,8 +62,20 @@ function collectDefinitions(markdown: string): string[] {
     const line = lines[index] ?? "";
     const open = FENCE_RE.exec(line);
     if (open) {
-      const close = closerIndex(lines, depths, index + 1, open[1] ?? "```", depths[index] ?? 0);
-      index = close === -1 ? lines.length : close + 1;
+      const depth = depths[index] ?? 0;
+      const close = closerIndex(lines, depths, index + 1, open[1] ?? "```", depth);
+      if (close === -1) {
+        if (depth === 0) {
+          index = lines.length;
+        } else {
+          // The fence ends where its blockquote ends; resume after it.
+          let resume = index + 1;
+          while (resume < lines.length && (depths[resume] ?? 0) >= depth) resume += 1;
+          index = resume;
+        }
+        continue;
+      }
+      index = close + 1;
       continue;
     }
     if (DEFINITION_RE.test(line)) found.push(line);
