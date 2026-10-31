@@ -4001,15 +4001,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       ELSE 0 END
                 )
                 SELECT thread_id FROM orchestration_v2_projection_runs
-                WHERE status IN ('preparing', 'starting', 'running', 'waiting')
-                UNION
-                -- A held queue already went through recovery; rereading it on
-                -- every boot costs a projection read per held thread.
-                SELECT thread_id FROM orchestration_v2_projection_runs
-                WHERE status = 'queued'
-                  AND CASE WHEN json_valid(payload_json)
+                -- SQLite requires the exact partial-index predicate to avoid historical runs.
+                WHERE status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+                  AND (status <> 'queued' OR CASE WHEN json_valid(payload_json)
                     THEN json_extract(payload_json, '$.queueHeld') IS NOT 1
-                    ELSE 1 END
+                    ELSE 1 END)
                 UNION
                 SELECT thread_id FROM orchestration_v2_projection_runtime_requests
                 WHERE status = 'pending'
