@@ -110,10 +110,8 @@ export function SidebarThreadHeader({
           </InputGroupAddon>
         ) : null}
       </InputGroup>
-      {/* Header actions retain their independent hover states. Pulled in 2px
-          so the new-thread glyph ends on the rows' trailing line, above their
-          times and chevrons. */}
-      <div className="me-0.5 flex shrink-0 items-center">
+      {/* Three 28px controls with 4px gaps (pen s8qVFu). */}
+      <div className="flex shrink-0 items-center gap-1">
         {hasProjects ? projectScope : null}
         <SidebarHeaderIconButton label="Add project" onClick={onNewProject}>
           <FolderPlusIcon />
