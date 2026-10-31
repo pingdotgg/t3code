@@ -1,5 +1,6 @@
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
+import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -27,9 +28,12 @@ const makeCredentialStore = (options: {
   let active = new Set<string>();
   const lock = Semaphore.makeUnsafe(1);
   const db = {
-    execute: () =>
+    execute: (query: SQL) =>
       Effect.acquireRelease(
         Effect.gen(function* () {
+          const rendered = new PgDialect().sqlToQuery(query);
+          expect(rendered.sql).toContain("pg_advisory_xact_lock");
+          expect(rendered.params).toHaveLength(2);
           if (!(yield* lock.takeIfAvailable(1))) {
             yield* options.onLockWait ?? Effect.void;
             yield* lock.take(1);
