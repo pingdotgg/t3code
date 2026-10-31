@@ -1710,6 +1710,11 @@ export const layerWithOptions = (
           });
         return {
           ...runtime,
+          // Adapters may refresh their session (e.g. capabilities) after open;
+          // a spread would freeze the value the orchestrator reads.
+          get providerSession() {
+            return runtime.providerSession;
+          },
           subscribeEvents,
           events: Stream.unwrap(
             subscribeEvents.pipe(Effect.map((subscription) => subscription.events)),
