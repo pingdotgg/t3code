@@ -1447,6 +1447,8 @@ const CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS = `
 ### Background work you wait on
 
 To wait for a background command or Monitor you started (tests, a build), call \`t3_background_wait\` with its task ID before you end your turn. Do not mark work you leave running, or PRs. T3 MCP tools are deferred: load one with ToolSearch before you call it.
+
+Native subagents must wait for their commands to finish before returning. Claude kills a foreground subagent's background commands and Monitors when it returns; \`t3_background_wait\` cannot keep that work alive and returns subagent-owned task IDs as unmatched. Use \`delegate_task\` for work that must outlive the calling turn.
 `;
 
 // Native subagents start from their task, not this session's system prompt.
@@ -2870,6 +2872,10 @@ function isClaudeOpaqueBackgroundTaskType(taskType: string | null | undefined): 
   return typeof taskType === "string" && CLAUDE_OPAQUE_BACKGROUND_TASK_KINDS.has(taskType);
 }
 
+type ClaudePendingBackgroundTask = OrchestrationV2PendingBackgroundTask & {
+  readonly ownedBySubagent?: true;
+};
+
 function claudePendingBackgroundTask(input: {
   readonly taskId: string;
   readonly taskType: string | null;
@@ -2878,9 +2884,17 @@ function claudePendingBackgroundTask(input: {
   readonly description: string | undefined;
   // Undeclared SDK field: the subagent whose own background work this is.
   readonly parentTaskId: unknown;
-}): OrchestrationV2PendingBackgroundTask {
+  readonly ownedBySubagent: unknown;
+}): ClaudePendingBackgroundTask {
+  const parentTaskId =
+    typeof input.parentTaskId === "string" && input.parentTaskId.trim().length > 0
+      ? input.parentTaskId
+      : undefined;
   return {
     taskId: input.taskId,
+    ...(input.ownedBySubagent === true || parentTaskId !== undefined
+      ? { ownedBySubagent: true as const }
+      : {}),
     kind: input.startedByMonitor
       ? "monitor"
       : ((input.taskType === null
@@ -2889,9 +2903,7 @@ function claudePendingBackgroundTask(input: {
     ...(input.description !== undefined && input.description.trim().length > 0
       ? { description: input.description }
       : {}),
-    ...(typeof input.parentTaskId === "string" && input.parentTaskId.trim().length > 0
-      ? { parentTaskId: input.parentTaskId }
-      : {}),
+    ...(parentTaskId === undefined ? {} : { parentTaskId }),
   };
 }
 
@@ -2924,10 +2936,10 @@ function isClaudeRootTurnFrame(message: SDKMessage): boolean {
 }
 
 function claudePendingBackgroundTasksFromRoster(
-  roster: ReadonlyMap<string, OrchestrationV2PendingBackgroundTask>,
+  roster: ReadonlyMap<string, ClaudePendingBackgroundTask>,
   awaitedTaskIds: ReadonlySet<string>,
 ): ReadonlyArray<OrchestrationV2PendingBackgroundTask> {
-  return Array.from(roster.values(), (task) =>
+  return Array.from(roster.values(), ({ ownedBySubagent: _ownedBySubagent, ...task }) =>
     awaitedTaskIds.has(task.taskId) ? { ...task, awaited: true as const } : task,
   );
 }
@@ -2935,7 +2947,7 @@ function claudePendingBackgroundTasksFromRoster(
 function parseClaudeBackgroundTaskEntry(
   entry: unknown,
   monitorTasks: ReadonlyMap<string, unknown>,
-): OrchestrationV2PendingBackgroundTask | null {
+): ClaudePendingBackgroundTask | null {
   if (entry === null || typeof entry !== "object") {
     return null;
   }
@@ -2955,6 +2967,7 @@ function parseClaudeBackgroundTaskEntry(
     startedByMonitor: monitorTasks.has(taskId),
     description: typeof description === "string" ? description : undefined,
     parentTaskId: Reflect.get(entry, "parent_task_id"),
+    ownedBySubagent: Reflect.get(entry, "owned_by_subagent"),
   });
 }
 
@@ -4784,12 +4797,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           >(),
         );
         const pendingBackgroundTasksByNativeThread = yield* Ref.make(
-          new Map<string, Map<string, OrchestrationV2PendingBackgroundTask>>(),
+          new Map<string, Map<string, ClaudePendingBackgroundTask>>(),
         );
         // Survives roster REPLACE levels, which rebuild every entry without the agent's mark.
         const awaitedBackgroundTasksByNativeThread = yield* Ref.make(
           new Map<string, Set<string>>(),
         );
+        // Bash can move a foreground command to the background after its timeout.
+        const foregroundOwnedTasksByNativeThread = yield* Ref.make(new Map<string, Set<string>>());
         // Wake eligibility is separate from the Waiting roster. It survives empty
         // background_tasks_changed levels (SDK: empty level can precede task_notification) and
         // is consumed when the first idle notification is buffered/offered so duplicates cannot
@@ -5105,10 +5120,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
 
         const rosterForNativeThread = (
-          all: ReadonlyMap<string, Map<string, OrchestrationV2PendingBackgroundTask>>,
+          all: ReadonlyMap<string, Map<string, ClaudePendingBackgroundTask>>,
           nativeThreadId: string,
-        ): Map<string, OrchestrationV2PendingBackgroundTask> =>
-          all.get(nativeThreadId) ?? new Map<string, OrchestrationV2PendingBackgroundTask>();
+        ): Map<string, ClaudePendingBackgroundTask> =>
+          all.get(nativeThreadId) ?? new Map<string, ClaudePendingBackgroundTask>();
 
         const hasPendingBackgroundTaskOnNativeThread = (nativeThreadId: string, taskId: string) =>
           Ref.get(pendingBackgroundTasksByNativeThread).pipe(
@@ -5316,16 +5331,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(function* (
             nativeThreadId: string,
-            tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
+            tasks: ReadonlyArray<ClaudePendingBackgroundTask>,
           ) {
+            const previous = rosterForNativeThread(
+              yield* Ref.get(pendingBackgroundTasksByNativeThread),
+              nativeThreadId,
+            );
+            // Roster snapshots can omit owned_by_subagent even when task_started supplied it.
+            const nextTasks = tasks.map((task) =>
+              previous.get(task.taskId)?.ownedBySubagent === true
+                ? { ...task, ownedBySubagent: true as const }
+                : task,
+            );
             yield* Ref.update(pendingBackgroundTasksByNativeThread, (current) => {
               const updated = new Map(current);
-              if (tasks.length === 0) {
+              if (nextTasks.length === 0) {
                 updated.delete(nativeThreadId);
               } else {
                 updated.set(
                   nativeThreadId,
-                  new Map(tasks.map((task) => [task.taskId, task] as const)),
+                  new Map(nextTasks.map((task) => [task.taskId, task] as const)),
                 );
               }
               return updated;
@@ -5337,7 +5362,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 tasks.map((task) => task.taskId),
               );
             }
-            const listed = new Set(tasks.map((task) => task.taskId));
+            const listed = new Set(
+              nextTasks
+                .filter((task) => task.parentTaskId === undefined && task.ownedBySubagent !== true)
+                .map((task) => task.taskId),
+            );
             yield* Ref.update(awaitedBackgroundTasksByNativeThread, (current) => {
               const awaited = current.get(nativeThreadId);
               if (awaited === undefined) return current;
@@ -5352,15 +5381,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
         const upsertPendingBackgroundTask =
           /* Provider events include streaming deltas; avoid a span for each update. */
-          Effect.fnUntraced(function* (
-            nativeThreadId: string,
-            task: OrchestrationV2PendingBackgroundTask,
-          ) {
+          Effect.fnUntraced(function* (nativeThreadId: string, task: ClaudePendingBackgroundTask) {
             yield* Ref.update(pendingBackgroundTasksByNativeThread, (current) => {
               const roster = new Map(rosterForNativeThread(current, nativeThreadId));
-              roster.set(task.taskId, task);
+              roster.set(
+                task.taskId,
+                roster.get(task.taskId)?.ownedBySubagent === true
+                  ? { ...task, ownedBySubagent: true as const }
+                  : task,
+              );
               return new Map(current).set(nativeThreadId, roster);
             });
+            if (task.parentTaskId !== undefined || task.ownedBySubagent === true) {
+              yield* clearTaskIdFromNativeThreadSet(
+                awaitedBackgroundTasksByNativeThread,
+                nativeThreadId,
+                task.taskId,
+              );
+            }
             yield* rememberOpaqueTasks([task]);
             yield* markWakeEligibleOpaqueBackgroundTasks(nativeThreadId, [task.taskId]);
           });
@@ -5402,6 +5440,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               return updated;
             });
             yield* clearNativeThreadTaskIdSet(awaitedBackgroundTasksByNativeThread, nativeThreadId);
+            yield* clearNativeThreadTaskIdSet(foregroundOwnedTasksByNativeThread, nativeThreadId);
             yield* endClaudeMonitorTasks((_taskId, task) => task.nativeThreadId === nativeThreadId);
           });
 
@@ -7559,7 +7598,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }
                 const roster =
                   nativeThreadId === null
-                    ? new Map<string, OrchestrationV2PendingBackgroundTask>()
+                    ? new Map<string, ClaudePendingBackgroundTask>()
                     : rosterForNativeThread(
                         yield* Ref.get(pendingBackgroundTasksByNativeThread),
                         nativeThreadId,
@@ -8028,7 +8067,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (!Array.isArray(roster)) {
               return false;
             }
-            const nextTasks: OrchestrationV2PendingBackgroundTask[] = [];
+            const nextTasks: ClaudePendingBackgroundTask[] = [];
             const listedTaskIds = new Set(
               roster.flatMap((entry) => {
                 const taskId =
@@ -8042,32 +8081,64 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               (taskId, task) =>
                 task.nativeThreadId === input.nativeThreadId && !listedTaskIds.has(taskId),
             );
+            const foregroundOwned = taskIdSetForNativeThread(
+              yield* Ref.get(foregroundOwnedTasksByNativeThread),
+              input.nativeThreadId,
+            );
             for (const entry of roster) {
               const task = parseClaudeBackgroundTaskEntry(entry, monitorTasks);
               if (task !== null) {
-                nextTasks.push(task);
+                nextTasks.push(
+                  foregroundOwned.has(task.taskId) ? { ...task, ownedBySubagent: true } : task,
+                );
+                yield* clearTaskIdFromNativeThreadSet(
+                  foregroundOwnedTasksByNativeThread,
+                  input.nativeThreadId,
+                  task.taskId,
+                );
               }
             }
             yield* replacePendingBackgroundTasks(input.nativeThreadId, nextTasks);
             rosterChanged = true;
           } else if (message.type === "system" && message.subtype === "task_started") {
-            if (!isClaudeNonSubagentTask(message) || message.is_backgrounded === false) {
+            if (!isClaudeNonSubagentTask(message)) {
               return false;
             }
+            const task = claudePendingBackgroundTask({
+              taskId: message.task_id,
+              taskType: claudeTaskTypeFromSdkMessage(message),
+              startedByMonitor: yield* isClaudeMonitorTask({
+                nativeThreadId: input.nativeThreadId,
+                taskId: message.task_id,
+                toolUseId: message.tool_use_id,
+              }),
+              description:
+                typeof message.description === "string" ? message.description : undefined,
+              parentTaskId: Reflect.get(message, "parent_task_id"),
+              ownedBySubagent: Reflect.get(message, "owned_by_subagent"),
+            });
+            if (message.is_backgrounded === false) {
+              if (task.ownedBySubagent === true) {
+                yield* addTaskIdsToNativeThreadSet(
+                  foregroundOwnedTasksByNativeThread,
+                  input.nativeThreadId,
+                  [task.taskId],
+                );
+              }
+              return false;
+            }
+            const foregroundOwned = taskIdSetForNativeThread(
+              yield* Ref.get(foregroundOwnedTasksByNativeThread),
+              input.nativeThreadId,
+            );
             yield* upsertPendingBackgroundTask(
               input.nativeThreadId,
-              claudePendingBackgroundTask({
-                taskId: message.task_id,
-                taskType: claudeTaskTypeFromSdkMessage(message),
-                startedByMonitor: yield* isClaudeMonitorTask({
-                  nativeThreadId: input.nativeThreadId,
-                  taskId: message.task_id,
-                  toolUseId: message.tool_use_id,
-                }),
-                description:
-                  typeof message.description === "string" ? message.description : undefined,
-                parentTaskId: Reflect.get(message, "parent_task_id"),
-              }),
+              foregroundOwned.has(task.taskId) ? { ...task, ownedBySubagent: true } : task,
+            );
+            yield* clearTaskIdFromNativeThreadSet(
+              foregroundOwnedTasksByNativeThread,
+              input.nativeThreadId,
+              task.taskId,
             );
             rosterChanged = true;
           } else if (message.type === "system" && message.subtype === "task_notification") {
@@ -8169,6 +8240,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const message = input.message;
           // Track before routing: idle-wake Monitors report tasks before replaying their tool calls.
           yield* trackClaudeMonitorCalls(message);
+          if (
+            message.type === "system" &&
+            message.subtype === "task_updated" &&
+            (message.patch.status === "completed" ||
+              message.patch.status === "failed" ||
+              message.patch.status === "killed")
+          ) {
+            yield* clearTaskIdFromNativeThreadSet(
+              foregroundOwnedTasksByNativeThread,
+              liveQuery.nativeThreadId,
+              message.task_id,
+            );
+          }
           // Update before routing because the idle wake gate reads this.
           if (
             message.type === "system" &&
@@ -11178,7 +11262,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 yield* Ref.get(pendingBackgroundTasksByNativeThread),
                 nativeThreadId,
               );
-              const matched = [...new Set(taskIds)].filter((taskId) => roster.has(taskId));
+              // Claude kills a foreground subagent's shell tasks on return; an awaited mark cannot keep them alive.
+              const matched = [...new Set(taskIds)].filter((taskId) => {
+                const task = roster.get(taskId);
+                return (
+                  task !== undefined &&
+                  (!awaited || (task.parentTaskId === undefined && task.ownedBySubagent !== true))
+                );
+              });
               if (matched.length === 0) return { matched };
               if (awaited) {
                 yield* addTaskIdsToNativeThreadSet(

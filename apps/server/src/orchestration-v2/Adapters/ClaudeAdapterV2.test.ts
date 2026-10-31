@@ -8350,7 +8350,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("holds only the background tasks the agent marks awaited, until they end", () =>
+  it.effect("marks only session-owned background tasks awaited, until they end", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
@@ -8367,6 +8367,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               task_id: taskId,
               task_type: "local_bash",
               description: taskId,
+              ...(taskId === "subagent-tests" ? { parent_task_id: "foreground-agent" } : {}),
             })),
             uuid,
             session_id: WAKE_NATIVE_SESSION,
@@ -8395,13 +8396,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         yield* Queue.offer(
           harness.sdkMessages,
-          roster([WAKE_TASK_ID, "dev-server"], "00000000-0000-4000-8000-000000000301"),
+          roster(
+            [WAKE_TASK_ID, "dev-server", "subagent-tests"],
+            "00000000-0000-4000-8000-000000000301",
+          ),
         );
-        yield* nextRoster((tasks) => tasks.length === 2);
+        yield* nextRoster((tasks) => tasks.length === 3);
 
         const marked = yield* awaitBackgroundTasks({
           providerThread: harness.providerThread,
-          taskIds: [WAKE_TASK_ID, "already-finished"],
+          taskIds: [WAKE_TASK_ID, "subagent-tests", "already-finished"],
           awaited: true,
         });
         assert.deepStrictEqual(marked.matched, [WAKE_TASK_ID]);
@@ -8410,6 +8414,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           [
             [WAKE_TASK_ID, true],
             ["dev-server", false],
+            ["subagent-tests", false],
           ],
         );
         yield* Queue.offer(harness.sdkMessages, turnOneResult);
@@ -8474,6 +8479,146 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
     ),
+  );
+
+  it.effect.each([false, true])(
+    "retains subagent ownership from task_started with is_backgrounded=%s",
+    (backgrounded) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const awaitBackgroundTasks = harness.runtime.awaitBackgroundTasks;
+          if (awaitBackgroundTasks === undefined)
+            throw new Error("Missing background wait support.");
+          const taskId = "owned-without-parent";
+          const roster = (taskIds: ReadonlyArray<string>, description: string) =>
+            claudeSdkFrame({
+              type: "system",
+              subtype: "background_tasks_changed",
+              tasks: taskIds.map((task_id) => ({ task_id, task_type: "local_bash", description })),
+              uuid: description,
+              session_id: WAKE_NATIVE_SESSION,
+            });
+          const latestTasks = () =>
+            providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+              .pendingBackgroundTasks ?? [];
+
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-owned-without-parent"),
+              text: "Run the subagent's tests.",
+              attachments: [],
+            }),
+          );
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: taskId,
+              task_type: "local_bash",
+              owned_by_subagent: true,
+              is_backgrounded: backgrounded,
+              description: "Subagent tests",
+              uuid: "owned-task-started",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+
+          for (const revision of ["backgrounded", "refreshed"]) {
+            yield* harness.offerAndWait(roster([taskId], revision));
+            yield* harness.until(() => latestTasks()[0]?.description === revision);
+            const result = yield* awaitBackgroundTasks({
+              providerThread: harness.providerThread,
+              taskIds: [taskId],
+              awaited: true,
+            });
+            assert.deepStrictEqual(result.matched, []);
+          }
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
+  it.effect.each(["snapshot", "task_started"] as const)(
+    "clears an awaited mark when %s reveals a subagent owner",
+    (source) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const awaitBackgroundTasks = harness.runtime.awaitBackgroundTasks;
+          if (awaitBackgroundTasks === undefined)
+            throw new Error("Missing background wait support.");
+          const latestTasks = () =>
+            providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+              .pendingBackgroundTasks ?? [];
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-owned-after-wait"),
+              text: "Wait for the tests.",
+              attachments: [],
+            }),
+          );
+          const task = { task_id: "tests", task_type: "local_bash", description: "Tests" };
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "background_tasks_changed",
+              tasks: [task],
+              uuid: "unowned-roster",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          yield* harness.until(() => latestTasks().length === 1);
+          yield* awaitBackgroundTasks({
+            providerThread: harness.providerThread,
+            taskIds: ["tests"],
+            awaited: true,
+          });
+          yield* harness.until(() => latestTasks()[0]?.awaited === true);
+
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              ...(source === "snapshot"
+                ? {
+                    subtype: "background_tasks_changed",
+                    tasks: [{ ...task, description: "Owned tests", parent_task_id: "agent" }],
+                  }
+                : {
+                    subtype: "task_started",
+                    ...task,
+                    description: "Owned tests",
+                    owned_by_subagent: true,
+                    is_backgrounded: true,
+                  }),
+              uuid: "ownership-revealed",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          yield* harness.until(() => latestTasks()[0]?.description === "Owned tests");
+          const last = providerThreadRosterEvents(harness.events).at(-1);
+          assert.isUndefined(last?.providerThread.pendingBackgroundTasks?.[0]?.awaited);
+          const result = yield* awaitBackgroundTasks({
+            providerThread: harness.providerThread,
+            taskIds: ["tests"],
+            awaited: true,
+          });
+          assert.deepStrictEqual(result.matched, []);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
   );
 
   it.effect("keeps a running Claude monitor typed after many newer monitors end", () =>
