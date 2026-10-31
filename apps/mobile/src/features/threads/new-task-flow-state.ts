@@ -30,6 +30,9 @@ export interface NewTaskFlowState {
   readonly draftKey: string | null;
   readonly submitting: boolean;
   readonly expandedProvider: string | null;
+  /** Set once the user commits the draft to its machine; auto balance then leaves it. */
+  readonly environmentPinned: boolean;
+  readonly loadBalancedEnvironmentId: EnvironmentId | null;
 }
 
 export const INITIAL_NEW_TASK_FLOW_STATE: NewTaskFlowState = {
@@ -38,6 +41,8 @@ export const INITIAL_NEW_TASK_FLOW_STATE: NewTaskFlowState = {
   draftKey: null,
   submitting: false,
   expandedProvider: null,
+  environmentPinned: false,
+  loadBalancedEnvironmentId: null,
 };
 
 // Every draft route on the stack keeps its flow, not just the one the provider
@@ -109,6 +114,8 @@ export function resolveRouteDraft(input: {
       environmentId: stamp.environmentId,
       projectKey: scopedProjectKey(stamp.environmentId, stamp.projectId),
       draftKey: routeDraftId,
+      // A saved draft stays on the machine it was written for.
+      environmentPinned: true,
     },
   };
 }

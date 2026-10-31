@@ -427,7 +427,7 @@ export function NewTaskDraftScreen(props: {
             selectedProject?.environmentId !== directProject.environmentId ||
             selectedProject.id !== directProject.id
           ) {
-            setProject(directProject);
+            setProject(directProject, { pinEnvironment: true });
             return;
           }
           if (!flow.draftKey) return;
@@ -442,13 +442,13 @@ export function NewTaskDraftScreen(props: {
           });
         }
         appliedInitialProjectKeyRef.current = directProjectKey;
-        if (
-          selectedProject?.environmentId === directProject.environmentId &&
-          selectedProject.id === directProject.id
-        ) {
-          return;
-        }
-        setProject(directProject);
+        // Always select explicitly, even when the flow's fallback already
+        // matches: auto balance only runs for a project the route chose. A
+        // branch or shared content belongs to this machine, so those pin it.
+        setProject(directProject, {
+          pinEnvironment:
+            Boolean(props.initialProjectRef?.branch) || props.incomingShareId !== undefined,
+        });
         return;
       }
 
@@ -473,7 +473,8 @@ export function NewTaskDraftScreen(props: {
       return;
     }
     if (selection.kind === "select") {
-      setProject(selection.project);
+      // Shared content is reserved for the draft's project, so it stays on this machine.
+      setProject(selection.project, { pinEnvironment: props.incomingShareId !== undefined });
       return;
     }
     if (selection.kind === "dismiss") {
@@ -545,6 +546,16 @@ export function NewTaskDraftScreen(props: {
   const showBranchLoading =
     environmentConnected && flow.branchesLoading && flow.availableBranches.length === 0;
 
+  // An attachment is checked against the machine on screen and keeps the
+  // draft there, so auto balance must not move it while one is on its way.
+  // Routing can become eligible mid-pick, when another machine's copy of the
+  // project loads, so only a draft that has already been balanced is exempt.
+  const keepMachineForAttachment = () => {
+    if (flow.autoBalanceStatus !== "balanced") {
+      flow.pinEnvironment();
+    }
+  };
+
   const {
     onPickDraftMedia: handlePickMedia,
     onPickDraftFiles: handlePickFiles,
@@ -554,6 +565,7 @@ export function NewTaskDraftScreen(props: {
     draftKey: flow.draftKey,
     serverConfig: selectedEnvironmentServerConfig,
     locked: isComposerInteractionLocked,
+    onAttachmentStart: keepMachineForAttachment,
   });
 
   async function handleStart(): Promise<import("@t3tools/contracts").MessageId | null> {
@@ -595,6 +607,20 @@ export function NewTaskDraftScreen(props: {
       flow.submitting ||
       (workspaceMode === "worktree" && !selectedBranchName)
     ) {
+      return null;
+    }
+    if (flow.autoBalanceStatus === "checking" || flow.autoBalanceStatus === "unavailable") {
+      if (flow.autoBalanceStatus === "checking") {
+        Dialog.alert(
+          "Checking machine resources",
+          "Resource checks are still running. You can choose a machine in the composer.",
+        );
+      } else {
+        Dialog.alert(
+          "Choose a machine to continue",
+          "No eligible machine has available resources. Choose a machine in the composer to override.",
+        );
+      }
       return null;
     }
     if (
@@ -715,10 +741,20 @@ export function NewTaskDraftScreen(props: {
     navigation.navigate(routeName);
   };
 
+  // Auto balance names itself, not the machine it picked.
+  const autoBalanceLabel =
+    flow.autoBalanceStatus === null
+      ? null
+      : flow.autoBalanceStatus === "checking"
+        ? "Checking machines…"
+        : flow.autoBalanceStatus === "unavailable"
+          ? "Auto balance unavailable"
+          : "Auto balance";
   const environmentControl = (
     <DraftEnvironmentControl
       connectionState={connectionState}
       label={selectedEnvironmentLabel}
+      autoBalanceLabel={autoBalanceLabel}
       machineKind={resolveEnvironmentMachineKind(selectedEnvironmentServerConfig)}
       disabled={isComposerInteractionLocked}
       onChooseEnvironment={() => openContextPicker("NewTaskEnvironment")}

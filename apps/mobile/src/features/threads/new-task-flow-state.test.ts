@@ -80,6 +80,7 @@ describe("resolveRouteDraft", () => {
         environmentId,
         projectKey: "env:project",
         draftKey: "new-task:draft-1",
+        environmentPinned: true,
       },
     });
   });
