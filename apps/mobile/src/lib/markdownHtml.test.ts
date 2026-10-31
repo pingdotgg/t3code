@@ -326,6 +326,8 @@ describe("file embeds in native thread and file Markdown", () => {
       ["a quote line indented like code", `> text\n>     ${video}`, `> text\n>     ${link}`],
       ["a tab-indented line", `text\n\t${video}`, `text\n\t${link}`],
       ["text before a code-indented line", `${video}\n    tail`, `${link}\n    tail`],
+      ["a line after a backslash break", `text\\\n${video}`, `text\\\n${link}`],
+      ["a line before a backslash break", `${video}\\\nnext`, `${link}\\\nnext`],
       [
         "text that a split would turn into a setext heading",
         `intro\n--- ${video}`,

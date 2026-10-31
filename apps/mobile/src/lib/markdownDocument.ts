@@ -492,11 +492,11 @@ export function markdownWithFileEmbeds(
     // After a paragraph break, a line indented this far would become a code block.
     if (linePrefixes.some((linePrefix) => /(?:^|>) ?(?: {4}| {0,3}\t)/.test(linePrefix)))
       return null;
-    if (
-      !staysParagraphs(markdown.slice(first, start)) ||
-      !staysParagraphs(markdown.slice(end, last))
-    )
-      return null;
+    const before = markdown.slice(first, start);
+    const after = markdown.slice(end, last);
+    if (!staysParagraphs(before) || !staysParagraphs(after)) return null;
+    // A paragraph break would leave a backslash hard break as a literal backslash.
+    if (/\\\r?\n[ \t>]*$/.test(before) || /^\\\r?\n/.test(after)) return null;
     const blank = prefix.trimEnd();
     const breaks: MarkdownEdit[] = [];
     const afterPrevious =
