@@ -13,6 +13,7 @@ import {
   normalizeAntigravitySessionUpdate,
   normalizeAntigravityToolCall,
   sanitizeAntigravityToolPayload,
+  makeAntigravityReadRepair,
 } from "./AntigravityProtocol.ts";
 import {
   mergeToolCallState,
@@ -24,7 +25,12 @@ const isSessionNotification = Schema.is(AcpWireSchema.SessionNotification);
 describe("native Antigravity subagent tools", () => {
   it("recognizes only native invocation titles and excludes MCP tools", () => {
     const toolCall = { toolCallId: "trajectory:4", kind: "other", data: {} };
-    for (const title of ["Running start_subagent", "Run start_subagent?"]) {
+    for (const title of [
+      "Running start_subagent",
+      "Run start_subagent?",
+      "Running invoke_subagent",
+      "Run invoke_subagent?",
+    ]) {
       expect(classifyAntigravitySubagentToolCall({ ...toolCall, title }, {})).toBe("subagent");
       expect(
         classifyAntigravitySubagentToolCall(
@@ -406,5 +412,84 @@ describe("Antigravity tool results", () => {
     expect(serialized).not.toContain("image-blob");
     expect(serialized).not.toContain("inline-image");
     expect(serialized).not.toContain("inline-data-url");
+  });
+});
+
+describe("Antigravity served reads", () => {
+  const flush = (reads: ReturnType<typeof makeAntigravityReadRepair>, toolCallId: string) =>
+    reads.repair({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId,
+        status: "failed",
+        rawOutput: "Tool execution failed",
+      },
+    }).update;
+
+  it("credits a read T3 served before the agent announced it", () => {
+    const reads = makeAntigravityReadRepair();
+    reads.attempted("/repo/a.ts", true);
+    const announced = reads.repair({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call_late",
+        title: "Running client_view_file",
+        kind: "read",
+        status: "in_progress",
+        locations: [{ path: "/repo/a.ts" }],
+      },
+    });
+    expect(announced.update).toMatchObject({ status: "completed" });
+    expect(flush(reads, "call_late")).toEqual({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "call_late",
+      status: "completed",
+    });
+  });
+
+  it("forgets an earlier turn's unannounced served read", () => {
+    const reads = makeAntigravityReadRepair();
+    reads.attempted("/repo/a.ts", true);
+    reads.reset();
+    reads.repair({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call_refused",
+        title: "Running client_view_file",
+        kind: "read",
+        status: "in_progress",
+        locations: [{ path: "/repo/a.ts" }],
+      },
+    });
+    reads.attempted("/repo/a.ts", false);
+    expect(flush(reads, "call_refused")).toMatchObject({ status: "failed" });
+  });
+
+  it("drops an earlier turn's unanswered read so a new turn's served read gets the credit", () => {
+    const reads = makeAntigravityReadRepair();
+    const announce = (toolCallId: string) =>
+      reads.repair({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title: "Running client_view_file",
+          kind: "read",
+          status: "in_progress",
+          locations: [{ path: "/repo/a.ts" }],
+        },
+      });
+    announce("call_abandoned");
+    reads.reset();
+    announce("call_current");
+    reads.attempted("/repo/a.ts", true);
+    expect(flush(reads, "call_current")).toEqual({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "call_current",
+      status: "completed",
+    });
   });
 });
