@@ -30,7 +30,6 @@ const CATALOG_SECTIONS = [
 
 /** The catalog sections in the app sidebar. */
 export function DesignSystemSidebarNav() {
-
   return (
     <SidebarContent className="overflow-x-hidden">
       <SidebarGroup>
