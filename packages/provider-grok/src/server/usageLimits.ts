@@ -17,10 +17,12 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const GrokCredentials = Schema.Record(
   Schema.String,
+  // The CLI writes `null` for fields it has no value for, such as the email of
+  // an account that signed in without one.
   Schema.Struct({
-    key: Schema.optional(Schema.String),
-    auth_mode: Schema.optional(Schema.String),
-    email: Schema.optional(Schema.String),
+    key: Schema.optional(Schema.NullOr(Schema.String)),
+    auth_mode: Schema.optional(Schema.NullOr(Schema.String)),
+    email: Schema.optional(Schema.NullOr(Schema.String)),
   }),
 );
 const decodeCredentials = Schema.decodeEffect(Schema.fromJsonString(GrokCredentials));

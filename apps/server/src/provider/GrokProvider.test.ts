@@ -706,4 +706,28 @@ it.layer(NodeServices.layer)("readGrokAccount email", (it) => {
       }
     }),
   );
+
+  it.effect("reads limits when the CLI stores a null email", () =>
+    Effect.gen(function* () {
+      const { email, usageLimits } = yield* readGrokAccount({
+        HOME: "/definitely/not/a/grok-home",
+        GROK_AUTH:
+          '{"https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828":{"key":"t","auth_mode":"oidc","email":null}}',
+      }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({ config: { creditUsagePercent: 25 } }),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(email).toBeUndefined();
+      expect(usageLimits.windows[0]?.usedPercent).toBe(25);
+    }),
+  );
 });
