@@ -18,44 +18,21 @@ export interface ProviderContinuationRequest {
   readonly driver: ProviderDriverKind;
   readonly detail: string | null;
   readonly notification?: OrchestrationV2Notification;
-  /**
-   * Durable ownership for an app-owned delegated-task completion delivery.
-   * The continuation worker re-reads the cohort before dispatching so a later
-   * task can join a queued wake and a stopped or acknowledged cohort is dropped.
-   */
   readonly delegatedCompletion?: {
     readonly parentRunId: RunId;
     readonly generation: number;
     readonly messageId: MessageId;
   };
-  /**
-   * How the continuation turn gets its content.
-   *
-   * `adapter_buffered` (default) is the provider-native wake: the adapter has
-   * already buffered the CLI's wake output, and the dispatched message only
-   * triggers ingestion. `ClaudeAdapterV2` deliberately discards the message
-   * text on that path.
-   *
-   * `message_text` is for app-owned work with no buffered provider output, such
-   * as a delegated child finishing. The text is the entire wake, so it must
-   * reach the provider as a real prompt.
-   */
+  /** adapter_buffered (default) ingests existing CLI output; message_text delivers app-owned wake text. */
   readonly delivery?: "adapter_buffered" | "message_text";
+  readonly messageId?: MessageId;
   readonly dispatchIfCurrent?: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<Option.Option<A>, E, R>;
-  /** Clears a pending offer that the continuation worker intentionally drops. */
   readonly clearIfCurrent?: () => Effect.Effect<void>;
 }
 
-/**
- * Adapters offer a continuation request when provider-native work completes
- * outside an active turn (for example a Claude background task wake turn) so
- * the orchestrator can start a run that ingests it. The default reference
- * drops requests, keeping adapter construction dependency-free in tests; the
- * live layer must be shared with the ProviderContinuationService worker that
- * drains it.
- */
+/** The default drops requests; share the live layer with the worker that drains them. */
 export class ProviderContinuationRequests extends Context.Reference<{
   readonly offer: (request: ProviderContinuationRequest) => Effect.Effect<void>;
   readonly take: Effect.Effect<ProviderContinuationRequest>;
@@ -68,8 +45,11 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const queue = yield* Queue.unbounded<ProviderContinuationRequest>();
     return {
-      offer: (request: ProviderContinuationRequest) =>
-        Queue.offer(queue, request).pipe(Effect.asVoid),
+      offer: Effect.fn("ProviderContinuationRequests.offer")(function (
+        request: ProviderContinuationRequest,
+      ) {
+        return Queue.offer(queue, request).pipe(Effect.asVoid);
+      }),
       take: Queue.take(queue),
     };
   }),

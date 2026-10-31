@@ -1,5 +1,8 @@
 // @effect-diagnostics globalTimers:off
 // The SDK owns process shutdown; native deadlines cover initialize before an Effect resource exists.
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- FileSystem.realPath is Node's JS realpath; museCanonicalPath needs the native one.
+import * as NodeFSP from "node:fs/promises";
+
 import {
   spawnMspConnection,
   type Connection,
@@ -7,6 +10,8 @@ import {
   type SpawnedMspConnection,
 } from "@muse-code/sdk";
 import type { RuntimeMode } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 
 export interface MuseSdkHost {
@@ -20,29 +25,33 @@ export interface MuseSdkHost {
     | "onProtocolError"
     | "closed"
   >;
-  readonly initializeResult: Pick<SpawnedMspConnection["initializeResult"], "grantedCapabilities">;
+  readonly initializeResult: Pick<SpawnedMspConnection["initializeResult"], "grantedCapabilities"> &
+    Partial<Pick<SpawnedMspConnection["initializeResult"], "museHome">>;
   readonly exited: Promise<ProcessExit>;
-  /** The last lines Muse wrote to stderr, for explaining an unexpected exit. */
   readonly stderrTail?: () => ReadonlyArray<string>;
   readonly close: () => Promise<void>;
 }
 
+export interface MuseLaunch {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+}
+
 export interface MuseSdkHostOptions {
   readonly binaryPath: string;
-  /** Arguments before the serve arguments, for a launcher in front of the binary. */
   readonly launchArgs?: ReadonlyArray<string>;
+  readonly launch?: MuseLaunch;
   readonly cwd?: string;
   readonly environment?: NodeJS.ProcessEnv;
   readonly runtimeMode?: RuntimeMode;
-  /** Disables shell and filesystem writes and workspace trust. */
   readonly readOnly?: boolean;
-  /** Read-only generation needs durable logging for turn/item notifications (verified through 1.1.1). */
+  /** Read-only generation needs session logging for turn/item notifications. */
   readonly sessionLogging?: boolean;
   readonly signal?: AbortSignal;
   readonly startupTimeoutMs?: number;
+  readonly onProcessExit?: (exit: ProcessExit) => void;
 }
 
-/** Preserve the host's CLI login while excluding the API-key override before copying values. */
 export function makeMuseEnvironment(
   environment: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
@@ -56,11 +65,68 @@ export function makeMuseEnvironment(
   };
 }
 
+export function museVerbatimPath(path: string): string {
+  if (path.startsWith("\\\\?\\")) return path;
+  return path.startsWith("\\\\") ? `\\\\?\\UNC\\${path.slice(2)}` : `\\\\?\\${path}`;
+}
+
+// Native realpath corrects filesystem case as well as resolving symlinks.
+export const museCanonicalPath = Effect.fn("museCanonicalPath")(function* (path: string) {
+  return yield* Effect.tryPromise(() => NodeFSP.realpath(path)).pipe(
+    Effect.orElseSucceed(() => path),
+  );
+});
+
+// Windows turn roots need verbatim form; launch cmd.exe with the plain canonical path.
+export const museWorkspaceRoot = Effect.fn("museWorkspaceRoot")(function* (path: string) {
+  if ((yield* HostProcess.Platform) !== "win32") return yield* museCanonicalPath(path);
+  const canonical = yield* Effect.tryPromise(() => NodeFSP.realpath(path)).pipe(
+    // A verbatim path takes `/` literally, so an unresolved root needs Windows separators.
+    Effect.orElseSucceed(() => path.replaceAll("/", "\\")),
+  );
+  return museVerbatimPath(canonical);
+});
+
+function windowsEnvironmentValue(environment: NodeJS.ProcessEnv, name: string) {
+  const key = Object.keys(environment).find(
+    (candidate) => candidate.toUpperCase() === name.toUpperCase(),
+  );
+  return key === undefined ? undefined : environment[key];
+}
+
+/** Resolve Windows launchers with PATHEXT and run .cmd/.bat under cmd.exe; SDK spawn has no shell. */
+export const museLaunch = Effect.fn("museLaunch")(function* (
+  binaryPath: string,
+  environment?: NodeJS.ProcessEnv,
+): Effect.fn.Return<MuseLaunch> {
+  if ((yield* HostProcess.Platform) !== "win32") return { command: binaryPath, args: [] };
+  const env = environment ?? (yield* HostProcess.Environment);
+  const resolveExecutable = yield* SpawnExecutableResolution;
+  const resolved = resolveExecutable(binaryPath, "win32", env) ?? binaryPath;
+  if (!/\.(?:cmd|bat)$/i.test(resolved)) return { command: resolved, args: [] };
+  const systemRoot = windowsEnvironmentValue(env, "SystemRoot");
+  return {
+    command:
+      windowsEnvironmentValue(env, "ComSpec") ??
+      (systemRoot ? `${systemRoot}\\System32\\cmd.exe` : "cmd.exe"),
+    // /d prevents AutoRun stdout; bare @ preserves quoted paths that cmd /c would unquote.
+    args: [
+      "/d",
+      "/c",
+      ...(/\s/.test(resolved) ? ["@", resolved] : [resolved.replace(/[()&<>@^|]/g, "^$&")]),
+    ],
+  };
+});
+
 export function museApprovalMode(runtimeMode: RuntimeMode) {
   return runtimeMode === "full-access" ? "allowAll" : "promptUnmatched";
 }
 
-/** The `muse serve` arguments for a host: read-only hosts get no shell, writes, or workspace trust. */
+// Select explicitly; Muse defaults may let an AI reviewer decide approvals.
+export function musePermissionProfile(runtimeMode: RuntimeMode) {
+  return runtimeMode === "full-access" ? ":unrestricted" : ":ask-me";
+}
+
 export function museServeArgs(
   options: Pick<MuseSdkHostOptions, "readOnly" | "sessionLogging" | "runtimeMode">,
 ) {
@@ -75,7 +141,6 @@ export function museServeArgs(
   return args;
 }
 
-/** What T3 sends in MSP `initialize`; only full hosts ask for session MCP servers. */
 export function museInitializeParams(readOnly = false) {
   return {
     clientInfo: { name: "t3_code", title: "T3 Code", version: "1" },
@@ -83,20 +148,20 @@ export function museInitializeParams(readOnly = false) {
   };
 }
 
-/** One SDK-owned process. The pre-handshake handle owns cleanup even when initialize never replies. */
+/** Owns cleanup before the handshake, even if initialize never replies. */
 export async function createMuseSdkHost(
   options: MuseSdkHostOptions,
   spawn: typeof spawnMspConnection = spawnMspConnection,
 ): Promise<MuseSdkHost> {
   options.signal?.throwIfAborted();
+  const launch = options.launch ?? { command: options.binaryPath, args: [] };
   const handshake = spawn({
-    command: options.binaryPath,
-    args: [...(options.launchArgs ?? []), ...museServeArgs(options)],
+    command: launch.command,
+    args: [...launch.args, ...(options.launchArgs ?? []), ...museServeArgs(options)],
     ...(options.cwd ? { cwd: options.cwd } : {}),
-    // Callers pass an environment already built with makeMuseEnvironment.
     env: options.environment ?? makeMuseEnvironment(),
-    // A healthy host exits at once; this only bounds a hung one on close.
     shutdownTimeoutMs: 10_000,
+    ...(options.onProcessExit ? { onProcessExit: options.onProcessExit } : {}),
   });
   let closePromise: Promise<void> | undefined;
   const close = () => {
@@ -126,8 +191,7 @@ export async function createMuseSdkHost(
     if (host.initializeResult.schema?.version !== 1) {
       throw new Error("Muse SDK returned an unsupported protocol envelope version.");
     }
-    // The SDK's fingerprint warning permits additive optional schema changes.
-    // Successful initialization, not fingerprint identity, determines readiness.
+    // Fingerprint warnings permit additive schema changes; successful initialization proves readiness.
     return {
       connection: host.connection,
       initializeResult: host.initializeResult,
@@ -148,9 +212,10 @@ export const createMuseSdkHostEffect = Effect.fn("createMuseSdkHostEffect")(func
   options: Omit<MuseSdkHostOptions, "signal">,
   createHost: typeof createMuseSdkHost = createMuseSdkHost,
 ) {
+  const launch = options.launch ?? (yield* museLaunch(options.binaryPath, options.environment));
   let startup: Promise<MuseSdkHost> | undefined;
   return yield* Effect.tryPromise((signal) => {
-    startup = createHost({ ...options, signal });
+    startup = createHost({ ...options, launch, signal });
     return startup;
   }).pipe(
     Effect.onInterrupt(() =>

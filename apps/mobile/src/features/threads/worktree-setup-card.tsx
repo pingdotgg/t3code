@@ -1,3 +1,4 @@
+import { Button } from "../../components/ui/Button";
 import {
   worktreeSetupStageLabel,
   type WorktreeSetupSnapshot,
@@ -5,13 +6,15 @@ import {
 } from "@t3tools/contracts";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
-import { useEffect, useState } from "react";
-import { ActivityIndicator, AppState, Pressable, ScrollView, View } from "react-native";
+import { useState } from "react";
+import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { WorktreeSetupSheet } from "./worktree-setup-sheet";
 import { ShimmeringWorkContent } from "./thread-work-log";
+import { useVisibleSecondClock } from "./use-visible-second-clock";
 
 export interface WorktreeSetupCardProps {
   snapshot: WorktreeSetupSnapshot;
@@ -36,7 +39,6 @@ const icons: Record<WorktreeSetupStage["status"], AppSymbolName> = {
   warning: "exclamationmark.triangle",
 };
 
-/** Setup stages collapse into the working header once the agent's turn is live. */
 export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
   const { snapshot, turnStarted, turnStartedAt, working } = props;
   const handedOff = turnStarted && worktreeSetupAgentStarted(snapshot);
@@ -44,7 +46,7 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
   const backgroundSetup = handedOff && running;
   const scriptName = snapshot.setupScript?.name ?? "Setup script";
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const now = useSetupClock(running || working);
+  const now = useVisibleSecondClock(running || working);
   const failed =
     snapshot.phase === "failed" || snapshot.stages.some((stage) => stage.status === "failed");
   const label =
@@ -82,7 +84,7 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
           accessibilityRole="button"
           accessibilityLabel={
             backgroundSetup
-              ? `${scriptName} is still running. Show setup progress.`
+              ? `Background setup is still running: ${scriptName}. Show setup progress.`
               : "Worktree setup details"
           }
           accessibilityState={{ expanded: detailsOpen }}
@@ -97,10 +99,14 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
             }
           >
             {backgroundSetup ? (
-              <ActivityIndicator
-                size="small"
+              <AppActivityIndicator
+                size={Platform.OS === "android" ? 12 : "small"}
                 colorClassName="accent-icon-muted"
-                style={{ width: 12, height: 12, transform: [{ scale: 0.65 }] }}
+                style={{
+                  width: 12,
+                  height: 12,
+                  transform: Platform.OS === "android" ? undefined : [{ scale: 0.65 }],
+                }}
               />
             ) : failed ? (
               <SymbolView
@@ -110,7 +116,7 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
               />
             ) : null}
             <Text numberOfLines={1} className="shrink text-2xs text-foreground-secondary">
-              {backgroundSetup ? scriptName : "Details"}
+              {backgroundSetup ? "Background setup" : "Details"}
             </Text>
             {!backgroundSetup ? (
               <SymbolView name="chevron.right" size={10} tintColorClassName="accent-icon-muted" />
@@ -142,7 +148,7 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
 }
 
 export function WorktreeWorkingHeader({ startedAt }: { startedAt: string }) {
-  const now = useSetupClock(true);
+  const now = useVisibleSecondClock(true);
   return (
     <View className="py-1">
       <View className="min-h-11 flex-row items-center border-b border-border px-1">
@@ -183,21 +189,6 @@ function HeaderLabel({
   );
 }
 
-function useSetupClock(active: boolean) {
-  const [now, setNow] = useState(Date.now);
-  const [appState, setAppState] = useState(AppState.currentState);
-  useEffect(() => {
-    const subscription = AppState.addEventListener("change", setAppState);
-    return () => subscription.remove();
-  }, []);
-  useEffect(() => {
-    if (!active || appState !== "active") return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [active, appState]);
-  return now;
-}
-
 function SetupDetailsSheet({
   snapshot,
   turnStarted,
@@ -212,6 +203,7 @@ function SetupDetailsSheet({
   return (
     <WorktreeSetupSheet height={bodyHeight} onClose={onClose}>
       <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
         bounces={false}
         onContentSizeChange={(_width, height) => setBodyHeight(height)}
         contentContainerStyle={{
@@ -220,7 +212,6 @@ function SetupDetailsSheet({
           paddingBottom: Math.max(20, insets.bottom),
         }}
       >
-        {/* Agent startup is the header handoff, not a fifth setup step. */}
         {snapshot.stages
           .filter((stage) => stage.id !== "agent")
           .map((stage) => (
@@ -239,28 +230,24 @@ function SetupDetailsSheet({
         ) : null}
         {canCancel ? (
           <View className="mt-3 flex-row items-center justify-end gap-4 border-t border-border pt-1">
-            <Pressable
-              accessibilityRole="button"
+            <Button
+              label="Cancel setup"
+              tone="danger"
               accessibilityLabel="Cancel worktree setup"
               onPress={() => {
                 onClose();
                 onCancel();
               }}
-              className="min-h-11 justify-center px-2"
-            >
-              <Text className="text-sm text-danger-foreground">Cancel setup</Text>
-            </Pressable>
+            />
             {onWorkLocally ? (
-              <Pressable
-                accessibilityRole="button"
+              <Button
+                label="Work locally"
+                tone="secondary"
                 onPress={() => {
                   onClose();
                   onWorkLocally();
                 }}
-                className="min-h-11 justify-center px-2"
-              >
-                <Text className="text-sm text-foreground">Work locally</Text>
-              </Pressable>
+              />
             ) : null}
           </View>
         ) : null}
@@ -302,7 +289,7 @@ function StageRow({
     >
       <View className="w-6 items-center">
         {stage.status === "running" && animate ? (
-          <ActivityIndicator
+          <AppActivityIndicator
             size="small"
             colorClassName="accent-icon-muted"
             style={{ transform: [{ scale: 0.75 }] }}
@@ -359,7 +346,6 @@ function StageRow({
 
 const OUTPUT_TAIL_SLOTS = [0, 1, 2, 3] as const;
 
-/** Fixed four-line output window, shown only in Details. */
 function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: boolean }) {
   return (
     <View

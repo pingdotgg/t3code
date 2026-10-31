@@ -8,11 +8,6 @@ type UsageProviderPresentation = {
   readonly driverKind: ProviderDriverKind;
 };
 
-/**
- * Exhaustive presentation for providers supported by the usage contract.
- * Declaration order is reused by every chart and table, so adding a provider
- * only requires its contract support and one entry here.
- */
 export const PROVIDER_PRESENTATION = {
   codex: {
     label: "Codex",
@@ -26,7 +21,6 @@ export const PROVIDER_PRESENTATION = {
   },
   grok: {
     label: "Grok Build",
-    // Contrast-aware neutral between the Codex series and muted chart chrome.
     color: "color-mix(in oklab, var(--contrast-foreground) 72%, var(--background))",
     driverKind: ProviderDriverKind.make("grok"),
   },
@@ -41,12 +35,20 @@ export const PROVIDER_PRESENTATION = {
     color: "#8c7bd1",
     driverKind: ProviderDriverKind.make("antigravity"),
   },
+  pi: {
+    label: "Pi",
+    color: "#4d9f8a",
+    driverKind: ProviderDriverKind.make("pi"),
+  },
+  muse: {
+    label: "Muse Code",
+    color: "#0866ff",
+    driverKind: ProviderDriverKind.make("muse"),
+  },
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
 
-/** Stable provider reading order across charts, summaries, tables, and hover rows. */
 export const PROVIDER_ORDER = Object.keys(PROVIDER_PRESENTATION) as UsageProviderKind[];
 
-/** Providers with real activity, independent of the metric currently displayed. */
 export function providersWithUsage(
   totals: readonly {
     readonly provider: UsageProviderKind;

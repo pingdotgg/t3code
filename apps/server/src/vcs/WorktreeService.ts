@@ -1,3 +1,6 @@
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import { OrchestrationV2ProviderSessionJson } from "@t3tools/contracts";
+import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -107,6 +110,7 @@ export type WorktreeRemovalInput = {
       readonly keepWhen?: WorktreeKeepWhen;
       readonly expected: { readonly branch: string; readonly headSha: string };
       readonly recheck: Effect.Effect<boolean>;
+      readonly policyRemoval?: Effect.Effect<RemovalOutcome>;
     }
 );
 
@@ -313,6 +317,10 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const sql = yield* SqlClient.SqlClient;
+  const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+  const isWindows = yield* HostProcess.isWindows;
+  const pathKey = (value: string) =>
+    isWindows ? path.resolve(value).toLowerCase() : path.resolve(value);
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitManager = yield* GitManager.GitManager;
   const projectStore = yield* ProjectStore.ProjectStoreV2;
@@ -371,7 +379,7 @@ const make = Effect.gen(function* () {
   );
 
   const inside = (root: string, target: string) => {
-    const relative = path.relative(root, target);
+    const relative = path.relative(pathKey(root), pathKey(target));
     return (
       relative !== "" &&
       relative !== ".." &&
@@ -379,7 +387,8 @@ const make = Effect.gen(function* () {
       !path.isAbsolute(relative)
     );
   };
-  const atOrInside = (root: string, target: string) => root === target || inside(root, target);
+  const atOrInside = (root: string, target: string) =>
+    pathKey(root) === pathKey(target) || inside(root, target);
 
   const executeLenient = (operation: string, cwd: string, args: ReadonlyArray<string>) =>
     git
@@ -530,16 +539,22 @@ const make = Effect.gen(function* () {
     .pipe(Effect.map((snapshot) => [...snapshot.threads, ...snapshot.archivedThreads]));
 
   // Sessions can outlive their run and can be shared across app threads.
-  const readSessionCwds = sql<{ readonly cwd: string | null }>`
-    SELECT json_extract(payload_json, '$.cwd') AS cwd
-    FROM orchestration_v2_projection_provider_sessions
-    WHERE status != 'stopped'
+  const readSessionCwds = sql<{ readonly payload_json: string }>`
+    SELECT payload_json FROM orchestration_v2_projection_provider_sessions WHERE status != 'stopped'
   `.pipe(
+    NodeSqliteClient.readOnly,
     Effect.flatMap((rows) =>
-      Effect.forEach(
-        rows.flatMap((row) => (row.cwd === null ? [] : [row.cwd])),
-        canonicalizePath,
+      Effect.forEach(rows, (row) =>
+        Schema.decodeEffect(Schema.fromJsonString(OrchestrationV2ProviderSessionJson))(
+          row.payload_json,
+        ),
       ),
+    ),
+    Effect.flatMap((sessions) =>
+      Effect.filter(sessions, (session) => providerSessions.isLive(session.id)),
+    ),
+    Effect.flatMap((sessions) =>
+      Effect.forEach(sessions, (session) => canonicalizePath(session.cwd)),
     ),
   );
 
@@ -556,8 +571,22 @@ const make = Effect.gen(function* () {
   );
 
   /** Every thread, session and terminal directory, read once and matched per checkout. */
-  const readUsage = Effect.fn("WorktreeService.readUsage")(function* () {
-    const threads = yield* readThreads;
+  const readUsage = Effect.fn("WorktreeService.readUsage")(function* (targetPath?: string) {
+    const threads =
+      targetPath === undefined
+        ? yield* readThreads
+        : yield* Effect.gen(function* () {
+            const paths = yield* projections.getThreadWorktreePaths({ includeArchived: true });
+            const matching = yield* Effect.filter(paths, (entry) =>
+              canonicalizePath(entry.worktreePath).pipe(
+                Effect.map((canonical) => pathKey(canonical) === pathKey(targetPath)),
+              ),
+            );
+            const shells = yield* Effect.forEach(matching, (entry) =>
+              projections.getThreadShell(entry.threadId),
+            );
+            return shells.filter((shell) => shell !== null);
+          });
     const canonicalByRawPath = new Map<string, string>();
     const threadsByPath = new Map<string, OrchestrationV2ThreadShell[]>();
     for (const thread of threads) {
@@ -566,15 +595,15 @@ const make = Effect.gen(function* () {
         canonicalByRawPath.get(thread.worktreePath) ??
         (yield* canonicalizePath(thread.worktreePath));
       canonicalByRawPath.set(thread.worktreePath, canonicalPath);
-      const bucket = threadsByPath.get(canonicalPath);
-      if (bucket === undefined) threadsByPath.set(canonicalPath, [thread]);
+      const bucket = threadsByPath.get(pathKey(canonicalPath));
+      if (bucket === undefined) threadsByPath.set(pathKey(canonicalPath), [thread]);
       else bucket.push(thread);
     }
     const sessionCwds = yield* readSessionCwds;
     const terminalCwds = yield* readTerminalCwds;
     return (worktreePath: string): WorktreeUsage => ({
       // Every project's threads count: projects can share one repository.
-      threads: threadsByPath.get(worktreePath) ?? [],
+      threads: threadsByPath.get(pathKey(worktreePath)) ?? [],
       hasSession: sessionCwds.some((cwd) => atOrInside(worktreePath, cwd)),
       hasTerminal: terminalCwds.some((cwd) => atOrInside(worktreePath, cwd)),
     });
@@ -847,11 +876,14 @@ const make = Effect.gen(function* () {
       inspection === null ? null : yield* resolveDefaultRef(workspaceRoot),
     );
 
-    const usage = (yield* readUsage())(worktreePath);
+    const usage = (yield* readUsage(worktreePath))(worktreePath);
     const [blocker] = removalBlockers({
       intent: input.intent,
       keepWhen,
-      inspection,
+      inspection:
+        input.intent === "policy" && input.policyRemoval !== undefined && inspection !== null
+          ? { ...inspection, hasSubmodules: false }
+          : inspection,
       aheadOfDefaultCount,
       usage,
       now: yield* Clock.currentTimeMillis,
@@ -888,7 +920,8 @@ const make = Effect.gen(function* () {
       if (changedFiles > 0) {
         return skipped("dirty", `${changedFiles} ${changedFiles === 1 ? "file" : "files"}`);
       }
-      if (latest.hasSubmodules) return skipped("submodules");
+      if (latest.hasSubmodules && !(input.intent === "policy" && input.policyRemoval !== undefined))
+        return skipped("submodules");
       if (latest.ignoredFiles.length > 0 && !allowIgnoredFiles) {
         return skipped("ignored_files", latest.ignoredFiles[0]);
       }
@@ -898,6 +931,8 @@ const make = Effect.gen(function* () {
     // directory: what is left would pass for a healthy checkout on the next
     // turn. The revision advances with it, so no client keeps a removed row.
     const removal = yield* Effect.gen(function* () {
+      if (input.intent === "policy" && input.policyRemoval !== undefined)
+        return yield* input.policyRemoval;
       // Only the configured tracked-changes policy discards untracked data.
       // Git's unforced removal still refuses a tracked edit made during cleanup.
       if (keepWhen === "tracked-changes") {
@@ -909,6 +944,7 @@ const make = Effect.gen(function* () {
         });
       }
       yield* git.removeWorktree({ cwd: workspaceRoot, path: worktreePath, force: false });
+      return { outcome: "removed" } as const;
     }).pipe(
       // Cleanup can change files even if Git subsequently refuses removal.
       Effect.ensuring(
@@ -920,7 +956,7 @@ const make = Effect.gen(function* () {
       Effect.uninterruptible,
     );
     if (removal._tag === "Failure") return skipped("remove_failed", removal.failure.detail);
-    return { outcome: "removed" } satisfies RemovalOutcome;
+    return removal.success;
   });
 
   const removeIfSafe: WorktreeService["Service"]["removeIfSafe"] = Effect.fn(

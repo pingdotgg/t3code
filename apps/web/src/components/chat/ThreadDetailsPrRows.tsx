@@ -1,20 +1,22 @@
+import { pipe } from "effect/Function";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import type { EnvironmentId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
 import {
+  pullRequestListLines,
   resolveThreadPullRequestChains,
   threadPullRequestKeyOf,
   visibleThreadPullRequests,
-} from "@t3tools/shared/threadPullRequests";
-import { Minus, Plus } from "lucide";
+} from "@t3tools/client-runtime/thread-pull-requests";
+import { ChevronDown, ChevronUp } from "lucide";
 import { useState, type ComponentProps, type MouseEvent as ReactMouseEvent } from "react";
 
-import { findProjectOnChangeRequestHost, parseChangeRequestUrl } from "~/lib/openPullRequestLink";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { findProjectOnChangeRequestHost } from "@t3tools/client-runtime/change-request-links";
 
 import { useProjects } from "~/state/entities";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { pullRequestListLines } from "../pullRequest/pullRequestListLines";
 import { MorphIcon } from "~/components/MorphIcon";
 import { linkedPullRequestSnapshotStatus, prStatusIndicator } from "../ThreadStatusIndicators";
 
@@ -34,9 +36,9 @@ function ThreadDetailsPrLinkRow({
   onStopWatching?: (() => void) | undefined;
 }) {
   const projects = useProjects();
-  const parsed = parseChangeRequestUrl(link.url);
+  const parsed = sourceControlClients.parseChangeRequestUrl(link.url)?.link;
   const project =
-    parsed === null
+    parsed === undefined
       ? null
       : (findProjectOnChangeRequestHost(
           projects.filter((candidate) => candidate.environmentId === environmentId),
@@ -75,7 +77,6 @@ export function ThreadDetailsPrRows({
 }) {
   const [expanded, setExpanded] = useState(false);
   const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
-  // Only watched links get the eye; the row hides it once the server records the stop.
   const stopWatching = (link: ThreadPullRequestLink | null) =>
     link?.watch === undefined
       ? undefined
@@ -94,7 +95,7 @@ export function ThreadDetailsPrRows({
   const rest =
     currentLink === null
       ? []
-      : pullRequestListLines(resolveThreadPullRequestChains(visibleThreadPullRequests(links)))
+      : pipe(visibleThreadPullRequests(links), resolveThreadPullRequestChains, pullRequestListLines)
           .map((line) => line.link)
           .filter((link) => threadPullRequestKeyOf(link) !== threadPullRequestKeyOf(currentLink));
   if (rest.length === 0) return currentRow;
@@ -102,8 +103,9 @@ export function ThreadDetailsPrRows({
   return (
     <>
       {currentRow}
-      {expanded
-        ? rest.map((link) => (
+      {expanded ? (
+        <div data-thread-details-pr-list className="flex flex-col">
+          {rest.map((link) => (
             <ThreadDetailsPrLinkRow
               key={threadPullRequestKeyOf(link)}
               environmentId={row.environmentId}
@@ -112,8 +114,9 @@ export function ThreadDetailsPrRows({
               onActed={row.onActed}
               onStopWatching={stopWatching(link)}
             />
-          ))
-        : null}
+          ))}
+        </div>
+      ) : null}
       <ThreadDetailsControl
         variant="ghost"
         size="sm"
@@ -122,7 +125,12 @@ export function ThreadDetailsPrRows({
         tone="muted"
         className="w-full active:scale-100"
       >
-        <MorphIcon aria-hidden className="size-4 shrink-0" icon={expanded ? Minus : Plus} />
+        <MorphIcon
+          aria-hidden
+          className="size-4 shrink-0"
+          // Chevrons, not plus and minus: the plus already means "add" in this card.
+          icon={expanded ? ChevronUp : ChevronDown}
+        />
         {expanded ? "Show less" : `Show ${rest.length} more`}
       </ThreadDetailsControl>
     </>

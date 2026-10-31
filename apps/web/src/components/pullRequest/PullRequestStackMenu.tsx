@@ -22,12 +22,15 @@ import {
   DialogFooter,
 } from "../ui/dialog";
 import { toastManager } from "../ui/toast";
+import type { ChangeRequestTerminology } from "~/sourceControlPresentation";
 import { PullRequestStackLayers } from "./PullRequestStackLayers";
 import { PullRequestStackHeader } from "./PullRequestStackHeader";
 import { PullRequestStackLayerContent } from "./PullRequestStackLayerContent";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
 export function PullRequestStackMenu({
+  hostLabel,
+  terminology,
   stack,
   reference,
   environmentId,
@@ -39,6 +42,8 @@ export function PullRequestStackMenu({
   notice,
   onRetry,
 }: {
+  hostLabel: string;
+  terminology: ChangeRequestTerminology;
   notice?: string | null;
   onRetry?: (() => void) | undefined;
   stack: PullRequestStack;
@@ -117,7 +122,7 @@ export function PullRequestStackMenu({
         title: action === "merge" ? "Stack merge request completed" : "Stack rebased",
         description:
           action === "merge"
-            ? "GitHub merged the stack or added it to its merge queue."
+            ? `${hostLabel} merged the stack or added it to its merge queue.`
             : undefined,
       });
     }
@@ -213,7 +218,7 @@ export function PullRequestStackMenu({
           />
           <TooltipPopup>
             Merge stack through #{reference.number} into {stack.base} ({mergeLayers.length}{" "}
-            {mergeLayers.length === 1 ? "pull request" : "pull requests"})
+            {mergeLayers.length === 1 ? terminology.singular : terminology.plural})
           </TooltipPopup>
         </Tooltip>
       ) : null}
@@ -227,12 +232,12 @@ export function PullRequestStackMenu({
           <DialogHeader>
             <DialogTitle>
               {confirmation === "merge"
-                ? `Merge ${mergeLayers.length} pull requests?`
-                : `Rebase ${unmerged.length} pull requests?`}
+                ? `Merge ${mergeLayers.length} ${mergeLayers.length === 1 ? terminology.singular : terminology.plural}?`
+                : `Rebase ${unmerged.length} ${unmerged.length === 1 ? terminology.singular : terminology.plural}?`}
             </DialogTitle>
             <DialogDescription>
               {confirmation === "merge"
-                ? `Merge #${reference.number} and its unmerged layers below into ${stack.base} using ${mergeMethod}. GitHub checks their rules before merging or queueing them and rebases the remaining stack after merging.`
+                ? `Merge #${reference.number} and its unmerged layers below into ${stack.base} using ${mergeMethod}. ${hostLabel} checks their rules before merging or queueing them and rebases the remaining stack after merging.`
                 : `Rebase the remote branches from bottom to top onto ${stack.base}. This rewrites branch history and may restart checks. If a layer fails, earlier updates remain.`}
             </DialogDescription>
           </DialogHeader>

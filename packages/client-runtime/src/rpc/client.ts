@@ -31,6 +31,7 @@ export class EnvironmentRpcUnavailableError extends Schema.TaggedError<Environme
 
 export interface EnvironmentRpcRequestObservation {
   readonly environmentId: string;
+  readonly environmentLabel: string;
   readonly method: string;
 }
 
@@ -48,18 +49,18 @@ export type EnvironmentRpcTag = keyof WsRpcProtocolClient & string;
 type RpcMethod<TTag extends EnvironmentRpcTag> = WsRpcProtocolClient[TTag];
 
 export type EnvironmentSubscriptionRpcTag =
-  | typeof WS_METHODS.codexAuthCallbackSubscribe
   | typeof WS_METHODS.providerAuthSubscribe
   | typeof WS_METHODS.providerInstallSubscribe
   | typeof ORCHESTRATION_V2_WS_METHODS.subscribeShell
   | typeof ORCHESTRATION_V2_WS_METHODS.subscribeThread
+  | typeof ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput
   | typeof ORCHESTRATION_V2_WS_METHODS.searchThreadStream
   | typeof WS_METHODS.subscribeAuthAccess
   | typeof WS_METHODS.subscribeServerConfig
   | typeof WS_METHODS.subscribeServerLifecycle
   | typeof WS_METHODS.scheduledTasksSubscribe
   | typeof WS_METHODS.serverGetStorageCleanupReport
-  | typeof WS_METHODS.subscribeTerminalEvents
+  | typeof WS_METHODS.serverGetDatabaseStorage
   | typeof WS_METHODS.subscribeTerminalMetadata
   | typeof WS_METHODS.subscribePreviewEvents
   | typeof WS_METHODS.subscribeDiscoveredLocalServers
@@ -104,7 +105,6 @@ export class EnvironmentRpcSubscriptionObserver extends Context.Reference<{
 export const isRpcClientError = Schema.is(RpcClientError.RpcClientError);
 const isEnvironmentAuthorizationError = Schema.is(EnvironmentAuthorizationError);
 
-/** Ceiling for the doubling delay between same-session expected-failure retries. */
 const MAX_EXPECTED_FAILURE_RETRY_DELAY_MS = 30_000;
 
 export type EnvironmentRpcInput<TTag extends EnvironmentRpcTag> = Parameters<RpcMethod<TTag>>[0];
@@ -203,6 +203,7 @@ export const requestGuarded = Effect.fn("EnvironmentRpc.request")(function* <
   ) => Effect.Effect<EnvironmentRpcSuccess<TTag>, EnvironmentRpcFailure<TTag>>;
   const completeObservation = yield* observer.observe({
     environmentId: supervisor.target.environmentId,
+    environmentLabel: supervisor.target.label,
     method: tag,
   });
   return yield* method(input).pipe(Effect.ensuring(completeObservation));
@@ -236,19 +237,12 @@ export function runStreamGuarded<TTag extends EnvironmentStreamCommandRpcTag>(
 }
 
 interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
-  /** Reports protocol or programming defects without changing their recovery policy. */
   readonly onDefect?: (
     cause: Cause.Cause<EnvironmentRpcStreamFailure<TTag>>,
   ) => Effect.Effect<void, never, never>;
   readonly onExpectedFailure?: (
     cause: Cause.Cause<EnvironmentRpcStreamFailure<TTag>>,
   ) => Effect.Effect<void, never, never>;
-  /**
-   * First delay before resubscribing on the same session after an expected
-   * failure. Each consecutive failure doubles it up to 30 seconds, and the
-   * first value from a healthy stream resets it. Authorization failures are
-   * not retried; they wait for the next session or `resubscribe` signal.
-   */
   readonly retryExpectedFailureAfter?: Duration.Input;
   readonly resubscribe?: Stream.Stream<unknown, never, never>;
 }
@@ -295,8 +289,6 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                 EnvironmentRpcStreamValue<TTag>,
                 EnvironmentRpcStreamFailure<TTag>
               >;
-              // Consecutive expected-failure retries on this session. Reset by
-              // the first value a resubscribed stream delivers.
               let expectedFailureRetries = 0;
               const subscribeToSession = (): Stream.Stream<A, EnvironmentRpcStreamFailure<TTag>> =>
                 Stream.suspend(() =>
@@ -439,7 +431,6 @@ export function subscribe<TTag extends EnvironmentSubscriptionRpcTag>(
   return subscribeDynamic(tag, () => Effect.succeed(input), options);
 }
 
-/** Protected writes must go through the permission-aware command layer. */
 export const request = <TTag extends Exclude<EnvironmentUnaryRpcTag, ClientGuardedRpcTag>>(
   tag: TTag,
   input: EnvironmentRpcInput<TTag>,

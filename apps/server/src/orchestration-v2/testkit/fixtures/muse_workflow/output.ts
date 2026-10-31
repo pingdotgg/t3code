@@ -8,11 +8,6 @@ import {
   projectionFor,
 } from "../shared.ts";
 
-/**
- * The workflow row stays live after its turn and settles when the workflow
- * does; Muse's own report turn becomes a second, completed run instead of
- * being interrupted, and nothing is left pending.
- */
 export function assertMuseWorkflowOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -39,13 +34,21 @@ export function assertMuseWorkflowOutput(
   assert.isDefined(workflow, "the workflow shows as a row");
   assert.equal(workflow.status, "completed");
   assert.equal(workflow.runId, projection.runs[0]?.id);
+  const finalSummary = transcript.entries
+    .map((entry) =>
+      entry.type === "emit_inbound"
+        ? Reflect.get(Reflect.get(Object(entry.frame).params ?? {}, "item") ?? {}, "finalSummary")
+        : undefined,
+    )
+    .findLast((summary) => typeof summary === "string");
+  assert.isString(finalSummary, "Muse reports the workflow's result");
+  assert.equal(workflow.type === "dynamic_tool" ? workflow.output : undefined, finalSummary);
 
   const report = projection.messages.filter(
     (message) => message.role === "assistant" && message.runId === projection.runs[1]?.id,
   );
   assert.isAbove(report.length, 0, "Muse's report reaches the second run");
 
-  // Each workflow agent is a native subagent nested under the workflow row.
   assert.lengthOf(projection.subagents, 2);
   for (const agent of projection.subagents) {
     assert.equal(agent.origin, "provider_native");

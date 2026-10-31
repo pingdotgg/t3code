@@ -6,6 +6,15 @@ export function isUncPath(value: string): boolean {
   return value.startsWith("\\\\");
 }
 
+/**
+ * Windows treats `/` and `\` alike, so any two leading separators name a UNC
+ * or device path. Touching one makes Windows sign in to that host with the
+ * user's NTLM credentials, so agent-authored paths must not reach one.
+ */
+export function isNetworkPath(value: string): boolean {
+  return /^[\\/]{2}/.test(value);
+}
+
 export function isWindowsAbsolutePath(value: string): boolean {
   return isUncPath(value) || isWindowsDrivePath(value);
 }
@@ -22,10 +31,7 @@ export function isExplicitRelativePath(value: string): boolean {
 }
 
 function isRootPath(value: string): boolean {
-  // The drive separator is required: a bare `C:` is not the drive root (it
-  // means "current directory on C:"), and treating it as already-canonical
-  // would leave it as `C:` while `C:\` and `C:/` normalize to the drive root,
-  // so the same location would fail project identity/dedup comparisons.
+  // Bare C: means the current directory on C, not its root; require the drive separator.
   return value === "/" || value === "\\" || /^[a-zA-Z]:[/\\]$/.test(value);
 }
 
@@ -57,11 +63,6 @@ export function normalizeProjectPathForComparison(value: string): string {
 // Windows refuses these as file names, with or without an extension.
 const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 
-/**
- * Folder name for a project started from just a name ("Pinball Stats" becomes
- * "pinball-stats"). The server uses it for `projects.createNew`, and clients
- * use it to show the path before the server makes it.
- */
 export function newProjectFolderName(name: string): string {
   const slug = name
     .normalize("NFKD")
@@ -83,8 +84,6 @@ export function stripSlashPrefixedWindowsDrive(path: string): string {
 }
 
 export function fileBasename(path: string): string {
-  // A trailing separator is a valid way to write a directory. Trim it before
-  // taking the final segment so the label is never empty.
   const trimmed = path.replace(/[/\\]+$/, "");
   if (trimmed.length === 0) return path;
   const separatorIndex = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
@@ -105,9 +104,30 @@ export function workspaceRelativeFilePath(
   const rootForCompare = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;
   if (pathForCompare.replace(/\/+$/, "") === rootForCompare) return ".";
   if (!pathForCompare.startsWith(`${rootForCompare}/`)) return null;
-  return normalizedPath.slice(normalizedRoot.length + 1);
+  const relativePath = normalizedPath.slice(normalizedRoot.length + 1);
+  // `/repo/../x` starts with the root but escapes it; the server rejects that as a workspace path.
+  let depth = 0;
+  for (const segment of relativePath.split("/")) {
+    if (segment === "..") depth -= 1;
+    else if (segment.length > 0 && segment !== ".") depth += 1;
+    if (depth < 0) return null;
+  }
+  return relativePath;
 }
 
 export function isAbsolutePath(value: string): boolean {
   return value.startsWith("/") || isWindowsAbsolutePath(value);
+}
+
+/** Home-relative host paths are expanded by the destination server. */
+export function isHostPath(value: string): boolean {
+  return isAbsolutePath(value) || value.startsWith("~/");
+}
+
+export function resolveWorkspaceFilePath(path: string, workspaceRoot: string): string {
+  if (isAbsolutePath(path) || path.startsWith("~/") || path.startsWith("~\\")) return path;
+  const base = workspaceRoot.replace(/[/\\]+$/, "");
+  return isWindowsAbsolutePath(workspaceRoot)
+    ? `${base}\\${path.replaceAll("/", "\\")}`
+    : `${base}/${path}`;
 }

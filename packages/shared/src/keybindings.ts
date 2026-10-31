@@ -29,7 +29,7 @@ export interface ShortcutModifierStateLike {
   altKey: boolean;
 }
 
-const EVENT_CODE_SHORTCUT_KEYS: Readonly<Record<string, string>> = {
+export const EVENT_CODE_SHORTCUT_KEYS: Readonly<Record<string, string>> = {
   Backquote: "`",
   Backslash: "\\",
   BracketLeft: "[",
@@ -52,6 +52,30 @@ const EVENT_CODE_SHORTCUT_KEYS: Readonly<Record<string, string>> = {
   Semicolon: ";",
   Slash: "/",
 };
+
+export const US_SHIFTED_TO_UNSHIFTED_KEYS: ReadonlyMap<string, string> = new Map([
+  ["!", "1"],
+  ["@", "2"],
+  ["#", "3"],
+  ["$", "4"],
+  ["%", "5"],
+  ["^", "6"],
+  ["&", "7"],
+  ["*", "8"],
+  ["(", "9"],
+  [")", "0"],
+  ["~", "`"],
+  ["_", "-"],
+  ["+", "="],
+  ["{", "["],
+  ["}", "]"],
+  ["|", "\\"],
+  [":", ";"],
+  ['"', "'"],
+  ["<", ","],
+  [">", "."],
+  ["?", "/"],
+]);
 
 export function isMacPlatform(platform: string): boolean {
   return /mac|iphone|ipad|ipod/i.test(platform);
@@ -122,6 +146,11 @@ type WhenToken =
 
 export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+b", command: "sidebar.toggle" },
+  { key: "f6", command: "workspace.focusNext" },
+  { key: "shift+f6", command: "workspace.focusPrevious" },
+  // Some browsers keep plain F6 for their own toolbars; mod+F6 reaches the page in all of them.
+  { key: "mod+f6", command: "workspace.focusNext" },
+  { key: "mod+shift+f6", command: "workspace.focusPrevious" },
   { key: "mod+[", command: "navigation.back", when: "!terminalFocus" },
   { key: "mod+]", command: "navigation.forward", when: "!terminalFocus" },
   { key: "mod+j", command: "terminal.toggle" },
@@ -193,7 +222,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   ...THREAD_JUMP_KEYBINDING_COMMANDS.map((command, index) => ({
     key: `mod+${index + 1}`,
     command,
-    when: "isDesktop",
+    when: "!modelPickerOpen && isDesktop",
   })),
   ...MODEL_PICKER_JUMP_KEYBINDING_COMMANDS.map((command, index) => ({
     key: `mod+${index + 1}`,

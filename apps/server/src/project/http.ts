@@ -1,7 +1,7 @@
 import {
-  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
+  requiredScopesForProjectMutation,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
@@ -14,10 +14,11 @@ import {
 } from "../auth/http.ts";
 import { traceLocalHandlerWork } from "../cloud/traceRelayRequest.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
+import * as ProjectCloneTracker from "./ProjectCloneTracker.ts";
 import * as ProjectService from "./ProjectService.ts";
-import { projectMutationOperation } from "./ProjectMutation.ts";
+import { mutateProjectWithClone } from "./ProjectMutation.ts";
 
-export const failProjectMutation = Effect.fn("environment.projects.failMutation")(function* (
+const failProjectMutation = Effect.fn("environment.projects.failMutation")(function* (
   cause: ProjectService.ProjectServiceError | ServerRuntimeStartup.ServerRuntimeStartupError,
 ) {
   if (
@@ -36,6 +37,7 @@ export const layer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const projects = yield* ProjectService.ProjectService;
     const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
+    const projectClones = yield* ProjectCloneTracker.ProjectCloneTracker;
 
     return handlers
       .handle(
@@ -53,8 +55,10 @@ export const layer = HttpApiBuilder.group(
         "mutate",
         Effect.fn("environment.projects.mutate")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
-          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          const operation = projectMutationOperation(projects, args.payload);
+          for (const scope of requiredScopesForProjectMutation(args.payload)) {
+            yield* requireEnvironmentScope(scope);
+          }
+          const operation = mutateProjectWithClone(projects, projectClones, args.payload);
           return yield* startup
             .enqueueCommand(operation)
             .pipe(traceLocalHandlerWork, Effect.catch(failProjectMutation));

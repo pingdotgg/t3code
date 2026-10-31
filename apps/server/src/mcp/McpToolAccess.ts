@@ -1,10 +1,15 @@
 import {
+  type EnvironmentId,
+  type OrchestrationV2LinkOrigin,
+  OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
   type ProviderInteractionMode,
   type RuntimeMode,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Struct from "effect/Struct";
 import type * as Layer from "effect/Layer";
@@ -15,8 +20,10 @@ import {
   DispatchModeLimit,
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
+import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import { assertNotLinked, assertSameLink, callerLinkOrigin } from "./linkOrigin.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
-import { resolveInteractionMode, resolveRuntimeMode } from "./OrchestratorMcpService.ts";
+import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import {
   assertFullAccess,
   assertLiveCaller,
@@ -27,13 +34,7 @@ import {
   unavailable,
 } from "./threadAccess.ts";
 
-// Only the classes below assign these, from their static blocks, so nothing
-// outside this module can build a declaration or a handlers layer.
-
-/**
- * Both constructors demand this. Their private constructors only stop the type
- * checker; this also stops `Reflect.construct` and friends at runtime.
- */
+/** Private constructors only enforce types; the token also blocks runtime construction. */
 const builtHere: unique symbol = Symbol("t3/mcp/McpToolAccess/builtHere");
 
 const refuseOutsideConstruction = (token: symbol) => {
@@ -42,62 +43,53 @@ const refuseOutsideConstruction = (token: symbol) => {
   }
 };
 
-/** Builds a declaration; only the declaration functions below call it. */
 let declare: <P, A, E, R>(
   handle: (params: P) => Effect.Effect<A, E, R>,
+  remote: RemoteCheck<P> | undefined,
 ) => Declaration<(params: P) => Effect.Effect<A, E, R>>;
+
+/**
+ * What a call bound for a linked environment checks here before it goes: the
+ * caller, not the thread or project it names, which live there and are
+ * checked there. `undefined` for tools that act as the calling thread itself.
+ */
+type RemoteCheck<P> = (
+  params: P,
+) => Effect.Effect<unknown, OrchestratorMcpFailure, Effect.Services<typeof writingCaller>>;
+let remoteCheckOf: <Handler>(declaration: Declaration<Handler>) => RemoteCheck<never> | undefined;
 
 type CheckedHandlerOf<D> = D extends Declaration<infer Handler> ? Handler : never;
 
-/** Turns each declaration back into the handler it checks, keeping its type. */
 interface CheckedHandler extends Struct.Lambda {
   <Handler>(declaration: Declaration<Handler>): Handler;
   readonly "~lambda.out": CheckedHandlerOf<this["~lambda.in"]>;
 }
 let checkedHandler: CheckedHandler;
 
-/** Only `toLayer` below builds one. */
 let handlersLayer: <Tools extends Record<string, Tool.Any>, EX, RX>(
   layer: Layer.Layer<Tool.HandlersFor<Tools>, EX, RX>,
 ) => HandlersLayer<Tools, EX, RX>;
 
-/**
- * Who may call a T3 MCP tool. Every handler is built by one of the
- * declarations below, which say what the tool does. `toLayer` accepts only
- * declarations, and `/mcp` registers only layers `toLayer` built, so a tool
- * without a decision here does not compile. Both are nominal classes, so a
- * handler or layer cannot pass for one by copying its fields. Effect's own
- * registration functions accept any handler, so the
- * `t3code/no-raw-mcp-registration` lint rule keeps Effect's `McpServer` inside
- * McpHttpServer.
- *
- * Parameters choose the target; the caller sets the limits: a thread caller
- * its own runtime and interaction modes, an outside client the ceiling it was
- * approved with. Nothing a caller starts or changes may run with broader
- * modes, and a thread caller changes things only while its own run is live.
- * A refusal is an `OrchestratorMcpFailure`, so the compiler requires it in the
- * tool's failure schema, and `ThreadManagementService` in its dependencies.
- *
- * The declaration checks the caller before the handler runs. Handlers still
- * check what only they can see, such as a queued run belonging to its thread.
- */
+/** t3code/no-raw-mcp-registration confines Effect's unchecked registration API to McpHttpServer. */
 export class Declaration<out Handler> {
-  // A private field makes the class nominal, and only this module can build
-  // one: its constructor is private and the static block hands the only way
-  // in to module-scoped functions. Copying a declaration's fields onto
-  // anything else fails to typecheck and, at runtime, to run.
   readonly #handle: Handler;
-  private constructor(token: typeof builtHere, handle: Handler) {
+  readonly #remote: RemoteCheck<never> | undefined;
+  private constructor(
+    token: typeof builtHere,
+    handle: Handler,
+    remote: RemoteCheck<never> | undefined,
+  ) {
     refuseOutsideConstruction(token);
     this.#handle = handle;
+    this.#remote = remote;
   }
   static {
-    declare = (handle) => new Declaration(builtHere, handle);
+    declare = (handle, remote) => new Declaration(builtHere, handle, remote);
     checkedHandler = Struct.lambda<CheckedHandler>((declaration) => declaration.#handle);
+    remoteCheckOf = (declaration) => declaration.#remote;
   }
 }
 
-/** A client approved for read-only access changes nothing. */
 const refuseReadOnlyClient = McpInvocationContext.McpInvocationContext.pipe(
   Effect.flatMap((scope) =>
     scope.client?.access === "read-only"
@@ -112,17 +104,11 @@ const refuseReadOnlyClient = McpInvocationContext.McpInvocationContext.pipe(
   ),
 );
 
-/**
- * The caller of a tool that changes something. Tools that act for a
- * capability of their own (preview, device, worktree, pull requests) check it
- * themselves.
- */
 const writingCaller = refuseReadOnlyClient.pipe(
   Effect.andThen(loadCaller()),
   Effect.tap(assertLiveCaller),
 );
 
-/** The same, for tools whose only capability is controlling threads. */
 const orchestratingCaller = refuseReadOnlyClient.pipe(
   Effect.andThen(readCaller()),
   Effect.tap(assertLiveCaller),
@@ -132,71 +118,95 @@ const requireThreadCaller = McpInvocationContext.McpInvocationContext.pipe(
   Effect.flatMap((scope) => McpInvocationContext.requireThreadScope(scope, "This tool")),
 );
 
-/** Changes nothing, so every caller may call it. */
 export const reads = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
-  declare((params: P) => handle(params));
-
-/** Reads what belongs to the calling T3 thread, such as its preview tabs or devices. */
-export const readsAsCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
-  declare((params: P) => requireThreadCaller.pipe(Effect.flatMap(() => handle(params))));
-
-/**
- * Acts as the calling T3 thread (its subagents, preview tabs, devices,
- * worktree) while that thread's run is live. Only an agent running inside a
- * T3 thread has one.
- */
-export const actsAsCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
-  declare((params: P) =>
-    requireThreadCaller.pipe(
-      Effect.flatMap(() => writingCaller),
-      Effect.flatMap(() => handle(params)),
-    ),
+  declare(
+    (params: P) => handle(params),
+    () => Effect.void,
   );
 
-/** Changes something that belongs to no thread, such as a pending upload or a scheduled task. */
-export const writes = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
-  declare((params: P) => orchestratingCaller.pipe(Effect.flatMap(() => handle(params))));
+export const readsAsCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
+  declare((params: P) => requireThreadCaller.pipe(Effect.flatMap(() => handle(params))), undefined);
+
+export const actsAsCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
+  declare(
+    (params: P) =>
+      requireThreadCaller.pipe(
+        Effect.andThen(writingCaller),
+        Effect.flatMap(() => handle(params)),
+      ),
+    undefined,
+  );
 
 /**
- * Changes the threads `threads` names. An omitted id is the caller's own
- * thread; any other thread must run within the caller's modes, checked here
- * and again by the orchestrator when it applies each command. A thread that
- * does not exist is the handler's to report.
+ * Changes something that belongs to no thread, such as a pending upload or a
+ * scheduled task. Work a linked environment started may not: none of it
+ * carries the link's origin, so none of it is that link's.
  */
+export const writes = <P, A, E, R>(
+  handle: (params: P) => Effect.Effect<A, E, R>,
+  options?: {
+    /** Whether a linked caller may make it, as for uploads its own sends need. */
+    readonly linkedCallers?: "allowed";
+  },
+) =>
+  declare(
+    (params: P) =>
+      orchestratingCaller.pipe(
+        Effect.tap((caller) =>
+          options?.linkedCallers === "allowed"
+            ? Effect.void
+            : assertNotLinked(caller, "change this environment's scheduled tasks"),
+        ),
+        Effect.flatMap(() => handle(params)),
+      ),
+    () => orchestratingCaller,
+  );
+
+/** Requires handler capability checks, not thread control; linked work is refused the same way. */
+export const writesWithCapability = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
+  declare(
+    (params: P) =>
+      writingCaller.pipe(
+        Effect.tap((caller) => assertNotLinked(caller, "start work here that is not its link's")),
+        Effect.flatMap(() => handle(params)),
+      ),
+    () => writingCaller,
+  );
+
 export const writesThreads = <P, A, E, R>(
   threads: (params: P) => ReadonlyArray<ThreadId | undefined>,
   handle: (params: P) => Effect.Effect<A, E, R>,
 ) =>
-  declare((params: P) =>
-    Effect.gen(function* () {
-      const caller = yield* writingCaller;
-      for (const threadId of threads(params)) {
-        if (threadId === undefined || threadId === caller.scope.thread?.threadId) continue;
-        const target = yield* caller.threads
-          .getThreadShell(threadId)
-          .pipe(Effect.mapError(unavailable));
-        if (target !== null && target.deletedAt === null) {
-          yield* assertTargetWithinLimits(caller.limits, target);
+  declare(
+    (params: P) =>
+      Effect.gen(function* () {
+        const caller = yield* writingCaller;
+        for (const threadId of threads(params)) {
+          if (threadId === undefined || threadId === caller.scope.thread?.threadId) continue;
+          const target = yield* caller.threads
+            .getThreadShell(threadId)
+            .pipe(Effect.mapError(unavailable));
+          if (target !== null && target.deletedAt === null) {
+            yield* assertTargetWithinLimits(caller.limits, target);
+            yield* assertSameLink(caller, target);
+          }
         }
-      }
-      // The target's user can raise its modes after the check above; the
-      // orchestrator checks again under the thread's lock and records its
-      // refusal here, since handlers wrap dispatch errors their own way.
-      const refused = yield* Ref.make<DispatchModeRefusal | undefined>(undefined);
-      return yield* handle(params).pipe(
-        Effect.provideService(DispatchModeLimit, { ...caller.limits, refused }),
-        Effect.catch((error) =>
-          Effect.flatMap(Ref.get(refused), (refusal) =>
-            Effect.fail<E | OrchestratorMcpFailure>(
-              refusal === undefined ? error : escalationDenied(refusal),
+        // Modes can rise after this check; the orchestrator rechecks under lock and records refusal before handlers wrap errors.
+        const refused = yield* Ref.make<DispatchModeRefusal | undefined>(undefined);
+        return yield* handle(params).pipe(
+          Effect.provideService(DispatchModeLimit, { ...caller.limits, refused }),
+          Effect.catch((error) =>
+            Effect.flatMap(Ref.get(refused), (refusal) =>
+              Effect.fail<E | OrchestratorMcpFailure>(
+                refusal === undefined ? error : escalationDenied(refusal),
+              ),
             ),
           ),
-        ),
-      );
-    }),
+        );
+      }),
+    () => writingCaller,
   );
 
-/** How an agent hears that a thread it targets was raised above its modes mid-call. */
 const escalationDenied = (refusal: DispatchModeRefusal) =>
   new OrchestratorMcpFailure({
     code:
@@ -206,79 +216,118 @@ const escalationDenied = (refusal: DispatchModeRefusal) =>
     message: `Thread ${refusal.threadId} now runs in ${refusal.runtimeMode}/${refusal.interactionMode} mode, above this caller's. Its user changed it while this call ran.`,
   });
 
-/** The modes a started thread runs with: those requested, else the caller's own. */
 export interface StartedModes {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  /** The linked environment the caller acts for. The thread must carry it. */
+  readonly linkOrigin: OrchestrationV2LinkOrigin | undefined;
 }
 
-/** Starts threads with the modes `modes` requests, which may not be broader than the caller's. */
+/**
+ * Starts threads with the modes `modes` requests, which may not be broader
+ * than the caller's. `linked` says what a linked caller gets: threads stamped
+ * with its `linkOrigin`, or a refusal where the tool cannot carry one.
+ */
 export const startsThreads = <P, A, E, R>(
   modes: (params: P) => {
     readonly runtimeMode?: RuntimeMode | undefined;
     readonly interactionMode?: ProviderInteractionMode | undefined;
   },
   handle: (params: P, modes: StartedModes) => Effect.Effect<A, E, R>,
-) =>
-  declare((params: P) =>
-    Effect.gen(function* () {
-      const { limits } = yield* writingCaller;
-      const requested = modes(params);
-      const started: StartedModes = {
-        runtimeMode: yield* resolveRuntimeMode(limits.runtimeMode, requested.runtimeMode),
-        interactionMode: yield* resolveInteractionMode(
-          limits.interactionMode,
-          requested.interactionMode,
-        ),
-      };
-      return yield* handle(params, started);
-    }),
+  linked: "stamped" | { readonly refused: string },
+) => {
+  const started = Effect.fn("McpToolAccess.started")(function* (caller: Caller, params: P) {
+    const requested = modes(params);
+    return {
+      runtimeMode: yield* resolveRuntimeMode(caller.limits.runtimeMode, requested.runtimeMode),
+      interactionMode: yield* resolveInteractionMode(
+        caller.limits.interactionMode,
+        requested.interactionMode,
+      ),
+      linkOrigin: callerLinkOrigin(caller),
+    } satisfies StartedModes;
+  });
+  return declare(
+    (params: P) =>
+      Effect.gen(function* () {
+        const caller = yield* writingCaller;
+        if (linked !== "stamped") yield* assertNotLinked(caller, linked.refused);
+        return yield* handle(params, yield* started(caller, params));
+      }),
+    (params: P) => Effect.flatMap(writingCaller, (caller) => started(caller, params)),
   );
+};
+
+/** One tool with two access rules, picked per call, such as create versus update. */
+export const either = <P, A, E, R, A2, E2, R2>(
+  useFirst: (params: P) => boolean,
+  first: Declaration<(params: P) => Effect.Effect<A, E, R>>,
+  second: Declaration<(params: P) => Effect.Effect<A2, E2, R2>>,
+) => {
+  const remotes = [remoteCheckOf(first), remoteCheckOf(second)] as ReadonlyArray<
+    RemoteCheck<P> | undefined
+  >;
+  return declare(
+    (params: P): Effect.Effect<A | A2, E | E2, R | R2> =>
+      useFirst(params) ? checkedHandler(first)(params) : checkedHandler(second)(params),
+    (params) =>
+      remotes[useFirst(params) ? 0 : 1]?.(params) ??
+      Effect.fail(
+        new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "This action acts as the calling thread, which is here. Omit environmentId.",
+        }),
+      ),
+  );
+};
 
 const fullAccessRequired =
   "Changing projects or environment settings needs a live full-access/default calling thread or a full-access client.";
 
-/**
- * Changes projects or environment settings, which needs a full-access/default
- * caller. `check` re-checks the caller wherever the handler waits before
- * writing, such as for a lock, since the caller's modes can change meanwhile.
- */
+/** Recheck after waits before writing; caller modes may have changed. */
 export const writesEnvironment = <P, A, E, R>(
   handle: (
     params: P,
     check: Effect.Effect<Caller, OrchestratorMcpFailure, CheckServices>,
   ) => Effect.Effect<A, E, R>,
+  options?: {
+    /**
+     * Whether a linked caller may make it, as for adding a project: it leaves
+     * everything already here as it was.
+     */
+    readonly linkedCallers?: "allowed";
+  },
 ) => {
   const check = orchestratingCaller.pipe(
+    Effect.tap((caller) =>
+      options?.linkedCallers === "allowed"
+        ? Effect.void
+        : assertNotLinked(caller, "change projects or environment settings"),
+    ),
     Effect.tap((caller) => assertFullAccess(caller, fullAccessRequired)),
   );
-  return declare((params: P) => check.pipe(Effect.flatMap(() => handle(params, check))));
+  return declare(
+    (params: P) => check.pipe(Effect.flatMap(() => handle(params, check))),
+    // Linked work never reaches a link at all; that is checked as the call goes.
+    () =>
+      orchestratingCaller.pipe(
+        Effect.tap((caller) => assertFullAccess(caller, fullAccessRequired)),
+      ),
+  );
 };
 
-/** What a declaration's own check needs. */
 type CheckServices = Effect.Services<typeof orchestratingCaller>;
 
-/**
- * Each handler of `Handlers`, built by one of the declarations above. A
- * declaration is never callable, which rules out a handler function wearing a
- * declaration's fields.
- */
 type Declarations<Handlers> = {
   readonly [Name in keyof Handlers]: Declaration<Handlers[Name]> & NotCallable;
 };
 
-/** Anything but a function. */
 type NotCallable = { readonly call?: never } & { readonly apply?: never };
 
-/** A toolkit's handlers, each built by one of the declarations above. */
 export type Handlers<Tools extends Record<string, Tool.Any>> = Declarations<
   Toolkit.HandlersFrom<Tools>
 >;
 
-/**
- * A toolkit's handler layer built by `toLayer`, the only kind `/mcp`
- * registers. Like a declaration it is nominal, so nothing else passes for one.
- */
 export class HandlersLayer<Tools extends Record<string, Tool.Any>, EX = never, RX = never> {
   readonly #layer: Layer.Layer<Tool.HandlersFor<Tools>, EX, RX>;
   private constructor(
@@ -291,7 +340,6 @@ export class HandlersLayer<Tools extends Record<string, Tool.Any>, EX = never, R
   static {
     handlersLayer = (layer) => new HandlersLayer(builtHere, layer);
   }
-  /** The handlers, for registering this toolkit on the MCP server. */
   static layer<Tools extends Record<string, Tool.Any>, EX, RX>(
     handlers: HandlersLayer<Tools, EX, RX>,
   ) {
@@ -302,15 +350,74 @@ export class HandlersLayer<Tools extends Record<string, Tool.Any>, EX = never, R
 const checkedHandlers = <Handlers>(declarations: Declarations<Handlers>): Handlers =>
   Struct.map(declarations, checkedHandler);
 
-/** `Toolkit.toLayer` for handlers that all declare their access. */
+/**
+ * A tool runs in a linked environment when its parameters take this target
+ * as `environmentId`. Other tools may name an environment for their own
+ * reasons, such as the one to link or to move a thread to.
+ */
+const takesLinkedEnvironment = (tool: Tool.Any) => {
+  const parameters: unknown = tool.parametersSchema;
+  return (
+    Predicate.hasProperty(parameters, "fields") &&
+    Predicate.hasProperty(parameters.fields, "environmentId") &&
+    parameters.fields.environmentId === OrchestratorMcpEnvironmentTarget
+  );
+};
+
+const linksUnavailable = new OrchestratorMcpFailure({
+  code: "orchestration_error",
+  message: "This environment cannot reach linked environments.",
+});
+
+/**
+ * Every tool that takes a linked environment runs there the same way: its
+ * declaration checks the caller here, and the same call goes to the other
+ * environment, which checks the rest. The handler here never sees
+ * `environmentId`, so it cannot leak into what it writes.
+ */
+const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record<string, Tool.Any>>(
+  toolkit: Toolkit.Toolkit<Tools>,
+  declarations: Handlers<Tools>,
+  checked: Toolkit.HandlersFrom<Tools>,
+) {
+  // Optional so toolkits that never leave this environment build without it.
+  const forwarding = yield* Effect.serviceOption(PeerForwarding.PeerForwarding);
+  const handlers: Record<string, unknown> = { ...checked };
+  for (const [name, declaration] of Object.entries<Declaration<unknown>>(declarations)) {
+    const tool = toolkit.tools[name];
+    if (tool === undefined || !takesLinkedEnvironment(tool)) continue;
+    const remote = remoteCheckOf(declaration);
+    if (remote === undefined)
+      return yield* Effect.die(
+        `${name} takes a linked environment, but it acts as its calling thread, which is here.`,
+      );
+    const here = handlers[name] as (
+      params: object,
+    ) => Effect.Effect<unknown, Tool.Failure<Tools[keyof Tools]>>;
+    handlers[name] = ({ environmentId, ...params }: { readonly environmentId?: EnvironmentId }) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const target = PeerForwarding.remoteTarget(scope, environmentId);
+        if (target === undefined) return yield* here(params);
+        if (scope.linkedEnvironments === false) return yield* PeerForwarding.linkedEnvironmentsOff;
+        yield* (remote as RemoteCheck<typeof params>)(params);
+        if (Option.isNone(forwarding)) return yield* linksUnavailable;
+        return yield* forwarding.value.call(scope, tool, target, { ...params, environmentId });
+      });
+  }
+  return handlers as Toolkit.HandlersFrom<Tools>;
+});
+
 export const toLayer = <Tools extends Record<string, Tool.Any>, EX = never, RX = never>(
   toolkit: Toolkit.Toolkit<Tools>,
   build: Handlers<Tools> | Effect.Effect<Handlers<Tools>, EX, RX>,
-): HandlersLayer<Tools, EX, Exclude<RX, Scope.Scope>> =>
-  handlersLayer(
+): HandlersLayer<Tools, EX, Exclude<RX, Scope.Scope>> => {
+  // Checked as soon as they are given, so a forged declaration fails here.
+  const withDeclarations = (declarations: Handlers<Tools>) =>
+    routed(toolkit, declarations, checkedHandlers(declarations));
+  return handlersLayer(
     toolkit.toLayer(
-      Effect.isEffect(build)
-        ? Effect.map(build, checkedHandlers<Toolkit.HandlersFrom<Tools>>)
-        : checkedHandlers(build),
+      Effect.isEffect(build) ? Effect.flatMap(build, withDeclarations) : withDeclarations(build),
     ),
   );
+};

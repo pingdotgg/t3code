@@ -1,34 +1,41 @@
+import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { fileBasename } from "@t3tools/shared/path";
 import type { ThreadId } from "@t3tools/contracts";
-import { resolveMarkdownLinkPresentation } from "@t3tools/mobile-markdown-text/links";
-import type { MarkdownFileContextMenu } from "@t3tools/mobile-markdown-text/types";
+import { resolveMarkdownLinkPresentation } from "../../lib/markdownLinks";
+import type { MarkdownFileContextMenu } from "../../native/SelectableMarkdownText.types";
 import { hostPreviewMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 
 import {
   isAbsolutePath,
+  resolveFileLinkPath,
   resolveWorkspaceFilePath,
   resolveWorkspaceRelativeFilePath,
 } from "../files/filePath";
 
-export type FileChipAction = "copy-full-path" | "copy-relative-path" | "open-file" | "save";
-
 export interface FileChipTarget {
-  /** The host path, when the link is absolute or the workspace root is known. */
   readonly fullPath?: string;
-  /** The path inside the workspace, when the link resolves there. */
   readonly relativePath?: string;
 }
 
-/** Null when the link is not a file or resolves nowhere the feed can open, such as `~/x` or `../x`. */
+export function fileChipClipboardPath(
+  target: FileChipTarget,
+  action: "copy-full-path" | "copy-relative-path",
+): string | undefined {
+  const path = action === "copy-full-path" ? target.fullPath : target.relativePath;
+  return path === undefined ? undefined : formatFilePathForClipboard(path, target.fullPath);
+}
+
 export function resolveFileChipTarget(
   href: string,
   workspaceRoot: string | null | undefined,
 ): FileChipTarget | null {
   const presentation = resolveMarkdownLinkPresentation(href);
   if (presentation.kind !== "file") return null;
-  const relativePath = resolveWorkspaceRelativeFilePath(workspaceRoot, presentation.path);
-  const fullPath = isAbsolutePath(presentation.path)
-    ? presentation.path
+  const path = resolveFileLinkPath(workspaceRoot, presentation.path);
+  if (path === null) return null;
+  const relativePath = resolveWorkspaceRelativeFilePath(workspaceRoot, path);
+  const fullPath = isAbsolutePath(path)
+    ? path
     : workspaceRoot && relativePath
       ? resolveWorkspaceFilePath(workspaceRoot, relativePath)
       : undefined;
@@ -60,7 +67,6 @@ export function fileChipShareSource(target: FileChipTarget, threadId: ThreadId) 
     : null;
 }
 
-/** Saving is available for the media and documents the host asset endpoint can serve. */
 export function fileChipMenu(target: FileChipTarget): MarkdownFileContextMenu {
   return {
     title: target.fullPath ?? target.relativePath ?? "",

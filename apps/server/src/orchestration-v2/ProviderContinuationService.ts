@@ -50,13 +50,6 @@ function delegatedCompletionRetryKey(
   return `${request.threadId}:${completion.parentRunId}:${completion.generation}:${completion.messageId}`;
 }
 
-/**
- * Drains ProviderContinuationRequests and dispatches an internal
- * message.dispatch per request so the wake turn buffered by the adapter is
- * ingested as a normal run. Delegated completions are durable mailbox offers:
- * the orchestrator selects native steering or queued delivery under its thread
- * lock. Adapter-buffered continuations still queue behind active work.
- */
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const ids = yield* IdAllocator.IdAllocatorV2;
@@ -102,12 +95,9 @@ export const layer = Layer.effectDiscard(
               delegatedCompletionRetryKey(request, request.delegatedCompletion),
             );
           }
-          // No continuation turn will start to clear the adapter's sticky offer.
           if (request.clearIfCurrent !== undefined) {
             yield* request.clearIfCurrent();
           } else if (request.dispatchIfCurrent !== undefined) {
-            // Backward compatibility for request producers without an explicit
-            // drop callback.
             yield* request.dispatchIfCurrent(Effect.void);
           }
           return;
@@ -126,31 +116,76 @@ export const layer = Layer.effectDiscard(
             fixtureName: "delegated-completion",
             commandName: "dispatch",
           });
-          yield* threads.dispatch({
-            type: "message.dispatch",
-            commandId,
-            threadId: request.threadId,
-            messageId: delivery.messageId,
-            text: delegatedCompletionText(delivery.taskIds),
-            attachments: [],
-            dispatchMode: { type: "queue_after_active" },
-            createdBy: "agent",
-            creationSource: "server",
-            delegatedCompletion: {
-              parentRunId: request.delegatedCompletion.parentRunId,
-              generation: delivery.generation,
-              taskIds: delivery.taskIds,
-            },
-          });
+          yield* threads
+            .dispatch({
+              type: "message.dispatch",
+              commandId,
+              threadId: request.threadId,
+              messageId: delivery.messageId,
+              text: delegatedCompletionText(delivery.taskIds),
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "agent",
+              creationSource: "server",
+              delegatedCompletion: {
+                parentRunId: request.delegatedCompletion.parentRunId,
+                generation: delivery.generation,
+                taskIds: delivery.taskIds,
+              },
+            })
+            .pipe(
+              Effect.catchTags({
+                ThreadManagementProviderInstanceDisabledError: (error) =>
+                  Effect.logInfo(
+                    "orchestration-v2.provider-continuation.delegated-completion-disabled",
+                    {
+                      threadId: request.threadId,
+                      projectId: error.projectId,
+                      instanceId: error.instanceId,
+                    },
+                  ).pipe(
+                    Effect.andThen(
+                      Effect.forEach(
+                        delivery.taskIds,
+                        (taskId) =>
+                          ids.allocate
+                            .command({
+                              fixtureName: "delegated-completion",
+                              commandName: "acknowledge-disabled",
+                            })
+                            .pipe(
+                              Effect.flatMap((ackCommandId) =>
+                                threads.dispatch({
+                                  type: "delegated_task.completion-delivery.acknowledge",
+                                  commandId: ackCommandId,
+                                  parentThreadId: request.threadId,
+                                  taskId,
+                                  observedByRunId: null,
+                                }),
+                              ),
+                            ),
+                        { discard: true },
+                      ),
+                    ),
+                    Effect.andThen(
+                      request.clearIfCurrent !== undefined
+                        ? request.clearIfCurrent()
+                        : request.dispatchIfCurrent !== undefined
+                          ? request.dispatchIfCurrent(Effect.void)
+                          : Effect.void,
+                    ),
+                  ),
+              }),
+            );
           yield* clearRetryAttempt(retryKey);
           return;
         }
-        // The ordinal is display metadata only: allocate.message appends a
-        // random UUID, so a stale projection read here cannot collide ids.
-        const messageId = yield* ids.allocate.message({
-          threadId: request.threadId,
-          ordinal: projection.messages.length + 1,
-        });
+        const messageId =
+          request.messageId ??
+          (yield* ids.allocate.message({
+            threadId: request.threadId,
+            ordinal: projection.messages.length + 1,
+          }));
         const commandId = CommandId.make(`provider-continuation:${messageId}`);
         const dispatch = threads.dispatch({
           type: "message.dispatch",
@@ -166,17 +201,36 @@ export const layer = Layer.effectDiscard(
           attachments: [],
           dispatchMode: { type: "queue_after_active" },
           createdBy: "agent",
-          // "provider" marks an adapter-buffered wake, which ClaudeAdapterV2
-          // detects to attach the buffered CLI output and drop this text. A
-          // message_text wake has no buffered output, so it must not carry that
-          // marker or the turn settles immediately having prompted nothing.
+          // Only buffered wakes use creationSource "provider"; Claude would drain an empty buffer instead of prompting message_text.
           creationSource: request.delivery === "message_text" ? "server" : "provider",
         });
+        // Catch after dispatchIfCurrent so adapters see raw failures first; clearIfCurrent is idempotent and covers others.
+        const logInstanceDisabled = (
+          error: ThreadManagementService.ThreadManagementProviderInstanceDisabledError,
+        ) =>
+          Effect.logInfo("orchestration-v2.provider-continuation.instance-disabled", {
+            threadId: request.threadId,
+            providerThreadId: request.providerThreadId,
+            projectId: error.projectId,
+            instanceId: error.instanceId,
+          }).pipe(
+            Effect.andThen(
+              request.clearIfCurrent !== undefined ? request.clearIfCurrent() : Effect.void,
+            ),
+          );
         if (request.dispatchIfCurrent === undefined) {
-          yield* dispatch;
+          yield* dispatch.pipe(
+            Effect.catchTags({
+              ThreadManagementProviderInstanceDisabledError: logInstanceDisabled,
+            }),
+          );
           return;
         }
-        yield* request.dispatchIfCurrent(dispatch);
+        yield* request.dispatchIfCurrent(dispatch).pipe(
+          Effect.catchTags({
+            ThreadManagementProviderInstanceDisabledError: logInstanceDisabled,
+          }),
+        );
       },
     );
 

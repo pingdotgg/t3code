@@ -1,3 +1,5 @@
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -330,7 +332,7 @@ it.effect("leaves a complete checkout when the turn start is cancelled during cr
               ),
           }),
           Layer.mock(ProjectService.ProjectService)({
-            getById: () => Effect.succeed(Option.some(project)),
+            getById: () => Effect.succeedSome(project),
             snapshot: Effect.succeed({
               projects: [project],
               updatedAt: "2026-01-01T00:00:00.000Z",
@@ -777,7 +779,7 @@ it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
           },
         ],
       } satisfies Project;
-      const nativePty = yield* NodePtyAdapter.make();
+      const nativePty = yield* Effect.provide(PtyAdapter.PtyAdapter, NodePtyAdapter.layer);
       let spawns = 0;
       const terminal = yield* TerminalManager.makeWithOptions({
         logsDir: path.join(scratch, "logs"),
@@ -798,7 +800,13 @@ it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         Effect.provideService(TerminalManager.TerminalManager, terminal),
         Effect.provideService(HostProcess.Environment, { ...process.env, SHELL: "/bin/bash" }),
         Effect.provide(
-          Layer.mergeAll(Layer.mock(ProjectService.ProjectService)({}), ServerSettings.layerTest()),
+          Layer.mergeAll(
+            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getThreadShell: () => Effect.succeed(null),
+            }),
+            ServerSettings.layerTest(),
+          ),
         ),
       );
       yield* Effect.gen(function* () {

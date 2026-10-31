@@ -1,4 +1,8 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import type {
   PullRequestCapabilities,
   PullRequestReaction,
@@ -13,43 +17,34 @@ import {
   type ProviderChangeRequestDetail,
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
+import { definition } from "../shared/definition.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
   comment: true,
-  actions: [
-    "merge",
-    "ready",
-    "draft",
-    "close",
-    "reopen",
-    "update-branch",
-    "enable-auto-merge",
-    "disable-auto-merge",
-  ],
-  // GitLab offers all three, though a project settles on one; `mergeCapabilities` narrows it.
+  actions: [...definition.changeRequestActions],
   mergeMethods: ["merge", "squash", "rebase"],
-  // Rebase alone: GitLab moves a stale branch onto its target by replaying it, and has nothing
-  // that merges the target back in the way GitHub's update button can. Declaring only what it
-  // does is what lets a request to merge the target in be refused instead of quietly rebasing.
+  // GitLab has no merge-target-into-source operation.
   updateMethods: ["rebase"],
   search: true,
   reactions: true,
-  // GitLab keeps a reader's viewed files in one browser's local storage, where nothing outside
-  // that browser can read or write them. So the marks made here are this environment's own: they
-  // follow the reader between the clients connected to it, but they are not the ones gitlab.com
-  // shows, and the surface says so rather than implying a review can be carried on from there.
+  // GitLab's viewed marks live in browser-local storage.
   viewedFiles: "environment",
   review: {
     inlineComment: true,
     reply: true,
     resolve: true,
-    // No "changes requested": GitLab has approval and unresolved discussions, and nothing that
-    // says a merge request has been reviewed and rejected.
+    // GitLab has no requested-changes verdict.
     verdicts: ["comment", "approve"],
   },
   reviewers: { request: true, listCandidates: true },
   edit: { changeRequest: true, comment: true },
+};
+
+const UNAVAILABLE_REQUIREMENT = {
+  missing:
+    "GitLab CLI (`glab`) is required to browse change requests on this host. Install it from https://gitlab.com/gitlab-org/cli and reload.",
+  unauthenticated: "GitLab CLI is not authenticated. Run `glab auth login` and retry.",
 };
 
 /**
@@ -64,26 +59,11 @@ const MERGE_ACTIONS: ReadonlySet<string> = new Set([
   "disable-auto-merge",
 ]);
 
-/**
- * What the signed-in account may do here. GitLab answers exactly one of these questions per
- * viewer, on the merge request itself: `user.can_merge`, which is why merging is the only thing
- * narrowed.
- *
- * The rest stay granted. GitLab's REST API reports the viewer's role on the project but never
- * whether they opened this merge request — and its author may close it, reopen it and move it in
- * and out of draft whatever their role, just as the author of a note may resolve the discussion
- * it started. Withholding those controls from the one person entitled to them is the worse of the
- * two mistakes, so they are offered and GitLab explains any refusal itself.
- *
- * Asking for a review is granted for the same reason: GitLab takes a reviewer set from the author
- * and from anyone with the Developer role, and states neither of those two facts here.
- */
+/** Authors may close/reopen/change draft state regardless of role; REST omits authorship. */
 export function gitLabViewerPermissions(input: {
   readonly viewerCanMerge: boolean;
 }): PullRequestViewerPermissions {
   return {
-    // Arming the merge and taking the arming back are the merge, deferred, so they answer to
-    // the same `can_merge` the merge itself does.
     actions: CAPABILITIES.actions.filter(
       (action) => !MERGE_ACTIONS.has(action) || input.viewerCanMerge,
     ),
@@ -95,8 +75,17 @@ export function gitLabViewerPermissions(input: {
   };
 }
 
-/** The CLI tags that mean the tool itself is unusable, rather than one request failing. */
-export function gitLabProviderFailure(
+/**
+ * One page view asks for the detail and then its checks within a second, and the poll that
+ * follows asks again. A minute keeps those to one `glab` call without hiding a pipeline for long;
+ * a refresh or a finished turn drops it sooner through `forgetChangeRequestReads`.
+ */
+const MERGE_REQUEST_DETAIL_TTL = Duration.minutes(1);
+/** A project's merge methods change in its settings, which nobody does between page views. */
+const PROJECT_MERGE_CAPABILITIES_TTL = Duration.minutes(15);
+const READ_CACHE_CAPACITY = 256;
+
+function gitLabProviderFailure(
   error: GitLabPullRequestCli.GitLabPullRequestCliError,
 ): PullRequestProviderFailure {
   if (error._tag === "GitLabCliUnavailableError") return { reason: "missing-tool" };
@@ -109,26 +98,126 @@ export function gitLabProviderFailure(
 export const make = Effect.gen(function* () {
   const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
+  // Keyed on the checkout as well: `glab` picks the host and the account to answer as from the
+  // checkout's remote and config, so two checkouts may read the same project as different people.
+  const mergeRequestDetails = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd, repository, number, host] = JSON.parse(key) as [string, string, number, string];
+      return cli.getMergeRequestDetail({ cwd, repository, number, host });
+    },
+    {
+      capacity: READ_CACHE_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? MERGE_REQUEST_DETAIL_TTL : Duration.zero),
+    },
+  );
+  const projectMergeCapabilities = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd, repository, host] = JSON.parse(key) as [string, string, string];
+      return cli.getProjectMergeCapabilities({ cwd, repository, host });
+    },
+    {
+      capacity: READ_CACHE_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? PROJECT_MERGE_CAPABILITIES_TTL : Duration.zero),
+    },
+  );
+
+  const detailKey = (input: {
+    readonly cwd: string;
+    readonly host: string;
+    readonly repository: string;
+    readonly number: number;
+  }) => JSON.stringify([input.cwd, input.repository, input.number, input.host]);
+  const mergeRequestDetail = (input: {
+    readonly cwd: string;
+    readonly host: string;
+    readonly repository: string;
+    readonly number: number;
+  }) => Cache.get(mergeRequestDetails, detailKey(input));
+
+  // Dropped on both sides, as the service does with its own reads: a read that starts while the
+  // write is in flight must not outlive it.
+  const writing =
+    <
+      I extends {
+        readonly cwd: string;
+        readonly host: string;
+        readonly repository: string;
+        readonly number: number;
+      },
+      A,
+      E,
+    >(
+      write: (input: I) => Effect.Effect<A, E>,
+    ) =>
+    (input: I): Effect.Effect<A, E> => {
+      const invalidate = Cache.invalidate(mergeRequestDetails, detailKey(input));
+      return invalidate.pipe(Effect.andThen(write(input)), Effect.ensuring(invalidate));
+    };
+
   const fail = (operation: string) => (error: GitLabPullRequestCli.GitLabPullRequestCliError) =>
     new PullRequestProviderError({
-      provider: "gitlab",
+      provider: SourceControlProviderKind.make("gitlab"),
       operation,
       ...gitLabProviderFailure(error),
       detail: error.detail,
       cause: error,
     });
 
-  const provider: PullRequestProviderApi = {
-    kind: "gitlab",
-    capabilities: CAPABILITIES,
+  // Optional endpoints may lose part of the activity, but an unusable CLI or account must
+  // reach the caller so it can report authentication failures and pause a throttled host.
+  const recoverRead = <A>(
+    read: Effect.Effect<A, GitLabPullRequestCli.GitLabPullRequestCliError>,
+    fallback: A,
+  ) =>
+    read.pipe(
+      Effect.catch((error) => {
+        const { reason } = gitLabProviderFailure(error);
+        return reason === "rate-limited" ||
+          reason === "unauthenticated" ||
+          reason === "missing-tool"
+          ? Effect.fail(error)
+          : Effect.succeed(fallback);
+      }),
+    );
 
-    getViewer: (input) =>
-      cli.getViewerUsername({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),
+  // REST omits line counts; the CLI recovers optional stats failures per batch.
+  const mergeRequestWithStats = (
+    input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly repository: string;
+      readonly number: number;
+    },
+    detail = cli.getMergeRequestDetail(input),
+  ) =>
+    Effect.all(
+      [
+        detail,
+        cli.listMergeRequestStats({ cwd: input.cwd, host: input.host, changeRequests: [input] }),
+      ],
+      {
+        concurrency: 2,
+      },
+    ).pipe(
+      Effect.map(([mergeRequest, [stat]]) =>
+        stat === undefined
+          ? mergeRequest
+          : { ...mergeRequest, additions: stat.additions, deletions: stat.deletions },
+      ),
+    );
+
+  const provider: PullRequestProviderApi = {
+    kind: SourceControlProviderKind.make("gitlab"),
+    capabilities: CAPABILITIES,
+    unavailableRequirement: UNAVAILABLE_REQUIREMENT,
+
+    getViewer: (input) => cli.getViewerUsername(input).pipe(Effect.mapError(fail("getViewer"))),
 
     listChangeRequests: (input) =>
       cli
         .listMergeRequests({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           state: input.state,
           involvement: input.involvement,
@@ -136,25 +225,40 @@ export const make = Effect.gen(function* () {
           limit: input.limit,
           query: input.query,
           cursor: input.cursor,
+          filters: input.filters,
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
-          // GitLab is asked for its merge requests by update, newest first, whether or not it is
-          // being carried on from — so every page it answers is one a cursor can continue.
           Effect.map((batch) => ({ ...batch, continues: true })),
         ),
 
+    getFileStats: (input) =>
+      cli.getMergeRequestFileStats(input).pipe(Effect.mapError(fail("getFileStats"))),
+
+    listChangeRequestStats: (input) =>
+      cli.listMergeRequestStats(input).pipe(Effect.mapError(fail("listChangeRequestStats"))),
+
     getChangeRequestChecks: (input) =>
-      cli.getMergeRequestDetail(input).pipe(
+      mergeRequestDetail(input).pipe(
         Effect.map(({ state, checks }) => ({ state, checks })),
         Effect.mapError(fail("getChangeRequestChecks")),
       ),
 
+    // Merge settings only affect the detail panel's actions.
+    getChangeRequestPreview: (input) =>
+      cli.getMergeRequestDetail(input).pipe(Effect.mapError(fail("getChangeRequestPreview"))),
+
+    getChangeRequestSummary: (input) =>
+      mergeRequestWithStats(input).pipe(Effect.mapError(fail("getChangeRequestSummary"))),
+
     getChangeRequest: (input) =>
       Effect.all(
         [
-          cli.getMergeRequestDetail(input),
-          cli.getProjectMergeCapabilities({ cwd: input.cwd, repository: input.repository }),
+          mergeRequestWithStats(input, mergeRequestDetail(input)),
+          Cache.get(
+            projectMergeCapabilities,
+            JSON.stringify([input.cwd, input.repository, input.host]),
+          ),
         ],
         { concurrency: 2 },
       ).pipe(
@@ -163,8 +267,7 @@ export const make = Effect.gen(function* () {
           ...mergeRequest,
           mergeCapabilities,
           viewerPermissions: gitLabViewerPermissions(mergeRequest),
-          // A GitLab too old to count the divergence says nothing here rather than "up to
-          // date": the banner is worth missing, and a wrong all-clear is not worth showing.
+          // Missing divergence counts mean unknown, not up to date.
           baseComparison:
             mergeRequest.divergedCommits === undefined
               ? "unknown"
@@ -180,21 +283,13 @@ export const make = Effect.gen(function* () {
     getChangeRequestActivity: (input) =>
       Effect.all(
         [
-          cli
-            .listNotes(input)
-            .pipe(Effect.orElseSucceed(() => ({ comments: [], truncated: true }))),
-          cli.listCommits(input).pipe(Effect.orElseSucceed(() => [])),
-          cli
-            .listDiscussions(input)
-            .pipe(Effect.orElseSucceed(() => ({ threads: [], truncated: true }))),
-          // The notes endpoint carries no award of any kind, so they are read alongside it. A
-          // failed read costs the conversation its reactions rather than its words.
-          cli.listReactions(input).pipe(
-            Effect.orElseSucceed(() => ({
-              reactions: [] as ReadonlyArray<PullRequestReaction>,
-              reactionsByNoteId: new Map<string, ReadonlyArray<PullRequestReaction>>(),
-            })),
-          ),
+          recoverRead(cli.listNotes(input), { comments: [], truncated: true }),
+          recoverRead(cli.listCommits(input), []),
+          recoverRead(cli.listDiscussions(input), { threads: [], truncated: true }),
+          recoverRead(cli.listReactions(input), {
+            reactions: [] as ReadonlyArray<PullRequestReaction>,
+            reactionsByNoteId: new Map<string, ReadonlyArray<PullRequestReaction>>(),
+          }),
         ],
         { concurrency: 4 },
       ).pipe(
@@ -205,9 +300,6 @@ export const make = Effect.gen(function* () {
             ...comment,
             reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
           })),
-          // GitLab reports no count of its own, so the walk's own total is the host's: the
-          // notes endpoint carries every comment on the merge request, including the ones
-          // written under a discussion, and it is read until GitLab runs out.
           commentCount: notes.comments.length,
           commentsTruncated: notes.truncated || discussions.truncated,
           reviewThreads: discussions.threads.map((thread) => ({
@@ -221,100 +313,151 @@ export const make = Effect.gen(function* () {
         })),
       ),
 
-    // The same read the detail takes it from, on its own: `user.can_merge` lives on the merge
-    // request, so there is no cheaper thing to ask GitLab.
+    // Straight from the host, never the shared read: this is what a write is refused or let
+    // through on, and access granted or withdrawn within the minute must count.
     getViewerPermissions: (input) =>
       cli
-        .getMergeRequestDetail(input)
+        .getMergeRequestDetail({ ...input, downstreamChecks: false })
         .pipe(Effect.mapError(fail("getViewerPermissions")), Effect.map(gitLabViewerPermissions)),
+
+    forgetChangeRequestReads: (scope) =>
+      Cache.keys(mergeRequestDetails).pipe(
+        Effect.flatMap((keys) =>
+          Effect.forEach(
+            Array.from(keys).filter((key) => {
+              if (scope === undefined) return true;
+              const [, repository, number] = JSON.parse(key) as [string, string, number];
+              return (
+                repository.toLowerCase() === scope.repository.toLowerCase() &&
+                (scope.number === undefined || number === scope.number)
+              );
+            }),
+            (key) => Cache.invalidate(mergeRequestDetails, key),
+            { discard: true },
+          ),
+        ),
+      ),
 
     getDiff: (input) => cli.getMergeRequestDiff(input).pipe(Effect.mapError(fail("getDiff"))),
 
-    // What each marked file is at the head, which is what tells a mark that still stands from one
-    // the branch has moved past. GitLab's own local-storage marks are keyed on the blob id too,
-    // so this stales at the same moment its web UI would.
+    getDiffFileContents: (input) =>
+      cli.getMergeRequestDiffFileContents(input).pipe(Effect.mapError(fail("getDiffFileContents"))),
+
     getFileRevisions: (input) =>
       cli.getFileRevisions(input).pipe(
         Effect.mapError(fail("getFileRevisions")),
         Effect.map((revisions) => ({ revisions })),
       ),
 
-    // Users only: GitLab requests a review of a person, and the groups that can stand in for one
-    // appear in approval rules rather than in a merge request's reviewers.
+    // MR reviewers are users; groups belong to approval rules.
     listReviewerCandidates: (input) =>
       cli
         .listReviewerCandidates({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
         })
         .pipe(Effect.mapError(fail("listReviewerCandidates"))),
 
-    setReviewerRequest: (input) =>
+    listRepositoryLabels: (input) =>
+      cli
+        .listProjectLabels({
+          cwd: input.cwd,
+          host: input.host,
+          repository: input.repository,
+          search: input.query,
+        })
+        .pipe(Effect.mapError(fail("listRepositoryLabels"))),
+
+    searchRepositoryAuthors: (input) =>
+      cli
+        .listProjectUsers({
+          cwd: input.cwd,
+          host: input.host,
+          repository: input.repository,
+          search: input.query,
+        })
+        .pipe(Effect.mapError(fail("searchRepositoryAuthors"))),
+
+    setReviewerRequest: writing((input) =>
       cli
         .setReviewerRequest({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           reviewers: input.reviewers,
           requested: input.requested,
         })
         .pipe(Effect.mapError(fail("setReviewerRequest"))),
+    ),
 
-    runAction: (input) =>
+    runAction: writing((input) =>
       cli
         .runMergeRequestAction({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           action: input.action,
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
         })
         .pipe(Effect.mapError(fail("runAction"))),
+    ),
 
-    updateChangeRequest: (input) =>
+    updateChangeRequest: writing((input) =>
       cli
         .updateMergeRequest({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           ...(input.title === undefined ? {} : { title: input.title }),
           ...(input.body === undefined ? {} : { description: input.body }),
         })
         .pipe(Effect.mapError(fail("updateChangeRequest"))),
+    ),
 
-    comment: (input) => cli.commentOnMergeRequest(input).pipe(Effect.mapError(fail("comment"))),
+    comment: writing((input) =>
+      cli.commentOnMergeRequest(input).pipe(Effect.mapError(fail("comment"))),
+    ),
 
-    // The kind is not read: every comment this provider hands out, positioned or not, carries a
-    // plain REST note id, and one endpoint rewrites both.
-    updateComment: (input) =>
+    updateComment: writing((input) =>
       cli
         .updateNote({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           noteId: input.commentId,
           body: input.body,
         })
         .pipe(Effect.mapError(fail("updateComment"))),
+    ),
 
-    submitReview: (input) => cli.submitReview(input).pipe(Effect.mapError(fail("submitReview"))),
+    submitReview: writing((input) =>
+      cli.submitReview(input).pipe(Effect.mapError(fail("submitReview"))),
+    ),
 
-    replyToThread: (input) =>
+    replyToThread: writing((input) =>
       cli
         .replyToDiscussion({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           discussionId: input.threadId,
           body: input.body,
         })
         .pipe(Effect.mapError(fail("replyToThread"))),
+    ),
 
-    setReaction: (input) =>
+    setReaction: writing((input) =>
       cli
         .setReaction({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           ...(input.subjectId === undefined ? {} : { noteId: input.subjectId }),
@@ -322,17 +465,20 @@ export const make = Effect.gen(function* () {
           reacted: input.reacted,
         })
         .pipe(Effect.mapError(fail("setReaction"))),
+    ),
 
-    setThreadResolution: (input) =>
+    setThreadResolution: writing((input) =>
       cli
         .setDiscussionResolution({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           discussionId: input.threadId,
           resolved: input.resolved,
         })
         .pipe(Effect.mapError(fail("setThreadResolution"))),
+    ),
   };
 
   return provider;

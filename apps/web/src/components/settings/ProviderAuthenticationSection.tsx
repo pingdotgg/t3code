@@ -27,7 +27,6 @@ import { RedactedSensitiveText } from "./RedactedSensitiveText";
 
 const ProviderAuthTerminal = lazy(() => import("./ProviderAuthTerminal"));
 
-/** All actions target the provider's environment, even when the browser is on another device. */
 export function ProviderAuthenticationSection({
   environmentId,
   environmentLabel,
@@ -76,7 +75,7 @@ export function ProviderAuthenticationSection({
       (provider.driver === "acpRegistry" && auth?.methods?.length === 0));
   const accountDescription = active
     ? auth?.phase === "starting"
-      ? "Starting sign-in…"
+      ? (auth.message ?? "Starting sign-in…")
       : auth?.phase === "verifying"
         ? "Checking your account…"
         : interaction?.type === "terminal"
@@ -136,12 +135,10 @@ export function ProviderAuthenticationSection({
   async function openBrowser() {
     if (!url || readOnly) return;
     const requiresConsent = interaction?.type === "browser" && interaction.requiresConsent;
-    // Browsers block tabs opened after an await, so the web build reserves one
-    // while the environment records consent.
+    // Reserve tabs before awaiting consent; browsers block later opens.
     const pending = requiresConsent && !window.desktopBridge ? window.open("", "_blank") : null;
     if (pending) pending.opener = null;
     try {
-      // Consent is checked on the environment before opening a provider URL locally.
       if (requiresConsent && !(await send({ type: "browser", action: "accept" }))) {
         pending?.close();
         return;
@@ -229,8 +226,8 @@ export function ProviderAuthenticationSection({
                       variant="ghost-muted"
                       disabled={disabled}
                       onClick={() => {
-                        // Copy inside the click so the clipboard keeps the user
-                        // activation; the link only works once consent is recorded.
+                        // Copy during the click to retain clipboard activation; consent must still be
+                        // recorded before use.
                         const copied = writeTextToClipboard(url, "Provider sign-in link");
                         void (async () => {
                           await copied;

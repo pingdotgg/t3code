@@ -19,7 +19,7 @@ const runNode = <A, E>(
 ) => effect.pipe(Effect.scoped, Effect.provide(NodeServices.layer), Effect.runPromise);
 
 describe("Cursor skills", () => {
-  it("discovers recursive project skills with project precedence", async () =>
+  it("discovers project, user, then built-in skills by precedence", async () =>
     await runNode(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -66,6 +66,10 @@ describe("Cursor skills", () => {
           "oversized",
           "x".repeat(1_000_001),
         );
+        const builtinRoot = path.join(userHome, ".cursor", "skills-cursor");
+        yield* writeSkill(builtinRoot, "loop", "---\ndescription: builtin loop\n---\n");
+        yield* writeSkill(builtinRoot, "review", "---\ndescription: builtin review\n---\n");
+        yield* writeSkill(builtinRoot, "ide-only", "---\nmetadata:\n  surfaces:\n    - ide\n---\n");
         yield* fileSystem.makeDirectory(path.join(userHome, ".codex"), { recursive: true });
         yield* fileSystem.writeFileString(
           path.join(userHome, ".codex", "skills"),
@@ -80,6 +84,13 @@ describe("Cursor skills", () => {
             scope: "project",
             enabled: true,
             userInvocable: false,
+          },
+          {
+            name: "loop",
+            description: "builtin loop",
+            path: path.join(builtinRoot, "loop", "SKILL.md"),
+            scope: "system",
+            enabled: true,
           },
           {
             name: "oversized",
@@ -99,6 +110,66 @@ describe("Cursor skills", () => {
         expect(
           (yield* probeCursorSkills(workspace, { HOME: userHome }).pipe(Effect.result))._tag,
         ).toBe("Failure");
+      }),
+    ));
+
+  it("skips a skill tree deeper than the limit instead of failing discovery", async () =>
+    await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDirectory = (prefix: string) =>
+          fileSystem
+            .makeTempDirectoryScoped({ directory: NodeOS.tmpdir(), prefix })
+            .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
+        const userHome = yield* tempDirectory("cursor-skills-home-");
+        const workspace = yield* tempDirectory("cursor-skills-workspace-");
+        const writeSkill = Effect.fn("writeCursorSkill")(function* (directory: string) {
+          yield* fileSystem.makeDirectory(directory, { recursive: true });
+          yield* fileSystem.writeFileString(path.join(directory, "SKILL.md"), "---\n---\n");
+        });
+        const userRoot = path.join(userHome, ".claude", "skills");
+        const atLimit = path.join(
+          userRoot,
+          "deep",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "deep-skill",
+        );
+
+        yield* writeSkill(path.join(workspace, ".agents", "skills", "review"));
+        yield* writeSkill(atLimit);
+        yield* writeSkill(path.join(atLimit, "below"));
+        yield* writeSkill(path.join(userRoot, "later"));
+
+        const expected = [
+          {
+            name: "deep-skill",
+            path: path.join(atLimit, "SKILL.md"),
+            scope: "user",
+            enabled: true,
+          },
+          {
+            name: "later",
+            path: path.join(userRoot, "later", "SKILL.md"),
+            scope: "user",
+            enabled: true,
+          },
+          {
+            name: "review",
+            path: path.join(workspace, ".agents", "skills", "review", "SKILL.md"),
+            scope: "project",
+            enabled: true,
+          },
+        ];
+        expect(yield* discoverCursorSkills(workspace, { HOME: userHome })).toEqual(expected);
+        expect(yield* probeCursorSkills(workspace, { HOME: userHome })).toEqual(expected);
       }),
     ));
 
@@ -131,9 +202,6 @@ describe("Cursor skills", () => {
             yield* fileSystem.writeFileString(path.join(directory, "SKILL.md"), contents);
           });
 
-          // A skill package managed in a config repo and installed by symlink.
-          // Its own SKILL.md must be discovered under the link name, but nothing
-          // below the target may be walked.
           yield* writeSkill(path.join(library, "shared-review"), "---\ndescription: shared\n---\n");
           yield* writeSkill(path.join(library, "shared-review", "hidden"), "---\n---\n");
           const root = path.join(workspace, ".cursor", "skills");

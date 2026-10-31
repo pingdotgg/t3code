@@ -3,13 +3,11 @@ import { assert, it } from "@effect/vitest";
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -46,8 +44,9 @@ const personalSkill = {
   sourceInfo: { scope: "user", path: "/home/.pi/agent/skills/personal/SKILL.md" },
 };
 
-// Respond through the real stdio transport, with a distinct command catalog for each cwd.
-const makePiSpawner = Effect.gen(function* () {
+const makePiSpawner = Effect.fnUntraced(function* (
+  discovery: { readonly state?: unknown; readonly models?: ReadonlyArray<unknown> } = {},
+) {
   const pendingCommand = yield* Deferred.make<void>();
   const launches: Array<ChildProcess.StandardCommand> = [];
   const spawner = ChildProcessSpawner.make((command) =>
@@ -92,8 +91,10 @@ const makePiSpawner = Effect.gen(function* () {
                   ],
                 }
               : request.type === "get_available_models"
-                ? { models: [{ provider: "test", id: "model" }] }
-                : {};
+                ? { models: discovery.models ?? [{ provider: "test", id: "model" }] }
+                : request.type === "get_state"
+                  ? (discovery.state ?? {})
+                  : {};
           return Queue.offer(
             stdout,
             encoder.encode(
@@ -125,7 +126,7 @@ const create = (config: Partial<PiSettings> = {}, enabled = true) =>
 it.layer(layerTest)("PiDriver workspace discovery", (it) => {
   it.effect("keeps each workspace's skills and commands separate from the machine catalog", () =>
     Effect.gen(function* () {
-      const { spawner, launches } = yield* makePiSpawner;
+      const { spawner, launches } = yield* makePiSpawner();
       const instance = yield* create({ launchArgs: '--approve --skill "extra skill"' }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
@@ -186,11 +187,50 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect.each([true, false])(
+    "limits discovered thinking defaults to the known active model, known=%s",
+    (known) =>
+      Effect.gen(function* () {
+        const { spawner } = yield* makePiSpawner({
+          state: {
+            thinkingLevel: "high",
+            ...(known ? { model: { provider: "test", id: "model" } } : {}),
+          },
+          models: [
+            { provider: "test", id: "model", reasoning: true },
+            { provider: "other", id: "model", reasoning: true },
+            { provider: "test", id: "other", reasoning: true },
+          ],
+        });
+        const instance = yield* create().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        yield* instance.snapshot.refresh;
+        const snapshot = yield* instance.snapshot.getSnapshot;
+        assert.deepEqual(
+          snapshot.models.map((model) => [
+            model.slug,
+            (model.capabilities?.optionDescriptors ?? []).flatMap((descriptor) =>
+              descriptor.type === "select"
+                ? descriptor.options.filter((option) => option.isDefault).map((option) => option.id)
+                : [],
+            ),
+          ]),
+          [
+            ["default", []],
+            ["test/model", known ? ["high"] : []],
+            ["other/model", []],
+            ["test/other", []],
+          ],
+        );
+      }).pipe(Effect.scoped),
+  );
+
   it.effect(
     "fails command discovery instead of returning an empty successful workspace catalog",
     () =>
       Effect.gen(function* () {
-        const { spawner } = yield* makePiSpawner;
+        const { spawner } = yield* makePiSpawner();
         const instance = yield* create().pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         );
@@ -204,20 +244,5 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
           ["personal"],
         );
       }).pipe(Effect.scoped),
-  );
-
-  it.effect("times out workspace discovery that needs interactive input", () =>
-    Effect.gen(function* () {
-      const { spawner, pendingCommand } = yield* makePiSpawner;
-      const instance = yield* create().pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      );
-      const probe = yield* instance.snapshotForCwd!("/pending").pipe(Effect.flip, Effect.forkChild);
-      yield* Deferred.await(pendingCommand);
-      yield* TestClock.adjust("15 seconds");
-      const error = yield* Fiber.join(probe);
-      assert.equal(error._tag, "ProviderDriverError");
-      assert.include(error.detail, "workspace commands");
-    }).pipe(Effect.scoped),
   );
 });

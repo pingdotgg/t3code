@@ -450,11 +450,13 @@ const make = Effect.gen(function* () {
       // Persist readiness before Git can leave a checkout behind. Each project
       // sharing this repository owns its setup; success for one cannot clear
       // another's pending work. Tokens distinguish recreations across restarts.
-      const token = yield* crypto.randomUUIDv4.pipe(
-        Effect.mapError((cause) =>
-          mutationError("run_setup", cause, { projectId: input.projectId, path: worktreePath }),
-        ),
-      );
+      const token = yield* crypto
+        .randomUUIDv4()
+        .pipe(
+          Effect.mapError((cause) =>
+            mutationError("run_setup", cause, { projectId: input.projectId, path: worktreePath }),
+          ),
+        );
       yield* Effect.forEach(new Set([...projectIds, input.projectId]), (projectId) =>
         Effect.gen(function* () {
           const filePath = yield* pendingSetupPath(projectId, worktreePath);

@@ -1,13 +1,4 @@
-/**
- * CursorSkills — workspace-aware discovery and native invocation for Cursor.
- *
- * Cursor discovers Agent Skills recursively from user and project roots but
- * its ACP command catalog only appears after opening a real session. Scanning
- * the same roots avoids starting an agent and its MCP servers just to populate
- * a composer menu.
- *
- * @module provider/Drivers/CursorSkills
- */
+// Scan skills without opening an ACP session and starting its MCP servers.
 
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import * as ByteSize from "effect/ByteSize";
@@ -129,8 +120,9 @@ function parseSkillFrontmatter(contents: string): CursorSkillFrontmatter | undef
 
 const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (input: {
   readonly directory: string;
-  readonly scope: "user" | "project";
+  readonly scope: "user" | "project" | "system";
   readonly budget: CursorSkillScanBudget;
+  readonly scannedRoots: Set<string>;
 }): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -138,6 +130,9 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
   if (input.budget.exhausted) return skills;
   const rootDirectory = yield* orUndefined(fileSystem.realPath(input.directory), input.budget);
   if (!rootDirectory) return skills;
+  // Symlinked roots may share a tree; do not charge its scan budget twice.
+  if (input.scannedRoots.has(rootDirectory)) return skills;
+  input.scannedRoots.add(rootDirectory);
   const visitedDirectories = new Set<string>();
 
   const visit = Effect.fn("visitCursorSkillDirectory")(function* (
@@ -153,9 +148,7 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
       return;
     }
     visitedDirectories.add(resolvedDirectory);
-    // A symlink whose target lives outside the root is a skill package
-    // boundary: read its own SKILL.md so linked skill libraries show up, but
-    // never walk the target tree.
+    // Outside-root symlinks expose only their own SKILL.md; never traverse the target tree.
     const insideRoot =
       resolvedDirectory === rootDirectory ||
       resolvedDirectory.startsWith(`${rootDirectory}${path.sep}`);
@@ -201,13 +194,12 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
         return;
       }
       input.budget.remainingEntries -= 1;
+      // Installed dependencies can exhaust the shared budget and hide unrelated skills.
+      if (entry === "node_modules") continue;
       const child = path.join(directory, entry);
       const info = yield* orUndefined(fileSystem.stat(child), input.budget);
       if (info?.type !== "Directory") continue;
-      if (depth >= MAX_SKILL_DEPTH) {
-        input.budget.exhausted = true;
-        return;
-      }
+      if (depth >= MAX_SKILL_DEPTH) continue;
       yield* visit(child, depth + 1);
     }
   });
@@ -231,7 +223,12 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
     { directory: path.join(base, ".codex", "skills"), scope },
     { directory: path.join(base, ".claude", "skills"), scope },
   ];
-  const roots = [...(cwd ? rootsBelow(cwd, "project") : []), ...rootsBelow(userHome, "user")];
+  const roots = [
+    ...(cwd ? rootsBelow(cwd, "project") : []),
+    ...rootsBelow(userHome, "user"),
+    // Cursor syncs its built-in skills here; same-named user and project skills win.
+    { directory: path.join(userHome, ".cursor", "skills-cursor"), scope: "system" as const },
+  ];
 
   const skillsByName = new Map<string, ServerProviderSkill>();
   const budget: CursorSkillScanBudget = {
@@ -240,9 +237,10 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
     exhausted: false,
     incomplete: false,
   };
+  const scannedRoots = new Set<string>();
   for (const root of roots) {
     if (budget.exhausted) break;
-    const skills = yield* discoverSkillsInRoot({ ...root, budget });
+    const skills = yield* discoverSkillsInRoot({ ...root, budget, scannedRoots });
     for (const skill of skills) {
       if (!skillsByName.has(skill.name)) skillsByName.set(skill.name, skill);
     }

@@ -1,7 +1,10 @@
+import { platform } from "node:process";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Semaphore from "effect/Semaphore";
+
+const leaseKey = (cwd: string) => (platform === "win32" ? cwd.toLowerCase() : cwd);
 
 const leases = new Map<string, { semaphore: Semaphore.Semaphore; users: number }>();
 
@@ -17,7 +20,7 @@ export const resolveWorkspaceLeasePath = Effect.fn("resolveWorkspaceLeasePath")(
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const missingSegments: string[] = [];
-  let ancestor = path.resolve(cwd);
+  let ancestor = cwd;
   while (true) {
     const real = yield* fs.realPath(ancestor).pipe(Effect.option);
     if (real._tag === "Some") return path.resolve(real.value, ...missingSegments);
@@ -37,15 +40,35 @@ export const withWorkspaceLease = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
   Effect.suspend(() => {
-    const lease = leases.get(cwd) ?? { semaphore: Semaphore.makeUnsafe(1), users: 0 };
-    leases.set(cwd, lease);
+    const key = leaseKey(cwd);
+    const lease = leases.get(key) ?? { semaphore: Semaphore.makeUnsafe(1), users: 0 };
+    leases.set(key, lease);
     lease.users++;
     return lease.semaphore.withPermit(effect).pipe(
       Effect.ensuring(
         Effect.sync(() => {
           lease.users--;
-          if (lease.users === 0) leases.delete(cwd);
+          if (lease.users === 0) leases.delete(key);
         }),
       ),
     );
   });
+
+export const acquireWorkspaceLease = Effect.fn("acquireWorkspaceLease")(function* (cwd: string) {
+  yield* Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      const key = leaseKey(cwd);
+      const lease = leases.get(key) ?? { semaphore: Semaphore.makeUnsafe(1), users: 0 };
+      leases.set(key, lease);
+      lease.users++;
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          lease.users--;
+          if (lease.users === 0) leases.delete(key);
+        }),
+      );
+      yield* restore(lease.semaphore.take(1));
+      yield* Effect.addFinalizer(() => lease.semaphore.release(1));
+    }),
+  );
+});

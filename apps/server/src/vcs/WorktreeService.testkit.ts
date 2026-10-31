@@ -1,3 +1,4 @@
+import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -61,6 +62,9 @@ export const makeHarness = () => {
     serverConfigLayer,
     Sqlite.layerMemory,
     WorktreeLifecycle.layer,
+    Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+      isLive: () => Effect.succeed(true),
+    }),
     ServerSettings.layerTest(),
     Layer.mock(GitManager.GitManager)({
       invalidateStatus: () => Effect.suspend(() => state.onRemoved),
@@ -75,6 +79,18 @@ export const makeHarness = () => {
         ),
     }),
     Layer.mock(ProjectionStore.ProjectionStoreV2)({
+      getThreadWorktreePaths: () =>
+        Effect.suspend(() => state.onThreadsRead).pipe(
+          Effect.map(() =>
+            state.threads.flatMap((thread) =>
+              thread.worktreePath === null
+                ? []
+                : [{ threadId: thread.id, worktreePath: thread.worktreePath }],
+            ),
+          ),
+        ),
+      getThreadShell: (id) =>
+        Effect.sync(() => state.threads.find((thread) => thread.id === id) ?? null),
       getShellSnapshot: (options) =>
         Effect.suspend(() => state.onThreadsRead).pipe(
           Effect.map(() => {

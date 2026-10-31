@@ -15,6 +15,7 @@ const OpenCodeTextGenerationOperation = Schema.Literals([
   "generatePrContent",
   "generateBranchName",
   "generateThreadTitle",
+  "generateReviewGuide",
 ]);
 
 const openCodeTextGenerationErrorContext = {
@@ -185,11 +186,18 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           ...(server.serverPassword !== undefined ? { serverPassword: server.serverPassword } : {}),
         });
         const session = yield* Effect.tryPromise({
-          try: () =>
-            client.session.create({
-              title: `T3 Code ${input.operation}`,
-              permission: [{ permission: "*", pattern: "*", action: "deny" }],
-            }),
+          try: (signal) =>
+            client.session.create(
+              {
+                title: `T3 Code ${input.operation}`,
+                // OpenCode Zen refuses free-model requests that carry no tools, so keep read.
+                permission: [
+                  { permission: "*", pattern: "*", action: "deny" },
+                  { permission: "read", pattern: "*", action: "allow" },
+                ],
+              },
+              { signal },
+            ),
           catch: (cause) =>
             new OpenCodeTextGenerationSessionRequestError({
               operation: input.operation,
@@ -214,20 +222,40 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
         };
 
         const result = yield* Effect.tryPromise({
-          try: () =>
-            client.session.prompt({
-              sessionID: session.data.id,
-              model: parsedModel,
-              ...(selectedAgent ? { agent: selectedAgent } : {}),
-              ...(selectedVariant ? { variant: selectedVariant } : {}),
-              parts: [{ type: "text", text: input.prompt }, ...fileParts],
-            }),
+          try: (signal) =>
+            client.session.prompt(
+              {
+                sessionID: session.data.id,
+                model: parsedModel,
+                ...(selectedAgent ? { agent: selectedAgent } : {}),
+                ...(selectedVariant ? { variant: selectedVariant } : {}),
+                parts: [{ type: "text", text: input.prompt }, ...fileParts],
+              },
+              { signal },
+            ),
           catch: (cause) =>
             new OpenCodeTextGenerationPromptRequestError({
               ...promptContext,
               cause,
             }),
-        });
+        }).pipe(
+          // Disconnecting the HTTP request does not stop work in a shared or external server.
+          Effect.onInterrupt(() =>
+            OpenCodeRuntime.runOpenCodeSdk("session.abort", (signal) =>
+              client.session.abort({ sessionID: session.data.id }, { signal }),
+            ).pipe(
+              Effect.interruptible,
+              Effect.timeout("10 seconds"),
+              Effect.catch(() =>
+                Effect.logWarning(
+                  "Failed to stop cancelled OpenCode text generation.",
+                  promptContext,
+                ),
+              ),
+              Effect.asVoid,
+            ),
+          ),
+        );
         const promptFailure = getOpenCodePromptFailure(result.data?.info?.error);
         if (promptFailure) {
           return yield* new OpenCodeTextGenerationPromptResponseError({
@@ -320,5 +348,8 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
     return yield* TextGenerationOperations.decodeJsonReply(input, "OpenCode", rawOutput);
   });
 
-  return TextGenerationOperations.fromRunner("OpenCodeTextGeneration", runOpenCodeJson);
+  return TextGenerationOperations.fromRunner(
+    "OpenCodeTextGeneration",
+    TextGenerationOperations.withoutInvestigation("OpenCode", runOpenCodeJson),
+  );
 });

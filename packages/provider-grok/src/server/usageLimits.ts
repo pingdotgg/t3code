@@ -31,6 +31,7 @@ const GrokUsageResponse = Schema.Struct({
       currentPeriod: Schema.optional(
         Schema.Struct({
           type: Schema.optional(Schema.String),
+          start: Schema.optional(Schema.Unknown),
           end: Schema.optional(Schema.String),
         }),
       ),
@@ -38,25 +39,47 @@ const GrokUsageResponse = Schema.Struct({
   ),
 });
 
+function parsePeriodBoundary(value: string | undefined) {
+  if (
+    !value ||
+    value !== value.trim() ||
+    !/^(?:\d{4}|[+-]\d{6})-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?|24:00(?::00(?:\.0+)?)?)(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.test(
+      value,
+    )
+  ) {
+    return Number.NaN;
+  }
+  // Date parsing can normalize impossible calendar dates instead of rejecting them.
+  const datePart = value.slice(0, value.indexOf("T"));
+  const date = DateTime.make(`${datePart}T00:00:00.000Z`);
+  if (Option.isNone(date)) return Number.NaN;
+  const parts = DateTime.toPartsUtc(date.value);
+  if (parts.month !== Number(datePart.slice(-5, -3)) || parts.day !== Number(datePart.slice(-2))) {
+    return Number.NaN;
+  }
+  return Date.parse(value);
+}
+
 export function grokUsageResponseToLimits(
   response: typeof GrokUsageResponse.Type,
   checkedAt: string,
 ) {
-  const usedPercent = response.config?.creditUsagePercent;
-  if (usedPercent === undefined || !Number.isFinite(usedPercent)) {
-    // A billing read that succeeded but carries no percentage is an account
-    // with nothing metered yet, not one that can never report: xAI omits the
-    // field entirely (rather than sending 0) until usage registers, then fills
-    // it in. Calling that `unsupported` would strand the account — the Limits
-    // view drops unsupported entries and deliberately mutes their notice, so a
-    // freshly signed-in Grok account would vanish with no explanation until it
-    // happened to be used, and `applyUsageLimitsUpdate` would refuse the
-    // mid-turn windows that could have recovered it.
-    return makeUsageLimits({ checkedAt, windows: [] });
-  }
   const period = response.config?.currentPeriod;
   const periodType = period?.type?.replace(/^USAGE_PERIOD_TYPE_/, "");
   const kind = periodType === "WEEKLY" ? "weekly" : periodType === "MONTHLY" ? "monthly" : "other";
+  let usedPercent = response.config?.creditUsagePercent;
+  if (
+    usedPercent === undefined &&
+    (kind === "weekly" || kind === "monthly") &&
+    typeof period?.start === "string" &&
+    parsePeriodBoundary(period?.start) < parsePeriodBoundary(period?.end)
+  ) {
+    // Grok omits a zero percentage while retaining the complete subscription period.
+    usedPercent = 0;
+  }
+  if (usedPercent === undefined || !Number.isFinite(usedPercent)) {
+    return makeUsageLimits({ checkedAt, windows: [] });
+  }
   const reset = period?.end ? DateTime.make(period.end) : Option.none();
   const window: ServerProviderUsageWindow = {
     id: "subscription",
@@ -68,10 +91,6 @@ export function grokUsageResponseToLimits(
   return makeUsageLimits({ checkedAt, windows: [window] });
 }
 
-/**
- * The grok.com login the CLI uses by default, or undefined when the CLI is
- * configured to pick another account, endpoint, or an API key.
- */
 const readGrokCredential = Effect.fn("readGrokCredential")(function* (
   environment: NodeJS.ProcessEnv,
 ) {
@@ -138,10 +157,6 @@ const readGrokCredential = Effect.fn("readGrokCredential")(function* (
   return credential?.auth_mode === "api_key" ? undefined : credential;
 });
 
-/**
- * Reads the default grok.com login once and reports its usage limits along with
- * its email, so the email always names the account whose quota was read.
- */
 export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
   environment: NodeJS.ProcessEnv = process.env,
 ) {
@@ -160,7 +175,6 @@ export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
   if (!token) {
     return { email, usageLimits: makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }) };
   }
-  // A failed quota request still knows which account it asked about.
   const usageLimits = yield* Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(

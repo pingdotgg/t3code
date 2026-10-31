@@ -1,4 +1,8 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
+import {
+  type SourceControlDefinition,
+  UNKNOWN_SOURCE_CONTROL_CLIENT,
+} from "@t3tools/client-runtime/source-control-clients";
 
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { readLocalApi } from "~/localApi";
@@ -7,20 +11,9 @@ import { toastManager } from "../ui/toast";
 
 export type PullRequestLinkContextMenuAction = "copy-link" | "open-external";
 
-/** Named for the host rather than "externally": the point is where you will land. */
-const OPEN_ON_HOST_LABELS: Partial<Record<string, string>> = {
-  github: "Open on GitHub",
-  gitlab: "Open on GitLab",
-  forgejo: "Open on Forgejo",
-  bitbucket: "Open on Bitbucket",
-  gitcafe: "Open on GitCafe",
-  "azure-devops": "Open on Azure DevOps",
-};
+export const openOnHostLabel = (host: SourceControlDefinition): string =>
+  host === UNKNOWN_SOURCE_CONTROL_CLIENT ? "Open on host" : `Open on ${host.label}`;
 
-export const openOnHostLabel = (provider: string): string =>
-  OPEN_ON_HOST_LABELS[provider] ?? "Open on host";
-
-/** Copy first: it is the reason to right-click a number rather than click it. */
 function pullRequestLinkContextMenuItems(
   openLabel: string,
 ): readonly ContextMenuItem<PullRequestLinkContextMenuAction>[] {
@@ -30,15 +23,6 @@ function pullRequestLinkContextMenuItems(
   ];
 }
 
-/**
- * The right-click on a change request's number. Everywhere else that number is written it is a
- * link, and the gesture that copies a link is the one hand reaches for — so without this the
- * platform's own edit menu opens over a control that has nothing to cut, paste or select.
- *
- * The host is named by the caller rather than guessed here: the same number belongs to GitHub,
- * GitLab, Bitbucket or Azure DevOps depending on where it was read, and the `url` the contract
- * carries is already whichever of them it came from.
- */
 export async function showPullRequestLinkContextMenu({
   url,
   openLabel,
@@ -54,8 +38,6 @@ export async function showPullRequestLinkContextMenu({
   try {
     action = await api.contextMenu.show(pullRequestLinkContextMenuItems(openLabel), position);
   } catch {
-    // A menu that could not be shown has already cost the reader their right-click; there is
-    // nothing to say about it that a second popup would not make worse.
     return;
   }
   try {

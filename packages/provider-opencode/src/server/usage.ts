@@ -1,10 +1,3 @@
-/**
- * Usage history for OpenCode, read from its SQLite databases and legacy JSON
- * message store under each data directory.
- *
- * @module provider-opencode/server/usage
- */
-
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
   totalTokens,
@@ -14,8 +7,8 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -36,7 +29,6 @@ function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-/** OpenCode stores uncached input and reasoning separately from input/output. */
 function parseOpenCodeMessage(
   source: string,
   fallback: {
@@ -76,8 +68,7 @@ function parseOpenCodeMessage(
     model,
     sessionId: fallback.sessionId || text(message.sessionID),
     totals,
-    // OpenCode writes zero for models without a known rate, including paid
-    // subscription models. Let the shared price table estimate those records.
+    // OpenCode uses zero for unknown rates, including paid subscriptions; let shared pricing estimate.
     reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) && cost > 0 ? cost : null,
     speed: "standard",
     dedupeKey: id ? `opencode:${id}` : null,
@@ -91,16 +82,25 @@ export interface OpenCodeUsageReadResult {
 }
 
 const isNotFound = (cause: PlatformError.PlatformError) => cause.reason._tag === "NotFound";
+const MESSAGE_PAGE_SIZE = 64;
 
-/** A regular file or directory, never a symlink to one. */
-const entryType = Effect.fn("entryType")(function* (path: string) {
+const isSymbolicLink = Effect.fnUntraced(function* (path: string) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const link = yield* Effect.exit(fileSystem.readLink(path));
-  if (Exit.isSuccess(link)) return "SymbolicLink" as const;
-  return (yield* fileSystem.stat(path)).type;
+  return yield* Effect.isSuccess(fileSystem.readLink(path));
 });
 
-/** Reads current SQLite and pre-migration JSON stores without modifying either. */
+const entryInfo = Effect.fn("entryInfo")(function* (path: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  if (yield* isSymbolicLink(path))
+    return { type: "SymbolicLink" as const, mtime: Option.none<Date>() };
+  return yield* fileSystem.stat(path);
+});
+
+const LEGACY_STAT_CONCURRENCY = 4;
+
+// Batch stats so huge directories do not stay in memory.
+const LEGACY_STAT_BATCH = 256;
+
 export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
   root: string,
   sinceMs: number,
@@ -124,10 +124,9 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
     Effect.flatMap((names) =>
       Effect.filter(
         names.filter((name) => /^opencode(?:-[a-zA-Z0-9_-]+)?\.db$/.test(name)),
-        // One database removed between listing and stat must not hide the rest.
         (name) =>
-          entryType(path.join(root, name)).pipe(
-            Effect.map((type) => type === "File"),
+          entryInfo(path.join(root, name)).pipe(
+            Effect.map((info) => info.type === "File"),
             Effect.catchTags({
               PlatformError: (cause) =>
                 isNotFound(cause) ? Effect.succeed(false) : Effect.fail(cause),
@@ -153,8 +152,7 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
     files.push(file);
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      // A busy live provider should fail this source promptly rather than
-      // stalling the server while SQLite waits for its writer.
+      // Fail promptly on live-writer locks instead of stalling the server.
       yield* sql.unsafe("PRAGMA busy_timeout = 100");
       const tables = new Set(
         (yield* sql.unsafe<{ readonly name: unknown }>(
@@ -172,26 +170,46 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
         const timestamp = columns.has("time_created") ? "time_created" : "NULL";
         const predicates = table === "session_message" ? ["type = 'assistant'"] : [];
         if (timestamp !== "NULL") predicates.push("time_created >= ?");
-        const where = predicates.length > 0 ? ` WHERE ${predicates.join(" AND ")}` : "";
-        const rows = yield* sql.unsafe<{
-          readonly id: unknown;
-          readonly session_id: unknown;
-          readonly data: unknown;
-          readonly created: unknown;
+        predicates.push("rowid > ?", "rowid <= ?");
+        const [range] = yield* sql.unsafe<{
+          readonly first_row_id: number | null;
+          readonly last_row_id: number | null;
         }>(
-          `SELECT id, session_id, data, ${timestamp} AS created FROM ${table}${where}`,
-          timestamp === "NULL" ? [] : [sinceMs],
+          `SELECT (SELECT MIN(rowid) FROM ${table}) AS first_row_id, (SELECT MAX(rowid) FROM ${table}) AS last_row_id`,
         );
-        for (const [index, row] of rows.entries()) {
-          append(
-            file.records,
-            parseOpenCodeMessage(text(row.data), {
-              id: text(row.id),
-              sessionId: text(row.session_id),
-              ...(typeof row.created === "number" ? { timestampMs: row.created } : {}),
-            }),
-          );
-          if (index % 256 === 255) yield* Effect.yieldNow;
+        const firstRowId = range?.first_row_id;
+        const lastRowId = range?.last_row_id;
+        if (typeof firstRowId !== "number" || typeof lastRowId !== "number") continue;
+        // StatementSync.all materializes results; page by rowid and exclude mid-scan appends.
+        // Omit tracing because large histories require thousands of statements.
+        for (let after = firstRowId - 1; after < lastRowId; after += MESSAGE_PAGE_SIZE) {
+          const rows = yield* sql
+            .unsafe<{
+              readonly id: unknown;
+              readonly session_id: unknown;
+              readonly data: unknown;
+              readonly created: unknown;
+            }>(
+              `SELECT id, session_id, data, ${timestamp} AS created
+               FROM ${table} WHERE ${predicates.join(" AND ")} ORDER BY rowid`,
+              [
+                ...(timestamp === "NULL" ? [] : [sinceMs]),
+                after,
+                Math.min(after + MESSAGE_PAGE_SIZE, lastRowId),
+              ],
+            )
+            .pipe(Effect.withTracerEnabled(false));
+          for (const row of rows) {
+            append(
+              file.records,
+              parseOpenCodeMessage(text(row.data), {
+                id: text(row.id),
+                sessionId: text(row.session_id),
+                ...(typeof row.created === "number" ? { timestampMs: row.created } : {}),
+              }),
+            );
+          }
+          yield* Effect.yieldNow;
         }
       }
     }).pipe(
@@ -205,37 +223,60 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
     );
   }
 
-  // Do not follow symlinks, including cycles. Database records win over their
-  // old JSON copies when OpenCode has migrated a store in place.
   const directories = [path.join(root, "storage", "message")];
   while (directories.length > 0) {
     const directory = directories.pop()!;
     yield* Effect.gen(function* () {
-      for (const name of yield* fileSystem.readDirectory(directory)) {
-        const entry = path.join(directory, name);
-        const type = yield* entryType(entry).pipe(
-          Effect.catchTags({
-            PlatformError: (cause) =>
-              isNotFound(cause) ? Effect.succeed(null) : Effect.fail(cause),
-          }),
+      const names = yield* fileSystem.readDirectory(directory);
+      for (let start = 0; start < names.length; start += LEGACY_STAT_BATCH) {
+        const batch = names.slice(start, start + LEGACY_STAT_BATCH);
+        const entries = batch.map((name) => path.join(directory, name));
+        // stat follows symlinks; avoid expensive readLink failures unless link identity matters.
+        const infos = yield* Effect.forEach(
+          entries,
+          (entry) =>
+            fileSystem.stat(entry).pipe(
+              Effect.catchTags({
+                PlatformError: (cause) =>
+                  isNotFound(cause)
+                    ? Effect.succeed(null)
+                    : isSymbolicLink(entry).pipe(
+                        Effect.flatMap((link) =>
+                          link ? Effect.succeed(null) : Effect.fail(cause),
+                        ),
+                      ),
+              }),
+              Effect.exit,
+            ),
+          { concurrency: LEGACY_STAT_CONCURRENCY },
         );
-        if (type === "Directory") {
-          directories.push(entry);
-        } else if (type === "File" && name.endsWith(".json")) {
-          found = true;
-          const id = name.slice(0, -5);
-          if (seen.has(`opencode:${id}`)) continue;
-          const file = { path: entry, records: [] as UsageRecord[] };
-          files.push(file);
-          yield* fileSystem.readFileString(entry).pipe(
-            Effect.map((source) => append(file.records, parseOpenCodeMessage(source, { id }))),
-            Effect.catchTags({
-              PlatformError: (cause) => {
-                if (!isNotFound(cause)) error = true;
-                return Effect.void;
-              },
-            }),
-          );
+        for (const [index, name] of batch.entries()) {
+          const entry = entries[index]!;
+          const info = yield* infos[index]!;
+          if (info?.type === "Directory") {
+            if (!(yield* isSymbolicLink(entry))) directories.push(entry);
+          } else if (info?.type === "File" && name.endsWith(".json")) {
+            const id = name.slice(0, -5);
+            // Messages cannot postdate file mtime; older files hold no in-window usage.
+            const skip =
+              seen.has(`opencode:${id}`) ||
+              Option.exists(info.mtime, (mtime) => mtime.getTime() < sinceMs);
+            if (found && skip) continue;
+            if (yield* isSymbolicLink(entry)) continue;
+            found = true;
+            if (skip) continue;
+            const file = { path: entry, records: [] as UsageRecord[] };
+            files.push(file);
+            yield* fileSystem.readFileString(entry).pipe(
+              Effect.map((source) => append(file.records, parseOpenCodeMessage(source, { id }))),
+              Effect.catchTags({
+                PlatformError: (cause) => {
+                  if (!isNotFound(cause)) error = true;
+                  return Effect.void;
+                },
+              }),
+            );
+          }
         }
       }
     }).pipe(
@@ -250,14 +291,11 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
   return { files, missing: !found && !error, error };
 });
 
-/**
- * The data directories to read: `OPENCODE_DATA_DIR` (comma-separated) or the
- * XDG default, canonicalized so aliases count once.
- */
-const resolveOpenCodeDataDirs = Effect.fn("resolveOpenCodeDataDirs")(function* () {
+const resolveOpenCodeDataDirs = Effect.fn("resolveOpenCodeDataDirs")(function* (
+  environment: NodeJS.ProcessEnv,
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const environment = yield* HostProcess.Environment;
   const homeDirectory = yield* HostProcess.HomeDirectory;
   const roots = environment["OPENCODE_DATA_DIR"]
     ?.split(",")
@@ -285,8 +323,11 @@ export type OpenCodeUsageReaderEnv = FileSystem.FileSystem | Path.Path;
 export const openCodeUsageReader: ProviderUsageReader<OpenCodeSettings, OpenCodeUsageReaderEnv> = {
   kind: "scan",
   provider: "opencode",
-  scan: Effect.fn("openCodeUsageReader.scan")(function* ({ windowStartMs }) {
-    const roots = yield* resolveOpenCodeDataDirs();
+  scan: Effect.fn("openCodeUsageReader.scan")(function* ({ instances, windowStartMs }) {
+    const roots = new Set<string>();
+    for (const instance of instances) {
+      for (const root of yield* resolveOpenCodeDataDirs(instance.environment)) roots.add(root);
+    }
     return yield* Effect.forEach(
       roots,
       (dir) =>

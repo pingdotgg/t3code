@@ -1,11 +1,11 @@
-import { createContext, useContext } from "react";
+import { createContext, useContext, useState } from "react";
 import { Pressable, View } from "react-native";
 import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useMediaActions } from "../state/mediaActions";
-import { AppText } from "./AppText";
-import { SymbolView } from "./AppSymbol";
+import { AppText } from "./ui/AppText";
+import { SymbolView } from "./ui/AppSymbol";
 import type { ResolvedFilePreviewSource } from "./FilePreviewModal.types";
 import { MediaActionsMenu } from "./MediaActionsMenu";
 import { MediaSourceCaption } from "./MediaSourceCaption";
@@ -17,15 +17,16 @@ type MediaImagePreviewProps = {
 
 const ImagePreviewContext = createContext<MediaImagePreviewProps | null>(null);
 
-function ImagePreviewHeader() {
+function ImagePreviewHeader(header: { readonly imageIndex: number }) {
   const props = useContext(ImagePreviewContext)!;
+  const source = props.source.gallery?.[header.imageIndex] ?? props.source;
   const insets = useSafeAreaInsets();
-  const mediaActions = useMediaActions(props.source.actionsSource, props.onRequestClose);
+  const mediaActions = useMediaActions(source.actionsSource, props.onRequestClose);
   return (
     <View className="bg-black/70" style={{ paddingTop: insets.top }}>
       <View className="flex-row items-center gap-2 px-3">
         <AppText className="flex-1 text-base text-white" numberOfLines={2}>
-          {props.source.name ?? "Image"}
+          {source.name ?? "Image"}
         </AppText>
         <MediaActionsMenu media={mediaActions} inModal />
         <Pressable
@@ -42,13 +43,20 @@ function ImagePreviewHeader() {
   );
 }
 
-/** Android keeps media actions in its in-app image viewer. iOS uses Quick Look. */
 export function MediaImagePreview(props: MediaImagePreviewProps) {
+  const gallery = props.source.gallery ?? [props.source];
+  // Freeze imageIndex: react-native-image-viewing remounts the Modal and replays its fade when it changes.
+  const [initialIndex] = useState(() =>
+    Math.max(
+      0,
+      gallery.findIndex((item) => item.uri === props.source.uri),
+    ),
+  );
   return (
     <ImagePreviewContext value={props}>
       <ImageViewing
-        images={[{ uri: props.source.uri }]}
-        imageIndex={0}
+        images={gallery.map((item) => ({ uri: item.uri }))}
+        imageIndex={initialIndex}
         visible
         presentationStyle="fullScreen"
         onRequestClose={props.onRequestClose}

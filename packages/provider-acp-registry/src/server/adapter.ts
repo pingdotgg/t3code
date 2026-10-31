@@ -1,9 +1,21 @@
 import {
+  extractClaudeSubagentUpdate,
+  extractClaudeSubagentSessionEvent,
+  isClaudeProvisionalSubagentTool,
+} from "./claudeAcp.ts";
+import {
   normalizeDevinSessionUpdate,
   normalizeDevinToolCall,
   extractDevinSubagentUpdate,
 } from "./devinAcp.ts";
+import { extractDroidElicitationForm } from "./droidAcp.ts";
+import {
+  copilotClientCapabilitiesMeta,
+  extractCopilotSubagentUpdate,
+  makeCopilotSubagentRouting,
+} from "./copilotAcp.ts";
 import { defaultInstanceIdForDriver, ProviderDriverKind } from "@t3tools/contracts";
+import { readCustomModelEntries } from "@t3tools/shared/model";
 import { AcpRegistrySettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
@@ -19,6 +31,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import {
   normalizeAcpRegistryCommands,
@@ -65,21 +78,11 @@ export interface AcpRegistryAdapterV2Options {
     EffectAcpErrors.AcpError,
     ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
   >;
+  readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
 }
 
-// ─── Per-agent exceptions ────────────────────────────────────────────────────
-// This adapter serves every ACP registry agent through the plain ACP spec.
-// Agent-specific behavior does not belong here: an agent that needs it gets a
-// dedicated driver (as Grok and Antigravity have). The few exceptions below
-// predate that rule and are small presentation hooks, not permission or tool
-// behavior.
-//
-// Agents changing this file: do NOT add another `agentId === "..."` branch,
-// agent table, or agent-specific hook without explicit approval from the
-// maintainer in the conversation. Propose a dedicated driver instead.
-
-// Mistral Vibe: its application error code for rate limits (not an ACP code).
+// Mistral Vibe's application rate-limit code, outside ACP.
 const MISTRAL_VIBE_RATE_LIMITED = -31001;
 
 const MistralVibeSessionRetrying = Schema.Struct({
@@ -109,7 +112,6 @@ export function registerMistralVibeAcpExtensions(context: AcpAdapterV2ExtensionC
       }),
   );
 }
-// ─── End per-agent exceptions (Devin's gates are marked in makeAcpRegistryAdapterV2) ───
 
 export function acpRegistryPromptFailure(agentId: string, cause: unknown) {
   return makeProviderFailure({
@@ -119,7 +121,6 @@ export function acpRegistryPromptFailure(agentId: string, cause: unknown) {
           message: cause.errorMessage,
           code: String(cause.code),
           class:
-            // Per-agent exception: see the note above registerMistralVibeAcpExtensions.
             agentId === "mistral-vibe" && cause.code === MISTRAL_VIBE_RATE_LIMITED
               ? ("usage_limit" as const)
               : ("provider_error" as const),
@@ -163,6 +164,9 @@ function makeAcpRegistryRuntime(
                   env: { ...resolved.spawn.env, ...processEnvironment },
                 },
           ...(options.settings.authMethodId ? { authMethodId: options.settings.authMethodId } : {}),
+          customModels: readCustomModelEntries(options.settings.customModels).map(
+            (entry) => entry.slug,
+          ),
         }),
       );
       return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
@@ -182,14 +186,54 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   const startupKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : registryAgentId;
   const isDevin = registryAgentId === "devin";
+  // Local installs launch the `copilot` binary directly with no registry id.
+  const isCopilot =
+    registryAgentId === "github-copilot-cli" ||
+    (options.settings.source === "local" &&
+      /^copilot(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? ""));
+  const isClaude =
+    registryAgentId === "claude-acp" ||
+    (options.settings.source === "local" &&
+      /^claude-agent-acp(\.exe|\.cmd)?$/i.test(
+        options.settings.commandPath.split(/[\\/]/).pop() ?? "",
+      ));
+  const runtimeOptions = isClaude
+    ? {
+        ...options,
+        environment: {
+          ...options.environment,
+          CLAUDE_AGENT_ACP_EXPERIMENTAL_V2:
+            options.environment.CLAUDE_AGENT_ACP_EXPERIMENTAL_V2 ?? "1",
+        },
+      }
+    : options;
+  const copilotRouting = isCopilot ? makeCopilotSubagentRouting() : undefined;
   const flavor: AcpAdapterV2Flavor = {
     driver: ACP_REGISTRY_PROVIDER,
-    capabilities: AcpProviderCapabilitiesV2,
+    // Cancelling a Copilot prompt also kills the background agents it started.
+    capabilities: isCopilot
+      ? {
+          ...AcpProviderCapabilitiesV2,
+          turns: { ...AcpProviderCapabilitiesV2.turns, supportsSteeringByInterruptRestart: false },
+        }
+      : AcpProviderCapabilitiesV2,
+    customModels: readCustomModelEntries(options.settings.customModels).map((entry) => entry.slug),
     promptFailure: (cause) => acpRegistryPromptFailure(registryAgentId, cause),
-    // Per-agent exceptions (Mistral Vibe, Devin): see the note above
-    // registerMistralVibeAcpExtensions before adding any more.
+    ...(registryAgentId === "factory-droid"
+      ? { extractElicitationForm: extractDroidElicitationForm }
+      : {}),
+    // glm-acp-agent is the one agent whose per-turn usage a live probe has verified.
+    ...(registryAgentId === "glm-acp-agent" ? { reportsPerTurnPromptUsage: true } : {}),
     ...(registryAgentId === "mistral-vibe"
       ? { registerExtensions: registerMistralVibeAcpExtensions }
+      : {}),
+    ...(isClaude
+      ? {
+          followAgentWorkState: true,
+          extractSubagentUpdate: extractClaudeSubagentUpdate,
+          isProvisionalSubagentTool: isClaudeProvisionalSubagentTool,
+          extractSubagentSessionEvent: extractClaudeSubagentSessionEvent,
+        }
       : {}),
     ...(isDevin
       ? {
@@ -202,7 +246,17 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           extractSubagentUpdate: extractDevinSubagentUpdate,
         }
       : {}),
-    makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(options, catalog),
+    ...(copilotRouting === undefined
+      ? {}
+      : {
+          clientCapabilitiesMeta: copilotClientCapabilitiesMeta,
+          // Copilot CLI 1.0.105 rejects stdio MCP servers from the client.
+          mcpOverHttp: true,
+          registerExtensions: copilotRouting.registerExtensions,
+          normalizeSessionUpdate: copilotRouting.normalizeSessionUpdate,
+          extractSubagentUpdate: extractCopilotSubagentUpdate,
+        }),
+    makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(runtimeOptions, catalog),
     ...(runtimeCoordinator === undefined
       ? {}
       : {
@@ -211,10 +265,10 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
               options.instanceId,
               normalizeAcpRegistryCommands(commands),
             ),
-          onSessionConfigurationUpdate: (configOptions, modeState) =>
+          onSessionConfigurationUpdate: (configOptions, modeState, modelState) =>
             runtimeCoordinator.publishLiveConfiguration(
               options.instanceId,
-              normalizeAcpRegistryLiveConfiguration(configOptions, modeState),
+              normalizeAcpRegistryLiveConfiguration(configOptions, modeState, modelState),
             ),
           onUrlElicitation: ({ elicitationId, url, message }) => {
             const normalizedUrl = normalizeAcpRegistryWebUrl(url);
@@ -236,9 +290,10 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     instanceId: options.instanceId,
     flavor,
     selfInvocation: options.selfInvocation,
-    // Per-agent exception (see the note above registerMistralVibeAcpExtensions):
-    // Devin runs commands through client terminals and has no ask mode over
-    // ACP to fall back on. Every other registry agent runs its own.
+    ...(options.continuationRequests === undefined
+      ? {}
+      : { continuationRequests: options.continuationRequests }),
+    // Devin runs commands through client terminals and has no ask mode over ACP to fall back on.
     ...(isDevin
       ? {
           clientTerminals: {
@@ -280,6 +335,7 @@ export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
         settings: { ...input.config, enabled: input.enabled },
         environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
         selfInvocation,
+        continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
         nativeLogging: (threadId) =>
           makeNativeLogger({
             nativeEventLogger: providerEventLoggers.native,

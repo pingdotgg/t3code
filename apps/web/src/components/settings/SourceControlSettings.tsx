@@ -1,3 +1,4 @@
+import { useNowMinute } from "../../hooks/useNowMinute";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { ChevronDownIcon, GitBranchIcon, RefreshCwIcon } from "lucide-react";
 import { Link } from "@tanstack/react-router";
@@ -6,9 +7,7 @@ import * as Option from "effect/Option";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import type {
-  BackgroundActivitySettings,
   EnvironmentId,
-  SourceControlProviderKind,
   SourceControlDiscoveryResult,
   SourceControlProviderAuth,
   SourceControlProviderDiscoveryItem,
@@ -16,13 +15,6 @@ import type {
   VcsDiscoveryItem,
   WorktreeInfo,
 } from "@t3tools/contracts";
-import {
-  getBackgroundActivityBaseProfile,
-  getBackgroundActivityPresetSettings,
-  resolveServerBackgroundActivitySettings,
-} from "@t3tools/shared/backgroundActivitySettings";
-
-import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { cn } from "../../lib/utils";
@@ -71,57 +63,31 @@ import {
   EmptyTitle,
 } from "../ui/empty";
 import { Skeleton } from "../ui/skeleton";
-import {
-  NumberField,
-  NumberFieldDecrement,
-  NumberFieldGroup,
-  NumberFieldIncrement,
-  NumberFieldInput,
-} from "../ui/number-field";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
-import {
-  AzureDevOpsIcon,
-  BitbucketIcon,
-  GitCafeIcon,
-  GitHubIcon,
-  GitIcon,
-  GitLabIcon,
-  ForgejoIcon,
-  JujutsuIcon,
-  type Icon,
-} from "../Icons";
 import { ProjectFavicon } from "../ProjectFavicon";
-import { BitbucketCredentialsSettings } from "./BitbucketCredentialsSettings";
-import { GitHubAccountSettings } from "./GitHubAccountSettings";
-import { GitHubTokenSettings } from "./GitHubTokenSettings";
+import { GitIcon, JujutsuIcon, type Icon } from "../Icons";
+import { SourceControlHostSettings } from "./SourceControlHostSettings";
+import { SourceControlAccountSettings } from "./SourceControlAccountSettings";
+import { SourceControlAppSignInSettings } from "./SourceControlAppSignInSettings";
+import { SourceControlTokenSettings } from "./SourceControlTokenSettings";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import {
-  PolicyTooltip,
-  SettingResetButton,
   SettingsPageContainer,
   SettingsSearchTarget,
   SettingsSection,
-  useRelativeTimeTick,
   useSettingsSearchTargetId,
 } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { searchableSetting, sourceControlHostSettingsSearchId } from "./settingsSearch";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlIcon } from "~/sourceControlPresentation";
 
 const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
   versionControlSystems: [],
   sourceControlProviders: [],
-};
-
-const SOURCE_CONTROL_PROVIDER_ICONS: Partial<Record<SourceControlProviderKind, Icon>> = {
-  github: GitHubIcon,
-  gitlab: GitLabIcon,
-  forgejo: ForgejoIcon,
-  "azure-devops": AzureDevOpsIcon,
-  bitbucket: BitbucketIcon,
-  gitcafe: GitCafeIcon,
 };
 
 const VCS_ICONS: Partial<Record<VcsDriverKind, Icon>> = {
@@ -130,47 +96,6 @@ const VCS_ICONS: Partial<Record<VcsDriverKind, Icon>> = {
 };
 
 const SOURCE_CONTROL_SKELETON_ROWS = ["primary", "secondary"] as const;
-const GIT_FETCH_INTERVAL_STEP_SECONDS = 5;
-type BackgroundActivityOverridePatch = Partial<{
-  [K in keyof BackgroundActivitySettings["overrides"]]:
-    | BackgroundActivitySettings["overrides"][K]
-    | undefined;
-}>;
-
-function durationToSeconds(duration: Duration.Duration): number {
-  return Math.round(Duration.toMillis(duration) / 1_000);
-}
-
-function normalizeFetchIntervalSeconds(value: number | null): number {
-  if (value === null || !Number.isFinite(value)) {
-    return 0;
-  }
-  return Math.max(0, Math.round(value));
-}
-
-function backgroundActivityOverrideSettings(
-  current: BackgroundActivitySettings,
-  overrides: BackgroundActivityOverridePatch,
-) {
-  const nextOverrides: BackgroundActivityOverridePatch = {
-    ...current.overrides,
-    ...overrides,
-  };
-  for (const [key, value] of Object.entries(nextOverrides)) {
-    if (value === undefined) {
-      delete nextOverrides[key as keyof typeof nextOverrides];
-    }
-  }
-  return {
-    backgroundActivity: {
-      schemaVersion: 1 as const,
-      profile: "custom" as const,
-      baseProfile: getBackgroundActivityBaseProfile(current),
-      overrides: nextOverrides as BackgroundActivitySettings["overrides"],
-    },
-  };
-}
-
 function optionLabel(value: Option.Option<string>): string | null {
   return Option.getOrNull(value);
 }
@@ -187,13 +112,13 @@ function isVcsNotReady(item: VcsDiscoveryItem | SourceControlProviderDiscoveryIt
 
 function authPresentation(auth: SourceControlProviderAuth): {
   readonly label: string;
-  readonly badge: "warning" | null;
+  readonly badge: "secondary" | null;
 } {
   if (auth.status === "authenticated") {
     return { label: "Authenticated", badge: null };
   }
   if (auth.status === "unauthenticated") {
-    return { label: "Not authenticated", badge: "warning" };
+    return { label: "Not authenticated", badge: "secondary" };
   }
   return { label: "Status unknown", badge: null };
 }
@@ -211,9 +136,23 @@ function RedactedAccount(props: { readonly account: string | null }) {
 
 function itemStatusDot(item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem): string {
   if (isVcsNotReady(item)) return "bg-muted-foreground/35";
+  if (isProviderDiscoveryItem(item)) {
+    return item.status === "available" && item.auth.status === "authenticated"
+      ? "bg-success"
+      : "bg-muted-foreground/35";
+  }
   if (item.status !== "available") return "bg-warning";
-  if (isProviderDiscoveryItem(item) && item.auth.status !== "authenticated") return "bg-warning";
   return "bg-success";
+}
+
+function sourceControlItemIcon(
+  item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem,
+): ReactNode {
+  const host = isProviderDiscoveryItem(item) ? sourceControlClients.find(item.kind) : undefined;
+  const Icon = isProviderDiscoveryItem(item)
+    ? host && sourceControlIcon(host)
+    : VCS_ICONS[item.kind];
+  return Icon ? <Icon className="size-4.5 text-foreground/80" aria-hidden /> : null;
 }
 
 function SourceControlItemMark({
@@ -222,17 +161,15 @@ function SourceControlItemMark({
   readonly item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem;
 }) {
   const dotClassName = itemStatusDot(item);
-  const Icon = isProviderDiscoveryItem(item)
-    ? SOURCE_CONTROL_PROVIDER_ICONS[item.kind]
-    : VCS_ICONS[item.kind];
+  const icon = sourceControlItemIcon(item);
 
-  if (!Icon) {
+  if (!icon) {
     return <span className={cn("size-2 shrink-0 rounded-full", dotClassName)} aria-hidden />;
   }
 
   return (
     <span className="relative inline-flex size-5 shrink-0 items-center justify-center">
-      <Icon className="size-4.5 text-foreground/80" aria-hidden />
+      {icon}
       <span
         className={cn(
           "pointer-events-none absolute -left-0.5 -top-0.5 size-2 rounded-full ring-2 ring-background",
@@ -263,8 +200,6 @@ function itemSummary({
 
   if (auth) {
     if (auth.status === "authenticated") {
-      // The server names the account its requests use, Settings choice included, and
-      // says when an environment token overrides it.
       const authDetail = optionLabel(auth.detail);
       return (
         <>
@@ -280,13 +215,10 @@ function itemSummary({
       );
     }
 
-    // API integrations have no CLI to sign in with; an unverified saved credential falls
-    // through to the "could not verify" detail instead of repeating the setup hint.
     if (!item.executable && auth.status === "unauthenticated") {
       return <span>Available. {item.installHint}</span>;
     }
 
-    // Signed in, but every login is turned off here: the fix is the switch below, not the CLI.
     if (auth.status === "unauthenticated" && auth.accounts?.some((entry) => entry.authenticated)) {
       return <span>{optionLabel(auth.detail) ?? `Every ${item.label} host is turned off.`}</span>;
     }
@@ -328,17 +260,12 @@ function DiscoveryItemRow({
   const [isExpanded, setIsExpanded] = useState(false);
   const hasDetails = children !== undefined;
   const searchTargetId = useSettingsSearchTargetId();
-
-  useEffect(() => {
-    if (
-      (item.kind === "git" && searchTargetId === searchableSetting("git-fetch-interval").id) ||
-      (item.kind === "bitbucket" &&
-        searchTargetId === searchableSetting("bitbucket-credentials").id) ||
-      (item.kind === "github" && searchTargetId === searchableSetting("github-accounts").id)
-    ) {
-      setIsExpanded(true);
-    }
-  }, [item.kind, searchTargetId]);
+  const [seenSearchTargetId, setSeenSearchTargetId] = useState<string | null>(null);
+  const targetsThisRow = searchTargetId === sourceControlHostSettingsSearchId(item.kind);
+  if (targetsThisRow && !isExpanded && seenSearchTargetId !== searchTargetId) {
+    setIsExpanded(true);
+  }
+  if (seenSearchTargetId !== searchTargetId) setSeenSearchTargetId(searchTargetId);
 
   return (
     <div
@@ -398,86 +325,6 @@ function DiscoveryItemRow({
         </Collapsible>
       ) : null}
     </div>
-  );
-}
-
-function GitFetchIntervalSettings() {
-  const settings = useScopedSettings();
-  const updateSettings = useUpdateScopedSettings();
-  const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
-  const automaticGitFetchIntervalSeconds = durationToSeconds(
-    resolvedBackgroundActivity.automaticGitFetchInterval,
-  );
-  const defaultAutomaticGitFetchIntervalSeconds = durationToSeconds(
-    getBackgroundActivityPresetSettings(
-      getBackgroundActivityBaseProfile(settings.backgroundActivity),
-    ).automaticGitFetchInterval,
-  );
-  const canResetFetchInterval =
-    automaticGitFetchIntervalSeconds !== defaultAutomaticGitFetchIntervalSeconds;
-  const setting = searchableSetting("git-fetch-interval");
-
-  return (
-    <SettingsSearchTarget id={setting.id} className="grid gap-3">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 space-y-1">
-          <div className="flex min-w-0 items-center gap-1">
-            <span className="text-xs font-medium text-foreground">{setting.title}</span>
-            <PolicyTooltip>
-              This interval is configured for Git only. The shared Background activity policy still
-              decides whether Git refreshes may run when the timer fires. Custom intervals appear as
-              Advanced in General settings.
-            </PolicyTooltip>
-            <span
-              className={cn(
-                "inline-flex size-5 shrink-0 items-center justify-center transition-opacity",
-                canResetFetchInterval ? "opacity-100" : "pointer-events-none opacity-0",
-              )}
-              aria-hidden={!canResetFetchInterval}
-            >
-              {canResetFetchInterval ? (
-                <SettingResetButton
-                  label="fetch interval"
-                  onClick={() =>
-                    updateSettings(
-                      backgroundActivityOverrideSettings(settings.backgroundActivity, {
-                        automaticGitFetchInterval: undefined,
-                      }),
-                    )
-                  }
-                />
-              ) : null}
-            </span>
-          </div>
-          <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-            Refresh remote branches in the background. Set to 0 to avoid automatic Git prompts.
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <NumberField
-            value={automaticGitFetchIntervalSeconds}
-            min={0}
-            step={GIT_FETCH_INTERVAL_STEP_SECONDS}
-            size="sm"
-            className="w-32"
-            onValueChange={(value) =>
-              updateSettings(
-                backgroundActivityOverrideSettings(settings.backgroundActivity, {
-                  automaticGitFetchInterval: Duration.seconds(normalizeFetchIntervalSeconds(value)),
-                }),
-              )
-            }
-          >
-            <NumberFieldGroup>
-              <NumberFieldDecrement aria-label="Decrease fetch interval" />
-              <NumberFieldInput aria-label="Automatic Git fetch interval in seconds" />
-              <NumberFieldIncrement aria-label="Increase fetch interval" />
-            </NumberFieldGroup>
-          </NumberField>
-          <span className="text-xs text-muted-foreground">seconds</span>
-        </div>
-      </div>
-    </SettingsSearchTarget>
   );
 }
 
@@ -742,7 +589,7 @@ function WorktreeList(props: {
   readonly pendingPath: string | null;
   readonly canPrune: boolean;
 }) {
-  const nowMs = useRelativeTimeTick(30_000);
+  const nowMs = Date.parse(useNowMinute());
   return groupWorktreesByProject(props.worktrees).map((group) => (
     <section key={group.projectId} aria-label={`${group.projectTitle} worktrees`}>
       <WorktreeGroupHeading environmentId={props.environmentId} group={group} />
@@ -973,7 +820,7 @@ function WorktreeEnvironmentGroup({
  * server predates worktree management is left out rather than shown broken.
  * Cleanup rules stay in Storage settings; this only links there.
  */
-function WorktreeManagementSection() {
+export function WorktreeManagementSection() {
   const { environments } = useEnvironments();
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -1014,7 +861,7 @@ function WorktreeManagementSection() {
       headerAction={
         <div className="flex items-center gap-2">
           <Link
-            to="/settings/storage"
+            to="/settings/worktrees"
             className="text-xs text-muted-foreground hover:text-foreground"
           >
             Cleanup rules
@@ -1062,9 +909,7 @@ function WorktreeManagementSection() {
 
 export function SourceControlSettingsPanel() {
   const { scope, environment, connectedEnvironments } = useSettingsScope();
-  // Discovery scans one machine's tools, so it shows the representative
-  // environment (named in the section title when several are selected);
-  // the settings rows above it fan out like everywhere else.
+
   const environmentId =
     environment?.connection.phase === "connected" ? environment.environmentId : null;
   const aggregate = scope.environmentIds.length !== 1 && connectedEnvironments.length > 1;
@@ -1083,6 +928,63 @@ export function SourceControlSettingsPanel() {
   const isInitialScanPending = discovery.isPending && discovery.data === null;
   const handleScan = () => {
     discovery.refresh();
+  };
+  const hostSettingsPanel = (item: SourceControlProviderDiscoveryItem) => {
+    const definition = sourceControlClients.find(item.kind);
+    if (!definition?.settings || environmentId === null) return undefined;
+    const { credentials } = definition;
+    if (credentials) {
+      return (
+        <SettingsSearchTarget id={sourceControlHostSettingsSearchId(item.kind)}>
+          <div className="grid gap-6">
+            {credentials.appSignIn && item.appSignIn === true ? (
+              <SourceControlAppSignInSettings
+                key={`sign-in-${environmentId}`}
+                environmentId={environmentId}
+                definition={definition}
+                appSignIn={credentials.appSignIn}
+                account={Option.getOrNull(item.auth.account)}
+                onChanged={handleScan}
+              />
+            ) : null}
+            {credentials.appSignIn && item.appSignIn === true ? (
+              <div className="flex items-center gap-3 text-2xs text-muted-foreground">
+                <span aria-hidden className="h-px flex-1 bg-border" />
+                Or use your own credentials
+                <span aria-hidden className="h-px flex-1 bg-border" />
+              </div>
+            ) : null}
+            <SourceControlTokenSettings
+              key={`token-${environmentId}`}
+              environmentId={environmentId}
+              definition={definition}
+              credentials={credentials}
+              onSaved={handleScan}
+            />
+            {item.status === "available" ? (
+              <SourceControlAccountSettings
+                key={environmentId}
+                environmentId={environmentId}
+                definition={definition}
+                credentials={credentials}
+                auth={item.auth}
+                onSaved={handleScan}
+              />
+            ) : null}
+          </div>
+        </SettingsSearchTarget>
+      );
+    }
+    return (
+      <SettingsSearchTarget id={sourceControlHostSettingsSearchId(item.kind)}>
+        <SourceControlHostSettings
+          key={environmentId}
+          environmentId={environmentId}
+          definition={{ ...definition, settings: definition.settings }}
+          onSaved={handleScan}
+        />
+      </SettingsSearchTarget>
+    );
   };
   const scanButton = (
     <Tooltip>
@@ -1118,7 +1020,7 @@ export function SourceControlSettingsPanel() {
             title={`Version Control${environmentSuffix}`}
             headerAction={scanButton}
           />
-          <SourceControlSectionSkeleton title="Source Control Providers" />
+          <SourceControlSectionSkeleton title="Source control providers" />
         </>
       ) : hasDiscoveryItems ? (
         <>
@@ -1129,9 +1031,7 @@ export function SourceControlSettingsPanel() {
               headerAction={scanButton}
             >
               {result.versionControlSystems.map((item) => (
-                <DiscoveryItemRow key={`vcs:${item.kind}`} item={item}>
-                  {item.kind === "git" ? <GitFetchIntervalSettings /> : undefined}
-                </DiscoveryItemRow>
+                <DiscoveryItemRow key={`vcs:${item.kind}`} item={item} />
               ))}
             </SettingsSection>
           ) : null}
@@ -1141,42 +1041,14 @@ export function SourceControlSettingsPanel() {
               id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
               title={
                 hasVersionControlSystems
-                  ? "Source Control Providers"
-                  : `Source Control Providers${environmentSuffix}`
+                  ? "Source control providers"
+                  : `Source control providers${environmentSuffix}`
               }
               headerAction={hasVersionControlSystems ? null : scanButton}
             >
               {result.sourceControlProviders.map((item) => (
                 <DiscoveryItemRow key={`provider:${item.kind}`} item={item}>
-                  {item.kind === "bitbucket" ? (
-                    <SettingsSearchTarget id={searchableSetting("bitbucket-credentials").id}>
-                      <BitbucketCredentialsSettings
-                        // Drafts belong to one environment; switching must not carry them over.
-                        key={environmentId}
-                        environmentId={environmentId}
-                        onSaved={handleScan}
-                      />
-                    </SettingsSearchTarget>
-                  ) : item.kind === "github" ? (
-                    <SettingsSearchTarget id={searchableSetting("github-accounts").id}>
-                      <div className="grid gap-6">
-                        {/* Shown even without gh: a saved token is how GitHub works without the CLI. */}
-                        <GitHubTokenSettings
-                          key={`token-${environmentId}`}
-                          environmentId={environmentId}
-                          onSaved={handleScan}
-                        />
-                        {item.status === "available" ? (
-                          <GitHubAccountSettings
-                            key={environmentId}
-                            environmentId={environmentId}
-                            auth={item.auth}
-                            onSaved={handleScan}
-                          />
-                        ) : null}
-                      </div>
-                    </SettingsSearchTarget>
-                  ) : undefined}
+                  {hostSettingsPanel(item)}
                 </DiscoveryItemRow>
               ))}
             </SettingsSection>
@@ -1190,7 +1062,6 @@ export function SourceControlSettingsPanel() {
         />
       )}
 
-      <WorktreeManagementSection />
       <SourceControlWritingSettingsSection />
     </SettingsPageContainer>
   );

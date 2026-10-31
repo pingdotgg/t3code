@@ -1,7 +1,7 @@
 import {
   type GhosttyKeyboardLayoutMap,
   ghosttyConsumedMods,
-  ghosttyKeyForCode,
+  ghosttyKeyForEvent,
   ghosttyUnshiftedCodepoint,
   loadGhosttyKeyboardLayoutMap,
 } from "./keyCodes";
@@ -10,9 +10,9 @@ import { GhosttyRuntime, loadGhosttyRuntime } from "./runtime";
 const GHOSTTY_SUCCESS = 0;
 const GHOSTTY_OUT_OF_SPACE = -3;
 const MAX_SCROLLBACK_ROWS = 10_000;
-// wasm32 C ABI layout for GhosttyTerminalSelectionFormatOptions at the
-// libghostty-vt revision pinned alongside this module.
+// wasm32 GhosttyTerminalSelectionFormatOptions layout at the pinned libghostty-vt revision.
 const SELECTION_FORMAT_OPTIONS_SIZE = 16;
+const PALETTE_BYTES = 256 * 3;
 
 const RENDER_DATA = {
   cols: 1,
@@ -47,8 +47,7 @@ const CELL_DATA = {
   selected: 7,
 } as const;
 
-// wasm32 arrays for the official row_cells_get_multi API. Optional colors
-// come last because an unset color stops the query at that field.
+// Optional row_cells_get_multi colors must come last; an unset color stops the query.
 const CELL_QUERY = {
   keys: 0,
   values: 20,
@@ -81,7 +80,7 @@ export interface GhosttyTheme {
   readonly foreground: GhosttyColor;
   readonly background: GhosttyColor;
   readonly cursor: GhosttyColor;
-  /** CSS color the renderer overlays on selected cells; not sent to Ghostty. */
+  readonly palette?: readonly GhosttyColor[];
   readonly selectionBackground?: string;
 }
 
@@ -103,7 +102,6 @@ export interface GhosttyRow {
   readonly cells: readonly GhosttyCell[];
   readonly text: string;
   readonly isWrapContinuation: boolean;
-  /** Whether this row soft-wraps onto the next row. */
   readonly wrapsToNext: boolean;
 }
 
@@ -139,7 +137,6 @@ export interface GhosttyScrollbar {
   readonly len: number;
 }
 
-/** Grid position tagged with its Ghostty coordinate space: 1 viewport, 2 screen. */
 export interface GhosttyPointInput {
   readonly x: number;
   readonly y: number;
@@ -179,13 +176,7 @@ function sameColor(left: GhosttyColor, right: GhosttyColor): boolean {
   return left.r === right.r && left.g === right.g && left.b === right.b;
 }
 
-/**
- * A terminal program can print one base character followed by a huge run of
- * combining marks, packing hundreds of thousands of codepoints into a single
- * cell that still fits the scrollback buffer. Engines cap spread-call
- * arguments far below that, so convert in bounded chunks instead of spreading
- * every codepoint into String.fromCodePoint at once.
- */
+/** Bounds String.fromCodePoint arguments for cells with enormous combining-mark sequences. */
 export function ghosttyCellText(codepointView: DataView, graphemeLength: number): string {
   if (graphemeLength === 1) return String.fromCodePoint(codepointView.getUint32(0, true));
   const CHUNK_SIZE = 4_096;
@@ -342,21 +333,36 @@ export class GhosttyTerminalCore {
     this.resize(cols, rows, cellWidth, cellHeight);
   }
 
-  write(data: string | Uint8Array): void {
+  write(data: string | Uint8Array, onSynchronizedOutputEnd?: () => void): void {
     this.ensureActive();
     const bytes = typeof data === "string" ? encoder.encode(data) : data;
     if (bytes.length === 0) return;
     const pointer = this.runtime.alloc(bytes.length);
     this.runtime.bytes(pointer, bytes.length).set(bytes);
-    this.runtime.call("ghostty_terminal_vt_write", this.terminal, pointer, bytes.length);
-    this.runtime.free(pointer, bytes.length);
+    // An existing render deadline belongs to one group. Observe Ghostty before
+    // the next escape can reopen it; Ghostty still parses OSC/DCS and split VT
+    // sequences itself. Once that group ends, the remaining bytes can be batched.
+    let synchronized = onSynchronizedOutputEnd !== undefined && this.isSynchronizedOutput();
+    try {
+      for (let start = 0; start < bytes.length;) {
+        const nextEscape = synchronized ? bytes.indexOf(0x1b, start + 1) : -1;
+        const end = nextEscape === -1 ? bytes.length : nextEscape;
+        this.runtime.call("ghostty_terminal_vt_write", this.terminal, pointer + start, end - start);
+        start = end;
+        if (synchronized && !this.isSynchronizedOutput()) {
+          synchronized = false;
+          onSynchronizedOutputEnd?.();
+        }
+      }
+    } finally {
+      this.runtime.free(pointer, bytes.length);
+    }
   }
 
   resetAndWrite(data: string): void {
     this.ensureActive();
     this.runtime.call("ghostty_terminal_reset", this.terminal);
-    // RIS returns the cursor to Ghostty's built-in steady default, so the
-    // embedder default has to be applied again before the replay runs.
+    // RIS restores the built-in steady cursor; reapply the embedder default before replay.
     this.applyDefaultCursorBlink();
     this.rows = [];
     if (data.length === 0) return;
@@ -389,13 +395,7 @@ export class GhosttyTerminalCore {
     );
   }
 
-  /**
-   * Ghostty's built-in default cursor is steady, while the xterm.js renderer
-   * this replaced ran with `cursorBlink: true`. Option 23 is the embedder's
-   * default blink, which is the state a session starts in and returns to on
-   * DECSCUSR reset (CSI 0 q), so programs that ask for a specific cursor
-   * through DECSCUSR or DEC mode 12 still win.
-   */
+  // Option 23 sets blink on startup and DECSCUSR reset; explicit DECSCUSR or DEC mode 12 still wins.
   private applyDefaultCursorBlink(): void {
     const blink = this.runtime.alloc(1);
     this.runtime.bytes(blink, 1)[0] = 1;
@@ -415,6 +415,18 @@ export class GhosttyTerminalCore {
       this.runtime.call("ghostty_terminal_set", this.terminal, option, color);
     }
     this.runtime.free(color, 3);
+    if (theme.palette) this.setPalette(theme.palette);
+  }
+
+  private setPalette(colors: readonly GhosttyColor[]): void {
+    const palette = this.runtime.alloc(PALETTE_BYTES);
+    this.runtime.call("ghostty_terminal_get", this.terminal, 25, palette);
+    const bytes = this.runtime.bytes(palette, PALETTE_BYTES);
+    colors.slice(0, 16).forEach((color, index) => {
+      bytes.set([color.r, color.g, color.b], index * 3);
+    });
+    this.runtime.call("ghostty_terminal_set", this.terminal, 14, palette);
+    this.runtime.free(palette, PALETTE_BYTES);
   }
 
   scroll(deltaRows: number): void {
@@ -481,6 +493,23 @@ export class GhosttyTerminalCore {
     );
   }
 
+  isSynchronizedOutput(): boolean {
+    this.ensureActive();
+    this.runtime.bytes(this.scratch, 1)[0] = 0;
+    return (
+      this.runtime.call("ghostty_terminal_mode_get", this.terminal, 2026, this.scratch) ===
+        GHOSTTY_SUCCESS && this.runtime.bytes(this.scratch, 1)[0] !== 0
+    );
+  }
+
+  endSynchronizedOutput(): void {
+    this.ensureActive();
+    this.assertSuccess(
+      "ghostty_terminal_mode_set",
+      this.runtime.call("ghostty_terminal_mode_set", this.terminal, 2026, 0),
+    );
+  }
+
   isAlternateScreen(): boolean {
     this.ensureActive();
     this.runtime.bytes(this.scratch, 4).fill(0);
@@ -507,7 +536,7 @@ export class GhosttyTerminalCore {
       this.keyEvent,
       action === "release" ? 0 : event.repeat ? 2 : 1,
     );
-    this.runtime.call("ghostty_key_event_set_key", this.keyEvent, ghosttyKeyForCode(event.code));
+    this.runtime.call("ghostty_key_event_set_key", this.keyEvent, ghosttyKeyForEvent(event));
     const mods =
       (event.shiftKey ? 1 : 0) |
       (event.ctrlKey ? 1 << 1 : 0) |
@@ -702,6 +731,25 @@ export class GhosttyTerminalCore {
       if (!start || !end) return null;
       this.runtime.call("ghostty_terminal_set", this.terminal, 21, selection);
       return { start, end };
+    } finally {
+      this.runtime.free(selection, layout.size);
+    }
+  }
+
+  selectionRange(): GhosttySelectionRange["screen"] | null {
+    this.ensureActive();
+    const layout = this.runtime.layout("GhosttySelection");
+    const selection = this.runtime.alloc(layout.size);
+    try {
+      this.runtime.setField(selection, "GhosttySelection", "size", layout.size);
+      if (
+        this.runtime.call("ghostty_terminal_get", this.terminal, 31, selection) !== GHOSTTY_SUCCESS
+      ) {
+        return null;
+      }
+      const start = this.pointFromGridRef(selection + layout.fields.start!.offset, 2);
+      const end = this.pointFromGridRef(selection + layout.fields.end!.offset, 2);
+      return start && end ? { start, end } : null;
     } finally {
       this.runtime.free(selection, layout.size);
     }
@@ -1032,14 +1080,14 @@ export class GhosttyTerminalCore {
             this.graphemes,
           ) === GHOSTTY_SUCCESS
         ) {
-          // Read through a DataView: the byte-array allocator guarantees no
-          // 4-byte alignment, which a Uint32Array view would require.
+          // Byte allocations need not be 4-byte aligned; use DataView instead of Uint32Array.
           const codepointView = this.runtime.view(this.graphemes, bufferSize);
           text = ghosttyCellText(codepointView, graphemeLength);
         }
       }
       let wide = 0;
-      if (text.length === 0 && cells.at(-1)?.text.length) {
+      // A wrap spacer in the final column can follow a spacer tail.
+      if (text.length === 0 && (cells.at(-1)?.text.length || cells.length === cols - 1)) {
         this.assertSuccess(
           "ghostty_render_state_row_cells_get(raw)",
           this.runtime.call(

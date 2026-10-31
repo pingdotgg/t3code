@@ -6,7 +6,7 @@ import {
   ExecutionEnvironmentDescriptor,
   ServerSelfUpdateMethod,
 } from "./environment.ts";
-import { ServerAuthDescriptor } from "./auth.ts";
+import { AuthClientPresentationMetadata, ServerAuthDescriptor } from "./auth.ts";
 import {
   ForwardCompatibleArray,
   IsoDateTime,
@@ -23,11 +23,12 @@ import {
   ResolvedKeybindingsConfig,
 } from "./keybindings.ts";
 import { EditorId, FileManagerRevealKind, RemoteOpenTarget } from "./editor.ts";
-import { ModelCapabilities } from "./model.ts";
+import { ModelCapabilities, ProviderOptionDescriptor } from "./model.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerProviderUsageLimits, UsageLimitSourceSnapshots } from "./providerUsageLimits.ts";
 import { ServerSettings } from "./settings.ts";
+import { DesktopUpdateChannelSchema } from "./ipc.ts";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
   kind: Schema.Literal("keybindings.malformed-config"),
@@ -46,8 +47,6 @@ export const ServerConfigIssue = Schema.Union([
 ]);
 export type ServerConfigIssue = typeof ServerConfigIssue.Type;
 
-// Issue kinds grow over time; older clients must not fail the whole config
-// decode over a kind they cannot render.
 const ServerConfigIssues = ForwardCompatibleArray(ServerConfigIssue);
 
 export const ServerProviderState = Schema.Literals(["ready", "warning", "error", "disabled"]);
@@ -69,11 +68,6 @@ export const ServerProviderAuth = Schema.Struct({
   canLogout: Schema.optional(Schema.Boolean),
   subscriptionSharing: Schema.optional(Schema.Boolean),
   profileId: Schema.optional(TrimmedNonEmptyString),
-  /**
-   * The workspace or organization whose quota the login draws on, such as a
-   * ChatGPT workspace or Claude organization id. One email can belong to
-   * several, each with its own quota.
-   */
   workspaceId: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
@@ -92,11 +86,6 @@ export const ServerProviderModel = Schema.Struct({
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
 
-/**
- * A model the model manifest announces that the installed provider version is
- * too old to run. It is never selectable; clients show it so users learn that
- * updating the provider unlocks it.
- */
 export const ServerProviderUpdateRequiredModel = Schema.Struct({
   slug: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
@@ -125,17 +114,9 @@ export const ServerProviderSkill = Schema.Struct({
   enabled: Schema.Boolean,
   displayName: Schema.optional(TrimmedNonEmptyString),
   shortDescription: Schema.optional(TrimmedNonEmptyString),
-  /**
-   * The skill is hidden from the agent's own skill tool, so only the user can
-   * start it — Claude Code's `disable-model-invocation`. Composers must offer
-   * it as a slash command; naming it in prose does nothing.
-   */
+  /** Claude disable-model-invocation: only users can invoke; composers must offer a slash command. */
   userInvocationOnly: Schema.optional(Schema.Boolean),
-  /**
-   * The mirror of {@link ServerProviderSkill.userInvocationOnly}: Claude Code's
-   * `user-invocable: false` keeps the skill out of its own slash commands, so
-   * only the agent can start it. Composers must not offer it under `/`.
-   */
+  /** Claude user-invocable:false: only agents can invoke; composers must hide the slash command. */
   userInvocable: Schema.optional(Schema.Boolean),
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
@@ -144,17 +125,12 @@ export const ServerProviderWorkspaceSnapshot = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   checkedAt: IsoDateTime,
   slashCommands: Schema.Array(ServerProviderSlashCommand),
-  /** Skills are available, but command discovery still needs a retry. */
   slashCommandsPending: Schema.optional(Schema.Boolean),
   skills: Schema.Array(ServerProviderSkill),
+  optionDescriptors: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
 });
 export type ServerProviderWorkspaceSnapshot = typeof ServerProviderWorkspaceSnapshot.Type;
 
-/**
- * How long a workspace's skill and command scan stays current. Nothing watches
- * skill directories, so a composer opened after this rescans on use, and the
- * server answers repeat requests inside the window from its cache.
- */
 export const PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS = 5 * 60_000;
 
 export function isProviderWorkspaceSnapshotCurrent(
@@ -164,23 +140,7 @@ export function isProviderWorkspaceSnapshotCurrent(
   return nowMs - Date.parse(snapshot.checkedAt) < PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS;
 }
 
-/**
- * Availability of a configured provider instance from the runtime's POV.
- *
- *  - `available` — the build ships this driver and an instance is wired
- *    up. Default for legacy snapshots produced from the closed
- *    `ServerSettings.providers` map.
- *  - `unavailable` — the user's `ServerSettings.providerInstances` (or a
- *    persisted thread / session binding) references a driver this build
- *    doesn't ship. Common after rolling back from a fork or PR branch
- *    that introduced a new driver. The snapshot is preserved so the UI
- *    can render "missing driver" affordances and so the data round-trips
- *    when the user moves back to the fork.
- *
- * Snapshots with `availability: "unavailable"` MUST set
- * `installed: false` and `enabled: false`; the runtime refuses turn
- * starts against them with a structured error.
- */
+/** Unavailable snapshots must set installed and enabled false. */
 export const ServerProviderAvailability = Schema.Literals(["available", "unavailable"]);
 export type ServerProviderAvailability = typeof ServerProviderAvailability.Type;
 
@@ -244,25 +204,18 @@ export const ServerProviderUpdateState = Schema.Struct({
 export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
 
 export const ServerProvider = Schema.Struct({
-  // Routing key for the configured instance this snapshot represents. This
-  // is the only stable identity consumers may use for provider routing.
+  // Only instanceId is stable enough for provider routing.
   instanceId: ProviderInstanceId,
-  // Open driver kind slug that selects the implementation handling this
-  // instance. It is metadata/capability context, not a routing key.
   driver: ProviderDriverKind,
   displayName: Schema.optional(TrimmedNonEmptyString),
   accentColor: Schema.optional(TrimmedNonEmptyString),
-  // Optional visual identity supplied by the owning provider driver. Clients
-  // must still validate remote URLs against that driver's trusted origin.
+  // Validate driver-supplied remote icons against the driver's trusted origin.
   iconUrl: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(2_048))),
   badgeLabel: Schema.optional(TrimmedNonEmptyString),
   continuation: Schema.optional(ServerProviderContinuation),
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
-  // The driver streams context window usage, so a started thread will have a
-  // meter once its activities load. Clients reserve the meter's space on it.
   reportsContextWindow: Schema.optional(Schema.Boolean),
   supportedRuntimeModes: Schema.optional(ForwardCompatibleArray(RuntimeMode)),
-  requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
   supportsConversationRollback: Schema.optional(Schema.Boolean),
   supportsTextGeneration: Schema.optional(Schema.Boolean),
   setup: Schema.optional(
@@ -290,18 +243,14 @@ export const ServerProvider = Schema.Struct({
   enabled: Schema.Boolean,
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),
+  // Version reported by the installed CLI for a local provider with a separate
+  // server. Null means unknown; absence keeps legacy snapshots on `version`.
+  installedVersion: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   status: ServerProviderState,
   auth: ServerProviderAuth,
   checkedAt: IsoDateTime,
   message: Schema.optional(TrimmedNonEmptyString),
-  // Optional for back-compat: every legacy producer omits this field and
-  // an absent value is interpreted as `"available"` by consumers (see
-  // `isProviderAvailable`). New `ProviderInstanceRegistry` outputs set it
-  // explicitly so the UI can render unavailable shadows from
-  // `ServerSettings.providerInstances`.
   availability: Schema.optional(ServerProviderAvailability),
-  // Human-readable reason populated when `availability === "unavailable"`.
-  // Surfaces in the UI alongside the missing-driver affordance.
   unavailableReason: Schema.optional(TrimmedNonEmptyString),
   models: Schema.Array(ServerProviderModel),
   // Kept apart from `models` so clients that predate it never offer them.
@@ -311,7 +260,6 @@ export const ServerProvider = Schema.Struct({
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   workspaceSnapshots: Schema.optionalKey(Schema.Array(ServerProviderWorkspaceSnapshot)),
-  // Absent when the driver has no notion of subscription usage.
   usageLimits: Schema.optional(ServerProviderUsageLimits),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   compatibilityAdvisory: Schema.optionalKey(ServerProviderCompatibilityAdvisory),
@@ -319,43 +267,79 @@ export const ServerProvider = Schema.Struct({
 });
 export type ServerProvider = typeof ServerProvider.Type;
 
-// Provider status kinds grow over time (ServerProviderState,
-// ServerProviderAuthStatus, ServerProviderVersionAdvisoryStatus,
-// ServerProviderUpdateStatus); an older client must not fail the whole config
-// decode over one provider it cannot render.
 export const ServerProviders = ForwardCompatibleArray(ServerProvider);
 export type ServerProviders = typeof ServerProviders.Type;
 
-/**
- * Treat the optional `availability` as "available" when absent. This is
- * the rule legacy producers (which omit the field) and new producers
- * (which set it explicitly) agree on so consumers never have to thread
- * `?? "available"` defaults through their code paths.
- */
 export const isProviderAvailable = (snapshot: ServerProvider): boolean =>
   snapshot.availability !== "unavailable";
 
-/**
- * Treat an absent `supportsTextGeneration` as supported so legacy
- * producers, which all support application text generation, keep working
- * without resending the field.
- */
+/** Legacy producers omit this field and support text generation. */
 export const isProviderTextGenerationCapable = (snapshot: ServerProvider): boolean =>
   snapshot.supportsTextGeneration !== false;
+
+export const OtlpEndpointSource = Schema.Literals(["environment", "bootstrap", "settings"]);
+export type OtlpEndpointSource = typeof OtlpEndpointSource.Type;
 
 export const ServerObservability = Schema.Struct({
   logsDirectoryPath: TrimmedNonEmptyString,
   localTracingEnabled: Schema.Boolean,
   otlpTracesUrl: Schema.optional(TrimmedNonEmptyString),
+  otlpTracesSource: Schema.optional(OtlpEndpointSource),
+  otlpTracesVariable: Schema.optional(TrimmedNonEmptyString),
   otlpTracesEnabled: Schema.Boolean,
   otlpMetricsUrl: Schema.optional(TrimmedNonEmptyString),
+  otlpMetricsSource: Schema.optional(OtlpEndpointSource),
+  otlpMetricsVariable: Schema.optional(TrimmedNonEmptyString),
   otlpMetricsEnabled: Schema.Boolean,
   otlpLogsUrl: Schema.optional(TrimmedNonEmptyString),
-  // Absent on servers from before the log signal shipped, so a newer client
-  // reads those as having no log export rather than rejecting the whole config.
+  otlpLogsSource: Schema.optional(OtlpEndpointSource),
+  otlpLogsVariable: Schema.optional(TrimmedNonEmptyString),
   otlpLogsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type ServerObservability = typeof ServerObservability.Type;
+
+export const OtlpSignal = Schema.Literals(["traces", "metrics", "logs"]);
+export type OtlpSignal = typeof OtlpSignal.Type;
+
+export const OtlpEndpointCheckInput = Schema.Struct({
+  signal: OtlpSignal,
+  url: TrimmedNonEmptyString.check(Schema.isPattern(/^https?:\/\/./i)),
+});
+export type OtlpEndpointCheckInput = typeof OtlpEndpointCheckInput.Type;
+
+export const OtlpEndpointCheckResult = Schema.Union([
+  Schema.TaggedStruct("Accepted", { latencyMs: Schema.Number }),
+  Schema.TaggedStruct("Rejected", { status: Schema.Number }),
+  Schema.TaggedStruct("Unreachable", { timedOut: Schema.Boolean }),
+]);
+export type OtlpEndpointCheckResult = typeof OtlpEndpointCheckResult.Type;
+
+/** The client tells the server what it is, so the triage context can name it. */
+export const ServerPrepareTriageInput = Schema.Struct({
+  client: AuthClientPresentationMetadata,
+});
+export type ServerPrepareTriageInput = typeof ServerPrepareTriageInput.Type;
+
+export const ServerPrepareTriageResult = Schema.Struct({
+  /** Composer text that links the session's prompt file. */
+  prompt: Schema.String,
+});
+export type ServerPrepareTriageResult = typeof ServerPrepareTriageResult.Type;
+
+/**
+ * The prompt file links as a chip in the user's message; clients spot a triage
+ * draft by it.
+ */
+export const TRIAGE_PROMPT_FILE_NAME = "triage-playbook.md";
+
+export class ServerPrepareTriageError extends Schema.TaggedError<ServerPrepareTriageError>()(
+  "ServerPrepareTriageError",
+  { cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return "Could not write the triage session files.";
+  }
+}
 
 export const ServerTraceDiagnosticsErrorKind = Schema.Literals([
   "trace-file-not-found",
@@ -551,60 +535,30 @@ export const ServerSignalProcessResult = Schema.Struct({
 });
 export type ServerSignalProcessResult = typeof ServerSignalProcessResult.Type;
 
-/**
- * A palette the environment's machine publishes for T3 Code to follow, read
- * from a theme file next to the rest of the environment's state. Two seed
- * colors rather than a full palette: clients derive the remaining roles with
- * the same generator the guided theme editor uses, so a desktop theme carries
- * over as a coherent T3 Code palette instead of a foreign one.
- */
 export const EnvironmentThemeColor = Schema.String.check(
   Schema.isPattern(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/),
 );
 export type EnvironmentThemeColor = typeof EnvironmentThemeColor.Type;
 
-/**
- * Matches the client-side theme id rule, so a published id is selectable.
- * The appearance keywords are excluded outright: a published `dark.json`
- * would otherwise capture every client whose stored preference is the stock
- * `"dark"`, retinting people who never chose it.
- */
+/** Reserve appearance keywords so published themes cannot replace stock preferences. */
 export const EnvironmentThemeId = Schema.String.check(
   Schema.isPattern(/^(?!(?:system|light|dark)$)[a-z0-9](?:[a-z0-9-]{0,47})$/),
 );
 export type EnvironmentThemeId = typeof EnvironmentThemeId.Type;
 
-/**
- * Role colors as published. Values are any CSS color the client's theme
- * parser accepts (exported theme files use oklch), canonicalized client-side;
- * roles a build does not know are dropped there, so a machine may publish
- * roles a newer client added without breaking an older one. Keys must still
- * be role-shaped and values color-sized, so the record stays open to future
- * vocabulary without being an arbitrary-payload channel.
- */
 const EnvironmentThemeColors = Schema.Record(
   Schema.String.check(Schema.isPattern(/^[a-zA-Z][a-zA-Z0-9]{0,63}$/)),
   TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
 );
 
 const environmentThemeFields = {
-  /**
-   * Standard exported theme files (the Download button's output) carry
-   * `version: 1`; the seeded short form a desktop generates has no version.
-   */
   version: Schema.optional(Schema.Literal(1)),
-  /** Shown on the theme card, e.g. the desktop theme's own name. */
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(48)),
   appearance: Schema.Literals(["light", "dark"]),
-  /**
-   * Seed colors. When present, clients derive the full palette from them with
-   * the guided theme editor's generator and layer `colors` on top; when
-   * absent, `colors` is the palette, as in an exported theme file.
-   */
+  /** Derive the palette from canvas/accent, then overlay colors; without them, colors is the palette. */
   canvas: Schema.optional(EnvironmentThemeColor),
   accent: Schema.optional(EnvironmentThemeColor),
   colors: Schema.optional(EnvironmentThemeColors),
-  /** The other appearance's palette, as exported theme files carry it. */
   variants: Schema.optional(
     Schema.Struct({
       light: Schema.optional(EnvironmentThemeColors),
@@ -613,24 +567,15 @@ const environmentThemeFields = {
   ),
 };
 
-/** One published theme file. The id is the filename, not part of the content,
- * so a file cannot claim another file's identity; an embedded `id` is ignored. */
 export const EnvironmentThemeFile = Schema.Struct(environmentThemeFields);
 export type EnvironmentThemeFile = typeof EnvironmentThemeFile.Type;
 
 export const EnvironmentTheme = Schema.Struct({
-  /** The publishing filename without its extension, stable across recolors. */
   id: EnvironmentThemeId,
   ...environmentThemeFields,
 });
 export type EnvironmentTheme = typeof EnvironmentTheme.Type;
 
-/**
- * Whether a theme file carries anything to render. A file with neither seeds
- * nor colors would show as the stock palette wearing a name, which reads as a
- * bug rather than a theme — the CLI and the server watcher both reject it,
- * through this one predicate so they cannot drift.
- */
 export function environmentThemeFileHasColors(file: EnvironmentThemeFile): boolean {
   return (
     (file.canvas !== undefined && file.accent !== undefined) ||
@@ -638,10 +583,7 @@ export function environmentThemeFileHasColors(file: EnvironmentThemeFile): boole
   );
 }
 
-/**
- * "tailnet" when the address is on this machine's Tailscale interface, "lan"
- * for any other private address, including other VPNs in 100.64.0.0/10.
- */
+/** tailnet means this machine's Tailscale interface; other private addresses are lan. */
 export const ServerDirectEndpointKind = Schema.Literals(["lan", "tailnet"]);
 export type ServerDirectEndpointKind = typeof ServerDirectEndpointKind.Type;
 
@@ -651,6 +593,19 @@ export const ServerDirectEndpoint = Schema.Struct({
 });
 export type ServerDirectEndpoint = typeof ServerDirectEndpoint.Type;
 
+/**
+ * A stretch where the server's event loop could not run, so it answered
+ * nothing and clients may have dropped the connection.
+ */
+export const ServerEventLoopStall = Schema.Struct({
+  detectedAt: IsoDateTime,
+  durationMs: NonNegativeInt,
+  /** One-minute load average when the stall was seen. Absent on Windows, which has none. */
+  loadAverage: Schema.optionalKey(Schema.Number),
+  cpuCount: PositiveInt,
+});
+export type ServerEventLoopStall = typeof ServerEventLoopStall.Type;
+
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
@@ -659,79 +614,53 @@ export const ServerConfig = Schema.Struct({
   keybindings: ResolvedKeybindingsConfig,
   issues: ServerConfigIssues,
   providers: ServerProviders,
-  // Editor ids grow over time; drop ones this build does not know rather than
-  // failing the whole config decode.
   availableEditors: ForwardCompatibleArray(EditorId),
-  /**
-   * SSH hosts this environment advertises for remote open-in-editor links.
-   * Absent on servers that predate the feature; empty when the machine has no
-   * sshd or no advertisable name.
-   */
   remoteOpenTargets: Schema.optionalKey(ForwardCompatibleArray(RemoteOpenTarget)),
-  /**
-   * Direct addresses this server listens on right now (LAN and tailnet), so a
-   * client connected one way can learn the others. Hints only: the client
-   * checks each address answers as this environment before using it. Absent on
-   * servers that predate the feature; empty when bound to loopback only.
-   */
+  /** Hints only; verify each address answers as this environment. */
   directEndpoints: Schema.optionalKey(ForwardCompatibleArray(ServerDirectEndpoint)),
   observability: ServerObservability,
   settings: ServerSettings,
-  /** Whether shell subscriptions can emit an opt-in catch-up completion marker. */
   shellResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
-  /** Whether shell.openInEditor honors `LaunchEditorInput.reveal` for the
-      file-manager editor. */
-  shellRevealInFileManager: Schema.optionalKey(Schema.Boolean),
-  /** File-manager wording clients should use for reveal actions. */
-  shellRevealInFileManagerKind: Schema.optionalKey(FileManagerRevealKind),
-  /** Whether thread subscriptions can emit an opt-in catch-up completion marker. */
-  threadResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /**
-   * Whether thread detail reads accept a turn window (`turnLimit`/
-   * `beforeCursor`) and return `page` metadata. Clients must not send window
-   * fields to servers that don't advertise this.
+   * The shell can leave idle subagent children out of snapshots (`omitIdleSubagents`), and
+   * `getThreadFamily` and `getWorktreeThreadIds` serve the rows it leaves out.
    */
+  shellThreadFamilies: Schema.optionalKey(Schema.Boolean),
+  /**
+   * The shell can leave older settled threads out of snapshots (`omitOlderSettled`), and
+   * `getOlderSettledThreads` serves them. Only servers that also advertise `shellThreadFamilies`.
+   */
+  shellOlderSettled: Schema.optionalKey(Schema.Boolean),
+  shellRevealInFileManager: Schema.optionalKey(Schema.Boolean),
+  shellRevealInFileManagerKind: Schema.optionalKey(FileManagerRevealKind),
+  threadResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
+  /** Send window fields only when advertised. */
   threadSnapshotPagination: Schema.optionalKey(Schema.Boolean),
-  /** Whether thread reads accept the reasoningMessages opt-in. */
-  reasoningMessages: Schema.optionalKey(Schema.Boolean),
   threadFind: Schema.optionalKey(Schema.Boolean),
   threadFindProgressive: Schema.optionalKey(Schema.Boolean),
-  /**
-   * Folder behind this environment's Scratch project, for threads that need
-   * no repository. Present only on servers that answer projects.ensureScratch
-   * and whose data dir is outside a Git checkout.
-   */
+  /** Settings patches may carry `secretProviders`; older servers drop the key without an error. */
+  secretProviderSettings: Schema.optionalKey(Schema.Boolean),
+  /** Secret settings may point at a secret provider; older servers drop the reference. */
+  secretReferences: Schema.optionalKey(Schema.Boolean),
   scratchWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
-  /**
-   * Folder that holds projects started from just a name. Present only on
-   * servers that answer projects.createNew.
-   */
   newProjectsRoot: Schema.optionalKey(TrimmedNonEmptyString),
   /**
-   * Palettes published by this environment's machine. Never sent in a config
-   * snapshot: the theme stream emits the current set before any change, so a
-   * snapshot carrying it too would hand every subscriber the same array twice
-   * per connect. Clients populate this by projecting `environmentThemesUpdated`,
-   * and it stays absent for subscribers that did not opt in.
+   * The latest stall long enough to notice, sent only for a few minutes after
+   * it. A client that reconnects reads it to say why the host stopped
+   * answering. Clients do not cache it, since it describes the host at connect.
+   */
+  lastEventLoopStall: Schema.optionalKey(ServerEventLoopStall),
+  /**
+   * Never sent in a config snapshot: the theme stream emits the current set
+   * before any change, so a snapshot carrying it too would hand every
+   * subscriber the same array twice per connect.
    */
   environmentThemes: Schema.optional(Schema.Array(EnvironmentTheme)),
-  /**
-   * Quota reported by configured `usageLimitSources`. Like themes, never in
-   * a snapshot: the source stream emits the current set on subscribe, and it
-   * stays absent for subscribers that did not opt in.
-   */
+  /** Stream-only and opt-in; the source stream emits the current set on subscribe. */
   usageLimitSources: Schema.optional(UsageLimitSourceSnapshots),
 });
 export type ServerConfig = typeof ServerConfig.Type;
 
-/**
- * The machine an environment should be drawn as: the user's pick, else what
- * the server detected, else a generic server. Settings only exist once
- * connected; a descriptor alone (relay discovery, before any connection)
- * still yields the detected kind. A null config (nothing known yet, or an
- * older server) resolves to the same generic so rows never flicker between
- * glyphs.
- */
 export function resolveEnvironmentMachineKind(
   config: {
     readonly environment: Pick<ExecutionEnvironmentDescriptor, "platform">;
@@ -823,7 +752,6 @@ export type ServerConfigStreamSettingsUpdatedEvent =
   typeof ServerConfigStreamSettingsUpdatedEvent.Type;
 
 export const ServerConfigEnvironmentThemesUpdatedPayload = Schema.Struct({
-  /** The full published set; empty once the machine publishes none. */
   themes: Schema.Array(EnvironmentTheme),
 });
 export type ServerConfigEnvironmentThemesUpdatedPayload =
@@ -838,7 +766,6 @@ export type ServerConfigStreamEnvironmentThemesUpdatedEvent =
   typeof ServerConfigStreamEnvironmentThemesUpdatedEvent.Type;
 
 export const ServerConfigUsageLimitSourcesUpdatedPayload = Schema.Struct({
-  /** The full set; empty once no source is configured. */
   sources: UsageLimitSourceSnapshots,
 });
 export type ServerConfigUsageLimitSourcesUpdatedPayload =
@@ -862,7 +789,6 @@ export const ServerConfigStreamEvent = Schema.Union([
 ]);
 export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
 
-/** Terminal selection recorded by the service launcher for one update. */
 export const ServerSelfUpdateOutcome = Schema.Struct({
   id: TrimmedNonEmptyString,
   fromVersion: TrimmedNonEmptyString,
@@ -875,7 +801,6 @@ export type ServerSelfUpdateOutcome = typeof ServerSelfUpdateOutcome.Type;
 export const ServerLifecycleReadyPayload = Schema.Struct({
   at: IsoDateTime,
   environment: ExecutionEnvironmentDescriptor,
-  /** Present when this process resumed a launcher-managed update. */
   updateOutcome: Schema.optionalKey(ServerSelfUpdateOutcome),
 });
 export type ServerLifecycleReadyPayload = typeof ServerLifecycleReadyPayload.Type;
@@ -956,25 +881,43 @@ export class ServerProviderUpdateError extends Schema.TaggedError<ServerProvider
   }
 }
 
+export const ServerNpmReleaseInput = Schema.Struct({
+  spec: Schema.String.check(
+    Schema.isMaxLength(64),
+    Schema.isPattern(/^(?:latest|nightly|\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/),
+  ),
+});
+export type ServerNpmReleaseInput = typeof ServerNpmReleaseInput.Type;
+
+export const ServerNpmRelease = Schema.Struct({
+  version: Schema.String,
+  databaseMigration: Schema.optionalKey(Schema.Int),
+});
+export type ServerNpmRelease = typeof ServerNpmRelease.Type;
+
+export class ServerNpmReleaseError extends Schema.TaggedError<ServerNpmReleaseError>()(
+  "ServerNpmReleaseError",
+  { reason: Schema.String },
+) {
+  override get message(): string {
+    return `Could not check the configured npm registry: ${this.reason}`;
+  }
+}
+
 export const ServerSelfUpdateInput = Schema.Struct({
-  /** Exact npm version of the `t3` package to install (never a dist-tag, so
-      the server and the acknowledging client agree on what was requested). */
+  /** Exact npm version, never a dist-tag, so server and client agree on the request. */
   targetVersion: TrimmedNonEmptyString,
-  /** Opt-in recovery for provider turns that are running when the server
-      hands off to its replacement. Missing and false keep restart behavior
-      conservative under version skew. */
-  continueRunningThreads: Schema.optionalKey(Schema.Boolean),
+  /** Desktop-managed hosts move their app to this update track first. Sent only for a track switch. */
+  channel: Schema.optionalKey(DesktopUpdateChannelSchema),
+  /** The target release's highest migration; the host refuses to leave Nightly without it. */
+  targetDatabaseMigration: Schema.optionalKey(Schema.Int),
 });
 export type ServerSelfUpdateInput = typeof ServerSelfUpdateInput.Type;
 
-/** Acknowledgement that the update artifact is installed and the server is
-    about to restart into it — the connection will drop moments later. */
 export const ServerSelfUpdateResult = Schema.Struct({
   targetVersion: TrimmedNonEmptyString,
   method: ServerSelfUpdateMethod,
-  /** Launcher-generated correlation ID. Absent when talking to older servers. */
   updateId: Schema.optionalKey(TrimmedNonEmptyString),
-  /** Desktop preparation token. Present only for the desktop-app method. */
   desktopUpdateToken: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ServerSelfUpdateResult = typeof ServerSelfUpdateResult.Type;

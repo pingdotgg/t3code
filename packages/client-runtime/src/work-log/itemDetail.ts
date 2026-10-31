@@ -1,5 +1,5 @@
 import type { AssetResource, OrchestrationV2TurnItem } from "@t3tools/contracts";
-import { readToolOutputImage, toolOutputImages } from "@t3tools/shared/toolOutput";
+import { toolOutputImageBlocks, toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as DateTime from "effect/DateTime";
 
 const MAX_TEXT_BLOCK_DEPTH = 4;
@@ -8,24 +8,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Wire projection replaces a large dynamic input with `{ summary, truncated: true }`. */
 function isSummarizedValue(value: unknown): boolean {
   return isRecord(value) && value.truncated === true && typeof value.summary === "string";
 }
 
-function textFromBlocks(value: unknown, depth: number): string | null {
+function textFromBlocks(
+  value: unknown,
+  depth: number,
+  imageBlocks: ReadonlyArray<unknown>,
+): string | null {
   if (depth > MAX_TEXT_BLOCK_DEPTH) return null;
   if (typeof value === "string") return value;
   if (Array.isArray(value)) {
-    const parts = value.map((block) => textFromBlocks(block, depth + 1));
+    const parts = value.map((block) => textFromBlocks(block, depth + 1, imageBlocks));
     return parts.every((part) => part !== null)
       ? parts.filter((part) => part !== "").join("\n")
       : null;
   }
   if (!isRecord(value)) return null;
   if (value.type === "text" && typeof value.text === "string") return value.text;
-  // Images clients can show render on their own (see turnItemOutputImages).
-  if (value.type === "image") return readToolOutputImage(value) ? "" : "[image]";
+  if (value.type === "image") return imageBlocks.includes(value) ? "" : "[image]";
   if (value.type === "resource_link" && typeof value.uri === "string") return value.uri;
   if (value.type === "resource" && isRecord(value.resource)) {
     const resource = value.resource;
@@ -33,12 +35,10 @@ function textFromBlocks(value: unknown, depth: number): string | null {
     if (typeof resource.uri === "string") return resource.uri;
   }
   const keys = Object.keys(value).filter((key) => key !== "isError" && key !== "is_error");
-  // MCP results and provider tool results wrap their text in `content`.
-  // `structuredContent` usually repeats it as data, so it only shows when the
-  // text is empty.
-  if (keys.length === 1 && keys[0] === "content") return textFromBlocks(value.content, depth + 1);
+  if (keys.length === 1 && keys[0] === "content")
+    return textFromBlocks(value.content, depth + 1, imageBlocks);
   if (keys.length === 2 && keys.includes("content") && keys.includes("structuredContent")) {
-    const text = textFromBlocks(value.content, depth + 1);
+    const text = textFromBlocks(value.content, depth + 1, imageBlocks);
     return text?.trim() ? text : null;
   }
   return null;
@@ -52,7 +52,6 @@ function parseJson(text: string): unknown {
   }
 }
 
-/** MCP tools often return JSON as minified text, one document per line. Indent each. */
 function prettyJsonText(text: string): string {
   const trimmed = text.trim();
   if (!/^[[{]/.test(trimmed)) return text;
@@ -64,10 +63,10 @@ function prettyJsonText(text: string): string {
   return documents.map((document) => JSON.stringify(document, null, 2)).join("\n\n");
 }
 
-/** Formats a tool input or output for display: text blocks as text, the rest as JSON. */
-function formatToolValue(value: unknown): string | null {
+function formatToolValue(value: unknown, hasImagePreview = false): string | null {
   if (value === undefined || value === null) return null;
-  const text = textFromBlocks(value, 0);
+  if (hasImagePreview && isRecord(value) && value.type === "image") return null;
+  const text = textFromBlocks(value, 0, toolOutputImageBlocks(value));
   if (text !== null) return text.trim() ? prettyJsonText(text) : null;
   let json: string | undefined;
   try {
@@ -79,10 +78,6 @@ function formatToolValue(value: unknown): string | null {
   return json;
 }
 
-/**
- * The call a tool row's body shows above its result: the full command, the
- * arguments as `key value` pairs, or formatted text when they are not flat.
- */
 export function toolCallLines(input: {
   readonly command?: string | undefined;
   readonly args?: unknown;
@@ -92,7 +87,6 @@ export function toolCallLines(input: {
   readonly argsText: string | null;
 } {
   if (input.command !== undefined) {
-    // The row title truncates to its width, so the body always has the full command.
     const command = input.command.trim();
     return { command: command || null, args: null, argsText: null };
   }
@@ -129,14 +123,13 @@ const LIVE_TURN_ITEM_STATUSES: ReadonlySet<OrchestrationV2TurnItem["status"]> = 
 ]);
 
 /**
- * Cache key for a fetched item. A running item keeps one key, so an open row
- * fetches once while it streams and again when it finishes, not on every update.
+ * A running item keeps one key, so an open row fetches once while it streams and
+ * again when it finishes, not on every update.
  */
 export function turnItemDetailRevision(item: OrchestrationV2TurnItem): string {
   return LIVE_TURN_ITEM_STATUSES.has(item.status) ? "live" : DateTime.formatIso(item.updatedAt);
 }
 
-/** True when the timeline item withholds content that `getTurnItem` returns. */
 export function turnItemNeedsDetailFetch(item: OrchestrationV2TurnItem): boolean {
   switch (item.type) {
     case "command_execution":
@@ -148,7 +141,6 @@ export function turnItemNeedsDetailFetch(item: OrchestrationV2TurnItem): boolean
   }
 }
 
-/** Older Claude bash rows stored the raw `{ stdout, stderr, interrupted, ... }` result. */
 function commandOutputText(output: string): string {
   if (!output.trimStart().startsWith('{"stdout"')) return output;
   const parsed = parseJson(output.trim());
@@ -165,13 +157,14 @@ function commandOutputText(output: string): string {
     .join("\n");
 }
 
-/** The tool output carried by a fetched item, formatted for display. */
 export function turnItemOutputText(item: OrchestrationV2TurnItem): string | null {
   switch (item.type) {
     case "command_execution":
       return item.output?.trim() ? commandOutputText(item.output) || null : null;
     case "dynamic_tool":
-      return item.outputOmitted === true ? null : formatToolValue(item.output);
+      return item.outputOmitted === true
+        ? null
+        : formatToolValue(item.output, item.viewedImagePath !== undefined);
     case "file_search":
       return item.results?.length
         ? item.results
@@ -204,10 +197,6 @@ export function turnItemOutputText(item: OrchestrationV2TurnItem): string | null
   }
 }
 
-/**
- * Images in a fetched item's tool output, as assets. The detail read leaves
- * the bytes out, so each loads over HTTP by its index.
- */
 export function turnItemOutputImages(
   item: OrchestrationV2TurnItem,
 ): ReadonlyArray<Extract<AssetResource, { readonly _tag: "tool-output-image" }>> {
@@ -220,10 +209,6 @@ export function turnItemOutputImages(
   }));
 }
 
-/**
- * Whether expanding the item shows anything. Rows without content must not
- * offer a disclosure, otherwise they open to an empty panel.
- */
 export function turnItemHasDetail(item: OrchestrationV2TurnItem): boolean {
   switch (item.type) {
     case "reasoning":

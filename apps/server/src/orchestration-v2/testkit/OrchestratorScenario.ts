@@ -11,6 +11,7 @@ import type {
   ProviderUserInputAnswers,
   CommandId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
@@ -23,6 +24,7 @@ import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
 import * as Orchestrator from "../Orchestrator.ts";
+import type { RecordedCommandOutput } from "./CommandOutputRecorder.ts";
 import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 
 export type OrchestratorV2ScenarioStep =
@@ -48,7 +50,6 @@ export type OrchestratorV2ScenarioStep =
       readonly threadId: ThreadId;
     }
   | {
-      /** Waits until the thread's Waiting strip lists no background work. */
       readonly type: "await_no_background_work";
       readonly threadId: ThreadId;
     }
@@ -64,11 +65,6 @@ export type OrchestratorV2ScenarioStep =
       readonly status: OrchestrationV2Run["status"];
     }
   | {
-      /**
-       * Wait for a run held open for background work to finish: each time the
-       * adapter arms its finish debounce (a replay gate receipt), advance the
-       * test clock by exactly that debounce, until the run reaches `status`.
-       */
       readonly type: "finish_held_run";
       readonly threadId: ThreadId;
       readonly runId: OrchestrationV2Run["id"];
@@ -100,7 +96,6 @@ export type OrchestratorV2ScenarioStep =
       readonly commandId: CommandId;
       readonly decision?: ProviderApprovalDecision;
       readonly answers?: ProviderUserInputAnswers;
-      /** Captures the shell snapshot under this key while the request is pending. */
       readonly shellSnapshotKeyWhilePending?: string;
     };
 
@@ -117,6 +112,8 @@ export interface OrchestratorV2ScenarioResult {
   readonly projections: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection>;
   readonly shellSnapshot: OrchestrationV2ThreadShellSnapshot;
   readonly capturedShellSnapshots: ReadonlyMap<string, OrchestrationV2ThreadShellSnapshot>;
+  /** Live output each command streamed (never persisted). Provider replays fill it in. */
+  readonly commandOutput?: ReadonlyMap<TurnItemId, RecordedCommandOutput>;
 }
 
 export class OrchestratorV2ScenarioStepError extends Schema.TaggedError<OrchestratorV2ScenarioStepError>()(
@@ -134,9 +131,12 @@ export class OrchestratorV2ScenarioStepError extends Schema.TaggedError<Orchestr
 function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<ThreadId> {
   switch (command.type) {
     case "thread.create":
+    case "thread.stop":
     case "thread.archive":
     case "thread.unarchive":
     case "thread.delete":
+    case "thread.guest-share.close":
+    case "thread.guest-message.dismiss":
     case "thread.settle":
     case "thread.auto-settle":
     case "thread.unsettle":
@@ -166,8 +166,10 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "prepared-run.progress":
     case "prepared-run.fail":
     case "prepared-run.retry":
+    case "subagent.stop":
     case "run.interrupt":
     case "queued-message.promote-to-steer":
+    case "queued-run.start":
     case "queue.resume":
     case "queued-run.reorder":
     case "queued-run.cancel":
@@ -217,10 +219,7 @@ const hasActiveRun = (projection: OrchestrationV2ThreadProjection) =>
   );
 
 const SCENARIO_WAIT_ATTEMPTS = 10_000;
-// Iterations count event-loop turns, not time: while async work (git
-// subprocesses, fixture IO) is in flight the loop is idle and the counter
-// burns at full speed on slow runners. A wait is exhausted only once BOTH
-// the iteration budget and this wall-clock deadline are spent.
+// Iteration budgets burn through idle event-loop turns during async I/O; exhaust both iterations and wall-clock deadline.
 const SCENARIO_WAIT_DEADLINE_MS = 60_000;
 const scenarioWaitDeadline = () => performance.now() + SCENARIO_WAIT_DEADLINE_MS;
 const scenarioWaitExhausted = (attemptsRemaining: number, deadlineAt: number) =>
@@ -255,7 +254,6 @@ export function runOrchestratorV2Scenario(
   scenario: OrchestratorV2Scenario,
   options: {
     readonly replayGate?: ProviderReplayGate;
-    /** Runs after the steps, while the provider session is still open. */
     readonly afterSteps?: Effect.Effect<void>;
   } = {},
 ): Effect.Effect<
@@ -281,19 +279,18 @@ export function runOrchestratorV2Scenario(
       const capturedShellSnapshots = new Map<string, OrchestrationV2ThreadShellSnapshot>();
       let anonymousBackgroundDispatchIndex = 0;
 
-      const awaitDispatch = (key: string) =>
-        Effect.gen(function* () {
-          const fiber = backgroundDispatches.get(key);
-          if (!fiber) {
-            return yield* new OrchestratorV2ScenarioStepError({
-              scenario: scenario.name,
-              step: `await:${key}`,
-            });
-          }
-          const events = yield* Fiber.join(fiber);
-          backgroundDispatches.delete(key);
-          storedEventGroups.push(events);
-        });
+      const awaitDispatch = Effect.fn("awaitDispatch")(function* (key: string) {
+        const fiber = backgroundDispatches.get(key);
+        if (!fiber) {
+          return yield* new OrchestratorV2ScenarioStepError({
+            scenario: scenario.name,
+            step: `await:${key}`,
+          });
+        }
+        const events = yield* Fiber.join(fiber);
+        backgroundDispatches.delete(key);
+        storedEventGroups.push(events);
+      });
 
       const waitForPendingRuntimeRequest = (
         threadId: ThreadId,
@@ -561,7 +558,6 @@ export function runOrchestratorV2Scenario(
           );
         });
 
-      // Finish receipts earlier held runs already consumed.
       let consumedFinishReceipts = 0;
       const finishHeldRun = Effect.fn("scenario.finishHeldRun")(function* (
         step: Extract<OrchestratorV2ScenarioStep, { readonly type: "finish_held_run" }>,
@@ -574,9 +570,7 @@ export function runOrchestratorV2Scenario(
           });
         }
         while (true) {
-          // The run settles only through the latest armed debounce; a rearm
-          // (a late frame) supersedes it with a new receipt. Advance past the
-          // latest one, then either the run gets there or it rearmed again.
+          // Only the latest debounce receipt settles the run; late frames rearm it.
           const armed = yield* Effect.promise(() =>
             gate.waitForFinishArmed(consumedFinishReceipts),
           ).pipe(
@@ -599,7 +593,6 @@ export function runOrchestratorV2Scenario(
               Effect.as(false),
             ),
           );
-          // A finalized turn arms no further receipts, so the count is final.
           if (settled) {
             consumedFinishReceipts = gate.finishArmedCount();
             return;
@@ -732,8 +725,7 @@ export function runOrchestratorV2Scenario(
       };
     }),
   ).pipe(
-    // A failed step can leave provider frames held at a gate. Release them
-    // before the harness shuts the provider down, or teardown waits on them.
+    // Release held provider frames before shutdown so teardown cannot block on gates.
     Effect.ensuring(Effect.sync(() => options.replayGate?.releaseAll())),
   );
 }

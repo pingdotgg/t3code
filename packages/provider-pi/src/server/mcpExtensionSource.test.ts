@@ -7,6 +7,7 @@ import * as NodeVM from "node:vm";
 import { assert, describe, it } from "@effect/vitest";
 
 import { PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
+import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 
 type RequestHook = (
   event: { payload: unknown },
@@ -24,9 +25,11 @@ type InputHook = (
   ctx: { ui: { notify: (message: string, level: string) => void } },
 ) => Promise<{ action: string; text: string; images?: ReadonlyArray<unknown> } | undefined>;
 
-async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
+async function loadHooks(
+  commands: ReadonlyArray<SkillCommand> = [],
+  argv: ReadonlyArray<string> = [],
+) {
   const handlers = new Map<string, unknown>();
-  // Execute the shipped extension with MCP disabled; this path needs no Typebox.
   const source = NodeModule.stripTypeScriptTypes(
     PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
       "export default async function",
@@ -34,10 +37,9 @@ async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
     ),
   );
   await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
-    process: { env: {} },
+    process: { env: {}, argv },
     NodeFSP,
     NodePath,
-    // Frontmatter parsing belongs to Pi. These fixtures contain only skill bodies.
     stripFrontmatter: (content: string) => content,
     pi: {
       on: (name: string, handler: unknown) => handlers.set(name, handler),
@@ -47,138 +49,129 @@ async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
   return handlers;
 }
 
-interface RegisteredTool {
-  readonly name: string;
-  readonly description: string;
-  readonly parameters: unknown;
-  readonly exposure?: string;
-  readonly promptSnippet?: string;
-  readonly promptGuidelines?: ReadonlyArray<string>;
-  readonly execute: (
-    id: string,
-    args: Record<string, unknown>,
-    signal?: AbortSignal,
-  ) => Promise<{
-    readonly content: ReadonlyArray<{ readonly type: string; readonly text: string }>;
-  }>;
-}
-
-type AgentStartHook = (
-  event: { systemPrompt: string },
-  ctx: { ui: { notify: (message: string, severity: string) => void } },
-) => Promise<{ systemPrompt: string }>;
-
-async function loadMcpBridge(
-  options: {
-    readonly modern?: boolean;
-    readonly toolSearchAvailable?: boolean;
-    readonly toolSearchDisabled?: boolean;
-    readonly allowsTool?: (name: string) => boolean;
-  } = {},
-) {
-  const handlers = new Map<string, AgentStartHook>();
-  const tools: RegisteredTool[] = [];
-  const requests: Array<{ readonly method: string; readonly params?: unknown }> = [];
-  let activeTools = ["read"];
-  const transports: Array<{
-    readonly url: string;
-    readonly authorization: string;
-    readonly signal: AbortSignal | undefined;
-  }> = [];
-  const servers: Array<{ readonly name: string; readonly config: Record<string, unknown> }> = [];
-  const catalog = [
-    { name: "orchestrator_capabilities", description: "Discover available providers and models." },
-    { name: "delegate_task", description: "Delegate work to another agent." },
-    { name: "task_status", description: "Check delegated work." },
-    { name: "preview_snapshot", description: "Inspect the collaborative browser." },
-  ].map((tool) => ({ ...tool, inputSchema: { type: "object", properties: {} } }));
-  const source = NodeModule.stripTypeScriptTypes(
-    PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
-      "export default async function",
-      "async function",
-    ),
-  );
-  await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
-    process: {
-      env: { T3_MCP_URL: "http://fixture.invalid/mcp", T3_MCP_BEARER_TOKEN: "fixture-token" },
+describe("Pi orchestration prompt section", () => {
+  it.each([
+    {
+      name: "on Pi builds without prompt sections",
+      events: [
+        { systemPrompt: "base" },
+        { systemPrompt: "base", systemPromptOptions: {} },
+        { systemPrompt: "base", systemPromptOptions: { sections: null } },
+      ],
     },
-    AbortSignal,
-    Type: { Unsafe: (schema: unknown) => schema },
-    fetch: async (
-      url: string,
-      options: { body: string; headers: Record<string, string>; signal?: AbortSignal },
-    ) => {
-      transports.push({
-        url,
-        authorization: options.headers.authorization!,
-        signal: options.signal,
-      });
-      const request = JSON.parse(options.body) as { id: number; method: string; params?: unknown };
-      requests.push(request);
-      const result =
-        request.method === "tools/list"
-          ? { tools: catalog }
-          : request.method === "tools/call"
-            ? { content: [{ type: "text", text: "browser snapshot" }] }
-            : {};
-      return new Response(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }), {
-        headers: { "content-type": "application/json" },
-      });
+    {
+      name: "when an earlier extension forces the system prompt",
+      events: [
+        {
+          systemPrompt: "forced",
+          systemPromptOptions: { sections: {}, forceSystemPrompt: "forced" },
+        },
+      ],
     },
-    pi: {
-      on: (name: string, handler: AgentStartHook) => handlers.set(name, handler),
-      registerTool: (tool: RegisteredTool) => {
-        if (options.allowsTool && !options.allowsTool(tool.name)) return;
-        const index = tools.findIndex((current) => current.name === tool.name);
-        if (index === -1) tools.push(tool);
-        else tools[index] = tool;
-      },
-      getActiveTools: () => activeTools,
-      setActiveTools: (names: string[]) => {
-        activeTools = names.filter((name) => options.allowsTool?.(name) ?? true);
-      },
-      getAllTools: () =>
-        options.toolSearchAvailable &&
-        !options.toolSearchDisabled &&
-        (options.allowsTool?.("tool_search") ?? true)
-          ? [{ name: "tool_search", sourceInfo: { path: "builtin:tool-search" } }]
-          : [],
-      ...(options.modern
-        ? {
-            registerMcpServer: (name: string, config: Record<string, unknown>) =>
-              servers.push({ name, config }),
-            unregisterMcpServer: () => servers.splice(0),
-          }
-        : {}),
-    },
+  ])("appends guidance $name", async ({ events }) => {
+    const bridge = await loadMcpBridge();
+    const hook = bridge.handlers.get("before_agent_start")!;
+    for (const event of events) {
+      const result = await hook(event, { ui: { notify: assert.fail } });
+      assert.isDefined(result);
+      assert.isTrue(result!.systemPrompt.startsWith(`${event.systemPrompt}\n\n`));
+      assert.include(result!.systemPrompt, "orchestrator_capabilities");
+    }
   });
-  return {
-    handlers,
-    tools,
-    requests,
-    servers,
-    transports,
-    getActiveTools: () => activeTools,
-    restoreActiveTools: (names: string[]) => {
-      activeTools = names;
+});
+
+describe("Pi project trust", () => {
+  it.each([
+    { name: "a trusted folder", trusted: true, argv: [], notices: 0 },
+    { name: "an untrusted folder", trusted: false, argv: [], notices: 1 },
+    { name: "--no-approve", trusted: false, argv: ["--approve", "-na"], notices: 0 },
+  ])("sends $notices trust notice per session for $name", async ({ trusted, argv, notices }) => {
+    const sent: string[] = [];
+    const ctx = {
+      cwd: "/repo",
+      isProjectTrusted: () => trusted,
+      ui: { notify: (message: string) => sent.push(message) },
+    };
+    // Pi reruns extension factories on session replacement without asking about trust again.
+    for (const _session of [1, 2]) {
+      const handlers = (await loadHooks([], ["node", "pi", ...argv])) as Map<
+        string,
+        (event: unknown, ctx: unknown) => unknown
+      >;
+      for (const _turn of [1, 2]) await handlers.get("before_agent_start")!({}, ctx);
+    }
+    assert.equal(sent.length, notices * 2);
+    for (const message of sent)
+      assert.include(message, "for /repo because the folder is not trusted");
+  });
+});
+
+describe("Pi MCP tool results", () => {
+  it("returns mixed screenshot blocks and typed script output without repeating structured text", async () => {
+    const content = [
+      { type: "text", text: "Browser screenshot" },
+      { type: "image", data: "AAAA", mimeType: "image/png", _meta: { private: true } },
+      { type: "text", text: "Screenshot captured" },
+    ] as const;
+    const result = { content, structuredContent: { count: 2 }, _meta: { private: true } };
+    const bridge = await loadMcpBridge({ modern: true, result });
+    const tool = bridge.tools.find((tool) => tool.name === "mcp__t3-code__preview_snapshot")!;
+    const output = await tool.execute("snapshot", {});
+    assert.deepEqual(output.content, [
+      content[0],
+      { type: "image", data: "AAAA", mimeType: "image/png" },
+      content[2],
+    ]);
+    assert.deepEqual(output.structuredContent, { content, structuredContent: { count: 2 } });
+    assert.deepEqual(tool.outputSchema, {
+      type: "object",
+      properties: {
+        content: { type: "array", items: { type: "object" } },
+        structuredContent: { type: "object", properties: { count: { type: "number" } } },
+        isError: { type: "boolean" },
+        _meta: { type: "object" },
+      },
+      required: ["content"],
+    });
+  });
+
+  it.each([false, true])(
+    "preserves image-only results and error status, isError=%s",
+    async (isError) => {
+      const image = { type: "image", data: "AAAA", mimeType: "image/png" };
+      const result = { content: [image], isError };
+      const bridge = await loadMcpBridge({ result });
+      const output = await bridge.tools[0]!.execute("image", {});
+      assert.deepEqual(output.content[0], image);
+      assert.equal(output.content.length, isError ? 2 : 1);
+      if (isError) assert.include(output.content[1]?.text ?? "", "returned an error");
+      assert.equal(output.isError, isError ? true : undefined);
+      assert.deepEqual(output.structuredContent, result);
     },
-  };
-}
+  );
+
+  it("uses structured output as model text when content is empty", async () => {
+    const result = { content: [], structuredContent: { count: 2 } };
+    const bridge = await loadMcpBridge({ result });
+    const output = await bridge.tools[0]!.execute("structured", {});
+    assert.deepEqual(output.content, [{ type: "text", text: '{"count":2}' }]);
+    assert.deepEqual(output.structuredContent, result);
+  });
+});
 
 describe("Pi MCP tool exposure", () => {
+  const discoveryContext = {
+    model: { api: "anthropic-messages" },
+    ui: { notify: () => undefined },
+  };
+
   it("keeps orchestration direct and optional bridge tools discoverable on modern Pi", async () => {
     const bridge = await loadMcpBridge({ modern: true, toolSearchAvailable: true });
-    await bridge.handlers.get("session_start")!(
-      { systemPrompt: "" },
-      { ui: { notify: () => undefined } },
-    );
+    await bridge.handlers.get("session_start")!({ systemPrompt: "" }, discoveryContext);
     const start = bridge.handlers.get("before_agent_start");
     assert.isDefined(start);
-    const prompt = await start!(
-      { systemPrompt: "Pi system prompt" },
-      { ui: { notify: () => undefined } },
-    );
-    assert.include(prompt.systemPrompt, "orchestrator_capabilities");
+    const prompt = await start!({ systemPrompt: "Pi system prompt" }, discoveryContext);
+    assert.include(prompt?.systemPrompt ?? "", "orchestrator_capabilities");
     assert.equal(bridge.servers.length, 0);
     assert.equal(bridge.tools.length, 8);
     assert.deepEqual(bridge.getActiveTools(), ["read", "tool_search"]);
@@ -209,6 +202,33 @@ describe("Pi MCP tool exposure", () => {
     assert.equal(bridge.requests.at(-1)?.method, "tools/call");
   });
 
+  it("restores gateway declarations after model switches and older tree loadouts without excluded tools", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      toolSearchAvailable: true,
+      allowsTool: (name) => name !== "mcp__t3-code__delegate_task",
+    });
+    const event = { systemPrompt: "" };
+    await bridge.handlers.get("session_start")!(event, discoveryContext);
+    const gatewayContext = { model: { api: "openai-completions" }, ui: { notify: assert.fail } };
+    await bridge.handlers.get("model_select")!(event, gatewayContext);
+    bridge.restoreActiveTools(["read", "mcp__t3-code__task_status"]);
+    await bridge.handlers.get("session_tree")!(event, gatewayContext);
+    assert.deepEqual(bridge.getActiveTools(), [
+      "read",
+      "mcp__t3-code__task_status",
+      "tool_search",
+      "mcp__t3-code__orchestrator_capabilities",
+      "mcp__t3-code__preview_snapshot",
+    ]);
+    await bridge.handlers.get("model_select")!(event, discoveryContext);
+    assert.equal(
+      bridge.tools.find((tool) => tool.name === "mcp__t3-code__preview_snapshot")?.exposure,
+      "deferred",
+    );
+    assert.include(bridge.getActiveTools(), "mcp__t3-code__preview_snapshot");
+  });
+
   it.each(["legacy Pi", "disabled tool search"])(
     "keeps tool execution available with %s",
     async (mode) => {
@@ -219,7 +239,7 @@ describe("Pi MCP tool exposure", () => {
       });
       if (mode !== "legacy Pi") {
         const start = bridge.handlers.get("session_start");
-        await start!({ systemPrompt: "Pi system prompt" }, { ui: { notify: () => undefined } });
+        await start!({ systemPrompt: "Pi system prompt" }, discoveryContext);
       }
       assert.equal(bridge.tools.filter((tool) => tool.exposure !== "hidden").length, 4);
       assert.isTrue(
@@ -245,66 +265,93 @@ describe("Pi MCP tool exposure", () => {
       assert.isUndefined(tool?.promptGuidelines);
     },
   );
+});
 
-  it("preserves legacy wildcard tool selection", async () => {
-    const bridge = await loadMcpBridge({
-      modern: true,
-      toolSearchAvailable: true,
-      allowsTool: (name) =>
-        name === "read" || name === "tool_search" || name.startsWith("mcp__t3-code__"),
-    });
-    await bridge.handlers.get("session_start")!(
-      { systemPrompt: "" },
-      { ui: { notify: () => undefined } },
-    );
-    assert.equal(bridge.tools.length, 4);
-    assert.equal(bridge.tools.filter((tool) => tool.exposure === "direct").length, 3);
-    const tool = bridge.tools.find((tool) => tool.name === "mcp__t3-code__preview_snapshot");
-    assert.isDefined(tool);
-    assert.equal((await tool!.execute("selected", {})).content[0]?.text, "browser snapshot");
-  });
-
-  it.each([false, true])(
-    "reconciles tree loadouts while honoring search exclusion: %s",
-    async (excludeSearch) => {
-      const bridge = await loadMcpBridge({
-        modern: true,
-        toolSearchAvailable: true,
-        allowsTool: (name) =>
-          name !== "mcp__t3-code__delegate_task" && (!excludeSearch || name !== "tool_search"),
-      });
-      await bridge.handlers.get("session_start")!(
-        { systemPrompt: "" },
-        { ui: { notify: () => undefined } },
-      );
-      bridge.restoreActiveTools([
-        "read",
-        "mcp__t3-code__task_status",
-        "mcp__t3-code__preview_snapshot",
-      ]);
-      const tree = bridge.handlers.get("session_tree");
-      assert.isDefined(tree);
-      await tree!({ systemPrompt: "" }, { ui: { notify: () => undefined } });
-      assert.deepEqual(bridge.getActiveTools(), [
-        "read",
-        "mcp__t3-code__task_status",
-        "mcp__t3-code__preview_snapshot",
-        ...(!excludeSearch ? ["tool_search"] : []),
-      ]);
-      assert.isFalse(
-        bridge.tools.some(
-          (tool) => tool.exposure !== "hidden" && tool.name.endsWith("__delegate_task"),
-        ),
-      );
+describe("Pi MCP tool schemas", () => {
+  it.each([{ type: "object" }, {}])(
+    "declares empty properties on object schemas that omit them: %j",
+    async (inputSchema) => {
+      const bridge = await loadMcpBridge({ inputSchema });
+      assert.isAbove(bridge.tools.length, 0);
+      for (const tool of bridge.tools) {
+        assert.deepEqual(tool.parameters, { type: "object", properties: {} });
+      }
     },
   );
+
+  it("keeps declared properties and other schema keywords", async () => {
+    const inputSchema = {
+      type: "object",
+      properties: { depth: { type: "number" } },
+      required: ["depth"],
+      additionalProperties: false,
+    };
+    const bridge = await loadMcpBridge({ inputSchema });
+    for (const tool of bridge.tools) {
+      assert.deepEqual(tool.parameters, inputSchema);
+    }
+  });
 });
 
 describe("Pi tool discovery permissions", () => {
+  it.each(["approval-required", "auto-accept-edits", "auto"])(
+    "allows annotated T3 reads in %s while gating mutations and replacements",
+    async (runtimeMode) => {
+      const bridge = await loadMcpBridge({ modern: true, runtimeMode });
+      const hook = bridge.handlers.get("tool_call") as unknown as (
+        event: { toolName: string; input: unknown },
+        ctx: { ui: { confirm: (title: string) => Promise<boolean> } },
+      ) => Promise<{ block: true; reason: string } | undefined>;
+      const confirmations: string[] = [];
+      const ctx = {
+        ui: {
+          confirm: async (title: string) => {
+            confirmations.push(title);
+            return false;
+          },
+        },
+      };
+      for (const prefix of ["mcp__t3-code__", "mcp__t3_code__"]) {
+        assert.isUndefined(
+          await hook({ toolName: prefix + "orchestrator_capabilities", input: {} }, ctx),
+        );
+        assert.equal(
+          (await hook({ toolName: prefix + "delegate_task", input: {} }, ctx))?.block,
+          true,
+        );
+        assert.equal(
+          (await hook({ toolName: prefix + "task_status", input: {} }, ctx))?.block,
+          true,
+        );
+      }
+      assert.equal(confirmations.length, 4);
+      bridge.setBridgeSourcePath("/user/extensions/replacement.ts");
+      assert.equal(
+        (await hook({ toolName: "mcp__t3-code__orchestrator_capabilities", input: {} }, ctx))
+          ?.block,
+        true,
+      );
+      assert.equal(
+        (await hook({ toolName: "mcp__other__orchestrator_capabilities", input: {} }, ctx))?.block,
+        true,
+      );
+      assert.equal(confirmations.length, 6);
+    },
+  );
+
   it("allows discovery without confirmation and still gates the discovered tool", async () => {
     type ToolCallHook = (
       event: { toolName: string; input: unknown },
-      ctx: { ui: { confirm: (title: string, detail: string) => Promise<boolean> } },
+      ctx: {
+        signal: AbortSignal;
+        ui: {
+          confirm: (
+            title: string,
+            detail: string,
+            options: { signal: AbortSignal },
+          ) => Promise<boolean>;
+        };
+      },
     ) => Promise<{ block: true; reason: string } | undefined>;
     let toolCall: ToolCallHook | undefined;
     let searchPath = "builtin:tool-search";
@@ -325,9 +372,12 @@ describe("Pi tool discovery permissions", () => {
     });
     assert.isDefined(toolCall);
     const confirmations: string[] = [];
+    const controller = new AbortController();
     const ctx = {
+      signal: controller.signal,
       ui: {
-        confirm: async (title: string) => {
+        confirm: async (title: string, _detail: string, options: { signal: AbortSignal }) => {
+          assert.strictEqual(options.signal, controller.signal);
           confirmations.push(title);
           return false;
         },
@@ -341,7 +391,6 @@ describe("Pi tool discovery permissions", () => {
     assert.equal(result?.block, true);
     assert.deepEqual(confirmations, ["Allow mcp__t3-code__preview_snapshot?"]);
 
-    // An extension that replaces the search builtin is not known to be read-only.
     searchPath = "/extensions/custom-search.ts";
     const replaced = await toolCall!({ toolName: "tool_search", input: {} }, ctx);
     assert.equal(replaced?.block, true);
@@ -351,7 +400,6 @@ describe("Pi tool discovery permissions", () => {
 
 async function loadRequestHook(): Promise<RequestHook> {
   const handlers = new Map<string, RequestHook>();
-  // Execute the shipped extension with MCP disabled; this path needs no Typebox.
   const source = NodeModule.stripTypeScriptTypes(
     PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
       "export default async function",
@@ -436,7 +484,6 @@ describe("Pi skill references", () => {
     const hook = await loadInputHook([
       { name: "skill:alpha", source: "skill", sourceInfo: { path: "/unused" } },
     ]);
-    // Punctuation-adjacent references are plain text in the composer, not selected chips.
     for (const text of [
       "Explain $HOME",
       "/skill:alpha use $alpha",

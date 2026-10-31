@@ -1,3 +1,4 @@
+import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { assert, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -59,12 +60,24 @@ const insertLiveSession = Effect.fn("WorktreeServiceTest.insertLiveSession")(fun
   cwd: string,
 ) {
   const sql = yield* SqlClient.SqlClient;
+  const payload = JSON.stringify({
+    id: "session-1",
+    driver: "codex",
+    providerInstanceId: "codex",
+    status: "ready",
+    cwd,
+    model: null,
+    capabilities: CodexProviderCapabilitiesV2,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    lastError: null,
+  });
   yield* sql`
     INSERT INTO orchestration_v2_projection_provider_sessions
       (provider_session_id, thread_id, provider, status, model, updated_at, payload_json)
     VALUES
       ('session-1', 'thread-session', 'codex', 'ready', NULL, '2026-01-01T00:00:00.000Z',
-       json_object('cwd', ${cwd}))
+       ${payload})
   `;
 });
 

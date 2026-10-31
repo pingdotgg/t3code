@@ -66,13 +66,7 @@ export function getCodexTurnAccumulator(
   return created;
 }
 
-/**
- * Usage added by one `thread/tokenUsage/updated` notification. Codex reports a
- * running `total` for the thread and `last`, the usage of the newest model
- * response. Within a turn the growth of `total` equals `last`. Without a prior
- * total (first update after resume or rollback), or when Codex reset the
- * running total, `last` is the delta.
- */
+/** total is thread-wide; last covers the newest model response. */
 function codexTurnTokenUsageDelta(
   previous: CodexCumulativeTokenUsage | undefined,
   current: CodexCumulativeTokenUsage,
@@ -107,8 +101,7 @@ export function accumulateCodexTurnTokenUsage(
 ): void {
   const current = codexTokenUsageBreakdown(usage.total);
   if (state.activeTurnId !== turnId) {
-    // The total is thread-wide, so every update moves the baseline. A late
-    // update for a finished turn is not counted toward the live turn.
+    // Every thread-wide total updates the baseline; late finished-turn updates do not count toward the live turn.
     state.baseline = current;
     return;
   }
@@ -164,9 +157,7 @@ export function completeCodexTurnTokenUsage(
     };
   }
 
-  // Codex counts cache reads and writes inside inputTokens. Clamp the
-  // subsets so the record keeps the documented relationships even if a
-  // counter drifts.
+  // Codex counts cache reads and writes inside inputTokens.
   return {
     usageStatus: completed ? "complete" : "partial",
     usageScope: "main_agent",
