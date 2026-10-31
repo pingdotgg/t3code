@@ -29,7 +29,7 @@ import {
   mergePullRequestThreadComments,
 } from "./pullRequestDetail.logic";
 import { PullRequestActorLabel } from "./pullRequestPresentation";
-import { PullRequestMarkdown } from "./PullRequestMarkdown";
+import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import type { PendingReviewComment } from "./pullRequestReviewStore";
@@ -116,7 +116,7 @@ export function PendingReviewCommentCard({
 function ReviewThreadLocation({ thread }: { thread: PullRequestReviewThread }) {
   const label = `${thread.path}${thread.line ? `:${thread.line}` : ""}`;
   return (
-    <div className="-mx-3 -mt-3 mb-3 border-b border-border">
+    <div className="-mx-3 -mt-3 mb-3 border-b border-border bg-foreground/[0.015]">
       <div className="flex min-w-0 items-center gap-2 px-3 py-2">
         <Tooltip>
           <TooltipTrigger
@@ -135,7 +135,7 @@ function ReviewThreadLocation({ thread }: { thread: PullRequestReviewThread }) {
         </Badge>
       </div>
       {thread.snippet && thread.snippet.length > 0 ? (
-        <div className="mx-3 mb-3 overflow-x-auto rounded-md border border-border bg-background py-1 font-mono text-meta leading-5">
+        <div className="mx-3 mb-3 overflow-x-auto rounded-control surface-well py-1 font-mono text-meta leading-5">
           {thread.snippet.map((line, index) => (
             <div
               // oxlint-disable-next-line react/no-array-index-key -- Snippet lines can repeat; these stateless rows never reorder.
@@ -285,7 +285,7 @@ export function ReviewThreadCard({
 
   if (standalone) {
     return (
-      <div className="group rounded-card border border-border surface-card p-3 text-body">
+      <div className="group overflow-hidden rounded-xl surface-popover p-3 text-body">
         <ReviewThreadLocation thread={thread} />
         <div className="space-y-3">
           {comments.map((comment, index) => (
@@ -314,7 +314,7 @@ export function ReviewThreadCard({
                   onCancel={() => setEditingId(null)}
                 />
               ) : (
-                <PullRequestMarkdown
+                <PullRequestCommentBody
                   className="mt-1 min-w-0 text-body"
                   text={comment.body}
                   cwd={workspaceRoot}
@@ -445,15 +445,6 @@ export function ReviewThreadCard({
                   <span>
                     <RelativeTime timestamp={comment.createdAt} />
                   </span>
-                  <PullRequestReactionBar
-                    className="ml-auto justify-end"
-                    reactions={comment.reactions ?? []}
-                    canReact={canReact}
-                    subjectId={comment.id}
-                    environmentId={environmentId}
-                    reference={reference}
-                    onRefresh={onReacted}
-                  />
                 </div>
                 {editingId === comment.id ? (
                   <PullRequestMarkdownEditor
@@ -468,7 +459,7 @@ export function ReviewThreadCard({
                   />
                 ) : (
                   <div className="mt-1 flex items-start gap-1">
-                    <PullRequestMarkdown
+                    <PullRequestCommentBody
                       className="min-w-0 flex-1 text-body"
                       text={comment.body}
                       cwd={workspaceRoot}
@@ -482,6 +473,15 @@ export function ReviewThreadCard({
                     ) : null}
                   </div>
                 )}
+                <PullRequestReactionBar
+                  className="mt-2"
+                  reactions={comment.reactions ?? []}
+                  canReact={canReact}
+                  subjectId={comment.id}
+                  environmentId={environmentId}
+                  reference={reference}
+                  onRefresh={onReacted}
+                />
               </article>
             ))}
           </div>
