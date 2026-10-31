@@ -99,6 +99,11 @@ import {
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 const DROID_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "factory-droid" });
+const OPENCODE_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({
+  source: "local",
+  commandPath: "/usr/local/bin/opencode",
+  commandArgs: ["acp"],
+});
 
 const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
 
@@ -1374,7 +1379,7 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  // Factory Droid 0.243.0 sends an optional text companion for every AskUser choice.
+  // Droid 0.243.0 and OpenCode 2.1 pair each choice with an optional free-form companion field.
   const droidChoice = {
     type: "string",
     title: "Format",
@@ -1404,6 +1409,41 @@ describe("AcpAdapterV2", () => {
       { label: "Plain text", description: "Plain text", value: "option_1" },
     ],
   }));
+
+  // OpenCode 2.1 pairs each qN choice with a qN_custom free-form companion.
+  const openCodeSchema = {
+    type: "object",
+    properties: {
+      q0: {
+        type: "string",
+        title: "Color preference",
+        description: "Which color do you prefer?",
+        oneOf: [
+          { const: "red", title: "Red", description: "Choose the color red" },
+          { const: "blue", title: "Blue" },
+        ],
+        default: "red",
+      },
+      q0_custom: {
+        type: "string",
+        title: "Color preference (other)",
+        description: "Type your own answer",
+        minLength: 1,
+      },
+    },
+  };
+  const openCodeQuestions = [
+    {
+      id: "q0",
+      header: "Color preference",
+      question: "Which color do you prefer?",
+      options: [
+        { label: "Red", description: "Choose the color red", value: "red" },
+        { label: "Blue", description: "Blue", value: "blue" },
+      ],
+      allowCustomAnswer: true,
+    },
+  ];
 
   // regression: #20417 Droid AskUser answers were sent as a cancel
   it.live.each([
@@ -1450,11 +1490,65 @@ describe("AcpAdapterV2", () => {
       answers: { name: "Ada" },
       result: { action: "accept", content: { name: "Ada" } },
     },
-  ])("Droid elicitation $scenario", ({ schema, questions, answers, result, withAttachments }) =>
-    Effect.gen(function* () {
+    {
+      scenario: "OpenCode keeps the selected option and hides the custom companion",
+      settings: OPENCODE_SETTINGS,
+      schema: openCodeSchema,
+      questions: openCodeQuestions,
+      answers: { q0: "blue" },
+      result: { action: "accept", content: { q0: "blue" } },
+    },
+    {
+      scenario: "OpenCode sends a typed answer to the custom companion",
+      settings: OPENCODE_SETTINGS,
+      schema: openCodeSchema,
+      questions: openCodeQuestions,
+      answers: { q0: "green" },
+      result: { action: "accept", content: { q0_custom: "green" } },
+    },
+    {
+      scenario: "OpenCode multi-select keeps values and custom text",
+      settings: OPENCODE_SETTINGS,
+      schema: {
+        ...openCodeSchema,
+        properties: {
+          q0: {
+            type: "array",
+            title: "Color preference",
+            description: "Which color do you prefer?",
+            items: { anyOf: openCodeSchema.properties.q0.oneOf },
+          },
+          q0_custom: { type: "string", description: "Add your own answer" },
+        },
+      },
+      questions: openCodeQuestions.map((question) => ({ ...question, multiSelect: true })),
+      answers: { q0: ["blue", "green"] },
+      result: { action: "accept", content: { q0: ["blue"], q0_custom: "green" } },
+    },
+    {
+      scenario: "OpenCode cancels without accepting answers",
+      settings: OPENCODE_SETTINGS,
+      schema: openCodeSchema,
+      questions: openCodeQuestions,
+      answers: undefined,
+      result: { action: "cancel" },
+    },
+    {
+      scenario: "OpenCode falls back for an unrelated form",
+      settings: OPENCODE_SETTINGS,
+      schema: { type: "object", properties: { name: { type: "string" } } },
+      questions: [{ id: "name", header: "Question 1", question: "Your answer?", options: [] }],
+      answers: { name: "Ada" },
+      result: { action: "accept", content: { name: "Ada" } },
+    },
+  ])("Registry elicitation $scenario", (fixture) => {
+    const { schema, questions, answers, result } = fixture;
+    const withAttachments = "withAttachments" in fixture && fixture.withAttachments;
+    const settings = "settings" in fixture ? fixture.settings : DROID_SETTINGS;
+    return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-droid-form-" });
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-registry-form-" });
       const statusPath = path.join(directory, "status.json");
       const expectedResult = typeof result === "function" ? result(directory) : result;
       let preparedAnswers: ProviderUserInputAnswers | undefined = answers;
@@ -1558,7 +1652,7 @@ describe("AcpAdapterV2", () => {
       const adapter = yield* makeAcpRegistryAdapterV2({
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
-        settings: DROID_SETTINGS,
+        settings,
         environment: {},
         makeRuntime: makeAcpReplayRuntime({
           transcript,
@@ -1574,7 +1668,7 @@ describe("AcpAdapterV2", () => {
           Layer.mock(AcpRegistryCatalog)({ resolve: () => Effect.die("runtime is injected") }),
         ),
       );
-      const threadId = ThreadId.make("droid-form-thread");
+      const threadId = ThreadId.make("registry-form-thread");
       const modelSelection = { instanceId, model: "default" } as const;
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "approval-required",
@@ -1611,7 +1705,7 @@ describe("AcpAdapterV2", () => {
         ),
       );
       if (item.type !== "turn_item.updated" || item.turnItem.type !== "user_input_request")
-        return yield* Effect.die("Expected Droid question");
+        return yield* Effect.die("Expected a user input question");
       assert.deepEqual(item.turnItem.questions, questions);
       yield* runtime.respondToRuntimeRequest({
         requestId: item.turnItem.requestId,
@@ -1622,8 +1716,8 @@ describe("AcpAdapterV2", () => {
         Stream.runHead,
       );
       assert.equal(Option.getOrThrow(terminal).status, "completed");
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
-  );
+    }).pipe(Effect.provide(layerTest), Effect.scoped);
+  });
 
   it.live.each(["failed", "recovered", "cancelled"] as const)(
     "projects Mistral retry notices and their %s outcome",
