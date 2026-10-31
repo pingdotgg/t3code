@@ -17,6 +17,21 @@ import { upCommand } from "./up.ts";
 // T3 Connect's flows run only in builds with its public config, and they call
 // the relay; this file swaps in the link and unlink steps.
 const events = vi.hoisted((): Array<string> => []);
+// The CLI link marker, kept in memory instead of the secret store.
+const link = vi.hoisted(() => ({
+  desired: false,
+  mode: "managed" as "managed" | "publish_only",
+}));
+vi.mock("../cloud/CliState.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../cloud/CliState.ts")>()),
+  readCliDesiredCloudLink: Effect.sync(() => link.desired),
+  readCliDesiredLinkMode: Effect.sync(() => link.mode),
+  setCliDesiredCloudLink: (desired: boolean, mode: "managed" | "publish_only" = "managed") =>
+    Effect.sync(() => {
+      link.desired = desired;
+      link.mode = mode;
+    }),
+}));
 vi.mock("../cloud/publicConfig.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../cloud/publicConfig.ts")>()),
   hasCloudPublicConfig: true,
@@ -28,20 +43,33 @@ vi.mock("./connect.ts", async (importOriginal) => {
     linkEnvironmentForConnect: () =>
       Effect.sync(() => {
         events.push("link");
+        link.desired = true;
+        link.mode = "managed";
         return { identity: "me@example.com" } as const;
       }),
     disconnectCloud: () =>
       Effect.sync(() => {
         events.push("unlink");
+        link.desired = false;
         return { status: "succeeded" } as const;
       }),
   };
 });
 
 it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up with T3 Connect", (it) => {
-  it.effect("a failed restart unlinks the new link, then restarts on the old settings", () =>
+  it.effect.each([
+    { label: "no link", prior: null, events: ["link", "restart", "unlink", "restart"] },
+    // The publish-only link comes back, with its activity publishing.
+    {
+      label: "a publish-only link",
+      prior: "publish_only" as const,
+      events: ["link", "restart", "restart"],
+    },
+  ])("a failed restart after --connect undoes it, then restarts: $label before", (input) =>
     Effect.gen(function* () {
       events.length = 0;
+      link.desired = input.prior !== null;
+      link.mode = input.prior ?? "managed";
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-up-connect-test-" });
       yield* fs.writeFileString(`${baseDir}/service.env`, "T3CODE_LAN=false\n");
@@ -85,8 +113,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up with T3 Co
       );
 
       expect(exit._tag).toBe("Failure");
-      // The unlink comes before the restart on the old settings.
-      expect(events).toEqual(["link", "restart", "unlink", "restart"]);
+      // Any unlink comes before the restart on the old settings.
+      expect(events).toEqual(input.events);
+      expect(link).toEqual(
+        input.prior === null
+          ? { desired: false, mode: "managed" }
+          : { desired: true, mode: input.prior },
+      );
       expect(yield* fs.readFileString(`${baseDir}/service.env`)).toBe("T3CODE_LAN=false\n");
     }),
   );

@@ -162,6 +162,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
     readonly restartFails?: boolean;
     /** Runs as if in a terminal, answering each question with this text. */
     readonly answer?: string;
+    readonly prints?: string;
     readonly env: string;
     readonly args: ReadonlyArray<string>;
     readonly installs: number;
@@ -216,6 +217,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
     },
     {
       label: "a failed update keeps service.env matching the old service",
+      // The old service still runs, so no foreground server is offered.
+      prints: "Fix that, then run `t3 up` again.",
       installed: true,
       status: { current: false },
       installFails: true,
@@ -311,7 +314,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       );
 
       if (input.answer !== undefined) yield* asTerminal;
-      const exit = yield* Command.runWith(upCommand, { version: packageJson.version })([
+      const { exit, lines } = yield* Command.runWith(upCommand, { version: packageJson.version })([
         "--base-dir",
         baseDir,
         ...input.args,
@@ -320,14 +323,20 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
         input.answer === undefined
           ? (effect) => effect
           : Effect.provideService(Terminal.Terminal, answering(input.answer)),
+        Effect.exit,
+        Effect.flatMap((exit) =>
+          Effect.map(TestConsole.logLines, (lines) => ({ exit, lines: lines.map(String) })),
+        ),
         Effect.provide(
           Layer.mergeAll(
             ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
             Layer.fresh(TestConsole.layer),
           ),
         ),
-        Effect.exit,
       );
+      if (input.prints !== undefined) {
+        expect(lines.join("\n")).toContain(input.prints);
+      }
       expect(exit._tag).toBe(input.restartFails === true ? "Failure" : "Success");
       expect({ installs, restarts }).toEqual({
         installs: input.installs,

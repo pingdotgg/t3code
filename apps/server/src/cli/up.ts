@@ -203,6 +203,11 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   }
 
   const current = { connect: before.connect === true, lan: before.lan };
+  // A publish-only link is not "on", but a rollback must put it back.
+  const priorPublishOnly =
+    hasCloudPublicConfig &&
+    (yield* CliState.readCliDesiredCloudLink) &&
+    (yield* CliState.readCliDesiredLinkMode) === "publish_only";
   const plan = planRoutes({ ...before, installed: before.service.installed }, flags);
   const interactive = !flags.yes && interactiveTerminal();
   let routes = plan.routes;
@@ -291,9 +296,11 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   const restoreServiceEnv = before.service.installed
     ? CliService.writeServiceEnv(baseDir, { T3CODE_LAN: previousLan }).pipe(
         Effect.andThen(
-          routes.connect && !current.connect
-            ? disconnectCloud({ clearAuthorization: false }).pipe(Effect.asVoid)
-            : Effect.void,
+          !routes.connect || current.connect
+            ? Effect.void
+            : priorPublishOnly
+              ? CliState.setCliDesiredCloudLink(true, "publish_only")
+              : disconnectCloud({ clearAuthorization: false }).pipe(Effect.asVoid),
         ),
       )
     : Effect.void;
@@ -342,8 +349,13 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
           }),
           Effect.tapError(() => rollBack),
         );
-    if ("failed" in result) {
+    if ("failed" in result && before.service.installed) {
+      // The old service still runs, so a foreground server would clash with it.
       yield* restoreServiceEnv;
+      yield* Console.log(
+        `Service setup failed: ${result.failed} Fix that, then run \`t3 up\` again.`,
+      );
+    } else if ("failed" in result) {
       yield* printServeCommand(`Service setup failed: ${result.failed}`);
     } else if (result.changed) {
       yield* Console.log(CliService.formatServiceChange(result));
