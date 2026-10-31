@@ -1185,50 +1185,30 @@ describe("ManagedEndpointProvider", () => {
       const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
       const origin = { localHttpHost: "127.0.0.1", localHttpPort: 3773 } as const;
       const provisioned = yield* provider.provision({ ...key, origin });
+      const reconcile = provider.reconcileOrigin({
+        ...key,
+        tunnelId: provisioned.runtime.tunnelId!,
+        origin,
+        endpoint: provisioned.endpoint,
+      });
+      tunnelCalls.length = 0;
+
+      expect(yield* reconcile).toBe("ready");
+      expect(tunnelCalls.map((call) => call.operation)).toEqual(["get", "getConfiguration"]);
+
       configuration.current = {
         ingress: [
           { hostname: expectedManagedHostname("env_ABC"), service: "http://127.0.0.1:4711" },
           { service: "http_status:404" },
         ],
       };
-
-      expect(
-        yield* provider.reconcileOrigin({
-          ...key,
-          tunnelId: provisioned.runtime.tunnelId!,
-          origin,
-          endpoint: provisioned.endpoint,
-        }),
-      ).toBe("ready");
+      expect(yield* reconcile).toBe("ready");
       expect(configuration.current).toEqual({
         ingress: [
           { hostname: expectedManagedHostname("env_ABC"), service: "http://127.0.0.1:3773" },
           { service: "http_status:404" },
         ],
       });
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("does not rewrite Cloudflare ingress that already serves the recorded origin", () => {
-    const tunnelCalls: TunnelCall[] = [];
-    const layer = layerProvider(makePersistentTunnelClient(tunnelCalls));
-
-    return Effect.gen(function* () {
-      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
-      const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
-      const origin = { localHttpHost: "127.0.0.1", localHttpPort: 3773 } as const;
-      const provisioned = yield* provider.provision({ ...key, origin });
-      tunnelCalls.length = 0;
-
-      expect(
-        yield* provider.reconcileOrigin({
-          ...key,
-          tunnelId: provisioned.runtime.tunnelId!,
-          origin,
-          endpoint: provisioned.endpoint,
-        }),
-      ).toBe("ready");
-      expect(tunnelCalls.map((call) => call.operation)).toEqual(["get", "getConfiguration"]);
     }).pipe(Effect.provide(layer));
   });
 
