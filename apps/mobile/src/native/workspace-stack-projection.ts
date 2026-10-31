@@ -6,15 +6,29 @@ import type {
 
 type Route = StackNavigationState<ParamListBase>["routes"][number];
 
-export function projectWorkspaceStack(
+/** Keep the presenting history mounted while modal routes cover the whole workspace. */
+export function projectStackPresentation(
   state: StackNavigationState<ParamListBase>,
   isOverlay: (route: Route) => boolean,
 ) {
   const firstOverlay = state.routes.findIndex(isOverlay);
-  const workspaceRoutes = state.routes.slice(0, firstOverlay < 0 ? undefined : firstOverlay);
+  return {
+    workspace: state.routes.slice(0, firstOverlay < 0 ? undefined : firstOverlay),
+    overlays: firstOverlay < 0 ? [] : state.routes.slice(firstOverlay),
+  };
+}
+
+/** Project one router history into native columns and a modal presentation stack. */
+export function projectWorkspaceStack(
+  state: StackNavigationState<ParamListBase>,
+  isOverlay: (route: Route) => boolean,
+) {
+  const { workspace: workspaceRoutes, overlays } = projectStackPresentation(state, isOverlay);
   const primary = workspaceRoutes.find((route) => route.name === "Home");
-  const detail = workspaceRoutes.filter((route) => route.name !== "Home");
-  const overlays = firstOverlay < 0 ? [] : state.routes.slice(firstOverlay);
+  // The Settings tab's route only selects what Home shows; its pages are the detail.
+  const detail = workspaceRoutes.filter(
+    (route) => route.name !== "Home" && route.name !== "Settings",
+  );
   return { primary, detail, overlays };
 }
 
@@ -50,10 +64,13 @@ export function nativeStackPopAction(
   destinationKey?: string,
 ) {
   const sourceIndex = state.routes.findIndex((route) => route.key === dismissedKey);
-  const destinationIndex =
+  let destinationIndex =
     destinationKey === undefined
       ? sourceIndex - 1
       : state.routes.findIndex((route) => route.key === destinationKey);
+  // Home's screen draws the Settings list, so going back to it from a Settings page stops there.
+  if (destinationIndex >= 0 && state.routes[destinationIndex + 1]?.name === "Settings")
+    destinationIndex += 1;
   if (
     sourceIndex <= 0 ||
     sourceIndex > state.index ||
@@ -68,6 +85,53 @@ export function nativeStackPopAction(
     source: dismissedKey,
     target: state.key,
   };
+}
+
+/** The column UIKit shows while a split is collapsed, and the active detail it began removing. */
+export interface CollapsedSplitColumn {
+  readonly visible: "primary" | "secondary";
+  readonly leaving: string | null;
+}
+
+/**
+ * A collapsed split nests the detail column's navigation controller in the list column's. Back
+ * from the detail root pops that controller whole, so no screen leaves its own stack or reports a
+ * dismissal: the list appearing after the active detail began leaving is the only sign of it.
+ */
+export function collapsedSplitTransition(
+  column: CollapsedSplitColumn,
+  event: { readonly type: "willAppear" | "didAppear" | "willDisappear"; readonly key: string },
+  state: Pick<NavigationState, "key" | "index" | "routes">,
+  primaryKey: string,
+): {
+  readonly column: CollapsedSplitColumn;
+  readonly pop: ReturnType<typeof nativeStackPopAction>;
+} {
+  switch (event.type) {
+    case "willDisappear":
+      // JS pushes, pops, and presentations have already moved the router past this screen.
+      return {
+        column:
+          state.index > 0 && state.routes[state.index]?.key === event.key
+            ? { ...column, leaving: event.key }
+            : column,
+        pop: null,
+      };
+    case "willAppear":
+      // A cancelled swipe, or an expansion that keeps the detail on screen.
+      return {
+        column: column.leaving === event.key ? { ...column, leaving: null } : column,
+        pop: null,
+      };
+    case "didAppear":
+      return {
+        column: { visible: event.key === primaryKey ? "primary" : "secondary", leaving: null },
+        pop:
+          event.key === primaryKey && column.leaving
+            ? nativeStackPopAction(state, column.leaving, primaryKey)
+            : null,
+      };
+  }
 }
 
 export function partitionStackPresentations<T>(

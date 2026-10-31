@@ -45,6 +45,29 @@ function isWhitespace(char: string): boolean {
   return char === " " || char === "\n" || char === "\t" || char === "\r";
 }
 
+/** A second slash makes the whole word a path, even when the caret precedes that slash. */
+export function isPathWord(
+  text: string,
+  wordStart: number,
+  cursor: number,
+  isWhitespaceChar: (char: string) => boolean,
+): boolean {
+  let wordEnd = cursor;
+  while (wordEnd < text.length && !isWhitespaceChar(text[wordEnd] ?? "")) {
+    wordEnd += 1;
+  }
+  return text.slice(wordStart + 1, wordEnd).includes("/");
+}
+
+/**
+ * `$5`, `€9.99` and `$10k` are money, not skills. Matches the amounts the inline skill
+ * token regexes already refuse to render as skills, plus the punctuation prose puts after
+ * one (`$10k.`, `($5)`).
+ */
+export function isCurrencyAmountQuery(query: string): boolean {
+  return /^\.?[0-9][0-9,._]*(?:[kKmMbBtT]|[eE][0-9]+)?[.,;:!?)]*$/.test(query);
+}
+
 export function detectComposerTrigger(
   text: string,
   cursorInput: number,
@@ -56,6 +79,9 @@ export function detectComposerTrigger(
 
   if (linePrefix.startsWith("/")) {
     const commandMatch = /^\/(\S*)$/.exec(linePrefix);
+    if (commandMatch && isPathWord(text, lineStart, cursor, isWhitespaceChar ?? isWhitespace)) {
+      return null;
+    }
     if (commandMatch) {
       const commandQuery = commandMatch[1] ?? "";
       if (commandQuery.toLowerCase() === "model") {
@@ -94,6 +120,7 @@ export function detectComposerTrigger(
 
   const token = text.slice(tokenStart, cursor);
   if (token.startsWith("/")) {
+    if (isPathWord(text, tokenStart, cursor, wsCheck)) return null;
     return {
       kind: "slash-command",
       query: token.slice(1),
@@ -111,6 +138,7 @@ export function detectComposerTrigger(
     };
   const skillPrefix = /^\p{Sc}/u.exec(token);
   if (skillPrefix) {
+    if (isCurrencyAmountQuery(token.slice(skillPrefix[0].length))) return null;
     return {
       kind: "skill",
       query: token.slice(skillPrefix[0].length),

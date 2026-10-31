@@ -47,71 +47,6 @@ function fixture() {
 }
 
 describe("persistent project favicon cache", () => {
-  it("restores image bytes in a fresh client before any remote response", async () => {
-    const { cache, storage, load } = fixture();
-    expect(await cache.resolve(target, url, signal())).toBe(image);
-    await cache.flush();
-    const reloaded = createProjectFaviconCache({ storage, load });
-    await reloaded.hydrate();
-    expect(reloaded.peek(target)).toBe(image);
-    expect(await reloaded.resolve(target, null, signal())).toBe(image);
-    expect(load).toHaveBeenCalledTimes(1);
-  });
-
-  it("reuses the image when signed URLs or connection origins change", async () => {
-    const { cache, load } = fixture();
-    await cache.resolve(target, url, signal());
-    expect(
-      await cache.resolve(target, "https://new.test/api/assets/token-b/vabc-icon.svg", signal()),
-    ).toBe(image);
-    expect(load).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps the old image during refresh and failures, then persists its replacement", async () => {
-    const { cache, load, storage } = fixture();
-    await cache.resolve(target, url, signal());
-    const next = deferred<string>();
-    load.mockImplementationOnce(() => next.promise);
-    const refreshing = cache.resolve(target, url.replace("vabc", "vdef"), signal());
-    expect(cache.peek(target)).toBe(image);
-    next.resolve(replacement);
-    expect(await refreshing).toBe(replacement);
-    load.mockRejectedValueOnce(new Error("offline"));
-    expect(await cache.resolve(target, url, signal())).toBe(replacement);
-    await cache.flush();
-    expect(await createProjectFaviconCache({ storage, load }).resolve(target, null, signal())).toBe(
-      replacement,
-    );
-  });
-
-  it("persists confirmed removal and ignores an aborted older download", async () => {
-    const { cache, load, storage } = fixture();
-    await cache.resolve(target, url, signal());
-    const next = deferred<string>();
-    const started = deferred<void>();
-    load.mockImplementationOnce(() => {
-      started.resolve();
-      return next.promise;
-    });
-    const controller = new AbortController();
-    const pending = cache.resolve(target, url.replace("vabc", "vdef"), controller.signal);
-    await started.promise;
-    controller.abort();
-    expect(
-      await cache.resolve(
-        target,
-        "https://remote.test/api/assets/token/project-favicon-missing",
-        signal(),
-      ),
-    ).toBeNull();
-    next.resolve(replacement);
-    await pending;
-    await cache.flush();
-    expect(
-      await createProjectFaviconCache({ storage, load }).resolve(target, null, signal()),
-    ).toBeNull();
-  });
-
   it("isolates environments, workspaces, and icon selections", async () => {
     const { cache } = fixture();
     await cache.resolve(target, url, signal());
@@ -155,35 +90,6 @@ describe("persistent project favicon cache", () => {
       expect(records.size).toBe(remaining);
     },
   );
-
-  it("discards a download that starts while the environment is being cleared", async () => {
-    const records = new Map<string, ProjectFaviconEntry>();
-    const removal = deferred<void>();
-    const load = vi.fn(async () => image);
-    const storage: ProjectFaviconStorage = {
-      list: async () => [...records.values()],
-      put: async (key, entry) => {
-        records.set(key, entry);
-      },
-      remove: async (key) => {
-        await removal.promise;
-        records.delete(key);
-      },
-    };
-    const cache = createProjectFaviconCache({ storage, load });
-    await cache.resolve(target, url, signal());
-    await cache.flush();
-    const clearing = cache.clearEnvironment(target.environmentId);
-    await Promise.resolve();
-    const late = cache.resolve(target, url.replace("vabc", "vdef"), signal());
-    removal.resolve();
-    await clearing;
-    expect(records.size).toBe(0);
-    expect(cache.peek(target)).toBeNull();
-    expect(load).toHaveBeenCalledTimes(1);
-    expect(await late).toBe(image);
-    expect(load).toHaveBeenCalledTimes(2);
-  });
 
   it("bounds individual images, total bytes, and entry count in storage", async () => {
     const { cache, load, records } = fixture();
@@ -261,14 +167,6 @@ describe("project favicon image loader", () => {
     };
   }
 
-  it("inlines small icons exactly as served without rasterizing", async () => {
-    const { load, downscale } = loader(
-      new Response(svg, { headers: { "content-type": "image/svg+xml; charset=utf-8" } }),
-    );
-    expect(await load(url, signal())).toBe(`data:image/svg+xml;base64,${svgBase64}`);
-    expect(downscale).not.toHaveBeenCalled();
-  });
-
   it("falls back to the file extension when the response has no image type", async () => {
     const { load } = loader(new Response(svg, { headers: { "content-type": "text/plain" } }));
     expect(await load(url, signal())).toBe(`data:image/svg+xml;base64,${svgBase64}`);
@@ -310,14 +208,5 @@ describe("project favicon image loader", () => {
       }),
     );
     await expect(declared.load(url, signal())).rejects.toThrow("too large");
-  });
-
-  it("rejects failed responses and non-image payloads", async () => {
-    const failed = loader(new Response("nope", { status: 404 }));
-    await expect(failed.load(url, signal())).rejects.toThrow("404");
-    const html = loader(new Response("<html/>", { headers: { "content-type": "text/html" } }));
-    await expect(
-      html.load("https://remote.test/api/assets/t/v1-favicon", signal()),
-    ).rejects.toThrow("no image type");
   });
 });

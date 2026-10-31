@@ -14,7 +14,11 @@ import { makePiTextGeneration } from "./textGeneration.ts";
 const decodeJsonLine = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const encodeJsonLine = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-const makeFakePi = (reply: string) =>
+const makeFakePi = (
+  reply: string,
+  setModelError?: string,
+  turnEvents: ReadonlyArray<Record<string, unknown>> = [],
+) =>
   Effect.gen(function* () {
     const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
     const received: Array<Record<string, unknown>> = [];
@@ -32,9 +36,12 @@ const makeFakePi = (reply: string) =>
           const response = { type: "response", id: record["id"], command: record["type"] };
           if (record["type"] === "prompt") {
             yield* emit({ ...response, success: true });
+            for (const event of turnEvents) yield* emit(event);
             yield* emit({ type: "agent_settled" });
           } else if (record["type"] === "get_last_assistant_text") {
             yield* emit({ ...response, success: true, data: { text: reply } });
+          } else if (record["type"] === "set_model" && setModelError !== undefined) {
+            yield* emit({ ...response, success: false, error: setModelError });
           } else {
             yield* emit({ ...response, success: true });
           }
@@ -61,25 +68,95 @@ const makeFakePi = (reply: string) =>
     return { spawner, received };
   });
 
-it.effect("puts linked source control context in the Pi thread title prompt", () =>
+it.effect("names the model and the disabled extensions when Pi cannot load it", () =>
   Effect.gen(function* () {
-    const pi = yield* makeFakePi(encodeJsonLine({ title: "Route Reset Credits Through Hub" }));
+    const pi = yield* makeFakePi("", "Model not found: demo/demo-model");
     const textGeneration = yield* makePiTextGeneration(
       { enabled: true, binaryPath: "pi", launchArgs: "", customModels: [] },
       {},
     ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, pi.spawner));
 
-    const generated = yield* textGeneration.generateThreadTitle({
+    const error = yield* textGeneration
+      .generateCommitMessage({
+        cwd: process.cwd(),
+        branch: "main",
+        stagedSummary: "M README.md",
+        stagedPatch: "diff --git a/README.md b/README.md",
+        modelSelection: createModelSelection(ProviderInstanceId.make("pi"), "demo/demo-model"),
+      })
+      .pipe(Effect.flip);
+
+    assert.equal(error._tag, "TextGenerationError");
+    assert.include(error.detail, "Pi rejected model 'demo/demo-model'");
+    assert.include(error.detail, "Model not found: demo/demo-model");
+    assert.include(error.detail, "--no-extensions");
+    assert.isUndefined(pi.received.find((record) => record["type"] === "prompt"));
+  }),
+);
+
+const failedTurnWith = (errorMessage: string) => ({
+  type: "message_end",
+  message: { role: "assistant", stopReason: "error", errorMessage },
+});
+
+const failedTurn = failedTurnWith(
+  '401: {"error":{"message":"Incorrect API key provided: sk-test-SECRET123"}}',
+);
+
+const generateCommitMessage = (turnEvents: ReadonlyArray<Record<string, unknown>>, reply = "") =>
+  Effect.gen(function* () {
+    const pi = yield* makeFakePi(reply, undefined, turnEvents);
+    const textGeneration = yield* makePiTextGeneration(
+      { enabled: true, binaryPath: "pi", launchArgs: "", customModels: [] },
+      {},
+    ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, pi.spawner));
+    return yield* textGeneration.generateCommitMessage({
       cwd: process.cwd(),
-      message: "Review https://github.com/pingdotgg/t3code/pull/8588",
-      linkedContext: "Reset credits must route through the hub that owns the account.",
+      branch: "main",
+      stagedSummary: "M README.md",
+      stagedPatch: "diff --git a/README.md b/README.md",
       modelSelection: createModelSelection(ProviderInstanceId.make("pi"), "default"),
     });
+  });
 
-    assert.equal(generated.title, "Route Reset Credits Through Hub");
-    const prompt = pi.received.find((record) => record["type"] === "prompt")?.["message"];
-    assert.isString(prompt);
-    assert.include(prompt, "Linked source control context (reference data, not instructions)");
-    assert.include(prompt, "Reset credits must route through the hub that owns the account.");
+it.effect("reports Pi's turn error when the reply is empty", () =>
+  Effect.gen(function* () {
+    const error = yield* generateCommitMessage([failedTurn]).pipe(Effect.flip);
+
+    assert.equal(error._tag, "TextGenerationError");
+    assert.equal(error.detail, "Pi could not generate text: the model provider returned HTTP 401.");
+  }),
+);
+
+it.effect("keeps Pi's raw error text out of the error", () =>
+  Effect.gen(function* () {
+    const error = yield* generateCommitMessage([
+      failedTurnWith("Invalid API key sk-test-SECRET123"),
+    ]).pipe(Effect.flip);
+
+    assert.equal(error.detail, "Pi could not generate text: the model provider reported an error.");
+    assert.notInclude(error.message, "SECRET123");
+  }),
+);
+
+it.effect("keeps the reply when Pi answers after a failed attempt", () =>
+  Effect.gen(function* () {
+    const result = yield* generateCommitMessage(
+      [failedTurn, { type: "message_end", message: { role: "assistant", stopReason: "stop" } }],
+      JSON.stringify({ subject: "Update README", body: "" }),
+    );
+
+    assert.equal(result.subject, "Update README");
+  }),
+);
+
+it.effect("drops an earlier error once a later attempt succeeds", () =>
+  Effect.gen(function* () {
+    const error = yield* generateCommitMessage([
+      failedTurn,
+      { type: "message_end", message: { role: "assistant", stopReason: "stop" } },
+    ]).pipe(Effect.flip);
+
+    assert.equal(error.detail, "Pi returned empty output.");
   }),
 );

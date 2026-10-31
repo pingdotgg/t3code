@@ -12,12 +12,7 @@ import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
-// Linux ships as an AppImage, so the .desktop entry users end up with is
-// created by whatever integration tool they use (AppImageLauncher names it
-// appimagekit_<hash>-….desktop) and its filename is not under our control.
-// Electron's app.setAsDefaultProtocolClient resolves the desktop id from
-// setDesktopName, which cannot match those files — so the browser keeps
-// prompting "Choose an application" for every OAuth callback.
+// AppImage integrators choose the .desktop filename, so setDesktopName cannot identify it for protocol registration.
 const { logInfo, logWarning } = makeComponentLogger("desktop-linux-url-handler");
 
 export class DesktopLinuxUrlHandlerRegistrationError extends Schema.TaggedError<DesktopLinuxUrlHandlerRegistrationError>()(
@@ -62,9 +57,7 @@ const escapeDesktopEntryString = (value: string): string =>
     .replaceAll("\r", "\\r")
     .replaceAll("\t", "\\t");
 
-// Exec values are unescaped twice by implementations: first the general
-// string-value rules, then the Exec quoting rules — so writing composes the
-// layers in reverse.
+// Exec values undergo general unescaping then Exec unquoting; escape in reverse order.
 export function escapeDesktopEntryExecArgument(value: string): string {
   const quoted = value
     .replaceAll("\\", () => "\\\\")
@@ -74,6 +67,12 @@ export function escapeDesktopEntryExecArgument(value: string): string {
     .replaceAll("%", () => "%%");
   return escapeDesktopEntryString(`"${quoted}"`);
 }
+
+// Legacy xdg-open looks up the first Exec word without unquoting it.
+const escapeUrlHandlerExecTarget = (value: string): string =>
+  /[ \t\n"'\\><~|&;$*?#()`]/.test(value)
+    ? escapeDesktopEntryExecArgument(value)
+    : escapeDesktopEntryString(value.replaceAll("%", "%%"));
 
 // The AppImage integration entry owns the window identity. This
 // hidden URL-only entry must not compete with it for StartupWMClass matching.
@@ -87,7 +86,7 @@ export function renderUrlHandlerDesktopEntry(input: {
     "[Desktop Entry]",
     "Type=Application",
     `Name=${escapeDesktopEntryString(input.displayName)}`,
-    `Exec=${escapeDesktopEntryExecArgument(input.execTarget)} %U`,
+    `Exec=${escapeUrlHandlerExecTarget(input.execTarget)} %U`,
     ...(input.iconPath === undefined ? [] : [`Icon=${escapeDesktopEntryString(input.iconPath)}`]),
     "Terminal=false",
     "NoDisplay=true",
@@ -97,6 +96,17 @@ export function renderUrlHandlerDesktopEntry(input: {
   ].join("\n");
 }
 
+// Docks may look up the Wayland app id without a desktop entry; icon theme lookups are case-sensitive.
+const LINUX_THEME_ICON_SIZE = "256x256";
+
+function linuxThemeIconNames(desktopEntryName: string): readonly string[] {
+  const appId = desktopEntryName.replace(/\.desktop$/u, "");
+  return [...new Set([appId.toLowerCase(), appId])];
+}
+
+const sameBytes = (left: Uint8Array, right: Uint8Array): boolean =>
+  left.length === right.length && left.every((byte, index) => byte === right[index]);
+
 export class DesktopLinuxUrlHandler extends Context.Service<
   DesktopLinuxUrlHandler,
   {
@@ -104,7 +114,7 @@ export class DesktopLinuxUrlHandler extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopLinuxUrlHandler") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -118,19 +128,25 @@ export const make = Effect.gen(function* () {
   );
   const iconsDir = environment.path.join(environment.linuxApplicationsDir, "..", "icons");
   const iconPath = environment.path.join(iconsDir, `${environment.linuxDesktopEntryName}.png`);
+  const hicolorDir = environment.path.join(iconsDir, "hicolor");
+  const themeIconDir = environment.path.join(hicolorDir, LINUX_THEME_ICON_SIZE, "apps");
 
   const writeDesktopEntry = Effect.gen(function* () {
+    // Distribution packages that run on a shared Electron set
+    // T3CODE_DESKTOP_LAUNCHER_PATH, because process.execPath is that Electron.
     // Inside the mounted AppImage, process.execPath points at a transient
     // /tmp/.mount_* path — the handler must launch the AppImage itself.
-    const execTarget = Option.getOrElse(environment.appImagePath, () => process.execPath);
+    const execTarget = environment.desktopLauncherPath.pipe(
+      Option.orElse(() => environment.appImagePath),
+      Option.getOrElse(() => process.execPath),
+    );
     const content = renderUrlHandlerDesktopEntry({
       displayName: environment.displayName,
       execTarget,
       scheme,
       ...(environment.isPackaged ? { iconPath } : {}),
     });
-    // Pre-ready setup normally wrote this already. Avoid truncating a valid
-    // entry while the portal may be reading it during startup.
+    // Avoid truncating the pre-ready entry while the portal may be reading it.
     const existing = yield* fileSystem
       .readFileString(desktopEntryPath)
       .pipe(Effect.orElseSucceed(() => null));
@@ -158,6 +174,7 @@ export const make = Effect.gen(function* () {
           stdin: "ignore",
           stdout: "ignore",
           stderr: "ignore",
+          forceKillAfter: "1 second",
         },
       );
       const handle = yield* spawner.spawn(command);
@@ -177,6 +194,61 @@ export const make = Effect.gen(function* () {
             applicationsDir: environment.linuxApplicationsDir,
             cause: error,
           }),
+    ),
+  );
+
+  const refreshIconThemeCache = Effect.scoped(
+    Effect.gen(function* () {
+      const command = ChildProcess.make("gtk-update-icon-cache", ["-f", "-t", hicolorDir], {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+        // Releasing a timed-out helper otherwise waits on SIGTERM indefinitely.
+        forceKillAfter: "1 second",
+      });
+      const handle = yield* spawner.spawn(command);
+      return yield* handle.exitCode.pipe(Effect.timeout("5 seconds"));
+    }),
+  );
+
+  const modifiedAt = (filePath: string) =>
+    fileSystem
+      .stat(filePath)
+      .pipe(Effect.map((info) => Option.getOrUndefined(info.mtime)?.getTime() ?? 0));
+
+  const installThemeIcons = Effect.gen(function* () {
+    const source = yield* assets.resolveResourcePath(`icons/${LINUX_THEME_ICON_SIZE}.png`);
+    if (Option.isNone(source)) return;
+    const icon = yield* fileSystem.readFile(source.value);
+    const targets = linuxThemeIconNames(environment.linuxDesktopEntryName).map((name) =>
+      environment.path.join(themeIconDir, `${name}.png`),
+    );
+    let changed = false;
+    for (const target of targets) {
+      const current = yield* fileSystem.readFile(target).pipe(Effect.option);
+      if (Option.isSome(current) && sameBytes(current.value, icon)) continue;
+      yield* fileSystem.makeDirectory(themeIconDir, { recursive: true });
+      yield* fileSystem.writeFile(target, icon);
+      changed = true;
+    }
+    // Creating a cache would leave GTK reading stale icons from other installers.
+    // A newer icon retries a refresh that failed on an earlier launch.
+    const cachePath = environment.path.join(hicolorDir, "icon-theme.cache");
+    const cachedAt = yield* modifiedAt(cachePath).pipe(Effect.option);
+    if (Option.isNone(cachedAt)) return;
+    let stale = changed;
+    for (const target of targets) {
+      if (stale) break;
+      if ((yield* modifiedAt(target)) > cachedAt.value) stale = true;
+    }
+    if (!stale) return;
+    const exitCode = yield* refreshIconThemeCache;
+    if (exitCode !== 0) {
+      yield* logWarning("icon theme cache refresh failed", { hicolorDir, exitCode });
+    }
+  }).pipe(
+    Effect.catch((error) =>
+      logWarning("app id theme icon install failed", { themeIconDir, category: error._tag }),
     ),
   );
 
@@ -232,11 +304,10 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+    yield* installThemeIcons;
+
     yield* updateDesktopDatabase.pipe(
-      // Some MIME implementations, including GIO, use mimeinfo.cache to verify
-      // that a desktop entry is associated with a scheme. Cache refresh is
-      // independently best-effort so a missing update-desktop-database executable
-      // does not prevent xdg-mime from recording the requested default.
+      // GIO verifies scheme associations through mimeinfo.cache. A missing cache updater must not block xdg-mime.
       Effect.catch((error) =>
         logWarning("desktop MIME cache refresh failed", {
           applicationsDir: environment.linuxApplicationsDir,
