@@ -1,4 +1,4 @@
-import type { EnvironmentId, UnifiedSettings } from "@t3tools/contracts";
+import type { EnvironmentId, UnifiedSettings, UsageLimitSourceConfig } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
@@ -18,8 +18,10 @@ import {
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { AddUsageLimitSourceDialog } from "./AddUsageLimitSourceDialog";
+import { providerClients } from "./providerDriverMeta";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { withAccountVisibility } from "./usageSourceAccounts";
 
 export function UsageProviderSettings({
   environmentId,
@@ -38,13 +40,18 @@ export function UsageProviderSettings({
   const updateCursorSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: "update Cursor account usage",
   });
+  const updateHubAccounts = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "update hub accounts",
+  });
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
-  const platform = useAtomValue(serverEnvironment.configValueAtom(environmentId))?.environment
-    .platform;
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const platform = serverConfig?.environment.platform;
+  const snapshots = serverConfig?.usageLimitSources ?? [];
   const [adding, setAdding] = useState(false);
   const [updatingCursor, setUpdatingCursor] = useState(false);
+  const [savingHubIds, setSavingHubIds] = useState<ReadonlySet<string>>(() => new Set());
   const entries = Object.entries(sources);
 
   const setCursorUsageEnabled = async (enabled: boolean) => {
@@ -57,6 +64,33 @@ export function UsageProviderSettings({
       await refreshProviders({ environmentId, input: {} });
     }
     setUpdatingCursor(false);
+  };
+
+  const setAccountVisible = async (
+    id: string,
+    source: UsageLimitSourceConfig,
+    accountId: string,
+    visible: boolean,
+  ) => {
+    setSavingHubIds((previous) => new Set(previous).add(id));
+    await updateHubAccounts({
+      environmentId,
+      input: {
+        patch: {
+          usageLimitSources: {
+            [id]: {
+              ...source,
+              hiddenAccounts: withAccountVisibility(source.hiddenAccounts, accountId, visible),
+            },
+          },
+        },
+      },
+    });
+    setSavingHubIds((previous) => {
+      const next = new Set(previous);
+      next.delete(id);
+      return next;
+    });
   };
 
   return (
@@ -92,6 +126,8 @@ export function UsageProviderSettings({
         ) : (
           entries.map(([id, source]) => {
             const label = source.label?.trim() || source.url;
+            const snapshot = snapshots.find((candidate) => candidate.id === id);
+            const accounts = [...(snapshot?.accounts ?? []), ...(snapshot?.hidden ?? [])];
             return (
               <SettingsRow
                 key={id}
@@ -110,7 +146,37 @@ export function UsageProviderSettings({
                     />
                   ) : null
                 }
-              />
+              >
+                {accounts.length > 0 ? (
+                  <div className="mt-3 divide-y divide-border/60 border-y border-border/60">
+                    {accounts.map((account) => {
+                      const title = account.email ?? account.id;
+                      return (
+                        <div
+                          key={account.id}
+                          className="flex min-w-0 items-center justify-between gap-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-xs text-foreground">{title}</p>
+                            <p className="truncate text-3xs text-muted-foreground">
+                              {providerClients.get(account.driver)?.label ?? String(account.driver)}
+                              {account.email ? ` · ${account.id}` : ""}
+                            </p>
+                          </div>
+                          <Switch
+                            aria-label={`Show ${title}`}
+                            checked={!source.hiddenAccounts.includes(account.id)}
+                            disabled={readOnly || savingHubIds.has(id)}
+                            onCheckedChange={(visible) =>
+                              void setAccountVisible(id, source, account.id, visible)
+                            }
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </SettingsRow>
             );
           })
         )}

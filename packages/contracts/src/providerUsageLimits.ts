@@ -55,6 +55,13 @@ export const ProviderUsageLimitsUpdate = Schema.Struct({
 });
 export type ProviderUsageLimitsUpdate = typeof ProviderUsageLimitsUpdate.Type;
 
+export const UsageLimitSourceHiddenAccount = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  driver: ProviderDriverKind,
+  email: Schema.optional(TrimmedNonEmptyString),
+});
+export type UsageLimitSourceHiddenAccount = typeof UsageLimitSourceHiddenAccount.Type;
+
 export const UsageLimitSourceAccount = Schema.Struct({
   id: TrimmedNonEmptyString,
   driver: ProviderDriverKind,
@@ -71,6 +78,7 @@ export const UsageLimitSourceSnapshot = Schema.Struct({
   label: TrimmedNonEmptyString,
   checkedAt: IsoDateTime,
   accounts: ForwardCompatibleArray(UsageLimitSourceAccount),
+  hidden: Schema.optional(ForwardCompatibleArray(UsageLimitSourceHiddenAccount)),
   error: Schema.optional(TrimmedNonEmptyString),
 });
 export type UsageLimitSourceSnapshot = typeof UsageLimitSourceSnapshot.Type;

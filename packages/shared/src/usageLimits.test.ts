@@ -1381,6 +1381,50 @@ describe("sameUsageLimitCommandCoverage", () => {
   });
 });
 
+describe("limit notices", () => {
+  const source = {
+    id: UsageLimitSourceId.make("hub"),
+    kind: "cliproxy" as const,
+    label: "hub",
+    checkedAt: "2026-09-03T11:00:00.000Z",
+    accounts: [],
+  };
+
+  it("suppresses the empty notice when every reported account is hidden", () => {
+    const presentations = new Map([
+      [
+        EnvironmentId.make("laptop"),
+        {
+          entry: { target: { label: "Laptop" } },
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [
+              {
+                ...source,
+                hidden: [{ id: "a.json", driver: ProviderDriverKind.make("codex") }],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    expect(collectLimitNotices(presentations)).toEqual([]);
+  });
+
+  it("still reports a hub that lists no accounts and has no error", () => {
+    const presentations = new Map([
+      [
+        EnvironmentId.make("laptop"),
+        {
+          entry: { target: { label: "Laptop" } },
+          serverConfig: { providers: [], usageLimitSources: [source] },
+        },
+      ],
+    ]);
+    expect(collectLimitNotices(presentations)).toEqual(["hub: No accounts reported."]);
+  });
+});
+
 describe("external usage settings", () => {
   it("deduplicates destinations across accounts and environments without inventing quota pools", () => {
     const managed = provider({
