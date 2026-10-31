@@ -681,9 +681,7 @@ export function SettingsRow({
               ) : null}
             </div>
             {description ? (
-              <p className="max-w-xl text-meta font-normal leading-normal text-dim-foreground">
-                {description}
-              </p>
+              <p className="max-w-xl text-meta leading-normal text-dim-foreground">{description}</p>
             ) : null}
             {renderedStatus ? (
               <div className="pt-0.5 text-body text-muted-foreground [--type-body:var(--type-meta)]">
