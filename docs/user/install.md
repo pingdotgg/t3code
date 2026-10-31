@@ -20,9 +20,12 @@ On Windows, in PowerShell:
 irm https://t3.codes/install.ps1 | iex
 ```
 
-This installs the `t3` binary to `~/.local/bin`. If your shell reports `command not found`
-afterwards, that directory is not on your `PATH` yet; the installer prints the
-line to add. Set `T3CODE_CHANNEL=nightly` to install the nightly train, or
+This installs the `t3` binary to `~/.local/bin`. If that folder is not on your
+`PATH` yet, the installer says so and, for zsh, bash on Linux, and fish, prints
+a command to add it. On Windows, `t3` works in the same PowerShell window right
+away; add the folder to your `PATH` for new windows. If a `t3` that the
+installer or the desktop app did not create is already there, it leaves that
+one alone and stops. Set `T3CODE_CHANNEL=nightly` to install the nightly train, or
 `T3CODE_VERSION` to pin an exact version.
 
 | Task                                             | Command                                                                 |
@@ -43,7 +46,11 @@ instead. Stop it before starting a replacement, or use a different `--base-dir`
 for an independent server.
 
 To try T3 Code once without installing it, run `npx t3@latest` instead (needs
-Node.js for `npx`).
+Node.js for `npx`). It offers to install the `t3` command first. If you say no,
+it asks again at the next minor release, and `npx t3 install` installs it later.
+When a `t3` at least as new is already installed by the install script,
+`t3 install`, or the desktop app on macOS and Linux, `npx t3` runs that one. Set
+`T3CODE_USE_NPM=1` to run npm's version anyway.
 
 ### Intel Macs
 
@@ -102,12 +109,14 @@ Nix manages both the desktop app and the bundled
 
 ### The `t3` command
 
-The desktop app includes the `t3` command-line tool. To run it from any
-terminal, open **Settings → About** and choose **Install** next to
-**t3 command**. On macOS and Linux it adds a `t3` link to a folder on your
-`PATH`; on Windows it adds the app's command folder to your `PATH`. Open a new
-terminal afterwards. **Remove** takes it off again. If you already have `t3`
-from npm, it stays as it is.
+The desktop app includes the `t3` command-line tool and installs it on first
+launch. On macOS and Linux it adds a `t3` link in `~/.local/bin` (or `~/bin`);
+on Windows it adds the app's command folder to your `PATH`. Open a new terminal
+afterwards. If the folder is not on your `PATH`, **Add to PATH** in the welcome
+setup or **Settings → About** adds one line to your shell's startup file. On a
+new Ubuntu account, `~/.local/bin` joins your `PATH` the next time you log in, so
+logging out and back in also works. **Remove** next to **t3 command** takes it
+off, and the app does not add it again; **Install** puts it back. If you already have another `t3`, it stays as it is.
 
 ### Windows Subsystem for Linux
 

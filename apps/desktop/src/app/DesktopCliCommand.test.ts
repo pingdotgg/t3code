@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -25,6 +26,7 @@ const environmentFor = (
     baseDir: input.baseDir,
     stateDir: path.join(input.baseDir, "userdata"),
     serverRoot: "/opt/T3 Code/resources/app.asar",
+    appVersion: "1.2.3",
     appImagePath: Option.none(),
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
@@ -85,11 +87,15 @@ const fakePowerShell = (initial: string) => {
 };
 
 const machinePath = process.env.PATH;
+const machineShell = process.env.SHELL;
 beforeEach(() => {
   process.env.PATH = "";
+  process.env.SHELL = "/bin/zsh";
 });
 afterEach(() => {
   process.env.PATH = machinePath;
+  if (machineShell === undefined) delete process.env.SHELL;
+  else process.env.SHELL = machineShell;
 });
 
 it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
@@ -98,7 +104,22 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const home = yield* fs.makeTempDirectoryScoped();
-      const command = yield* commandIn({ home });
+      // Like a launcher root once wrote: refreshing its times fails, and installs still work.
+      const noUtimes = FileSystem.FileSystem.of({
+        ...fs,
+        utimes: (target) =>
+          Effect.fail(
+            PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "FileSystem",
+              method: "utimes",
+              pathOrDescriptor: target,
+            }),
+          ),
+      });
+      const command = yield* commandIn({ home }).pipe(
+        Effect.provideService(FileSystem.FileSystem, noUtimes),
+      );
       const link = path.join(home, ".local", "bin", "t3");
 
       expect(yield* command.state).toEqual({
@@ -107,15 +128,30 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         onPath: false,
         launcherPath: null,
       });
+      yield* command.installOnFirstLaunch;
+      expect((yield* command.state).installedPath).toBe(link);
       const installed = yield* command.install;
       expect(installed.installedPath).toBe(link);
       expect(installed.launcherPath).toBe(path.join(home, ".t3", "bin", "t3"));
+      expect(installed.pathSetup).toEqual({ file: "~/.zshrc", added: false });
       expect(yield* fs.readLink(link)).toBe(path.join(home, ".t3", "bin", "t3"));
       expect((yield* command.install).installedPath).toBe(link);
+
+      // Add to PATH appends one line, once, and keeps a final line with no newline intact.
+      const zshrc = path.join(home, ".zshrc");
+      yield* fs.writeFileString(zshrc, "# mine");
+      yield* command.addToPath;
+      expect((yield* command.addToPath).pathSetup).toEqual({ file: "~/.zshrc", added: true });
+      expect(yield* fs.readFileString(zshrc)).toBe(
+        '# mine\n# Added by T3 Code\nexport PATH="$HOME/.local/bin:$PATH"\n',
+      );
 
       expect((yield* command.uninstall).installedPath).toBeNull();
       expect(yield* fs.exists(link)).toBe(false);
       expect(yield* fs.exists(path.join(home, ".t3", "bin", "t3"))).toBe(true);
+      // Removed stays removed: first launch never installs again.
+      yield* command.installOnFirstLaunch;
+      expect(yield* fs.exists(link)).toBe(false);
     }).pipe(Effect.scoped),
   );
 
@@ -132,7 +168,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       yield* fs.symlink(path.join(home, "gone"), path.join(home, "bin", "t3"));
 
       const error = yield* Effect.flip(command.install);
-      expect(error.message).toContain("Another t3 command is already installed");
+      expect(error.message).toContain("Another t3 command is already in");
       yield* command.uninstall;
       expect(yield* fs.readFileString(theirs)).toBe("npm's t3\n");
       expect(yield* fs.readLink(path.join(home, "bin", "t3"))).toBe(path.join(home, "gone"));
@@ -180,9 +216,14 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       expect((yield* command.state).shadowedBy).toBe(theirs);
       const error = yield* Effect.flip(command.install);
       expect(error.message).toContain(theirs);
+      yield* command.installOnFirstLaunch;
       expect(yield* fs.exists(path.join(home, ".local", "bin", "t3"))).toBe(false);
+      expect(yield* fs.readFileString(theirs)).toBe("#!/bin/sh\n");
 
+      // A first-launch install that failed is not retried behind the user's back.
       yield* fs.remove(theirs);
+      yield* command.installOnFirstLaunch;
+      expect(yield* fs.exists(path.join(home, ".local", "bin", "t3"))).toBe(false);
       const installed = yield* command.install;
       expect(installed).toMatchObject({
         onPath: true,

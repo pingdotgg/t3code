@@ -1,7 +1,9 @@
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Random from "effect/Random";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
@@ -30,6 +32,7 @@ export const renderCliShim = (input: {
   readonly target: CliShimTarget;
   readonly shimPath: string;
   readonly t3Home: string;
+  readonly version: string;
 }) => {
   const { target } = input;
   if (target.kind === "windows") {
@@ -70,6 +73,8 @@ export const renderCliShim = (input: {
   const header = [
     "#!/bin/sh",
     `# ${MARKER}`,
+    // The npm launcher reads this to prefer the app's t3 when it is at least as new.
+    `# T3 Code version: ${input.version}`,
     `export T3CODE_CLI_PATH=${shellWord(input.shimPath)}`,
     `home=${shellWord(input.t3Home)}`,
     'export T3CODE_HOME="${T3CODE_HOME:-$home}"',
@@ -93,11 +98,12 @@ export const renderCliShim = (input: {
     "work=$(mktemp -d) || exit 1",
     '"$app" --appimage-mount >"$work/mount" 2>/dev/null &',
     "mounter=$!",
-    `trap 'kill "$mounter" 2>/dev/null; rm -rf "$work"' EXIT`,
+    `trap 'kill "$mounter" 2>/dev/null; wait "$mounter" 2>/dev/null; rm -rf "$work"' EXIT`,
     "trap 'exit 130' INT TERM",
     "mount=",
     'while kill -0 "$mounter" 2>/dev/null; do',
-    '  mount=$(head -n 1 "$work/mount")',
+    // The mounter may not have created the file yet; the loop just tries again.
+    '  mount=$(head -n 1 "$work/mount" 2>/dev/null)',
     '  [ -d "$mount" ] && break',
     "  mount=",
     "  sleep 0.05",
@@ -107,7 +113,24 @@ export const renderCliShim = (input: {
     '  (cd "$work" && "$app" --appimage-extract >/dev/null) || { echo "Could not open $app." >&2; exit 1; }',
     '  mount="$work/squashfs-root"',
     "fi",
-    run("$mount"),
+    // The shell must outlive the CLI to unmount, so it forwards TERM and HUP; the terminal sends
+    // Ctrl-C to the CLI directly. A background child would read /dev/null, so pass stdin on fd 3.
+    // With stdin closed, `exec 3<&0` would end the shell; `command` makes it a normal error.
+    "{ command exec 3<&0; } 2>/dev/null || exec 3</dev/null",
+    `${run("$mount")} <&3 3<&- &`,
+    "cli=$!",
+    "exec 3<&-",
+    `trap 'kill -TERM "$cli" 2>/dev/null' TERM`,
+    `trap 'kill -HUP "$cli" 2>/dev/null' HUP`,
+    "trap '' INT",
+    "status=0",
+    'wait "$cli" || status=$?',
+    // A trapped signal interrupts wait; wait again for the CLI's own exit status.
+    'while kill -0 "$cli" 2>/dev/null; do',
+    "  status=0",
+    '  wait "$cli" || status=$?',
+    "done",
+    'exit "$status"',
     "",
   ].join("\n");
 };
@@ -137,7 +160,12 @@ export const install = Effect.gen(function* () {
         }),
         onNone: () => ({ kind: "direct" as const, executable: process.execPath, entry }),
       });
-  const content = renderCliShim({ target, shimPath, t3Home: environment.baseDir });
+  const content = renderCliShim({
+    target,
+    shimPath,
+    t3Home: environment.baseDir,
+    version: environment.appVersion,
+  });
 
   return yield* Effect.gen(function* () {
     const existing = yield* fs.readFileString(shimPath).pipe(Effect.option);
@@ -147,10 +175,17 @@ export const install = Effect.gen(function* () {
     }
     if (Option.getOrUndefined(existing) !== content) {
       yield* fs.makeDirectory(path.dirname(shimPath), { recursive: true });
-      const staging = `${shimPath}.${process.pid}.tmp`;
+      // Unique per call: backend startup and the first-launch command install can race here.
+      const staging = `${shimPath}.${process.pid}.${yield* Random.nextIntBetween(0, 0xffffff)}.tmp`;
       yield* fs.writeFileString(staging, content, { mode: 0o755 });
       yield* fs.rename(staging, shimPath);
       yield* logInfo("installed t3 launcher", { shimPath });
+    } else {
+      // npx trusts the version line only while the shim is newer than the app it runs.
+      // Any utimes moves the ctime npx compares; the times passed are in seconds. If it fails
+      // (a shim root once wrote), npx only falls back to npm's copy.
+      const now = (yield* Clock.currentTimeMillis) / 1000;
+      yield* fs.utimes(shimPath, now, now).pipe(Effect.ignore);
     }
     return Option.some(shimPath);
   }).pipe(

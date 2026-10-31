@@ -965,3 +965,47 @@ export const resolveWindowsEnvironment = Effect.fn("shell.resolveWindowsEnvironm
     ? { ...baselinePatch, ...profiledPatch }
     : baselinePatch;
 });
+
+interface PathSetupInput {
+  readonly directory: string;
+  readonly home: string;
+  readonly shell: string | undefined;
+  readonly platform: NodeJS.Platform;
+}
+
+/**
+ * The startup file (home-relative, `~/...`) and line that put `directory` on PATH for new zsh,
+ * bash, or fish terminals. Undefined on Windows (writing PATH there would flatten the registry's
+ * `%VAR%` entries), for other shells, macOS bash, or unsafe paths.
+ */
+export function pathSetup(
+  input: PathSetupInput,
+): { readonly file: string; readonly line: string } | undefined {
+  if (input.platform === "win32") return undefined;
+  const underHome = input.directory.startsWith(`${input.home}/`);
+  const rest = underHome ? input.directory.slice(input.home.length) : input.directory;
+  if (!/^[\w./-]+$/.test(rest)) return undefined;
+  const directory = underHome ? `$HOME${rest}` : rest;
+  const shell = input.shell?.split("/").pop();
+  if (shell === "fish") {
+    return { file: "~/.config/fish/config.fish", line: `fish_add_path ${directory}` };
+  }
+  // macOS bash reads only the first of .bash_profile, .bash_login, and .profile; no file is safe.
+  const file =
+    shell === "zsh"
+      ? "~/.zshrc"
+      : shell === "bash" && input.platform !== "darwin"
+        ? "~/.bashrc"
+        : undefined;
+  return file && { file, line: `export PATH="${directory}:$PATH"` };
+}
+
+/** A command to paste that does what {@link pathSetup} describes. */
+export function pathSetupCommand(input: PathSetupInput): string | undefined {
+  const setup = pathSetup(input);
+  if (!setup) return undefined;
+  // fish_add_path already saves the folder for every new fish terminal.
+  if (setup.file.endsWith(".fish")) return setup.line;
+  // The leading newline keeps the line out of a final comment with no newline after it.
+  return `printf '\\n%s\\n' '${setup.line}' >> ${setup.file}`;
+}

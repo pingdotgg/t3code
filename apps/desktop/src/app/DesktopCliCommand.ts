@@ -12,18 +12,26 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { pathSetup } from "@t3tools/shared/shell";
+
 import * as DesktopCliShim from "./DesktopCliShim.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { makeComponentLogger } from "./DesktopObservability.ts";
+
+const { logInfo, logWarning } = makeComponentLogger("desktop-cli-command");
 
 export class DesktopCliCommandError extends Schema.TaggedError<DesktopCliCommandError>()(
   "DesktopCliCommandError",
   { message: Schema.String },
 ) {}
 
-const unixCandidates = (home: string, platform: NodeJS.Platform) =>
+const userCandidates = (home: string) => [`${home}/.local/bin`, `${home}/bin`];
+
+// Older builds also linked into these macOS folders; still find and remove those links there.
+const knownLocations = (home: string, platform: NodeJS.Platform) =>
   platform === "darwin"
-    ? ["/opt/homebrew/bin", "/usr/local/bin", `${home}/.local/bin`, `${home}/bin`]
-    : [`${home}/.local/bin`, `${home}/bin`];
+    ? [...userCandidates(home), "/opt/homebrew/bin", "/usr/local/bin"]
+    : userCandidates(home);
 
 const pathEntries = (value: string | undefined, separator: string) =>
   (value ?? "").split(separator).filter((entry) => entry.length > 0);
@@ -58,6 +66,10 @@ export class DesktopCliCommand extends Context.Service<
     readonly state: Effect.Effect<DesktopCliCommandState>;
     readonly install: Effect.Effect<DesktopCliCommandState, DesktopCliCommandError>;
     readonly uninstall: Effect.Effect<DesktopCliCommandState, DesktopCliCommandError>;
+    /** Adds the installed command's folder to PATH in the user's shell startup file. */
+    readonly addToPath: Effect.Effect<DesktopCliCommandState, DesktopCliCommandError>;
+    /** Installs the command on an app's first launch; removing it in Settings sticks. */
+    readonly installOnFirstLaunch: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopCliCommand") {}
 
@@ -71,6 +83,7 @@ export const make = Effect.gen(function* () {
   const launcher = DesktopCliShim.launcherPath(environment);
   const binDirectory = path.dirname(launcher);
   const ownedPathMarker = path.join(environment.stateDir, "cli-command-path-entry");
+  const firstLaunchMarker = path.join(environment.stateDir, "cli-command-first-launch");
 
   const fail = (message: string) => new DesktopCliCommandError({ message });
   const exists = (target: string) => fs.exists(target).pipe(Effect.orElseSucceed(() => false));
@@ -166,12 +179,27 @@ export const make = Effect.gen(function* () {
         ? Option.some(launcher)
         : Option.none<string>();
     }
-    for (const directory of unixCandidates(environment.homeDirectory, environment.platform)) {
+    for (const directory of knownLocations(environment.homeDirectory, environment.platform)) {
       const link = path.join(directory, "t3");
       if (yield* isOurLink(link)) return Option.some(link);
     }
     return Option.none<string>();
   });
+
+  const startupLine = (installedPath: string) => {
+    const setup = pathSetup({
+      directory: path.dirname(installedPath),
+      home: environment.homeDirectory,
+      shell: process.env.SHELL,
+      platform: environment.platform,
+    });
+    return setup && { ...setup, path: path.join(environment.homeDirectory, setup.file.slice(2)) };
+  };
+  const hasLine = (setup: { readonly path: string; readonly line: string }) =>
+    fs.readFileString(setup.path).pipe(
+      Effect.map((content) => content.split("\n").some((line) => line.trim() === setup.line)),
+      Effect.orElseSucceed(() => false),
+    );
 
   const state: DesktopCliCommand["Service"]["state"] = Effect.gen(function* () {
     if (!environment.isPackaged) {
@@ -185,12 +213,16 @@ export const make = Effect.gen(function* () {
     const onPath = windows
       ? Option.isSome(installed)
       : Option.isSome(first) && (yield* runsOurLauncher(first.value));
+    const setup = onPath || Option.isNone(installed) ? undefined : startupLine(installed.value);
     return {
       supported: true,
       installedPath: Option.getOrNull(installed),
       onPath,
       launcherPath,
       ...shadow,
+      ...(setup === undefined
+        ? {}
+        : { pathSetup: { file: setup.file, added: yield* hasLine(setup) } }),
     };
   }).pipe(
     Effect.orElseSucceed(() => ({
@@ -225,13 +257,19 @@ export const make = Effect.gen(function* () {
       }
       return yield* state;
     }
+    const candidates = userCandidates(environment.homeDirectory);
     const existing = yield* installedAt;
-    if (Option.isSome(existing)) {
-      const target = yield* fs.readLink(existing.value).pipe(Effect.option);
+    const replaced = Option.getOrUndefined(existing);
+    // A link in an older macOS folder stays until the new one exists, so a failure keeps a t3.
+    const legacy = replaced !== undefined && !candidates.includes(path.dirname(replaced));
+    if (replaced !== undefined) {
+      const target = yield* fs.readLink(replaced).pipe(Effect.option);
       if (Option.getOrUndefined(target) === launcher) return yield* state;
-      yield* fs
-        .remove(existing.value)
-        .pipe(Effect.mapError(() => fail(`Could not replace ${existing.value}.`)));
+      if (!legacy) {
+        yield* fs
+          .remove(replaced)
+          .pipe(Effect.mapError(() => fail(`Could not replace ${replaced}.`)));
+      }
     }
     const shadowedBy = yield* foreignFirstOnPath;
     if (Option.isSome(shadowedBy)) {
@@ -240,7 +278,6 @@ export const make = Effect.gen(function* () {
       );
     }
     const onPath = pathEntries(process.env.PATH, ":");
-    const candidates = unixCandidates(environment.homeDirectory, environment.platform);
     for (const directory of [
       ...candidates.filter((candidate) => onPath.includes(candidate)),
       ...candidates.filter((candidate) => !onPath.includes(candidate)),
@@ -257,10 +294,12 @@ export const make = Effect.gen(function* () {
         Effect.as(true),
         Effect.orElseSucceed(() => false),
       );
-      if (linked) return yield* state;
+      if (!linked) continue;
+      if (legacy) yield* fs.remove(replaced).pipe(Effect.ignore);
+      return yield* state;
     }
     return yield* fail(
-      `Another t3 command is already installed, or no folder on your PATH is writable. Run the launcher directly at ${launcher}.`,
+      `Another t3 command is already in ~/.local/bin and ~/bin, or neither is writable. Run the launcher directly at ${launcher}.`,
     );
   }).pipe(Effect.withSpan("desktop.cliCommand.install"));
 
@@ -274,7 +313,7 @@ export const make = Effect.gen(function* () {
       }
       return yield* state;
     }
-    for (const directory of unixCandidates(environment.homeDirectory, environment.platform)) {
+    for (const directory of knownLocations(environment.homeDirectory, environment.platform)) {
       const link = path.join(directory, "t3");
       if (yield* isOurLink(link)) {
         yield* fs.remove(link).pipe(Effect.mapError(() => fail(`Could not remove ${link}.`)));
@@ -283,7 +322,41 @@ export const make = Effect.gen(function* () {
     return yield* state;
   }).pipe(Effect.withSpan("desktop.cliCommand.uninstall"));
 
-  return DesktopCliCommand.of({ state, install, uninstall });
+  const addToPath: DesktopCliCommand["Service"]["addToPath"] = Effect.gen(function* () {
+    const installed = yield* installedAt;
+    if (Option.isNone(installed)) return yield* fail("Install the t3 command first.");
+    const setup = startupLine(installed.value);
+    if (setup === undefined) return yield* fail("T3 Code cannot add t3 to this shell's PATH.");
+    if (!(yield* hasLine(setup))) {
+      yield* fs.makeDirectory(path.dirname(setup.path), { recursive: true }).pipe(
+        Effect.andThen(
+          fs.writeFileString(setup.path, `\n# Added by T3 Code\n${setup.line}\n`, { flag: "a" }),
+        ),
+        Effect.mapError(() => fail(`Could not add t3 to ${setup.file}.`)),
+      );
+    }
+    return yield* state;
+  }).pipe(Effect.withSpan("desktop.cliCommand.addToPath"));
+
+  const installOnFirstLaunch: DesktopCliCommand["Service"]["installOnFirstLaunch"] = Effect.gen(
+    function* () {
+      if (!environment.isPackaged || (yield* exists(firstLaunchMarker))) return;
+      // Mark first so a failed or removed install is never retried behind the user's back.
+      yield* fs.writeFileString(firstLaunchMarker, "");
+      const installed = yield* install;
+      yield* logInfo("installed the t3 command on first launch", {
+        installedPath: installed.installedPath,
+        onPath: installed.onPath,
+      });
+    },
+  ).pipe(
+    Effect.catch((error) =>
+      logWarning("did not install the t3 command on first launch", { error: String(error) }),
+    ),
+    Effect.withSpan("desktop.cliCommand.installOnFirstLaunch"),
+  );
+
+  return DesktopCliCommand.of({ state, install, uninstall, addToPath, installOnFirstLaunch });
 });
 
 export const layer = Layer.effect(DesktopCliCommand, make);

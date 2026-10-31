@@ -14,6 +14,7 @@ import * as NodePath from "node:path";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  pathSetupCommand,
   CommandAvailability,
   CommandResolutionCache,
   type CommandAvailabilityChecker,
@@ -1044,4 +1045,31 @@ effectIt.layer(NodeServices.layer)("resolveWindowsEnvironment", (it) => {
       expect(commandAvailable).toHaveBeenCalledTimes(1);
     }),
   );
+});
+
+describe("pathSetupCommand", () => {
+  // Undefined where a pasted line could break things: Windows (it would flatten %VAR% entries in
+  // the registry PATH), macOS bash (several startup files), other shells, and unsafe paths.
+  it.each([
+    [
+      "/home/theo/.local/bin",
+      "/bin/bash",
+      "linux",
+      `printf '\\n%s\\n' 'export PATH="/home/theo/.local/bin:$PATH"' >> ~/.bashrc`,
+    ],
+    ["/Users/theo/.local/bin", "/usr/bin/fish", "linux", "fish_add_path $HOME/.local/bin"],
+    [
+      "/opt/t3/bin",
+      "/bin/zsh",
+      "linux",
+      `printf '\\n%s\\n' 'export PATH="/opt/t3/bin:$PATH"' >> ~/.zshrc`,
+    ],
+    ["/Users/theo/.local/bin", "/bin/tcsh", "darwin", undefined],
+    ["/Users/theo/.local/bin", "/bin/bash", "darwin", undefined],
+    ["C:\\Users\\theo\\.local\\bin", "pwsh", "win32", undefined],
+    ["/Users/theo/it's here", "/bin/zsh", "darwin", undefined],
+    ["/opt/a$PWD/bin", "/bin/zsh", "linux", undefined],
+  ] as const)("%s with %s on %s", (directory, shell, platform, expected) => {
+    expect(pathSetupCommand({ directory, home: "/Users/theo", shell, platform })).toBe(expected);
+  });
 });

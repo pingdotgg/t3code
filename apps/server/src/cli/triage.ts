@@ -188,8 +188,9 @@ export const triageCommand = Command.make("triage", {
       ]);
       yield* Console.log(`Starting ${selected.label}. It will ask what went wrong.\n`);
       const exitCode = yield* runInteractiveSession({ ...spawnSpec, cwd: sessionDir });
+      // 126 and 127 tell the npm launcher that t3 itself could not start, so never pass them on.
       if (exitCode !== 0) {
-        process.exitCode = exitCode;
+        process.exitCode = exitCode === 126 || exitCode === 127 ? 1 : exitCode;
       }
     }),
   ),

@@ -216,19 +216,35 @@ if ((Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $version)) {
 Step "Setting up the t3 command..."
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 $shim = Join-Path $binDir "t3.cmd"
+# Replace only a shim that runs a version in this home; never the desktop app's or another t3.
+if (Test-Path -LiteralPath $shim) {
+  $existingTarget = ""
+  # The shim is UTF-8 without a BOM; Windows PowerShell 5.1 reads files as ANSI by default.
+  foreach ($line in [System.IO.File]::ReadAllLines($shim, [System.Text.Encoding]::UTF8)) {
+    if ($line -match '^"([^"]+)"') { $existingTarget = $Matches[1]; break }
+  }
+  # Full paths, so a target like versions\..\other cannot pass as ours.
+  $ownedPrefix = [System.IO.Path]::GetFullPath($versionsDir).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+  if ($existingTarget) { $existingTarget = [System.IO.Path]::GetFullPath($existingTarget) }
+  if (-not $existingTarget.StartsWith($ownedPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    Fail "another t3 is already at $shim. Remove it and run this again, or run $(Join-Path $targetDir 't3.exe') directly."
+  }
+}
 # UTF-8 without a BOM: cmd.exe reads the shim as-is, and ASCII would corrupt
 # non-ASCII characters in the user's home path.
 [System.IO.File]::WriteAllText($shim, "@echo off`r`n`"$(Join-Path $targetDir 't3.exe')`" %*", (New-Object System.Text.UTF8Encoding $false))
 # Pruning keeps what this shim points at; a background service cannot see $binDir otherwise.
 $launchers = Join-Path $t3Home "runtime\launchers"
-$shimPath = (Resolve-Path $shim).Path
+$shimPath = (Resolve-Path -LiteralPath $shim).Path
 if (-not ((Test-Path $launchers) -and ((Get-Content $launchers) -contains $shimPath))) {
   [System.IO.File]::AppendAllText($launchers, "$shimPath`r`n", (New-Object System.Text.UTF8Encoding $false))
 }
 if ($interactive) { [Console]::Error.Write("`r$esc[2K") }
 [Console]::Error.WriteLine("  ${green}Installed T3 Code $version$reset`n")
 if (($env:PATH -split ";") -notcontains $binDir) {
-  Write-Host "  Add $binDir to your PATH, then run ${bold}t3$reset.`n"
+  # `irm | iex` runs in the user's own session, so t3 works in this window right away.
+  $env:Path = "$binDir;$env:Path"
+  Write-Host "  Run ${bold}t3$reset to get started. For new windows, add $binDir to your PATH.`n"
 } else {
   Write-Host "  Run ${bold}t3$reset to get started.`n"
 }

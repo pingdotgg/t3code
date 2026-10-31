@@ -21,6 +21,9 @@ repo="pingdotgg/t3code"
 base_url="${T3CODE_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
 t3_home="${T3CODE_HOME:-$HOME/.t3}"
 bin_dir="${T3CODE_INSTALL_BIN_DIR:-$HOME/.local/bin}"
+# Trailing slashes would put `//` in the paths the t3 command guard compares.
+while [ "${t3_home%/}" != "$t3_home" ] && [ "$t3_home" != / ]; do t3_home="${t3_home%/}"; done
+while [ "${bin_dir%/}" != "$bin_dir" ] && [ "$bin_dir" != / ]; do bin_dir="${bin_dir%/}"; done
 
 fail() {
   printf '\nt3 install: %s\n' "$1" >&2
@@ -230,6 +233,27 @@ fi
 
 step "Setting up the t3 command..."
 mkdir -p "$bin_dir"
+# Replace only this home's own t3 links: into its versions, or the desktop app's launcher.
+# Anything that is not a symlink (a script, a copied binary) belongs to someone else.
+if [ -e "${bin_dir}/t3" ] || [ -L "${bin_dir}/t3" ]; then
+  owned=false
+  if [ -L "${bin_dir}/t3" ]; then
+    existing="$(readlink "${bin_dir}/t3" 2>/dev/null || true)"
+    case "$existing" in /*) ;; *) existing="${bin_dir}/${existing}" ;; esac
+    real_versions_dir="$(CDPATH='' cd -P -- "$versions_dir" && pwd)"
+    # Through a symlinked T3 home the link text names the alias; resolve its folder to compare.
+    existing_dir="$(CDPATH='' cd -P -- "$(dirname -- "$existing")" 2>/dev/null && pwd || true)"
+    # The text alone counts only without . or .. segments (a pruned version leaves a dangling link).
+    case "$existing" in
+      */./* | */../* | */. | */..) ;;
+      "$versions_dir"/* | "$real_versions_dir"/* | "${t3_home}/bin/t3") owned=true ;;
+    esac
+    if [ -n "$existing_dir" ]; then
+      case "${existing_dir}/${existing##*/}" in "$real_versions_dir"/*) owned=true ;; esac
+    fi
+  fi
+  "$owned" || fail "another t3 is already at ${bin_dir}/t3. Remove it and run this again, or run ${target_dir}/t3 directly."
+fi
 ln -sfn "${target_dir}/t3" "${bin_dir}/t3"
 # Pruning keeps what this launcher points at; a background service cannot see bin_dir otherwise.
 launcher="$(CDPATH='' cd -P -- "$bin_dir" && pwd)/t3"
@@ -237,7 +261,29 @@ launchers="${t3_home}/runtime/launchers"
 grep -qxF "$launcher" "$launchers" 2>/dev/null || printf '%s\n' "$launcher" >> "$launchers"
 if "$interactive"; then printf '\r\033[2K' >&2; fi
 printf '  %sInstalled T3 Code %s%s\n\n' "$green" "$version" "$reset" >&2
+# A command to paste for zsh, Linux bash, or fish, like `t3 install` prints. macOS bash reads only
+# one of several startup files, so no single file is safe to change there.
+path_command=
+path_rest="$bin_dir"
+path_prefix=
+case "$bin_dir" in "$HOME"/*) path_rest="${bin_dir#"$HOME"}" path_prefix='$HOME' ;; esac
+case "$path_rest" in *[!A-Za-z0-9_./-]*) path_rest= ;; esac
+if [ -n "$path_rest" ]; then
+  path_line="export PATH=\"${path_prefix}${path_rest}:\$PATH\""
+  shell_name="${SHELL:-}"
+  case "${shell_name##*/}" in
+    zsh) path_command="printf '\\n%s\\n' '${path_line}' >> ~/.zshrc" ;;
+    bash) [ "$platform" = darwin ] || path_command="printf '\\n%s\\n' '${path_line}' >> ~/.bashrc" ;;
+    fish) path_command="fish_add_path ${path_prefix}${path_rest}" ;;
+  esac
+fi
 case ":${PATH}:" in
   *":${bin_dir}:"*) printf '  Run %st3%s to get started.\n\n' "$bold" "$reset" ;;
-  *) printf '  Add %s to your PATH, then run %st3%s.\n\n' "$bin_dir" "$bold" "$reset" ;;
+  *)
+    if [ -n "$path_command" ]; then
+      printf '  %s is not on your PATH yet. Add it with:\n\n    %s\n\n  Then open a new terminal and run %st3%s.\n\n' "$bin_dir" "$path_command" "$bold" "$reset"
+    else
+      printf '  Add %s to your PATH, then run %st3%s.\n\n' "$bin_dir" "$bold" "$reset"
+    fi
+    ;;
 esac
