@@ -13,7 +13,7 @@ private struct ComposerTokenPayload: Decodable {
   let end: Int
 }
 
-private struct ComposerSelectionPayload: Decodable {
+private struct ComposerSelectionPayload: Decodable, Equatable {
   let start: Int
   let end: Int
 }
@@ -85,9 +85,7 @@ private final class ComposerTextView: UITextView {
   var textPasteThresholdBytes = 0
   var maxInputChars = Int.max
   var enterBehavior: ComposerEnterBehavior = .send
-  /// Shortcut HUD titles. JS supplies what the two sends actually do right now
-  /// ("Queue Message" / "Steer Message"), so the iPad Command-hold list names
-  /// the outcome rather than a generic "Send".
+  /// JS supplies the actual send outcomes so the iPad Command-hold HUD names the configured actions.
   var submitTitle = "Send Message"
   var alternateSubmitTitle = "Send Message"
   private var bypassTextPasteInterception = false
@@ -95,9 +93,6 @@ private final class ComposerTextView: UITextView {
   override var keyCommands: [UIKeyCommand]? {
     var commands = super.keyCommands ?? []
     guard !isReadOnly, markedTextRange == nil else { return commands }
-    // The plainer chord always performs the configured follow-up behavior and
-    // the more-modified one performs its opposite, so Command is the "other
-    // way" modifier whichever Return behavior is configured.
     if enterBehavior == .send {
       let submitOnReturn = UIKeyCommand(
         input: "\r",
@@ -449,6 +444,9 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private var tokensNeedRebuild = false
   private var chipsNeedMeasuredWidth = false
   private var hasDeferredForcedRebuild = false
+  private var pendingContentOffset: CGPoint?
+  private var needsSelectionReveal = false
+  private var selectionBeforeFocusingTap: (selection: ComposerSelectionPayload, value: String)?
 
   let onComposerChange = EventDispatcher()
   let onComposerSelectionChange = EventDispatcher()
@@ -464,7 +462,8 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   public required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
 
-    clipsToBounds = false
+    clipsToBounds = true
+    textView.clipsToBounds = true
     textView.delegate = self
     textView.textDropDelegate = self
     textView.backgroundColor = .clear
@@ -520,6 +519,12 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   @objc private func openContext(_ recognizer: UITapGestureRecognizer) {
     guard let (index, attachment) = contextAttachment(at: recognizer.location(in: textView)) else {
       textView.becomeFirstResponder()
+      if selectionBeforeFocusingTap != nil {
+        // UIKit places the caret from its own tap recognizer during this same touch.
+        DispatchQueue.main.async { [weak self] in
+          self?.restoreSelectionBeforeFocusingTap()
+        }
+      }
       return
     }
     openContext(index: index, attachment: attachment)
@@ -558,7 +563,11 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-    true
+    // The collapsed editor only shows the draft's first line, so a tap that expands an
+    // overflowing draft returns to the caret it was left at instead of moving it there.
+    let collapsedOverflow = !textView.isFirstResponder && !textView.isScrollEnabled && draftOverflowsBounds()
+    selectionBeforeFocusingTap = collapsedOverflow ? (sourceSelection(), value) : nil
+    return true
   }
 
   public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -583,10 +592,26 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
 
   public override func layoutSubviews() {
     super.layoutSubviews()
+    let previousSize = textView.bounds.size
     textView.frame = bounds
     if chipsNeedMeasuredWidth, bounds.width > 0 {
       chipsNeedMeasuredWidth = false
       applyControlledDocument(force: true)
+    }
+    if textView.isScrollEnabled, bounds.width > 0, bounds.height > 0 {
+      textView.layoutIfNeeded()
+      if let offset = pendingContentOffset {
+        let minY = -textView.adjustedContentInset.top
+        let maxY = max(minY, textView.contentSize.height - bounds.height + textView.adjustedContentInset.bottom)
+        textView.setContentOffset(CGPoint(x: offset.x, y: min(maxY, max(minY, offset.y))), animated: false)
+        pendingContentOffset = nil
+      }
+      if needsSelectionReveal || (previousSize != bounds.size && textView.isFirstResponder) {
+        needsSelectionReveal = false
+        if let selection = textView.selectedTextRange {
+          textView.scrollRectToVisible(textView.caretRect(for: selection.end), animated: false)
+        }
+      }
     }
     let placeholderX = textView.textContainerInset.left + textView.textContainer.lineFragmentPadding
     let placeholderY = textView.textContainerInset.top
@@ -632,10 +657,12 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       tokens = decode([ComposerTokenPayload].self, from: document.tokensJson) ?? []
       tokensNeedRebuild = true
     }
+    let previousSelection = sourceSelection()
     value = document.value
     requestedSelection = document.selection
     applyControlledDocument(force: tokensNeedRebuild)
     applyRequestedSelection()
+    cancelFocusingTapRestoreIfSelectionMoved(from: previousSelection)
     if tokensMatchCurrentValue() {
       tokensNeedRebuild = false
     }
@@ -694,7 +721,16 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   func setScrollEnabled(_ scrollEnabled: Bool) {
+    guard textView.isScrollEnabled != scrollEnabled else { return }
+    if !scrollEnabled {
+      // Disabling scrolling discards UITextView's offset. Restore it after
+      // expansion has laid out the text, regardless of prop update order.
+      pendingContentOffset = pendingContentOffset ?? textView.contentOffset
+    }
     textView.isScrollEnabled = scrollEnabled
+    if scrollEnabled {
+      revealSelectionAfterLayout()
+    }
   }
 
   func setAutoFocus(_ autoFocus: Bool) {
@@ -738,8 +774,10 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   func setSelection(start: Int, end: Int) {
+    let previousSelection = sourceSelection()
     requestedSelection = ComposerSelectionPayload(start: start, end: end)
     applyRequestedSelection()
+    cancelFocusingTapRestoreIfSelectionMoved(from: previousSelection)
   }
 
   public func textViewDidChange(_ textView: UITextView) {
@@ -811,6 +849,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   public func textViewDidBeginEditing(_ textView: UITextView) {
+    revealSelectionAfterLayout()
     onComposerFocus()
   }
 
@@ -836,6 +875,9 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     hasDeferredForcedRebuild = false
 
     let previousSelection = sourceSelection()
+    if textView.isScrollEnabled {
+      pendingContentOffset = pendingContentOffset ?? textView.contentOffset
+    }
     isApplyingControlledValue = true
     textView.attributedText = makeAttributedDocument()
     let targetSelection = requestedSelection ?? previousSelection
@@ -843,6 +885,11 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     textView.selectedRange = displayRange(for: targetSelection)
     restoreBaseTypingAttributes()
     isApplyingControlledValue = false
+    if currentSource != value || previousSelection.start != targetSelection.start || previousSelection.end != targetSelection.end {
+      revealSelectionAfterLayout()
+    } else {
+      setNeedsLayout()
+    }
     updatePlaceholderVisibility()
     emitContentSizeIfNeeded()
   }
@@ -1053,6 +1100,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       return
     }
     value = textView.serializedText()
+    revealSelectionAfterLayout()
     let selection = sourceSelection()
     nativeEventCount += 1
     onComposerChange([
@@ -1122,6 +1170,40 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     isApplyingControlledValue = true
     textView.selectedRange = nextRange
     isApplyingControlledValue = false
+    revealSelectionAfterLayout()
+  }
+
+  private func restoreSelectionBeforeFocusingTap() {
+    guard let snapshot = selectionBeforeFocusingTap else {
+      return
+    }
+    selectionBeforeFocusingTap = nil
+    // A draft that changed during the touch, such as a transcript landing, owns the caret now.
+    guard textView.isFirstResponder, textView.markedTextRange == nil, value == snapshot.value else {
+      return
+    }
+    let range = displayRange(for: snapshot.selection)
+    guard !NSEqualRanges(range, textView.selectedRange) else {
+      return
+    }
+    textView.selectedRange = range
+    revealSelectionAfterLayout()
+  }
+
+  private func cancelFocusingTapRestoreIfSelectionMoved(from previousSelection: ComposerSelectionPayload) {
+    if sourceSelection() != previousSelection {
+      selectionBeforeFocusingTap = nil
+    }
+  }
+
+  private func draftOverflowsBounds() -> Bool {
+    let size = textView.sizeThatFits(CGSize(width: textView.bounds.width, height: .greatestFiniteMagnitude))
+    return size.height > textView.bounds.height + 1
+  }
+
+  private func revealSelectionAfterLayout() {
+    needsSelectionReveal = true
+    setNeedsLayout()
   }
 
   private func updatePlaceholderVisibility() {
@@ -1129,28 +1211,16 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   private func emitContentSizeIfNeeded() {
-    // The laid-out text without insets. A one-line draft reports its natural width, so
-    // JS can tell whether it fits a narrower row than the one it is laid out in; past
-    // one line only the height matters, so layout stops at the second line. The width
-    // comes from the line fragment because usedRect spans the container once the view
-    // scrolls. A trailing newline's empty line only exists as the extra fragment.
-    let layout = textView.layoutManager
-    let container = textView.textContainer
-    var lines = 0
-    var width: CGFloat = 0
-    var height: CGFloat = 0
-    let glyphs = NSRange(location: 0, length: layout.numberOfGlyphs)
-    layout.enumerateLineFragments(forGlyphRange: glyphs) { _, used, _, _, stop in
-      lines += 1
-      width = used.width
-      height = used.maxY
-      if lines > 1 { stop.pointee = true }
-    }
-    if lines < 2, layout.extraLineFragmentTextContainer === container {
-      lines += 1
-      height = max(height, layout.extraLineFragmentUsedRect.maxY)
-    }
-    let nextSize = CGSize(width: lines == 1 ? ceil(width) : 0, height: ceil(height))
+    guard bounds.width > 0 else { return }
+    // Fit independently of the animated viewport: when scrolling is disabled,
+    // its current height can clip TextKit's laid-out line fragments.
+    let fittedHeight = textView.sizeThatFits(CGSize(width: bounds.width, height: .greatestFiniteMagnitude)).height
+      - textView.textContainerInset.top - textView.textContainerInset.bottom
+    let measuredHeight = min(lineHeight * 4, fittedHeight)
+    let width = fittedHeight <= lineHeight + 0.5
+      ? textView.layoutManager.usedRect(for: textView.textContainer).width
+      : 0
+    let nextSize = CGSize(width: ceil(width), height: ceil(measuredHeight))
     guard abs(nextSize.width - lastContentSize.width) > 0.5 ||
       abs(nextSize.height - lastContentSize.height) > 0.5 else {
       return

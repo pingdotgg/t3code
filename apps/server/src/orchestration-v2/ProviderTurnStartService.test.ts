@@ -3,10 +3,12 @@ import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  GitCommandError,
   MessageId,
   NodeId,
   ProviderSessionId,
   ProviderThreadId,
+  ProviderTurnId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSetupError,
@@ -32,6 +34,8 @@ import * as Schema from "effect/Schema";
 import * as ServerConfig from "../config.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { layerRealGit } from "./ProviderTurnStartService.testkit.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -65,7 +69,6 @@ const layerWorktreeLocation = (worktreesDir = managedWorktreesDir) =>
     ServerSettings.layerTest(),
   );
 
-/** Starts a run on a thread whose worktree folder is missing, with routing reads failing after. */
 function startWithMissingWorktree(
   worktreePath: string,
   realPaths: Record<string, string> = {
@@ -121,6 +124,7 @@ function startWithMissingWorktree(
   const startRootRun = vi.fn(() => Effect.void);
   const pruneWorktrees = vi.fn(() => Effect.void);
   const createWorktree = vi.fn(() => Effect.succeed({} as never));
+  const listLocalBranchNames = vi.fn(() => Effect.succeed(["feature/restore"]));
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -129,7 +133,6 @@ function startWithMissingWorktree(
         IdAllocator.layer,
         Layer.succeed(FileSystem.FileSystem, {
           exists: () => Effect.succeed(false),
-          // Paths that exist on the fake disk, mapped to where their symlinks lead.
           realPath: (target: string) =>
             normalize(target) in realPaths
               ? Effect.succeed(realPaths[normalize(target)])
@@ -143,12 +146,14 @@ function startWithMissingWorktree(
                 ),
         } as never),
         layerWorktreeLocation(),
-        Layer.mock(GitWorkflow.GitWorkflowService)({ pruneWorktrees, createWorktree }),
+        Layer.mock(GitWorkflow.GitWorkflowService)({
+          pruneWorktrees,
+          createWorktree,
+          listLocalBranchNames,
+        }),
         Layer.mock(ProjectService.ProjectService)({
           getById: () =>
-            Effect.succeed(
-              Option.some({ workspaceRoot: "/tmp/provider-turn-start-project" } as never),
-            ),
+            Effect.succeedSome({ workspaceRoot: "/tmp/provider-turn-start-project" } as never),
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadRecords: () => {
@@ -260,6 +265,8 @@ function makeLocalCommandHarness(input: {
   readonly text: string;
   readonly worktreePath?: string;
   readonly worktreesDir?: string;
+  readonly workspaceRoot?: string;
+  readonly gitWorkflow?: GitWorkflow.GitWorkflowService["Service"];
   readonly fileSystem?: FileSystem.FileSystem;
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
@@ -271,6 +278,14 @@ function makeLocalCommandHarness(input: {
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
   readonly failReadsAfterRunning?: boolean;
+  readonly previousTurn?: {
+    readonly runStatus: "failed" | "completed";
+    readonly turnStatus: "running" | "completed" | "interrupted";
+    readonly differentThread?: boolean;
+    readonly liveSession?: boolean;
+    readonly interruptFailure?: boolean;
+    readonly interruptCurrentRun?: boolean;
+  };
 }) {
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
   const threadId = ThreadId.make("thread-native-account-command");
@@ -456,6 +471,74 @@ function makeLocalCommandHarness(input: {
       ),
     };
   }
+  const previousTurnId = ProviderTurnId.make("previous-provider-turn");
+  if (input.previousTurn !== undefined) {
+    const previousRunId = RunId.make("previous-failed-run");
+    const previousAttemptId = RunAttemptId.make("previous-failed-attempt");
+    const previousProviderThreadId = input.previousTurn.differentThread
+      ? oldProviderThreadId
+      : providerThreadId;
+    projection = {
+      ...projection,
+      runs: [
+        {
+          ...run,
+          id: previousRunId,
+          ordinal: 1,
+          status: input.previousTurn.runStatus,
+          rootNodeId: NodeId.make("previous-root"),
+          activeAttemptId: previousAttemptId,
+          providerThreadId: previousProviderThreadId,
+          completedAt: now,
+        },
+        run,
+      ],
+      providerThreads: [
+        {
+          ...providerThread,
+          nativeThreadRef: {
+            driver: providerThread.driver,
+            nativeId: "existing-native-conversation",
+            strength: "strong",
+          },
+        },
+      ],
+      providerTurns: [
+        {
+          id: previousTurnId,
+          providerThreadId: previousProviderThreadId,
+          nodeId: NodeId.make("previous-root"),
+          runAttemptId: previousAttemptId,
+          ordinal: 1,
+          nativeTurnRef: null,
+          status: input.previousTurn.turnStatus,
+          startedAt: now,
+          completedAt: input.previousTurn.turnStatus === "running" ? null : now,
+        },
+      ],
+    };
+  }
+  let providerBusy =
+    input.previousTurn?.runStatus === "failed" &&
+    input.previousTurn.turnStatus === "running" &&
+    !input.previousTurn.differentThread &&
+    input.previousTurn.liveSession !== false;
+  const interruptTurn = vi.fn((request: ProviderAdapter.ProviderAdapterV2InterruptInput) =>
+    Effect.gen(function* () {
+      expect(request.providerTurnId).toBe(previousTurnId);
+      expect(request.providerThread.id).toBe(providerThreadId);
+      if (input.previousTurn?.interruptFailure) {
+        return yield* new ProviderAdapter.ProviderAdapterInterruptError({
+          driver: providerThread.driver,
+          providerThreadId,
+          providerTurnId: request.providerTurnId,
+          cause: "provider interrupt failed",
+        });
+      }
+      providerBusy = false;
+      if (input.previousTurn?.interruptCurrentRun) interruptRun();
+    }),
+  );
   const events: Array<OrchestrationV2DomainEvent> = [];
   const interruptRun = () => {
     projection = {
@@ -515,7 +598,7 @@ function makeLocalCommandHarness(input: {
                   ),
                 ),
               )
-            : input.failReadsAfterRunning === true
+            : input.failReadsAfterRunning === true || input.previousTurn !== undefined
               ? Effect.succeed({
                   driver: providerThread.driver,
                   providerSession: {
@@ -531,14 +614,17 @@ function makeLocalCommandHarness(input: {
                     lastError: null,
                   },
                   ensureThread: () => Effect.succeed(providerThread),
+                  resumeThread: () => Effect.succeed(projection.providerThreads[0]),
                 } as never)
               : Effect.die("A local command must not open a native session."),
   );
   const startRootRun = vi.fn<
     (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
   >(() =>
-    input.failReadsAfterRunning === true
-      ? Effect.void
+    input.failReadsAfterRunning === true || input.previousTurn !== undefined
+      ? Effect.suspend(() =>
+          providerBusy ? Effect.die("The previous provider turn is still running.") : Effect.void,
+        )
       : Effect.die("A local command must not start a native turn."),
   );
   const failReadIfRunning = Effect.suspend(() =>
@@ -588,7 +674,9 @@ function makeLocalCommandHarness(input: {
     ({ thread }: Parameters<RuntimePolicy.RuntimePolicyV2Shape["resolve"]>[0]) =>
       Effect.succeed({ cwd: thread.worktreePath ?? "/tmp/native-account-command" } as never),
   );
-  const createWorktree = vi.fn(() => Effect.succeed({} as never));
+  const createWorktree = vi.fn<GitWorkflow.GitWorkflowService["Service"]["createWorktree"]>(() =>
+    Effect.succeed({} as never),
+  );
   const getThreadRecords = vi.fn<ProjectionStore.ProjectionStoreV2Shape["getThreadRecords"]>(() =>
     Effect.succeed(projection),
   );
@@ -614,13 +702,18 @@ function makeLocalCommandHarness(input: {
         input.fileSystem === undefined
           ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
           : Layer.succeed(FileSystem.FileSystem, input.fileSystem),
-        Layer.mock(GitWorkflow.GitWorkflowService)({
-          pruneWorktrees: () => Effect.void,
-          createWorktree,
-        }),
+        input.gitWorkflow === undefined
+          ? Layer.mock(GitWorkflow.GitWorkflowService)({
+              pruneWorktrees: () => Effect.void,
+              listLocalBranchNames: () => Effect.succeed(["feature/restore"]),
+              createWorktree,
+            })
+          : Layer.succeed(GitWorkflow.GitWorkflowService, input.gitWorkflow),
         Layer.mock(ProjectService.ProjectService)({
           getById: () =>
-            Effect.succeed(Option.some({ workspaceRoot: "/tmp/native-account-project" } as never)),
+            Effect.succeedSome({
+              workspaceRoot: input.workspaceRoot ?? "/tmp/native-account-project",
+            } as never),
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadRecords,
@@ -642,7 +735,19 @@ function makeLocalCommandHarness(input: {
               }),
             ),
         }),
-        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ open }),
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+          open,
+          get: () =>
+            Effect.succeed(
+              input.previousTurn?.liveSession === false
+                ? Option.none()
+                : Option.some({
+                    driver: providerThread.driver,
+                    providerSessionId,
+                    interruptTurn,
+                  } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime),
+            ),
+        }),
         Layer.mock(ProviderAuthService.ProviderAuthService)({ tryHandlePromptCommand }),
         Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({
@@ -662,6 +767,7 @@ function makeLocalCommandHarness(input: {
     open,
     writeIfRunCurrent,
     startRootRun,
+    interruptTurn,
     tryHandlePromptCommand,
     events,
     oldInstanceId,
@@ -680,6 +786,303 @@ function makeLocalCommandHarness(input: {
     }).pipe(Effect.provide(layer)),
   };
 }
+
+effectIt.effect(
+  "recovers the local or pushed thread tip, else the current branch, remote default, or detached HEAD",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const gitWorkflow = yield* GitWorkflow.GitWorkflowService;
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-recreate-repo-" });
+      const workspaceRoot = path.join(root, "project");
+      const originRoot = path.join(root, "origin.git");
+      const worktreesDir = path.join(root, "worktrees");
+      const worktreePath = path.join(worktreesDir, "project", "restore");
+      yield* fileSystem.makeDirectory(workspaceRoot);
+      const git = (cwd: string, args: ReadonlyArray<string>) =>
+        driver
+          .execute({ operation: "test.worktreeRecovery", cwd, args })
+          .pipe(Effect.map((result) => result.stdout.trim()));
+      const branchConfig = (key: string) =>
+        git(workspaceRoot, ["config", "--get", `branch.feature/restore.${key}`]).pipe(
+          Effect.orElseSucceed(() => ""),
+        );
+      yield* git(root, ["init", "--bare", "-b", "main", originRoot]);
+      yield* git(workspaceRoot, ["init", "-b", "main"]);
+      yield* git(workspaceRoot, ["config", "user.name", "Test"]);
+      yield* git(workspaceRoot, ["config", "user.email", "test@example.com"]);
+      yield* git(workspaceRoot, ["commit", "--allow-empty", "-m", "base"]);
+      const baseTip = yield* git(workspaceRoot, ["rev-parse", "HEAD"]);
+      yield* git(workspaceRoot, ["remote", "add", "origin", originRoot]);
+      yield* git(workspaceRoot, ["push", "origin", "main"]);
+      yield* git(workspaceRoot, ["remote", "set-head", "origin", "main"]);
+      yield* git(workspaceRoot, ["worktree", "add", "-b", "feature/restore", worktreePath]);
+      yield* fileSystem.writeFileString(path.join(worktreePath, "thread.txt"), "thread work");
+      yield* git(worktreePath, ["add", "."]);
+      yield* git(worktreePath, ["commit", "-m", "thread tip"]);
+      const threadTip = yield* git(worktreePath, ["rev-parse", "HEAD"]);
+      yield* git(workspaceRoot, ["switch", "-c", "project-current"]);
+      yield* fileSystem.writeFileString(
+        path.join(workspaceRoot, "project.txt"),
+        "new project code",
+      );
+      yield* git(workspaceRoot, ["add", "."]);
+      yield* git(workspaceRoot, ["commit", "-m", "project tip"]);
+      const projectTip = yield* git(workspaceRoot, ["rev-parse", "HEAD"]);
+      expect(projectTip).not.toBe(threadTip);
+      // Tags must neither hide the thread branch nor select a different recovery tip.
+      yield* git(workspaceRoot, ["tag", "feature/restore", projectTip]);
+      yield* git(workspaceRoot, ["tag", "project-current", threadTip]);
+      yield* git(workspaceRoot, ["tag", "origin/feature/restore", threadTip]);
+
+      const expectedTips = {
+        retained: { tip: threadTip, file: "thread.txt", upstream: null, base: "" },
+        deleted: { tip: projectTip, file: "project.txt", upstream: null, base: "project-current" },
+        pushed: {
+          tip: threadTip,
+          file: "thread.txt",
+          upstream: "refs/remotes/origin/feature/restore",
+          base: "",
+        },
+        "pushed-detached": {
+          tip: threadTip,
+          file: "thread.txt",
+          upstream: "refs/remotes/origin/feature/restore",
+          base: "",
+        },
+        detached: { tip: baseTip, file: null, upstream: null, base: "main" },
+        "detached-no-remote": { tip: projectTip, file: "project.txt", upstream: null, base: "" },
+      } as const;
+      // Reuse the workflow across turns so recovery cannot select a cached project branch.
+      for (const scenario of Object.keys(expectedTips) as Array<keyof typeof expectedTips>) {
+        const expected = expectedTips[scenario];
+        if (scenario === "pushed") {
+          yield* git(workspaceRoot, ["push", "origin", `${threadTip}:refs/heads/feature/restore`]);
+          yield* git(workspaceRoot, ["fetch", "origin"]);
+        }
+        if (scenario === "pushed-detached") {
+          yield* git(workspaceRoot, ["switch", "--detach"]);
+          expect(yield* git(workspaceRoot, ["branch", "--show-current"])).toBe("");
+        }
+        if (scenario === "detached") {
+          yield* git(workspaceRoot, ["push", "origin", "--delete", "feature/restore"]);
+        }
+        if (scenario === "detached-no-remote") {
+          yield* git(workspaceRoot, ["remote", "remove", "origin"]);
+        }
+        yield* fileSystem.remove(worktreePath, { recursive: true });
+        if (scenario !== "retained") {
+          yield* git(workspaceRoot, ["worktree", "prune"]);
+          yield* git(workspaceRoot, ["branch", "-D", "feature/restore"]);
+        }
+        const harness = makeLocalCommandHarness({
+          text: "Continue",
+          workspaceRoot,
+          worktreePath,
+          worktreesDir,
+          fileSystem,
+          gitWorkflow,
+          failReadsAfterRunning: true,
+        });
+        const open = harness.open.getMockImplementation()!;
+        harness.open.mockImplementation(() =>
+          Effect.gen(function* () {
+            expect(yield* git(worktreePath, ["branch", "--show-current"])).toBe("feature/restore");
+            expect(yield* git(worktreePath, ["rev-parse", "HEAD"])).toBe(expected.tip);
+            for (const file of ["thread.txt", "project.txt"]) {
+              expect(yield* fileSystem.exists(path.join(worktreePath, file))).toBe(
+                file === expected.file,
+              );
+            }
+            expect(yield* branchConfig("merge")).toBe(
+              expected.upstream === null ? "" : "refs/heads/feature/restore",
+            );
+            if (expected.upstream !== null) {
+              expect(
+                yield* git(worktreePath, ["rev-parse", "--symbolic-full-name", "@{upstream}"]),
+              ).toBe(expected.upstream);
+            }
+            expect(yield* branchConfig("t3-merge-base")).toBe(expected.base);
+            return yield* open();
+          }).pipe(Effect.orDie),
+        );
+
+        yield* harness.start;
+
+        expect(harness.open).toHaveBeenCalledOnce();
+        expect(harness.startRootRun).toHaveBeenCalledWith(
+          expect.objectContaining({
+            runtimePolicy: expect.objectContaining({ cwd: worktreePath }),
+          }),
+        );
+        expect(harness.projection().runs.at(-1)?.status).toBe("running");
+      }
+    }).pipe(Effect.scoped, Effect.provide(layerRealGit)),
+);
+
+effectIt.effect(
+  "preserves recreation interrupts and retries, then fails the final attempt before provider start",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const worktreesDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-recreate-failure-",
+      });
+      const worktreePath = path.join(worktreesDir, "project", "restore");
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        worktreesDir,
+        worktreePath,
+        fileSystem,
+        failReadsAfterRunning: true,
+      });
+      harness.createWorktree.mockImplementationOnce(() => Effect.interrupt);
+      harness.createWorktree.mockImplementation(() =>
+        Effect.fail(
+          new GitCommandError({
+            operation: "worktree-add",
+            command: "git worktree add",
+            cwd: "/tmp/native-account-project",
+            detail: "fatal: private git diagnostic",
+          }),
+        ),
+      );
+
+      const interrupted = yield* Effect.exit(harness.start);
+      expect(interrupted._tag).toBe("Failure");
+      if (interrupted._tag === "Failure")
+        expect(Cause.hasInterruptsOnly(interrupted.cause)).toBe(true);
+      expect(harness.events).toEqual([]);
+      expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+
+      const retry = yield* Effect.result(harness.startWithRetry);
+      expect(retry).toMatchObject({ _tag: "Failure", failure: { _tag: "ProviderTurnStartError" } });
+      expect(harness.events).toEqual([]);
+      expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+
+      yield* harness.start;
+      expect(harness.createWorktree).toHaveBeenCalledTimes(3);
+      expect(harness.writeIfRunCurrent).toHaveBeenCalledOnce();
+      expect(harness.open).not.toHaveBeenCalled();
+      expect(harness.startRootRun).not.toHaveBeenCalled();
+      const projection = harness.projection();
+      expect(projection.runs.at(-1)).toMatchObject({ status: "failed", startedAt: null });
+      expect(projection.attempts[0]).toMatchObject({ status: "failed", startedAt: null });
+      expect(projection.nodes[0]).toMatchObject({ status: "failed", startedAt: null });
+      expect(projection.turnItems).toMatchObject([
+        {
+          type: "error",
+          failure: {
+            message: `Could not recreate the worktree for branch 'feature/restore' at ${worktreePath}.`,
+          },
+        },
+      ]);
+      expect(JSON.stringify(harness.events)).not.toContain("private git diagnostic");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+effectIt.effect("recovers an abandoned failed turn before continuing its native conversation", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      previousTurn: { runStatus: "failed", turnStatus: "running" },
+    });
+
+    yield* harness.start;
+
+    expect(harness.interruptTurn).toHaveBeenCalledOnce();
+    expect(harness.projection().runs.at(-1)?.status).toBe("running");
+    expect(harness.projection().providerTurns[0]).toMatchObject({
+      status: "interrupted",
+      completedAt: expect.anything(),
+    });
+    expect(harness.startRootRun).toHaveBeenCalledOnce();
+    expect(harness.startRootRun.mock.calls[0]?.[0].providerThread.nativeThreadRef?.nativeId).toBe(
+      "existing-native-conversation",
+    );
+  }),
+);
+
+effectIt.effect.each([
+  { runStatus: "failed", turnStatus: "completed" },
+  { runStatus: "completed", turnStatus: "completed" },
+  { runStatus: "failed", turnStatus: "running", differentThread: true },
+  { runStatus: "failed", turnStatus: "running", liveSession: false },
+  { runStatus: "failed", turnStatus: "interrupted", interruptFailure: true },
+] as const)("continues without interrupting when recovery does not apply: %j", (previousTurn) =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({ text: "Continue", previousTurn });
+
+    yield* harness.start;
+
+    expect(harness.interruptTurn).not.toHaveBeenCalled();
+    expect(harness.projection().runs.at(-1)?.status).toBe("running");
+  }),
+);
+
+effectIt.effect("does not start another turn when abandoned-turn cleanup fails", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      previousTurn: { runStatus: "failed", turnStatus: "running", interruptFailure: true },
+    });
+
+    yield* harness.start;
+
+    expect(harness.interruptTurn).toHaveBeenCalledOnce();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    expect(harness.projection().runs.at(-1)?.status).toBe("failed");
+  }),
+);
+
+effectIt.effect("retries abandoned-turn cleanup without failing the continuation early", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      previousTurn: { runStatus: "failed", turnStatus: "running", interruptFailure: true },
+    });
+
+    const error = yield* harness.startWithRetry.pipe(Effect.flip);
+
+    expect(error._tag).toBe("ProviderTurnStartError");
+    expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+    expect(harness.open).not.toHaveBeenCalled();
+  }),
+);
+
+effectIt.effect("does not start the continuation if recording recovery fails", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      previousTurn: { runStatus: "failed", turnStatus: "running" },
+      writeFailure: new Error("database unavailable"),
+    });
+
+    const error = yield* harness.start.pipe(Effect.flip);
+
+    expect(error._tag).toBe("ProviderTurnStartError");
+    expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+    expect(harness.projection().providerTurns[0]?.status).toBe("running");
+    expect(harness.open).not.toHaveBeenCalled();
+  }),
+);
+
+effectIt.effect("does not resume a continuation stopped while recovery was in flight", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      previousTurn: { runStatus: "failed", turnStatus: "running", interruptCurrentRun: true },
+    });
+
+    yield* harness.start;
+
+    expect(harness.projection().runs.at(-1)?.status).toBe("interrupted");
+    expect(harness.open).not.toHaveBeenCalled();
+  }),
+);
 
 effectIt.effect.each(["cleanup-first", "startup-first"])(
   "coordinates provider startup with %s",
@@ -934,6 +1337,34 @@ effectIt.effect("leaves the run starting when a session-open failure will be ret
     expect(error._tag).toBe("ProviderTurnStartError");
     expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
     expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+  }),
+);
+
+effectIt.effect("fails the run without a retry when the provider needs sign-in", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      openFailure: new ProviderAdapter.ProviderAdapterOpenSessionError({
+        driver: ProviderDriverKind.make("antigravity"),
+        providerSessionId: ProviderSessionId.make("new-provider-session"),
+        requiresSignIn: true,
+      }),
+    });
+
+    yield* harness.startWithRetry;
+
+    expect(harness.open).toHaveBeenCalledOnce();
+    expect(harness.projection().runs.at(-1)?.status).toBe("failed");
+    expect(harness.projection().turnItems).toMatchObject([
+      {
+        type: "error",
+        status: "failed",
+        failure: {
+          class: "provider_error",
+          message: "Failed to open antigravity provider session new-provider-session.",
+        },
+      },
+    ]);
   }),
 );
 

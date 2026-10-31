@@ -75,7 +75,7 @@ describe("native device stream transport", () => {
       }
     }
     vi.stubGlobal("WebSocket", FakeSocket);
-    const fetch = vi.fn(() => Promise.resolve(new Response("frame")));
+    const fetch = vi.fn(() => Promise.resolve(Response.json({})));
     vi.stubGlobal("fetch", fetch);
     const events = {
       onStatus: vi.fn(),
@@ -199,7 +199,11 @@ class MjpegImage extends EventTarget {
   }
 }
 
-function recoveryFixture(platform: "ios" | "android" = "ios", preferMjpeg = true) {
+function recoveryFixture(
+  platform: "ios" | "android" = "ios",
+  preferMjpeg = true,
+  serveSimOnly = false,
+) {
   vi.useFakeTimers();
   const sockets: Socket[] = [];
   class Socket {
@@ -211,7 +215,9 @@ function recoveryFixture(platform: "ios" | "android" = "ios", preferMjpeg = true
     onclose: ((event: { code: number; reason: string }) => void) | null = null;
     send = vi.fn();
     close = vi.fn();
-    constructor() {
+    readonly url: string;
+    constructor(url: string) {
+      this.url = url;
       sockets.push(this);
     }
   }
@@ -245,6 +251,7 @@ function recoveryFixture(platform: "ios" | "android" = "ios", preferMjpeg = true
   const fetch = vi.fn((url: string, init: RequestInit) => {
     const signal = init.signal!;
     signals.push(signal);
+    if (url.includes("/api?")) return Promise.resolve(Response.json({}));
     if (!url.includes("stream.avcc")) return Promise.resolve(new Response("prime"));
     return Promise.resolve(
       new Response(
@@ -273,6 +280,7 @@ function recoveryFixture(platform: "ios" | "android" = "ios", preferMjpeg = true
     {
       platform,
       preferMjpeg,
+      serveSimOnly,
       deviceId: "test-device",
       access: {
         httpBase: "https://test/api/device-hub",
@@ -323,6 +331,86 @@ describe("shared device stream readiness and recovery", () => {
     vi.unstubAllGlobals();
   });
 
+  it("repairs the hub's fallback configuration without disabling hardware decoding", async () => {
+    const { client, videoBodies, Decoder } = recoveryFixture("ios", false);
+    try {
+      client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      videoBodies[0]!.enqueue(
+        Uint8Array.from(
+          envelope(
+            1,
+            [
+              1, 100, 0, 51, 255, 225, 0, 12, 39, 100, 0, 51, 172, 86, 128, 76, 1, 73, 230, 164, 1,
+              0, 4, 40, 238, 60, 176,
+            ],
+          ),
+        ),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(Decoder.isConfigSupported).toHaveBeenCalledExactlyOnceWith({
+        codec: "avc1.640033",
+        description: Uint8Array.from([
+          1, 100, 0, 51, 255, 225, 0, 17, 39, 100, 0, 51, 172, 86, 128, 76, 1, 73, 230, 168, 6, 208,
+          68, 35, 80, 1, 0, 4, 40, 238, 60, 176,
+        ]),
+        optimizeForLatency: true,
+      });
+    } finally {
+      client.stop();
+    }
+  });
+
+  it("streams and drives a serve-sim-only Android device over serve-sim's AVCC and input socket", async () => {
+    const { client, events, fetch, sockets, videoBodies, decoders } = recoveryFixture(
+      "android",
+      false,
+      true,
+    );
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    // No MJPEG priming: Simlock serves only the AVCC stream and the input socket.
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      "https://test/api/device-hub/vendor/serve-sim/helper/test-device/stream.avcc",
+    ]);
+    expect(sockets.map((socket) => socket.url)).toEqual([
+      "wss://test/api/device-hub/vendor/serve-sim/helper/ws?device=test-device",
+    ]);
+    // Simlock adds meta (5), keep-alive (6), and lease-end (7) frames to serve-sim's envelopes.
+    videoBodies[0]!.enqueue(
+      new Uint8Array([
+        ...envelope(5, [0x7b, 0x7d]),
+        ...envelope(1, [1, 0x64, 0, 0x1f]),
+        ...envelope(6, []),
+        ...envelope(2, [2]),
+        ...envelope(7, [0x7b, 0x7d]),
+      ]),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(decoders[0]!.decode).toHaveBeenCalledOnce();
+
+    const input = sockets[0]!;
+    input.onmessage?.({ data: Uint8Array.of(0x83).buffer });
+    input.onmessage?.({
+      data: new Uint8Array([
+        0x82,
+        ...new TextEncoder().encode('{"width":1080,"height":2400,"orientation":"portrait"}'),
+      ]).buffer,
+    });
+    expect(events.onInputConnected).toHaveBeenLastCalledWith(true, undefined);
+    client.sendTouch("begin", 0.25, 0.5);
+    client.pressButton("back");
+    const sent = input.send.mock.calls.map(([payload]) => {
+      const bytes = payload as Uint8Array;
+      return [bytes[0], JSON.parse(new TextDecoder().decode(bytes.subarray(1)))];
+    });
+    expect(sent).toEqual([
+      [0x03, { type: "begin", x: 0.25, y: 0.5 }],
+      [0x04, { button: "back" }],
+    ]);
+    client.stop();
+  });
+
   it("does not repaint a delayed JPEG seed over newer decoded video", async () => {
     const { client, videoBodies, drawImage, decodedFrame } = recoveryFixture("ios", false);
     let resolveBitmap!: (bitmap: ImageBitmap) => void;
@@ -363,9 +451,11 @@ describe("shared device stream readiness and recovery", () => {
         }),
     );
     client.start();
+    await vi.advanceTimersByTimeAsync(0);
     sockets[0]!.onmessage?.({ data: sps });
     client.stop();
     client.start();
+    await vi.advanceTimersByTimeAsync(0);
     resolveSupport({ supported: true });
     await vi.advanceTimersByTimeAsync(0);
     expect(decoders).toHaveLength(0);
@@ -402,5 +492,138 @@ describe("shared device stream readiness and recovery", () => {
     expect(events.onStatus).not.toHaveBeenCalled();
     client.stop();
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("Android WebRTC device streams", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function setup() {
+    vi.useFakeTimers();
+    const sockets: Socket[] = [];
+    class Socket {
+      static OPEN = 1;
+      readyState = 1;
+      binaryType = "";
+      onopen: (() => void) | null = null;
+      onmessage: ((event: { data: string }) => void) | null = null;
+      onclose: ((event: { code: number; reason: string }) => void) | null = null;
+      send = vi.fn();
+      close = vi.fn();
+      readonly url: string;
+      constructor(url: string) {
+        this.url = url;
+        sockets.push(this);
+      }
+    }
+    const videos: Video[] = [];
+    class Video {
+      muted = false;
+      playsInline = false;
+      style = { cssText: "" };
+      srcObject: unknown = null;
+      videoWidth = 400;
+      videoHeight = 800;
+      setAttribute = vi.fn();
+      remove = vi.fn();
+      play = vi.fn(async () => {});
+      callback: (() => void) | null = null;
+      requestVideoFrameCallback(callback: () => void) {
+        this.callback = callback;
+        return 0;
+      }
+      constructor() {
+        videos.push(this);
+      }
+    }
+    const peers: Peer[] = [];
+    class Peer {
+      iceGatheringState = "complete";
+      connectionState = "connected";
+      localDescription = { type: "offer", sdp: "offer-sdp" };
+      ontrack: ((event: { streams: unknown[]; track: unknown }) => void) | null = null;
+      onconnectionstatechange: (() => void) | null = null;
+      close = vi.fn();
+      createOffer = vi.fn(async () => this.localDescription);
+      setLocalDescription = vi.fn(async () => {});
+      setRemoteDescription = vi.fn(async () => {});
+      addTransceiver = vi.fn(() => ({ setCodecPreferences: vi.fn() }));
+      addEventListener = vi.fn();
+      removeEventListener = vi.fn();
+      constructor() {
+        peers.push(this);
+      }
+    }
+    vi.stubGlobal("WebSocket", Socket);
+    vi.stubGlobal("RTCPeerConnection", Peer);
+    vi.stubGlobal("RTCRtpReceiver", { getCapabilities: () => ({ codecs: [] }) });
+    vi.stubGlobal("document", { createElement: () => new Video(), body: { append: vi.fn() } });
+    const fetch = vi.fn((url: string, _init?: RequestInit) =>
+      Promise.resolve(
+        url.includes("/api?")
+          ? Response.json({ serial: "emulator-5554", stream: { transport: "webrtc" } })
+          : Response.json({ type: "answer", sdp: "answer-sdp" }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const events = {
+      onStatus: vi.fn(),
+      onScreen: vi.fn(),
+      onUnauthorized: vi.fn(),
+      onMjpegFallback: vi.fn(),
+      onInputConnected: vi.fn(),
+    };
+    const present = vi.fn(() => true);
+    const client = createDeviceStreamClient(
+      {
+        platform: "android",
+        deviceId: "session-1",
+        access: {
+          httpBase: "https://test/api/device-hub",
+          wsBase: "wss://test/api/device-hub",
+          credentials: true,
+          query: { hostId: "eas" },
+        },
+      },
+      { present },
+      events,
+    );
+    return { client, events, fetch, peers, videos, sockets, present };
+  }
+
+  it("streams over WebRTC when serve-emu advertises it, with input that reconnects on its own", async () => {
+    const { client, events, fetch, peers, videos, sockets, present } = setup();
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      "https://test/api/device-hub/vendor/serve-emu/api?device=session-1&hostId=eas",
+      "https://test/api/device-hub/vendor/serve-emu/webrtc/offer?device=session-1&hostId=eas",
+    ]);
+    expect(peers[0]?.setRemoteDescription).toHaveBeenCalledWith({
+      type: "answer",
+      sdp: "answer-sdp",
+    });
+    peers[0]?.ontrack?.({ streams: [{}], track: {} });
+    videos[0]?.callback?.();
+    expect(present).toHaveBeenCalledWith(videos[0], 400, 800);
+    expect(events.onStatus).toHaveBeenLastCalledWith("streaming", undefined);
+
+    expect(sockets.map((socket) => socket.url)).toEqual([
+      "wss://test/api/device-hub/vendor/serve-emu/ws?device=session-1&video=0&hostId=eas",
+    ]);
+    sockets[0]!.onopen?.();
+    client.pressButton("back");
+    expect(sockets[0]!.send).toHaveBeenCalledWith(JSON.stringify({ type: "back" }));
+    events.onStatus.mockClear();
+    sockets[0]!.onclose?.({ code: 1001, reason: "going away" });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(sockets[1]?.url).toContain("video=0");
+    expect(peers).toHaveLength(1);
+    expect(peers[0]?.close).not.toHaveBeenCalled();
+    expect(events.onStatus).not.toHaveBeenCalled();
+    client.stop();
   });
 });

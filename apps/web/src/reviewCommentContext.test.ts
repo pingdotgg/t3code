@@ -6,6 +6,7 @@ import {
   buildDiffReviewComment,
   buildFileReviewComment,
   formatReviewCommentFence,
+  resolveDiffReviewAnchor,
   resolveDiffReviewPosition,
   restoreDiffReviewCommentRange,
 } from "./reviewCommentContext";
@@ -179,5 +180,37 @@ describe("review comment context parsing", () => {
       kind: "deleted",
       oldLine: 25,
     });
+  });
+
+  it("keeps a selection's first line only for a ranged host and within one hunk", () => {
+    const fileDiff = parsePatchFiles(
+      [
+        "diff --git a/src/app.ts b/src/app.ts",
+        "--- a/src/app.ts",
+        "+++ b/src/app.ts",
+        "@@ -1,3 +1,4 @@",
+        " one",
+        "+two",
+        " three",
+        " four",
+        "@@ -20,2 +21,3 @@",
+        " twenty",
+        "+twenty-one",
+        " twenty-two",
+      ].join("\n"),
+      "review-anchor-range",
+    )[0]!.files[0]!;
+    const upward = { start: 3, side: "additions", end: 1, endSide: "additions" } as const;
+
+    expect(resolveDiffReviewAnchor(fileDiff, upward, false)).toEqual({
+      position: { kind: "context", oldLine: 1, newLine: 1, side: "right" },
+    });
+    expect(resolveDiffReviewAnchor(fileDiff, upward, true)).toEqual({
+      startPosition: { kind: "context", oldLine: 1, newLine: 1, side: "right" },
+      position: { kind: "context", oldLine: 2, newLine: 3, side: "right" },
+    });
+    expect(
+      resolveDiffReviewAnchor(fileDiff, { start: 2, side: "additions", end: 22 }, true),
+    ).toEqual({ position: { kind: "added", newLine: 22 } });
   });
 });
