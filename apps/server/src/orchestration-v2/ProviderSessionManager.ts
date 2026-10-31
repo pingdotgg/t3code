@@ -25,6 +25,7 @@ import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
@@ -41,7 +42,9 @@ import {
   withMetrics,
 } from "../observability/Metrics.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ServerConfig from "../config.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -323,6 +326,7 @@ export const layerWithOptions = (
   | CommandOutputHub.CommandOutputHub
   | EventSink.EventSinkV2
   | FileSystem.FileSystem
+  | Path.Path
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
   | McpSessionRegistry.McpSessionRegistry
@@ -340,6 +344,21 @@ export const layerWithOptions = (
       /** Unreadable settings must preserve explicit browser-access opt-outs. */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
+      const serverConfig = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+      const pathService = yield* Path.Path;
+      /** A deleted scratch folder is disposable, so it is recreated empty. */
+      const restoreScratchWorkspace = (cwd: string) =>
+        Option.match(serverConfig, {
+          onNone: () => Effect.succeed(false),
+          onSome: (config) =>
+            ManagedProjectFolders.restoreMissingScratchFolder({
+              scratchRoot: ManagedProjectFolders.scratchRootFor(pathService, config.baseDir),
+              cwd,
+            }).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, pathService),
+            ),
+        });
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -2123,10 +2142,21 @@ export const layerWithOptions = (
             Effect.gen(function* () {
               const cwd = input.runtimePolicy.cwd;
               if (cwd !== null) {
-                const workspaceIsDirectory = yield* fileSystem.stat(cwd).pipe(
+                const isWorkspaceDirectory = fileSystem.stat(cwd).pipe(
                   Effect.map((stat) => stat.type === "Directory"),
                   Effect.catch((error) => Effect.succeed(error.reason._tag !== "NotFound")),
                 );
+                let workspaceIsDirectory = yield* isWorkspaceDirectory;
+                if (!workspaceIsDirectory && (yield* restoreScratchWorkspace(cwd))) {
+                  yield* Effect.logWarning(
+                    "orchestration-v2.driver-session.scratch-workspace-recreated",
+                    {
+                      threadId: input.threadId,
+                      cwd,
+                    },
+                  );
+                  workspaceIsDirectory = yield* isWorkspaceDirectory;
+                }
                 if (!workspaceIsDirectory) {
                   return yield* new ProviderWorkspaceMissingError({
                     threadId: input.threadId,
