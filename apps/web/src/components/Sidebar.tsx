@@ -65,7 +65,7 @@ import {
   type OlderSettledScope,
 } from "@t3tools/client-runtime/state/threads";
 
-import { CheckIcon, FolderIcon, ListFilterIcon, SettingsIcon } from "lucide-react";
+import { CheckIcon, FolderIcon, SettingsIcon } from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -3133,7 +3133,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         <ProjectFavicon project={scopedProjectGroups[0]} className="size-4" />
                       </span>
                     ) : (
-                      <ListFilterIcon className="size-3.5" />
+                      <FolderIcon className="size-3.5" />
                     )}
                   </ComboboxTrigger>
                   {/* Refocusing the trigger after a pointer close shows its focus ring and opens its tooltip. */}
@@ -3427,7 +3427,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     // controls.
                     role="presentation"
                     className={cn(
-                      "relative flex flex-col gap-px",
+                      "relative flex flex-col gap-0.5",
                       sidebarListItems.length > 0 && "flex-1",
                       actionSweep !== null && "**:pointer-events-none",
                       // Projected rows (two boundary labels, two hints) extend the scroll range; a range that

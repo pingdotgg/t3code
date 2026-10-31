@@ -60,7 +60,7 @@ export function SidebarThreadHeader({
 
   return (
     <div className="flex items-center gap-1">
-      <InputGroup variant="ghost" className="min-w-0 flex-1">
+      <InputGroup size="sidebar" className="min-w-0 flex-1">
         <InputGroupAddon>
           {/* A 16px slot like a row's favicon, pulled out like the addon's own
               svg: the glyph centers on the icon column and the placeholder
@@ -145,16 +145,18 @@ export function SidebarHeaderIconButton({
   label,
   tooltip = label,
   className,
+  size = "header",
   children,
   ...rest
 }: {
   label: string;
+  size?: "header" | "footer";
   tooltip?: ReactNode;
   className?: string | undefined;
   children?: ReactNode;
 } & Omit<
   ComponentProps<typeof SidebarMenuButton>,
-  "children" | "className" | "tooltip" | "isActive" | "aria-label"
+  "children" | "className" | "tooltip" | "isActive" | "aria-label" | "size"
 >) {
   return (
     <Tooltip>
@@ -165,7 +167,7 @@ export function SidebarHeaderIconButton({
             type="button"
             aria-label={label}
             {...rest}
-            className={cn("relative size-7 shrink-0", className)}
+            className={cn("relative shrink-0", size === "footer" ? "size-8" : "size-7", className)}
           />
         }
       >
