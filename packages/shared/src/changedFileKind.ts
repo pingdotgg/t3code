@@ -2,6 +2,25 @@ import type { PullRequestChangeBreakdown } from "@t3tools/contracts";
 
 export type ChangedFileKind = keyof NonNullable<PullRequestChangeBreakdown>;
 
+export function summarizeChangedFiles(
+  files: ReadonlyArray<{ path: string; additions: number; deletions: number }>,
+): NonNullable<PullRequestChangeBreakdown> {
+  const empty = () => ({ additions: 0, deletions: 0 });
+  const breakdown = {
+    code: empty(),
+    tests: empty(),
+    mocks: empty(),
+    generated: empty(),
+    docs: empty(),
+  };
+  for (const file of files) {
+    const bucket = breakdown[classifyChangedFile(file.path)];
+    bucket.additions += file.additions;
+    bucket.deletions += file.deletions;
+  }
+  return breakdown;
+}
+
 const GENERATED_FILES = new Set([
   "bun.lock",
   "bun.lockb",

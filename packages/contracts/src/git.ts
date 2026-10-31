@@ -10,6 +10,7 @@ import {
 } from "./baseSchemas.ts";
 import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceControl.ts";
 import { VcsDriverKind } from "./vcs.ts";
+import { PullRequestChangeBreakdown } from "./pullRequest.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const GitFilePath = Schema.String.check(Schema.isNonEmpty());
@@ -239,6 +240,7 @@ const VcsStatusLocalShape = {
       baseRef: Schema.NullOr(TrimmedNonEmptyStringSchema),
       insertions: NonNegativeInt,
       deletions: NonNegativeInt,
+      breakdown: Schema.optional(PullRequestChangeBreakdown),
     }),
   ),
 };

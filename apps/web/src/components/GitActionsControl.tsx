@@ -110,6 +110,8 @@ import {
 import { getSourceControlPresentation, sourceControlIcon } from "~/sourceControlPresentation";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
+import { summarizeChangedFiles } from "@t3tools/shared/changedFileKind";
+import { ChangeBreakdownGrid } from "./pullRequest/PullRequestChangeBreakdownStat";
 import { useOpenLink } from "~/browser/useOpenLink";
 
 interface GitActionsControlProps {
@@ -1049,6 +1051,17 @@ export default function GitActionsControl({
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const gitStatusForActions = gitStatus;
   const changesTotals = gitStatusForActions?.branchChanges ?? gitStatusForActions?.workingTree;
+  const changesBreakdown = gitStatusForActions?.branchChanges
+    ? gitStatusForActions.branchChanges.breakdown
+    : gitStatusForActions
+      ? summarizeChangedFiles(
+          gitStatusForActions.workingTree.files.map((file) => ({
+            path: file.path,
+            additions: file.insertions,
+            deletions: file.deletions,
+          })),
+        )
+      : null;
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
   // Changed-file paths are repository-relative, so they must resolve against
@@ -1623,35 +1636,56 @@ export default function GitActionsControl({
       )}
 
       {showChanges && isRepo && !quietEmptyDraft ? (
-        <ThreadDetailsControl
-          type="button"
-          variant="ghost"
-          size="sm"
-          part="row"
-          disabled={!onOpenChanges}
-          onClick={onOpenChanges}
-        >
-          <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
-          <span className={cn("flex-1 text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>Changes</span>
-          <span className="flex items-center gap-1.5 font-mono text-xs tabular-nums">
-            <span
-              className={
-                changesTotals?.insertions
-                  ? "text-diff-addition-foreground"
-                  : "text-muted-foreground"
-              }
-            >
-              +{formatDiffCount(changesTotals?.insertions ?? 0)}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <ThreadDetailsControl
+                type="button"
+                variant="ghost"
+                size="sm"
+                part="row"
+                disabled={!onOpenChanges}
+                onClick={onOpenChanges}
+              />
+            }
+          >
+            <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+            <span className={cn("flex-1 text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+              Changes
             </span>
-            <span
-              className={
-                changesTotals?.deletions ? "text-diff-deletion-foreground" : "text-muted-foreground"
-              }
-            >
-              -{formatDiffCount(changesTotals?.deletions ?? 0)}
+            <span className="flex items-center gap-1.5 font-mono text-xs tabular-nums">
+              <span
+                className={
+                  changesTotals?.insertions
+                    ? "text-diff-addition-foreground"
+                    : "text-muted-foreground"
+                }
+              >
+                +{formatDiffCount(changesTotals?.insertions ?? 0)}
+              </span>
+              <span
+                className={
+                  changesTotals?.deletions
+                    ? "text-diff-deletion-foreground"
+                    : "text-muted-foreground"
+                }
+              >
+                -{formatDiffCount(changesTotals?.deletions ?? 0)}
+              </span>
             </span>
-          </span>
-        </ThreadDetailsControl>
+          </TooltipTrigger>
+          {changesBreakdown &&
+          changesTotals &&
+          (changesTotals.insertions > 0 || changesTotals.deletions > 0) ? (
+            // Base UI fixes the popup width on open; remeasure when the breakdown changes.
+            <TooltipPopup key={JSON.stringify(changesBreakdown)} side="bottom">
+              <ChangeBreakdownGrid
+                breakdown={changesBreakdown}
+                total={{ additions: changesTotals.insertions, deletions: changesTotals.deletions }}
+              />
+            </TooltipPopup>
+          ) : null}
+        </Tooltip>
       ) : null}
 
       <Dialog
