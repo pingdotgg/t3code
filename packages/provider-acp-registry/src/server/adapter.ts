@@ -222,9 +222,9 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     promptFailure: (cause) => acpRegistryPromptFailure(registryAgentId, cause),
     ...(registryAgentId === "factory-droid" || registryAgentId === "kimi"
       ? {
-          rewriteUserText: (text) => {
+          rewriteUserText: (text, _turnInput, sessionId) => {
             if (runtimeCoordinator === undefined) return Effect.succeed(text);
-            return runtimeCoordinator.getAvailableCommands(options.instanceId).pipe(
+            return runtimeCoordinator.getAvailableCommands(options.instanceId, sessionId).pipe(
               Effect.map((commands) =>
                 Option.match(commands, {
                   onNone: () => text,
@@ -275,10 +275,11 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     ...(runtimeCoordinator === undefined
       ? {}
       : {
-          onAvailableCommandsUpdate: (commands) =>
+          onAvailableCommandsUpdate: (commands, sessionId) =>
             runtimeCoordinator.publishAvailableCommands(
               options.instanceId,
               normalizeAcpRegistryCommands(commands, registryAgentId),
+              sessionId,
             ),
           onSessionConfigurationUpdate: (configOptions, modeState, modelState) =>
             runtimeCoordinator.publishLiveConfiguration(
