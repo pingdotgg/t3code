@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Console from "effect/Console";
@@ -311,6 +312,13 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
       routes.lan ? "--lan" : "--no-lan",
     ]);
     yield* Console.log(`${reason} Keep this command running:\n  ${command}`);
+    // A host wins over --lan and --no-lan, as it does in service.env.
+    const shellHost = (yield* HostProcess.Environment).T3CODE_HOST;
+    if (shellHost !== undefined) {
+      yield* Console.warn(
+        `T3CODE_HOST=${shellHost} in this shell overrides that choice. Unset it before you run the command.`,
+      );
+    }
   });
   let started = false;
   if (!before.service.supported) {
