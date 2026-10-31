@@ -48,6 +48,7 @@ const minimalDesktopFlags = (baseDir: string) => ({
   autoBootstrapProjectFromCwd: Option.none<boolean>(),
   logWebSocketEvents: Option.none<boolean>(),
   tailscaleServeEnabled: Option.none<boolean>(),
+  secretStore: Option.none(),
   tailscaleServePort: Option.none<number>(),
 });
 
@@ -230,6 +231,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         autoBootstrapProjectFromCwd: Option.none<boolean>(),
         logWebSocketEvents: Option.none<boolean>(),
         tailscaleServeEnabled: Option.none<boolean>(),
+        secretStore: Option.none(),
         tailscaleServePort: Option.none<number>(),
       };
       const layerConfig = ConfigProvider.layer(
@@ -274,6 +276,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         autoBootstrapProjectFromCwd: Option.none<boolean>(),
         logWebSocketEvents: Option.none<boolean>(),
         tailscaleServeEnabled: Option.none<boolean>(),
+        secretStore: Option.none(),
         tailscaleServePort: Option.none<number>(),
       };
       const layerConfig = ConfigProvider.layer(
@@ -329,6 +332,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           autoBootstrapProjectFromCwd: Option.some(false),
           logWebSocketEvents: Option.some(false),
           tailscaleServeEnabled: Option.none(),
+          secretStore: Option.none(),
           tailscaleServePort: Option.none(),
         },
         Option.none(),
@@ -405,6 +409,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
+          secretStore: Option.none(),
           tailscaleServePort: Option.none(),
         },
         Option.some("Debug"),
@@ -420,6 +425,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
                   T3CODE_NO_BROWSER: "true",
                   T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
                   T3CODE_LOG_WS_EVENTS: "true",
+                  T3CODE_SECRET_STORE: "keyring",
                 },
               }),
             ),
@@ -446,6 +452,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: true,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        secretStore: "keyring",
       });
     }),
   );
@@ -552,6 +559,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
+          secretStore: Option.none(),
           tailscaleServePort: Option.none(),
         },
         Option.none(),
@@ -568,6 +576,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       expect(resolved.otlpMetricsUrl).toBeUndefined();
       expect(resolved.otlpLogsUrl).toBeUndefined();
       expect(resolved.otelEnvironment.disabled).toBe(true);
+      expect(resolved.secretStore).toBe("keyring");
     }),
   );
 
@@ -600,6 +609,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
+          secretStore: Option.none(),
           tailscaleServePort: Option.none(),
         },
         Option.none(),
@@ -640,6 +650,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
+          secretStore: Option.none(),
           tailscaleServePort: Option.none(),
         },
         Option.none(),
@@ -702,6 +713,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           autoBootstrapProjectFromCwd: Option.none(),
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
+          secretStore: Option.none(),
           tailscaleServePort: Option.none(),
         },
         Option.none(),
@@ -741,6 +753,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     autoBootstrapProjectFromCwd: Option.none<boolean>(),
     logWebSocketEvents: Option.none<boolean>(),
     tailscaleServeEnabled: Option.none<boolean>(),
+    secretStore: Option.none(),
     tailscaleServePort: Option.none<number>(),
   });
 

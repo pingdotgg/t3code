@@ -74,6 +74,15 @@ const logWebSocketEventsFlag = Flag.Boolean("log-websocket-events").pipe(
   Flag.withAlias("log-ws-events"),
   Flag.optional,
 );
+const secretStoreFlag = Flag.Literals(
+  "secret-store",
+  ServerConfig.SecretStoreBackend.literals,
+).pipe(
+  Flag.withDescription(
+    "Encrypt secrets with a key kept in the OS keyring, or store them as plaintext files. The choice persists for this T3 home (equivalent to T3CODE_SECRET_STORE).",
+  ),
+  Flag.optional,
+);
 const tailscaleServeFlag = Flag.Boolean("tailscale-serve").pipe(
   Flag.withDescription(
     "Configure Tailscale Serve to expose this backend over HTTPS on the Tailnet.",
@@ -157,6 +166,10 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  secretStore: Config.schema(ServerConfig.SecretStoreBackend, "T3CODE_SECRET_STORE").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   tailscaleServeEnabled: Config.Boolean("T3CODE_TAILSCALE_SERVE").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -200,6 +213,7 @@ export interface CliServerFlags {
   readonly logWebSocketEvents: Option.Option<boolean>;
   readonly tailscaleServeEnabled: Option.Option<boolean>;
   readonly tailscaleServePort: Option.Option<number>;
+  readonly secretStore: Option.Option<ServerConfig.SecretStoreBackend>;
 }
 
 export interface CliAuthLocationFlags {
@@ -234,6 +248,7 @@ export const sharedServerCommandFlags = {
   logWebSocketEvents: logWebSocketEventsFlag,
   tailscaleServeEnabled: tailscaleServeFlag,
   tailscaleServePort: tailscaleServePortFlag,
+  secretStore: secretStoreFlag,
 } as const;
 
 const resolveOptionPrecedence = <Value>(
@@ -277,6 +292,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
     tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
     tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
+    secretStore: flags.secretStore ?? Option.none(),
   } satisfies CliServerFlags;
   const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
   const bootstrapEnvelope =
@@ -404,6 +420,14 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     ),
     () => 443,
   );
+  // Desktop moves secrets into the keyring by default; standalone servers opt in.
+  const secretStore = Option.getOrUndefined(
+    resolveOptionPrecedence(
+      normalizedFlags.secretStore,
+      Option.fromUndefinedOr(env.secretStore),
+      mode === "desktop" ? Option.some("keyring" as const) : Option.none(),
+    ),
+  );
   const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
   const explicitHost = resolveOptionPrecedence(
     normalizedFlags.host,
@@ -506,6 +530,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     logWebSocketEvents,
     tailscaleServeEnabled,
     tailscaleServePort,
+    ...(secretStore === undefined ? {} : { secretStore }),
   };
 
   return config;
@@ -530,6 +555,7 @@ export const resolveCliAuthConfig = (
       logWebSocketEvents: Option.none(),
       tailscaleServeEnabled: Option.none(),
       tailscaleServePort: Option.none(),
+      secretStore: Option.none(),
     },
     cliLogLevel,
   );

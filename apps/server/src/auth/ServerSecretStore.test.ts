@@ -176,3 +176,98 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
     }).pipe(Effect.provide(layerRenameFailureSecretStore())),
   );
 });
+
+const makeMemoryKeyring = (options: { readonly unavailable?: boolean } = {}) => {
+  const entries = new Map<string, Uint8Array>();
+  const unavailable = (account: string) =>
+    Effect.fail(
+      new ServerSecretStore.SecretStoreKeyringError({
+        resource: `keyring entry ${account}`,
+        cause: "No Secret Service on this session bus.",
+      }),
+    );
+  const keyring = ServerSecretStore.SecretStoreKeyring.of({
+    get: (account) =>
+      options.unavailable
+        ? unavailable(account)
+        : Effect.sync(() => Option.fromUndefinedOr(entries.get(account))),
+    set: (account, value) =>
+      options.unavailable
+        ? unavailable(account)
+        : Effect.sync(() => void entries.set(account, Uint8Array.from(value))),
+    remove: (account) => Effect.sync(() => void entries.delete(account)),
+  });
+  return { entries, keyring };
+};
+
+const openStore = (
+  keyring: ServerSecretStore.SecretStoreKeyring["Service"],
+  secretStore?: ServerConfig.SecretStoreBackend,
+) =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    return yield* ServerSecretStore.make.pipe(
+      Effect.provideService(ServerConfig.ServerConfig, { ...config, secretStore }),
+      Effect.provideService(ServerSecretStore.SecretStoreKeyring, keyring),
+    );
+  });
+
+const readRaw = (name: string) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const { secretsDir } = yield* ServerConfig.ServerConfig;
+    return new TextDecoder().decode(yield* fileSystem.readFile(`${secretsDir}/${name}.bin`));
+  });
+
+const encode = (value: string) => new TextEncoder().encode(value);
+const decode = (value: Option.Option<Uint8Array>) =>
+  new TextDecoder().decode(Option.getOrThrow(value));
+
+it.layer(NodeServices.layer)("ServerSecretStore keyring backend", (it) => {
+  it.effect("moves secrets under a keyring key and back out again", () =>
+    Effect.gen(function* () {
+      const { entries, keyring } = makeMemoryKeyring();
+      const plaintext = yield* openStore(keyring);
+      yield* plaintext.set("relay-token", encode("before-keyring"));
+
+      const encrypted = yield* openStore(keyring, "keyring");
+      yield* encrypted.set("cli-token", encode("after-keyring"));
+      assert.equal(entries.size, 1);
+      assert.notInclude(yield* readRaw("relay-token"), "before-keyring");
+      assert.notInclude(yield* readRaw("cli-token"), "after-keyring");
+
+      // A CLI command sharing the home passes no backend and follows the existing key.
+      const following = yield* openStore(keyring);
+      assert.equal(decode(yield* following.get("relay-token")), "before-keyring");
+      assert.equal(decode(yield* following.get("cli-token")), "after-keyring");
+
+      yield* openStore(keyring, "file");
+      assert.equal(entries.size, 0);
+      assert.equal(yield* readRaw("relay-token"), "before-keyring");
+      assert.equal(yield* readRaw("cli-token"), "after-keyring");
+    }).pipe(Effect.provide(layerServerConfig())),
+  );
+
+  it.effect("keeps plaintext files when the keyring is unavailable", () =>
+    Effect.gen(function* () {
+      const { keyring } = makeMemoryKeyring({ unavailable: true });
+      const store = yield* openStore(keyring, "keyring");
+      yield* store.set("relay-token", encode("plain"));
+
+      assert.equal(yield* readRaw("relay-token"), "plain");
+    }).pipe(Effect.provide(layerServerConfig())),
+  );
+
+  it.effect("refuses to start when the keyring lost the key", () =>
+    Effect.gen(function* () {
+      const { entries, keyring } = makeMemoryKeyring();
+      const store = yield* openStore(keyring, "keyring");
+      yield* store.set("relay-token", encode("sealed"));
+      entries.clear();
+
+      const error = yield* Effect.flip(openStore(keyring));
+
+      assert.instanceOf(error, ServerSecretStore.SecretStoreKeyringError);
+    }).pipe(Effect.provide(layerServerConfig())),
+  );
+});

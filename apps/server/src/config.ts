@@ -31,6 +31,9 @@ export const DEFAULT_PORT = 3773;
 export const RuntimeMode = Schema.Literals(["web", "desktop"]);
 export type RuntimeMode = typeof RuntimeMode.Type;
 
+export const SecretStoreBackend = Schema.Literals(["keyring", "file"]);
+export type SecretStoreBackend = typeof SecretStoreBackend.Type;
+
 export const StartupPresentation = Schema.Literals(["browser", "headless"]);
 export type StartupPresentation = typeof StartupPresentation.Type;
 
@@ -106,6 +109,8 @@ export class ServerConfig extends Context.Service<
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
+    /** Switches the secrets directory to this backend; unset keeps whatever it already uses. */
+    readonly secretStore?: SecretStoreBackend | undefined;
   }
 >()("t3/config/ServerConfig") {
   static readonly layerTest = (

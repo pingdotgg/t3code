@@ -201,22 +201,24 @@ it.effect("a link whose row cannot be stored keeps none of its token", () =>
       const held = yield* Ref.make<ReadonlySet<string>>(new Set());
       const noted = Layer.effect(
         ServerSecretStore.ServerSecretStore,
-        Effect.map(ServerSecretStore.make, (store) =>
-          ServerSecretStore.ServerSecretStore.of({
-            ...store,
-            set: (name, value) =>
-              store
-                .set(name, value)
-                .pipe(Effect.andThen(Ref.update(held, (names) => new Set([...names, name])))),
-            remove: (name) =>
-              store
-                .remove(name)
-                .pipe(
-                  Effect.andThen(
-                    Ref.update(held, (names) => new Set([...names].filter((at) => at !== name))),
+        Effect.map(
+          ServerSecretStore.make.pipe(Effect.provide(ServerSecretStore.layerNativeKeyring)),
+          (store) =>
+            ServerSecretStore.ServerSecretStore.of({
+              ...store,
+              set: (name, value) =>
+                store
+                  .set(name, value)
+                  .pipe(Effect.andThen(Ref.update(held, (names) => new Set([...names, name])))),
+              remove: (name) =>
+                store
+                  .remove(name)
+                  .pipe(
+                    Effect.andThen(
+                      Ref.update(held, (names) => new Set([...names].filter((at) => at !== name))),
+                    ),
                   ),
-                ),
-          }),
+            }),
         ),
       );
       const a = yield* makeA(laptop, noted);

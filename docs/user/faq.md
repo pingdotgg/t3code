@@ -71,6 +71,10 @@ No. T3 Code is a serious developer tool. Locally runnable models are not capable
 
 No. Your code and prompts go from your machine to your provider (Anthropic, OpenAI, etc.), not to us. With T3 Connect, traffic rides a Cloudflare tunnel (`cloudflared` on your machine). Our relay sets up the link. It does not proxy your HTTP or WebSocket sessions. T3 Code does send basic product usage events (provider, model, token totals, that kind of thing). No prompts, no file contents. That is the same on Tailscale, LAN, or T3 Connect. Set `T3CODE_TELEMETRY_ENABLED=false` if you want it off. [Product usage data](./telemetry.md)
 
+## Where does T3 Code keep my tokens and API keys?
+
+In the `secrets` folder of your T3 home (`~/.t3/userdata/secrets`), readable only by your user. The desktop app encrypts them with a key it keeps in your OS keyring (Keychain, Credential Manager, or Secret Service). A server started with `npx t3` keeps plain files unless you run it once with `--secret-store keyring` (or `T3CODE_SECRET_STORE=keyring`); `--secret-store file` turns encryption back off. If no keyring is available, T3 Code keeps the plain files. Encrypted secrets only open on the machine and in the folder where they were written, so a copied `~/.t3` folder needs its accounts reconnected.
+
 ## Worktrees are eating my disk. How do I clean them up?
 
 Open **Settings > Storage** and turn on automatic worktree cleanup. You can also run it now from there. Worktrees add up fast. One user cleared 500 GB. [Storage cleanup](./project-settings.md#storage-cleanup)
