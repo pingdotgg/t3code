@@ -8,6 +8,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   RunId,
   RuntimeRequestId,
@@ -19,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { isAutoSettlementCandidate, resolveAutoSettlementAt } from "./ThreadSettlementService.ts";
 
@@ -271,6 +273,33 @@ it.effect(
         yield* createRun(limitEndedLast, "failed", 2),
         "provider_error",
       );
+      // A newer, different session error replaces the limit, as in threadErrorSummary.
+      const sessionErrorAfterLimit = yield* createThread("session-error-after-limit");
+      yield* createFailure(
+        sessionErrorAfterLimit,
+        yield* createRun(sessionErrorAfterLimit, "failed"),
+        "usage_limit",
+      );
+      yield* store.apply({
+        id: EventId.make("event:settlement:session-error"),
+        type: "provider-session.attached",
+        threadId: sessionErrorAfterLimit,
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId,
+        occurredAt: old,
+        payload: {
+          id: ProviderSessionId.make("provider-session:settlement:session-error"),
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId,
+          status: "error",
+          cwd: "/workspace",
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: old,
+          updatedAt: old,
+          lastError: "Session crashed.",
+        },
+      });
       const providerFailed = yield* createThread("provider-failed");
       yield* createFailure(
         providerFailed,
@@ -323,6 +352,7 @@ it.effect(
           queued,
           woke,
           providerFailed,
+          sessionErrorAfterLimit,
           background,
           persistent,
           rolledBack,

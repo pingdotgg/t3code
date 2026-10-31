@@ -6319,15 +6319,26 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     LIMIT 1
                   )
                     AND blocked.status = 'failed'
+                    -- threadErrorSummary: a differing session error replaces the failure.
                     AND (
-                      SELECT json_extract(error.payload_json, '$.failure.class')
+                      SELECT json_extract(error.payload_json, '$.failure.class') = 'usage_limit'
+                        AND COALESCE((
+                          SELECT json_extract(session.payload_json, '$.lastError')
+                          FROM orchestration_v2_projection_provider_session_bindings binding
+                          CROSS JOIN orchestration_v2_projection_provider_sessions session
+                            ON session.provider_session_id = binding.provider_session_id
+                          WHERE binding.thread_id = t.thread_id
+                            AND session.provider_instance_id = t.provider_instance_id
+                          ORDER BY session.updated_at DESC, session.provider_session_id DESC
+                          LIMIT 1
+                        ) = json_extract(error.payload_json, '$.failure.message'), 1)
                       FROM orchestration_v2_projection_turn_items error
                       WHERE error.thread_id = t.thread_id AND error.run_id = blocked.run_id
                         AND error.type = 'error' AND error.status = 'failed'
                         AND error.node_id IS json_extract(blocked.payload_json, '$.rootNodeId')
                       ORDER BY error.updated_at DESC, error.ordinal DESC, error.turn_item_id DESC
                       LIMIT 1
-                    ) = 'usage_limit'
+                    ) = 1
                 )
               )
             ORDER BY t.updated_at ASC, t.thread_id ASC
