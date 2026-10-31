@@ -28,17 +28,8 @@ export interface ChatColumnView {
   unclipped: boolean;
 }
 
-/**
- * Lays the chat (`children`) and every open right panel surface out side by
- * side on one horizontally scrolling strip. Selecting a surface scrolls its
- * column into view, and pressing inside a column selects it. Focus alone does
- * not select: selecting a terminal focuses it, which would pull focus off
- * whatever control the keyboard reached, and panels that focus themselves would
- * take turns selecting.
- *
- * When `enabled` is false the strip and chat wrapper render as `display:
- * contents`, so the chat keeps its place in the tree across layout changes and
- * is not remounted.
+/** Pointer selection preserves focus in edited controls; terminal focus must not reselect columns.
+ * Disabled wrappers use display:contents to retain the chat subtree across layout changes.
  */
 export function RightPanelColumns(props: {
   enabled: boolean;
@@ -70,6 +61,7 @@ export function RightPanelColumns(props: {
   const emptyColumn = surfaces.length === 0 ? (props.emptyColumn ?? null) : null;
   const hasPanelColumns = enabled && (surfaces.length > 0 || emptyColumn !== null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observe DOM clipping to pause offscreen terminals and native views
   useEffect(() => {
     const strip = stripRef.current;
     if (!strip || !enabled) return;
@@ -114,6 +106,7 @@ export function RightPanelColumns(props: {
   const chatVisible = visibility.has(CHAT_COLUMN_KEY);
   const chatUnclipped = visibility.get(CHAT_COLUMN_KEY) === "full";
   const onChatViewChange = props.onChatViewChange;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publish chat DOM intersection measurements to terminal and preview presentation owners
   useEffect(() => {
     onChatViewChange?.({ visible: chatVisible, unclipped: chatUnclipped });
   }, [chatVisible, chatUnclipped, onChatViewChange]);
@@ -126,6 +119,7 @@ export function RightPanelColumns(props: {
         .join("\n")
     : "";
   const onUnclippedSurfacesChange = props.onUnclippedSurfacesChange;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publish measured column clipping to native preview presentation
   useEffect(() => {
     onUnclippedSurfacesChange?.(
       unclippedSurfaceIdsKey === "" ? [] : unclippedSurfaceIdsKey.split("\n"),
@@ -133,6 +127,7 @@ export function RightPanelColumns(props: {
   }, [unclippedSurfaceIdsKey, onUnclippedSurfacesChange]);
 
   const chatRevealRequestId = props.chatRevealRequestId ?? 0;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reveal the chat DOM column for an imperative terminal focus request
   useEffect(() => {
     if (!enabled || chatRevealRequestId === 0) return;
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -143,6 +138,7 @@ export function RightPanelColumns(props: {
     });
   }, [enabled, chatRevealRequestId]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scroll the selected surface DOM column into view, including repeated selections
   useEffect(() => {
     if (!enabled || !activeSurfaceId) return;
     const column = columnRefs.current.get(activeSurfaceId);

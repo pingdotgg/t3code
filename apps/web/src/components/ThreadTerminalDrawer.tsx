@@ -1145,8 +1145,14 @@ function TerminalSessionViewport({
   const attachContainer = (mount: HTMLDivElement) => {
     containerRef.current = mount;
     const focus = () => {
-      if (logicallyVisibleRef.current && !visibleRef.current && readEnvironmentScope(environmentId, AuthTerminalOperateScope)) {
-        mount.closest<HTMLElement>("[data-right-panel-column]")?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
+      if (
+        logicallyVisibleRef.current &&
+        !visibleRef.current &&
+        readEnvironmentScope(environmentId, AuthTerminalOperateScope)
+      ) {
+        mount
+          .closest<HTMLElement>("[data-right-panel-column]")
+          ?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
       }
       return focusTerminalViewport({
         mount,
