@@ -26,6 +26,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
+import * as ContributionStatusStore from "@t3tools/provider-core/server/ContributionStatusStore";
 import { withUntracedRequests } from "./http.ts";
 import * as ServerHttp from "./http.ts";
 import {
@@ -635,6 +636,9 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(layerGit),
   Layer.provideMerge(layerVcs),
   Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice)),
+  // The same layer reference provider adapters write through, so memoization
+  // gives producers and the WebSocket stream one store.
+  Layer.provideMerge(ContributionStatusStore.layer),
   Layer.provideMerge(layerPersistence),
   Layer.provideMerge(
     Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
