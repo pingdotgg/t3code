@@ -3176,39 +3176,33 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             { concurrency: 32, discard: true },
           );
 
-          for (const mode of ["normal", "all", "no"]) {
+          for (const scenario of ["normal", "all", "no", "long names"]) {
+            if (scenario === "long names") {
+              yield* Effect.forEach(
+                Array.from({ length: 50 }, (_, index) => `${"a".repeat(180)}-${index}.txt`),
+                (file) => writeTextFile(cwd, file, "long name\n"),
+                { concurrency: 32, discard: true },
+              );
+            }
+            const mode = scenario === "long names" ? "normal" : scenario;
             yield* git(cwd, ["config", "status.showUntrackedFiles", mode]);
             untrackedScanRoots.length = 0;
             const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
             assert.deepStrictEqual(status.branchChanges, {
               baseRef: "main",
-              insertions: 2_002,
+              insertions: scenario === "long names" ? 2_052 : 2_002,
               deletions: 0,
             });
-            assert.lengthOf(untrackedScanRoots, 1);
-            assert.equal(untrackedScanRoots[0]!.length === 0, mode !== "normal");
-            if (mode === "normal") {
+            assert.deepStrictEqual(untrackedScanRoots, [
+              scenario === "normal" ? [":(top,literal)bulk[1]/"] : [],
+            ]);
+            if (scenario === "normal") {
               assert.deepStrictEqual(
                 status.workingTree.files.map((file) => file.path),
                 ["bulk[1]/"],
               );
             }
           }
-
-          yield* git(cwd, ["config", "status.showUntrackedFiles", "normal"]);
-          yield* Effect.forEach(
-            Array.from({ length: 50 }, (_, index) => `${"a".repeat(180)}-${index}.txt`),
-            (file) => writeTextFile(cwd, file, "long name\n"),
-            { concurrency: 32, discard: true },
-          );
-          untrackedScanRoots.length = 0;
-          const longNames = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
-          assert.deepStrictEqual(longNames.branchChanges, {
-            baseRef: "main",
-            insertions: 2_052,
-            deletions: 0,
-          });
-          assert.deepStrictEqual(untrackedScanRoots, [[]]);
         }),
     );
 
