@@ -153,8 +153,6 @@ function toMergeability(value: string | null | undefined): PullRequestMergeabili
     case "succeeded":
       return "mergeable";
     case "conflicts":
-    case "failure":
-    case "rejectedbypolicy":
       return "conflicting";
     default:
       return "unknown";
