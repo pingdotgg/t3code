@@ -149,7 +149,8 @@ describe("presentConnectionDiagnosis", () => {
     );
     const diagnosis = withRegistration("unregistered");
     expect(diagnosis?.headline).toContain("no longer on your T3 Connect account");
-    expect(diagnosis?.steps[0]).toContain("remove it from this device");
+    expect(diagnosis?.steps[0]).toContain("turn T3 Connect on");
+    expect(diagnosis?.steps[1]).toContain("remove it from this device");
   });
 
   it("keeps the relay health status out of a failure that has its own cause", () => {

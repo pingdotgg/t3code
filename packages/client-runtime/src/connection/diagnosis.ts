@@ -171,8 +171,8 @@ function steps(host: string, located: Located, failure: ConnectionAttemptError |
       ];
     case "unregistered":
       return [
-        `If ${host} was deregistered, or T3 Code was reinstalled on it and has a new identity, remove it from this device.`,
-        `If you still use ${host}, check that this device is signed in to the same T3 Connect account as the host.`,
+        `If you still use ${host}, turn T3 Connect on there in Settings > Sharing & access, and check that this device uses the same T3 Connect account.`,
+        `If T3 Code was reinstalled on ${host}, or you no longer use it, remove it from this device.`,
       ];
     case "tunnel_pending":
       return ["Wait a minute. T3 Code retries on its own.", checkHost];
