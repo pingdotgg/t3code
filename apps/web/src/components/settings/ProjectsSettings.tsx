@@ -1,6 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import {
-  ChevronRightIcon,
   FolderOpenIcon,
   FolderPlusIcon,
   GitBranchIcon,
@@ -23,7 +22,6 @@ import {
   SettingsEmptyTile,
   SettingsEmptyTiles,
   SettingsPageContainer,
-  SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
@@ -158,38 +156,25 @@ function ProjectChooser() {
         <AddProjectButton />
       </SettingsEmptyState>
       <SettingsSection title="Your projects">
-        {groups.map((group) => {
-          const open = () => selectScope({ project: group.projectKey });
-          return (
-            // The whole row opens the project; the chevron only marks it as navigation.
-            <SettingsRow
+        <div className="p-1">
+          {groups.map((group) => (
+            <Button
               key={group.projectKey}
-              role="button"
-              tabIndex={0}
+              variant="ghost"
+              className="w-full justify-start"
               aria-label={`Open ${group.displayName} settings`}
-              className="cursor-pointer outline-none first:rounded-t-card! last:rounded-b-card! hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-              onClick={open}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" && event.key !== " ") return;
-                event.preventDefault();
-                open();
-              }}
-              leading={<ProjectFavicon project={group} className="size-4" />}
-              title={group.displayName}
-              description={group.memberProjects
-                .map((member) => member.environmentLabel ?? member.workspaceRoot)
-                .join(" · ")}
-              trailing={
-                <span
-                  aria-hidden
-                  className="inline-flex size-6 shrink-0 items-center justify-center text-muted-foreground"
-                >
-                  <ChevronRightIcon className="size-3.5" />
-                </span>
-              }
-            />
-          );
-        })}
+              onClick={() => selectScope({ project: group.projectKey })}
+            >
+              <ProjectFavicon project={group} className="size-4 shrink-0" />
+              <span className="shrink-0 text-label">{group.displayName}</span>
+              <span className="min-w-0 truncate text-meta text-dim-foreground">
+                {group.memberProjects.length === 1
+                  ? group.memberProjects[0]?.workspaceRoot
+                  : `${group.memberProjects.length} checkouts`}
+              </span>
+            </Button>
+          ))}
+        </div>
       </SettingsSection>
     </SettingsPageContainer>
   );
