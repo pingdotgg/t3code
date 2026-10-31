@@ -1153,7 +1153,7 @@ describe("native provider presentation in the v2 timeline", () => {
       turnDiffSummaries: [],
       supportsConversationRollback: false,
     });
-    expect(rows.map((row) => row.kind)).toEqual(["message"]);
+    expect(rows.map((row) => row.kind)).toEqual(["turn-fold", "message"]);
   });
 
   it.each([
