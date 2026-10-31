@@ -2,8 +2,12 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  NodeId,
+  ProviderSessionId,
   RunId,
+  RuntimeRequestId,
   TurnItemId,
+  type OrchestrationV2RuntimeRequest,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
@@ -17,6 +21,7 @@ import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection
 import { createEnvironmentThreadDetailAtoms, sameThreadStructure } from "./threadDetail.ts";
 import { mergeOlderHistoryIntoProjection } from "./threadHistoryMerge.ts";
 import { EMPTY_ENVIRONMENT_THREAD_STATE } from "./threadState.ts";
+import { derivePendingThreadRequests } from "./threadRequests.ts";
 
 const later = DateTime.makeUnsafe("2026-06-20T00:00:01.000Z");
 
@@ -283,6 +288,379 @@ function replaceItem(projection: OrchestrationV2ThreadProjection, item: Orchestr
     payload: item,
   })!;
 }
+
+describe("pendingRequestsAtom", () => {
+  const approvalRequest: OrchestrationV2RuntimeRequest = {
+    id: RuntimeRequestId.make("approval"),
+    nodeId: NodeId.make("request-node"),
+    providerTurnId: null,
+    nativeRequestRef: null,
+    kind: "command",
+    status: "pending",
+    responseCapability: { type: "live", providerSessionId: ProviderSessionId.make("session") },
+    createdAt: v2Now,
+    resolvedAt: null,
+  };
+  const questionRequest: OrchestrationV2RuntimeRequest = {
+    ...approvalRequest,
+    id: RuntimeRequestId.make("question"),
+    kind: "user_input",
+    responseCapability: { type: "message" },
+  };
+  const approval = {
+    ...assistant,
+    id: TurnItemId.make("approval-item"),
+    type: "approval_request" as const,
+    requestId: approvalRequest.id,
+    requestKind: "command" as const,
+    prompt: "Run the command?",
+    reason: "Needs permission",
+  };
+  const question = {
+    ...assistant,
+    id: TurnItemId.make("question-item"),
+    type: "user_input_request" as const,
+    requestId: questionRequest.id,
+    questions: [
+      {
+        id: "next",
+        header: "Next",
+        question: "Continue?",
+        options: [{ label: "Yes", value: "yes", description: "Continue work" }],
+      },
+    ],
+  };
+  const initial: OrchestrationV2ThreadProjection = {
+    ...withItem(assistant),
+    turnItems: [approval, question, assistant],
+    runtimeRequests: [approvalRequest, questionRequest],
+  };
+
+  function setup(projection: OrchestrationV2ThreadProjection, details = createDetails()) {
+    const registry = AtomRegistry.make();
+    const atom = details.atoms.pendingRequestsAtom({
+      environmentId: EnvironmentId.make("pending-requests-env"),
+      threadId: v2ThreadId,
+    });
+    const push = (next: OrchestrationV2ThreadProjection | null) =>
+      registry.set(
+        details.state,
+        AsyncResult.success({
+          ...EMPTY_ENVIRONMENT_THREAD_STATE,
+          data: Option.fromNullishOr(next),
+        }),
+      );
+    push(projection);
+    registry.mount(atom);
+    return { read: () => registry.get(atom), push, [Symbol.dispose]: () => registry.dispose() };
+  }
+
+  function createDetails() {
+    const state = Atom.make(AsyncResult.success(EMPTY_ENVIRONMENT_THREAD_STATE));
+    return { state, atoms: createEnvironmentThreadDetailAtoms(() => state) };
+  }
+
+  it("avoids history scans through 100 irrelevant replacements with two pending requests", () => {
+    let itemTypeReads = 0;
+    let requestStatusReads = 0;
+    const countItem = (item: typeof assistant) =>
+      new Proxy(item, {
+        get(target, key, receiver) {
+          if (key === "type") itemTypeReads++;
+          return Reflect.get(target, key, receiver);
+        },
+      });
+    let projection: OrchestrationV2ThreadProjection = {
+      ...initial,
+      turnItems: [
+        approval,
+        question,
+        ...Array.from({ length: 998 }, (_, ordinal) =>
+          countItem({ ...assistant, id: TurnItemId.make(`stream-${ordinal}`), ordinal }),
+        ),
+      ],
+      runtimeRequests: initial.runtimeRequests.map(
+        (request) =>
+          new Proxy(request, {
+            get(target, key, receiver) {
+              if (key === "status") requestStatusReads++;
+              return Reflect.get(target, key, receiver);
+            },
+          }),
+      ),
+    };
+    using thread = setup(projection);
+    const selected = thread.read();
+    expect(selected).toEqual({
+      approvals: [
+        {
+          requestId: approvalRequest.id,
+          requestKind: "command",
+          createdAt: "2026-06-20T00:00:00.000Z",
+          detail: approval.prompt,
+          reason: approval.reason,
+          responseCapability: "live",
+        },
+      ],
+      userInputs: [
+        {
+          requestId: questionRequest.id,
+          createdAt: "2026-06-20T00:00:00.000Z",
+          questions: [{ ...question.questions[0], multiSelect: false }],
+          responseCapability: "message",
+          responseMode: "message",
+          dismissible: true,
+        },
+      ],
+    });
+    let totalItemTypeReads = 0;
+    let totalRequestStatusReads = 0;
+    for (let update = 0; update < 100; update++) {
+      const streamed = countItem({
+        ...assistant,
+        id: TurnItemId.make("stream-997"),
+        ordinal: 997,
+        text: `Chunk ${update}`,
+      });
+      projection = replaceItem(projection, streamed);
+      // Exclude reducer work; only count the mounted selector's reads after warmup.
+      itemTypeReads = 0;
+      requestStatusReads = 0;
+      thread.push(projection);
+      expect(thread.read()).toBe(selected);
+      totalItemTypeReads += itemTypeReads;
+      totalRequestStatusReads += requestStatusReads;
+    }
+    expect.soft(totalItemTypeReads).toBeLessThanOrEqual(400);
+    expect(totalRequestStatusReads).toBe(0);
+  });
+
+  it.each(["pending", "resolved"] as const)(
+    "reuses exact arrays without revisiting %s requests",
+    (status) => {
+      let statusReads = 0;
+      const projection = {
+        ...initial,
+        runtimeRequests: [
+          {
+            ...approvalRequest,
+            get status() {
+              statusReads++;
+              return status;
+            },
+          },
+        ],
+      };
+      using thread = setup(projection);
+      const selected = thread.read();
+      statusReads = 0;
+      for (let update = 0; update < 10; update++) {
+        thread.push({
+          ...projection,
+          thread: { ...projection.thread, title: `Renamed ${update}`, lastVisitedAt: later },
+        });
+        expect(thread.read()).toBe(selected);
+      }
+      expect(statusReads).toBe(0);
+      expect(selected?.approvals.length).toBe(status === "pending" ? 1 : 0);
+    },
+  );
+
+  function replaceRequest(
+    projection: OrchestrationV2ThreadProjection,
+    request: OrchestrationV2RuntimeRequest,
+  ) {
+    return applyOrchestrationV2ProjectionEvent(projection, {
+      id: EventId.make(`event-${request.id}`),
+      type: "runtime-request.updated",
+      threadId: v2ThreadId,
+      occurredAt: later,
+      payload: request,
+    })!;
+  }
+
+  it("updates capabilities, prompts, options, questions and request resolution", () => {
+    using thread = setup(initial);
+    let selected = thread.read();
+    const check = (projection: OrchestrationV2ThreadProjection) => {
+      thread.push(projection);
+      const next = thread.read();
+      expect(next).toEqual(derivePendingThreadRequests(projection));
+      expect(next).not.toBe(selected);
+      selected = next;
+      return next;
+    };
+    let projection = replaceRequest(initial, {
+      ...approvalRequest,
+      responseCapability: {
+        type: "live",
+        providerSessionId: ProviderSessionId.make("new-session"),
+        supportsFeedback: true,
+      },
+    });
+    expect(check(projection)?.approvals[0]?.supportsFeedback).toBe(true);
+    projection = replaceItem(projection, {
+      ...approval,
+      prompt: "Use the other command?",
+      reason: "Different permission",
+      options: [{ label: "Allow once", decision: "accept" }],
+    });
+    expect(check(projection)?.approvals[0]).toMatchObject({
+      detail: "Use the other command?",
+      reason: "Different permission",
+      options: [{ label: "Allow once", decision: "accept" }],
+    });
+    projection = replaceItem(projection, {
+      ...question,
+      questions: [
+        {
+          ...question.questions[0]!,
+          question: "Which next?",
+          multiSelect: true,
+          options: [{ label: "No", value: "no", description: "Stop work" }],
+        },
+      ],
+    });
+    expect(check(projection)?.userInputs[0]?.questions[0]).toMatchObject({
+      question: "Which next?",
+      multiSelect: true,
+      options: [{ value: "no" }],
+    });
+    projection = replaceRequest(projection, {
+      ...questionRequest,
+      responseCapability: { type: "not_resumable", reason: "Runtime exited" },
+    });
+    expect(check(projection)?.userInputs[0]).toMatchObject({
+      responseCapability: "not_resumable",
+      dismissible: false,
+    });
+    projection = replaceRequest(projection, {
+      ...approvalRequest,
+      responseCapability: { type: "not_resumable", reason: "Runtime exited" },
+    });
+    expect(check(projection)?.approvals[0]?.responseCapability).toBe("not_resumable");
+    projection = replaceRequest(projection, {
+      ...approvalRequest,
+      status: "resolved",
+      resolvedAt: later,
+    });
+    expect(check(projection)?.approvals).toEqual([]);
+    projection = replaceRequest(projection, {
+      ...questionRequest,
+      status: "resolved",
+      resolvedAt: later,
+    });
+    expect(check(projection)?.userInputs).toEqual([]);
+    const settled = thread.read();
+    projection = { ...projection, runtimeRequests: [] };
+    thread.push(projection);
+    expect(thread.read()).toBe(settled);
+    expect(thread.read()).toEqual({ approvals: [], userInputs: [] });
+    projection = replaceRequest(projection, questionRequest);
+    expect(check(projection)?.userInputs).toHaveLength(1);
+    projection = replaceRequest(projection, approvalRequest);
+    expect(check(projection)?.approvals).toHaveLength(1);
+    const unchanged = thread.read();
+    thread.push({ ...projection, runtimeRequests: projection.runtimeRequests.slice() });
+    expect(thread.read()).toBe(unchanged);
+  });
+
+  it.each([approval, question])("rescans replacements to and from $type", (requestItem) => {
+    using thread = setup(initial);
+    const selected = thread.read();
+    const withoutRequest = replaceItem(initial, { ...assistant, id: requestItem.id });
+    thread.push(withoutRequest);
+    expect(thread.read()).toEqual(derivePendingThreadRequests(withoutRequest));
+    expect(thread.read()).not.toBe(selected);
+    const restored = replaceItem(withoutRequest, requestItem);
+    thread.push(restored);
+    expect(thread.read()).toEqual(selected);
+    expect(thread.read()).not.toBe(selected);
+  });
+
+  it("falls back for skipped replacements, snapshot branches, prepends and reordered requests", () => {
+    let statusReads = 0;
+    const start = {
+      ...initial,
+      runtimeRequests: [
+        {
+          ...approvalRequest,
+          get status() {
+            statusReads++;
+            return approvalRequest.status;
+          },
+        },
+        questionRequest,
+      ],
+    };
+    using thread = setup(start);
+    const check = (projection: OrchestrationV2ThreadProjection) => {
+      statusReads = 0;
+      thread.push(projection);
+      thread.read();
+      expect(statusReads).toBeGreaterThan(0);
+      expect(thread.read()).toEqual(derivePendingThreadRequests(projection));
+    };
+    const selected = thread.read();
+    check({ ...start, turnItems: start.turnItems.slice() });
+    expect(thread.read()).toBe(selected);
+    const gap = replaceItem(replaceItem(start, { ...assistant, text: "Skipped stream update" }), {
+      ...assistant,
+      text: "After skipped stream update",
+    });
+    check(gap);
+    expect(thread.read()).toBe(selected);
+    const consecutive = replaceItem(gap, { ...assistant, text: "After fallback" });
+    statusReads = 0;
+    thread.push(consecutive);
+    expect(thread.read()).toBe(selected);
+    expect(statusReads).toBe(0);
+    const changed = replaceItem(consecutive, { ...approval, prompt: "Changed while skipped" });
+    const skipped = replaceItem(changed, { ...assistant, text: "After skipped approval" });
+    check(skipped);
+    expect(thread.read()?.approvals[0]?.detail).toBe("Changed while skipped");
+    const snapshot = { ...start, turnItems: start.turnItems.slice() };
+    const resumed = replaceItem(snapshot, { ...assistant, text: "Other snapshot branch" });
+    check(resumed);
+    expect(thread.read()?.approvals[0]?.detail).toBe(approval.prompt);
+    const olderQuestion = {
+      ...question,
+      id: TurnItemId.make("older-question"),
+      ordinal: 0,
+      questions: [{ ...question.questions[0]!, question: "Older question?" }],
+    };
+    const prepended = mergeOlderHistoryIntoProjection(resumed, [
+      withItem(olderQuestion).visibleTurnItems[0]!,
+    ]);
+    check(prepended);
+    expect(thread.read()?.userInputs[0]?.questions[0]?.question).toBe("Older question?");
+    check({ ...prepended, turnItems: prepended.turnItems.toReversed() });
+    expect(thread.read()?.userInputs[0]?.questions[0]?.question).toBe("Continue?");
+    check({ ...start, turnItems: [] });
+    expect(thread.read()?.userInputs).toEqual([]);
+    check(start);
+    expect(thread.read()?.userInputs).toHaveLength(1);
+  });
+
+  it("clears selection on null and recomputes after reload and registry disposal", () => {
+    const details = createDetails();
+    const selected = (() => {
+      using thread = setup(initial, details);
+      const selected = thread.read();
+      thread.push(null);
+      expect(thread.read()).toBeNull();
+      thread.push(initial);
+      expect(thread.read()).toEqual(selected);
+      expect(thread.read()).not.toBe(selected);
+      return selected;
+    })();
+    const reloaded = replaceItem(initial, { ...approval, prompt: "Reloaded approval" });
+    using thread = setup(reloaded, details);
+    expect(thread.read()?.approvals[0]?.detail).toBe("Reloaded approval");
+    expect(thread.read()).toEqual(derivePendingThreadRequests(reloaded));
+    expect(thread.read()).not.toBe(selected);
+  });
+});
 
 it("matches full structure comparisons across streamed, batched, and reordered updates", () => {
   const message = { ...assistant, ordinal: 2 };
