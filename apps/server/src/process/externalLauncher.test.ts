@@ -310,6 +310,49 @@ it.effect.skipIf(windowsHost)(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect.skipIf(windowsHost)(
+  "opens a Windows folder through the shell so a replacement file manager handles it",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+      yield* fileSystem.writeFileString(path.join(binDir, "explorer.EXE"), "");
+      const systemRoot = path.join(binDir, "Windows");
+      const powershellPath = `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+      yield* fileSystem.writeFileString(powershellPath, "");
+
+      let spawned: ChildProcess.StandardCommand | undefined;
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        yield* launcher.launchEditor({
+          editor: "file-manager",
+          cwd: "C:/Work/t3code/author's [draft] safe’; calc; #",
+        });
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "win32",
+            env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD", SYSTEMROOT: systemRoot },
+            onSpawn: (command) => {
+              spawned = command;
+            },
+          }),
+        ),
+      );
+
+      assert.ok(spawned);
+      assert.equal(spawned.command, powershellPath);
+      assert.equal(spawned.options.detached, false);
+      const encodedCommand = spawned.args[spawned.args.length - 1] ?? "";
+      const decodedCommand = Buffer.from(encodedCommand, "base64").toString("utf16le");
+      assert.include(
+        decodedCommand,
+        "Invoke-Item -LiteralPath 'C:\\Work\\t3code\\author''s [draft] safe’’; calc; #'",
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 for (const wsl of [false, true]) {
   it.effect.skipIf(windowsHost)(
     "selects a file over D-Bus on " + (wsl ? "WSLg without interop PowerShell" : "Linux"),
