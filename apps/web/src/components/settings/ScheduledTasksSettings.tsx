@@ -1768,41 +1768,43 @@ function ScheduledTaskEditorForm({
                 ) : null}
               </div>
             ) : draft.scheduleMode === "fixed" ? (
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="scheduled-task-time">Run at</Label>
-                  <Input
-                    type="time"
-                    id="scheduled-task-time"
-                    nativeInput
-                    className="w-32"
-                    value={draft.timeOfDay}
-                    onChange={(event) =>
-                      setDraft((current) => ({ ...current, timeOfDay: event.target.value }))
-                    }
-                  />
-                  <span className="text-xs text-muted-foreground">on</span>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Label htmlFor="scheduled-task-time">Run at</Label>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="time"
+                      id="scheduled-task-time"
+                      nativeInput
+                      className="w-32"
+                      value={draft.timeOfDay}
+                      onChange={(event) =>
+                        setDraft((current) => ({ ...current, timeOfDay: event.target.value }))
+                      }
+                    />
+                    <span className="text-xs text-muted-foreground">on</span>
+                  </div>
+                  <ToggleGroup
+                    multiple
+                    variant="outline"
+                    size="sm"
+                    aria-label="Days to run"
+                    value={[...draft.weekdays].map(String)}
+                    onValueChange={(values) => {
+                      if (values.length === 0) return;
+                      setDraft((current) => ({
+                        ...current,
+                        weekdays: new Set(values.map(Number)),
+                      }));
+                    }}
+                  >
+                    {WEEKDAY_ORDER.map((day) => (
+                      <Toggle key={day} value={String(day)} aria-label={WEEKDAY_LABELS[day]}>
+                        {WEEKDAY_SHORT[day]}
+                      </Toggle>
+                    ))}
+                  </ToggleGroup>
                 </div>
-                <ToggleGroup
-                  multiple
-                  variant="outline"
-                  size="sm"
-                  aria-label="Days to run"
-                  value={[...draft.weekdays].map(String)}
-                  onValueChange={(values) => {
-                    if (values.length === 0) return;
-                    setDraft((current) => ({
-                      ...current,
-                      weekdays: new Set(values.map(Number)),
-                    }));
-                  }}
-                >
-                  {WEEKDAY_ORDER.map((day) => (
-                    <Toggle key={day} value={String(day)} aria-label={WEEKDAY_LABELS[day]}>
-                      {WEEKDAY_SHORT[day]}
-                    </Toggle>
-                  ))}
-                </ToggleGroup>
               </div>
             ) : (
               <div className="flex items-center gap-2">
