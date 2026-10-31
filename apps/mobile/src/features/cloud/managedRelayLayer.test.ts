@@ -12,6 +12,10 @@ import { FetchHttpClient } from "effect/http";
 import * as Dpop from "./dpop";
 import * as ManagedRelayLayer from "./managedRelayLayer";
 
+vi.mock("expo-constants", () => ({
+  default: { expoConfig: { extra: { relay: { backgroundUrl: "http://invalid.example.test" } } } },
+}));
+
 vi.mock("expo-crypto", () => ({
   CryptoDigestAlgorithm: { SHA256: "SHA-256" },
   getRandomBytes: (byteCount: number) => new Uint8Array(NodeCrypto.randomBytes(byteCount)),
@@ -42,6 +46,24 @@ vi.mock("expo-secure-store", () => ({
 }));
 
 describe("managed relay DPoP signer", () => {
+  it.effect(
+    "constructs the primary client and rejects only background calls for a malformed override",
+    () =>
+      Effect.gen(function* () {
+        const client = yield* ManagedRelay.ManagedRelayClient;
+        assert.equal(client.relayUrl, "https://relay.example.test");
+        const failed = yield* client
+          .getAgentActivitySnapshot({ clerkToken: "unused" })
+          .pipe(Effect.flip);
+        assert.equal(failed._tag, "ManagedRelayUrlInvalidError");
+      }).pipe(
+        Effect.provide(
+          ManagedRelayLayer.layer("https://relay.example.test").pipe(
+            Layer.provide(Layer.mergeAll(FetchHttpClient.layer, Dpop.layer)),
+          ),
+        ),
+      ),
+  );
   it.effect("loads the proof key again after a failed read", () =>
     Effect.gen(function* () {
       const signer = yield* ManagedRelay.ManagedRelayDpopSigner;
