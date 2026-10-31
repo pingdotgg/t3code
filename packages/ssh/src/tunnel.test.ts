@@ -17,6 +17,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as SshAuth from "./auth.ts";
+import { remoteStateKey } from "./command.ts";
 import { SshCommandError } from "./errors.ts";
 import * as SshTunnel from "./tunnel.ts";
 
@@ -83,6 +84,91 @@ function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
 
 const ARCHIVE = { archiveVersion: "1.2.3-preview.20260911.4" } as const;
 const decodeBootstrap = Schema.decodeUnknownEffect(DesktopSshEnvironmentBootstrapSchema);
+
+const makeReconnectHarness = (beforeStop: () => Effect.Effect<void> = () => Effect.void) => {
+  const config = { port: 40_001, username: "original" };
+  const tunnelCommands: Array<ReadonlyArray<string>> = [];
+  const stopCommands: Array<ReadonlyArray<string>> = [];
+  const activeTunnels = new Set<number>();
+  const remoteOwners = new Set<string>();
+  const launchedOwners: string[] = [];
+  const pairedOwners: string[] = [];
+  let nextTunnelId = 0;
+  let failLaunch = false;
+  const spawner = ChildProcessSpawner.make((command) =>
+    Effect.gen(function* () {
+      const args = commandArgs(command);
+      if (args.includes("-G")) {
+        return makeSuccessfulProcess(
+          `hostname 127.0.0.1\nuser ${config.username}\nport ${config.port}\n`,
+        );
+      }
+      if (args.includes("-N")) {
+        tunnelCommands.push(args);
+        const id = ++nextTunnelId;
+        activeTunnels.add(id);
+        return makeRunningProcess(() => {
+          activeTunnels.delete(id);
+        });
+      }
+      if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
+        const stateKey = args.at(-1)!;
+        launchedOwners.push(stateKey);
+        if (failLaunch) {
+          failLaunch = false;
+          return {
+            ...makeSuccessfulProcess("remote launch unavailable"),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+          };
+        }
+        remoteOwners.add(stateKey);
+        return makeSuccessfulProcess('{"remotePort":3773,"serverKind":"managed"}\n');
+      }
+      const input = ChildProcess.isStandardCommand(command) ? command.options.stdin : undefined;
+      const stdin = typeof input === "object" && "stream" in input ? input.stream : input;
+      const script = Stream.isStream(stdin)
+        ? yield* stdin.pipe(
+            Stream.decodeText(),
+            Stream.runFold(
+              () => "",
+              (text, chunk) => text + chunk,
+            ),
+          )
+        : "";
+      const stateKey = script.match(/STATE_DIR="\$HOME\/\.t3\/ssh-launch\/([^"]+)"/u)?.[1];
+      assert.isDefined(stateKey);
+      if (script.includes("auth pairing create")) {
+        pairedOwners.push(stateKey!);
+        return makeSuccessfulProcess('{"credential":"test-pairing-token"}\n');
+      }
+      assert.include(script, '{"stopped":true}');
+      stopCommands.push(args);
+      yield* beforeStop();
+      remoteOwners.delete(stateKey!);
+      return makeSuccessfulProcess('{"stopped":true}\n');
+    }),
+  );
+  return {
+    config,
+    tunnelCommands,
+    stopCommands,
+    activeTunnels,
+    remoteOwners,
+    launchedOwners,
+    pairedOwners,
+    failNextLaunch: () => {
+      failLaunch = true;
+    },
+    layer: Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshAuth.SshPasswordPrompt.disabledLayer,
+      SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+    ),
+  };
+};
 
 describe("ssh tunnel scripts", () => {
   it("rejects archive versions that are not a single exact version segment", () => {
@@ -263,31 +349,31 @@ describe("ssh tunnel scripts", () => {
     }),
   );
 
-  it.effect.each(["local tunnel", "remote server"] as const)(
-    "waits for %s shutdown before reconnecting the same target",
-    (stalledStep) =>
+  it.effect.each(
+    ["local tunnel", "remote server"].flatMap((stalledStep) =>
+      [false, true].map((rotate) => ({ stalledStep, rotate })),
+    ),
+  )(
+    "waits for $stalledStep shutdown before reconnecting (port changes: $rotate)",
+    ({ stalledStep, rotate }) =>
       Effect.gen(function* () {
         const shutdownStarted = yield* Deferred.make<void>();
         const finishShutdown = yield* Deferred.make<void>();
-        const reconnectsStarted = yield* Deferred.make<void>();
         const pauseShutdown = Deferred.succeed(shutdownStarted, undefined).pipe(
           Effect.andThen(Deferred.await(finishShutdown)),
         );
-        let resolutions = 0;
         let launches = 0;
         let tunnels = 0;
         let stops = 0;
         let remoteRunning = false;
+        let configOutput = "";
         const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
         const spawner = ChildProcessSpawner.make((command) =>
           Effect.gen(function* () {
             const args = commandArgs(command);
             const isTarget = args.includes(target.alias);
             if (args.includes("-G")) {
-              if (isTarget && ++resolutions === 4) {
-                yield* Deferred.succeed(reconnectsStarted, undefined);
-              }
-              return makeSuccessfulProcess("");
+              return makeSuccessfulProcess(configOutput);
             }
             if (args.includes("-N")) {
               const tunnel = makeRunningProcess(() => undefined);
@@ -336,9 +422,13 @@ describe("ssh tunnel scripts", () => {
           yield* manager.ensureEnvironment(target);
           const disconnect = yield* Effect.forkChild(manager.disconnectEnvironment(target));
           yield* Deferred.await(shutdownStarted);
-          const firstReconnect = yield* Effect.forkChild(manager.ensureEnvironment(target));
-          const secondReconnect = yield* Effect.forkChild(manager.ensureEnvironment(target));
-          yield* Deferred.await(reconnectsStarted);
+          const firstReconnect = yield* Effect.forkChild(manager.ensureEnvironment(target), {
+            startImmediately: true,
+          });
+          const secondReconnect = yield* Effect.forkChild(manager.ensureEnvironment(target), {
+            startImmediately: true,
+          });
+          if (rotate) configOutput = "port 2222\n";
 
           yield* manager.ensureEnvironment({
             alias: "other",
@@ -358,6 +448,7 @@ describe("ssh tunnel scripts", () => {
           assert.equal(tunnels, 2);
           assert.isTrue(remoteRunning);
           assert.equal(first.httpBaseUrl, second.httpBaseUrl);
+          assert.equal(first.target.port, rotate ? 2222 : null);
         }).pipe(
           Effect.ensuring(Deferred.succeed(finishShutdown, undefined)),
           Effect.provide(layer),
@@ -366,83 +457,162 @@ describe("ssh tunnel scripts", () => {
       }),
   );
 
-  it.effect.each([
-    { name: "SSH config", username: null, port: null },
-    { name: "an explicit username", username: "override", port: null },
-    { name: "an explicit port", username: null, port: 2200 },
-    { name: "explicit username and port", username: "override", port: 2200 },
-  ])("reconnects a saved target using $name after SSH config changes", (overrides) =>
+  it.effect.each(
+    [
+      { name: "SSH config", username: null, port: null },
+      { name: "an explicit username", username: "override", port: null },
+      { name: "an explicit port", username: null, port: 2200 },
+      { name: "explicit username and port", username: "override", port: 2200 },
+    ].flatMap((overrides) => ["manual", "automatic"].map((mode) => ({ ...overrides, mode }))),
+  )("reconnects a saved target using $name after a config change ($mode)", (overrides) => {
+    const harness = makeReconnectHarness();
+    return Effect.gen(function* () {
+      const manager = yield* SshTunnel.SshEnvironmentManager;
+      yield* manager.ensureEnvironment({
+        alias: "devbox",
+        hostname: "devbox",
+        username: overrides.username ?? harness.config.username,
+        port: overrides.port ?? harness.config.port,
+      });
+      const first = yield* manager.ensureEnvironment({
+        alias: "devbox",
+        hostname: "devbox",
+        username: overrides.username,
+        port: overrides.port,
+      });
+      assert.lengthOf(harness.tunnelCommands, 1);
+      harness.config.port = 40_002;
+      harness.config.username = "updated";
+      const saved = yield* decodeBootstrap(JSON.parse(JSON.stringify(first)));
+      if (overrides.mode === "manual") {
+        yield* manager.disconnectEnvironment(saved.target);
+        assert.equal(harness.activeTunnels.size, 0);
+        assert.equal(harness.remoteOwners.size, 0);
+        const originalStop = harness.stopCommands.at(-1)!;
+        assert.equal(originalStop[originalStop.indexOf("-p") + 1], String(first.target.port));
+        assert.include(originalStop, `${first.target.username}@devbox`);
+      }
+      const reconnected = yield* manager.ensureEnvironment(saved.target, {
+        issuePairingToken: true,
+      });
+      const username = overrides.username ?? harness.config.username;
+      const port = overrides.port ?? harness.config.port;
+      assert.equal(reconnected.target.username, username);
+      assert.equal(reconnected.target.port, port);
+      assert.deepEqual(reconnected.target.overrides, {
+        username: overrides.username,
+        port: overrides.port,
+      });
+      assert.equal(harness.activeTunnels.size, 1);
+      assert.equal(harness.remoteOwners.size, 1);
+      assert.deepEqual(harness.pairedOwners, [harness.launchedOwners.at(-1)]);
+      if (overrides.mode === "automatic") {
+        assert.equal(harness.launchedOwners.at(-1), harness.launchedOwners[0]);
+        assert.lengthOf(harness.stopCommands, 0);
+      }
+      const tunnel = harness.tunnelCommands.at(-1)!;
+      assert.equal(tunnel[tunnel.indexOf("-p") + 1], String(port));
+      assert.include(tunnel, `${username}@devbox`);
+      yield* manager.disconnectEnvironment(saved.target);
+      const stop = harness.stopCommands.at(-1)!;
+      assert.equal(stop[stop.indexOf("-p") + 1], String(port));
+      assert.include(stop, `${username}@devbox`);
+      assert.equal(harness.activeTunnels.size, 0);
+      assert.equal(harness.remoteOwners.size, 0);
+    }).pipe(Effect.provide(harness.layer), Effect.scoped);
+  });
+
+  it.effect("keeps remote ownership when a replacement fails before retrying", () => {
+    const harness = makeReconnectHarness();
+    return Effect.gen(function* () {
+      const manager = yield* SshTunnel.SshEnvironmentManager;
+      const first = yield* manager.ensureEnvironment({
+        alias: "devbox",
+        hostname: "devbox",
+        username: null,
+        port: null,
+      });
+      harness.config.port = 40_002;
+      harness.failNextLaunch();
+      const failure = yield* Effect.result(manager.ensureEnvironment(first.target));
+      assert.isTrue(Result.isFailure(failure));
+      assert.equal(harness.activeTunnels.size, 1);
+      assert.equal(harness.remoteOwners.size, 1);
+      const retried = yield* manager.ensureEnvironment(first.target);
+      assert.equal(retried.target.port, 40_002);
+      assert.equal(harness.activeTunnels.size, 1);
+      assert.equal(new Set(harness.launchedOwners).size, 1);
+      yield* manager.disconnectEnvironment(first.target);
+      assert.equal(harness.activeTunnels.size, 0);
+      assert.equal(harness.remoteOwners.size, 0);
+    }).pipe(Effect.provide(harness.layer), Effect.scoped);
+  });
+
+  it.effect("closes all hosts concurrently when the manager shuts down", () =>
     Effect.gen(function* () {
-      let configPort = 40_001;
-      let configUsername = "original";
-      const tunnelCommands: Array<ReadonlyArray<string>> = [];
-      const stopCommands: Array<ReadonlyArray<string>> = [];
-      const spawner = ChildProcessSpawner.make((command) =>
-        Effect.sync(() => {
-          const args = commandArgs(command);
-          if (args.includes("-G")) {
-            return makeSuccessfulProcess(
-              `hostname 127.0.0.1\nuser ${configUsername}\nport ${configPort}\n`,
-            );
-          }
-          if (args.includes("-N")) {
-            tunnelCommands.push(args);
-            return makeRunningProcess(() => undefined);
-          }
-          if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
-            return makeSuccessfulProcess('{"remotePort":3773}\n');
-          }
-          stopCommands.push(args);
-          return makeSuccessfulProcess('{"stopped":true}\n');
+      const firstStop = yield* Deferred.make<void>();
+      const finishStops = yield* Deferred.make<void>();
+      let stopsStarted = 0;
+      const harness = makeReconnectHarness(() =>
+        Effect.gen(function* () {
+          stopsStarted += 1;
+          yield* Deferred.succeed(firstStop, undefined);
+          yield* Deferred.await(finishStops);
         }),
       );
-      const layer = Layer.mergeAll(
-        NodeServices.layer,
-        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Layer.succeed(HttpClient.HttpClient, testHttpClient),
-        Layer.succeed(NetService.NetService, testNetService),
-        SshAuth.SshPasswordPrompt.disabledLayer,
-        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
-      );
       yield* Effect.gen(function* () {
-        const manager = yield* SshTunnel.SshEnvironmentManager;
-        yield* manager.ensureEnvironment({
-          alias: "devbox",
-          hostname: "devbox",
-          username: overrides.username ?? configUsername,
-          port: overrides.port ?? configPort,
-        });
-        const first = yield* manager.ensureEnvironment({
-          alias: "devbox",
-          hostname: "devbox",
-          username: overrides.username,
-          port: overrides.port,
-        });
-        assert.lengthOf(tunnelCommands, 1);
-        configPort = 40_002;
-        configUsername = "updated";
-
-        const saved = yield* decodeBootstrap(JSON.parse(JSON.stringify(first)));
-        yield* manager.disconnectEnvironment(saved.target);
-        const reconnected = yield* manager.ensureEnvironment(saved.target);
-        const username = overrides.username ?? configUsername;
-        const port = overrides.port ?? configPort;
-        assert.equal(reconnected.target.username, username);
-        assert.equal(reconnected.target.port, port);
-        assert.deepEqual(reconnected.target.overrides, {
-          username: overrides.username,
-          port: overrides.port,
-        });
-        const tunnel = tunnelCommands.at(-1)!;
-        assert.equal(tunnel[tunnel.indexOf("-p") + 1], String(port));
-        assert.include(tunnel, `${username}@devbox`);
-
-        yield* manager.disconnectEnvironment(reconnected.target);
-        const stop = stopCommands.at(-1)!;
-        assert.equal(stop[stop.indexOf("-p") + 1], String(port));
-        assert.include(stop, `${username}@devbox`);
-      }).pipe(Effect.provide(layer), Effect.scoped);
+        const shutdown = yield* Effect.forkChild(
+          Effect.gen(function* () {
+            const manager = yield* SshTunnel.SshEnvironmentManager;
+            for (const alias of ["alpha", "beta"]) {
+              yield* manager.ensureEnvironment({
+                alias,
+                hostname: alias,
+                username: null,
+                port: null,
+              });
+            }
+          }).pipe(Effect.provide(harness.layer), Effect.scoped),
+        );
+        yield* Effect.raceFirst(Deferred.await(firstStop), Fiber.join(shutdown));
+        yield* TestClock.adjust(Duration.zero);
+        const startedBeforeRelease = stopsStarted;
+        yield* Deferred.succeed(finishStops, undefined);
+        yield* Fiber.join(shutdown);
+        assert.equal(startedBeforeRelease, 2);
+        assert.equal(harness.activeTunnels.size, 0);
+        assert.equal(harness.remoteOwners.size, 0);
+      }).pipe(Effect.ensuring(Deferred.succeed(finishStops, undefined)));
     }),
+  );
+
+  it.effect.each(["connect", "disconnect"] as const)(
+    "uses saved ownership with a new manager and port during %s",
+    (operation) => {
+      const harness = makeReconnectHarness();
+      return Effect.gen(function* () {
+        const saved = {
+          alias: "devbox",
+          hostname: "127.0.0.1",
+          username: "original",
+          port: 40001,
+          overrides: { username: null, port: null },
+        };
+        harness.remoteOwners.add(yield* remoteStateKey(saved));
+        harness.config.port = 40002;
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        if (operation === "connect") {
+          const restored = yield* manager.ensureEnvironment(saved);
+          assert.equal(restored.target.port, 40002);
+          assert.equal(harness.remoteOwners.size, 1);
+        }
+        yield* manager.disconnectEnvironment(saved);
+        const stop = harness.stopCommands.at(-1)!;
+        assert.equal(stop[stop.indexOf("-p") + 1], "40002");
+        assert.equal(harness.activeTunnels.size, 0);
+        assert.equal(harness.remoteOwners.size, 0);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    },
   );
 });
 

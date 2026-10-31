@@ -1,4 +1,4 @@
-import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
+import { getDesktopSshRequest, type DesktopSshEnvironmentTarget } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
@@ -78,8 +78,10 @@ export const remoteStateKey = Effect.fn("ssh/command.remoteStateKey")(function* 
   target: DesktopSshEnvironmentTarget,
 ): Effect.fn.Return<string, never, Crypto.Crypto> {
   const crypto = yield* Crypto.Crypto;
+  // Inherited endpoint values can change while the remote server stays the same.
+  const { username, port } = getDesktopSshRequest(target);
   const digest = yield* crypto
-    .digest("SHA-256", encoder.encode(targetConnectionKey(target)))
+    .digest("SHA-256", encoder.encode(targetConnectionKey({ ...target, username, port })))
     .pipe(Effect.orDie);
   return Hex.encode(digest).slice(0, 16);
 });

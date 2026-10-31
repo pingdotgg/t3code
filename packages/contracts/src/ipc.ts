@@ -394,6 +394,17 @@ export const DesktopSshEnvironmentTargetSchema = Schema.Struct({
 });
 export type DesktopSshEnvironmentTarget = typeof DesktopSshEnvironmentTargetSchema.Type;
 
+export function getDesktopSshRequest(target: DesktopSshEnvironmentTarget) {
+  // Legacy records cannot distinguish resolved values from explicit overrides.
+  const { username, port } = target.overrides ?? target;
+  return { alias: target.alias.trim() || target.hostname.trim(), username, port };
+}
+
+export function getDesktopSshRequestKey(target: DesktopSshEnvironmentTarget): string {
+  const { alias, username, port } = getDesktopSshRequest(target);
+  return `${alias}\u0000${username ?? ""}\u0000${port ?? ""}`;
+}
+
 export type DesktopSshHostSource = "ssh-config" | "known-hosts";
 export const DesktopSshHostSourceSchema = Schema.Literals(["ssh-config", "known-hosts"]);
 
