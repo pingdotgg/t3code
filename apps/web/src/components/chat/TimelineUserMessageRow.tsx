@@ -758,7 +758,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   // Touch shows actions all the time, so they keep their own line there.
   const floatActions = row.groupedWithNext === true && !coarsePointer;
   const messageActions = (
-    <div className="flex shrink-0 items-center gap-2">
+    <div
+      className={cn(
+        "flex items-center justify-end gap-x-2 gap-y-0.5",
+        floatActions ? "flex-wrap" : "shrink-0",
+      )}
+    >
       {folded && senderThreadId ? (
         <InlineButton onClick={() => ctx.onOpenThread(senderThreadId)} tone="muted">
           Open thread
@@ -802,7 +807,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
   return (
     <div
-      className="group flex flex-col items-end gap-1"
+      className="group @container flex flex-col items-end gap-1"
       data-user-message-attribution={folded ? "agent" : undefined}
     >
       {userMessage.attribution === "t3code" ? (
@@ -994,7 +999,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         ) : null}
         {floatActions ? (
           <div
-            className={cn("absolute end-full bottom-3 me-2 flex w-max", ACTIONS_REVEAL_CLASS_NAME)}
+            className={cn(
+              "absolute end-full bottom-3 me-2 flex w-max max-w-[calc(20cqw-0.5rem)]",
+              ACTIONS_REVEAL_CLASS_NAME,
+            )}
           >
             {messageActions}
           </div>
