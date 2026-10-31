@@ -223,14 +223,11 @@ export const make = Effect.gen(function* () {
     );
     return permissions(repo, pr, viewer);
   });
-  const readChecks = Effect.fn("ForgejoPullRequestProvider.readChecks")(function* (
-    input: ProviderRepositoryRef,
-    pr: typeof ForgejoPullRequest.Type,
-  ) {
-    const branch = read(
+  const readCheckPolicy = (input: ProviderRepositoryRef, base: string) =>
+    read(
       {
         ...input,
-        path: `${repoPath(input)}/branches/${pr.base.ref.split("/").map(encodeURIComponent).join("/")}`,
+        path: `${repoPath(input)}/branches/${base.split("/").map(encodeURIComponent).join("/")}`,
       },
       ForgejoBranchStatusChecks,
     ).pipe(
@@ -246,20 +243,29 @@ export const make = Effect.gen(function* () {
         },
       }),
     );
+  const readStatuses = (input: ProviderRepositoryRef, sha: string) =>
+    page(
+      {
+        ...input,
+        path: `${repoPath(input)}/statuses/${encodeURIComponent(sha)}?sort=recentupdate`,
+      },
+      ForgejoStatus,
+    ).pipe(Effect.map(({ items }) => items));
+  const readChecks = Effect.fn("ForgejoPullRequestProvider.readChecks")(function* (
+    input: ProviderRepositoryRef,
+    pr: typeof ForgejoPullRequest.Type,
+  ) {
     const [statuses, policy] = yield* Effect.all(
-      [
-        page(
-          {
-            ...input,
-            path: `${repoPath(input)}/statuses/${encodeURIComponent(pr.head.sha)}?sort=recentupdate`,
-          },
-          ForgejoStatus,
-        ),
-        branch,
-      ],
+      [readStatuses(input, pr.head.sha), readCheckPolicy(input, pr.base.ref)],
       { concurrency: 2 },
     );
-    return markRequiredForgejoChecks(forgejoChecks(statuses.items, pr.html_url), policy);
+    return markRequiredForgejoChecks(forgejoChecks(statuses, pr.html_url), policy);
+  });
+  const readSummary = Effect.fn("ForgejoPullRequestProvider.readSummary")(function* (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) {
+    const pr = yield* getPull(input);
+    return forgejoChangeRequest(pr, yield* readChecks(input, pr));
   });
   const unsupported = (operation: string) =>
     Effect.fail(failure(operation, `Forgejo does not expose ${operation} through its API.`));
@@ -272,7 +278,7 @@ export const make = Effect.gen(function* () {
     listChangeRequests: Effect.fn("ForgejoPullRequestProvider.listChangeRequests")(
       function* (input) {
         const offset = input.cursor?.delivered ?? 0;
-        const items: ReturnType<typeof forgejoChangeRequest>[] = [];
+        const pulls: (typeof ForgejoPullRequest.Type)[] = [];
         const state = input.state === "merged" ? "closed" : input.state;
         const params = new URLSearchParams({ state, sort: "recentupdate" });
         const filters = input.filters;
@@ -317,15 +323,39 @@ export const make = Effect.gen(function* () {
           for (const row of rows.slice(start)) {
             if (consumed >= input.limit) break;
             consumed++;
-            if (row) items.push(forgejoChangeRequest(row));
+            if (row) pulls.push(row);
           }
           more = result.more || rows.length - start > consumed - countBefore;
         }
+        const policies = new Map(
+          yield* Effect.forEach(
+            new Set(pulls.map((pr) => pr.base.ref)),
+            (base) =>
+              readCheckPolicy(input, base).pipe(Effect.map((policy) => [base, policy] as const)),
+            { concurrency: 4 },
+          ),
+        );
+        const statuses = new Map(
+          yield* Effect.forEach(
+            new Set(pulls.map((pr) => pr.head.sha)),
+            (sha) => readStatuses(input, sha).pipe(Effect.map((checks) => [sha, checks] as const)),
+            { concurrency: 4 },
+          ),
+        );
+        const items = pulls.map((pr) =>
+          forgejoChangeRequest(
+            pr,
+            markRequiredForgejoChecks(
+              forgejoChecks(statuses.get(pr.head.sha)!, pr.html_url),
+              policies.get(pr.base.ref)!,
+            ),
+          ),
+        );
         return { items, truncated: more, continues: true, cursorAdvance: consumed };
       },
     ),
     getChangeRequestPreview: (input) => getPull(input).pipe(Effect.map(forgejoChangeRequest)),
-    getChangeRequestSummary: (input) => getPull(input).pipe(Effect.map(forgejoChangeRequest)),
+    getChangeRequestSummary: readSummary,
     getChangeRequestChecks: Effect.fn("ForgejoPullRequestProvider.getChangeRequestChecks")(
       function* (input) {
         const pr = yield* getPull(input);
@@ -339,7 +369,7 @@ export const make = Effect.gen(function* () {
       );
       const checks = yield* readChecks(input, pr);
       return {
-        ...forgejoChangeRequest(pr),
+        ...forgejoChangeRequest(pr, checks),
         headSha: pr.head.sha,
         body: pr.body ?? "",
         changedFiles: pr.changed_files ?? 0,
