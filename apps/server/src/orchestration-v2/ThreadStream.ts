@@ -5,15 +5,15 @@ import type {
 
 import { omitLocalVisibleTurnItems } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 import { dedupeSnapshotBodies } from "@t3tools/shared/orchestrationV2DedupedBodies";
+import {
+  capProjectionCheckpointFilesForWire,
+  projectThreadProjectionForWire,
+} from "@t3tools/shared/wireProjection";
 
 import {
   buildBoundedThreadProjection,
   type BoundedProjectionResult,
 } from "./threadHistoryPaging.ts";
-import {
-  capProjectionCheckpointFilesForWire,
-  projectThreadProjectionForWire,
-} from "./WireProjection.ts";
 
 export const THREAD_RESUME_MAX_REPLAY_EVENTS = 128;
 

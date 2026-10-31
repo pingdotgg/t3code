@@ -12,7 +12,7 @@ import * as Schema from "effect/Schema";
 import type * as RpcMessage from "effect/rpc/RpcMessage";
 import { describe, expect, it } from "vite-plus/test";
 
-import { projectDomainEventForWire } from "./WireProjection.ts";
+import { projectDomainEventForWire } from "@t3tools/shared/wireProjection";
 
 const OUTPUT_BYTES_PER_ROW = 8_192;
 const NOW = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
