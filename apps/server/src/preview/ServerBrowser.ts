@@ -1620,7 +1620,7 @@ const make = Effect.gen(function* () {
     timeout: number,
   ) => {
     const probeStartedAt = performance.now();
-    await ServerBrowserPage.stopUnresponsiveScript(tab.cdp);
+    await ServerBrowserPage.stopUnresponsiveScript(tab.cdp, timeout);
     const navigation = tab.page.goto(url, {
       // The probe spends the caller's budget; the broker evicts a host that answers late.
       timeout: Math.max(1, timeout - (performance.now() - probeStartedAt)),

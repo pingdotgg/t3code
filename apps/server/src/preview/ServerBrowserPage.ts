@@ -870,8 +870,11 @@ export const evaluate = async (
  * A same-site navigation cannot commit while the page's script never yields. Terminate only after a
  * probe goes unanswered: on an idle renderer V8 terminates the next script, possibly the new page's.
  */
-export const stopUnresponsiveScript = (cdp: CDPSession) =>
-  evaluateOrTerminate(cdp, { expression: "0" }, SCRIPT_PROBE_MS).then(constVoid, constVoid);
+export const stopUnresponsiveScript = (cdp: CDPSession, budgetMs = SCRIPT_PROBE_MS) =>
+  evaluateOrTerminate(cdp, { expression: "0" }, Math.min(SCRIPT_PROBE_MS, budgetMs)).then(
+    constVoid,
+    constVoid,
+  );
 
 export const waitFor = async (page: Page, input: PreviewAutomationWaitForInput) => {
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;

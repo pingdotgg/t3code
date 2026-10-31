@@ -644,6 +644,30 @@ it.live.each([
   ).pipe(Effect.provide(layer)),
 );
 
+it.live.each([
+  { method: "goto" as const, message: { type: "navigate", url: "http://localhost:5173/next" } },
+  { method: "goBack" as const, message: { type: "history", delta: -1 } },
+  { method: "goForward" as const, message: { type: "history", delta: 1 } },
+  { method: "reload" as const, message: { type: "reload" } },
+])("a viewer $method leaves a page whose script never yields", ({ method, message }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const { page, renderer } = contexts[0]!;
+      renderer.busyScript = Promise.withResolvers<void>();
+      // A same-site navigation cannot commit until the page's script stops.
+      const scriptStoppedFirst = Promise.withResolvers<boolean>();
+      page[method].mockImplementationOnce(async () => {
+        scriptStoppedFirst.resolve(renderer.busyScript === null);
+      });
+      yield* viewer.input(message);
+      expect(yield* Effect.promise(() => scriptStoppedFirst.promise)).toBe(true);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 // The fake encoder decodes every frame at 1280x800, so 30 fps hits the bitrate floor.
 it.live.each([
   { reports: [], frameRate: 30, bitsPerSecond: 2.5e6 },
