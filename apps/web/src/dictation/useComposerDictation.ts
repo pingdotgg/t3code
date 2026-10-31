@@ -8,8 +8,9 @@ import {
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { AtomRegistry } from "effect/reactivity";
 import { useNavigate } from "@tanstack/react-router";
-import { use, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { use, useEffect, useLayoutEffect, useRef, useState } from "react";
 
+import { useStableCallback } from "../hooks/useStableCallback";
 import { toastManager } from "../components/ui/toast";
 import {
   dictationEnvironment,
@@ -29,17 +30,17 @@ type ComposerDictationInput = Parameters<typeof useComposerDictation>[0] & {
 /** Wires a controller to the composer's latest input, read when callbacks run. */
 function createComposerDictationController(input: {
   readonly registry: AtomRegistry.AtomRegistry;
-  readonly latest: { readonly current: ComposerDictationInput };
-  readonly committed: { current: boolean };
+  readonly readLatest: () => ComposerDictationInput;
+  readonly markCommitted: () => void;
   readonly setState: (state: VoiceInputState) => void;
 }) {
-  const { latest, committed } = input;
+  const { readLatest, markCommitted } = input;
   let controller: VoiceInputController | null = null;
   const streaming = createStreamingDictation({
     registry: input.registry,
-    resolveEnvironmentId: () => latest.current.environmentId,
+    resolveEnvironmentId: () => readLatest().environmentId,
     interrupt: (message) => void controller?.interruptRecording(message),
-    rewriteTranscript: (text) => latest.current.rewriteTranscript(text),
+    rewriteTranscript: (text) => readLatest().rewriteTranscript(text),
     finishedAtLimit: (uri) =>
       void controller?.handleRecorderStatus({
         isFinished: true,
@@ -51,12 +52,12 @@ function createComposerDictationController(input: {
   const created = new VoiceInputController({
     ...streaming.dependencies,
     readDraft: () => {
-      const draft = latest.current.readDraft();
-      return draft && { ...draft, ownerKey: latest.current.ownerKey, revision: 0 };
+      const draft = readLatest().readDraft();
+      return draft && { ...draft, ownerKey: readLatest().ownerKey, revision: 0 };
     },
     commitDraft: (text, selection, inserted) => {
-      committed.current = true;
-      latest.current.commitDraft(text, selection, inserted);
+      markCommitted();
+      readLatest().commitDraft(text, selection, inserted);
     },
     // Render first, so the UI follows the controller even if cleanup throws.
     onStateChange: (next) => {
@@ -92,33 +93,41 @@ export function useComposerDictation(input: {
   const { state: environmentState } = useDictationState(environmentId);
   const modelLoaded = environmentState?.loadedModel != null;
   const latest = useRef({ ...input, environmentId, modelLoaded });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Refresh controller callbacks after React commits the current draft.
   useLayoutEffect(() => {
     latest.current = { ...input, environmentId, modelLoaded };
   });
   const committed = useRef(false);
   const [state, setState] = useState(IDLE_STATE);
 
-  // oxlint-disable-next-line react/refs -- The controller reads these refs only from its callbacks, after render.
+  const readLatest = useStableCallback(() => latest.current);
+  const markCommitted = useStableCallback(() => {
+    committed.current = true;
+  });
   const [{ controller, level, capturedAudio }] = useState(() =>
-    createComposerDictationController({ registry, latest, committed, setState }),
+    createComposerDictationController({ registry, readLatest, markCommitted, setState }),
   );
 
   const ownerKey = useRef(input.ownerKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Cancel the external recording controller when its draft owner changes.
   useEffect(() => {
     if (ownerKey.current === input.ownerKey) return;
     ownerKey.current = input.ownerKey;
     controller.ownerChanged();
   }, [controller, input.ownerKey]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Release the external recording controller on unmount.
   useEffect(() => () => controller.dispose(), [controller]);
 
   // The editor is enabled again by the time this parent effect runs.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore editor focus and selection after the controller commits its transcript.
   useEffect(() => {
     if (state.phase !== "idle" || !committed.current) return;
     committed.current = false;
     latest.current.onCommitted();
   }, [state.phase]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Report external recording failures through the toast manager.
   useEffect(() => {
     if (state.phase !== "error" || state.error === null) return;
     toastManager.add({ type: "error", title: state.error });
@@ -126,7 +135,7 @@ export function useComposerDictation(input: {
   }, [controller, state]);
 
   // Stable across renders so callers can run it from an effect keyed only on focus.
-  const warm = useCallback(() => {
+  const warm = useStableCallback(() => {
     const { environmentId: target, modelLoaded: loaded } = latest.current;
     if (target === null || loaded) return;
     void runAtomCommand(
@@ -135,11 +144,11 @@ export function useComposerDictation(input: {
       { environmentId: target, input: {} },
       { reportFailure: false },
     );
-  }, [registry]);
+  });
 
   const openSettings = () =>
     void navigate({
-      to: "/settings/integrations",
+      to: "/settings/devices",
       hash: "dictation",
       search: { machine: latest.current.draftEnvironmentId ?? undefined },
       state: { settingsTargetHighlight: true },

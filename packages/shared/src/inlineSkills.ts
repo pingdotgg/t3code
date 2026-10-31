@@ -81,14 +81,7 @@ function closestSpokenSkill<T extends InlineSkill>(spoken: string, skills: reado
   return best;
 }
 
-/**
- * Turns spoken skill references in a dictated transcript into `$name` tokens,
- * which the composer renders as skill chips. Only phrases anchored by the word
- * "skill" ("the review skill", "skill review") or "dollar" ("dollar review")
- * are rewritten, so ordinary words that happen to name a skill stay text. A
- * leading "the" is folded into the token, and punctuation touching the
- * rewritten phrase is dropped so the token still parses.
- */
+// Require "skill" or "dollar" so ordinary words that name a skill stay text.
 export function replaceSpokenSkills(text: string, skills: readonly InlineSkill[]): string {
   if (skills.length === 0) return text;
   const words = [...text.matchAll(/\S+/g)].map((match) => ({

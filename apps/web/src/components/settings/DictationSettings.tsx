@@ -11,7 +11,7 @@ import { useState } from "react";
 import {
   useClientSettings,
   useClientSettingsHydrated,
-  useUpdateClientSettings,
+  updateClientSettings,
 } from "~/hooks/useSettings";
 import { formatBytes } from "~/lib/formatBytes";
 import { cn } from "~/lib/utils";
@@ -82,13 +82,7 @@ function readinessLabel(state: DictationState | null): string {
 const modelDetail = (model: DictationModel) =>
   [model.languages, formatBytes(model.downloadBytes), model.note].filter(Boolean).join(" · ");
 
-/**
- * Dictation for the environments selected in the settings header. Choosing a
- * model while dictation is on is what downloads it; the status line follows
- * that download. The language row is always present (disabled for models that
- * only detect automatically) so switching models never shifts the layout. Changing settings needs settings:write; retrying a download
- * and removing an inactive model need orchestration:operate.
- */
+// Scope model installation to each selected environment.
 export function DictationSettingsSection() {
   const { scope, environment, connectedEnvironments } = useSettingsScope();
   const environmentId =
@@ -272,11 +266,6 @@ function DictationModelStatus(props: {
   );
 }
 
-/**
- * Downloaded models other than the selected one, which can be removed to free
- * disk. `selectedModel` is the settings value the model picker shows, so the
- * list changes in the same frame as the picker instead of waiting for the server.
- */
 function InactiveDictationModels(props: {
   readonly environmentId: EnvironmentId;
   readonly label: string | null;
@@ -342,11 +331,6 @@ function InactiveDictationModels(props: {
 
 const AUTOMATIC = "automatic";
 
-/**
- * Folded Connections section choosing which environment transcribes this
- * device's dictation. Automatic prefers the draft's environment, then the
- * primary, then any ready one. Rendered only when two or more machines are on.
- */
 export function DictationRoutingSettings({
   environments,
 }: {
@@ -354,7 +338,7 @@ export function DictationRoutingSettings({
 }) {
   const chosen = useClientSettings((settings) => settings.dictationEnvironmentId);
   const hydrated = useClientSettingsHydrated();
-  const updateSettings = useUpdateClientSettings();
+  const updateSettings = updateClientSettings;
   const ready = useReadyDictationEnvironmentIds();
 
   if (environments.length < 2) return null;

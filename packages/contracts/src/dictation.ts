@@ -1,12 +1,3 @@
-/**
- * Dictation - speech-to-text for the composer, run by an environment.
- *
- * Clients capture 16 kHz mono int16 PCM and stream it in chunks to the
- * environment they picked while the user speaks. The environment transcribes
- * with an opt-in local model (sherpa-onnx) and returns the text on finish.
- *
- * @module Dictation
- */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -28,11 +19,6 @@ export type DictationEngine = typeof DictationEngine.Type;
 export const DictationLanguage = TrimmedNonEmptyString;
 export type DictationLanguage = typeof DictationLanguage.Type;
 
-/**
- * Server settings for this environment's dictation engine. Selecting a model
- * while the engine is on activates it: the environment downloads what it needs
- * then. Nothing is downloaded before a model is activated.
- */
 export const DictationSettings = Schema.Struct({
   engine: DictationEngine.pipe(Schema.withDecodingDefault(Effect.succeed("off" as const))),
   localModel: DictationModelId.pipe(

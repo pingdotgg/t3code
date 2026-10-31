@@ -8,14 +8,7 @@ import { ComposerDictationActivity } from "./ComposerDictationActivity";
 
 const keepComposerFocus = (event: PointerEvent) => event.preventDefault();
 
-/**
- * Dictation in the composer footer. Idle it is a mic button that starts
- * dictation, or opens Dictation settings when no environment can transcribe.
- * Starting grows the same control in place: the button stays put and becomes
- * stop, while cancel, the waveform, and the timer unfold to its left inside a
- * pill. Ending folds them back. The unfold is a one-shot grid transition; the
- * only per-frame work is the waveform while the microphone is live.
- */
+// Keep recording controls available while the editor is frozen.
 export function ComposerDictationControl(props: {
   readonly dictation: ComposerDictation;
   readonly disabled: boolean;

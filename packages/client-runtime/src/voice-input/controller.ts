@@ -112,11 +112,7 @@ export function resolveTranscriptCommit(
   const isEmptySelection = captured.selection.start === captured.selection.end;
   const normalizedLocale = locale.replaceAll("_", "-").toLowerCase();
   const usesEnglishSpacing = normalizedLocale === "en" || normalizedLocale.startsWith("en-");
-  // Models transcribe each recording as its own sentence. Fit that sentence to
-  // where it lands: capitalize at the start of the draft, a line, or a
-  // sentence; mid-sentence, drop the leading capital (English only, where
-  // nouns are not capitalized). Drop a final period when the sentence goes on.
-  // A first word with other capitals ("iOS") or "I" is kept as spoken.
+  // Fit standalone model sentences to the insertion boundary without changing English proper names.
   const atSentenceStart = /(^|[.!?]\s*|\n\s*)$/.test(
     captured.text.slice(0, captured.selection.start),
   );

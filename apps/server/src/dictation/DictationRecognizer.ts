@@ -98,44 +98,46 @@ const make = Effect.gen(function* () {
           cause,
         }),
     });
-    const decode = (samples: Float32Array, language: string) =>
-      Effect.gen(function* () {
-        const pinnedLanguage = resolveLanguage(model, language);
-        if (models[model].skipSilence && isQuiet(samples))
-          return { text: "", locale: pinnedLanguage || "en" };
-        const json = yield* Effect.tryPromise({
-          try: async () => {
-            if (pinnedLanguage !== currentLanguage) {
-              addon.offlineRecognizerSetConfig(handle, configFor(pinnedLanguage));
-              currentLanguage = pinnedLanguage;
-            }
-            const stream = addon.createOfflineStream(handle);
-            addon.acceptWaveformOffline(stream, { samples, sampleRate: DICTATION_SAMPLE_RATE });
-            await addon.decodeOfflineStreamAsync(handle, stream);
-            return addon.getOfflineStreamResultAsJson(stream);
-          },
-          catch: (cause) =>
+    const decode = Effect.fn("DictationRecognizer.decode")(function* (
+      samples: Float32Array,
+      language: string,
+    ) {
+      const pinnedLanguage = resolveLanguage(model, language);
+      if (models[model].skipSilence && isQuiet(samples))
+        return { text: "", locale: pinnedLanguage || "en" };
+      const json = yield* Effect.tryPromise({
+        try: async () => {
+          if (pinnedLanguage !== currentLanguage) {
+            addon.offlineRecognizerSetConfig(handle, configFor(pinnedLanguage));
+            currentLanguage = pinnedLanguage;
+          }
+          const stream = addon.createOfflineStream(handle);
+          addon.acceptWaveformOffline(stream, { samples, sampleRate: DICTATION_SAMPLE_RATE });
+          await addon.decodeOfflineStreamAsync(handle, stream);
+          return addon.getOfflineStreamResultAsJson(stream);
+        },
+        catch: (cause) =>
+          new DictationError({
+            reason: "transcription-failed",
+            message: "Could not transcribe the recording.",
+            cause,
+          }),
+      });
+      const result = yield* decodeResult(json).pipe(
+        // Schema failures can contain transcript fragments, so keep this domain validation error private.
+        Effect.mapError(
+          () =>
             new DictationError({
               reason: "transcription-failed",
-              message: "Could not transcribe the recording.",
-              cause,
+              message: "The dictation runtime returned an invalid result.",
             }),
-        });
-        const result = yield* decodeResult(json).pipe(
-          // Schema failures can contain transcript fragments, so keep this domain validation error private.
-          Effect.mapError(
-            () =>
-              new DictationError({
-                reason: "transcription-failed",
-                message: "The dictation runtime returned an invalid result.",
-              }),
-          ),
-        );
-        return {
-          text: models[model].cleanText(result.text),
-          locale: result.lang || pinnedLanguage || "en",
-        };
-      });
+        ),
+      );
+      return {
+        text: models[model].cleanText(result.text),
+        locale: result.lang || pinnedLanguage || "en",
+      };
+    });
     return {
       decode,
       release: Effect.sync(() => {

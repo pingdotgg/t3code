@@ -1,7 +1,4 @@
-import {
-  closeSkillTokenAtCursor,
-  replaceSpokenSkills,
-} from "@t3tools/shared/inlineSkills";
+import { closeSkillTokenAtCursor, replaceSpokenSkills } from "@t3tools/shared/inlineSkills";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
@@ -138,7 +135,9 @@ import {
 } from "../../lib/attachmentUploadQueue";
 import { attachmentUploadBlockReason } from "../../lib/attachmentUploadState";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
-import { shortcutLabelForCommand } from "../../keybindings";
+import { isCommandPaletteOpen } from "../../commandPaletteBus";
+import { getTerminalFocusOwner } from "../../lib/terminalFocus";
+import { resolveShortcutCommand, shortcutLabelForCommand } from "../../keybindings";
 import {
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -1065,8 +1064,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isMobileViewport = useMediaQuery("max-sm");
   const isSoftwareKeyboardOpen = useSoftwareKeyboardOpen();
   const [isComposerFocused, setIsComposerFocused] = useState(false);
-  // Focusing the composer usually comes right before dictating; load the speech model early.
   const warmDictation = dictation.warm;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Warm the native speech model when the composer gains focus.
   useEffect(() => {
     if (isComposerFocused) warmDictation();
   }, [isComposerFocused, warmDictation]);
@@ -1233,7 +1232,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
   /** The editor refuses text for these reasons; dictation also freezes it while active. */
   const composerTextUnavailable =
-    isConnecting ||
     isComposerApprovalState ||
     projectSelectionRequired ||
     isChoiceOnlyPendingQuestion ||

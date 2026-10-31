@@ -1,12 +1,6 @@
 import * as Electron from "electron";
 
-/**
- * Permission policy for the main window's session. A session without a
- * handler grants every request, and this keeps that. The one addition is
- * microphone capture from the main window on macOS: it asks the OS for
- * consent first, so dictation gets the system prompt instead of silence
- * when the app has not been allowed to record yet.
- */
+// Ask macOS for microphone consent before granting main-window capture; preserve other grants.
 export function installMainWindowPermissions(
   webContents: Electron.WebContents,
   platform: NodeJS.Platform,

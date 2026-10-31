@@ -1,14 +1,4 @@
-/**
- * Audio-thread half of `PcmCapture`, loaded with `audioWorklet.addModule`.
- * Box-filters the device rate down to the target rate (or holds samples when
- * the device is slower), packs little-endian int16, and transfers one
- * ArrayBuffer per frame. About 25 times a second it also posts the input
- * level as a number from 0 to 1. A "flush" message posts the partial frame
- * and answers "flushed".
- *
- * Bundled as its own file so it loads under the desktop app's `script-src
- * 'self'` policy, which rejects blob: modules.
- */
+// A separate worklet file satisfies desktop script-src 'self', which rejects blob modules.
 
 const LEVELS_PER_SECOND = 25;
 // Levels map -60 dBFS (quiet room) to 0 and full scale to 1, which tracks loudness as heard.

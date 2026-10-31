@@ -4,6 +4,7 @@ import {
   resetVoiceInputGlobalsForTests,
   resolveTranscriptCommit,
   VoiceInputController,
+  voiceInputBlocksSubmission,
   VOICE_RECORDING_LIMIT_SECONDS,
   type VoiceDraftSnapshot,
   type VoiceInputControllerDependencies,
