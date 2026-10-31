@@ -29,7 +29,7 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses and selects the input DOM node when the bar opens or a find shortcut fires
   useEffect(() => {
     if (!props.open) return;
-    inputRef.current?.focus({ preventScroll: true });
+    inputRef.current?.focus();
     inputRef.current?.select();
   }, [
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each find shortcut bumps the request id, so an already-open bar refocuses and reselects its query.
