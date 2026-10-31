@@ -1010,7 +1010,12 @@ export default function ChatView(props: ChatViewProps) {
   useLayoutEffect(() => {
     const explicitThreadRef = explicitDiffOpenRef.current;
     explicitDiffOpenRef.current = null;
-    if (diffOpen && activeThreadRef && explicitThreadRef !== activeThreadRef) {
+    if (
+      diffOpen &&
+      activeThreadRef &&
+      explicitThreadRef !== activeThreadRef &&
+      !useDiffPanelStore.getState().consumeKeepSelectionOnOpen(activeThreadRef)
+    ) {
       useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
     }
   }, [activeThreadRef, diffOpen]);
@@ -2371,6 +2376,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThread,
     activeThreadId,
     activeThreadRef,
+    threadDetailRef: routeThreadDetailRef,
     activeThreadKey,
     activeThreadShell,
     activeLatestRun,
@@ -2393,7 +2399,6 @@ export default function ChatView(props: ChatViewProps) {
     clearUsageLimitsFor,
     beginLocalDispatch,
     resetLocalDispatch,
-    scheduleComposerFocus,
     scrollToEnd,
     persistThreadSettingsForNextTurn,
   });
