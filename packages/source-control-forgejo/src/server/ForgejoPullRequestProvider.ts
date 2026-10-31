@@ -603,12 +603,16 @@ export const make = Effect.gen(function* () {
     }),
     listReviewerCandidates: Effect.fn("ForgejoPullRequestProvider.listReviewerCandidates")(
       function* (input) {
+        // Unpaginated in Forgejo: paging it returns the full list on every page.
         const [pr, users] = yield* Effect.all(
-          [getPull(input), page({ ...input, path: `${repoPath(input)}/assignees` }, ForgejoUser)],
+          [
+            getPull(input),
+            readArray({ ...input, path: `${repoPath(input)}/assignees` }, ForgejoUser),
+          ],
           { concurrency: 2 },
         );
         return {
-          candidates: users.items
+          candidates: users
             .filter((user) => user.login !== pr.user?.login)
             .flatMap((user) => {
               const actor = forgejoActor(user);
@@ -625,7 +629,7 @@ export const make = Effect.gen(function* () {
                   ]
                 : [];
             }),
-          truncated: users.truncated,
+          truncated: false,
         };
       },
     ),
