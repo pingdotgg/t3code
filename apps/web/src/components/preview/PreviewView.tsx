@@ -1,5 +1,10 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
+import { randomUUID } from "~/lib/utils";
+import { useAtomValue } from "@effect/atom-react";
+import { primaryServerKeybindingsAtom } from "~/state/server";
+import { PreviewAnnotationSpeech } from "./PreviewAnnotationSpeech";
+import type { DesktopPreviewAnnotationVoiceConfig } from "@t3tools/contracts";
 import { previewStreamDownloadUrl } from "@t3tools/client-runtime/preview/server-browser-stream";
 import {
   isAtomCommandInterrupted,
@@ -148,11 +153,15 @@ export function PreviewView({
 }: Props) {
   const urlInputRef = useRef<HTMLInputElement | null>(null);
   const [pickActive, setPickActive] = useState(false);
+  const [annotationVoice, setAnnotationVoice] =
+    useState<DesktopPreviewAnnotationVoiceConfig | null>(null);
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const canSendAnnotation =
     useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope) &&
     Boolean(onSendAnnotation);
   const activeRecordingTabIds = useActiveBrowserRecordingTabIds();
-  const pickActiveRef = useRef<{ cancelled: boolean } | null>(null);
+  const pickOwnerKey = scopedThreadKey(threadRef);
+  const pickActiveRef = useRef<{ cancelled: boolean; ownerKey: string } | null>(null);
   const previewState = useThreadPreviewState(threadRef);
   const recentHistoryEntries = useThreadRecentHistory(
     threadRef,
@@ -738,15 +747,18 @@ export function PreviewView({
     // Capture app focus before main moves it into guest webContents.
     const previouslyFocused =
       typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null;
-    const pickRequest = { cancelled: false };
+    const pickRequest = { cancelled: false, ownerKey: pickOwnerKey };
     let submitted = false;
     pickActiveRef.current = pickRequest;
     setPickActive(true);
+    const voice = { sessionId: randomUUID(), keybindings };
+    setAnnotationVoice(voice);
     const finishPick = () => {
       const isCurrentPick = pickActiveRef.current === pickRequest;
       if (isCurrentPick) {
         pickActiveRef.current = null;
         setPickActive(false);
+        setAnnotationVoice(null);
       }
       if (
         (isCurrentPick || submitted) &&
@@ -767,12 +779,13 @@ export function PreviewView({
           readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
       );
       if (pickRequest.cancelled) return;
-      const result = await bridge.pickElement(runtimeTabId);
+      const result = await bridge.pickElement(runtimeTabId, voice);
       if (!result || pickRequest.cancelled) return;
       // The accepted pick must survive further clicks, tab changes, and unmount; stop cancellation here.
       if (pickActiveRef.current === pickRequest) {
         pickActiveRef.current = null;
         setPickActive(false);
+        setAnnotationVoice(null);
         submitted = true;
       }
       const { annotation: picked, submission, screenshotFailed = false } = result;
@@ -827,15 +840,16 @@ export function PreviewView({
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels an in-progress element pick on the preview bridge when the tab changes or on unmount
   useEffect(() => {
     return () => {
-      if (!pickActiveRef.current) return;
+      if (pickActiveRef.current?.ownerKey !== pickOwnerKey) return;
       pickActiveRef.current.cancelled = true;
       pickActiveRef.current = null;
       if (previewBridge && runtimeTabId) {
         void previewBridge.cancelPickElement(runtimeTabId).catch(() => undefined);
       }
       setPickActive(false);
+      setAnnotationVoice(null);
     };
-  }, [runtimeTabId]);
+  }, [runtimeTabId, pickOwnerKey]);
 
   // Subscribe only while visible; ChatView always owns URL-aware toggle-panel handling.
   const onPreviewAction = useEffectEvent(
@@ -879,6 +893,14 @@ export function PreviewView({
       className="flex min-h-0 flex-1 flex-col bg-background surface-grain"
       data-thread-key={scopedThreadKey(threadRef)}
     >
+      {pickActive && runtimeTabId && annotationVoice ? (
+        <PreviewAnnotationSpeech
+          key={JSON.stringify([annotationVoice.sessionId, threadRef])}
+          environmentId={threadRef.environmentId}
+          tabId={runtimeTabId}
+          config={annotationVoice}
+        />
+      ) : null}
       <PreviewChromeRow
         url={url}
         loading={loading || serverStreamPending}
