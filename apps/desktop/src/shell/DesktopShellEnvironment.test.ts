@@ -2,6 +2,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as PlatformError from "effect/PlatformError";
@@ -9,6 +10,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 import * as NodeOS from "node:os";
 import { vi } from "vite-plus/test";
 
@@ -46,6 +48,22 @@ function makeProcess(output: string, exitCode = 0): ChildProcessSpawner.ChildPro
   });
 }
 
+function makeHungProcess(): ChildProcessSpawner.ChildProcessHandle {
+  return ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(124),
+    stdout: Stream.never,
+    stderr: Stream.never,
+    all: Stream.never,
+    exitCode: Effect.never,
+    isRunning: Effect.succeed(true),
+    kill: () => Effect.never,
+    stdin: Sink.drain,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+    unref: Effect.succeed(Effect.void),
+  });
+}
+
 function withProcessEnv<A, E, R>(
   env: NodeJS.ProcessEnv,
   effect: Effect.Effect<A, E, R>,
@@ -72,6 +90,7 @@ function runShellEnvironment(input: {
     command: ChildProcess.Command,
   ) => string | { output: string; exitCode: number };
   readonly failure?: PlatformError.PlatformError;
+  readonly spawn?: ChildProcessSpawner.ChildProcessSpawner["Service"]["spawn"];
 }) {
   const layerEnvironment = Layer.succeed(
     DesktopEnvironment.DesktopEnvironment,
@@ -82,6 +101,7 @@ function runShellEnvironment(input: {
   const layerSpawner = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) => {
+      if (input.spawn !== undefined) return input.spawn(command);
       if (input.failure !== undefined) return Effect.fail(input.failure);
       const result = input.handler(command);
       return Effect.succeed(
@@ -368,6 +388,25 @@ describe("DesktopShellEnvironment", () => {
         assert.include(env.PATH, "C:\\Working");
         assert.include(env.PATH, "C:\\Windows\\System32");
       }),
+  );
+
+  it.effect("gives up on a Windows shell that survives the kill", () =>
+    Effect.gen(function* () {
+      const commands: Array<string> = [];
+      const fiber = yield* runShellEnvironment({
+        env: { PATH: "C:\\Windows", APPDATA: "C:\\Roaming" },
+        platform: "win32",
+        handler: () => "",
+        spawn: (command) => {
+          commands.push(command._tag === "StandardCommand" ? command.command : "");
+          return Effect.acquireRelease(Effect.succeed(makeHungProcess()), () => Effect.never);
+        },
+      }).pipe(Effect.forkChild({ startImmediately: true }));
+
+      for (let probe = 0; probe < 4; probe++) yield* TestClock.adjust("5 seconds");
+      yield* Fiber.join(fiber);
+      assert.deepEqual([...new Set(commands)], ["pwsh.exe", "powershell.exe"]);
+    }),
   );
 
   it.effect("replaces a Path-spelled Windows PATH instead of adding a second key", () =>

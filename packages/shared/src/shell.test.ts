@@ -7,6 +7,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -37,10 +38,12 @@ import {
 
 const nativeProbe = vi.hoisted(() => ({
   execFile: vi.fn<typeof import("node:child_process").execFile>(),
+  original: undefined as unknown as typeof import("node:child_process").execFile,
 }));
 
 vi.mock("node:child_process", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:child_process")>();
+  nativeProbe.original = original.execFile;
   return { ...original, execFile: nativeProbe.execFile.mockImplementation(original.execFile) };
 });
 
@@ -263,7 +266,7 @@ describe("readEnvironmentFromWindowsShell", () => {
       Effect.gen(function* () {
         const started = Promise.withResolvers<void>();
         const kill = vi.fn(() => true);
-        const child = { kill } as unknown as ReturnType<
+        const child = { kill, unref: vi.fn() } as unknown as ReturnType<
           typeof import("node:child_process").execFile
         >;
         const execFile = nativeProbe.execFile;
@@ -283,6 +286,32 @@ describe("readEnvironmentFromWindowsShell", () => {
           execFile.mockClear();
         }
       }),
+  );
+
+  effectIt.effect("gives up on a shell that survives the kill and holds stdout open", () =>
+    Effect.gen(function* () {
+      const stdout = { destroy: vi.fn() };
+      const unref = vi.fn();
+      const child = { kill: vi.fn(() => true), stdout, unref } as unknown as ReturnType<
+        typeof import("node:child_process").execFile
+      >;
+      const execFile = nativeProbe.execFile;
+      execFile.mockClear();
+      execFile.mockImplementation(() => child);
+      try {
+        const fiber = yield* readEnvironmentFromWindowsShell(["PATH"]).pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("6 seconds");
+        expect(execFile.mock.calls.map(([file]) => file)).toEqual(["pwsh.exe", "powershell.exe"]);
+        yield* TestClock.adjust("6 seconds");
+        expect(yield* Fiber.join(fiber)).toEqual({});
+        expect(stdout.destroy).toHaveBeenCalledTimes(2);
+        expect(unref).toHaveBeenCalledTimes(2);
+      } finally {
+        execFile.mockReset();
+        execFile.mockImplementation(nativeProbe.original);
+      }
+    }),
   );
 
   effectIt.effect("extracts environment variables from a PowerShell command", () =>
