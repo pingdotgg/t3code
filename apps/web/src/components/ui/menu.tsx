@@ -7,6 +7,7 @@ import { buttonVariants } from "./button";
 import { renderClosingPositioner } from "./closing-positioner";
 import { Input, type InputProps } from "./input";
 import { Spinner } from "./spinner";
+import { RELAXED_PICKER_CLASS } from "./picker-styles";
 
 export const MENU_ITEM_ROW_CLASS =
   "[&>svg]:-mx-0.5 flex min-h-8 cursor-pointer select-none items-center gap-2 rounded-control px-2.5 py-1 text-control text-foreground outline-none data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-highlighted:surface-selected-soft data-inset:ps-8 data-[variant=destructive]:text-destructive-foreground data-highlighted:not-data-[variant=destructive]:text-strong-foreground data-selected:surface-selected-soft data-selected:text-strong-foreground data-disabled:opacity-45 sm:min-h-8 [&>svg:not([class*='size-'])]:size-4.5 sm:[&>svg:not([class*='size-'])]:size-4 [&>svg:not([class*='text-'])]:text-muted-foreground data-highlighted:[&>svg:not([class*='text-'])]:text-foreground data-selected:[&>svg:not([class*='text-'])]:text-foreground data-[variant=destructive]:[&>svg:not([class*='text-'])]:text-current [&>svg]:pointer-events-none [&>svg]:shrink-0";
@@ -36,6 +37,7 @@ function MenuPopup({
   keepMounted = false,
   width = "default",
   variant = "default",
+  spacing = "default",
   ...props
 }: MenuPrimitive.Popup.Props & {
   align?: MenuPrimitive.Positioner.Props["align"];
@@ -47,6 +49,7 @@ function MenuPopup({
   keepMounted?: boolean;
   width?: "default" | "content";
   variant?: "default" | "scope";
+  spacing?: "default" | "relaxed";
 }) {
   return (
     <MenuPrimitive.Portal keepMounted={keepMounted}>
@@ -66,6 +69,7 @@ function MenuPopup({
             "surface-popover kbd-in-popover relative flex origin-(--transform-origin) rounded-card outline-none focus:outline-none",
             variant === "scope" &&
               "rounded-pane [&_[data-slot=menu-radio-item]:not([data-checked]):not([data-highlighted])]:text-muted-foreground [&_[data-slot=menu-radio-item-indicator]>svg]:size-3",
+            spacing === "relaxed" && RELAXED_PICKER_CLASS,
             // Electron drag hit-testing ignores z-index; opt portaled menus out to keep overlapping rows
             // hoverable.
             "[-webkit-app-region:no-drag]",

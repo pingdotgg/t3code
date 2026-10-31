@@ -5,6 +5,7 @@ import * as React from "react";
 import { cn } from "~/lib/utils";
 import { Input } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { RELAXED_PICKER_CLASS } from "./picker-styles";
 
 const ComboboxContext = React.createContext<{
   chipsRef: React.RefObject<Element | null> | null;
@@ -106,8 +107,17 @@ function ComboboxInput({
 
 function ComboboxSearchInput({
   separator = true,
+  variant = "default",
   ...props
-}: React.ComponentProps<typeof ComboboxInput> & { separator?: boolean }) {
+}: React.ComponentProps<typeof ComboboxInput> & { separator?: boolean; variant?: "default" | "inset" }) {
+  if (variant === "inset") {
+    return (
+      <div className="relative m-1.5 shrink-0 rounded-control surface-field">
+        <SearchIcon aria-hidden className="pointer-events-none absolute top-1/2 left-2.5 z-10 size-[13px] -translate-y-1/2 text-dim-foreground" />
+        <ComboboxInput {...props} showTrigger={false} size="sm" unstyled className="[&_input]:h-7 [&_input]:ps-7.75 [&_input]:pe-2.5 [&_input]:text-meta [&_input]:font-normal" />
+      </div>
+    );
+  }
   return (
     <div className="min-w-0 shrink-0 px-3 pt-2.5">
       <div
@@ -148,8 +158,10 @@ function ComboboxPopup({
   alignOffset,
   align = "start",
   anchor: anchorProp,
+  spacing = "default",
   ...props
 }: ComboboxPrimitive.Popup.Props & {
+  spacing?: "default" | "relaxed";
   align?: ComboboxPrimitive.Positioner.Props["align"];
   sideOffset?: ComboboxPrimitive.Positioner.Props["sideOffset"];
   alignOffset?: ComboboxPrimitive.Positioner.Props["alignOffset"];
@@ -173,6 +185,7 @@ function ComboboxPopup({
         <span
           className={cn(
             "surface-popover kbd-in-popover relative flex max-h-full min-w-(--anchor-width) max-w-(--available-width) origin-(--transform-origin) rounded-card transition-[scale,opacity]",
+            spacing === "relaxed" && RELAXED_PICKER_CLASS,
             className,
           )}
         >
