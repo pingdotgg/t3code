@@ -101,6 +101,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
             instanceId: options.instanceId,
             operation: "runtime",
             detail: cause.message,
+            cause,
           }),
       ),
     );

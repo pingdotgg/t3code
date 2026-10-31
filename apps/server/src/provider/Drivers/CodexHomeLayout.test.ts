@@ -71,7 +71,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
 
   describe("codexHomeEnvironment", () => {
     it.effect.each(["live", "interrupted"] as const)(
-      "reads committed shadow WAL data with a %s connection",
+      "reads committed private shadow WAL data with a %s connection",
       (connection) =>
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
@@ -84,12 +84,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             using seed = new NodeSqlite.DatabaseSync(sharedDatabasePath);
             seed.exec("PRAGMA journal_mode = WAL; CREATE TABLE entries (value TEXT);");
           }
-          // Windows places sidecars beside database links; Unix resolves the target first.
-          if ((yield* HostProcess.isWindows) && symlinksSupported) {
-            yield* fileSystem.symlink(sharedDatabasePath, shadowDatabasePath);
-          } else {
-            yield* fileSystem.copyFile(sharedDatabasePath, shadowDatabasePath);
-          }
+          yield* fileSystem.copyFile(sharedDatabasePath, shadowDatabasePath);
           using writer = new NodeSqlite.DatabaseSync(shadowDatabasePath);
           writer.exec("PRAGMA wal_autocheckpoint = 0; INSERT INTO entries VALUES ('committed');");
           const database = yield* fileSystem.readFile(shadowDatabasePath);
@@ -124,6 +119,134 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
               count: 2,
             });
           }
+        }),
+    );
+
+    for (const platform of ["win32", "linux", "darwin"] as const) {
+      it.effect.skipIf(!symlinksSupported)(
+        `preserves SQLite home compatibility on ${platform}`,
+        () =>
+          Effect.gen(function* () {
+            const fileSystem = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+            const shadowHome = yield* makeTempDir("t3code-codex-shadow-");
+            const layout = yield* resolveCodexHomeLayout(
+              decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+            );
+            expect((yield* codexHomeEnvironment(layout, {})).CODEX_SQLITE_HOME).toBe(sharedHome);
+            for (const name of ["state_5.sqlite", "state_5.sqlite-wal", "state_5.sqlite-shm"]) {
+              yield* writeTextFile(path.join(sharedHome, name), `shared ${name}`);
+              const target =
+                name === "state_5.sqlite"
+                  ? path.relative(shadowHome, path.join(sharedHome, name))
+                  : path.join(sharedHome, name);
+              yield* fileSystem.symlink(target, path.join(shadowHome, name));
+            }
+            yield* materializeCodexShadowHome(layout);
+            const legacyHome = platform === "win32" ? sharedHome : shadowHome;
+            expect((yield* codexHomeEnvironment(layout, {})).CODEX_SQLITE_HOME).toBe(legacyHome);
+            expect(
+              (yield* codexHomeEnvironment(layout, { CODEX_SQLITE_HOME: "  " })).CODEX_SQLITE_HOME,
+            ).toBe(legacyHome);
+
+            yield* writeTextFile(path.join(shadowHome, "goals_1.sqlite"), "private goals");
+            if (platform === "win32") {
+              const error = yield* codexHomeEnvironment(layout, {}).pipe(Effect.flip);
+              expect(error).toMatchObject({
+                _tag: "CodexShadowHomeSqliteConflictError",
+                sharedHomePath: sharedHome,
+                effectiveHomePath: shadowHome,
+              });
+            } else {
+              expect((yield* codexHomeEnvironment(layout, {})).CODEX_SQLITE_HOME).toBe(shadowHome);
+            }
+            for (const override of [sharedHome, shadowHome, "relative-sqlite-home"]) {
+              expect(
+                (yield* codexHomeEnvironment(layout, { CODEX_SQLITE_HOME: ` ${override} ` }))
+                  .CODEX_SQLITE_HOME,
+              ).toBe(override);
+            }
+            expect(yield* fileSystem.readFileString(path.join(shadowHome, "goals_1.sqlite"))).toBe(
+              "private goals",
+            );
+            expect(yield* fileSystem.readLink(path.join(shadowHome, "state_5.sqlite"))).toBe(
+              path.relative(shadowHome, path.join(sharedHome, "state_5.sqlite")),
+            );
+            yield* fileSystem.remove(path.join(shadowHome, "goals_1.sqlite"));
+            yield* fileSystem.remove(path.join(shadowHome, "state_5.sqlite"));
+            yield* fileSystem.symlink(
+              path.join(sharedHome, "unrelated.sqlite"),
+              path.join(shadowHome, "state_5.sqlite"),
+            );
+            if (platform === "win32") {
+              expect(yield* codexHomeEnvironment(layout, {}).pipe(Effect.flip)).toMatchObject({
+                _tag: "CodexShadowHomeSqliteConflictError",
+                entryName: "state_5.sqlite",
+              });
+            } else {
+              expect((yield* codexHomeEnvironment(layout, {})).CODEX_SQLITE_HOME).toBe(shadowHome);
+            }
+          }).pipe(Effect.provideService(HostProcess.Platform, platform)),
+      );
+    }
+
+    it.effect.skipIf(!symlinksSupported || HostProcess.Platform.defaultValue() !== "win32")(
+      "refuses an existing linked database with split committed WAL views without changing files",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+          const shadowHome = yield* makeTempDir("t3code-codex-shadow-");
+          const sharedDatabasePath = path.join(sharedHome, "state_5.sqlite");
+          const shadowDatabasePath = path.join(shadowHome, "state_5.sqlite");
+          {
+            using seed = new NodeSqlite.DatabaseSync(sharedDatabasePath);
+            seed.exec("PRAGMA journal_mode = WAL; CREATE TABLE entries (value TEXT);");
+          }
+          yield* fileSystem.symlink(sharedDatabasePath, shadowDatabasePath);
+          const shadowWriter = yield* Effect.acquireRelease(
+            Effect.sync(() => new NodeSqlite.DatabaseSync(shadowDatabasePath)),
+            (database) => Effect.sync(() => database.close()),
+          );
+          shadowWriter.exec(
+            "PRAGMA wal_autocheckpoint = 0; INSERT INTO entries VALUES ('shadow-committed');",
+          );
+          const sharedWriter = yield* Effect.acquireRelease(
+            Effect.sync(() => new NodeSqlite.DatabaseSync(sharedDatabasePath)),
+            (database) => Effect.sync(() => database.close()),
+          );
+          sharedWriter.exec(
+            "PRAGMA wal_autocheckpoint = 0; INSERT INTO entries VALUES ('shared-committed');",
+          );
+          expect(shadowWriter.prepare("SELECT value FROM entries").all()).toEqual([
+            { value: "shadow-committed" },
+          ]);
+          expect(sharedWriter.prepare("SELECT value FROM entries").all()).toEqual([
+            { value: "shared-committed" },
+          ]);
+          const files = [
+            sharedDatabasePath,
+            `${sharedDatabasePath}-wal`,
+            `${sharedDatabasePath}-shm`,
+            `${shadowDatabasePath}-wal`,
+            `${shadowDatabasePath}-shm`,
+          ];
+          const before = yield* Effect.forEach(files, (file) => fileSystem.readFile(file));
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+          );
+          yield* materializeCodexShadowHome(layout);
+          const error = yield* codexHomeEnvironment(layout, {}).pipe(Effect.flip);
+          expect(error).toMatchObject({
+            _tag: "CodexShadowHomeSqliteConflictError",
+            sharedHomePath: sharedHome,
+            effectiveHomePath: shadowHome,
+          });
+          expect(error.message).toContain("Stop all Codex processes");
+          expect(yield* Effect.forEach(files, (file) => fileSystem.readFile(file))).toEqual(before);
+          expect(yield* fileSystem.readLink(shadowDatabasePath)).toBe(sharedDatabasePath);
         }),
     );
   });

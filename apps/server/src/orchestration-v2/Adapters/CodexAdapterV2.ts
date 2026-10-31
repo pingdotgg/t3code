@@ -1564,18 +1564,22 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
     environment,
     hostEnvironment,
   );
-  const processEnv = yield* materializeCodexShadowHome(homeLayout).pipe(
-    Effect.andThen(() => codexHomeEnvironment(homeLayout, environmentOverrides)),
-    Effect.mapError(
-      (cause) =>
-        new ProviderAdapterDriverCreateError({
-          driver: CODEX_DRIVER_KIND,
-          instanceId,
-          detail: "Failed to materialize the Codex shadow home.",
-          cause,
-        }),
-    ),
-  );
+  // Managed runtimes prepare their own home and report setup failures through provider status.
+  const processEnv =
+    hooks.resolveRuntime === undefined
+      ? yield* materializeCodexShadowHome(homeLayout).pipe(
+          Effect.andThen(() => codexHomeEnvironment(homeLayout, environmentOverrides)),
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapterDriverCreateError({
+                driver: CODEX_DRIVER_KIND,
+                instanceId,
+                detail: "Failed to materialize the Codex shadow home.",
+                cause,
+              }),
+          ),
+        )
+      : environmentOverrides;
 
   const settings = {
     ...config,
