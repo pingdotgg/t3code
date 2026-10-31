@@ -335,6 +335,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
       readonly initialProviderItemIdentityVersion?: 2;
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
+    readonly canResumeAfterRestart?: boolean;
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
@@ -407,6 +408,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
           driver: CODEX_DRIVER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
+          canResumeAfterRestart: options.canResumeAfterRestart ?? true,
           events: options.failEventStream
             ? Stream.fail(
                 new ProviderAdapter.ProviderAdapterEventStreamError({
@@ -483,6 +485,7 @@ function layerTest(input: {
     readonly paused: Deferred.Deferred<void>;
   };
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
+  readonly canResumeAfterRestart?: boolean;
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
@@ -513,6 +516,7 @@ function layerTest(input: {
       ...(input.hasPendingBackgroundWork === undefined
         ? {}
         : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
+      canResumeAfterRestart: input.canResumeAfterRestart ?? true,
       ...(input.hasPendingBackgroundWorkForThread === undefined
         ? {}
         : { hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread }),
@@ -3625,9 +3629,9 @@ it.effect(
 );
 
 // regression: #26722 live agents kept a stale tool list after Linked environments changed
-it.effect(
-  "ProviderSessionManagerV2 reopens an idle exclusive runtime when Linked environments changes",
-  () =>
+it.effect.each([true, false])(
+  "ProviderSessionManagerV2 refreshes exclusive runtimes only when restorable: %s",
+  (canResumeAfterRestart) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const pendingWork = yield* Ref.make<Effect.Effect<boolean>>(Effect.succeed(false));
@@ -3696,6 +3700,11 @@ it.effect(
         });
 
         const second = yield* open;
+        if (!canResumeAfterRestart) {
+          assert.strictEqual(second, first);
+          assert.deepEqual(yield* counts, { openCount: 1, closeCount: 0 });
+          return;
+        }
         assert.notStrictEqual(second, first);
         assert.deepEqual(yield* counts, { openCount: 2, closeCount: 1 });
         const resumed = yield* second.resumeThread({
@@ -3754,6 +3763,7 @@ it.effect(
             state,
             idleTimeoutMs: 1000,
             capabilities: ExclusiveCapabilities,
+            canResumeAfterRestart,
             hasPendingBackgroundWork: Effect.flatten(Ref.get(pendingWork)),
             serverSettingsLayer: Layer.succeed(ServerSettings.ServerSettingsService, settings),
           }),

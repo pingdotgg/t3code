@@ -1762,6 +1762,7 @@ export const layerWithOptions = (
       )(function* (entry: LiveSessionEntry) {
         if (
           entry.supportsMultipleProviderThreads ||
+          entry.runtime.canResumeAfterRestart === false ||
           entry.openedWithLinkedEnvironments === undefined ||
           entry.busyTurns.size > 0
         ) {
