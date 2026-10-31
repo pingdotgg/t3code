@@ -755,7 +755,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       </div>
     ) : null;
 
-  // Touch shows actions all the time, so they keep their own line there.
+  // Touch shows actions all the time, and narrow lanes have no room beside the
+  // bubble, so both keep the actions on their own line.
   const floatActions = row.groupedWithNext === true && !coarsePointer;
   const messageActions = (
     <div
@@ -1000,7 +1001,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         {floatActions ? (
           <div
             className={cn(
-              "absolute end-full bottom-3 me-2 flex w-max max-w-[calc(20cqw-0.5rem)]",
+              "absolute end-full top-1/2 me-2 hidden w-max max-w-[calc(20cqw-0.5rem)] -translate-y-1/2 @min-[37rem]:flex",
               ACTIONS_REVEAL_CLASS_NAME,
             )}
           >
@@ -1009,8 +1010,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         ) : null}
       </div>
       <UserMessageProjectedStatus row={row} />
-      {(!folded || expanded) && !floatActions ? (
-        <div className={cn("flex w-full max-w-[80%] justify-end pe-1", ACTIONS_REVEAL_CLASS_NAME)}>
+      {!folded || expanded ? (
+        <div
+          className={cn(
+            "flex w-full max-w-[80%] justify-end pe-1",
+            floatActions && "@min-[37rem]:hidden",
+            ACTIONS_REVEAL_CLASS_NAME,
+          )}
+        >
           {messageActions}
         </div>
       ) : null}
