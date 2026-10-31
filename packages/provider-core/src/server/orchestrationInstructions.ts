@@ -33,7 +33,11 @@ export const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `
 
 ## T3 Code browser
 
-When browser work was asked, \`preview_*\` is the browser you share with the user: \`preview_status\` first, then \`preview_open\` if no tab can be automated. Prefer snapshot locators over coordinates. Switch browsers only if the tools are absent or \`preview_open\` says unsupported, the user asks, or two preview calls fail on one step. Then quote the error and switch.
+When browser work was asked, \`preview_*\` is the browser you share with the user: \`preview_status\` first, then \`preview_open\` if no tab can be automated. Prefer snapshot locators over coordinates.
+
+An operation timeout or missing locator does not mean the browser is unavailable. Correct actionable inputs and check \`preview_status\` on the same tab. If a snapshot times out while status works, use \`preview_evaluate\` for DOM inspection when you control the tab. After repeated failures, report the exact error and recovery checks.
+
+Keep recovery inside T3. Preview failures do not authorize opening another browser or incognito window, activating apps, or changing the user's focus. Switch browsers only when the user authorizes it or invokes a skill or documented repository workflow that names one. If tools are absent or no host is available after \`preview_status\` and \`preview_open\`, report the missing prerequisite.
 `;
 
 const T3_CODE_DEVICE_TOOLS = ["device_list", "device_open", "device_screenshot", "device_close"];
