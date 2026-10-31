@@ -87,9 +87,20 @@ const PNG_HEADER = (() => {
   return header.toString("base64");
 })();
 
+function makeRenderer() {
+  return {
+    /** A page script that never yields; Chromium stops it on `Runtime.terminateExecution`. */
+    busyScript: null as PromiseWithResolvers<void> | null,
+    gotoStarted: Promise.withResolvers<void>(),
+    /** Rejecting these stands in for Playwright's goto timeout while the script runs. */
+    stalledGotos: [] as Array<(cause: Error) => void>,
+  };
+}
+
 function makeSession(
   frame: ReturnType<typeof makeFrame> | undefined,
   viewport: { width: number; height: number },
+  renderer?: ReturnType<typeof makeRenderer>,
 ) {
   const events = new NodeEvents.EventEmitter();
   return {
@@ -99,6 +110,17 @@ function makeSession(
       Promise.all(events.listeners(name).map((listener) => listener(...args))),
     detach: vi.fn(async () => {}),
     send: vi.fn(async (method: string, input?: unknown): Promise<Record<string, unknown>> => {
+      const busyScript = renderer?.busyScript;
+      if (method === "Runtime.terminateExecution" && busyScript) {
+        renderer.busyScript = null;
+        busyScript.resolve();
+        return {};
+      }
+      if (method === "Runtime.evaluate" && busyScript) {
+        return busyScript.promise.then(() => {
+          throw new Error("Execution was terminated");
+        });
+      }
       if (method === "Page.getNavigationHistory") return { currentIndex: 0, entries: [{}] };
       if (method === "Page.getLayoutMetrics") return { cssVisualViewport: { pageX: 0, pageY: 0 } };
       if (method === "Page.captureScreenshot") {
@@ -156,6 +178,7 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
   const nativeFileChooser = vi.fn();
   const setChooserFiles = vi.fn(async (_files: unknown) => {});
   const sessions: ReturnType<typeof makeSession>[] = [];
+  const renderer = makeRenderer();
   let url = "about:blank";
   let viewport: ReturnType<Page["viewportSize"]> = { width: 1280, height: 800 };
   const cssViewport = { width: 1920, height: 1080 };
@@ -193,6 +216,14 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
       viewport = size;
     }),
     goto: vi.fn(async (next: string) => {
+      const busyScript = renderer.busyScript;
+      renderer.gotoStarted.resolve();
+      if (busyScript) {
+        await new Promise<void>((resolve, reject) => {
+          renderer.stalledGotos.push(reject);
+          void busyScript.promise.then(resolve);
+        });
+      }
       url = next;
       events.emit("load");
       const pending = initialNavigation;
@@ -226,6 +257,7 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
   const context = {
     page,
     sessions,
+    renderer,
     cssViewport,
     newPage: async () => page as unknown as Page,
     grantPermissions: vi.fn(async () => {}),
@@ -233,6 +265,7 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
       const session = makeSession(
         target === page ? undefined : (target as ReturnType<typeof makeFrame>),
         cssViewport,
+        renderer,
       );
       sessions.push(session);
       return session;
@@ -638,6 +671,61 @@ it.live.each([
         }
         yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
         expect(encoderStreams).toEqual([{ frameRate, bitsPerSecond }]);
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.live.each(["load", "none"] as const)(
+  "an agent navigates away from a page whose script never yields (readiness $0)",
+  (readiness) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, tabId } = yield* ready;
+        yield* broker.invoke({
+          scope,
+          tabId,
+          operation: "navigate",
+          input: { url: "http://localhost:5173/busy" },
+        });
+        const { renderer } = contexts[0]!;
+        renderer.busyScript = Promise.withResolvers<void>();
+        renderer.gotoStarted = Promise.withResolvers<void>();
+
+        const navigation = yield* broker
+          .invoke<PreviewAutomationStatus>({
+            scope,
+            tabId,
+            operation: "navigate",
+            input: { url: "http://localhost:5173/next", readiness, timeoutMs: 5_000 },
+          })
+          .pipe(Effect.exit, Effect.forkScoped);
+        yield* Effect.promise(() => renderer.gotoStarted.promise);
+        for (const timeOut of renderer.stalledGotos.splice(0)) {
+          timeOut(
+            Object.assign(new Error("page.goto: Timeout 5000ms exceeded."), {
+              name: "TimeoutError",
+            }),
+          );
+        }
+        const navigated = yield* Fiber.join(navigation);
+        const waited = yield* broker
+          .invoke({
+            scope,
+            tabId,
+            operation: "waitFor",
+            input: { urlIncludes: "/next", timeoutMs: 100 },
+          })
+          .pipe(Effect.exit);
+        const status = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "status",
+          input: {},
+        });
+
+        expect(status.url).toBe("http://localhost:5173/next");
+        expect(navigated).toMatchObject({ _tag: "Success" });
+        expect(waited).toMatchObject({ _tag: "Success" });
       }),
     ).pipe(Effect.provide(layer)),
 );
