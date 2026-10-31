@@ -1,11 +1,6 @@
 import { usePanelHost } from "../panelHost";
 import { DeviceHostUpdates } from "~/components/device/DeviceHostUpdates";
-import type {
-  DevicePlatform,
-  DeviceServiceState,
-  DeviceSummary,
-  ScopedThreadRef,
-} from "@t3tools/contracts";
+import type { DevicePlatform, DeviceServiceState, DeviceSummary } from "@t3tools/contracts";
 import { ArrowUpRight, CircleAlert, Play, Smartphone, X } from "lucide-react";
 import { useAtomMount } from "@effect/atom-react";
 import { type ReactNode, useState } from "react";
@@ -32,7 +27,11 @@ import {
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DeviceLoadingView } from "~/components/device/DeviceLoadingView";
-import { DeviceSetup, deviceHubReadiness, isAndroidDiscoveryUncertain } from "~/components/device/DeviceSetup";
+import {
+  DeviceSetup,
+  deviceHubReadiness,
+  isAndroidDiscoveryUncertain,
+} from "~/components/device/DeviceSetup";
 import { DeviceWorkspace } from "~/components/device/DeviceWorkspace";
 import { PreviewPanelShell } from "~/components/preview/PreviewPanelShell";
 
@@ -67,9 +66,7 @@ export default function DeviceSidePanel(props: {
   const hostDisabled = state.hostStatus === "disabled";
 
   useAtomMount(
-    visible && loaded && !hostDisabled
-      ? deviceHostProbeAtom(environmentId)
-      : NO_DEVICE_PROBE_ATOM,
+    visible && loaded && !hostDisabled ? deviceHostProbeAtom(environmentId) : NO_DEVICE_PROBE_ATOM,
   );
 
   const sessions = state.sessions.filter((session) => session.threadId === threadId);
