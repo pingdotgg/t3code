@@ -11,7 +11,7 @@ import { memo, use, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { workEntryDisplayIndicatesToolFailure } from "../../session-logic";
 import ChatMarkdown from "../ChatMarkdown";
-import { Minimize2Icon, XIcon } from "lucide-react";
+import { ChevronRightIcon, Minimize2Icon, XIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import {
@@ -369,6 +369,14 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
     <LiveActivityRow label="Thinking" iconName="brain" active={live} shimmer={live} />
   );
   const { groupId, thought } = row;
+  const groupDisclosure =
+    groupId === undefined ? null : (
+      <WorkGroupDisclosureButton
+        expanded={row.expanded === true}
+        label="failed tool details"
+        onToggle={() => ctx.onToggleWorkGroup(groupId, row.id)}
+      />
+    );
   if (thought === undefined) {
     if (groupId === undefined) return activity;
     return (
@@ -392,6 +400,7 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
       >
         {activity}
       </button>
+      {groupDisclosure}
       {thoughtExpanded ? <ReasoningTraceContent entries={[thought]} /> : null}
     </div>
   );
@@ -531,6 +540,14 @@ export function LiveWorkEntryTimelineRow({
   const expandedIsThought =
     liveThought !== undefined && thoughtExpanded && row.entry === row.thought;
 
+  const groupDisclosure =
+    liveThought === undefined ? null : (
+      <WorkGroupDisclosureButton
+        expanded={row.expanded}
+        label="work details"
+        onToggle={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
+      />
+    );
   const button = (
     <button
       type="button"
@@ -610,12 +627,42 @@ export function LiveWorkEntryTimelineRow({
     </button>
   );
 
-  if (liveThought === undefined || !thoughtExpanded) return button;
+  if (liveThought === undefined) return button;
   return (
     <div className="min-w-0 max-w-full">
       {button}
-      <ReasoningTraceContent entries={[liveThought]} />
+      {groupDisclosure}
+      {thoughtExpanded ? <ReasoningTraceContent entries={[liveThought]} /> : null}
     </div>
+  );
+}
+
+function WorkGroupDisclosureButton({
+  expanded,
+  label,
+  onToggle,
+}: {
+  expanded: boolean;
+  label: string;
+  onToggle: () => void;
+}) {
+  const action = expanded ? "Hide" : "Show";
+  return (
+    <WorkLogButton
+      aria-label={`${action} ${label}`}
+      aria-expanded={expanded}
+      onClick={onToggle}
+      icon={
+        <ChevronRightIcon
+          aria-hidden
+          className={cn(
+            "size-4 shrink-0 text-icon-muted transition-transform",
+            expanded && "rotate-90",
+          )}
+        />
+      }
+      label={`${action} ${label}`}
+    />
   );
 }
 

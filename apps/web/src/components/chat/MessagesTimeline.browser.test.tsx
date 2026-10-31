@@ -169,8 +169,12 @@ async function click(element: HTMLElement) {
   await act(async () => element.click());
 }
 
-function setup({ scheduledTasks = [] as ReadonlyArray<{ id: string; title: string }> } = {}) {
+function setup({
+  scheduledTasks = [] as ReadonlyArray<{ id: string; title: string }>,
+  liveThinkingEnabled = false,
+} = {}) {
   environmentQuery.data = { tasks: scheduledTasks };
+  liveThinkingState.enabled = liveThinkingEnabled;
 }
 
 const TASK_ID = ScheduledTaskId.make("task-1");
@@ -1214,27 +1218,86 @@ describe("labs live-thinking row", () => {
     screen.container.querySelector("[data-timeline-row-kind='work-live'] .max-h-96");
 
   it("keeps the work-group toggle while the labs setting is off", async () => {
-    liveThinkingState.enabled = false;
+    setup();
     await using screen = await renderTimeline(entries, liveProps);
     expect(liveRow(screen)).not.toBeNull();
     await click(liveRow(screen) as HTMLElement);
     // The click toggles the work group: the group row appears and the thought stays
     // folded in the entry row, never in the live row.
-    expect(screen.container.querySelector("[data-timeline-row-kind='work']")).not.toBeNull();
+    await vi.waitFor(() =>
+      expect(screen.container.querySelector("[data-timeline-row-kind='work']")).not.toBeNull(),
+    );
     expect(liveRowScroller(screen)).toBeNull();
   });
 
   it("expands the full streaming thought on click while the labs setting is on", async () => {
-    liveThinkingState.enabled = true;
+    setup({ liveThinkingEnabled: true });
     await using screen = await renderTimeline(entries, liveProps);
     expect(liveRow(screen)).not.toBeNull();
     await click(liveRow(screen) as HTMLElement);
     // The thought expands directly below the live row; the work group stays folded.
-    await expect
-      .element(screen.getByText(/Let me check the fixture before touching anything else/))
-      .toBeVisible();
-    expect(screen.container.querySelector("[data-timeline-row-kind='work']")).toBeNull();
+    const fullThought = "Let me check the fixture before touching anything else";
+    await expect.element(screen.getByText(new RegExp(fullThought))).toBeVisible();
+    expect(liveRow(screen)?.textContent).not.toContain(fullThought);
+    expect(liveRowScroller(screen)?.textContent?.split(fullThought)).toHaveLength(2);
+    await vi.waitFor(() =>
+      expect(screen.container.querySelector("[data-timeline-row-kind='work']")).toBeNull(),
+    );
     await click(liveRow(screen) as HTMLElement);
-    expect(liveRowScroller(screen)).toBeNull();
+    await vi.waitFor(() => expect(liveRowScroller(screen)).toBeNull());
+
+    await click(screen.button("Show work details"));
+    await vi.waitFor(() =>
+      expect(screen.container.querySelector("[data-timeline-row-kind='work']")).not.toBeNull(),
+    );
+  });
+
+  it("expands the fallback thought and retains failed-tool disclosure", async () => {
+    setup({ liveThinkingEnabled: true });
+    const failedEntries: Entry[] = [
+      {
+        id: "entry-settled-thought",
+        kind: "work",
+        createdAt: CREATED_AT,
+        entry: {
+          id: "settled-thought",
+          createdAt: CREATED_AT,
+          runId,
+          label: "Thinking",
+          tone: "thinking",
+          itemType: "reasoning",
+          toolLifecycleStatus: "completed",
+          detail: "The command failed because the fixture is stale.",
+        },
+      },
+      {
+        id: "entry-failed-command",
+        kind: "work",
+        createdAt: CREATED_AT,
+        entry: {
+          id: "failed-command",
+          createdAt: CREATED_AT,
+          runId,
+          label: "Ran rg",
+          command: "rg toolCall",
+          requestKind: "command",
+          tone: "tool",
+          toolLifecycleStatus: "failed",
+        },
+      },
+    ];
+    await using screen = await renderTimeline(failedEntries, liveProps);
+    const fallbackThought = screen.container.querySelector(
+      "[data-timeline-row-kind='thinking'] button",
+    );
+    expect(fallbackThought).not.toBeNull();
+    await click(fallbackThought as HTMLElement);
+    await expect
+      .element(screen.getByText(/command failed because the fixture is stale/))
+      .toBeVisible();
+
+    const disclosure = screen.button("Show failed tool details");
+    await click(disclosure);
+    await expect.element(screen.getByText(/rg toolCall/)).toBeVisible();
   });
 });
