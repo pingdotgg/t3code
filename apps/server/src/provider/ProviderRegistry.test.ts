@@ -746,6 +746,7 @@ it.layer(
       } as const satisfies ServerProvider;
       const refreshedProvider = {
         ...previousProvider,
+        status: "warning",
         checkedAt: "2026-04-14T00:01:00.000Z",
         models: [],
         slashCommands: [],
@@ -1836,6 +1837,7 @@ it.layer(
         } as const satisfies ServerProvider;
         const refreshedProvider = {
           ...initialProvider,
+          status: "warning",
           checkedAt: "2026-04-14T00:01:00.000Z",
           models: [],
         } satisfies ServerProvider;
