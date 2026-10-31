@@ -2958,6 +2958,77 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("rolls back a persisted thread on a fresh runtime after its session was released", () =>
+    Effect.gen(function* () {
+      const previousFake = yield* makeFakePi;
+      const { runtime: previousRuntime } = yield* openRuntime(previousFake);
+      const providerThread = yield* previousRuntime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const sessionFile = providerThread.nativeThreadRef?.nativeId;
+      assert.isDefined(sessionFile);
+      const turn = (ordinal: number, entryId: string): OrchestrationV2ProviderTurn => ({
+        id: ProviderTurnId.make(`turn-${ordinal}`),
+        providerThreadId: providerThread.id,
+        nodeId: NodeId.make(`node-${ordinal}`),
+        runAttemptId: null,
+        nativeTurnRef: { driver: PI_PROVIDER, nativeId: entryId, strength: "strong" },
+        ordinal,
+        status: "completed",
+        startedAt: null,
+        completedAt: null,
+      });
+      const turns = [turn(1, "u1"), turn(2, "u2")];
+
+      // Rollback opens the session the way CheckpointRollbackService does, without resumeThread.
+      const fake = yield* makeFakePi;
+      const adapter = yield* makeAdapter(fake);
+      const runtime = yield* adapter.openSession({
+        threadId: THREAD_ID,
+        providerSessionId: SESSION_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+        initialNativeThreadId: sessionFile!,
+      });
+      yield* runtime.events.pipe(Stream.runDrain, Effect.forkScoped);
+      fake.queueState({ sessionFile: sessionFile! });
+      fake.queueState({ sessionFile: "/fake/rolled-back-session.jsonl" });
+      const result = yield* runtime
+        .rollbackThread({
+          providerThread,
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("checkpoint-1"),
+            appRunOrdinal: 1,
+            providerTurn: turns[0]!,
+          },
+          providerThreadTurns: turns,
+        })
+        .pipe(Effect.result);
+
+      assert.equal(
+        result._tag,
+        "Success",
+        `rollback on a fresh Pi runtime failed: ${result._tag === "Failure" ? String(result.failure.cause) : ""}`,
+      );
+      const requests = fake.allRequests();
+      const switchIndex = requests.findIndex(
+        (request) => request.type === "switch_session" && request.sessionPath === sessionFile,
+      );
+      const forkIndex = requests.findIndex((request) => request.type === "fork");
+      assert.isAtLeast(switchIndex, 0, "fresh runtime never switched to the persisted session");
+      assert.isAbove(forkIndex, switchIndex, "fork ran before switching to the persisted session");
+      assert.equal(requests[forkIndex]?.entryId, "u2");
+      if (result._tag !== "Success") return;
+      assert.equal(
+        result.success.providerThread.nativeThreadRef?.nativeId,
+        "/fake/rolled-back-session.jsonl",
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("settles a command-only prompt from its deferred ack and idle probe", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
