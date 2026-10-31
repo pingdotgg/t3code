@@ -68,44 +68,120 @@ export function splitBufferedAssistantText(text: string): { ready: string; rest:
   return { ready: text.slice(0, boundary), rest: text.slice(boundary) };
 }
 
-export function makeAssistantStreamingFilter(mode: ResponseStreamingMode) {
-  const delivered = new Map<string, { text: string; at: number }>();
-  return (
-    event: ProviderAdapter.ProviderAdapterV2Event,
-    now: number,
-  ): ProviderAdapter.ProviderAdapterV2Event | null => {
-    if (
-      event.type === "node.updated" &&
-      event.node.kind === "assistant_message" &&
-      event.node.status === "running"
-    )
-      return null;
-    const message =
-      event.type === "message.updated" && event.message.role === "assistant"
-        ? event.message
-        : event.type === "turn_item.updated" &&
-            (event.turnItem.type === "assistant_message" || event.turnItem.type === "reasoning")
-          ? event.turnItem
-          : null;
-    if (!message) return event;
-    const key = `${event.type}:${message.id}`;
-    if (!message.streaming) {
-      delivered.delete(key);
-      return event;
-    }
-    if (mode === "turn") return null;
-    const previous = delivered.get(key);
-    if (previous && now - previous.at < 400) return null;
-    const { ready } = splitBufferedAssistantText(message.text);
-    if (!ready || ready === previous?.text) return null;
-    delivered.set(key, { text: ready, at: now });
-    if (event.type === "message.updated")
-      return { ...event, message: { ...event.message, text: ready } };
-    if (
-      event.type === "turn_item.updated" &&
-      (event.turnItem.type === "assistant_message" || event.turnItem.type === "reasoning")
-    )
-      return { ...event, turnItem: { ...event.turnItem, text: ready } };
-    return event;
+// Long enough to ride out normal gaps between chunks; short enough that text written before a
+// long tool call or background wait does not look lost.
+const ASSISTANT_IDLE_FLUSH_MS = 800;
+
+type StreamedMessage = {
+  readonly id: string;
+  readonly text: string;
+  readonly streaming: boolean;
+};
+
+interface StreamTrack {
+  readonly text: string;
+  readonly at: number;
+  // Latest snapshot whose text has not all been delivered yet.
+  readonly held: ProviderAdapter.ProviderAdapterV2Event | null;
+  readonly heldAt: number;
+}
+
+function streamedMessage(event: ProviderAdapter.ProviderAdapterV2Event): StreamedMessage | null {
+  if (event.type === "message.updated" && event.message.role === "assistant") return event.message;
+  if (
+    event.type === "turn_item.updated" &&
+    (event.turnItem.type === "assistant_message" || event.turnItem.type === "reasoning")
+  )
+    return event.turnItem;
+  return null;
+}
+
+function withText(
+  event: ProviderAdapter.ProviderAdapterV2Event,
+  text: string,
+): ProviderAdapter.ProviderAdapterV2Event {
+  if (event.type === "message.updated") return { ...event, message: { ...event.message, text } };
+  if (
+    event.type === "turn_item.updated" &&
+    (event.turnItem.type === "assistant_message" || event.turnItem.type === "reasoning")
+  )
+    return { ...event, turnItem: { ...event.turnItem, text } };
+  return event;
+}
+
+/**
+ * Paragraph mode delivers streamed text at Markdown boundaries, at most every 400ms. A snapshot
+ * held back that way is delivered whole once its message has been idle for `idleFlushMs`, so a
+ * provider that pauses mid-turn still shows everything it wrote.
+ */
+export function makeAssistantStreamingFilter(
+  mode: ResponseStreamingMode,
+  idleFlushMs = ASSISTANT_IDLE_FLUSH_MS,
+) {
+  const tracks = new Map<string, StreamTrack>();
+  return {
+    filter(
+      event: ProviderAdapter.ProviderAdapterV2Event,
+      now: number,
+    ): ProviderAdapter.ProviderAdapterV2Event | null {
+      if (
+        event.type === "node.updated" &&
+        event.node.kind === "assistant_message" &&
+        event.node.status === "running"
+      )
+        return null;
+      const message = streamedMessage(event);
+      if (!message) return event;
+      const key = `${event.type}:${message.id}`;
+      if (!message.streaming) {
+        tracks.delete(key);
+        return event;
+      }
+      if (mode === "turn") return null;
+      const previous = tracks.get(key);
+      const delivered = previous?.text ?? "";
+      const hold = () => {
+        tracks.set(key, {
+          text: delivered,
+          at: previous?.at ?? Number.NEGATIVE_INFINITY,
+          held: message.text.length > delivered.length ? event : null,
+          heldAt: now,
+        });
+        return null;
+      };
+      if (previous && now - previous.at < 400) return hold();
+      const { ready } = splitBufferedAssistantText(message.text);
+      // An idle delivery may already show more than the next boundary; never shrink it.
+      if (ready.length <= delivered.length) return hold();
+      tracks.set(key, {
+        text: ready,
+        at: now,
+        held: ready.length < message.text.length ? event : null,
+        heldAt: now,
+      });
+      return withText(event, ready);
+    },
+    nextIdleFlushAt(): number | null {
+      let next: number | null = null;
+      for (const track of tracks.values()) {
+        if (track.held !== null && (next === null || track.heldAt + idleFlushMs < next))
+          next = track.heldAt + idleFlushMs;
+      }
+      return next;
+    },
+    flushIdle(now: number): ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event> {
+      const flushed: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      for (const [key, track] of tracks) {
+        if (track.held === null || now - track.heldAt < idleFlushMs) continue;
+        tracks.set(key, {
+          text: streamedMessage(track.held)?.text ?? track.text,
+          at: now,
+          held: null,
+          heldAt: now,
+        });
+        flushed.push(track.held);
+      }
+      return flushed;
+    },
   };
 }
