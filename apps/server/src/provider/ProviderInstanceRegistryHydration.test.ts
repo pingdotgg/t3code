@@ -77,6 +77,28 @@ describe("deriveProviderInstanceConfigMap", () => {
     expect(merged[instanceId]).toBeUndefined();
   });
 
+  it("attaches the environment's proxy only to instances that use it", () => {
+    const claudeId = ProviderInstanceId.make("claude_direct");
+    const settings = settingsWith({
+      providerProxy: { url: " http://proxy:8317/v1/ ", apiKey: "sk-proxy", managementKey: "" },
+      providerInstances: {
+        [instanceId]: { driver: ProviderDriverKind.make("codex"), useProxy: true },
+        [claudeId]: { driver: ProviderDriverKind.make("claudeAgent") },
+      },
+    });
+
+    const merged = deriveProviderInstanceConfigMap(settings);
+
+    expect(merged[instanceId]?.proxy).toEqual({ url: "http://proxy:8317", apiKey: "sk-proxy" });
+    expect(merged[claudeId]).toBe(settings.providerInstances[claudeId]);
+    expect(
+      deriveProviderInstanceConfigMap({
+        ...settings,
+        providerProxy: { ...settings.providerProxy, url: "" },
+      })[instanceId]?.proxy,
+    ).toBeUndefined();
+  });
+
   it("ignores a project override that disables an instance, leaving the machine's config in charge", () => {
     const settings = settingsWith({
       providerInstances: {

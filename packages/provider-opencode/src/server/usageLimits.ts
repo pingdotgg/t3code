@@ -18,6 +18,7 @@ import {
   makeUnavailableUsageLimits,
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
+import { PROXY_LIMITS_MESSAGE } from "@t3tools/provider-core/server/providerProxy";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const AuthFile = Schema.Struct({ "opencode-go": Schema.optionalKey(Schema.Unknown) });
@@ -76,8 +77,16 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
   readonly enabled: boolean;
   readonly serverUrl: string;
   readonly environment: NodeJS.ProcessEnv;
+  readonly proxied?: boolean;
 }) {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  if (input.proxied) {
+    return makeUnavailableUsageLimits({
+      checkedAt,
+      reason: "unsupported",
+      message: PROXY_LIMITS_MESSAGE,
+    });
+  }
   const unsupported = makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
   if (!input.enabled || input.serverUrl.trim()) return unsupported;
 

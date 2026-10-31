@@ -882,6 +882,15 @@ const SecretProviderConfigWrite = Schema.Struct({
   label: SecretProviderLabel,
 });
 
+/** A CLIProxyAPI server that `useProxy` provider instances send model traffic to. Empty `url` turns it off. */
+export const ProviderProxySettings = Schema.Struct({
+  url: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  apiKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed("")), secretSetting),
+  // Optional; when set, the proxy's accounts also feed Usage -> Limits.
+  managementKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed("")), secretSetting),
+});
+export type ProviderProxySettings = typeof ProviderProxySettings.Type;
+
 export const SourceControlHostSettings = Schema.Record(Schema.String, Schema.Unknown);
 export type SourceControlHostSettings = typeof SourceControlHostSettings.Type;
 
@@ -1350,6 +1359,7 @@ export const ServerSettings = Schema.Struct({
   secretProviders: Schema.Record(SecretProviderId, SecretProviderConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  providerProxy: ProviderProxySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   cursorKeychainUsageEnabled: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
@@ -1669,6 +1679,14 @@ export const ServerSettingsPatch = Schema.Struct({
   secretProviders: Schema.optionalKey(
     Schema.Record(SecretProviderId, Schema.NullOr(SecretProviderConfigWrite)),
   ),
+  /** Redaction markers retain secrets; empty secrets remove them. */
+  providerProxy: Schema.optionalKey(
+    Schema.Struct({
+      url: Schema.optionalKey(TrimmedString),
+      apiKey: Schema.optionalKey(TrimmedString),
+      managementKey: Schema.optionalKey(TrimmedString),
+    }),
+  ),
   cursorKeychainUsageEnabled: Schema.optionalKey(Schema.Boolean),
 
   usagePriceOverrides: Schema.optionalKey(
@@ -1692,7 +1710,8 @@ export function requiredScopesForServerSettingsPatch(
       key === "providers" ||
       key === "providerInstances" ||
       key === "usageLimitSources" ||
-      key === "secretProviders"
+      key === "secretProviders" ||
+      key === "providerProxy"
     ) {
       changesProviders = true;
     } else {

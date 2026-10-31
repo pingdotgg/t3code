@@ -3767,7 +3767,10 @@ export const OpenCodeAdapterV2Driver: ProviderAdapterDriver<
       return yield* makeOpenCodeAdapterV2({
         instanceId: input.instanceId,
         settings: { ...input.config, enabled: input.enabled },
-        environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
+        environment: OpenCodeRuntime.applyOpenCodeProxyEnvironment(
+          yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
+          input.proxy,
+        ),
         ...(providerEventLoggers.native === undefined
           ? {}
           : { nativeEventLogger: providerEventLoggers.native }),
