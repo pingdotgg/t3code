@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   tokenCompletion: null as Promise<boolean> | null,
   onDebug: undefined as NativeReviewDiffViewProps["onDebug"],
   autoViewport: false,
+  contentResetKeyLandsLate: false,
   rows: vi.fn(),
   tokens: vi.fn(),
   highlight: vi.fn(),
@@ -33,19 +34,27 @@ function RawView({
   contentResetKey,
 }: NativeReviewDiffViewProps & { ref: Ref<unknown> }) {
   const [content, setContent] = useState({ resetKey: contentResetKey, rows: "" });
-  const rows = content.resetKey === contentResetKey ? content.rows : "";
+  // Native setContentResetKey clears rows unless the key is unchanged.
+  const setContentResetKey = (resetKey: string | undefined) =>
+    setContent((current) => (current.resetKey === resetKey ? current : { resetKey, rows: "" }));
   const [tokenRowIds, setTokenRowIds] = useState<string[]>([]);
+  // Android Fabric can apply a prop update after an AsyncFunction call made later.
+  if (!mocks.contentResetKeyLandsLate && content.resetKey !== contentResetKey) {
+    setContentResetKey(contentResetKey);
+  }
   useLayoutEffect(() => {
     mocks.onDebug = onDebug;
   });
   useImperativeHandle(nativeRef, () => ({
-    async setRowsJson(value: string) {
+    async setRowsJson(value: string, resetKey?: string) {
       mocks.rows(value);
       if (mocks.registrationFailures > 0) {
         mocks.registrationFailures -= 1;
         throw new Error("Unable to find the 'T3ReviewDiffSurface' view for this native tag");
       }
-      setContent({ resetKey: contentResetKey, rows: value });
+      if (resetKey !== undefined) setContentResetKey(resetKey);
+      setContent((current) => ({ ...current, rows: value }));
+      setContentResetKey(contentResetKey);
       if (mocks.autoViewport) {
         const decoded = JSON.parse(value) as NativeReviewDiffData["rows"];
         onDebug?.({
@@ -79,7 +88,7 @@ function RawView({
   }));
   return (
     <div data-token-rows={tokenRowIds.join(",")}>
-      {rows ? "Rendered diff" : "Blank native surface"}
+      {content.rows ? "Rendered diff" : "Blank native surface"}
     </div>
   );
 }
@@ -141,6 +150,7 @@ function setup(integrated = false) {
   mocks.tokenCompletion = null;
   mocks.onDebug = undefined;
   mocks.autoViewport = false;
+  mocks.contentResetKeyLandsLate = false;
   mocks.rows.mockClear();
   mocks.tokens.mockClear();
   mocks.highlight
@@ -251,6 +261,20 @@ function setup(integrated = false) {
     async mountPullRequest(targetFileId?: string) {
       await act(async () => root.render(<PullRequestDiff targetFileId={targetFileId} />));
     },
+    async showSection(contentResetKey: string) {
+      await act(async () =>
+        root.render(
+          <NativeDiff
+            rowsJson='[{"kind":"line","id":"r0"}]'
+            contentResetKey={contentResetKey}
+            appearanceScheme="light"
+            themeJson="{}"
+            rowHeight={20}
+            contentWidth={300}
+          />,
+        ),
+      );
+    },
     async collapseFiles(fileIds: ReadonlyArray<string>) {
       collapsedFileIds = fileIds;
       await act(async () => root.render(<PullRequestDiff />));
@@ -317,6 +341,18 @@ it("retries transient native registration without replacing the diff with an err
   mocks.registrationFailures = 1;
   await screen.deliverPayloads();
   expect(screen.container.textContent).toBe("Blank native surface");
+  await screen.deliverPayloads();
+  expect(screen.container.textContent).toBe("Rendered diff");
+});
+
+it("renders identical rows after switching sections when the reset key prop lands late", async () => {
+  using screen = setup(true);
+  await screen.showSection("thread:git:changes");
+  await screen.deliverPayloads();
+  expect(screen.container.textContent).toBe("Rendered diff");
+
+  mocks.contentResetKeyLandsLate = true;
+  await screen.showSection("thread:git:working-tree");
   await screen.deliverPayloads();
   expect(screen.container.textContent).toBe("Rendered diff");
 });
