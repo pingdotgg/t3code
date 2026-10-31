@@ -185,7 +185,7 @@ When a provider CLI is behind its latest release, its provider card shows the
 available version. **Update now** runs the installer that owns the CLI
 (Homebrew, or a global npm, pnpm, Yarn, Bun, Volta, or Vite+ install), or the
 CLI's own update command when T3 Code cannot tell. Update a CLI installed with
-mise through mise. Cursor and Antigravity update with T3 Code. Homebrew installs
+mise or Nix through that tool. Cursor and Antigravity update with T3 Code. Homebrew installs
 compare against the version Homebrew offers, which can trail the npm release by
 a few hours.
 

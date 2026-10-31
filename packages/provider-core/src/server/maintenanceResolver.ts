@@ -241,6 +241,11 @@ function isMiseCommandPath(commandPath: string): boolean {
   return normalized.includes("/mise/installs/") || normalized.includes("/mise/shims/");
 }
 
+/** The Nix store is read-only, so no updater can replace a CLI that lives there. */
+function isNixStoreCommandPath(commandPath: string): boolean {
+  return normalizeCommandPath(commandPath).startsWith("/nix/store/");
+}
+
 const winGetClaudeCommandPath =
   /^[a-z]:\/(?:users\/[^/]+\/appdata\/local\/microsoft|program files(?: \(x86\))?)\/winget\/(?:links|packages\/anthropic\.claudecode_[^/]+)\/claude\.exe$/;
 
@@ -439,6 +444,9 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   });
   const commandPaths = [context.resolvedCommandPath, context.realCommandPath];
   const packageName = definition.npmPackageName;
+  if (commandPaths.some(isNixStoreCommandPath)) {
+    return manual;
+  }
   // WinGet-managed claude update exits 0 without updating; T3 does not run winget upgrade.
   if (
     definition.provider === "claudeAgent" &&
