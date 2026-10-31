@@ -1076,7 +1076,7 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelOpen = rightPanelState.isOpen;
   const rightPanelLayout = useClientSettings((settings) => settings.rightPanelLayout);
   const rightPanelColumnsLayout =
-    rightPanelLayout === "columns" && !shouldUsePlanSidebarSheet && !embedded;
+    rightPanelLayout === "columns" && !prefersPlanSidebarSheet && !embedded;
   const [rightPanelRevealRequestId, setRightPanelRevealRequestId] = useState(0);
   const [chatColumnView, setChatColumnView] = useState<ChatColumnView>({
     visible: true,
@@ -1117,8 +1117,7 @@ export default function ChatView(props: ChatViewProps) {
         activePreviewMiniPlayer?.source ?? null,
         renderedRightPanelSurface,
       );
-  const canMaximizeRightPanel =
-    !embedded && rightPanelOpen && !shouldUsePlanSidebarSheet && !rightPanelColumnsLayout;
+  const canMaximizeRightPanel = !embedded && rightPanelOpen && !rightPanelColumnsLayout;
   const rightPanelMaximized =
     !embedded && canMaximizeRightPanel && rightPanelState.maximized === true;
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
@@ -3385,6 +3384,9 @@ export default function ChatView(props: ChatViewProps) {
       pullRequestAvailable={pullRequestSurfaceAvailable}
       pullRequestsAvailable={pullRequestsSurfaceAvailable}
       deviceAvailable={activeThreadRef !== null}
+      onAddSideChat={sideChatsOffered ? openSideChatStable : undefined}
+      sideChatAvailable={sideChat.available}
+      sideChatDisabledReason={sideChatDisabledReason}
     >
       {renderRightPanelSurface(surface, view)}
     </RightPanelTabs>
@@ -3408,6 +3410,7 @@ export default function ChatView(props: ChatViewProps) {
         activeSurfaceId={activeRightPanelSurface?.id ?? null}
         revealRequestId={rightPanelRevealRequestId}
         onActivate={activateRightPanelSurfaceStable}
+        onMoveSurface={moveRightPanelSurfaceStable}
         renderSurface={renderRightPanelColumn}
         emptyColumn={
           rightPanelOpen

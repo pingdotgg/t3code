@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import type { RightPanelSurface } from "../rightPanelStore";
+import { SortableTabList } from "./RightPanelTabs";
 
 export interface RightPanelColumnView {
   /** The selected surface; it owns focus and keyboard shortcuts. */
@@ -38,6 +39,7 @@ export function RightPanelColumns(props: {
   /** Changes whenever a surface is selected, even the current one, to scroll it into view. */
   revealRequestId: number;
   onActivate: (surface: RightPanelSurface) => void;
+  onMoveSurface: (surfaceId: string, toIndex: number) => void;
   renderSurface: (surface: RightPanelSurface, view: RightPanelColumnView) => ReactNode;
   /** Shown as the only panel column when the panel is open without surfaces. */
   emptyColumn?: ReactNode;
@@ -159,71 +161,73 @@ export function RightPanelColumns(props: {
     "relative flex min-h-0 w-[max(50%,min(100%,26rem))] shrink-0 snap-start flex-col border-l border-border";
 
   return (
-    <div
-      ref={stripRef}
-      className={
-        enabled
-          ? cn(
-              "flex min-h-0 min-w-0 flex-1 snap-x snap-proximity overflow-x-auto overflow-y-hidden",
-              // Scroll areas contain overscroll on both axes, which would keep
-              // a sideways swipe over a file tree or tab bar from reaching the
-              // strip. Ones with nothing to scroll sideways pass it on.
-              "[&_[data-slot=scroll-area-viewport]:not([data-has-overflow-x])]:overscroll-x-auto",
-            )
-          : "contents"
-      }
-      data-right-panel-columns={enabled ? "" : undefined}
-    >
+    <SortableTabList surfaces={surfaces} onMove={props.onMoveSurface} columns>
       <div
-        ref={chatColumnRef}
-        data-right-panel-column={CHAT_COLUMN_KEY}
+        ref={stripRef}
         className={
           enabled
             ? cn(
-                "flex min-h-0 shrink-0 snap-start",
-                hasPanelColumns ? "w-[max(50%,min(100%,32rem))]" : "w-full",
+                "flex min-h-0 min-w-0 flex-1 snap-x snap-proximity overflow-x-auto overflow-y-hidden",
+                // Scroll areas contain overscroll on both axes, which would keep
+                // a sideways swipe over a file tree or tab bar from reaching the
+                // strip. Ones with nothing to scroll sideways pass it on.
+                "[&_[data-slot=scroll-area-viewport]:not([data-has-overflow-x])]:overscroll-x-auto",
               )
             : "contents"
         }
+        data-right-panel-columns={enabled ? "" : undefined}
       >
-        {props.children}
+        <div
+          ref={chatColumnRef}
+          data-right-panel-column={CHAT_COLUMN_KEY}
+          className={
+            enabled
+              ? cn(
+                  "flex min-h-0 shrink-0 snap-start",
+                  hasPanelColumns ? "w-[max(50%,min(100%,32rem))]" : "w-full",
+                )
+              : "contents"
+          }
+        >
+          {props.children}
+        </div>
+        {enabled
+          ? surfaces.map((surface) => {
+              const active = surface.id === activeSurfaceId;
+              return (
+                <div
+                  key={surface.id}
+                  ref={(element) => {
+                    if (element) columnRefs.current.set(surface.id, element);
+                    else columnRefs.current.delete(surface.id);
+                  }}
+                  data-right-panel-column={surface.id}
+                  data-active-column={active}
+                  className={columnClassName}
+                  onPointerDownCapture={() => {
+                    if (!active) onActivate(surface);
+                  }}
+                >
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "pointer-events-none absolute inset-x-0 top-0 z-10 h-0.5",
+                      active ? "bg-primary" : "bg-transparent",
+                    )}
+                  />
+                  {renderSurface(surface, {
+                    active,
+                    visible: visibility.has(surface.id),
+                    unclipped: visibility.get(surface.id) === "full",
+                  })}
+                </div>
+              );
+            })
+          : null}
+        {enabled && emptyColumn !== null ? (
+          <div className={columnClassName}>{emptyColumn}</div>
+        ) : null}
       </div>
-      {enabled
-        ? surfaces.map((surface) => {
-            const active = surface.id === activeSurfaceId;
-            return (
-              <div
-                key={surface.id}
-                ref={(element) => {
-                  if (element) columnRefs.current.set(surface.id, element);
-                  else columnRefs.current.delete(surface.id);
-                }}
-                data-right-panel-column={surface.id}
-                data-active-column={active}
-                className={columnClassName}
-                onPointerDownCapture={() => {
-                  if (!active) onActivate(surface);
-                }}
-              >
-                <span
-                  aria-hidden
-                  className={cn(
-                    "pointer-events-none absolute inset-x-0 top-0 z-10 h-0.5",
-                    active ? "bg-primary" : "bg-transparent",
-                  )}
-                />
-                {renderSurface(surface, {
-                  active,
-                  visible: visibility.has(surface.id),
-                  unclipped: visibility.get(surface.id) === "full",
-                })}
-              </div>
-            );
-          })
-        : null}
-      {enabled && emptyColumn !== null ? (
-        <div className={columnClassName}>{emptyColumn}</div>
-      ) : null}
-    </div>
+    </SortableTabList>
   );
 }

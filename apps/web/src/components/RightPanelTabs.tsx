@@ -53,6 +53,8 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
   type ReactNode,
+  createContext,
+  useContext,
   useEffect,
   useEffectEvent,
   useRef,
@@ -832,11 +834,16 @@ function PullRequestSurfaceIcon({
   return <presentation.Icon className={cn("size-3 shrink-0", presentation.toneClassName)} />;
 }
 
-function SortableTabList(props: {
+const SurfaceSortingContext = createContext(false);
+const COLUMN_DRAG_MODIFIERS = [restrictToHorizontalAxis];
+
+export function SortableTabList(props: {
   surfaces: readonly RightPanelSurface[];
   onMove: ((surfaceId: string, toIndex: number) => void) | undefined;
+  columns?: boolean;
   children: ReactNode;
 }) {
+  const sharedSorting = useContext(SurfaceSortingContext);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const surfaceIds = props.surfaces.map((surface) => surface.id);
   const { onMove, surfaces } = props;
@@ -845,15 +852,16 @@ function SortableTabList(props: {
     const toIndex = surfaces.findIndex((surface) => surface.id === over.id);
     if (toIndex >= 0) onMove?.(String(active.id), toIndex);
   };
+  if (sharedSorting) return props.children;
   return (
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
-      modifiers={TAB_DRAG_MODIFIERS}
+      modifiers={props.columns ? COLUMN_DRAG_MODIFIERS : TAB_DRAG_MODIFIERS}
       onDragEnd={handleDragEnd}
     >
       <SortableContext items={surfaceIds} strategy={horizontalListSortingStrategy}>
-        {props.children}
+        <SurfaceSortingContext value>{props.children}</SurfaceSortingContext>
       </SortableContext>
     </DndContext>
   );
