@@ -1,4 +1,4 @@
-import { ChevronDownIcon, ShieldIcon } from "lucide-react";
+import { ShieldIcon } from "lucide-react";
 import { useState } from "react";
 import type { ProviderApprovalDecision, RuntimeRequestId } from "@t3tools/contracts";
 import type { PendingApproval } from "../../session-logic";
@@ -42,7 +42,7 @@ export function ComposerApprovalPanel({
         trailing={
           <>
             {count > 1 ? <ComposerRequestCard.Counter index={1} total={count} /> : null}
-            <ChevronDownIcon className="size-3" />
+            <ComposerBanner.ToggleIcon expanded={expanded} />
             <ComposerBanner.Dismiss
               render={<span role="button" tabIndex={0} />}
               aria-label="Cancel approval"
@@ -87,6 +87,7 @@ export function ComposerApprovalPanel({
         ) : null}
         <ComposerRequestCard.Footer>
           <ComposerPendingApprovalActions
+            designLabels
             requestId={approval.requestId}
             disabled={disabled}
             isResponding={isResponding}
