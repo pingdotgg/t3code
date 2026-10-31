@@ -4,6 +4,7 @@ import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { BackgroundThreadContext } from "./backgroundThread";
+import { useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
 import {
   resolveCompatibleRuntimeMode,
   runtimeModeConfig,
@@ -83,7 +84,10 @@ import {
   extendReplacementRangeForTrailingSpace,
   replaceTextRange,
 } from "../../composer-logic";
-import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
+import {
+  COMPOSER_PROMPT_PLACEHOLDER,
+  DISCONNECTED_COMPOSER_PLACEHOLDER,
+} from "../../composerPlaceholder";
 import {
   deriveComposerSendState,
   getAntigravitySendBlockReason,
@@ -116,7 +120,6 @@ import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerTriggerState } from "./useComposerTriggerState";
 import { useComposerMenuItems } from "./useComposerMenuItems";
-import { observeComposerPromptLayout } from "./observeComposerPromptLayout";
 import { useComposerMultilinePrompt } from "./useComposerMultilinePrompt";
 import {
   reconcileAttachmentContextReferences,
@@ -1068,7 +1071,7 @@ export function ChatComposer(props: ChatComposerProps) {
     null,
   );
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
-  const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
+  const [measuredPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
   const isMobileViewport = useMediaQuery("max-sm");
   const isSoftwareKeyboardOpen = useSoftwareKeyboardOpen();
@@ -1087,12 +1090,10 @@ export function ChatComposer(props: ChatComposerProps) {
   const hasMultilinePrompt = prompt.includes("\n") || hasWrappedPrompt;
   const attachComposerBody = useStableCallback((node: HTMLDivElement | null) => {
     setComposerMenuAnchor(node);
-    const stopLayout = node ? observeComposerPromptLayout(node) : undefined;
     const stopObserving = observeWrappedPrompt(node);
     return () => {
       setComposerMenuAnchor(null);
       stopObserving?.();
-      stopLayout?.();
     };
   });
   // A pending question stays expanded: its card moves into the banner dock,
@@ -1143,6 +1144,8 @@ export function ChatComposer(props: ChatComposerProps) {
   const mobileComposerExpandInFlightRef = useRef(false);
   const pendingThreadImportsRef = useRef<Map<string, number>>(new Map());
   const isRevertingCheckpointRef = useRef(isRevertingCheckpoint);
+  // Window-level shortcuts belong to the focused pane's composer.
+  const paneFocusedRef = useLayoutPaneFocusedRef();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed checkpoint revert flag to a ref read by async handlers
   useLayoutEffect(() => {
     isRevertingCheckpointRef.current = isRevertingCheckpoint;
@@ -1172,6 +1175,7 @@ export function ChatComposer(props: ChatComposerProps) {
       pasteAsTextShortcutUntilRef.current = 0;
     };
     const onDesktopPasteAsText = () => {
+      if (!paneFocusedRef.current) return;
       const activeElement = document.activeElement;
       const blocksPasteToFocus =
         activeElement instanceof Element &&
@@ -1195,7 +1199,7 @@ export function ChatComposer(props: ChatComposerProps) {
       target.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("blur", onBlur);
     };
-  }, [backgroundThread]);
+  }, [backgroundThread, paneFocusedRef]);
 
   const composerSendState = deriveComposerSendState({
     prompt,
@@ -1289,6 +1293,8 @@ export function ChatComposer(props: ChatComposerProps) {
       (supportsQuestionAttachments &&
         activePendingProgress.activeQuestion?.allowCustomAnswer !== false));
   const composerFooterHasWideActions = showPlanFollowUpPrompt;
+  const isComposerPrimaryActionsCompact =
+    composerFooterHasWideActions && measuredPrimaryActionsCompact;
 
   const editPromptFromTraits = (edit: (prompt: string) => string) => {
     const currentPrompt = getComposerDraft(composerDraftTarget)?.prompt ?? "";
@@ -1602,22 +1608,21 @@ export function ChatComposer(props: ChatComposerProps) {
     setIsDragOverComposer(false);
   }
 
+  // The observer reports the form's width before the first paint, so neither
+  // mounting nor a resize reads layout. The form has no padding or border, so
+  // its content box is its client width.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes composer form resizes to switch the footer and primary actions between compact layouts
   useLayoutEffect(() => {
     const composerForm = composerFormRef.current;
     if (!composerForm) return;
-    const measurePrimaryActionsCompact = () => {
-      const composerFormWidth = composerForm.clientWidth;
-      const options = { hasWideActions: composerFooterHasWideActions };
-      return (
-        shouldUseCompactComposerFooter(composerFormWidth, options) &&
-        shouldUseCompactComposerPrimaryActions(composerFormWidth, options)
-      );
-    };
-
-    setIsComposerPrimaryActionsCompact(measurePrimaryActionsCompact());
-    return observeResize(composerForm, () => {
-      setIsComposerPrimaryActionsCompact(measurePrimaryActionsCompact());
+    return observeResize(composerForm, ([entry]) => {
+      if (!entry) return;
+      const composerFormWidth = Math.round(entry.contentRect.width);
+      const compact =
+        composerFooterHasWideActions &&
+        shouldUseCompactComposerFooter(composerFormWidth, { hasWideActions: true }) &&
+        shouldUseCompactComposerPrimaryActions(composerFormWidth, { hasWideActions: true });
+      setIsComposerPrimaryActionsCompact(compact);
     });
   }, [composerFooterHasWideActions]);
 
@@ -1956,6 +1961,7 @@ export function ChatComposer(props: ChatComposerProps) {
     terminalOpen,
     modelPickerOpen: isComposerModelPickerOpen,
     ...(backgroundThread ? { targetRef: composerFormRef } : {}),
+    ownsFocus: () => paneFocusedRef.current,
   });
   // The editor freezes while dictation runs and drops focus; collapsing then would hide the recording pill.
   const dictationActiveRef = useRef(false);
@@ -3723,7 +3729,7 @@ export function ChatComposer(props: ChatComposerProps) {
                                 ? "Enable a provider in Settings to send a message"
                                 : environmentDisconnected
                                   ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                  : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                                  : COMPOSER_PROMPT_PLACEHOLDER
                     }
                     placeholderClassName="truncate"
                     narrowPlaceholder={
