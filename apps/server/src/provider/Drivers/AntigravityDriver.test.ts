@@ -6,11 +6,14 @@ import {
   type AntigravitySettings,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
 
@@ -40,6 +43,8 @@ const decodeRequest = Schema.decodeEffect(
     }),
   ),
 );
+const authorizationUrl =
+  "https://accounts.google.com/o/oauth2/v2/auth?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A51234%2F&state=fixture-state";
 const blockedCredentialKeys = new Set([
   "GEMINI_API_KEY",
   "GOOGLE_API_KEY",
@@ -72,20 +77,29 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
 
   const makeExecutable = Effect.fn("AntigravityDriverTest.makeExecutable")(function* (
     name: string,
-    loginRequired = false,
+    signIn: "none" | "stdout" | "browser-without-stdio" = "none",
   ) {
     const directory = path.join(root, name);
     const executablePath = path.join(directory, "agy_acp_server.par");
     const harnessPath = path.join(directory, "localharness_external");
     yield* fs.makeDirectory(directory, { recursive: true });
-    const authorizationUrl =
-      "https://accounts.google.com/o/oauth2/v2/auth?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A51234%2F&state=fixture-state";
     yield* fs.writeFileString(
       executablePath,
       [
         "#!/bin/sh",
-        ...(loginRequired
+        ...(signIn === "stdout"
           ? [`printf '%s\\n' ${shellQuote(ANTIGRAVITY_AUTH_STDOUT_PREFIX + authorizationUrl)}`]
+          : []),
+        // CPython's webbrowser on Windows shlex-splits BROWSER, substitutes %s, and starts it
+        // without inheriting the agent's stdio, then waits for the browser command to exit.
+        ...(signIn === "browser-without-stdio"
+          ? [
+              `url=${shellQuote(authorizationUrl)}`,
+              'eval "set -- $BROWSER"',
+              'for arg do shift; if [ "$arg" = "%s" ]; then set -- "$@" "$url"; else set -- "$@" "$arg"; fi; done',
+              '"$@" </dev/null >/dev/null 2>&1',
+              "exit 1",
+            ]
           : []),
         `exec ${shellQuote(nodePath)} ${shellQuote(mockAgentPath)} "$@"`,
         "",
@@ -105,7 +119,11 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
 
   const first = yield* makeExecutable("runtime 'one");
   const second = yield* makeExecutable("runtime two");
-  const signedOut = yield* makeExecutable("runtime signed-out", true);
+  const signedOut = yield* makeExecutable("runtime signed-out", "stdout");
+  const browserWithoutStdio = yield* makeExecutable(
+    "runtime browser-without-stdio",
+    "browser-without-stdio",
+  );
   const controls = { selected: first, failResolution: false, beforeAcquire: Effect.void };
   const acquisitions: Array<{ binaryPath: string | undefined; path: string | undefined }> = [];
   const releases: Array<string | null> = [];
@@ -228,6 +246,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     first,
     second,
     signedOut,
+    browserWithoutStdio,
     controls,
     acquisitions,
     releases,
@@ -349,6 +368,33 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         expect(snapshot.supportsTextGeneration).toBe(false);
         expect(h.acquisitions).toHaveLength(2);
         expect(h.releases).toEqual([h.first.version, h.signedOut.version]);
+        yield* h.assertClosed;
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "shows the Google sign-in URL when the agent opens BROWSER without sharing its stderr",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        h.controls.selected = h.browserWithoutStdio;
+        const auth = h.instance.auth;
+        if (!auth) return yield* Effect.die("Antigravity does not expose sign-in.");
+        const subscribed = yield* Deferred.make<void>();
+        const states = yield* auth.subscribe("owner").pipe(
+          Stream.tap(() => Deferred.succeed(subscribed, undefined)),
+          Stream.takeUntil((state) => ["succeeded", "failed", "cancelled"].includes(state.phase)),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(subscribed);
+        yield* auth.start("owner");
+        const observed = yield* Fiber.join(states);
+
+        expect(
+          observed.find((state) => state.phase === "waiting")?.authorizationUrl,
+          "the sign-in flow never received the URL the agent handed to BROWSER",
+        ).toBe(authorizationUrl);
         yield* h.assertClosed;
       }).pipe(Effect.scoped),
   );
