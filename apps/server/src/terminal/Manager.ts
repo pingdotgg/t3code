@@ -165,6 +165,10 @@ class TerminalProcessSignalError extends Schema.TaggedError<TerminalProcessSigna
   }
 }
 
+export class TerminalCwdRecovery extends Context.Reference<
+  (error: TerminalCwdNotFoundError) => Effect.Effect<void, TerminalCwdNotFoundError>
+>("t3/terminal/TerminalCwdRecovery", { defaultValue: () => (error) => Effect.fail(error) }) {}
+
 export class TerminalManager extends Context.Service<
   TerminalManager,
   {
@@ -2152,12 +2156,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   });
 
   const assertValidCwd = Effect.fn("terminal.assertValidCwd")(function* (cwd: string) {
-    const stats = yield* fileSystem.stat(cwd).pipe(
+    const stat = fileSystem.stat(cwd).pipe(
       Effect.catchTags({
         PlatformError: (cause) =>
           cause.reason._tag === "NotFound"
             ? new TerminalCwdNotFoundError({ cwd })
             : new TerminalCwdStatError({ cwd, cause }),
+      }),
+    );
+    const stats = yield* stat.pipe(
+      Effect.catchTags({
+        TerminalCwdNotFoundError: (error) =>
+          Effect.flatMap(TerminalCwdRecovery, (recover) =>
+            recover(error).pipe(Effect.andThen(stat)),
+          ),
       }),
     );
     if (stats.type !== "Directory") {

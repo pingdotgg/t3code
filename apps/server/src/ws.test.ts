@@ -3,6 +3,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   AuthSessionId,
+  AuthTerminalOperateScope,
+  TerminalCwdNotFoundError,
+  WsRpcGroup,
+  type TerminalSessionSnapshot,
   EnvironmentId,
   ProjectId,
   ThreadId,
@@ -22,6 +26,8 @@ import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -30,6 +36,7 @@ import { Headers } from "effect/http";
 import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
@@ -978,4 +985,134 @@ it.effect("thread resume across compacted history keeps message order and final 
       ),
     ),
   ),
+);
+
+it.effect.each([WS_METHODS.terminalOpen, WS_METHODS.terminalAttach])(
+  "restores a cleaned-up worktree at the %s RPC boundary",
+  (method) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { worktreesDir } = yield* ServerConfigModule.ServerConfig;
+      const cwd = path.join(worktreesDir, "project", "feature");
+      const threadId = ThreadId.make("terminal-recovery");
+      const input = { threadId, terminalId: "default", cwd };
+      const snapshot: TerminalSessionSnapshot = {
+        ...input,
+        worktreePath: cwd,
+        status: "running",
+        pid: 1,
+        history: "",
+        exitCode: null,
+        exitSignal: null,
+        label: "bash",
+        updatedAt: "2026-10-26T00:00:00Z",
+      };
+      let attempts = 0;
+      const created: string[] = [];
+      const check = Effect.gen(function* () {
+        attempts++;
+        if (!(yield* fs.exists(cwd).pipe(Effect.orDie)))
+          return yield* new TerminalCwdNotFoundError({ cwd });
+        return snapshot;
+      });
+      const launch = check.pipe(
+        Effect.catchTags({
+          TerminalCwdNotFoundError: (error) =>
+            Effect.flatMap(TerminalManager.TerminalCwdRecovery, (recover) =>
+              recover(error).pipe(Effect.andThen(check)),
+            ),
+        }),
+      );
+      const services = Layer.mergeAll(
+        layerUnusedConfigRpcServices,
+        Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+        Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+        Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+        Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+        Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+        Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+        Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+        Layer.mock(TerminalManager.TerminalManager)({
+          open: () => launch,
+          attachOutputStream: () =>
+            Stream.fromEffect(
+              launch.pipe(Effect.map((snapshot) => ({ type: "snapshot" as const, snapshot }))),
+            ),
+        }),
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: () =>
+            Effect.succeed({
+              id: threadId,
+              projectId: ProjectId.make("project"),
+              worktreePath: cwd,
+              branch: "feature",
+            } as OrchestrationV2ThreadShell),
+        }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () => Effect.succeedSome({ workspaceRoot: "/repo" } as never),
+        }),
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
+          pruneWorktrees: () => Effect.void,
+          listLocalBranchNames: () => Effect.succeed(["feature"]),
+          createWorktree: () =>
+            Effect.gen(function* () {
+              created.push(cwd);
+              yield* fs.makeDirectory(cwd, { recursive: true });
+              return {} as never;
+            }).pipe(Effect.orDie),
+        }),
+      );
+      const responses = yield* Queue.unbounded<string>();
+      const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+        ...WS_RPC_SERVER_OPTIONS,
+        onFromServer: (response) =>
+          response._tag === "Exit"
+            ? Queue.offer(
+                responses,
+                response.exit._tag === "Success" ? "success" : JSON.stringify(response.exit),
+              )
+            : response._tag === "Chunk"
+              ? Queue.offer(responses, "success")
+              : Queue.offer(responses, JSON.stringify(response)),
+      }).pipe(
+        Effect.provide([
+          RpcAuthorization.layer([AuthTerminalOperateScope]),
+          layerWsRpc(
+            {
+              sessionId: AuthSessionId.make("terminal-test"),
+              subject: "terminal-test",
+              method: "browser-session-cookie",
+              scopes: [AuthTerminalOperateScope],
+            },
+            {},
+            yield* ServerBrowser.ServerBrowser,
+            () => Effect.void,
+          ).pipe(Layer.provide(services)),
+        ]),
+      );
+      const requestId = RpcMessage.RequestId("terminal");
+      yield* server.write(0, {
+        _tag: "Request",
+        id: requestId,
+        tag: method,
+        payload: input,
+        headers: Headers.empty,
+      });
+      assert.equal(yield* Queue.take(responses), "success");
+      assert.equal(attempts, 2);
+      assert.deepEqual(created, [cwd]);
+      yield* server.write(0, { _tag: "Interrupt", requestId, interruptors: [] });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.fresh(layerConfigSources),
+          Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+          Layer.mock(ServerBrowser.ServerBrowser)({}),
+        ),
+      ),
+      Effect.scoped,
+    ),
 );
