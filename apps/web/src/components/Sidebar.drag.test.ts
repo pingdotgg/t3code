@@ -530,6 +530,44 @@ describe("sidebar drag projection", () => {
     expect(byTime.get("w")).toEqual(stationary);
   });
 
+  it("makes room for the boundary labels while a Working row is lifted", () => {
+    const items = [
+      pinnedHeader,
+      thread("p", "pinned"),
+      divider,
+      thread("a", "active"),
+      marker("working-header"),
+      thread("w", "working"),
+      settledHeader,
+    ];
+    const result = preview(
+      { items, settledOrder: [], settledExpanded: false, boundaryLabelHeight: 24 },
+      "w",
+      "w",
+    );
+    expect(result.get("p")?.y).toBe(24);
+    expect(result.get("a")?.y).toBe(48);
+    expect(result.get("w")).toEqual(stationary);
+  });
+
+  it("closes the Working shelf in the preview only when its last thread is pinned", () => {
+    const items = [
+      pinnedHeader,
+      thread("p", "pinned"),
+      divider,
+      thread("a", "active"),
+      marker("working-header"),
+      thread("w", "working"),
+      settledHeader,
+      thread("s", "settled"),
+    ];
+    const input = { items, settledOrder: ["s"], settledExpanded: true };
+    const last = preview({ ...input, workingThreadCount: 1 }, "w", "p");
+    const another = preview({ ...input, workingThreadCount: 2 }, "w", "p");
+    const settledY = (result: typeof last) => result.get(sidebarMarkerId("settled-header"))?.y ?? 0;
+    expect(settledY(last) - settledY(another)).toBe(-33);
+  });
+
   it("updates the projection when the target or measured geometry changes", () => {
     const strategy = createSidebarSortingStrategy({
       items: pinned,
