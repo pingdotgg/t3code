@@ -303,6 +303,93 @@ describe("OrchestratorMcpService", () => {
     }),
   );
 
+  it.effect("reports a child run the provider has not started yet as starting", () =>
+    Effect.gen(function* () {
+      const parentThreadId = ThreadId.make("thread:mcp-starting-parent");
+      const childThreadId = ThreadId.make("thread:mcp-starting-child");
+      const childRunId = RunId.make("run:mcp-starting-child");
+      const taskId = NodeId.make("node:mcp-starting-task");
+      const parentProjection = {
+        thread: { id: parentThreadId },
+        runs: [],
+        contextTransfers: [],
+        subagents: [
+          {
+            id: taskId,
+            threadId: parentThreadId,
+            origin: "app_owned",
+            childThreadId,
+            driver: "codex",
+            model: "gpt-5.6-terra",
+            status: "running",
+            result: null,
+            completionDelivery: null,
+          },
+        ],
+      } as unknown as OrchestrationV2ThreadProjection;
+      let providerStarted = false;
+      const childProjection = () =>
+        ({
+          thread: { id: childThreadId, title: "Child task" },
+          runs: [
+            {
+              id: childRunId,
+              ordinal: 1,
+              status: providerStarted ? "running" : "starting",
+              startedAt: providerStarted ? DateTime.makeUnsafe("2026-10-24T10:00:00Z") : null,
+              delegatedTaskId: taskId,
+            },
+          ],
+          contextTransfers: [],
+          messages: [],
+          subagents: [],
+          providerThreads: [{ status: "not_loaded", pendingBackgroundTasks: [] }],
+          runtimeRequests: [],
+          turnItems: [],
+        }) as unknown as OrchestrationV2ThreadProjection;
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) =>
+            Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection()),
+        }),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const scope: McpInvocationScope = {
+        environmentId: EnvironmentId.make("environment:mcp-starting"),
+        requestNamespace: "provider-session:mcp-starting",
+        thread: {
+          threadId: parentThreadId,
+          providerSessionId: "provider-session:mcp-starting",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const waiting = yield* service.taskStatus(scope, taskId);
+        assert.equal(waiting.status, "starting");
+        assert.equal(waiting.workState, "working");
+        assert.equal(waiting.childRunId, childRunId);
+        providerStarted = true;
+        const started = yield* service.taskStatus(scope, taskId);
+        assert.equal(started.status, "running");
+        assert.equal(started.workState, "working");
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
   it.effect("tells the parent to end its turn only while its task still runs", () =>
     Effect.gen(function* () {
       const parentThreadId = ThreadId.make("thread:mcp-next-parent");
