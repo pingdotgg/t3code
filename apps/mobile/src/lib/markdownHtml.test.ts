@@ -204,6 +204,16 @@ describe("details folds in chat Markdown", () => {
     );
   });
 
+  it("finds definitions inside a compact HTML block and labels that wrap", () => {
+    const markdown =
+      "See [the\n  doc].\n\n<details><summary>A</summary>a</details>\n[The Doc]: https://example.com";
+    const { segments, definitions } = splitMarkdownDetails(markdown);
+    const before = segments[0];
+    expect(
+      before?.kind === "markdown" && withReferenceDefinitions(before.markdown, definitions),
+    ).toBe("[The Doc]: https://example.com\n\nSee [the\n  doc].\n\n");
+  });
+
   it.each([
     [
       "a paragraph",

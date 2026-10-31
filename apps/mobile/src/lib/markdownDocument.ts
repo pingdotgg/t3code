@@ -338,7 +338,7 @@ export function withReferenceDefinitions(
   definitions: ReadonlyArray<MarkdownReferenceDefinition>,
 ): string {
   if (definitions.length === 0 || !markdown.includes("[")) return markdown;
-  const text = markdown.toLowerCase();
+  const text = markdown.toLowerCase().replace(/\s+/g, " ");
   const used = definitions.filter((definition) => text.includes(`[${definition.label}]`));
   return used.length === 0
     ? markdown
@@ -387,16 +387,9 @@ export function splitMarkdownDetails(markdown: string): MarkdownDetailsSplit {
   };
   if (!/<details/i.test(markdown)) return whole;
   const tokens: HtmlToken[] = [];
-  const definitions: MarkdownReferenceDefinition[] = [];
   const collect = (node: MarkdownNode) => {
     if (!("children" in node)) return;
     for (const child of node.children) {
-      if (child.type === "definition") {
-        const definition = referenceDefinition(
-          markdown.slice(child.position?.start.offset, child.position?.end.offset),
-        );
-        if (definition) definitions.push(definition);
-      }
       if (child.type !== "html") {
         collect(child);
         continue;
@@ -410,6 +403,21 @@ export function splitMarkdownDetails(markdown: string): MarkdownDetailsSplit {
     }
   };
   collect(parser.parse(markdown));
+  // Read definitions after flattening, which exposes ones a raw HTML block hides from this parse.
+  const definitions: MarkdownReferenceDefinition[] = [];
+  if (markdown.includes("]:")) {
+    const flattened = markdownWithHtml(markdown);
+    const visit = (node: MarkdownNode) => {
+      if (node.type === "definition") {
+        const definition = referenceDefinition(
+          flattened.slice(node.position?.start.offset, node.position?.end.offset),
+        );
+        if (definition) definitions.push(definition);
+      }
+      if ("children" in node) node.children.forEach(visit);
+    };
+    visit(parser.parse(flattened));
+  }
   const segments: MarkdownDetailsSegment[] = [];
   let cursor = 0;
   const pushMarkdown = (end: number) => {
