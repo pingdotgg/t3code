@@ -139,6 +139,8 @@ export interface CursorAgentSdkLoggedAgentOptions {
 export interface CursorAgentSdkLoggedSendOptions {
   readonly model?: SendOptions["model"];
   readonly mode?: SendOptions["mode"];
+  readonly hasMcpServers?: boolean;
+  readonly mcpServerNames?: ReadonlyArray<string>;
   readonly local?: {
     readonly force?: boolean;
     readonly hasCustomTools?: boolean;
@@ -298,9 +300,12 @@ export function loggedCursorSendOptions(
   if (options === undefined) {
     return {};
   }
+  const mcpServerNames =
+    options.mcpServers === undefined ? undefined : Object.keys(options.mcpServers).toSorted();
   return {
     ...(options.model === undefined ? {} : { model: options.model }),
     ...(options.mode === undefined ? {} : { mode: options.mode }),
+    ...(mcpServerNames === undefined ? {} : { hasMcpServers: true, mcpServerNames }),
     ...(options.local === undefined
       ? {}
       : {
