@@ -220,6 +220,7 @@ function PluginViewFrame(props: {
     frame.setAttribute("sandbox", PLUGIN_VIEW_FRAME_ATTRIBUTES.sandbox);
     frame.setAttribute("referrerpolicy", PLUGIN_VIEW_FRAME_ATTRIBUTES.referrerpolicy);
     frame.setAttribute("allow", PLUGIN_VIEW_FRAME_ATTRIBUTES.allow);
+    frame.name = "t3-plugin-view";
     frame.title = view.title;
     frame.className = "block size-full border-0";
 
