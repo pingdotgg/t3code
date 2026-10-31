@@ -515,7 +515,10 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
       ? alignedBottomInset - THREAD_COMPOSER_BOTTOM_GUTTER
       : Math.max(bottomSafeArea, 12)) - (hasSidebarTabBar ? 3 : 0),
   );
-  const composerKeyboardOffset = composerBottomInset;
+  // A hardware keyboard can leave the IME visible with no height. Nothing lifts the
+  // composer then, so cancelling its padding would drop it under the taskbar.
+  const composerKeyboardOffset =
+    isKeyboardVisible && liveKeyboardHeight === 0 ? 0 : composerBottomInset;
   const contentPresentationKind = props.contentPresentation.kind;
   const realThreadSyncLabel = (() => {
     switch (props.threadSyncStatus) {
