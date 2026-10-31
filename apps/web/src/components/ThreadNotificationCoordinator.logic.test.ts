@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import {
   createThreadNotificationGate,
+  isSnoozedForNotification,
   type ThreadNotificationObservation,
 } from "./ThreadNotificationCoordinator.logic";
 
@@ -10,13 +11,15 @@ const working: ThreadNotificationObservation = {
   attention: null,
   settled: false,
   completedAt: null,
+  snoozed: false,
 };
 const completed = (at: number): ThreadNotificationObservation => ({
   attention: null,
   settled: true,
   completedAt: at,
+  snoozed: false,
 });
-const visible = { archived: false, quiet: false };
+const visible = { archived: false, quiet: false, snoozed: false };
 
 function harness() {
   const notify = vi.fn();
@@ -35,6 +38,27 @@ describe("createThreadNotificationGate", () => {
   });
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("does not notify completion while the thread is snoozed", () => {
+    const { notify, observe } = harness();
+    observe(working);
+    observe({ ...completed(1), snoozed: true }, { ...visible, snoozed: true });
+    vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS * 2);
+    expect(notify).not.toHaveBeenCalled();
+    observe(completed(1));
+    vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS * 2);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("still notifies attention while the thread is snoozed", () => {
+    const { notify, observe } = harness();
+    observe(working);
+    observe(
+      { attention: "run-1:approval", settled: false, completedAt: null, snoozed: true },
+      { ...visible, snoozed: true },
+    );
+    expect(notify.mock.calls).toEqual([["thread", "input"]]);
   });
 
   it("drops a completion when the thread resumes within the grace", () => {
@@ -65,7 +89,7 @@ describe("createThreadNotificationGate", () => {
     observe(working);
     observe(completed(1));
     vi.advanceTimersByTime(500);
-    observe({ attention: "run-1:approval", settled: false, completedAt: null });
+    observe({ attention: "run-1:approval", settled: false, completedAt: null, snoozed: false });
     expect(notify.mock.calls).toEqual([["thread", "input"]]);
     vi.advanceTimersByTime(60_000);
     // The request resolves and the same run reads as completed again.
@@ -96,7 +120,7 @@ describe("createThreadNotificationGate", () => {
     observe(completed(1));
     vi.advanceTimersByTime(500);
     observe(working);
-    observe({ attention: "run-1:approval", settled: false, completedAt: null });
+    observe({ attention: "run-1:approval", settled: false, completedAt: null, snoozed: false });
     vi.advanceTimersByTime(60_000);
     observe(completed(1));
     vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS * 2);
@@ -108,7 +132,7 @@ describe("createThreadNotificationGate", () => {
     observe(working);
     observe(completed(1));
     vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS);
-    observe({ attention: "run-1:limited", settled: false, completedAt: null });
+    observe({ attention: "run-1:limited", settled: false, completedAt: null, snoozed: false });
     observe(completed(1));
     vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS * 2);
     expect(notify.mock.calls).toEqual([
@@ -122,7 +146,7 @@ describe("createThreadNotificationGate", () => {
     observe(working);
     observe(completed(1));
     vi.advanceTimersByTime(500);
-    observe({ attention: "run-2:approval", settled: false, completedAt: null });
+    observe({ attention: "run-2:approval", settled: false, completedAt: null, snoozed: false });
     observe(working);
     observe(completed(2));
     vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS);
@@ -151,6 +175,29 @@ describe("createThreadNotificationGate", () => {
     observe(completed(1));
     vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS);
     expect(notify.mock.calls).toEqual([["thread", "completion"]]);
+  });
+
+  it("drops a pending completion when the thread is snoozed during a runtime blip", () => {
+    const { notify, observe } = harness();
+    observe(working);
+    observe(completed(1));
+    vi.advanceTimersByTime(500);
+    observe({ ...working, snoozed: true }, { ...visible, snoozed: true });
+    observe(completed(1));
+    vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS * 2);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("drops a cancelled completion when the thread is snoozed later in the same blip", () => {
+    const { notify, observe } = harness();
+    observe(working);
+    observe(completed(1));
+    vi.advanceTimersByTime(500);
+    observe(working);
+    observe({ ...working, snoozed: true }, { ...visible, snoozed: true });
+    observe(completed(1));
+    vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS * 2);
+    expect(notify).not.toHaveBeenCalled();
   });
 
   it("restarts the grace when a newer completion replaces a pending one", () => {
@@ -189,5 +236,37 @@ describe("createThreadNotificationGate", () => {
     observe(completed(2), { ...visible, quiet: true });
     vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS * 2);
     expect(notify).not.toHaveBeenCalled();
+  });
+});
+
+describe("isSnoozedForNotification", () => {
+  const wakeAt = Date.parse("2026-01-01T12:00:00.000Z");
+  const snoozedThread = {
+    snoozedAt: "2026-01-01T11:00:00.000Z",
+    snoozedUntil: new Date(wakeAt).toISOString(),
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+  };
+
+  it("is snoozed before the wake time", () => {
+    expect(isSnoozedForNotification(snoozedThread, null, wakeAt - 1)).toBe(true);
+  });
+
+  it("keeps a completion from the snooze suppressed when processed after the wake", () => {
+    expect(isSnoozedForNotification(snoozedThread, wakeAt - 1, wakeAt + 60_000)).toBe(true);
+  });
+
+  it("does not suppress a completion from before the snooze processed after the wake", () => {
+    const snoozedAt = Date.parse(snoozedThread.snoozedAt);
+    expect(isSnoozedForNotification(snoozedThread, snoozedAt - 1, wakeAt + 60_000)).toBe(false);
+  });
+
+  it("does not suppress a completion after the wake time", () => {
+    expect(isSnoozedForNotification(snoozedThread, wakeAt + 1, wakeAt + 60_000)).toBe(false);
+  });
+
+  it("does not suppress after an early wake for attention", () => {
+    const raised = { ...snoozedThread, hasPendingApprovals: true };
+    expect(isSnoozedForNotification(raised, wakeAt - 1, wakeAt - 1)).toBe(false);
   });
 });
