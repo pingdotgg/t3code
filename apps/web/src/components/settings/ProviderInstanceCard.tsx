@@ -395,7 +395,7 @@ export function ProviderEnvironmentSection(props: {
       {rows.length > 0 ? (
         <div className="mt-3 min-w-0 space-y-2 pb-2">
           {rows.map((variable, index) =>
-            props.managed?.names.has(variable.name) ? (
+            props.managed?.names.has(variable.name.toUpperCase()) ? (
               <div key={variable.id} className="flex min-w-0 flex-wrap items-center gap-1.5">
                 <code className="min-w-0 truncate text-xs sm:w-44 sm:shrink-0">
                   {variable.name}
@@ -1213,7 +1213,7 @@ export function ProviderInstanceCard({
                   onRemove={removeEnvironmentField}
                   managedReason={
                     instanceLocks?.wholeEnvironment ||
-                    instanceLocks?.environmentNames.has(field.name)
+                    instanceLocks?.environmentNames.has(field.name.toUpperCase())
                       ? instanceLocks.reason
                       : undefined
                   }
