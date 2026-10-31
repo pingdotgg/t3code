@@ -1,5 +1,7 @@
-import { memo } from "react";
+import { ComposerBanner } from "./ComposerBanner";
+import { memo, useState } from "react";
 import { ChevronDownIcon, ListChecksIcon, PencilIcon } from "lucide-react";
+import ChatMarkdown from "../ChatMarkdown";
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -13,6 +15,7 @@ import { ComposerRequestCard, useRequestCardEnterShortcut } from "./ComposerRequ
  */
 export const ComposerPlanFollowUpBanner = memo(function ComposerPlanFollowUpBanner({
   planTitle,
+  planMarkdown,
   stepCount,
   disabled,
   isSending,
@@ -21,6 +24,7 @@ export const ComposerPlanFollowUpBanner = memo(function ComposerPlanFollowUpBann
   onRevise,
 }: {
   planTitle: string | null;
+  planMarkdown?: string;
   stepCount: number;
   disabled: boolean;
   isSending: boolean;
@@ -28,6 +32,7 @@ export const ComposerPlanFollowUpBanner = memo(function ComposerPlanFollowUpBann
   onBuildInNewThread: () => void;
   onRevise: () => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   useRequestCardEnterShortcut(disabled ? null : onBuild);
   const sub = [
     stepCount > 0 ? `${stepCount} ${stepCount === 1 ? "step" : "steps"}` : null,
@@ -42,42 +47,64 @@ export const ComposerPlanFollowUpBanner = memo(function ComposerPlanFollowUpBann
         title="Plan ready"
         sub={sub}
         trailing={
-          <ComposerRequestCard.Actions>
-            <Button size="sm" variant="secondary" onClick={onRevise}>
-              <PencilIcon />
-              Revise
+          planMarkdown ? (
+            <Button
+              size="xs"
+              variant="secondary"
+              onClick={() => setExpanded((value) => !value)}
+              aria-expanded={expanded}
+            >
+              {expanded ? "Close plan" : "Open plan"}
             </Button>
-            <Group data-chat-composer-implement-actions="true">
-              <Button
-                size="sm"
-                variant="default"
-                disabled={disabled}
-                aria-keyshortcuts="Enter"
-                onClick={onBuild}
-              >
-                {isSending ? "Sending…" : "Build it"}
-                <ComposerRequestCard.EnterKey />
+          ) : (
+            <ComposerRequestCard.Actions>
+              <Button size="sm" variant="secondary" onClick={onRevise}>
+                <PencilIcon />
+                Revise
               </Button>
-              <GroupSeparator />
-              <Menu>
-                <MenuTrigger
+              <Group data-chat-composer-implement-actions="true">
+                <Button
+                  size="sm"
+                  variant="default"
                   disabled={disabled}
-                  render={
-                    <Button size="icon-sm" variant="default" aria-label="Implementation actions" />
-                  }
+                  aria-keyshortcuts="Enter"
+                  onClick={onBuild}
                 >
-                  <ChevronDownIcon />
-                </MenuTrigger>
-                <MenuPopup align="end" side="top" {...composerFloatingLayerProps}>
-                  <MenuItem disabled={disabled} onClick={onBuildInNewThread}>
-                    Implement in a new thread
-                  </MenuItem>
-                </MenuPopup>
-              </Menu>
-            </Group>
-          </ComposerRequestCard.Actions>
+                  {isSending ? "Sending…" : "Build it"}
+                  <ComposerRequestCard.EnterKey />
+                </Button>
+                <GroupSeparator />
+                <Menu>
+                  <MenuTrigger
+                    disabled={disabled}
+                    render={
+                      <Button
+                        size="icon-sm"
+                        variant="default"
+                        aria-label="Implementation actions"
+                      />
+                    }
+                  >
+                    <ChevronDownIcon />
+                  </MenuTrigger>
+                  <MenuPopup align="end" side="top" {...composerFloatingLayerProps}>
+                    <MenuItem disabled={disabled} onClick={onBuildInNewThread}>
+                      Implement in a new thread
+                    </MenuItem>
+                  </MenuPopup>
+                </Menu>
+              </Group>
+            </ComposerRequestCard.Actions>
+          )
         }
       />
+      {planMarkdown && expanded ? (
+        <ComposerBanner.Scroll>
+          <ComposerRequestCard.Body>
+            <ChatMarkdown text={planMarkdown} />
+          </ComposerRequestCard.Body>
+        </ComposerBanner.Scroll>
+      ) : null}
     </ComposerRequestCard.Root>
   );
 });

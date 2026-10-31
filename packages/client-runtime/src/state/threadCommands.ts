@@ -23,6 +23,7 @@ import {
   closeGuestShare,
   resolveGuestMessage,
   cancelQueuedRun,
+  reorderQueuedRun,
   createThread,
   deleteThread,
   editQueuedRun,
@@ -336,6 +337,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     promoteQueuedRun: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:promote-queued-run",
       execute: promoteQueuedRun,
+      scheduler,
+      concurrency,
+    }),
+    reorderQueuedRun: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:reorder-queued-run",
+      execute: reorderQueuedRun,
       scheduler,
       concurrency,
     }),
