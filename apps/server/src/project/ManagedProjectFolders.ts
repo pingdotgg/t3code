@@ -209,7 +209,8 @@ const isVcsProcessSpawnError = Schema.is(VcsProcessSpawnError);
 const isGitMissing = (error: GitManagerServiceError) =>
   error._tag === "GitManagerError" &&
   isVcsProcessSpawnError(error.cause) &&
-  isMissingExecutable(error.cause.cause);
+  PlatformError.isPlatformError(error.cause.cause) &&
+  error.cause.cause.reason._tag === "NotFound";
 
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
