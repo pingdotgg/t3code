@@ -1,4 +1,4 @@
-import type { Schema } from "effect";
+import type * as Schema from "effect/Schema";
 
 /**
  * agentcast gives agents remote Windows desktops (UI trees, background input, a lock gate and
