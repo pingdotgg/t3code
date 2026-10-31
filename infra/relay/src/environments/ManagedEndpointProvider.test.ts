@@ -98,6 +98,11 @@ function makeTunnelClient(calls: TunnelCall[] = []) {
       Effect.sync(() => {
         calls.push({ operation: "putConfiguration", input: { tunnelId, tunnelConfig } });
       }),
+    getConfiguration: (tunnelId) =>
+      Effect.sync(() => {
+        calls.push({ operation: "getConfiguration", input: tunnelId });
+        return { ingress: [] };
+      }),
     getToken: (tunnelId) =>
       Effect.sync(() => {
         calls.push({ operation: "getToken", input: tunnelId });
@@ -1162,6 +1167,29 @@ describe("ManagedEndpointProvider", () => {
           { service: "http_status:404" },
         ],
       });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("does not rewrite Cloudflare ingress that already serves the recorded origin", () => {
+    const tunnelCalls: TunnelCall[] = [];
+    const layer = layerProvider(makePersistentTunnelClient(tunnelCalls));
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
+      const origin = { localHttpHost: "127.0.0.1", localHttpPort: 3773 } as const;
+      const provisioned = yield* provider.provision({ ...key, origin });
+      tunnelCalls.length = 0;
+
+      expect(
+        yield* provider.reconcileOrigin({
+          ...key,
+          tunnelId: provisioned.runtime.tunnelId!,
+          origin,
+          endpoint: provisioned.endpoint,
+        }),
+      ).toBe("ready");
+      expect(tunnelCalls.map((call) => call.operation)).toEqual(["get", "getConfiguration"]);
     }).pipe(Effect.provide(layer));
   });
 
