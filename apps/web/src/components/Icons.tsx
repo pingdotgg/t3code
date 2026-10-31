@@ -402,6 +402,118 @@ export const Zed: Icon = (props) => {
   );
 };
 
+export const QtCreatorIcon: Icon = (props) => {
+  const id = useId();
+
+  return (
+    <svg {...props} viewBox="0 0 48 48">
+      <defs>
+        <linearGradient
+          id={`${id}-qtcreator-a`}
+          y1="36.39"
+          x1="-2.994"
+          y2="23.839"
+          x2="-19.1"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop stopColor="#95a5a6" />
+          <stop offset="1" stopColor="#eff0f1" />
+        </linearGradient>
+        <linearGradient
+          id={`${id}-qtcreator-b`}
+          y1="9.178"
+          x1="-14.65"
+          y2="17.522"
+          x2="-6.43"
+          gradientUnits="userSpaceOnUse"
+          gradientTransform="translate(1.01-1.022)"
+        >
+          <stop />
+          <stop offset="1" stopOpacity="0" />
+        </linearGradient>
+        <linearGradient
+          href={`#${id}-qtcreator-b`}
+          id={`${id}-qtcreator-c`}
+          y1="9.268"
+          x1="-28.756"
+          y2="27.436"
+          x2="-10.858"
+          gradientUnits="userSpaceOnUse"
+          gradientTransform="translate(0-1.022)"
+        />
+        <linearGradient
+          id={`${id}-qtcreator-d`}
+          y1="-.883"
+          x1="-41.26"
+          y2="37.956"
+          x2="-2.994"
+          gradientUnits="userSpaceOnUse"
+          gradientTransform="translate(-1.01-1.022)"
+        >
+          <stop stopColor="#66b036" />
+          <stop offset="1" stopColor="#239161" />
+        </linearGradient>
+        <linearGradient
+          id={`${id}-qtcreator-e`}
+          y1="37.956"
+          x1="-2.994"
+          y2="-.883"
+          x2="-41.26"
+          gradientUnits="userSpaceOnUse"
+          gradientTransform="translate(0-1.022)"
+        >
+          <stop stopColor="#34495e" />
+          <stop offset="1" stopColor="#1c7865" />
+        </linearGradient>
+      </defs>
+      <g transform="matrix(.99317 0 0 .97839 45.973 4.864)">
+        <path
+          fill={`url(#${id}-qtcreator-d)`}
+          strokeLinejoin="bevel"
+          strokeWidth="2"
+          d="m-36.03-.883c-2.894 0-5.137 2.332-5.223 5.224v33.615h33.04c2.894 0 5.223-2.331 5.223-5.224v-33.615z"
+        />
+        <g fillRule="evenodd" strokeWidth="1.014">
+          <path
+            opacity=".2"
+            fill={`url(#${id}-qtcreator-c)`}
+            d="m-29.17 6.271l-3.02 4.088 2.458 17.375 3.02 2.044-1.074 2.044 4.332 4.398 13.01-1.912c.487-.085.946-.297 1.363-.603l-5.54-8.686.794-9.199-9.06-9.199z"
+          />
+          <path
+            opacity=".2"
+            fill={`url(#${id}-qtcreator-b)`}
+            d="m-12.06 7.293l-3.02 20.442 6.751 6.853c1.063-.939 2.311-3.634 2.311-5.304v-15.858z"
+          />
+        </g>
+        <g strokeLinejoin="bevel" strokeWidth="2">
+          <path
+            fill="#ffffff"
+            d="m-27.16 5.249c-4.03 0-7.05 2.044-7.05 11.754 0 8.01 2.149 10.798 5.086 11.53.524 6.17 6.997 4.312 6.997 4.312v-2.044c0 0-2.611.88-2.975-2.29 2.888-.769 4.989-3.586 4.989-11.508 0-9.71-3.02-11.754-7.05-11.754m0 2.044c2.01 0 3.02 1.689 3.02 9.71 0 8.02-1.01 9.71-3.02 9.71-2.01 0-3.02-1.689-3.02-9.71 0-8.02 1.01-9.71 3.02-9.71"
+          />
+          <path
+            fill={`url(#${id}-qtcreator-e)`}
+            d="m-2.994 31.71c0 2.894-2.329 5.224-5.223 5.224h-33.04v1.022h33.04c2.894 0 5.223-2.331 5.223-5.224z"
+          />
+        </g>
+        <g fillRule="evenodd" strokeWidth="1.014">
+          <path
+            fill={`url(#${id}-qtcreator-a)`}
+            d="m2.041 21.458c0 0-3.344 2.232-6.288 3.934-2.944 1.702-5.488 2.875-7.089 4.993-3.202 4.235-.63 9.603-.63 9.603 0 0 5.773 1.132 8.975-3.103 1.601-2.118 2.058-4.915 2.916-8.243.858-3.327 2.116-7.184 2.116-7.184"
+          />
+          <path
+            fill="#7f8c8d"
+            d="m2.041 21.459c0 0-.342.221-.403.262-.41 1.295-1.09 3.483-1.713 5.899-.858 3.327-1.316 6.125-2.916 8.243-3.202 4.235-8.973 3.104-8.973 3.104 0 0-.834-1.752-.958-4.04-.132 2.77.958 5.065.958 5.065 0 0 5.772 1.131 8.973-3.104 1.601-2.118 2.059-4.915 2.916-8.243.858-3.327 2.116-7.183 2.116-7.183"
+          />
+          <path
+            fill="#ffffff"
+            d="m-15.08 7.293h3.02v4.088h2.01v2.044h-2.01v11.243c0 2.044 2.01.511 2.01.511v2.044c0 0-6.04 3.577-6.04-2.555v-11.243h-1.01v-2.044h1.01z"
+          />
+        </g>
+      </g>
+    </svg>
+  );
+};
+
 export const OpenAI: Icon = ({ className, ...props }) => (
   <svg
     {...props}
