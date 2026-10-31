@@ -62,6 +62,7 @@ vi.mock("~/browser/previewRuntime", () => ({
 vi.mock("~/state/environments", () => ({
   useEnvironmentHttpBaseUrl: () => "http://localhost:3773/",
   usePrimaryEnvironmentId: () => null,
+  readPrimaryEnvironmentId: () => null,
   useEnvironment: () => ({ label: "Local" }),
 }));
 vi.mock("~/remoteOpen", () => ({
