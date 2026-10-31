@@ -45,6 +45,13 @@ describe("ssh auth", () => {
           new Error(`sign_and_send_pubkey: signing failed: agent refused operation\n${denied}`),
         ),
       );
+      assert.isTrue(
+        isSshAgentSigningFailure(
+          new Error(
+            `sign_and_send_pubkey: signing failed: communication with agent failed\n${denied}`,
+          ),
+        ),
+      );
       assert.isFalse(
         isSshAgentSigningFailure(
           new Error(

@@ -15,7 +15,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as SshAuth from "./auth.ts";
-import { SshCommandError } from "./errors.ts";
+import { SshCommandError, SshPasswordPromptError } from "./errors.ts";
 import * as SshTunnel from "./tunnel.ts";
 
 const makeSuccessfulProcess = (stdout: string) => {
@@ -269,6 +269,13 @@ describe("ssh tunnel scripts", () => {
       expectedPromptAttempts: [],
     },
     {
+      name: "asks for a password when signing failure has no agent provenance",
+      stderr:
+        'sign_and_send_pubkey: signing failed for ED25519-CERT "key-cert.pub": agent refused operation\n' +
+        "julius@devbox: Permission denied (publickey,password).\n",
+      expectedPromptAttempts: [1],
+    },
+    {
       name: "asks for a password when the server rejects every key",
       stderr: "julius@devbox: Permission denied (publickey,password).\r\n",
       expectedPromptAttempts: [1],
@@ -317,6 +324,16 @@ describe("ssh tunnel scripts", () => {
         );
         assert.isTrue(Result.isFailure(result));
         assert.deepEqual(promptAttempts, expectedPromptAttempts);
+        if (Result.isFailure(result)) {
+          if (expectedPromptAttempts.length === 0) {
+            assert.instanceOf(result.failure, SshCommandError);
+            if (result.failure instanceof SshCommandError) {
+              assert.equal(result.failure.stderr, stderr);
+            }
+          } else {
+            assert.instanceOf(result.failure, SshPasswordPromptError);
+          }
+        }
       }).pipe(Effect.provide(layer), Effect.scoped);
     }),
   );
