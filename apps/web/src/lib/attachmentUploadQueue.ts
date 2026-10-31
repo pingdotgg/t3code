@@ -109,7 +109,9 @@ export function markAttachmentClaimFailure(input: {
     setUploadState(attachment.id, {
       status: "failed",
       environmentId: input.environmentId,
-      attachmentId: upload.attachmentId,
+      ...(attachment.type !== "file" || attachment.uploadedAttachmentId !== upload.attachmentId
+        ? { attachmentId: upload.attachmentId }
+        : {}),
       reason: input.error instanceof Error ? input.error.message : "Attachment could not be sent.",
     });
   }
@@ -426,6 +428,7 @@ export function startAttachmentUpload(input: {
   readonly environmentId: EnvironmentId;
   readonly image: ComposerImageAttachment | ComposerFileAttachment;
   readonly draftTarget?: ComposerThreadTarget;
+  readonly force?: boolean;
 }): void {
   if (!readEnvironmentScope(input.environmentId, AuthOrchestrationOperateScope)) return;
   const existingJob = jobsByImageId.get(input.image.id);
@@ -434,7 +437,11 @@ export function startAttachmentUpload(input: {
   }
 
   const existing = readAttachmentUpload(input.image.id);
-  if (existing?.status === "ready" && existing.environmentId === input.environmentId) {
+  if (
+    !input.force &&
+    existing?.status === "ready" &&
+    existing.environmentId === input.environmentId
+  ) {
     // A file restored into a draft after its upload finished (stash, failed send) missed the
     // completion stamp; stamping here keeps it from re-uploading after a reload.
     stampDraftFileUpload(input, existing.attachmentId);
@@ -469,7 +476,8 @@ export function startAttachmentUpload(input: {
     environmentId: input.environmentId,
     ...(input.draftTarget !== undefined ? { draftTarget: input.draftTarget } : {}),
     ...(previous ? { previous } : {}),
-    ...(input.image.type === "file" &&
+    ...(!input.force &&
+    input.image.type === "file" &&
     input.image.uploadEnvironmentId === input.environmentId &&
     input.image.uploadedAttachmentId
       ? { persistedAttachmentId: input.image.uploadedAttachmentId }
@@ -617,11 +625,21 @@ export async function refreshExpiredAttachmentUploads(input: {
   readonly images: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>;
   readonly draftTarget?: ComposerThreadTarget;
 }): Promise<void> {
-  if (!readEnvironmentScope(input.environmentId, AuthOrchestrationReadScope)) return;
+  const canVerify = readEnvironmentScope(input.environmentId, AuthOrchestrationReadScope);
   await Promise.all(
     input.images.map(async (image) => {
       const upload = readAttachmentUpload(image.id);
       if (upload?.status !== "ready" || upload.environmentId !== input.environmentId) return;
+      if (!canVerify) {
+        if (image.file)
+          startAttachmentUpload({
+            environmentId: input.environmentId,
+            image,
+            force: true,
+            ...(input.draftTarget !== undefined ? { draftTarget: input.draftTarget } : {}),
+          });
+        return;
+      }
       const verification = await verifyStashedAttachmentUpload({
         environmentId: input.environmentId,
         attachmentId: upload.attachmentId,

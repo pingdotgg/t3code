@@ -93,6 +93,7 @@ import { useClientSettingsHydrated, useEnvironmentSettings } from "../../hooks/u
 import { environmentPresentations } from "../../state/presentation";
 import {
   approvalRedirectNotice,
+  composerDraftContentChanged,
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
@@ -944,23 +945,14 @@ export function useComposerSend(input: ComposerSendInput) {
       multipleTargets.push(resolved);
     }
 
-    const draftSignature = () => {
+    const draftBeforePreparation = useComposerDraftStore
+      .getState()
+      .getComposerDraft(composerDraftTarget);
+    const draftChangedDuringPreparation = () => {
+      if (composerRef.current?.hasPendingAttachments() === true) return true;
       const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
-      return JSON.stringify({
-        prompt: draft?.prompt ?? "",
-        images: draft?.images.map((image) => image.id) ?? [],
-        files: draft?.files.map((file) => file.id) ?? [],
-        terminalContexts: draft?.terminalContexts ?? [],
-        previewAnnotations: draft?.previewAnnotations ?? [],
-        reviewComments: draft?.reviewComments ?? [],
-        threadContexts: draft?.threadContexts ?? [],
-        environmentContexts: draft?.environmentContexts ?? [],
-      });
+      return composerDraftContentChanged(draftBeforePreparation, draft);
     };
-    const draftBeforePreparation = draftSignature();
-    const draftChangedDuringPreparation = () =>
-      draftSignature() !== draftBeforePreparation ||
-      composerRef.current?.hasPendingAttachments() === true;
     sendInFlightRef.current = true;
     const sendGeneration = ++composerSendGenerationRef.current;
     const attachmentCapabilitiesBeforeUpload = readLiveAttachmentCapabilities();

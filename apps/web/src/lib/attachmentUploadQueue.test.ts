@@ -292,6 +292,34 @@ describe("attachmentUploadQueue", () => {
     expect(TestXmlHttpRequest.requests).toHaveLength(0);
   });
 
+  it("reuploads local bytes for a connection without read permission", async () => {
+    const image = makeImage("operate-only");
+    useAttachmentUploadStore.setState({
+      uploadsByImageId: {
+        [image.id]: {
+          status: "ready",
+          environmentId: firstEnvironment,
+          attachmentId: "pending-original",
+        },
+      },
+    });
+    mocks.readEnvironmentScope.mockImplementation(
+      (_environmentId, scope) => scope !== "orchestration:read",
+    );
+    const refresh = refreshExpiredAttachmentUploads({
+      environmentId: firstEnvironment,
+      images: [image],
+    });
+    await vi.waitFor(() => expect(TestXmlHttpRequest.requests).toHaveLength(1));
+    TestXmlHttpRequest.requests[0]!.complete();
+    await refresh;
+    expect(readAttachmentUpload(image.id)).toMatchObject({
+      status: "ready",
+      attachmentId: "pending-environment-1-operate-only.png",
+    });
+    expect(mocks.executeAtomQuery).not.toHaveBeenCalled();
+  });
+
   it("does not resurrect an image removed while its upload is being checked", async () => {
     const image = makeImage("removed-during-verification");
     useAttachmentUploadStore.setState({
