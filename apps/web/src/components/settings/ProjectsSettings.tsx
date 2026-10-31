@@ -14,10 +14,10 @@ export function ProjectsSettings() {
     scope.kind === "unavailable" ? (
       <SettingsPageContainer>
         <div className="flex flex-col items-start gap-3">
-          <p className="text-sm text-muted-foreground">{scope.message}</p>
+          <p className="text-body text-muted-foreground">{scope.message}</p>
           {value.machine || value.checkout ? (
             <Button
-              variant="outline"
+              variant="secondary"
               size="xs"
               onClick={() => selectScope(selectEnvironmentAxis(value, ALL_ENVIRONMENTS_VALUE))}
             >

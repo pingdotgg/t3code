@@ -3,6 +3,7 @@ import type { EnvironmentId, ProviderDriverKind } from "@t3tools/contracts";
 import { InfoIcon } from "lucide-react";
 
 import { serverEnvironment } from "../../state/server";
+import { InlineButton } from "../ui/button";
 import { Alert, AlertDescription } from "../ui/alert";
 
 const MULTIPLE_ACCOUNTS_FAQ_URL =
@@ -35,14 +36,11 @@ export function MultipleAccountsNote({
       <AlertDescription>
         <p>
           We do not recommend managing multiple {providerName} accounts in T3 Code.{" "}
-          <a
-            href={MULTIPLE_ACCOUNTS_FAQ_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="underline underline-offset-2 hover:text-foreground"
+          <InlineButton
+            render={<a href={MULTIPLE_ACCOUNTS_FAQ_URL} target="_blank" rel="noreferrer" />}
           >
             More info
-          </a>
+          </InlineButton>
         </p>
       </AlertDescription>
     </Alert>

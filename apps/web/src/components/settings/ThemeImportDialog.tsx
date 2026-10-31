@@ -427,9 +427,7 @@ function ThemeImportBody({
 
       <div className="flex items-center gap-3" aria-hidden>
         <div className="h-px flex-1 bg-border" />
-        <span className="text-muted-foreground text-2xs uppercase tracking-wider">
-          or import a file
-        </span>
+        <span className="text-muted-foreground text-2xs">or import a file</span>
         <div className="h-px flex-1 bg-border" />
       </div>
 
@@ -460,7 +458,7 @@ function ThemeImportBody({
           />
         );
         const chooseButton = (label = "Choose files") => (
-          <Button disabled={isReading} size="sm" variant="outline" onClick={openFilePicker}>
+          <Button disabled={isReading} size="sm" variant="secondary" onClick={openFilePicker}>
             <DownloadIcon />
             {isReading ? "Reading…" : label}
           </Button>
@@ -488,7 +486,7 @@ function ThemeImportBody({
                 <Button size="sm" onClick={() => resolveConflicts("update")}>
                   Update existing
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => resolveConflicts("copy")}>
+                <Button size="sm" variant="secondary" onClick={() => resolveConflicts("copy")}>
                   Keep both
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => setConflicts(null)}>
