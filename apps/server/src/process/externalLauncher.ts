@@ -178,7 +178,8 @@ function encodeUtf16LeBase64(input: string): string {
 }
 
 function escapePowerShellStringLiteral(input: string): string {
-  return `'${input.replaceAll("'", "''")}'`;
+  // PowerShell also recognises typographic apostrophes as single-quote delimiters.
+  return `'${input.replace(/['\u2018-\u201b]/g, "$&$&")}'`;
 }
 
 function resolvePowerShellPath(env: NodeJS.ProcessEnv = {}): string {

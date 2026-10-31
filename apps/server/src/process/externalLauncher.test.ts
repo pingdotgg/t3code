@@ -263,7 +263,7 @@ it.live.skipIf(!windowsHost)("opens Windows folders through the default shell ha
       const launcher = yield* ExternalLauncher.ExternalLauncher;
       yield* launcher.launchEditor({
         editor: "file-manager",
-        cwd: "C:/workspace [draft]/author's $media",
+        cwd: "C:/workspace [draft]/author's ‘left’ ‚low‛ $media/’; Write-Output injected; #",
       });
     }).pipe(
       Effect.provide(
@@ -284,12 +284,15 @@ it.live.skipIf(!windowsHost)("opens Windows folders through the default shell ha
       ChildProcess.make(spawned.command, [
         ...spawned.args.slice(0, -1),
         Buffer.from(
-          `function Invoke-Item { param($LiteralPath) Write-Output $LiteralPath }; ${source}`,
+          `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); function Invoke-Item { param($LiteralPath) Write-Output $LiteralPath }; ${source}`,
           "utf16le",
         ).toString("base64"),
       ]),
     );
-    assert.equal(output.trim(), "C:\\workspace [draft]\\author's $media");
+    assert.equal(
+      output.trim(),
+      "C:\\workspace [draft]\\author's ‘left’ ‚low‛ $media\\’; Write-Output injected; #",
+    );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
