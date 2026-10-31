@@ -5600,6 +5600,131 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("queues a message sent with Queue while a usage limit blocks the thread", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-queue-after-limit");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        createdBy: "user",
+        creationSource: "web",
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Queue after limit",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const send = (index: number, type: "start_immediately" | "queue_after_active") =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:${index}`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:${index}`),
+          text: `Prompt ${index}`,
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+          dispatchMode: { type },
+        });
+      yield* send(0, "start_immediately");
+      const [limited] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      assert.isDefined(limited);
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:error`),
+            type: "turn-item.updated",
+            threadId,
+            runId: limited.id,
+            nodeId: limited.rootNodeId!,
+            providerInstanceId: limited.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`${threadId}:error`),
+              type: "error",
+              threadId,
+              runId: limited.id,
+              nodeId: limited.rootNodeId!,
+              providerThreadId: limited.providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 2,
+              status: "failed",
+              title: "Usage limit",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              failure: {
+                class: "usage_limit",
+                message: "Usage limit reached",
+                code: "usage_limit",
+                retryable: null,
+              },
+            },
+          },
+          {
+            id: EventId.make(`${threadId}:failed`),
+            type: "run.updated",
+            threadId,
+            runId: limited.id,
+            providerInstanceId: limited.providerInstanceId,
+            occurredAt: now,
+            payload: { ...limited, status: "failed", completedAt: now },
+          },
+        ],
+      });
+
+      yield* send(1, "queue_after_active");
+      yield* orchestrator.resumeQueuedRuns;
+      const runFor = (index: number) =>
+        Effect.map(orchestrator.getThreadProjection(threadId), ({ runs }) =>
+          runs.find((run) => run.userMessageId === MessageId.make(`${threadId}:${index}`)),
+        );
+      const queued = yield* runFor(1);
+      assert.equal(queued?.status, "queued");
+      assert.notEqual(queued?.queueHeld, true);
+
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`${threadId}:2`),
+        threadId,
+        messageId: MessageId.make(`${threadId}:2`),
+        manualContinuationOfRunId: limited.id,
+        text: "Continue where you left off.",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        dispatchMode: { type: "start_immediately" },
+      });
+      const continuation = yield* runFor(2);
+      assert.equal(continuation?.status, "starting");
+      assert.equal((yield* runFor(1))?.status, "queued");
+      const completedAt = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:continuation:completed`),
+            type: "run.updated",
+            threadId,
+            runId: continuation!.id,
+            providerInstanceId: continuation!.providerInstanceId,
+            occurredAt: completedAt,
+            payload: { ...continuation!, status: "completed", startedAt: completedAt, completedAt },
+          },
+        ],
+      });
+      yield* orchestrator.resumeQueuedRuns;
+      assert.equal((yield* runFor(1))?.status, "starting");
+    }),
+  );
+
   it.effect.each([
     ["server", modelSelection],
     ["provider", modelSelection],
