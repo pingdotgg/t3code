@@ -46,6 +46,23 @@ describe("add project shared logic", () => {
         sshUrl: "ssh://git@forgejo.example.test:2222/owner/repo.git",
       }),
     ).toBe("https://forgejo.example.test:8443/owner/repo.git");
+    expect(
+      getDefaultCloneUrl({
+        provider: SourceControlProviderKind.make("gitlab"),
+        url: "https://gitlab.com/group/subgroup/project",
+        sshUrl: "git@gitlab.com:group/subgroup/project.git",
+      }),
+    ).toBe("https://gitlab.com/group/subgroup/project");
+  });
+
+  it("keeps SSH for hosts that default to it", () => {
+    expect(
+      getDefaultCloneUrl({
+        provider: SourceControlProviderKind.make("bitbucket"),
+        url: "https://bitbucket.org/workspace/repo.git",
+        sshUrl: "git@bitbucket.org:workspace/repo.git",
+      }),
+    ).toBe("git@bitbucket.org:workspace/repo.git");
   });
 
   it("derives the clone folder name from any pasted clone URL", () => {
