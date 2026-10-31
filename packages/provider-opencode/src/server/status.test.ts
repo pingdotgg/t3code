@@ -96,7 +96,7 @@ it.effect("reads Go limits with the instance's XDG credentials and preserves res
 );
 
 it.effect(
-  "uses the selected public Console key for Go limits, falling back only on auth rejection",
+  "uses the selected public Console credential for Go limits, falling back only on auth rejection",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -116,18 +116,42 @@ it.effect(
       const insert = database.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?, ?)");
       const window = { percent: 1, resetsAt: "2026-09-17T12:00:00.000Z" };
       const consoleKey = { type: "key", key: "console-key" };
+      const consoleLogin = {
+        type: "oauth",
+        methodID: "device",
+        access: "console-token",
+        refresh: "refresh",
+        expires: 0,
+        metadata: {
+          server: "https://opencode.ai/console",
+          accountID: "acc_1",
+          email: "user@example.com",
+          orgID: "org_1",
+          orgName: "Org",
+        },
+      };
+      const consoleAccount = "4c1ad3b022b414b769bf373c1fa50a36e1704129d036b9d1a9fe4cde9999e87e";
       const fingerprints = new Map([
         ["console-key", "3e45cfde9158185930d4cc7020a4e390895574fd54bd8f9631d23a336bbf94f0"],
         ["go-key", "d0e590e93fc9bd9353f2b993c0c287391cae505da2a78cb698b75418d2f5367e"],
+        ["db-go-key", "2113f8e76a6b6a8b33f4fc88dde557d591b11d3ffe30b718cf44428e59933918"],
         ["inline-key", "85649de18e63305548b6407e185f708483727ee6189cc4bc9512ddb17e23e776"],
+        // Each device signs in separately, so one account must not split by token.
+        ["console-token", consoleAccount],
+        ["other-device-token", consoleAccount],
       ]);
+      const goRow = { type: "key", key: "db-go-key" };
       for (const {
         consoleRow = consoleKey,
         active = 1,
+        storedGo,
+        storedGoActive = 1,
         consoleStatus = 200,
+        rejected,
         inline = false,
         databaseFile,
         requested,
+        fingerprint,
       } of [
         {
           consoleRow: { ...consoleKey, metadata: { server: "https://opencode.ai/console" } },
@@ -137,13 +161,33 @@ it.effect(
         { consoleStatus: 403, requested: ["console-key", "go-key"] },
         { consoleStatus: 500, requested: ["console-key"] },
         { active: 0, requested: ["go-key"] },
+        { consoleRow: consoleLogin, requested: ["console-token"] },
+        {
+          consoleRow: { ...consoleLogin, metadata: { accountID: "acc_1" } },
+          requested: ["console-token"],
+          fingerprint: "7ed9889eb62f03ca5f54804921801e15500029780589a2599f92e49998dcd949",
+        },
+        {
+          consoleRow: { ...consoleLogin, access: "other-device-token" },
+          requested: ["other-device-token"],
+        },
+        {
+          // Earlier OpenCode 2 releases signed in through this address.
+          consoleRow: {
+            ...consoleLogin,
+            metadata: { ...consoleLogin.metadata, server: "https://console.opencode.ai/" },
+          },
+          requested: ["console-token"],
+        },
+        {
+          consoleRow: consoleLogin,
+          rejected: "console-token",
+          requested: ["console-token", "go-key"],
+        },
         {
           consoleRow: {
-            type: "oauth",
-            methodID: "device",
-            access: "token",
-            refresh: "refresh",
-            expires: 0,
+            ...consoleLogin,
+            metadata: { ...consoleLogin.metadata, server: "https://console.example" },
           },
           requested: ["go-key"],
         },
@@ -155,9 +199,37 @@ it.effect(
         { databaseFile: "selected.db", requested: ["console-key"] },
         { databaseFile: ":memory:", requested: ["go-key"] },
         { active: null, requested: ["console-key"] },
+        // OpenCode 2 uses its stored Go key; auth.json keeps only the stale imported copy.
+        { consoleRow: null, storedGo: goRow, requested: ["db-go-key"] },
+        {
+          consoleRow: { ...consoleLogin, metadata: { server: "invalid-url" } },
+          storedGo: goRow,
+          requested: ["db-go-key"],
+        },
+        {
+          storedGo: { ...goRow, metadata: { server: "invalid-url" } },
+          requested: ["console-key"],
+        },
+        {
+          consoleRow: null,
+          storedGo: goRow,
+          rejected: "db-go-key",
+          requested: ["db-go-key", "go-key"],
+        },
+        { consoleStatus: 401, storedGo: goRow, requested: ["console-key", "db-go-key"] },
+        { consoleRow: null, storedGo: goRow, storedGoActive: 0, requested: ["go-key"] },
+        {
+          consoleRow: null,
+          storedGo: { ...goRow, metadata: { server: "https://console.example" } },
+          requested: ["go-key"],
+        },
+        { consoleRow: null, storedGo: goRow, inline: true, requested: ["inline-key"] },
       ]) {
         database.exec("DELETE FROM credential");
-        insert.run("cred_selected", "opencode", JSON.stringify(consoleRow), active, 2, 2);
+        if (consoleRow !== null)
+          insert.run("cred_selected", "opencode", JSON.stringify(consoleRow), active, 2, 2);
+        if (storedGo)
+          insert.run("cred_go", "opencode-go", JSON.stringify(storedGo), storedGoActive, 3, 3);
         // Legacy selections follow creation order, even when an older key was updated later.
         insert.run(
           "cred_older",
@@ -198,7 +270,13 @@ it.effect(
               authorizations.push(key);
               // The legacy key is expired in the regression; it only works in fallback scenarios.
               const status =
-                key === "console-key" ? consoleStatus : requested.includes(key) ? 200 : 401;
+                key === rejected
+                  ? 401
+                  : key === "console-key"
+                    ? consoleStatus
+                    : requested.includes(key)
+                      ? 200
+                      : 401;
               return Effect.succeed(
                 HttpClientResponse.fromWeb(
                   request,
@@ -220,7 +298,7 @@ it.effect(
         NodeAssert.equal(limits.windows.length, consoleStatus === 500 ? 0 : 3);
         NodeAssert.equal(
           limits.credentialFingerprint,
-          consoleStatus === 500 ? undefined : fingerprints.get(requested.at(-1)!),
+          consoleStatus === 500 ? undefined : (fingerprint ?? fingerprints.get(requested.at(-1)!)),
         );
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
