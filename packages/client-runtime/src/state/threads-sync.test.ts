@@ -317,6 +317,32 @@ const PENDING_QUESTION = {
   resolvedAt: null,
 };
 
+const QUESTION_CARD: OrchestrationV2TurnItem = {
+  id: TurnItemId.make("question-card"),
+  threadId: THREAD_ID,
+  runId: null,
+  nodeId: PENDING_QUESTION.nodeId,
+  providerThreadId: null,
+  providerTurnId: null,
+  nativeItemRef: null,
+  parentItemId: null,
+  ordinal: 1,
+  status: "running",
+  title: null,
+  startedAt: v2Now,
+  completedAt: null,
+  updatedAt: v2Now,
+  type: "user_input_request",
+  requestId: PENDING_QUESTION.id,
+  questions: [{ id: "scope", header: "Scope", question: "Which scope?", options: [] }],
+};
+
+const PROJECTION_WITH_QUESTION = {
+  ...BASE_PROJECTION,
+  runtimeRequests: [PENDING_QUESTION],
+  turnItems: [QUESTION_CARD],
+};
+
 const questionResolved = (sequence: number): OrchestrationV2ThreadStreamItem => ({
   kind: "event",
   sequence,
@@ -360,6 +386,62 @@ const deleted = (sequence = 3): OrchestrationV2ThreadStreamItem => {
 };
 
 describe("EnvironmentThreads", () => {
+  it.effect.each([
+    ["disk", false],
+    ["retained", false],
+    ["disk", true],
+    ["retained", true],
+  ] as const)(
+    "recovers a %s cache only when its pending question card is missing: %s",
+    ([cacheKind, hasCard]) =>
+      Effect.gen(function* () {
+        const projection = {
+          ...PROJECTION_WITH_QUESTION,
+          turnItems: hasCard ? [QUESTION_CARD] : [],
+        };
+        const schema = Schema.fromJsonString(StoredOrchestrationThreadSnapshot);
+        const encoded = yield* Schema.encodeEffect(schema)({
+          schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
+          environmentId: TARGET.environmentId,
+          threadId: THREAD_ID,
+          snapshot: { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, projection },
+        });
+        const stored = yield* Schema.decodeEffect(schema)(encoded);
+        const h = yield* makeHarness({
+          loadCached: Effect.succeedSome(stored.snapshot),
+          ...(cacheKind === "retained"
+            ? {
+                resumeCache: {
+                  owner: undefined,
+                  snapshot: {
+                    state: {
+                      ...EMPTY_ENVIRONMENT_THREAD_STATE,
+                      data: Option.some(projection),
+                      status: "live",
+                    },
+                    sequence: CACHED_SNAPSHOT_SEQUENCE,
+                    persisted: true,
+                  },
+                },
+              }
+            : {}),
+          httpSnapshot: {
+            _tag: "present",
+            snapshot: {
+              snapshotSequence: CACHED_SNAPSHOT_SEQUENCE,
+              projection: PROJECTION_WITH_QUESTION,
+            },
+          },
+          completionMarker: true,
+        });
+        yield* Queue.offer(h.inputs, synchronized());
+        const state = yield* awaitThreadState(h.observed, (value) => value.status === "live");
+        expect(yield* Ref.get(h.loaderCalls)).toBe(hasCard ? 0 : 1);
+        expect(Option.getOrThrow(state.data)).toEqual(PROJECTION_WITH_QUESTION);
+        expect(yield* Ref.get(h.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE);
+      }),
+  );
+
   it.effect("discards an oversized version-4 cache and requests a fresh bounded snapshot", () =>
     Effect.gen(function* () {
       const item: OrchestrationV2TurnItem = {
@@ -559,7 +641,7 @@ describe("EnvironmentThreads", () => {
         Scope.close(scope, Exit.void),
       );
       const old = yield* makeHarness({
-        cached: { ...BASE_PROJECTION, runtimeRequests: [PENDING_QUESTION] },
+        cached: PROJECTION_WITH_QUESTION,
         resumeCache,
       }).pipe(Effect.provideService(Scope.Scope, oldScope));
       yield* awaitThreadState(old.observed, (value) => value.status === "live");
@@ -2121,7 +2203,7 @@ describe("EnvironmentThreads", () => {
         (unsubscribe) => Effect.sync(unsubscribe),
       );
       const harness = yield* makeHarness({
-        cached: { ...BASE_PROJECTION, runtimeRequests: [PENDING_QUESTION] },
+        cached: PROJECTION_WITH_QUESTION,
         completionMarker: true,
       });
       yield* awaitThreadState(
