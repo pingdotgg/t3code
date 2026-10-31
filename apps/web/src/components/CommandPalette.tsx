@@ -110,11 +110,7 @@ import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
 import { threadEnvironment } from "../state/threads";
-import {
-  readEnvironmentScope,
-  useEnvironmentScope,
-  useEnvironmentsWithScope,
-} from "~/state/session";
+import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
@@ -124,7 +120,7 @@ import { useStartTriage } from "../hooks/useStartTriage";
 import { pickTriageEnvironment } from "../lib/triageTarget";
 import { useNewProject } from "../hooks/useNewProject";
 import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
-import { useProjectGroupUpdate } from "../hooks/useProjectGroupUpdate";
+import { useProjectPin } from "../hooks/useProjectGroupUpdate";
 import {
   useEnvironmentProviders,
   useEnvironments,
@@ -247,10 +243,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
 import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
-import {
-  buildSidebarProjectPickerEntries,
-  type SidebarProjectSnapshot,
-} from "../sidebarProjectGrouping";
+import { buildSidebarProjectPickerEntries } from "../sidebarProjectGrouping";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "~/components/pullRequest/pullRequestListPreferences";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
@@ -530,18 +523,7 @@ function OpenCommandPaletteDialog(props: {
       group,
     ]),
   );
-  const { updateProjectGroup, canOrganizeProjectGroup } = useProjectGroupUpdate();
-  const operableEnvironmentIds = useEnvironmentsWithScope(projects, AuthOrchestrationOperateScope);
-  const canPinProjectGroup = (group: SidebarProjectSnapshot) =>
-    canOrganizeProjectGroup(group.memberProjects) &&
-    group.memberProjects.every((member) => operableEnvironmentIds.has(member.environmentId));
-  const toggleProjectGroupPin = (group: SidebarProjectSnapshot) => {
-    void updateProjectGroup(
-      group.memberProjects,
-      { pinned: !group.pinned },
-      group.pinned ? "Failed to unpin project" : "Failed to pin project",
-    );
-  };
+  const { canPinProjectGroup, toggleProjectGroupPin } = useProjectPin();
   const projectPin = (project: CommandPaletteProject) => {
     const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
     return group && canPinProjectGroup(group)

@@ -125,7 +125,7 @@ import {
 } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
-import { useProjectGroupUpdate } from "../hooks/useProjectGroupUpdate";
+import { useProjectPin } from "../hooks/useProjectGroupUpdate";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
@@ -156,11 +156,7 @@ import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
 import { useThreadSearch } from "../state/queries";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
-import {
-  readEnvironmentScope,
-  useEnvironmentScope,
-  useEnvironmentsWithScope,
-} from "../state/session";
+import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
@@ -239,7 +235,7 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { Button } from "./ui/button";
-import { ProjectPinButton } from "./ProjectPinButton";
+import { isProjectPinShortcut, ProjectPinButton } from "./ProjectPinButton";
 import {
   Combobox,
   ComboboxEmpty,
@@ -1218,11 +1214,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       });
     },
   );
-  const { updateProjectGroup, canOrganizeProjectGroup } = useProjectGroupUpdate();
-  const operableEnvironmentIds = useEnvironmentsWithScope(projects, AuthOrchestrationOperateScope);
-  const canPinProject = (project: SidebarProjectSnapshot) =>
-    canOrganizeProjectGroup(project.memberProjects) &&
-    project.memberProjects.every((member) => operableEnvironmentIds.has(member.environmentId));
+  const {
+    canPinProjectGroup: canPinProject,
+    setProjectGroupPinned,
+    toggleProjectGroupPin,
+  } = useProjectPin();
   const handleProjectSettings = useStableCallback(
     (
       event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLInputElement>,
@@ -1271,11 +1267,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           case "pin":
           case "unpin":
-            void updateProjectGroup(
-              group.memberProjects,
-              { pinned: clicked.value === "pin" },
-              clicked.value === "pin" ? "Failed to pin project" : "Failed to unpin project",
-            );
+            setProjectGroupPinned(group, clicked.value === "pin");
             return;
           case "project-settings":
             openProjectSettings(group);
@@ -3048,18 +3040,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         if (
                           project &&
                           canPinProject(project) &&
-                          resolveShortcutCommand(event.nativeEvent, keybindings, {
-                            platform: navigator.platform,
-                            context: { modelPickerOpen: false, editableFocus: true },
-                          }) === "thread.pin"
+                          isProjectPinShortcut(event, keybindings)
                         ) {
                           event.preventDefault();
                           event.stopPropagation();
-                          void updateProjectGroup(
-                            project.memberProjects,
-                            { pinned: !project.pinned },
-                            project.pinned ? "Failed to unpin project" : "Failed to pin project",
-                          );
+                          toggleProjectGroupPin(project);
                           return;
                         }
                         if (event.ctrlKey || event.altKey || event.metaKey) return;
@@ -3123,15 +3108,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 name={project.displayName}
                                 pinned={project.pinned}
                                 shortcutLabel={shortcutLabelForCommand(keybindings, "thread.pin")}
-                                onToggle={() => {
-                                  void updateProjectGroup(
-                                    project.memberProjects,
-                                    { pinned: !project.pinned },
-                                    project.pinned
-                                      ? "Failed to unpin project"
-                                      : "Failed to pin project",
-                                  );
-                                }}
+                                onToggle={() => toggleProjectGroupPin(project)}
                               />
                             ) : null}
                             {project ? (

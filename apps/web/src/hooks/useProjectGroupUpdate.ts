@@ -10,10 +10,10 @@ import * as Cause from "effect/Cause";
 
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import type { SidebarProjectGroupMember } from "../sidebarProjectGrouping";
-import { useServerConfigs } from "../state/entities";
+import { useProjects, useServerConfigs } from "../state/entities";
 import { readEnvironment } from "../state/environments";
 import { projectEnvironment } from "../state/projects";
-import { readEnvironmentScope } from "../state/session";
+import { readEnvironmentScope, useEnvironmentsWithScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 
 export type ProjectGroupUpdate = Partial<{
@@ -92,6 +92,34 @@ export function useProjectGroupUpdate() {
     );
 
   return { updateProjectGroup, canOrganizeProjectGroup };
+}
+
+/** Pin state for a project group, shared by every list that can pin or unpin a project. */
+export function useProjectPin() {
+  const { updateProjectGroup, canOrganizeProjectGroup } = useProjectGroupUpdate();
+  const operableEnvironmentIds = useEnvironmentsWithScope(
+    useProjects(),
+    AuthOrchestrationOperateScope,
+  );
+  type PinnableGroup = {
+    readonly memberProjects: ReadonlyArray<ProjectGroupMember>;
+    readonly pinned: boolean;
+  };
+  const canPinProjectGroup = (group: PinnableGroup) =>
+    canOrganizeProjectGroup(group.memberProjects) &&
+    group.memberProjects.every((member) => operableEnvironmentIds.has(member.environmentId));
+  const setProjectGroupPinned = (group: PinnableGroup, pinned: boolean) => {
+    void updateProjectGroup(
+      group.memberProjects,
+      { pinned },
+      pinned ? "Failed to pin project" : "Failed to unpin project",
+    );
+  };
+  return {
+    canPinProjectGroup,
+    setProjectGroupPinned,
+    toggleProjectGroupPin: (group: PinnableGroup) => setProjectGroupPinned(group, !group.pinned),
+  };
 }
 
 /** Reports the first member this connection cannot change, and returns that failure. */

@@ -1,7 +1,24 @@
+import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { PinIcon, PinOffIcon } from "lucide-react";
+import type { KeyboardEvent } from "react";
+
+import { resolveShortcutCommand } from "../keybindings";
 
 import { cn } from "~/lib/utils";
 import { Button } from "./ui/button";
+
+/** The thread pin shortcut, which pins the highlighted row in a project list. */
+export function isProjectPinShortcut(
+  event: KeyboardEvent,
+  keybindings: ResolvedKeybindingsConfig,
+): boolean {
+  return (
+    resolveShortcutCommand(event.nativeEvent, keybindings, {
+      platform: navigator.platform,
+      context: { modelPickerOpen: false, editableFocus: true },
+    }) === "thread.pin"
+  );
+}
 
 /**
  * Pin toggle for a project row in a menu or list. A pinned project always shows its pin;
