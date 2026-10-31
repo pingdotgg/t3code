@@ -11,6 +11,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BootService from "../cloud/bootService.ts";
 import * as CliState from "../cloud/CliState.ts";
+import { CLOUD_LINK_REVOKED } from "../cloud/config.ts";
 import { hasCloudPublicConfig } from "../cloud/publicConfig.ts";
 import { compareExactServiceVersions } from "../cloud/serviceProtocol.ts";
 import * as ServerConfig from "../config.ts";
@@ -32,8 +33,10 @@ type Routes = Readonly<Record<Route, boolean>>;
 /** How other devices reach this machine now. */
 interface Setup {
   readonly service: BootService.BootServiceStatus;
-  /** Null in builds without T3 Connect. */
+  /** Null in builds without T3 Connect. Off when T3 Connect revoked the link. */
   readonly connect: boolean | null;
+  /** T3 Connect revoked the link; `t3 connect` links again. */
+  readonly connectRevoked: boolean;
   readonly lan: boolean;
   /** An installed service with no T3CODE_LAN keeps the old default: on. */
   readonly lanFromOldDefault: boolean;
@@ -48,13 +51,18 @@ const readSetup = Effect.fn("cli.up.read_setup")(function* () {
   const lan = yield* Config.Boolean("T3CODE_LAN")
     .pipe(Config.option)
     .parse(ConfigProvider.fromEnv({ env: entries }));
+  const connectRevoked =
+    hasCloudPublicConfig &&
+    Option.isSome(yield* (yield* ServerSecretStore.ServerSecretStore).get(CLOUD_LINK_REVOKED));
   const connect = hasCloudPublicConfig
     ? (yield* CliState.readCliDesiredCloudLink) &&
-      (yield* CliState.readCliDesiredLinkMode) === "managed"
+      (yield* CliState.readCliDesiredLinkMode) === "managed" &&
+      !connectRevoked
     : null;
   return {
     service,
     connect,
+    connectRevoked,
     lan: Option.getOrElse(lan, () => service.installed),
     lanFromOldDefault: Option.isNone(lan) && service.installed,
     host: entries.T3CODE_HOST,
@@ -113,7 +121,18 @@ const formatSetup = (setup: Setup) => {
           ? `installed · t3@${service.installedVersion ?? packageJson.version}`
           : "not installed",
     ],
-    ...(setup.connect === null ? [] : [["T3 Connect", setup.connect ? "on" : "off"] as const]),
+    ...(setup.connect === null
+      ? []
+      : [
+          [
+            "T3 Connect",
+            setup.connect
+              ? "on"
+              : setup.connectRevoked
+                ? "off, T3 Connect revoked this link. Run `t3 connect` to link again."
+                : "off",
+          ] as const,
+        ]),
     [
       "Local network",
       setup.host !== undefined
@@ -189,7 +208,9 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   }
   // Nothing to run in the background, but a route left on still gets turned off.
   if (!before.service.installed && !routes.connect && !routes.lan) {
-    if (current.connect) yield* disconnectCloud({ clearAuthorization: false });
+    if (current.connect || before.connectRevoked) {
+      yield* disconnectCloud({ clearAuthorization: false });
+    }
     if (current.lan) yield* CliService.writeServiceEnv(baseDir, { T3CODE_LAN: "false" });
     return yield* Console.log(formatNextSteps(routes));
   }
@@ -225,7 +246,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
     if (linked === null) return;
     yield* Console.log(`✓ Signed in${linked.identity ? ` as ${linked.identity}` : ""}\n`);
   }
-  if (!routes.connect && current.connect) {
+  if (!routes.connect && (current.connect || before.connectRevoked)) {
     yield* disconnectCloud({ clearAuthorization: false });
   }
   const previousLan = (yield* CliService.readServiceEnv(baseDir)).entries.T3CODE_LAN;
