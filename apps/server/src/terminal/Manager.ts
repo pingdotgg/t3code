@@ -314,6 +314,8 @@ interface TerminalSessionState {
   unsubscribeExit: (() => void) | null;
   hasRunningSubprocess: boolean;
   childCommandLabel: string | null;
+  /** Exit code from the shell's last OSC 133/633 command-finished mark, if it reported one. */
+  lastCommandExitCode: number | null;
   runtimeEnv: Record<string, string> | null;
   stopOnSettle: boolean;
 }
@@ -347,6 +349,12 @@ type DrainProcessEventAction =
       sequence: number;
       history: BoundedTerminalHistory | null;
       data: string;
+      activity: {
+        sequence: number;
+        hasRunningSubprocess: boolean;
+        lastCommandExitCode: number | null;
+        label: string;
+      } | null;
     }
   | {
       type: "exit";
@@ -425,6 +433,9 @@ function summary(session: TerminalSessionState): TerminalSummary {
     exitCode: session.exitCode,
     exitSignal: session.exitSignal,
     hasRunningSubprocess: session.hasRunningSubprocess,
+    ...(session.lastCommandExitCode !== null
+      ? { lastCommandExitCode: session.lastCommandExitCode }
+      : {}),
     label: terminalWireLabel(session),
     updatedAt: session.updatedAt,
   };
@@ -1309,12 +1320,30 @@ function findEscapeSequenceEndIndex(input: string, start: number): number | null
 const HISTORY_SEQUENCE_START = /\u001b/;
 const NEXT_HISTORY_SEQUENCE_START = new RegExp(HISTORY_SEQUENCE_START.source, "g");
 
+/**
+ * Reads a shell-integration "command finished" mark (OSC 133;D or VS Code's
+ * OSC 633;D). Returns the exit code, null for a mark without one, and
+ * undefined for any other OSC.
+ */
+function readCommandFinishedExitCode(content: string): number | null | undefined {
+  const match = /^(?:133|633);D(?:;(-?\d+))?(?:;|$)/.exec(content);
+  if (!match) return undefined;
+  if (match[1] === undefined) return null;
+  const exitCode = Number.parseInt(match[1], 10);
+  return Number.isSafeInteger(exitCode) ? exitCode : null;
+}
+
 function sanitizeTerminalHistoryChunk(
   pendingControlSequence: string,
   data: string,
-): { visibleText: string; pendingControlSequence: string } {
+): {
+  visibleText: string;
+  pendingControlSequence: string;
+  /** Last command-finished mark in this chunk; undefined when there was none. */
+  commandExitCode: number | null | undefined;
+} {
   if (pendingControlSequence.length === 0 && !HISTORY_SEQUENCE_START.test(data)) {
-    return { visibleText: data, pendingControlSequence: "" };
+    return { visibleText: data, pendingControlSequence: "", commandExitCode: undefined };
   }
 
   const input = `${pendingControlSequence}${data}`;
@@ -1324,6 +1353,11 @@ function sanitizeTerminalHistoryChunk(
   let index = 0;
   // Set when a C1 code point began the sequence at `index`: the ESC form that stands in for it.
   let c1Introducer = "";
+  let commandExitCode: number | null | undefined;
+  const readOsc = (content: string) => {
+    const exitCode = readCommandFinishedExitCode(content);
+    if (exitCode !== undefined) commandExitCode = exitCode;
+  };
 
   const append = (value: string) => {
     visibleText += value;
@@ -1339,7 +1373,7 @@ function sanitizeTerminalHistoryChunk(
       const contentStart = prefix.length > 0 ? index : index + 2;
       const nextCodePoint = (prefix || input).charCodeAt(prefix.length > 0 ? 1 : index + 1);
       if (Number.isNaN(nextCodePoint)) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
+        return { visibleText, pendingControlSequence: input.slice(index), commandExitCode };
       }
 
       if (nextCodePoint === 0x5b) {
@@ -1393,7 +1427,7 @@ function sanitizeTerminalHistoryChunk(
           cursor += 1;
         }
         if (cursor >= input.length) {
-          return { visibleText, pendingControlSequence: prefix + input.slice(index) };
+          return { visibleText, pendingControlSequence: prefix + input.slice(index), commandExitCode };
         }
         continue;
       }
@@ -1410,12 +1444,13 @@ function sanitizeTerminalHistoryChunk(
           nextCodePoint === 0x5d,
         );
         if (stringEnd === null) {
-          return { visibleText, pendingControlSequence: prefix + input.slice(index) };
+          return { visibleText, pendingControlSequence: prefix + input.slice(index), commandExitCode };
         }
         const { end, c1 } = stringEnd;
         const content = stripStringTerminator(
           prefix.slice(2) + input.slice(contentStart, c1?.index ?? end),
         );
+        if (nextCodePoint === 0x5d) readOsc(content);
         const strip =
           (nextCodePoint === 0x5d && shouldStripOscSequence(content)) ||
           (nextCodePoint === 0x50 && shouldStripDcsSequence(content));
@@ -1435,7 +1470,7 @@ function sanitizeTerminalHistoryChunk(
 
       const escapeSequenceEndIndex = findEscapeSequenceEndIndex(input, index + 1);
       if (escapeSequenceEndIndex === null) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
+        return { visibleText, pendingControlSequence: input.slice(index), commandExitCode };
       }
       // ESC Z (DECID) is the legacy primary device attributes query.
       if (nextCodePoint !== 0x5a) {
@@ -1452,7 +1487,7 @@ function sanitizeTerminalHistoryChunk(
     index = nextSequenceStart;
   }
 
-  return { visibleText, pendingControlSequence: c1Introducer };
+  return { visibleText, pendingControlSequence: c1Introducer, commandExitCode };
 }
 
 function legacySafeThreadId(threadId: string): string {
@@ -2480,6 +2515,19 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             session.history.append(sanitized.visibleText);
           }
           const eventStamp = advanceEventSequence(session);
+          let activity: Extract<DrainProcessEventAction, { type: "output" }>["activity"] = null;
+          if (
+            sanitized.commandExitCode !== undefined &&
+            sanitized.commandExitCode !== session.lastCommandExitCode
+          ) {
+            session.lastCommandExitCode = sanitized.commandExitCode;
+            activity = {
+              sequence: advanceEventSequence(session).sequence,
+              hasRunningSubprocess: session.hasRunningSubprocess,
+              lastCommandExitCode: session.lastCommandExitCode,
+              label: terminalWireLabel(session),
+            };
+          }
 
           return {
             type: "output",
@@ -2488,6 +2536,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             sequence: eventStamp.sequence,
             history: sanitized.visibleText.length > 0 ? session.history : null,
             data: nextEvent.data,
+            activity,
           } as const;
         }
 
@@ -2497,6 +2546,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         session.pid = null;
         session.hasRunningSubprocess = false;
         session.childCommandLabel = null;
+        session.lastCommandExitCode = null;
         session.status = "exited";
         session.pendingHistoryControlSequence = "";
         session.pendingProcessEvents = [];
@@ -2537,6 +2587,19 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           sequence: action.sequence,
           data: action.data,
         });
+        if (action.activity !== null) {
+          yield* publishEvent({
+            type: "activity",
+            threadId: action.threadId,
+            terminalId: action.terminalId,
+            sequence: action.activity.sequence,
+            hasRunningSubprocess: action.activity.hasRunningSubprocess,
+            ...(action.activity.lastCommandExitCode !== null
+              ? { lastCommandExitCode: action.activity.lastCommandExitCode }
+              : {}),
+            label: action.activity.label,
+          });
+        }
         continue;
       }
 
@@ -2569,6 +2632,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       session.pid = null;
       session.hasRunningSubprocess = false;
       session.childCommandLabel = null;
+      session.lastCommandExitCode = null;
       session.status = "exited";
       session.pendingHistoryControlSequence = "";
       session.pendingProcessEvents = [];
@@ -2675,6 +2739,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       session.exitSignal = null;
       session.hasRunningSubprocess = false;
       session.childCommandLabel = null;
+      session.lastCommandExitCode = null;
       session.pendingProcessEvents = [];
       session.pendingProcessEventIndex = 0;
       session.processEventDrainRunning = false;
@@ -2793,6 +2858,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         session.process = null;
         session.hasRunningSubprocess = false;
         session.childCommandLabel = null;
+        session.lastCommandExitCode = null;
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;
         session.processEventDrainRunning = false;
@@ -2981,6 +3047,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             terminalId: liveSession.value.terminalId,
             sequence: eventStamp.sequence,
             hasRunningSubprocess: next.hasRunningSubprocess,
+            ...(liveSession.value.lastCommandExitCode !== null
+              ? { lastCommandExitCode: liveSession.value.lastCommandExitCode }
+              : {}),
             label: terminalWireLabel(liveSession.value),
           }),
           state,
@@ -3123,6 +3192,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         unsubscribeExit: null,
         hasRunningSubprocess: false,
         childCommandLabel: null,
+        lastCommandExitCode: null,
         runtimeEnv: normalizedRuntimeEnv(input.env),
         stopOnSettle: input.stopOnSettle ?? false,
       };

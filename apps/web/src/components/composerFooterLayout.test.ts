@@ -94,3 +94,57 @@ describe("progressive composer controls", () => {
     }
   });
 });
+
+describe("resolveRestingComposerControlsLayout with icon-only controls", () => {
+  // Picker 115 with its label, 34 as an icon. Effort 80 / 30,
+  // access 99 / 30, overflow 30, gap 2.
+  const tray = {
+    gap: 2,
+    naturalFixedWidth: 115,
+    minimumFixedWidth: 52,
+    iconOnlyFixedWidth: 34,
+    blockWidths: [80, 99],
+    iconOnlyBlockWidths: [30, 30],
+    overflowWidth: 30,
+  };
+
+  it("drops trailing labels before the model label", () => {
+    // 115 + 80 + 99 + 2 * 2 = 298
+    expect(resolveRestingComposerControlsLayout({ ...tray, hostWidth: 298 })).toEqual({
+      hiddenCount: 0,
+      iconOnlyCount: 0,
+      pickerIconOnly: false,
+      visible: true,
+    });
+    // 115 + 80 + 30 + 4 = 229
+    expect(resolveRestingComposerControlsLayout({ ...tray, hostWidth: 229 })).toEqual({
+      hiddenCount: 0,
+      iconOnlyCount: 1,
+      pickerIconOnly: false,
+      visible: true,
+    });
+    // 115 + 30 + 30 + 4 = 179
+    expect(resolveRestingComposerControlsLayout({ ...tray, hostWidth: 179 })).toEqual({
+      hiddenCount: 0,
+      iconOnlyCount: 2,
+      pickerIconOnly: false,
+      visible: true,
+    });
+    // 34 + 30 + 30 + 4 = 98
+    expect(resolveRestingComposerControlsLayout({ ...tray, hostWidth: 178 })).toEqual({
+      hiddenCount: 0,
+      iconOnlyCount: 2,
+      pickerIconOnly: true,
+      visible: true,
+    });
+  });
+
+  it("moves blocks into overflow only once every control is an icon", () => {
+    expect(resolveRestingComposerControlsLayout({ ...tray, hostWidth: 97 })).toEqual({
+      hiddenCount: 2,
+      iconOnlyCount: 2,
+      pickerIconOnly: true,
+      visible: true,
+    });
+  });
+});
