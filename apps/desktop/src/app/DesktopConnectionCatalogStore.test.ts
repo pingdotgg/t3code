@@ -298,4 +298,124 @@ describe("DesktopConnectionCatalogStore", () => {
       assert.deepStrictEqual(yield* store.get, Option.some('{"schemaVersion":1,"targets":[]}'));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
+
+  const emptyCatalog =
+    '{"schemaVersion":1,"targets":[],"profiles":[],"credentials":[],"remoteDpopTokens":[],"disabledEnvironmentIds":[]}';
+  const savedCatalog = emptyCatalog.replace(
+    '"disabledEnvironmentIds":[]',
+    '"disabledEnvironmentIds":["environment-1"]',
+  );
+
+  const savedCatalogFiles = Effect.fn("test.savedCatalogFiles")(function* (stateDir: string) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const names = yield* fileSystem.readDirectory(stateDir);
+    return yield* Effect.forEach(
+      names.filter((name) => name.startsWith("connection-catalog.json.")).toSorted(),
+      (name) => fileSystem.readFileString(path.join(stateDir, name)),
+    );
+  });
+
+  it.effect("keeps an undecryptable catalog when a new catalog is saved over it", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-connection-catalog-test-",
+      });
+      const stateDir = path.join(baseDir, "userdata");
+      const catalogPath = path.join(stateDir, "connection-catalog.json");
+      const failDecrypt = yield* Ref.make(false);
+      const layer = layerFor(baseDir, true, failDecrypt);
+      const previousRun = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+        Effect.provide(layer),
+      );
+      assert.isTrue(yield* previousRun.set(savedCatalog));
+      const original = yield* fileSystem.readFileString(catalogPath);
+
+      yield* Ref.set(failDecrypt, true);
+      const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+        Effect.provide(layer),
+      );
+      yield* store.get.pipe(Effect.flip);
+      assert.isTrue(yield* store.set(emptyCatalog));
+
+      assert.deepStrictEqual(yield* savedCatalogFiles(stateDir), [original]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("keeps a catalog that decrypts to an unusable document when it is replaced", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-connection-catalog-test-",
+      });
+      const stateDir = path.join(baseDir, "userdata");
+      const layer = layerFor(baseDir);
+      const previousRun = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+        Effect.provide(layer),
+      );
+      assert.isTrue(yield* previousRun.set("\u0000not a catalog"));
+      const original = yield* fileSystem.readFileString(
+        path.join(stateDir, "connection-catalog.json"),
+      );
+
+      const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+        Effect.provide(layer),
+      );
+      assert.isTrue(yield* store.set(emptyCatalog));
+      assert.isTrue(yield* store.set(emptyCatalog));
+
+      assert.deepStrictEqual(yield* savedCatalogFiles(stateDir), [original]);
+      assert.deepStrictEqual(yield* store.get, Option.some(emptyCatalog));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("replaces a readable catalog without keeping a copy", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-connection-catalog-test-",
+      });
+      const layer = layerFor(baseDir);
+      const previousRun = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+        Effect.provide(layer),
+      );
+      assert.isTrue(yield* previousRun.set(savedCatalog));
+
+      const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+        Effect.provide(layer),
+      );
+      assert.isTrue(yield* store.set(emptyCatalog));
+
+      assert.deepStrictEqual(yield* savedCatalogFiles(path.join(baseDir, "userdata")), []);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("keeps an unreadable catalog once when first saves run concurrently", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-connection-catalog-test-",
+      });
+      const layer = layerFor(baseDir);
+      const previousRun = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+        Effect.provide(layer),
+      );
+      assert.isTrue(yield* previousRun.set("\u0000not a catalog"));
+
+      const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+        Effect.provide(layer),
+      );
+      const saved = yield* Effect.all([store.set(emptyCatalog), store.set(savedCatalog)], {
+        concurrency: "unbounded",
+      });
+
+      assert.deepStrictEqual(saved, [true, true]);
+      assert.equal((yield* savedCatalogFiles(path.join(baseDir, "userdata"))).length, 1);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
 });
