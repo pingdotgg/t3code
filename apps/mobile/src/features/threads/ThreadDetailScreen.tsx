@@ -263,6 +263,7 @@ export interface ThreadDetailScreenProps {
   readonly environmentId: EnvironmentId;
   readonly projectWorkspaceRoot: string | null;
   readonly threadCwd: string | null;
+  readonly isGitRepo: boolean;
   readonly selectedThreadQueueCount: number;
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
   readonly dispatchingMessageId: MessageId | null;
@@ -1382,6 +1383,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
               threadId={props.selectedThread.id}
               detailRef={props.selectedThreadDetailRef}
               workspaceRoot={props.threadCwd}
+              isGitRepo={props.isGitRepo}
               feed={props.selectedThreadFeed}
               pendingHandoff={props.pendingHandoff}
               worktreeSetup={props.worktreeSetup}

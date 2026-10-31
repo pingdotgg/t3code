@@ -14,7 +14,17 @@ const running: WorktreeSetupSnapshot = {
   baseRef: "main",
   worktreePath: null,
   setupScript: null,
-  stages: [],
+  stages: [
+    {
+      id: "agent",
+      status: "pending",
+      startedAt: null,
+      endedAt: null,
+      percent: null,
+      detail: null,
+      tail: [],
+    },
+  ],
   error: null,
 };
 
@@ -40,6 +50,15 @@ describe("mobile worktree setup handoff", () => {
       }),
     ).toBeNull();
     expect(resolveWorktreeSetupSnapshot(threadId, undefined, held)).toBe(done);
+    const idleFork = { ...done, stages: [] };
+    expect(
+      resolveVisibleWorktreeSetup({
+        live: idleFork,
+        recorded: null,
+        turnStarted: false,
+        followUpSent: false,
+      }),
+    ).toBeNull();
   });
 
   it.each(["failed", "cancelled"] as const)(

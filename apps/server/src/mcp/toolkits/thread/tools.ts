@@ -5,6 +5,7 @@ import {
   OrchestrationSearchThreadsInput,
   OrchestrationThreadSearchMatch,
   OrchestrationV2ThreadForkSourcePoint,
+  OrchestrationV2ThreadLaunchWorkspaceStrategy,
   OrchestrationV2ContextTransfer,
   TrimmedNonEmptyString,
   ModelSelection,
@@ -24,6 +25,7 @@ import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
+import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -165,9 +167,11 @@ const ThreadConfigureTool = Tool.make("t3_thread_configure", {
 const ThreadTransferTool = Tool.make("t3_thread_transfer", {
   ...commandTool,
   description:
-    "Move context between threads. Omit `threadId` for this thread. fork: copy it from `sourcePoint` (default latest stable run) into a new thread with the same setup; no turn runs yet. merge_back: merge it from `sourcePoint` into a related `targetThreadId` in the same project. status: its context transfers.",
+    "Move context between threads. Omit `threadId` for this thread. fork: copy it from `sourcePoint` (default latest stable run) into a new thread with the same setup. Fork workspaceStrategy: omit to keep the checkout, or choose root, existing_worktree, or worktree. A new worktree starts at the source checkpoint when available and waits for checkout and blocking setup scripts; asynchronous setup continues in the background. No turn starts. merge_back: merge it from `sourcePoint` into a related `targetThreadId` in the same project. status: its context transfers.",
+  dependencies: [...commandTool.dependencies, ThreadLaunch.ThreadLaunchService],
   parameters: Schema.Struct({
     action: Schema.Literals(["fork", "merge_back", "status"]),
+    workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
     sourcePoint: Schema.optional(OrchestrationV2ThreadForkSourcePoint),

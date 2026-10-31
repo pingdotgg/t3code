@@ -5,6 +5,8 @@ import {
   CheckpointId,
   CheckpointScopeId,
   ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationV2ThreadLaunchError,
+  type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   OrchestrationV2CheckpointUnavailableError,
   WS_METHODS,
   type ChatAttachment,
@@ -217,6 +219,7 @@ export interface RevertThreadCheckpointInput extends ThreadCommandInput {
 export type StopThreadSessionInput = ThreadCommandInput;
 
 export interface ForkThreadFromRunInput extends CommandMetadata {
+  readonly workspaceStrategy?: OrchestrationV2ThreadLaunchWorkspaceStrategy;
   readonly sourceThreadId: ThreadId;
   readonly targetThreadId: ThreadId;
   readonly runId: RunId;
@@ -979,6 +982,39 @@ export const stopThreadSession = Effect.fn("EnvironmentCommands.stopThreadSessio
 export const forkThreadFromRun = Effect.fn("EnvironmentCommands.forkThreadFromRun")(function* (
   input: ForkThreadFromRunInput,
 ) {
+  if (input.workspaceStrategy !== undefined) {
+    const { thread } = yield* getProjection(input.sourceThreadId);
+    const config = yield* getInitialServerConfig();
+    if (config.environment.capabilities.threadForkWorkspaceSelection === true) {
+      return yield* request(ORCHESTRATION_V2_WS_METHODS.launchThread, {
+        commandId: yield* allocateCommandId(input),
+        creationSource: input.creationSource ?? "web",
+        threadId: input.targetThreadId,
+        projectId: thread.projectId,
+        title: input.title ?? `${thread.title} fork`,
+        modelSelection: thread.modelSelection,
+        runtimeMode: thread.runtimeMode,
+        interactionMode: thread.interactionMode,
+        workspaceStrategy: input.workspaceStrategy,
+        forkSource: {
+          sourceThreadId: input.sourceThreadId,
+          sourcePoint: { type: "run", runId: input.runId },
+        },
+      });
+    }
+    const strategy = input.workspaceStrategy;
+    const retainsCheckout =
+      ((strategy.type === "root" && thread.worktreePath === null) ||
+        (strategy.type === "existing_worktree" && strategy.worktreePath === thread.worktreePath)) &&
+      (strategy.branch === undefined || strategy.branch === thread.branch);
+    if (!retainsCheckout) {
+      return yield* new OrchestrationV2ThreadLaunchError({
+        commandId: yield* allocateCommandId(input),
+        projectId: thread.projectId,
+        message: "Update this T3 Code server to fork into a different checkout.",
+      });
+    }
+  }
   return yield* dispatch({
     type: "thread.fork",
     commandId: yield* allocateCommandId(input),

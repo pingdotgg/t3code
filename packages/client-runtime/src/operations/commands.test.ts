@@ -41,6 +41,7 @@ import {
   revertThreadCheckpoint,
   resumeThreadQueue,
   startThreadTurn,
+  forkThreadFromRun,
 } from "./commands.ts";
 
 const layerTestCrypto = Layer.succeed(
@@ -65,6 +66,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly projection?: OrchestrationV2ThreadProjection;
   readonly projectionRequests?: ThreadId[];
   readonly advertiseThreadStop?: boolean;
+  readonly advertiseThreadForkWorkspaceSelection?: boolean;
 }) {
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
@@ -111,6 +113,9 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
     initialConfig: Effect.succeed({
       environment: {
         capabilities: {
+          ...(input.advertiseThreadForkWorkspaceSelection === false
+            ? {}
+            : { threadForkWorkspaceSelection: true }),
           repositoryIdentity: true,
           ...(input.advertiseThreadStop === true ? { threadStop: true } : {}),
         },
@@ -134,6 +139,57 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
 });
 
 describe("V2 environment commands", () => {
+  it.effect("forks into a chosen checkout, keeping history on servers without that choice", () =>
+    Effect.gen(function* () {
+      const forkInto = (
+        workspaceStrategy: OrchestrationV2ThreadLaunchInput["workspaceStrategy"],
+        advertiseThreadForkWorkspaceSelection = true,
+      ) =>
+        Effect.gen(function* () {
+          const commands: OrchestrationV2Command[] = [];
+          const launches: OrchestrationV2ThreadLaunchInput[] = [];
+          const supervisor = yield* makeSupervisor({
+            commands,
+            launches,
+            projects: [],
+            advertiseThreadForkWorkspaceSelection,
+            projection: { ...v2Projection, thread: { ...v2Projection.thread, worktreePath: null } },
+          });
+          const exit = yield* forkThreadFromRun({
+            commandId: CommandId.make("fork"),
+            sourceThreadId: v2ThreadId,
+            targetThreadId: ThreadId.make("destination"),
+            runId: RunId.make("run-1"),
+            workspaceStrategy,
+          }).pipe(
+            Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+            Effect.exit,
+          );
+          return { commands, launches, exit };
+        });
+
+      const chosen = yield* forkInto({ type: "worktree", baseRef: "main" });
+      expect(chosen.commands).toEqual([]);
+      expect(chosen.launches[0]).toMatchObject({
+        threadId: "destination",
+        workspaceStrategy: { type: "worktree", baseRef: "main" },
+        forkSource: { sourceThreadId: v2ThreadId, sourcePoint: { type: "run", runId: "run-1" } },
+        modelSelection: v2Projection.thread.modelSelection,
+      });
+
+      const legacy = yield* forkInto({ type: "root" }, false);
+      expect(legacy.launches).toEqual([]);
+      expect(legacy.commands).toMatchObject([
+        { type: "thread.fork", targetThreadId: "destination", sourcePoint: { type: "run" } },
+      ]);
+
+      const refused = yield* forkInto({ type: "worktree", baseRef: "main" }, false);
+      expect(refused.commands).toEqual([]);
+      expect(refused.launches).toEqual([]);
+      expect(String(refused.exit)).toContain("Update this T3 Code server");
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
   it.effect("distinguishes sending a selected queued message from resuming queue order", () =>
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];

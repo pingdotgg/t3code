@@ -112,7 +112,10 @@ function makeSourceProjection(sourceRun: OrchestrationV2Run): OrchestrationV2Thr
 const planFork = (
   sourceRun: OrchestrationV2Run,
   sourceProjection = makeSourceProjection(sourceRun),
-  options: { readonly sideChat?: boolean } = {},
+  options: Pick<
+    Parameters<ThreadForkService.ThreadForkServiceV2["Service"]["plan"]>[0],
+    "sideChat" | "workspace"
+  > = {},
 ) =>
   Effect.gen(function* () {
     const service = yield* ThreadForkService.ThreadForkServiceV2;
@@ -178,6 +181,21 @@ it.effect("starts a fork without the source thread's pending title regeneration"
 
     assert.isNull(result.targetThread.titleRegeneration);
     assert.deepEqual(sourceProjection.thread.titleRegeneration, titleRegeneration);
+  }),
+);
+
+it.effect("does not inherit the source fork's workspace readiness command", () =>
+  Effect.gen(function* () {
+    const sourceRun = makeSourceRun("completed");
+    const sourceProjection = makeSourceProjection(sourceRun);
+    const result = yield* planFork(sourceRun, {
+      ...sourceProjection,
+      thread: {
+        ...sourceProjection.thread,
+        workspacePreparationCommandId: CommandId.make("source:workspace-preparation"),
+      },
+    });
+    assert.isUndefined(result.targetThread.workspacePreparationCommandId);
   }),
 );
 
@@ -273,6 +291,11 @@ it.effect("marks only requested forks as supervised side chats", () =>
     });
     assert.isTrue(sideChat.targetThread.lineage.sideChat);
     assert.equal(sideChat.targetThread.runtimeMode, "approval-required");
+    const movedSideChat = yield* planFork(sourceRun, makeSourceProjection(sourceRun), {
+      sideChat: true,
+      workspace: { branch: "other", worktreePath: "/other" },
+    }).pipe(Effect.flip);
+    assert.equal(movedSideChat.cause, "A side chat must keep its parent's workspace.");
 
     const sideChatSource = makeSourceProjection(sourceRun);
     const sideChatProjection = {

@@ -19,6 +19,7 @@ import {
   readThread,
   unavailable,
 } from "../../threadAccess.ts";
+import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
@@ -180,19 +181,30 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
             return { sequence: result.sequence, targetThreadId };
           }
           const targetThreadId = ThreadId.make(`${commandId}:fork`);
-          const result = yield* threads
-            .dispatch({
-              type: "thread.fork",
+          const launches = yield* ThreadLaunch.ThreadLaunchService;
+          return yield* launches
+            .fork({
               commandId,
               sourceThreadId: projection.thread.id,
               targetThreadId,
               sourcePoint,
+              ...(input.workspaceStrategy === undefined
+                ? {}
+                : { workspaceStrategy: input.workspaceStrategy }),
               ...(input.title === undefined ? {} : { title: input.title }),
               createdBy: "agent",
               creationSource: "mcp",
             })
-            .pipe(Effect.mapError(dispatchFailure));
-          return { sequence: result.sequence, targetThreadId };
+            .pipe(
+              Effect.mapError((error) =>
+                error._tag === "ThreadLaunchError"
+                  ? new OrchestratorMcpFailure({
+                      code: "orchestration_error",
+                      message: error.message,
+                    })
+                  : dispatchFailure(error),
+              ),
+            );
         }),
     ),
   ),

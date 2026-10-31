@@ -2,6 +2,8 @@ import type {
   DeviceServiceState,
   EnvironmentId,
   MessageId,
+  RunId,
+  OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
@@ -24,6 +26,7 @@ import {
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { WizardPopup } from "../ui/wizard";
+import { ForkThreadDialog } from "./ForkThreadDialog";
 import { registerThreadOverlay } from "./threadOverlayRetention";
 
 /**
@@ -224,5 +227,39 @@ export function RevertConfirmHost(props: {
         </AlertDialogFooter>
       </AlertDialogPopup>
     </AlertDialog>
+  );
+}
+
+export interface ForkDialogSource {
+  readonly sourceThreadId: ThreadId;
+  readonly runId: RunId;
+}
+const forkDialogAtom = makeThreadOverlayAtom<ForkDialogSource>("fork-destination");
+export function openForkDialog(threadKey: string, source: ForkDialogSource): void {
+  appAtomRegistry.set(forkDialogAtom, { threadKey, value: source });
+}
+export function ForkDialogHost(props: {
+  readonly threadKey: string;
+  readonly worktreePath: string | null;
+  readonly branch: string | null;
+  readonly isGitRepo: boolean;
+  readonly onSelect: (
+    source: ForkDialogSource,
+    workspace: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  ) => Promise<void>;
+}) {
+  const source = useThreadOverlay(forkDialogAtom, props.threadKey);
+  if (source === null) return null;
+  return (
+    <ForkThreadDialog
+      worktreePath={props.worktreePath}
+      branch={props.branch}
+      isGitRepo={props.isGitRepo}
+      onClose={() => closeThreadOverlay(forkDialogAtom)}
+      onSelect={(workspace) => {
+        closeThreadOverlay(forkDialogAtom);
+        return props.onSelect(source, workspace);
+      }}
+    />
   );
 }

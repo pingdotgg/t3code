@@ -3,6 +3,7 @@ import {
   isCompactionCommandMessage,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2ThreadLaunchWorkspaceStrategy,
 } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
 
@@ -12,6 +13,46 @@ type Projection = ThreadStructure;
 type Run = Projection["runs"][number];
 type Message = Projection["messages"][number];
 type ProviderSession = Projection["providerSessions"][number];
+
+export interface ThreadForkWorkspaceChoice {
+  readonly id: "current" | "worktree";
+  readonly label: string;
+  readonly description: string;
+  readonly workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy;
+}
+
+export function threadForkWorkspaceChoices(input: {
+  readonly worktreePath: string | null;
+  readonly branch: string | null;
+  readonly isGitRepo: boolean;
+}): ReadonlyArray<ThreadForkWorkspaceChoice> {
+  const branch = input.branch ? { branch: input.branch } : {};
+  const current: ThreadForkWorkspaceChoice = {
+    id: "current",
+    label:
+      input.worktreePath && input.isGitRepo
+        ? "Fork in this worktree"
+        : "Fork in the current checkout",
+    description: "Continue from this response in the same checkout.",
+    workspaceStrategy: input.worktreePath
+      ? { type: "existing_worktree", worktreePath: input.worktreePath, ...branch }
+      : { type: "root", ...branch },
+  };
+  if (!input.isGitRepo) return [current];
+  return [
+    current,
+    {
+      id: "worktree",
+      label: "Fork in a new worktree",
+      description: "Continue from this response in a separate worktree.",
+      workspaceStrategy: {
+        type: "worktree",
+        baseRef: input.branch ?? "HEAD",
+        startFromOrigin: false,
+      },
+    },
+  ];
+}
 
 const ACTIVE_RUN_STATUSES = new Set<Run["status"]>(["preparing", "starting", "running", "waiting"]);
 const MERGE_BACK_RUN_STATUSES = new Set<Run["status"]>(["waiting", "completed"]);

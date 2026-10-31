@@ -11,6 +11,7 @@ import {
   type OrchestrationV2CreationSource,
   type OrchestrationV2DelegatedFrom,
   type OrchestrationV2LinkOrigin,
+  type OrchestrationV2ThreadForkSourcePoint,
   type OrchestrationV2ProviderThreadNativeMetadata,
   type OrchestrationV2ThreadProjection,
   type ProviderDriverKind,
@@ -26,12 +27,15 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as NodeUtil from "node:util";
 import {
   buildTemporaryWorktreeBranchName,
   flattenTemporaryWorktreeBranchName,
@@ -48,11 +52,15 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import type * as Orchestrator from "./Orchestrator.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import {
+  buildBoundedThreadProjection,
+  THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+} from "./threadHistoryPaging.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
   | { readonly type: "root"; readonly branch?: string | undefined }
@@ -88,6 +96,10 @@ export interface ThreadLaunchInput {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
+  readonly forkSource?: {
+    readonly sourceThreadId: ThreadId;
+    readonly sourcePoint: OrchestrationV2ThreadForkSourcePoint;
+  };
   readonly initialMessage?: ThreadLaunchInitialMessage;
   readonly importedNativeThread?: {
     readonly ref: {
@@ -107,7 +119,7 @@ export interface ThreadLaunchInput {
 
 type PreparationInput = Pick<
   ThreadLaunchInput,
-  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage"
+  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage" | "forkSource"
 > & {
   readonly reusedWorktree?: { readonly baseRef: string };
 };
@@ -125,6 +137,9 @@ export interface ThreadLaunchResult {
   readonly resumed: boolean;
   readonly sequence?: number;
 }
+
+const FORK_WORKSPACE_FAILED =
+  "The fork's workspace could not be prepared. Create a new fork to retry.";
 
 export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
   "ThreadLaunchError",
@@ -169,6 +184,21 @@ export class ThreadLaunchBaseRefError extends Schema.TaggedError<ThreadLaunchBas
 export class ThreadLaunchService extends Context.Service<
   ThreadLaunchService,
   {
+    readonly fork: (input: {
+      readonly commandId: CommandId;
+      readonly sourceThreadId: ThreadId;
+      readonly targetThreadId: ThreadId;
+      readonly sourcePoint: OrchestrationV2ThreadForkSourcePoint;
+      readonly workspaceStrategy?: ThreadLaunchWorkspaceStrategy;
+      readonly title?: string;
+      readonly createdBy: OrchestrationV2Actor;
+      readonly creationSource: OrchestrationV2CreationSource;
+    }) => Effect.Effect<
+      { readonly sequence: number; readonly targetThreadId: ThreadId },
+      | ThreadLaunchError
+      | Orchestrator.OrchestratorV2Error
+      | ThreadManagement.ThreadManagementProviderInstanceDisabledError
+    >;
     readonly launch: (
       input: ThreadLaunchInput,
     ) => Effect.Effect<
@@ -191,6 +221,7 @@ export class ThreadLaunchService extends Context.Service<
 >()("t3/orchestration-v2/ThreadLaunchService") {}
 
 const isThreadLaunchError = Schema.is(ThreadLaunchError);
+const isOrchestratorError = Schema.is(Orchestrator.OrchestratorV2Error);
 
 function failureDetail(error: unknown): string {
   if (isThreadLaunchError(error)) {
@@ -207,6 +238,8 @@ const make = Effect.gen(function* () {
   const cloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
   const terminals = yield* TerminalManager.TerminalManager;
   const git = yield* GitWorkflow.GitWorkflowService;
+  const vcs = yield* GitVcsDriver.GitVcsDriver;
+  const fs = yield* FileSystem.FileSystem;
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -320,7 +353,10 @@ const make = Effect.gen(function* () {
         threadId,
         branch: input.workspaceStrategy.branch ?? null,
         baseRef: input.workspaceStrategy.baseRef,
-        stages: ["fetch", "checkout", "setup-script", "agent"],
+        stages:
+          input.forkSource === undefined
+            ? ["fetch", "checkout", "setup-script", "agent"]
+            : ["fetch", "checkout", "setup-script"],
         fiber: yield* Effect.fiber,
       });
     } else if (reused !== undefined) {
@@ -635,7 +671,8 @@ const make = Effect.gen(function* () {
         yield* setupTracker.stageStatus(threadId, "setup-script", "skipped");
       }
       yield* setupTracker.markUncancellable(threadId);
-      yield* setupTracker.stageStatus(threadId, "agent", "running");
+      if (input.forkSource === undefined)
+        yield* setupTracker.stageStatus(threadId, "agent", "running");
       if (runId !== null) {
         yield* threads
           .dispatch({
@@ -654,9 +691,15 @@ const make = Effect.gen(function* () {
             Effect.uninterruptible,
           );
       }
-      yield* setupTracker.stageStatus(threadId, "agent", "done");
-      yield* awaitAsyncSetup;
-      yield* setupTracker.finish(threadId, "done");
+      if (input.forkSource === undefined)
+        yield* setupTracker.stageStatus(threadId, "agent", "done");
+      const finishSetup = awaitAsyncSetup.pipe(
+        Effect.andThen(setupTracker.finish(threadId, "done")),
+      );
+      // A fork's launch returns while its async setup script keeps running.
+      yield* input.forkSource !== undefined && setup.status === "started" && setup.async
+        ? Effect.asVoid(Effect.forkIn(finishSetup, preparationScope))
+        : finishSetup;
     }).pipe(
       Effect.onError((cause) =>
         Effect.gen(function* () {
@@ -804,11 +847,45 @@ const make = Effect.gen(function* () {
     );
   });
 
+  // Forks have no preparing run; the receipt gates sends until checkout and blocking setup finish.
+  const prepareFork = Effect.fn("ThreadLaunchService.prepareFork")(
+    (input: PreparationInput, threadId: ThreadId) =>
+      prepareInBackground(input, threadId, null).pipe(
+        Effect.andThen(
+          threads
+            .dispatch({
+              type: "thread.metadata.update",
+              commandId: CommandId.make(`${input.commandId}:fork-ready`),
+              threadId,
+            })
+            .pipe(Effect.mapError(mapError(input, "update-thread", threadId))),
+        ),
+        Effect.tap(() =>
+          setupTracker.update(threadId, (snapshot) => ({ ...snapshot, readyForMessages: true })),
+        ),
+        Effect.onError(() =>
+          threads.getThreadRecords(threadId, ["runs"]).pipe(
+            Effect.flatMap((current) =>
+              current.thread.worktreePath === null && current.runs.length === 0
+                ? threads.dispatch({
+                    type: "thread.delete",
+                    commandId: CommandId.make(`${input.commandId}:failed-fork`),
+                    threadId,
+                  })
+                : Effect.void,
+            ),
+            Effect.ignore,
+          ),
+        ),
+        Effect.ensuring(releasePreparation(input.commandId)),
+      ),
+  );
+
   const launch: ThreadLaunchService["Service"]["launch"] = Effect.fn("ThreadLaunchService.launch")(
     function* (request) {
       // Scratch has no Git repository. Normalize before folder allocation so
       // durable preparation and retries use the thread's own Scratch folder.
-      const input: ThreadLaunchInput =
+      let input: ThreadLaunchInput =
         request.workspaceStrategy.type === "worktree" &&
         (yield* managedFolders.isScratchProject(request.projectId))
           ? { ...request, workspaceStrategy: { type: "root" } }
@@ -839,13 +916,73 @@ const make = Effect.gen(function* () {
         commandId: input.commandId,
         instanceId: input.modelSelection.instanceId,
       });
+      if (input.forkSource !== undefined) {
+        if (input.reuseExistingThread === true || input.initialMessage !== undefined)
+          return yield* mapError(input, "create-thread")("A fork cannot reuse a thread or send.");
+        const source = yield* threads
+          .getThreadRecords(input.forkSource.sourceThreadId, ["runs", "checkpoints"])
+          .pipe(Effect.mapError(mapError(input, "create-thread")));
+        if (source.thread.projectId !== input.projectId)
+          return yield* mapError(input, "resolve-project")("A fork must stay in its project.");
+        if (input.workspaceStrategy.type === "existing_worktree") {
+          const real = (path: string) => fs.realPath(path).pipe(Effect.orElseSucceed(() => path));
+          const destination = yield* real(input.workspaceStrategy.worktreePath);
+          const keepsSourceFolder =
+            source.thread.worktreePath !== null &&
+            destination === (yield* real(source.thread.worktreePath));
+          if (!keepsSourceFolder) {
+            const paths = yield* vcs.listWorktreePaths(project.workspaceRoot).pipe(
+              Effect.flatMap((paths) => Effect.forEach(paths, real)),
+              Effect.mapError(mapError(input, "resolve-project")),
+            );
+            if (!paths.includes(destination))
+              return yield* mapError(
+                input,
+                "resolve-project",
+              )(
+                new Orchestrator.OrchestratorDispatchError({
+                  commandId: input.commandId,
+                  commandType: "thread.fork",
+                  cause: "The fork destination must be one of the project's Git worktrees.",
+                }),
+              );
+          }
+        }
+        if (input.workspaceStrategy.type === "worktree") {
+          // Pin latest_stable so history and checkout come from the same run.
+          const run = Orchestrator.runForSourcePoint(source, input.forkSource.sourcePoint);
+          const checkpoint = source.checkpoints.find(
+            (candidate) => candidate.id === run?.checkpointId && candidate.status === "ready",
+          );
+          const uuid = yield* randomUuidV4;
+          input = {
+            ...input,
+            ...(run === null
+              ? {}
+              : {
+                  forkSource: { ...input.forkSource, sourcePoint: { type: "run", runId: run.id } },
+                }),
+            workspaceStrategy: {
+              ...input.workspaceStrategy,
+              // Clients open the fork while it prepares; an unnamed one would offer a checkout picker.
+              branch:
+                input.workspaceStrategy.branch ??
+                buildTemporaryWorktreeBranchName(() => uuid.replaceAll("-", "")),
+              ...(checkpoint === undefined
+                ? {}
+                : { baseRef: checkpoint.ref, startFromOrigin: false }),
+            },
+          };
+        }
+      }
       return yield* Effect.gen(function* () {
         // Recover ids from accepted launch receipts before allocating; retries have no client id and new ids collide with receipts.
         const reusableLaunchReceipt =
           input.threadId === undefined &&
           Option.isSome(launchReceipt) &&
           launchReceipt.value.status === "accepted" &&
-          launchReceipt.value.commandType === "thread.create"
+          (launchReceipt.value.commandType === "thread.create" ||
+            launchReceipt.value.commandType === "thread.fork")
             ? launchReceipt.value
             : undefined;
         const candidateThreadId =
@@ -876,7 +1013,9 @@ const make = Effect.gen(function* () {
         }
 
         const workspaceStrategy: ThreadLaunchWorkspaceStrategy =
-          input.workspaceStrategy.type === "root" && Option.isNone(launchReceipt)
+          input.workspaceStrategy.type === "root" &&
+          Option.isNone(launchReceipt) &&
+          input.forkSource === undefined
             ? Option.match(
                 yield* managedFolders
                   .folderForThread({
@@ -894,7 +1033,7 @@ const make = Effect.gen(function* () {
         const initialBranch = workspaceStrategy.branch ?? null;
         const initialWorktreePath =
           workspaceStrategy.type === "existing_worktree" ? workspaceStrategy.worktreePath : null;
-        const claimDispatch =
+        const createDispatch =
           input.reuseExistingThread === true
             ? threads.dispatch({
                 type: "thread.metadata.update",
@@ -920,6 +1059,26 @@ const make = Effect.gen(function* () {
                 ...(input.delegatedFrom === undefined
                   ? {}
                   : { delegatedFrom: input.delegatedFrom }),
+                createdBy: input.createdBy,
+                creationSource: input.creationSource,
+              });
+        const claimDispatch =
+          input.forkSource === undefined
+            ? createDispatch
+            : threads.dispatch({
+                type: "thread.fork",
+                commandId: input.commandId,
+                sourceThreadId: input.forkSource.sourceThreadId,
+                targetThreadId: candidateThreadId,
+                sourcePoint: input.forkSource.sourcePoint,
+                title: input.title,
+                workspace: {
+                  branch: initialBranch,
+                  worktreePath: initialWorktreePath,
+                  ...(workspaceStrategy.type === "worktree"
+                    ? { workspacePreparationCommandId: input.commandId }
+                    : {}),
+                },
                 createdBy: input.createdBy,
                 creationSource: input.creationSource,
               });
@@ -1003,6 +1162,18 @@ const make = Effect.gen(function* () {
         const projection = yield* threads
           .getThreadProjection(threadId)
           .pipe(Effect.mapError(mapError(input, "create-thread", threadId)));
+        if (input.forkSource !== undefined && projection.thread.deletedAt !== null)
+          return yield* mapError(input, "create-thread", threadId)(FORK_WORKSPACE_FAILED);
+        if (
+          input.forkSource !== undefined &&
+          workspaceStrategy.type === "worktree" &&
+          Option.isSome(launchReceipt) &&
+          launchReceipt.value.status === "accepted" &&
+          Option.getOrUndefined(
+            yield* readReceipt(input, CommandId.make(`${input.commandId}:fork-ready`)),
+          )?.status !== "accepted"
+        )
+          return yield* mapError(input, "provision-worktree", threadId)(FORK_WORKSPACE_FAILED);
         const runIsPreparing =
           runId !== null &&
           projection.runs.some((run) => run.id === runId && run.status === "preparing");
@@ -1018,7 +1189,11 @@ const make = Effect.gen(function* () {
                 branch: workspaceStrategy.branch,
               }
             : workspaceStrategy;
-        if (shouldSchedule) {
+        // Root and existing-checkout forks have nothing to prepare.
+        if (
+          shouldSchedule &&
+          (input.forkSource === undefined || workspaceStrategy.type === "worktree")
+        ) {
           const ownsPreparation = yield* reservePreparation(input.commandId);
           if (ownsPreparation) {
             yield* Effect.gen(function* () {
@@ -1032,7 +1207,7 @@ const make = Effect.gen(function* () {
                       Effect.mapError(mapError(input, "update-thread", threadId)),
                     );
               if (preparationStillRequired) {
-                yield* schedulePreparation(
+                yield* (input.forkSource === undefined ? schedulePreparation : prepareFork)(
                   { ...input, workspaceStrategy: preparationStrategy },
                   threadId,
                   runId,
@@ -1044,9 +1219,24 @@ const make = Effect.gen(function* () {
           }
         }
 
+        const resultProjection =
+          input.forkSource === undefined
+            ? projection
+            : yield* threads
+                .getThreadSnapshotWindow(threadId, { rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT })
+                .pipe(
+                  Effect.map(
+                    (snapshot) =>
+                      buildBoundedThreadProjection({
+                        projection: snapshot.projection,
+                        snapshotSequence: snapshot.snapshotSequence,
+                      }).projection,
+                  ),
+                  Effect.mapError(mapError(input, "create-thread", threadId)),
+                );
         return {
           threadId,
-          projection,
+          projection: resultProjection,
           // An attempt that failed after claiming the thread recorded nothing, so
           // only a repeat of the final write counts as resumed.
           resumed:
@@ -1078,6 +1268,86 @@ const make = Effect.gen(function* () {
       yield* failPreparedRun(input, input.threadId, input.runId, Cause.squash(scheduled.cause));
     }
   });
+
+  // A client disconnect must not abandon a fork's checkout, and a concurrent
+  // replay must wait for the original rather than open the fork early.
+  const inFlightForks = new Map<
+    CommandId,
+    {
+      readonly input: ThreadLaunchInput;
+      readonly fiber: Fiber.Fiber<
+        ThreadLaunchResult,
+        ThreadLaunchError | ThreadManagement.ThreadManagementProviderInstanceDisabledError
+      >;
+    }
+  >();
+  const launchPreparedFork: ThreadLaunchService["Service"]["launch"] = Effect.fn(
+    "ThreadLaunchService.launchPreparedFork",
+  )(function* (input) {
+    const existing = inFlightForks.get(input.commandId);
+    if (existing !== undefined && !NodeUtil.isDeepStrictEqual(existing.input, input))
+      return yield* mapError(
+        input,
+        "create-thread",
+        input.threadId,
+      )("An in-progress fork command cannot be replayed with a different request.");
+    if (
+      existing === undefined &&
+      (input.forkSource === undefined || input.workspaceStrategy.type !== "worktree")
+    )
+      return yield* launch(input);
+    let fiber = existing?.fiber;
+    if (fiber === undefined) {
+      fiber = yield* launch(input).pipe(
+        Effect.ensuring(Effect.sync(() => inFlightForks.delete(input.commandId))),
+        Effect.forkIn(preparationScope, { startImmediately: false }),
+      );
+      inFlightForks.set(input.commandId, { input, fiber });
+    }
+    const result = yield* Fiber.join(fiber);
+    return { ...result, resumed: result.resumed || existing !== undefined };
+  });
+
+  const fork: ThreadLaunchService["Service"]["fork"] = Effect.fn("ThreadLaunchService.fork")(
+    function* (input) {
+      if (input.workspaceStrategy === undefined) {
+        const result = yield* threads.dispatch({
+          type: "thread.fork",
+          ...input,
+        });
+        return { sequence: result.sequence, targetThreadId: input.targetThreadId };
+      }
+      const { thread } = yield* threads.getThreadRecords(input.sourceThreadId, []);
+      yield* launchPreparedFork({
+        commandId: input.commandId,
+        threadId: input.targetThreadId,
+        projectId: thread.projectId,
+        title: input.title ?? `${thread.title} fork`,
+        modelSelection: thread.modelSelection,
+        runtimeMode: thread.runtimeMode,
+        interactionMode: thread.interactionMode,
+        workspaceStrategy: input.workspaceStrategy,
+        forkSource: { sourceThreadId: input.sourceThreadId, sourcePoint: input.sourcePoint },
+        createdBy: input.createdBy,
+        creationSource: input.creationSource,
+      });
+      const sequence = yield* threads
+        .getThreadEventSequence(input.targetThreadId)
+        .pipe(
+          Effect.mapError(
+            mapError(
+              { ...input, workspaceStrategy: input.workspaceStrategy, projectId: thread.projectId },
+              "create-thread",
+              input.targetThreadId,
+            ),
+          ),
+        );
+      return { sequence, targetThreadId: input.targetThreadId };
+    },
+    Effect.mapError((error) =>
+      error._tag === "ThreadLaunchError" && isOrchestratorError(error.cause) ? error.cause : error,
+    ),
+  );
 
   const retryPreparation: ThreadLaunchService["Service"]["retryPreparation"] = Effect.fn(
     "ThreadLaunchService.retryPreparation",
@@ -1136,7 +1406,13 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return ThreadLaunchService.of({ launch, checkWorktreeBase, retryPreparation, prepareRun });
+  return ThreadLaunchService.of({
+    launch: launchPreparedFork,
+    fork,
+    checkWorktreeBase,
+    retryPreparation,
+    prepareRun,
+  });
 });
 
 export const layer = Layer.effect(ThreadLaunchService, make);

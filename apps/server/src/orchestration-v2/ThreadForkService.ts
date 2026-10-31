@@ -60,6 +60,10 @@ export interface ThreadForkServiceV2Shape {
     readonly targetThreadId: ThreadId;
     readonly title?: string;
     readonly sideChat?: boolean;
+    readonly workspace?: Pick<
+      OrchestrationV2AppThread,
+      "branch" | "worktreePath" | "workspacePreparationCommandId"
+    >;
     readonly createdBy: OrchestrationV2Actor;
     readonly creationSource: OrchestrationV2CreationSource;
     readonly createdAt: DateTime.Utc;
@@ -76,6 +80,12 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
   ThreadForkServiceV2.of({
     plan: Effect.fn("ThreadForkService.plan")(function* (input) {
       const { sourceRun } = input;
+      if (input.sideChat && input.workspace !== undefined)
+        return yield* new ThreadForkPlanError({
+          sourceThreadId: input.sourceProjection.thread.id,
+          targetThreadId: input.targetThreadId,
+          cause: "A side chat must keep its parent's workspace.",
+        });
       const sourceLineage = input.sourceProjection.thread.lineage;
       // A task a linked environment delegated here is a subagent of a remote thread.
       if (
@@ -113,6 +123,8 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         titleRegeneration: null,
         // Side chats share the parent's worktree, so they start supervised.
         ...(input.sideChat ? { runtimeMode: "approval-required" as const } : {}),
+        ...input.workspace,
+        workspacePreparationCommandId: input.workspace?.workspacePreparationCommandId,
         activeProviderThreadId: null,
         lineage: {
           parentThreadId: input.sourceProjection.thread.id,

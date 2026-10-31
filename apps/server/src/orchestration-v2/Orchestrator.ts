@@ -812,7 +812,7 @@ function latestStableRun(
   );
 }
 
-function runForSourcePoint(
+export function runForSourcePoint(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "checkpoints">,
   sourcePoint: Extract<
     OrchestrationV2Command,
@@ -4246,6 +4246,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  const refuseUnpreparedForkWorkspace = Effect.fn("orchestrationV2.refuseUnpreparedForkWorkspace")(
+    function* (command: OrchestrationV2ServerCommand, thread: OrchestrationV2AppThread) {
+      const preparationCommandId = thread.workspacePreparationCommandId;
+      if (preparationCommandId === undefined) return;
+      const ready = Option.getOrUndefined(
+        yield* commandReceipts
+          .getByCommandId(CommandId.make(`${preparationCommandId}:fork-ready`))
+          .pipe(mapDispatchError(command)),
+      );
+      if (ready?.status !== "accepted" || ready.threadId !== thread.id)
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause:
+            "The fork's workspace is not ready. Wait for preparation to finish, or create a new fork if preparation failed.",
+        });
+    },
+  );
+
   const dispatchThreadFork = Effect.fn("orchestrationV2.dispatch.threadFork")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "thread.fork" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -4275,6 +4294,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
+    yield* refuseUnpreparedForkWorkspace(command, sourceProjection.thread);
     // Only side chat forks lock the source; validate the modes copied here, not an earlier read.
     yield* refuseAboveDispatchModeLimit(command, command.sourceThreadId, sourceProjection.thread);
     if (command.sideChat === true && sourceProjection.thread.deletedAt !== null) {
@@ -4350,6 +4370,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         targetThreadId: command.targetThreadId,
         ...(command.title === undefined ? {} : { title: command.title }),
         ...(command.sideChat ? { sideChat: true } : {}),
+        ...(command.workspace === undefined ? {} : { workspace: command.workspace }),
         createdBy: command.createdBy,
         creationSource: command.creationSource,
         createdAt: now,
@@ -5269,6 +5290,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+    yield* refuseUnpreparedForkWorkspace(command, projection.thread);
     if (command.manualContinuationOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
       const limited = latestRootProviderFailure(source ?? null, projection.turnItems);

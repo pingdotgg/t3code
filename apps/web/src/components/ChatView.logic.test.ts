@@ -722,6 +722,16 @@ describe("worktree setup visibility", () => {
       });
     expect(resolve(newest, base)).toEqual({ snapshot: newest, isPreparingWorktree: false });
     expect(resolve(base, newest)).toEqual({ snapshot: newest, isPreparingWorktree: false });
+    const forkSetup = {
+      ...base,
+      stages: [stage("checkout", "done"), stage("setup-script", "running")],
+    };
+    expect(resolve(forkSetup, null).isPreparingWorktree).toBe(true);
+    const readyFork = { ...forkSetup, readyForMessages: true, sequence: 10 };
+    expect(resolve(readyFork, forkSetup)).toEqual({
+      snapshot: readyFork,
+      isPreparingWorktree: false,
+    });
     const other = { ...base, threadId: ThreadId.make("another-thread") };
     expect(resolve(other, other)).toEqual({ snapshot: null, isPreparingWorktree: false });
   });

@@ -48,6 +48,7 @@ export const WorktreeSetupSnapshot = Schema.Struct({
   branch: Schema.NullOr(TrimmedNonEmptyString),
   baseRef: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  readyForMessages: Schema.optional(Schema.Boolean),
   setupScript: Schema.NullOr(
     Schema.Struct({
       name: TrimmedNonEmptyString,

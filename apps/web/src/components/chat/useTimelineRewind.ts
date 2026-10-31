@@ -10,9 +10,12 @@ import {
   type ScopedThreadRef,
   type ThreadId,
   type RunId,
+  type OrchestrationV2ThreadLaunchWorkspaceStrategy,
 } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { useNavigate } from "@tanstack/react-router";
+import { forkWorkspacePreparingAtom } from "@t3tools/client-runtime/worktree-setup";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useNavigate, useRouter } from "@tanstack/react-router";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -25,7 +28,7 @@ import { buildThreadRouteParams } from "../../threadRoutes";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { threadEnvironment } from "../../state/threads";
 import { waitForThreadShell } from "../../state/entities";
-import { openRevertConfirm } from "./ChatOverlayHosts";
+import { openRevertConfirm, openForkDialog, type ForkDialogSource } from "./ChatOverlayHosts";
 import { assetEnvironment } from "../../state/assets";
 import { readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -78,6 +81,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     setThreadError,
   } = input;
   const navigate = useNavigate();
+  const router = useRouter();
   const createAttachmentAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
     refresh: true,
@@ -176,17 +180,45 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     readonly runId: RunId;
   }) => {
     if (!activeThread || activeEnvironmentUnavailable) return;
+    openForkDialog(routeThreadKey, input);
+  };
+  const onForkFromRunStable = useStableCallback(onForkFromRun);
+  const onForkWorkspaceSelected = async (
+    source: ForkDialogSource,
+    workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  ) => {
+    if (
+      !activeThread ||
+      activeEnvironmentUnavailable ||
+      currentRouteThreadKeyRef.current !== routeThreadKey
+    )
+      return;
     const targetThreadId = newThreadId();
     const targetThreadRef = scopeThreadRef(environmentId, targetThreadId);
-    const result = await forkThreadFromRun({
+    const preparing = forkWorkspacePreparingAtom(scopedThreadKey(targetThreadRef));
+    const preparesWorktree = workspaceStrategy.type === "worktree";
+    if (preparesWorktree) appAtomRegistry.set(preparing, true);
+    const pendingResult = forkThreadFromRun({
       environmentId,
       input: {
-        sourceThreadId: input.sourceThreadId,
+        sourceThreadId: source.sourceThreadId,
         targetThreadId,
-        runId: input.runId,
+        runId: source.runId,
+        workspaceStrategy,
         title: `${activeThread.title} fork`,
       },
-    });
+    }).finally(() => appAtomRegistry.set(preparing, false));
+    const openFork = () =>
+      navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(targetThreadRef),
+      });
+    const createdEarly =
+      preparesWorktree &&
+      (await Promise.race([waitForThreadShell(targetThreadRef), pendingResult.then(() => false)]));
+    const openedEarly = createdEarly && currentRouteThreadKeyRef.current === routeThreadKey;
+    if (openedEarly) await openFork();
+    const result = await pendingResult;
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
@@ -195,9 +227,21 @@ export function useTimelineRewind(input: TimelineRewindInput) {
           error instanceof Error ? error.message : "Failed to fork this response.",
         );
       }
+      const forkPathname = router.buildLocation({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(targetThreadRef),
+      }).pathname;
+      if (openedEarly && router.state.location.pathname === forkPathname)
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(routeThreadRef),
+          replace: true,
+        });
       return;
     }
+    if (openedEarly || currentRouteThreadKeyRef.current !== routeThreadKey) return;
     const targetThreadReady = await waitForThreadShell(targetThreadRef);
+    if (currentRouteThreadKeyRef.current !== routeThreadKey) return;
     if (!targetThreadReady) {
       setThreadError(
         activeThread.id,
@@ -210,7 +254,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       params: buildThreadRouteParams(targetThreadRef),
     });
   };
-  const onForkFromRunStable = useStableCallback(onForkFromRun);
+  const onForkWorkspaceSelectedStable = useStableCallback(onForkWorkspaceSelected);
   const onRevertTimelineTurn = (targetTurnCount: number, messageId: MessageId) => {
     void onRevertToTurnCountStable(targetTurnCount, messageId);
   };
@@ -218,6 +262,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
   return {
     onConfirmRevertStable,
     onForkFromRunStable,
+    onForkWorkspaceSelectedStable,
     onRevertTimelineTurnStable,
   };
 }

@@ -897,6 +897,7 @@ export function NewTaskDraftScreen(props: {
   return (
     <>
       <ThreadScreenBinding
+        isGitRepo={flow.isGitRepo}
         environmentId={selectedProject.environmentId}
         header={
           <DraftThreadHeader thread={thread} project={selectedProject} cwd={composerWorkspaceCwd} />

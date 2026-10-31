@@ -1,3 +1,4 @@
+import { forkWorkspacePreparingAtom } from "@t3tools/client-runtime/worktree-setup";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
@@ -264,6 +265,7 @@ import {
   openBranchRestoreConfirm,
   PullRequestThreadDialogHost,
   RevertConfirmHost,
+  ForkDialogHost,
 } from "./chat/ChatOverlayHosts";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { useCitedHistory } from "./chat/citationProcedure";
@@ -1551,6 +1553,7 @@ export default function ChatView(props: ChatViewProps) {
   const timelineEmpty = timelineEntries.length === 0 && !hasStreamedTimelineRows;
   const displayedTimelineKey = activeThreadKey ?? routeThreadKey;
   const displayedThreadRef = parseScopedThreadKey(displayedTimelineKey);
+  const forkWorkspacePreparing = useAtomValue(forkWorkspacePreparingAtom(routeThreadKey));
   const {
     worktreeSetup,
     isPreparingWorktree,
@@ -1567,7 +1570,7 @@ export default function ChatView(props: ChatViewProps) {
     threadRef: activeThreadRef,
     serverProjection,
     activityRun: activeActivityRun,
-    localPreparing: isLocallyPreparingWorktree,
+    localPreparing: isLocallyPreparingWorktree || forkWorkspacePreparing,
     sendQueuesBehindSetup,
     // Include optimistic sends to retire the row before the server echo.
     followUpSent: timelineMessages.filter((message) => message.role === "user").length > 1,
@@ -2792,26 +2795,30 @@ export default function ChatView(props: ChatViewProps) {
                 : null;
   const openSideChatStable = useStableCallback(() => void sideChat.open());
   const sendSideChatStable = useStableCallback((prompt: string) => sideChat.open(prompt));
-  const { onConfirmRevertStable, onForkFromRunStable, onRevertTimelineTurnStable } =
-    useTimelineRewind({
-      environmentId,
-      routeThreadRef,
-      routeThreadKey,
-      currentRouteThreadKeyRef,
-      serverProjection,
-      activeThread,
-      timelineMessages,
-      phase,
-      isSendBusy,
-      isRevertingCheckpoint,
-      supportsConversationRollback,
-      activeEnvironmentUnavailable,
-      activeEnvironmentUnavailableLabel,
-      promptRef,
-      composerRef,
-      composerDraftTarget,
-      setThreadError,
-    });
+  const {
+    onConfirmRevertStable,
+    onForkFromRunStable,
+    onForkWorkspaceSelectedStable,
+    onRevertTimelineTurnStable,
+  } = useTimelineRewind({
+    environmentId,
+    routeThreadRef,
+    routeThreadKey,
+    currentRouteThreadKeyRef,
+    serverProjection,
+    activeThread,
+    timelineMessages,
+    phase,
+    isSendBusy,
+    isRevertingCheckpoint,
+    supportsConversationRollback,
+    activeEnvironmentUnavailable,
+    activeEnvironmentUnavailableLabel,
+    promptRef,
+    composerRef,
+    composerDraftTarget,
+    setThreadError,
+  });
   const onCompactContext = () => {
     if (compactDisabled) return;
     void sendStandaloneCommand("/compact", "Failed to compact context.");
@@ -3985,6 +3992,13 @@ export default function ChatView(props: ChatViewProps) {
         </ChatRightPanel>
       ) : null}
 
+      <ForkDialogHost
+        threadKey={routeThreadKey}
+        worktreePath={activeThread?.worktreePath ?? null}
+        branch={activeThread?.branch ?? null}
+        isGitRepo={isGitRepo}
+        onSelect={onForkWorkspaceSelectedStable}
+      />
       <RevertConfirmHost threadKey={routeThreadKey} onConfirm={onConfirmRevertStable} />
       {embedded ? null : <LinkPullRequestDialogHost />}
       <ThreadVisitWatermark threadRef={routeThreadRef} />
