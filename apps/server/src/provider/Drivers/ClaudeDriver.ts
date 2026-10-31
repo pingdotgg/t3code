@@ -46,9 +46,6 @@ import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeCachedProviderMaintenanceResolution,
-  makePackageManagedProviderMaintenanceResolver,
-  normalizeCommandPath,
-  resolveProviderMaintenanceCapabilitiesEffect,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   haveProviderSnapshotSettingsChanged,
@@ -61,6 +58,7 @@ import {
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { resolveClaudeMaintenance } from "./ClaudeMaintenance.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
@@ -71,24 +69,6 @@ const withoutUsage = (capabilities: ClaudeCapabilitiesProbe): ClaudeCapabilities
   delete result.usage;
   return result;
 };
-
-function isClaudeNativeCommandPath(commandPath: string): boolean {
-  const normalized = normalizeCommandPath(commandPath);
-  return (
-    normalized.endsWith("/.local/bin/claude") ||
-    normalized.endsWith("/.local/bin/claude.exe") ||
-    normalized.includes("/.local/share/claude/")
-  );
-}
-
-const UPDATE = makePackageManagedProviderMaintenanceResolver({
-  provider: DRIVER_KIND,
-  npmPackageName: "@anthropic-ai/claude-code",
-  nativeUpdate: {
-    args: ["update"],
-    isCommandPath: isClaudeNativeCommandPath,
-  },
-});
 
 export type ClaudeDriverEnv =
   | ClaudeAdapterV2DriverEnv
@@ -145,13 +125,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
     } satisfies ClaudeSettings;
     const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
-      resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
+      resolveClaudeMaintenance({
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
       }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
       ),
     );
     const continuationGroupKey = yield* makeClaudeContinuationGroupKey(effectiveConfig, processEnv);
