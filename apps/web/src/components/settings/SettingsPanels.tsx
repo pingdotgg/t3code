@@ -762,13 +762,14 @@ export function RestoreDeviceDefaultsButton({
   const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
   return (
     <Button
-      size="xs"
+      size={compact ? "icon-sm" : "xs"}
       variant="ghost"
+      aria-label={compact ? "Restore device defaults" : undefined}
       disabled={changedSettingLabels.length === 0}
       onClick={() => void restoreDefaults()}
     >
-      <RotateCcwIcon className="mx-1 size-3.5" />
-      <span className={compact ? "max-sm:sr-only" : undefined}>Restore device defaults</span>
+      <RotateCcwIcon className="size-3.5" />
+      {compact ? null : <span>Restore device defaults</span>}
     </Button>
   );
 }

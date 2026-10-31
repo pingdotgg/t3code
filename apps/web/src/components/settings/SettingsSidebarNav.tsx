@@ -1,3 +1,4 @@
+import "./settingsShell.css";
 import {
   lazy,
   Suspense,
@@ -244,30 +245,27 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       {...navArea}
       role="navigation"
       aria-label="Settings sections"
-      data-chrome-scope=""
       className={cn(
-        "flex w-60 shrink-0 flex-col border-e bg-sidebar text-sidebar-foreground max-md:w-14",
+        "settings-sidebar flex w-[231px] shrink-0 flex-col border-e text-foreground max-md:w-14",
         compactSearchOpen &&
           "max-md:absolute max-md:inset-y-0 max-md:start-0 max-md:z-10 max-md:w-full",
       )}
     >
-      <SidebarContent className="overflow-x-hidden">
-        <SidebarGroup>
-          <div className="flex flex-col gap-2">
-            {/* Pen mb644: a bare field led by the "/" key cap that focuses it. The
-                cap sits in the main search's 16px glyph slot, so it centers on the
-                icon column and the text starts on the label line, and it stays while
-                typing so the text never jumps. */}
+      <SidebarContent
+        className="overflow-x-hidden"
+        fixedHeader={
+          <SidebarGroup className="pb-3.5">
+            {/* Pen EV7oi: a search field with a trailing slash hint. */}
             <div className={compactSearchOpen ? undefined : "max-md:hidden"}>
-              <InputGroup variant="ghost">
+              <InputGroup>
                 <InputGroupAddon>
-                  <span className="-mx-0.5 flex size-4 shrink-0 items-center justify-center">
-                    <Kbd>/</Kbd>
-                  </span>
+                  <SearchIcon className="size-3.5" />
                 </InputGroupAddon>
                 <InputGroupInput
                   ref={searchInputRef}
                   nativeInput
+                  size="compact"
+                  placeholder="Search settings"
                   type="search"
                   value={query}
                   onChange={(event) => {
@@ -308,13 +306,22 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       <XIcon className="size-3" />
                     </Button>
                   </InputGroupAddon>
-                ) : null}
+                ) : (
+                  <InputGroupAddon align="inline-end">
+                    <Kbd>/</Kbd>
+                  </InputGroupAddon>
+                )}
               </InputGroup>
             </div>
+          </SidebarGroup>
+        }
+      >
+        <SidebarGroup>
+          <div className="flex flex-col gap-3.5">
             {isSearching && results.length === 0 ? (
               <p
                 role="status"
-                className="px-2 py-6 text-center text-xs text-sidebar-muted-foreground"
+                className="px-2 py-6 text-center text-caption text-sidebar-muted-foreground"
               >
                 No settings found
               </p>
@@ -332,6 +339,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                     ref={index === activeResultIndex ? scrollResultIntoView : undefined}
                   >
                     <SidebarMenuButton
+                      size="compact"
                       id={`settings-search-result-${item.id}`}
                       role="option"
                       aria-selected={index === activeResultIndex}
@@ -355,11 +363,12 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 ))}
               </SidebarMenu>
             ) : (
-              <div className="flex flex-col gap-4">
+              <div className="flex flex-col">
                 {compactSearchOpen ? null : (
                   <SidebarMenu className="md:hidden">
                     <SidebarMenuItem>
                       <SidebarMenuButton
+                        size="compact"
                         aria-label="Search settings"
                         onClick={() => setCompactSearchOpen(true)}
                       >
@@ -372,34 +381,35 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   {...sectionNavigation.containerProps}
                   role="tree"
                   aria-label="Settings sections"
-                  className="flex flex-col gap-4"
+                  className="flex flex-col"
                 >
                   {SETTINGS_NAV_GROUPS.map((group, index) => (
                     <div
                       key={group.heading ?? index}
                       role="group"
                       aria-label={group.heading ?? undefined}
-                      className="flex flex-col gap-1 max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0"
+                      className="flex flex-col max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0"
                     >
                       {group.heading ? (
                         // The group carries this label; a heading is not a valid tree child.
                         <h3
                           aria-hidden="true"
                           className={cn(
-                            "px-2 text-meta text-sidebar-muted-foreground",
+                            "px-2 pt-3 pb-1.5 text-meta text-sidebar-muted-foreground",
                             !compactSearchOpen && "max-md:hidden",
                           )}
                         >
                           {group.heading}
                         </h3>
                       ) : null}
-                      <SidebarMenu role="presentation">
+                      <SidebarMenu role="presentation" size="compact">
                         {group.paths.map((to) => {
                           const Icon = SETTINGS_SECTION_ICONS[to];
                           const isActive = activePath === to || activePath.startsWith(`${to}/`);
                           return (
                             <SidebarMenuItem key={to} role="presentation">
                               <SidebarMenuButton
+                                size="compact"
                                 data-settings-section={to}
                                 role="treeitem"
                                 tabIndex={sectionNavigation.tabIndexFor(to)}
