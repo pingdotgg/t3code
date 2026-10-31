@@ -106,6 +106,7 @@ export function PullRequestLabelPicker({
       query={query}
       onQueryChange={setQuery}
       searchLabel="Search labels"
+      popupWidth="labels"
       isPending={candidatesQuery.isPending && candidatesQuery.data === null}
       error={candidatesQuery.data === null ? candidatesQuery.error : null}
       candidates={candidates}
