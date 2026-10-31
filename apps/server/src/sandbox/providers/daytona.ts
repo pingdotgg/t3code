@@ -16,6 +16,8 @@ import {
 const DAYTONA_API_BASE = "https://app.daytona.io/api";
 const POLL_INTERVAL = "2 seconds";
 const POLL_ATTEMPTS = 90;
+// Daytona's TTL deletes the sandbox, disk included, so it trails T3's non-destructive stop by a day.
+const DESTROY_GRACE_MINUTES = 1440;
 
 const DaytonaSandbox = Schema.Struct({
   id: Schema.String,
@@ -156,7 +158,9 @@ export const daytonaDriver: SandboxProviderDriver = {
           autoDeleteInterval: -1,
           // Daytona's `ttlMinutes` destroys the sandbox, disk included, so it lands a day after
           // T3's own deadline stop and only cleans up when T3 never got to act.
-          ...(input.ttlMinutes === undefined ? {} : { ttlMinutes: input.ttlMinutes + 1440 }),
+          ...(input.ttlMinutes === undefined
+            ? {}
+            : { ttlMinutes: input.ttlMinutes + DESTROY_GRACE_MINUTES }),
           labels: { "t3.code/role": "environment" },
         },
       ),
@@ -290,6 +294,20 @@ export const daytonaDriver: SandboxProviderDriver = {
       Effect.flatMap((sandbox) => waitUntilStarted(input.config.apiKey, sandbox.id)),
       Effect.map(() => ({})),
     ),
+  // `/ttl/{minutes}` is re-anchored at the call and deletes even a stopped sandbox, so it keeps the
+  // same day of grace past T3's deadline as create.
+  extend: (input) =>
+    requestJson({
+      provider: "daytona",
+      stage: "config",
+      schema: Schema.Struct({ id: Schema.optionalKey(Schema.String) }),
+      request: authorize(
+        HttpClientRequest.post(
+          `${DAYTONA_API_BASE}/sandbox/${encodeURIComponent(input.sandboxId)}/ttl/${input.ttlMinutes + DESTROY_GRACE_MINUTES}`,
+        ),
+        input.config.apiKey,
+      ),
+    }).pipe(Effect.asVoid),
   status: (input) =>
     getSandbox(input.config.apiKey, input.sandboxId).pipe(
       Effect.map((sandbox) => DAYTONA_STATUS[sandbox.state] ?? null),

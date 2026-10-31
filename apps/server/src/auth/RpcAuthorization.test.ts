@@ -80,6 +80,7 @@ describe("RPC authorization scopes", () => {
     for (const method of [
       WS_METHODS.sandboxesCreate,
       WS_METHODS.sandboxesResume,
+      WS_METHODS.sandboxesExtend,
       WS_METHODS.sandboxesStop,
       WS_METHODS.sandboxesDelete,
     ]) {

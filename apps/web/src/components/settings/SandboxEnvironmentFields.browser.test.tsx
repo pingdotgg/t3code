@@ -54,7 +54,12 @@ vi.mock(import("~/state/query"), async (original) => ({
                   { id: "small", label: "Small", detail: "2 vCPU" },
                   { id: "default", label: "Default", detail: "4 vCPU" },
                 ],
-                capabilities: { limits: true, stopResume: true, credentialEnvironments: false },
+                capabilities: {
+                  limits: true,
+                  stopResume: true,
+                  credentialEnvironments: false,
+                  extend: true,
+                },
               },
             ],
           }

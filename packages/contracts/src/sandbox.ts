@@ -33,6 +33,7 @@ export const SandboxProviderInfo = Schema.Struct({
     limits: Schema.Boolean,
     stopResume: Schema.Boolean,
     credentialEnvironments: Schema.Boolean,
+    extend: Schema.Boolean,
   }),
 });
 export type SandboxProviderInfo = typeof SandboxProviderInfo.Type;
@@ -198,6 +199,32 @@ export const SandboxLifecycleInput = Schema.Struct({
   environmentId: EnvironmentId,
 });
 export type SandboxLifecycleInput = typeof SandboxLifecycleInput.Type;
+
+export const SANDBOX_LIFETIME_CAP_MIN_MINUTES = 60;
+export const SANDBOX_LIFETIME_CAP_MAX_MINUTES = 30 * 24 * 60;
+export const DEFAULT_SANDBOX_LIFETIME_CAP_MINUTES = 24 * 60;
+
+/** The longest a sandbox may live, from creation to its deadline, counting every extension. */
+export const SandboxLifetimeCapMinutes = Schema.Int.check(
+  Schema.isBetween({
+    minimum: SANDBOX_LIFETIME_CAP_MIN_MINUTES,
+    maximum: SANDBOX_LIFETIME_CAP_MAX_MINUTES,
+  }),
+);
+
+export const SandboxExtendInput = Schema.Struct({
+  environmentId: EnvironmentId,
+  /** Added to the deadline; the server grants less when the lifetime cap is closer. */
+  minutes: Schema.Int.check(
+    Schema.isBetween({ minimum: 1, maximum: SANDBOX_LIFETIME_CAP_MAX_MINUTES }),
+  ),
+});
+export type SandboxExtendInput = typeof SandboxExtendInput.Type;
+
+export const SandboxExtendResult = Schema.Struct({
+  sandbox: SandboxRecord,
+});
+export type SandboxExtendResult = typeof SandboxExtendResult.Type;
 
 export const SandboxStopResult = Schema.Struct({
   sandbox: SandboxRecord,

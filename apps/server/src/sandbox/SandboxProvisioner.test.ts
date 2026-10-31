@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { it } from "@effect/vitest";
 import { EnvironmentId, SandboxProviderError } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -307,8 +308,20 @@ describe("daytonaDriver", () => {
       expect(created).toEqual({ id: "sandbox_1", name: "Daytona sandbox" });
       expect(executed.stdout).toContain("Token: pair_xyz");
       expect(preview).toBe("https://3773-sandbox_1.proxy.daytona.works");
+      yield* daytonaDriver.extend!({
+        config: { apiKey: "dtn_test" },
+        sandboxId: created.id,
+        ttlMinutes: 180,
+        running: false,
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+
       // Daytona deletes at its TTL, so the backstop sits a day past T3's non-destructive stop.
       expect(JSON.parse(requests[0]!.body)).toMatchObject({ ttlMinutes: 480 + 1440 });
+      // `/ttl/{minutes}` counts from the call, even on a stopped sandbox, so it gets the same day.
+      expect(requests.at(-1)).toMatchObject({
+        method: "POST",
+        url: "https://app.daytona.io/api/sandbox/sandbox_1/ttl/1620",
+      });
       expect(requests.map((request) => request.url)).toContain(
         "https://toolbox.example/toolbox/sandbox_1/process/execute",
       );
@@ -1064,6 +1077,145 @@ describe("SandboxProvisioner lifecycle", () => {
       expect(requests).not.toContain(`GET https://boat.dev/api/v1/sandboxes/${boatSandboxId}`);
     });
   });
+
+  it.effect("extends a deadline up to the lifetime cap and moves the provider's backstop", () =>
+    Effect.gen(function* () {
+      const base: SandboxRecord = {
+        environmentId: testEnvironmentId,
+        provider: "boat",
+        sandboxId: boatSandboxId,
+        label: "Extended sandbox",
+        size: "small",
+        state: "running",
+        createdAt: "1970-01-01T00:00:00.000Z",
+        updatedAt: "1970-01-01T00:00:00.000Z",
+        httpBaseUrl: "https://boat.example/t3",
+        hardDeadlineAt: "1970-01-01T08:00:00.000Z",
+        ttlMinutes: 480,
+      };
+      const atLifetime = (ttlMinutes: number) => ({
+        ttlMinutes,
+        hardDeadlineAt: DateTime.formatIso(DateTime.makeUnsafe(ttlMinutes * 60_000)),
+      });
+      const cases = [
+        {
+          name: "adds to a running sandbox and re-arms Boat's auto-stop from now",
+          record: base,
+          minutes: 120,
+          expected: { ttlMinutes: 600, hardDeadlineAt: "1970-01-01T10:00:00.000Z" },
+          patchTtlSeconds: 600 * 60,
+        },
+        {
+          name: "keeps a trial's auto-stop within the plan maximum",
+          record: base,
+          minutes: 120,
+          limits: trialLimits,
+          expected: { ttlMinutes: 600, hardDeadlineAt: "1970-01-01T10:00:00.000Z" },
+          patchTtlSeconds: 120 * 60,
+        },
+        {
+          // A stopped Boat sandbox gets the remaining time when it resumes.
+          name: "grants only what is left under the cap, without a Boat call when stopped",
+          record: { ...base, state: "stopped", ...atLifetime(1380) },
+          minutes: 240,
+          expected: { ttlMinutes: 1440, hardDeadlineAt: "1970-01-02T00:00:00.000Z" },
+          patchTtlSeconds: null,
+        },
+        {
+          name: "refuses a sandbox at the cap",
+          record: { ...base, ...atLifetime(1440) },
+          minutes: 120,
+          error: "This sandbox is at the 24-hour lifetime limit set in Settings.",
+        },
+        {
+          name: "follows a lower cap from settings",
+          record: base,
+          minutes: 120,
+          cap: 480,
+          error: "This sandbox is at the 8-hour lifetime limit set in Settings.",
+        },
+        {
+          name: "refuses a sandbox past its deadline",
+          record: { ...base, state: "stopped", hardDeadlineAt: "1960-01-01T00:00:00.000Z" },
+          minutes: 120,
+          error: "This sandbox reached its 8-hour limit. Delete it and create a new one.",
+        },
+        {
+          name: "refuses an expired sandbox",
+          record: { ...base, state: "expired" },
+          minutes: 120,
+          error: "Only a running or stopped sandbox can be extended.",
+        },
+        {
+          name: "refuses a deleted sandbox",
+          record: { ...base, state: "deleted" },
+          minutes: 120,
+          error: "Only a running or stopped sandbox can be extended.",
+        },
+      ] satisfies ReadonlyArray<{
+        readonly name: string;
+        readonly record: SandboxRecord;
+        readonly minutes: number;
+        readonly limits?: unknown;
+        readonly cap?: number;
+        readonly expected?: Pick<SandboxRecord, "ttlMinutes" | "hardDeadlineAt">;
+        readonly patchTtlSeconds?: number | null;
+        readonly error?: string;
+      }>;
+      for (const testCase of cases) {
+        const repository = memoryRepository([testCase.record]);
+        const requests: Array<string> = [];
+        const bodies: Array<{ readonly url: string; readonly body: unknown }> = [];
+        const result = yield* SandboxProvisioner.SandboxProvisioner.pipe(
+          Effect.flatMap((provisioner) =>
+            provisioner.extend({ environmentId: testEnvironmentId, minutes: testCase.minutes }),
+          ),
+          Effect.provide(
+            provisionerLayer(
+              {
+                sandboxProviders: { boat: { apiKey: "boat_test" } },
+                ...("cap" in testCase ? { sandboxLifetimeCapMinutes: testCase.cap } : {}),
+              },
+              repository.layer,
+            ),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            lifecycleClient(requests, {
+              bodies,
+              ...("limits" in testCase ? { limits: testCase.limits } : {}),
+            }),
+          ),
+          Effect.result,
+        );
+        const stored = repository.records.get(testEnvironmentId);
+        const patches = requests.filter((request) => request.startsWith("PATCH"));
+        if ("error" in testCase) {
+          expect(result._tag, testCase.name).toBe("Failure");
+          if (result._tag === "Failure") {
+            expect(result.failure).toMatchObject({ detail: testCase.error });
+          }
+          expect(stored, testCase.name).toEqual(testCase.record);
+          expect(patches, testCase.name).toEqual([]);
+          continue;
+        }
+        expect(result._tag, testCase.name).toBe("Success");
+        expect(stored, testCase.name).toMatchObject(testCase.expected);
+        expect(stored?.createdAt).toBe(testCase.record.createdAt);
+        if (testCase.patchTtlSeconds === null) {
+          expect(patches, testCase.name).toEqual([]);
+        } else {
+          expect(patches, testCase.name).toEqual([
+            `PATCH https://boat.dev/api/v1/sandboxes/${boatSandboxId}`,
+          ]);
+          // Boat's PATCH sets the deadline to now + ttlSeconds; it does not add to it.
+          expect(bodies.find((entry) => entry.url.endsWith(boatSandboxId))?.body).toEqual({
+            ttlSeconds: testCase.patchTtlSeconds,
+          });
+        }
+      }
+    }),
+  );
 
   it.effect("syncs records with what the provider reports and fills their cost", () => {
     const environmentId = (digit: string) =>

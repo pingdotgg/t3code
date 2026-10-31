@@ -91,14 +91,21 @@ id returned by `/.well-known/t3/environment`. Environments stay the source of tr
 details; the record only adds what the provider needs to act on the machine: provider, sandbox id,
 size, credential environment, and the deadline.
 
-`ttlMinutes` defaults to 480 and is the sandbox's lifetime, not a window that each resume refreshes:
-stopping and resuming can never hand back another eight hours, or the limit would never bind.
-`hardDeadlineAt` is fixed at create time, resume refuses a sandbox that is already past it, and the
-server sweeps records once a minute and calls the driver's `stop` when a deadline passes. A failed
-stop is logged and retried on the next sweep. The provider's own TTL is only a backstop for when T3 is
-offline at the deadline, and it must never destroy what T3's stop would keep. Boat's backstop
-stops the machine at the deadline. Daytona's TTL deletes the sandbox, disk included, so it is set
-24 hours past the deadline: a stopped Daytona sandbox keeps its disk for a day and is then gone.
+`ttlMinutes` defaults to 480 and is the sandbox's lifetime, counted from creation, not a window
+that each resume refreshes: stopping and resuming never hand time back, or the limit would never
+bind. `hardDeadlineAt` is createdAt plus `ttlMinutes`. The only way to move it is Extend, which adds
+to both and is capped by the server's lifetime limit (`sandboxLifetimeCapMinutes`, 24 hours by
+default), so a sandbox still cannot run forever. Extend and resume refuse a sandbox already past its
+deadline, and the server sweeps records once a minute and calls the driver's `stop` when a deadline
+passes. A failed stop is logged and retried on the next sweep.
+
+The provider's own TTL is only a backstop for when T3 is offline at the deadline, and it must never
+destroy what T3's stop would keep; a driver with `extend` moves it whenever the deadline moves.
+Boat's backstop is an auto-stop counted from create or resume, so extending a running Boat sandbox
+resets it to the time left, a stopped one gets it on resume, and a plan with a lower auto-stop
+maximum (trial: two hours) stops the machine early without moving T3's deadline. Daytona's TTL
+deletes the sandbox, disk included, even when stopped, so it is always set 24 hours past the
+deadline: a stopped Daytona sandbox keeps its disk for a day and is then gone.
 
 The same sweep makes the record match the provider, because T3 usually runs where webhooks can't
 reach it. Each record gets at most one provider call per sweep, with a few in flight at a time. An

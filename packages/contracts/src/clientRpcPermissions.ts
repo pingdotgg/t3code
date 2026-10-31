@@ -41,6 +41,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.sandboxesDelete]: AuthSettingsWriteScope,
   [WS_METHODS.sandboxesStop]: AuthSettingsWriteScope,
   [WS_METHODS.sandboxesResume]: AuthSettingsWriteScope,
+  [WS_METHODS.sandboxesExtend]: AuthSettingsWriteScope,
   // Signing in replaces the server's GitHub credential, as saving a token in Settings does.
   [WS_METHODS.sourceControlSignInStart]: AuthSettingsWriteScope,
   [WS_METHODS.sourceControlSignInWait]: AuthSettingsWriteScope,

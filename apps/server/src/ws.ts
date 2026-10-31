@@ -2692,6 +2692,7 @@ export const layerWsRpc = (
         [WS_METHODS.sandboxesList]: () => sandboxes.list,
         [WS_METHODS.sandboxesStop]: (input) => sandboxes.stop(input),
         [WS_METHODS.sandboxesResume]: (input) => sandboxes.resume(input),
+        [WS_METHODS.sandboxesExtend]: (input) => sandboxes.extend(input),
         [WS_METHODS.projectCloneStart]: (input) =>
           projectCloneTracker.start(input, {
             createProject: (project) =>

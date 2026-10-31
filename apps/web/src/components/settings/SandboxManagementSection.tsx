@@ -1,16 +1,24 @@
-import { BoxIcon, PlayIcon, SquareIcon, Trash2Icon } from "lucide-react";
+import { BoxIcon, ChevronDownIcon, PlayIcon, SquareIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, SandboxProviderInfo, SandboxRecord } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  SANDBOX_LIFETIME_CAP_MAX_MINUTES,
+  SANDBOX_LIFETIME_CAP_MIN_MINUTES,
+  type SandboxProviderInfo,
+  type SandboxRecord,
+} from "@t3tools/contracts";
 
+import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "~/hooks/useSettings";
+import { useNowMinute } from "~/hooks/useNowMinute";
 import { serverEnvironment } from "~/state/server";
 import { useSandboxProvisionerEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { SettingsSection } from "./settingsLayout";
+import { SettingsRow, SettingsSection } from "./settingsLayout";
 import {
   describeSandboxFailure,
   SandboxQuotaLine,
@@ -20,13 +28,34 @@ import {
 } from "./SandboxStartLimits";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import {
+  NumberField,
+  NumberFieldDecrement,
+  NumberFieldGroup,
+  NumberFieldIncrement,
+  NumberFieldInput,
+} from "../ui/number-field";
 import { Spinner } from "../ui/spinner";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
-const DEADLINE = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
+const EXTEND_CHOICES_MINUTES = [120, 240, 480] as const;
+
+const formatDuration = (minutes: number) => {
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (hours === 0) return `${Math.max(1, rest)} min`;
+  return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
+};
+
+// The choices that fit under the cap, plus "the rest" when the cap falls between two of them.
+const extendChoices = (headroomMinutes: number): ReadonlyArray<number> => {
+  const fitting = EXTEND_CHOICES_MINUTES.filter((minutes) => minutes < headroomMinutes);
+  return headroomMinutes <= EXTEND_CHOICES_MINUTES.at(-1)!
+    ? [...fitting, headroomMinutes]
+    : fitting;
+};
 
 const stateLabel = (sandbox: SandboxRecord): string => {
   switch (sandbox.state) {
@@ -89,6 +118,7 @@ export function SandboxManagementSection() {
 
   return (
     <SettingsSection id="sandboxes" title="Sandboxes">
+      <SandboxLifetimeCapRow environmentId={provisionerEnvironmentId} />
       {list.error ? <p className="px-1 pb-2 text-xs text-destructive">{list.error}</p> : null}
       {sandboxes.map((sandbox) => (
         <SandboxRow
@@ -102,6 +132,50 @@ export function SandboxManagementSection() {
         />
       ))}
     </SettingsSection>
+  );
+}
+
+function SandboxLifetimeCapRow({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const capMinutes = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.sandboxLifetimeCapMinutes,
+  );
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  return (
+    <SettingsRow
+      title="Lifetime limit"
+      description="The longest a sandbox can run, counted from when it was created. Extending a sandbox never goes past it."
+      serverScoped
+      settingKeys={["sandboxLifetimeCapMinutes"]}
+      control={
+        <div className="flex items-center gap-2">
+          <NumberField
+            value={capMinutes / 60}
+            min={SANDBOX_LIFETIME_CAP_MIN_MINUTES / 60}
+            max={SANDBOX_LIFETIME_CAP_MAX_MINUTES / 60}
+            step={1}
+            size="sm"
+            className="w-28"
+            onValueChange={(hours) => {
+              if (hours === null) return;
+              updateSettings({
+                sandboxLifetimeCapMinutes: Math.min(
+                  SANDBOX_LIFETIME_CAP_MAX_MINUTES,
+                  Math.max(SANDBOX_LIFETIME_CAP_MIN_MINUTES, Math.round(hours * 60)),
+                ),
+              });
+            }}
+          >
+            <NumberFieldGroup>
+              <NumberFieldDecrement aria-label="Decrease sandbox lifetime limit" />
+              <NumberFieldInput aria-label="Sandbox lifetime limit in hours" />
+              <NumberFieldIncrement aria-label="Increase sandbox lifetime limit" />
+            </NumberFieldGroup>
+          </NumberField>
+          <span className="text-xs text-muted-foreground">hours</span>
+        </div>
+      }
+    />
   );
 }
 
@@ -123,11 +197,24 @@ function SandboxRow({
   const deleteSandbox = useAtomCommand(serverEnvironment.sandboxesDelete, {
     reportFailure: false,
   });
+  const extendSandbox = useAtomCommand(serverEnvironment.sandboxesExtend, {
+    reportFailure: false,
+  });
+  const capMinutes = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.sandboxLifetimeCapMinutes,
+  );
+  const minute = useNowMinute();
   const [pending, setPending] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [openedAt] = useState(() => Date.now());
-  const pastDeadline =
-    sandbox.hardDeadlineAt !== null && Date.parse(sandbox.hardDeadlineAt) <= openedAt;
+  // The tick is UTC truncated to the minute; a minute's precision is all these labels show.
+  const nowMillis = Date.parse(`${minute}:00.000Z`);
+  const remainingMinutes =
+    sandbox.hardDeadlineAt === null
+      ? null
+      : Math.ceil((Date.parse(sandbox.hardDeadlineAt) - nowMillis) / 60_000);
+  const pastDeadline = remainingMinutes !== null && remainingMinutes <= 0;
+  const headroomMinutes = capMinutes - sandbox.ttlMinutes;
   // Until providers load, keep the controls; the server refuses what the driver cannot do.
   const canStopResume = provider?.capabilities.stopResume ?? true;
   const canStop = canStopResume && (sandbox.state === "running" || sandbox.state === "error");
@@ -145,8 +232,13 @@ function SandboxRow({
     provider: canResume ? provider : undefined,
   });
   const attention = ATTENTION[sandbox.state];
+  const canExtend =
+    (provider?.capabilities.extend ?? false) &&
+    (sandbox.state === "running" || sandbox.state === "stopped") &&
+    remainingMinutes !== null &&
+    !pastDeadline;
 
-  const run = async (action: "stop" | "resume" | "delete") => {
+  const run = async (action: "stop" | "resume" | "delete" | { readonly extend: number }) => {
     startCheck.cancel();
     setConfirmingDelete(false);
     setPending(true);
@@ -156,14 +248,19 @@ function SandboxRow({
         ? await stopSandbox(input)
         : action === "resume"
           ? await resumeSandbox(input)
-          : await deleteSandbox({
-              environmentId,
-              input: {
-                provider: sandbox.provider,
-                sandboxId: sandbox.sandboxId,
-                environmentId: sandbox.environmentId,
-              },
-            });
+          : action === "delete"
+            ? await deleteSandbox({
+                environmentId,
+                input: {
+                  provider: sandbox.provider,
+                  sandboxId: sandbox.sandboxId,
+                  environmentId: sandbox.environmentId,
+                },
+              })
+            : await extendSandbox({
+                environmentId,
+                input: { environmentId: sandbox.environmentId, minutes: action.extend },
+              });
     setPending(false);
     if (action === "resume") startCheck.refresh();
     if (result._tag === "Failure") {
@@ -174,7 +271,9 @@ function SandboxRow({
             ? "Could not stop sandbox"
             : action === "resume"
               ? "Could not resume sandbox"
-              : "Could not delete sandbox",
+              : action === "delete"
+                ? "Could not delete sandbox"
+                : "Could not extend sandbox",
         );
         toastManager.add(
           stackedThreadToast({
@@ -194,9 +293,15 @@ function SandboxRow({
     sandbox.size,
     ...(attention === undefined ? [stateLabel(sandbox)] : []),
     ...(sandbox.costDollars === undefined ? [] : [formatCost(sandbox.costDollars)]),
-    ...(sandbox.hardDeadlineAt === null || attention !== undefined
+    ...(remainingMinutes === null || attention !== undefined
       ? []
-      : [`expires ${DEADLINE.format(new Date(sandbox.hardDeadlineAt))}`]),
+      : [
+          pastDeadline
+            ? "Lifetime limit reached"
+            : sandbox.state === "running"
+              ? `Stops in ${formatDuration(remainingMinutes)}`
+              : `${formatDuration(remainingMinutes)} of lifetime left`,
+        ]),
   ].join(" · ");
 
   return (
@@ -241,6 +346,34 @@ function SandboxRow({
               {pending ? <Spinner className="size-3" /> : <PlayIcon className="size-3" />}
               Resume
             </Button>
+          ) : null}
+          {canExtend ? (
+            headroomMinutes > 0 ? (
+              <Menu>
+                <MenuTrigger render={<Button size="xs" variant="outline" disabled={pending} />}>
+                  Extend
+                  <ChevronDownIcon className="size-3" />
+                </MenuTrigger>
+                <MenuPopup align="end">
+                  {extendChoices(headroomMinutes).map((minutes) => (
+                    <MenuItem key={minutes} onClick={() => void run({ extend: minutes })}>
+                      +{formatDuration(minutes)}
+                    </MenuItem>
+                  ))}
+                </MenuPopup>
+              </Menu>
+            ) : (
+              <Tooltip>
+                <TooltipTrigger render={<span tabIndex={0} />}>
+                  <Button size="xs" variant="outline" disabled>
+                    Extend
+                  </Button>
+                </TooltipTrigger>
+                <TooltipPopup side="top">
+                  At the {formatDuration(capMinutes)} lifetime limit set above.
+                </TooltipPopup>
+              </Tooltip>
+            )
           ) : null}
           {canDelete && !confirmingDelete ? (
             <Button

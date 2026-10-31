@@ -1234,6 +1234,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:sandboxes:resume",
       tag: WS_METHODS.sandboxesResume,
     }),
+    sandboxesExtend: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:sandboxes:extend",
+      tag: WS_METHODS.sandboxesExtend,
+    }),
     sandboxesCreate: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:sandboxes:create",
       tag: WS_METHODS.sandboxesCreate,

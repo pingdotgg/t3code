@@ -12,9 +12,10 @@ reconnects like any other remote environment.
 
 The key is saved on the T3 Code server that provisions the sandbox, not on the client. Creating a
 sandbox bills the provider account that owns the key. Stop and resume sandboxes from **Settings →
-Environments → Sandboxes**. A sandbox stops eight hours after it was created and cannot be resumed
-after that; resuming does not reset the limit. Daytona deletes a sandbox, files included, a day
-after that limit, so copy out anything you need before then.
+Environments → Sandboxes**. A sandbox stops eight hours after it was created; resuming does not
+reset that. Use **Extend** there to add time before it runs out, up to the lifetime limit in the
+same section (24 hours by default). Once it is reached the sandbox cannot be resumed. Daytona deletes
+a sandbox, files included, a day after it stops for good, so copy out anything you need before then.
 
 That list follows the provider: a sandbox you stop or delete in the provider's dashboard shows up as
 stopped or deleted within a minute, and Boat's monthly cost appears next to each sandbox. Boat keeps

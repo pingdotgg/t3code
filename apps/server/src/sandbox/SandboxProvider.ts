@@ -99,6 +99,16 @@ export interface SandboxProviderDriver {
     readonly config: SandboxProviderConfig;
     readonly sandboxId: string;
   }) => Effect.Effect<SandboxProviderStatus | null, SandboxProviderError, HttpClient.HttpClient>;
+  /**
+   * Moves the provider's own backstop to match an extended deadline. `ttlMinutes` is the time left
+   * until the new deadline, counted from now.
+   */
+  readonly extend?: (input: {
+    readonly config: SandboxProviderConfig;
+    readonly sandboxId: string;
+    readonly ttlMinutes: number;
+    readonly running: boolean;
+  }) => Effect.Effect<void, SandboxProviderError, HttpClient.HttpClient>;
   /** This month's cost of every T3 sandbox on the account in one call, keyed by sandbox id. */
   readonly usage?: (input: {
     readonly config: SandboxProviderConfig;

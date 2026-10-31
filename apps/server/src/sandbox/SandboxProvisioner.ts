@@ -8,6 +8,8 @@ import {
   type SandboxCredentialEnvironmentsInput,
   type SandboxCredentialEnvironmentsResult,
   type SandboxDeleteInput,
+  type SandboxExtendInput,
+  type SandboxExtendResult,
   type SandboxLifecycleInput,
   type SandboxLimitsInput,
   type SandboxLimitsResult,
@@ -151,6 +153,9 @@ export class SandboxProvisioner extends Context.Service<
     readonly resume: (
       input: SandboxLifecycleInput,
     ) => Effect.Effect<SandboxResumeResult, SandboxProviderError>;
+    readonly extend: (
+      input: SandboxExtendInput,
+    ) => Effect.Effect<SandboxExtendResult, SandboxProviderError>;
     /** Stops sandboxes past their deadline and syncs every other record with its provider. */
     readonly sweep: Effect.Effect<void>;
   }
@@ -229,6 +234,7 @@ const make = Effect.gen(function* () {
           limits: driver.limits !== undefined,
           stopResume: driver.stop !== undefined && driver.resume !== undefined,
           credentialEnvironments: driver.listEnvironments !== undefined,
+          extend: driver.extend !== undefined,
         },
       })),
     })),
@@ -560,6 +566,65 @@ const make = Effect.gen(function* () {
     return { sandbox: updated, httpBaseUrl: updated.httpBaseUrl } satisfies SandboxResumeResult;
   });
 
+  const extend = Effect.fn("SandboxProvisioner.extend")(function* (input: SandboxExtendInput) {
+    const record = yield* readRecord(input.environmentId);
+    const driver = findDriver(record.provider);
+    const refuse = (detail: string) =>
+      Effect.fail(new SandboxProviderError({ provider: record.provider, stage: "config", detail }));
+    if (driver.extend === undefined) {
+      return yield* refuse("This provider cannot extend a sandbox.");
+    }
+    if (record.state !== "running" && record.state !== "stopped") {
+      return yield* refuse("Only a running or stopped sandbox can be extended.");
+    }
+    if (record.hardDeadlineAt === null) {
+      return yield* refuse("This sandbox has no lifetime limit to extend.");
+    }
+    const nowMillis = DateTime.toEpochMillis(yield* DateTime.now);
+    const deadlineMillis = DateTime.toEpochMillis(DateTime.makeUnsafe(record.hardDeadlineAt));
+    if (deadlineMillis <= nowMillis) {
+      return yield* refuse(
+        `This sandbox reached its ${Math.round((record.ttlMinutes / 60) * 10) / 10}-hour limit. Delete it and create a new one.`,
+      );
+    }
+    const cap = (yield* settings.getSettings.pipe(Effect.orDie)).sandboxLifetimeCapMinutes;
+    // `ttlMinutes` is the lifetime from creation to the deadline, so the cap bounds it directly.
+    const granted = Math.min(input.minutes, cap - record.ttlMinutes);
+    if (granted <= 0) {
+      return yield* refuse(
+        `This sandbox is at the ${Math.round((cap / 60) * 10) / 10}-hour lifetime limit set in Settings.`,
+      );
+    }
+    const deadline = deadlineMillis + granted * 60_000;
+    const apiKey = yield* resolveApiKey(record.provider, undefined);
+    const limits =
+      driver.limits === undefined
+        ? null
+        : yield* onHttp(driver.limits({ config: { apiKey } })).pipe(
+            Effect.orElseSucceed(() => null),
+          );
+    yield* onHttp(
+      driver.extend({
+        config: { apiKey },
+        sandboxId: record.sandboxId,
+        // A plan that caps auto-stop lower stops the machine early; T3's deadline still stands.
+        ttlMinutes: Math.min(
+          Math.ceil((deadline - nowMillis) / 60_000),
+          limits?.maxTtlMinutes ?? Infinity,
+        ),
+        running: record.state === "running",
+      }),
+    );
+    const updated: SandboxRecord = {
+      ...record,
+      ttlMinutes: record.ttlMinutes + granted,
+      hardDeadlineAt: DateTime.formatIso(DateTime.makeUnsafe(deadline)),
+      updatedAt: DateTime.formatIso(DateTime.makeUnsafe(nowMillis)),
+    };
+    yield* records.put(updated).pipe(Effect.orDie);
+    return { sandbox: updated } satisfies SandboxExtendResult;
+  });
+
   // The sweep reads records, then waits on the provider; a user action in between wins.
   const putIfUnchanged = Effect.fn("SandboxProvisioner.putIfUnchanged")(function* (
     read: SandboxRecord,
@@ -670,6 +735,7 @@ const make = Effect.gen(function* () {
     list,
     stop,
     resume,
+    extend,
     sweep,
   });
 });

@@ -96,6 +96,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.sandboxesList]: AuthOrchestrationReadScope,
   [WS_METHODS.sandboxesStop]: AuthSettingsWriteScope,
   [WS_METHODS.sandboxesResume]: AuthSettingsWriteScope,
+  [WS_METHODS.sandboxesExtend]: AuthSettingsWriteScope,
   [WS_METHODS.serverSearchAcpRegistry]: AuthOrchestrationReadScope,
   [WS_METHODS.serverPrepareAcpRegistryAgent]: AuthProvidersManageScope,
   [WS_METHODS.serverUninstallAcpRegistryManagedBinary]: AuthProvidersManageScope,

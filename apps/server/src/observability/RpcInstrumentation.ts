@@ -145,6 +145,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.sandboxesList]: "environments",
   [WS_METHODS.sandboxesStop]: "environments",
   [WS_METHODS.sandboxesResume]: "environments",
+  [WS_METHODS.sandboxesExtend]: "environments",
   [WS_METHODS.sourceControlSignInWait]: "source-control",
   [WS_METHODS.sourceControlSignInCancel]: "source-control",
   [WS_METHODS.sourceControlAppAccess]: "source-control",

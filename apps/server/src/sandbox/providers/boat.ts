@@ -385,6 +385,25 @@ export const boatDriver: SandboxProviderDriver = {
       detail: "Timed out waiting for the sandbox to resume.",
     });
   }),
+  // Boat's TTL is an auto-stop counted from create or resume, so a stopped sandbox gets the remaining
+  // time when it resumes and only a running one needs it moved now. PATCH sets now + ttlSeconds.
+  extend: (input) =>
+    input.running
+      ? requestJson({
+          provider: "boat",
+          stage: "config",
+          schema: Schema.Struct({ ok: Schema.optionalKey(Schema.Boolean) }),
+          request: jsonBody(
+            authorize(
+              HttpClientRequest.patch(
+                `${BOAT_API_BASE}/sandboxes/${encodeURIComponent(input.sandboxId)}`,
+              ),
+              input.config.apiKey,
+            ),
+            { ttlSeconds: input.ttlMinutes * 60 },
+          ),
+        }).pipe(Effect.asVoid)
+      : Effect.void,
   status: (input) =>
     requestJson({
       provider: "boat",

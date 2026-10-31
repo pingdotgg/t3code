@@ -39,6 +39,8 @@ import {
   SandboxProviderError,
   SandboxProvidersResult,
   SandboxResumeResult,
+  SandboxExtendInput,
+  SandboxExtendResult,
   SandboxStopResult,
 } from "./sandbox.ts";
 import {
@@ -617,6 +619,7 @@ export const WS_METHODS = {
   sandboxesList: "sandboxes.list",
   sandboxesStop: "sandboxes.stop",
   sandboxesResume: "sandboxes.resume",
+  sandboxesExtend: "sandboxes.extend",
   projectCloneStart: "projectClone.start",
   projectCloneCancel: "projectClone.cancel",
   projectCloneRetry: "projectClone.retry",
@@ -1308,6 +1311,12 @@ const WsSandboxesStopRpc = Rpc.make(WS_METHODS.sandboxesStop, {
 const WsSandboxesResumeRpc = Rpc.make(WS_METHODS.sandboxesResume, {
   payload: SandboxLifecycleInput,
   success: SandboxResumeResult,
+  error: Schema.Union([SandboxProviderError, EnvironmentAuthorizationError]),
+});
+
+const WsSandboxesExtendRpc = Rpc.make(WS_METHODS.sandboxesExtend, {
+  payload: SandboxExtendInput,
+  success: SandboxExtendResult,
   error: Schema.Union([SandboxProviderError, EnvironmentAuthorizationError]),
 });
 
@@ -2159,6 +2168,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSandboxesListRpc,
   WsSandboxesStopRpc,
   WsSandboxesResumeRpc,
+  WsSandboxesExtendRpc,
   WsProjectCloneStartRpc,
   WsProjectCloneCancelRpc,
   WsProjectCloneRetryRpc,
