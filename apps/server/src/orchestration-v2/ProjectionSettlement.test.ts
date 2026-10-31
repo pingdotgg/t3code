@@ -177,6 +177,31 @@ const createFailure = Effect.fn(function* (
   });
 });
 
+const attachSessionError = Effect.fn(function* (threadId: ThreadId, lastError: string) {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const driver = ProviderDriverKind.make("codex");
+  yield* store.apply({
+    id: EventId.make(`event:session:${threadId}`),
+    type: "provider-session.attached",
+    threadId,
+    driver,
+    providerInstanceId,
+    occurredAt: old,
+    payload: {
+      id: ProviderSessionId.make(`provider-session:${threadId}`),
+      driver,
+      providerInstanceId,
+      status: "error",
+      cwd: "/workspace",
+      model: modelSelection.model,
+      capabilities: CodexProviderCapabilitiesV2,
+      createdAt: old,
+      updatedAt: old,
+      lastError,
+    },
+  });
+});
+
 it.effect(
   "sql: discovers settlement work with the same activity and background semantics as the shell",
   () =>
@@ -273,33 +298,21 @@ it.effect(
         yield* createRun(limitEndedLast, "failed", 2),
         "provider_error",
       );
-      // A newer, different session error replaces the limit, as in threadErrorSummary.
+      // threadErrorSummary: a matching session error keeps the limit, a differing one replaces it.
+      const sessionErrorMatchingLimit = yield* createThread("session-error-matching-limit");
+      yield* createFailure(
+        sessionErrorMatchingLimit,
+        yield* createRun(sessionErrorMatchingLimit, "failed"),
+        "usage_limit",
+      );
+      yield* attachSessionError(sessionErrorMatchingLimit, "usage_limit");
       const sessionErrorAfterLimit = yield* createThread("session-error-after-limit");
       yield* createFailure(
         sessionErrorAfterLimit,
         yield* createRun(sessionErrorAfterLimit, "failed"),
         "usage_limit",
       );
-      yield* store.apply({
-        id: EventId.make("event:settlement:session-error"),
-        type: "provider-session.attached",
-        threadId: sessionErrorAfterLimit,
-        driver: ProviderDriverKind.make("codex"),
-        providerInstanceId,
-        occurredAt: old,
-        payload: {
-          id: ProviderSessionId.make("provider-session:settlement:session-error"),
-          driver: ProviderDriverKind.make("codex"),
-          providerInstanceId,
-          status: "error",
-          cwd: "/workspace",
-          model: modelSelection.model,
-          capabilities: CodexProviderCapabilitiesV2,
-          createdAt: old,
-          updatedAt: old,
-          lastError: "Session crashed.",
-        },
-      });
+      yield* attachSessionError(sessionErrorAfterLimit, "Session crashed.");
       const providerFailed = yield* createThread("provider-failed");
       yield* createFailure(
         providerFailed,
