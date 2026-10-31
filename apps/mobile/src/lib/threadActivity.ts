@@ -1653,7 +1653,7 @@ function notificationGroupSummary(notifications: ReadonlyArray<OrchestrationV2No
   const noun =
     kinds.size === 1
       ? NOTIFICATION_SOURCE_NOUNS[notifications[0]!.source.kind]
-      : NOTIFICATION_SOURCE_NOUNS.background_task;
+      : NOTIFICATION_SOURCE_NOUNS.system;
   // One delegated-task wake can report a batch of tasks.
   const counts = new Map<OrchestrationV2Notification["outcome"], number>();
   let total = 0;
