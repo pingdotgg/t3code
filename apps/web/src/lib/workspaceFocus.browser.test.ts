@@ -300,5 +300,12 @@ describe("workspace area focus", () => {
 
     await userEvent.click(home);
     expect(outline(), "clicking the ringed area removes its ring").toBe("none");
+
+    // With no other area visible, F6 lands on the area that already has focus.
+    sidebar.element.hidden = true;
+    await userEvent.keyboard("{F6}");
+    fixture.controller.move(1);
+    expect(document.activeElement).toBe(home);
+    expect(outline(), "F6 onto the only, already focused area shows no ring").toBe("solid");
   });
 });
