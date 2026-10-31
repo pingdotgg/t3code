@@ -41,6 +41,7 @@ import { startHostEnvironmentLookup } from "./state/primaryEnvironment";
 import {
   getClientSettings,
   getClientSettingsHydratedSnapshot,
+  startLegacyLayoutSettingsMigration,
   startModelPreferencesMigration,
   subscribeClientSettings,
   subscribeClientSettingsHydration,
@@ -266,6 +267,7 @@ export function startAppServices(): AppRouter {
   startBrowserChromeThemeSync(router);
   startDefaultThemeAdoption();
   startModelPreferencesMigration();
+  startLegacyLayoutSettingsMigration();
   startAgentOpenedPreviews();
   if (isElectron) startElectronBrowserHost();
   startPreviewTitleRecording();
