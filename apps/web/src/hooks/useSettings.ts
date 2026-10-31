@@ -117,10 +117,6 @@ export function getClientSettingsHydratedSnapshot(): boolean {
   return clientSettingsHydrationStatus === "ready";
 }
 
-function getClientSettingsHydrationStatusSnapshot(): ClientSettingsHydrationStatus {
-  return clientSettingsHydrationStatus;
-}
-
 export function subscribeClientSettingsHydration(listener: () => void): () => void {
   clientSettingsHydrationListeners.add(listener);
   void hydrateClientSettings().catch(() => undefined);
@@ -279,14 +275,6 @@ export function useClientSettingsHydrated(): boolean {
     subscribeClientSettingsHydration,
     getClientSettingsHydratedSnapshot,
     () => false,
-  );
-}
-
-export function useClientSettingsHydrationStatus(): ClientSettingsHydrationStatus {
-  return useSyncExternalStore(
-    subscribeClientSettingsHydration,
-    getClientSettingsHydrationStatusSnapshot,
-    () => "pending",
   );
 }
 

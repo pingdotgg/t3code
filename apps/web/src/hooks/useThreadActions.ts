@@ -528,7 +528,7 @@ export function useThreadActions() {
             "",
             "Delete the worktree too?",
           ].join("\n"),
-          { variant: "destructive" },
+          { variant: "destructive", confirmLabel: "Delete worktree" },
         ),
       );
       if (confirmationResult._tag === "Failure") {
@@ -927,15 +927,13 @@ export function useThreadActions() {
     const resolved = resolveThreadTarget(target);
 
     if (confirmThreadDelete && localApi) {
-      const title = resolved?.thread.title ?? "this thread";
+      const title = resolved ? `"${resolved.thread.title}"` : "this thread";
       const confirmationResult = await settlePromise(() =>
-        localApi.dialogs.confirm(
-          [
-            `Delete thread "${title}"?`,
-            "This permanently clears conversation history for this thread.",
-          ].join("\n"),
-          { variant: "destructive" },
-        ),
+        localApi.dialogs.confirm(`This deletes ${title} and its chat history.`, {
+          variant: "destructive",
+          title: "Delete thread?",
+          confirmLabel: "Delete thread",
+        }),
       );
       if (confirmationResult._tag === "Failure") {
         return confirmationResult;
