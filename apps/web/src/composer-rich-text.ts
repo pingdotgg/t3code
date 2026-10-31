@@ -26,7 +26,26 @@ function pushSpan(spans: RichTextSpan[], text: string, marks: RichTextMark[]): v
   }
 }
 
+/** Words containing a slash or ending in a file extension are URLs, paths, or filenames. */
+const LITERAL_UNDERSCORE_WORD = /[\\/]|\.[a-z][a-z0-9]*\W*$/i;
+
+/** Both Markdown readers visit source offsets in document order. */
+export function composerUnderscoreWordReader(text: string) {
+  let word = { end: 0, literal: false };
+  return (index: number) => {
+    if (index >= word.end) {
+      let start = index;
+      while (start > 0 && !/\s/.test(text[start - 1]!)) start -= 1;
+      let end = index + 1;
+      while (end < text.length && !/\s/.test(text[end]!)) end += 1;
+      word = { end, literal: LITERAL_UNDERSCORE_WORD.test(text.slice(start, end)) };
+    }
+    return word;
+  };
+}
+
 export function parseInlineMarkdown(text: string): RichTextSpan[] {
+  const underscoreWordAt = composerUnderscoreWordReader(text);
   const root: RichTextSpan[] = [];
   const stack: { delimiter: string; mark: RichTextMark; spans: RichTextSpan[] }[] = [];
   const current = () => stack.at(-1)?.spans ?? root;
@@ -62,6 +81,11 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
     }
     let end = index;
     while (text[end] === char) end += 1;
+    if (char === "_" && underscoreWordAt(index).literal) {
+      pushSpan(current(), text.slice(index, end), []);
+      index = end;
+      continue;
+    }
     const before = text[index - 1] ?? "";
     const after = text[end] ?? "";
     const canClose = before !== "" && !/\s/.test(before) && (char !== "_" || !/\w/.test(after));

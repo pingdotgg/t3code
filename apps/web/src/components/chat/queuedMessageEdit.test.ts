@@ -1,4 +1,5 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 import {
@@ -74,17 +75,28 @@ describe("queued message file edits", () => {
     ).rejects.toThrow("Retry or remove");
   });
 
-  it("keeps file-only edits when another client starts the queued run", () => {
-    const store = useComposerDraftStore.getState();
-    store.setPrompt(editTarget, "Original message");
-    store.addFiles(editTarget, [file]);
-    expect(
-      recoverQueuedMessageEdit({ editTarget, threadTarget, originalText: "Original message" }),
-    ).toBe("kept");
-    expect(store.getComposerDraft(threadTarget)?.prompt).toBe("Original message");
-    expect(store.getComposerDraft(threadTarget)?.files).toEqual([file]);
-    expect(store.getComposerDraft(editTarget)).toBeNull();
-  });
+  it.each([false, true])(
+    "recovers a file edit when its queued run starts (inline context: %s)",
+    (inline) => {
+      const store = useComposerDraftStore.getState();
+      const thread = threadContextRecord(threadTarget, "Review this thread");
+      store.setRuntimeMode(threadTarget, "approval-required");
+      store.setPrompt(editTarget, "Original message");
+      store.addFiles(editTarget, [file], { appendReference: inline });
+      if (inline) store.addThreadContexts(editTarget, [thread]);
+      const prompt = store.getComposerDraft(editTarget)?.prompt;
+      expect(
+        recoverQueuedMessageEdit({ editTarget, threadTarget, originalText: "Original message" }),
+      ).toBe("kept");
+      expect(store.getComposerDraft(threadTarget)).toMatchObject({
+        prompt,
+        files: [file],
+        threadContexts: inline ? [thread] : [],
+        runtimeMode: "approval-required",
+      });
+      expect(store.getComposerDraft(editTarget)).toBeNull();
+    },
+  );
 
   it("does not overwrite a separate draft when the queued run leaves", () => {
     const store = useComposerDraftStore.getState();

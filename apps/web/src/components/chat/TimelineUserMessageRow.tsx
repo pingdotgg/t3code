@@ -1122,7 +1122,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       threadRef={ctx.threadRef ?? undefined}
       skills={props.skills}
       className="text-foreground"
-      lineBreaks
+      composerMessage
       parseRawHtml={false}
       renderContextReference={props.renderContextReference}
       headingLevelOffset={MESSAGE_HEADING_LEVEL}

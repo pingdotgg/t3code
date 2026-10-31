@@ -34,10 +34,6 @@ import { resolveComposerControlsOwnership } from "./composerControlsOwnership";
  * The composer footer controls: model picker, traits, mode controls and the overflow menu for
  * blocks that do not fit. Rendered in the expanded footer or the resting controls host.
  */
-// Model and effort sit a word space apart, so hover and open states brighten text, not a box.
-const TEXT_CONTROL_STATES =
-  "hover:bg-transparent data-pressed:bg-transparent data-popup-open:bg-transparent data-pressed:text-foreground data-popup-open:text-foreground";
-
 export function ComposerControlsBar(props: {
   environmentId: EnvironmentId;
   routeKind: ChatComposerProps["routeKind"];
@@ -166,7 +162,7 @@ export function ComposerControlsBar(props: {
     planModeEnabled,
     isComposerOwned: true,
     effortDisplay: props.effortDisplay,
-    triggerClassName: cn("ps-1.5 pe-1", TEXT_CONTROL_STATES),
+    triggerClassName: "border-s-border rounded-s-none data-popup-open:bg-accent",
     // Permissions always live in the effort menu, so the section never unmounts while open.
     extraMenuContent: (
       <ComposerPermissionsSection
@@ -271,8 +267,8 @@ export function ComposerControlsBar(props: {
       modelOptionsByInstance={modelOptionsByInstance}
       size={composerControlsCollapsed ? "xs" : "sm"}
       triggerClassName={cn(
-        "pe-1",
-        TEXT_CONTROL_STATES,
+        "data-popup-open:bg-accent",
+        providerTraitsPicker !== null && !traitsBlockHidden && "rounded-e-none",
         composerControlsCollapsed ? "min-w-13 shrink text-xs!" : "min-w-13",
       )}
       terminalOpen={terminalOpen}
@@ -323,6 +319,7 @@ export function ComposerControlsBar(props: {
               inert={hidden || undefined}
               className={cn(
                 "flex w-max min-w-max shrink-0 items-center gap-1",
+                def.id === "traits" && (composerControlsCollapsed ? "-ms-1" : "-ms-0.5"),
                 hidden && "pointer-events-none invisible absolute",
                 index >= restingBlockDefs.length - iconOnlyBlockCount &&
                   "[&_[data-composer-control-label]]:pointer-events-none [&_[data-composer-control-label]]:invisible [&_[data-composer-control-label]]:absolute [&_[data-composer-control-label]]:w-max [&_[data-composer-control-label]]:max-w-none [&_[data-composer-control-compact-icon]]:[visibility:inherit] [&_[data-composer-control-compact-icon]]:relative",
