@@ -222,7 +222,7 @@ export const layer: Layer.Layer<
 
     const supersedableThreadEventTypes = new Set(SUPERSEDABLE_THREAD_EVENT_TYPES);
     const readStateThreadEventTypes = new Set(READ_STATE_THREAD_EVENT_TYPES);
-    // Subagent snapshots stay intact because later rows can reference an earlier prompt.
+    // Subagent snapshots that set completionDelivery or anchor a later row's promptSequence stay.
     // Commanded turn items stay for command-result replay.
     // Small pages bound work on the reader worker and synchronous fallback.
     const COMPACTION_PAGE_SIZE = 50;
@@ -245,6 +245,7 @@ export const layer: Layer.Layer<
       const retainedReadStateThreadIds = new Set<string>();
       // Retain each key's oldest candidate, deleting it only when an older event appears.
       const oldestCandidateByEntityKey = new Map<string, number | null>();
+      const promptAnchorSequences = new Set<number>();
       let deletedEventCount = 0;
       let deletedReceiptCount = 0;
 
@@ -256,6 +257,7 @@ export const layer: Layer.Layer<
           readonly stream_id: string;
           readonly event_type: string;
           readonly entity_id: string | null;
+          readonly prompt_sequence: number | null;
           readonly imported_legacy_thread: number;
         }>`
           SELECT
@@ -269,6 +271,10 @@ export const layer: Layer.Layer<
                 AND event.event_type IN ('message.updated', 'node.updated')
               THEN json_extract(event.payload_json, '$.id')
               WHEN event.application_event_version = 2
+                AND event.event_type = 'subagent.updated'
+                AND json_type(event.payload_json, '$.completionDelivery') IS NULL
+              THEN json_extract(event.payload_json, '$.id')
+              WHEN event.application_event_version = 2
                 AND event.event_type = 'turn-item.updated'
                 AND event.command_id IS NULL
                 AND json_extract(event.payload_json, '$.type') <> 'subagent'
@@ -280,6 +286,10 @@ export const layer: Layer.Layer<
                 json_extract(event.payload_json, '$.number'))
               ELSE NULL
             END AS entity_id,
+            CASE
+              WHEN event.event_type = 'subagent.updated'
+              THEN json_extract(event.payload_json, '$.promptSequence')
+            END AS prompt_sequence,
             CASE
               WHEN event.application_event_version = 1 AND event.aggregate_kind = 'thread'
               THEN EXISTS (
@@ -300,6 +310,7 @@ export const layer: Layer.Layer<
           if (row.imported_legacy_thread === 1) {
             obsolete.push(row.sequence);
           } else if (row.application_event_version === 2) {
+            if (row.prompt_sequence !== null) promptAnchorSequences.add(row.prompt_sequence);
             if (
               row.aggregate_kind === "thread" &&
               supersedableThreadEventTypes.has(row.event_type)
@@ -326,13 +337,16 @@ export const layer: Layer.Layer<
               row.event_type === "thread.pull-request-link-updated" ||
               row.event_type === "message.updated" ||
               row.event_type === "node.updated" ||
-              (row.event_type === "turn-item.updated" && row.entity_id !== null)
+              ((row.event_type === "turn-item.updated" || row.event_type === "subagent.updated") &&
+                row.entity_id !== null)
             ) {
               const key = encodeEntityKey([row.event_type, row.stream_id, row.entity_id]);
               const candidate = oldestCandidateByEntityKey.get(key);
               if (candidate === undefined) oldestCandidateByEntityKey.set(key, null);
               else {
-                if (candidate !== null) obsolete.push(candidate);
+                if (candidate !== null && !promptAnchorSequences.has(candidate)) {
+                  obsolete.push(candidate);
+                }
                 oldestCandidateByEntityKey.set(key, row.sequence);
               }
             }

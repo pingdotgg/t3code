@@ -379,6 +379,111 @@ it.effect(
     }).pipe(Effect.provide(layerTest)),
 );
 
+function workflowSubagentEvent(
+  threadId: ThreadId,
+  now: DateTime.Utc,
+  tick: number,
+  options: { readonly prompt: string; readonly delivered: boolean },
+): OrchestrationV2DomainEvent {
+  return {
+    id: EventId.make(`event:workflow-compaction:${tick}`),
+    type: "subagent.updated",
+    threadId,
+    occurredAt: now,
+    payload: {
+      id: NodeId.make("subagent:workflow-compaction"),
+      threadId,
+      runId: null,
+      parentNodeId: NodeId.make("node:workflow-compaction-parent"),
+      origin: "provider_native",
+      createdBy: "agent",
+      driver: providerDriver,
+      providerInstanceId,
+      providerThreadId: null,
+      childThreadId: null,
+      nativeTaskRef: { driver: providerDriver, nativeId: "workflow", strength: "strong" },
+      prompt: options.prompt,
+      progress: `Workflow tick ${tick}`,
+      title: "Workflow",
+      model: null,
+      ...(options.delivered
+        ? { completionDelivery: { state: "delivered" as const, observedByRunId: null } }
+        : {}),
+      status: "running",
+      workflow: {
+        phases: [{ index: 0, title: "Review" }],
+        agents: Array.from({ length: tick + 1 }, (_, index) => ({
+          index,
+          label: `Member ${index}`,
+          state: index < tick ? ("completed" as const) : ("running" as const),
+          phaseIndex: 0,
+          prompt: `Member ${index} prompt. `.repeat(20),
+          ...(index < tick ? { result: `Member ${index} result. `.repeat(20) } : {}),
+        })),
+      },
+      result: null,
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+    },
+  };
+}
+
+it.effect("compacts superseded workflow subagent snapshots", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const eventStore = yield* EventStore.EventStoreV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:workflow-compaction");
+    yield* sink.write({ events: [threadCreated(makeThread(threadId, now), now)] });
+    const ticks = 12;
+    const deliveredTick = 5;
+    const writes = [];
+    for (let tick = 0; tick < ticks; tick += 1) {
+      const prompt = tick === 0 ? "Run workflow A. ".repeat(40) : "Run workflow B. ".repeat(40);
+      const event = workflowSubagentEvent(threadId, now, tick, {
+        prompt,
+        delivered: tick === deliveredTick,
+      });
+      writes.push(...(yield* sink.write({ events: [event] })));
+    }
+    const beforeProjection = yield* projections.getThreadProjection(threadId);
+    assert.deepEqual(beforeProjection.subagents[0]?.completionDelivery, {
+      state: "delivered",
+      observedByRunId: null,
+    });
+
+    yield* maintenance.compactEventStore();
+
+    const stored = yield* sql<{
+      readonly event_id: string;
+      readonly sequence: number;
+      readonly prompt_sequence: number | null;
+    }>`
+      SELECT event_id, sequence, json_extract(payload_json, '$.promptSequence') AS prompt_sequence
+      FROM orchestration_events
+      WHERE stream_id = ${threadId} AND event_type = 'subagent.updated'
+      ORDER BY sequence ASC
+    `;
+    // Oldest, the tick-1 prompt anchor, the completionDelivery row, and the newest.
+    assert.deepEqual(
+      stored.map((row) => row.event_id),
+      [0, 1, deliveredTick, ticks - 1].map((tick) => `event:workflow-compaction:${tick}`),
+    );
+    assert.equal(stored.at(-1)!.prompt_sequence, stored[1]!.sequence);
+    const replay = yield* eventStore
+      .read({ threadId, eventType: "subagent.updated" })
+      .pipe(Stream.runCollect);
+    assert.deepEqual(replay.at(-1), writes.at(-1));
+    assert.isTrue((yield* maintenance.verify).valid);
+    assert.isTrue((yield* maintenance.rebuild).valid);
+    assert.deepEqual(yield* projections.getThreadProjection(threadId), beforeProjection);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("keeps post-bound appends visible during compaction", () =>
   Effect.scoped(
     Effect.gen(function* () {
