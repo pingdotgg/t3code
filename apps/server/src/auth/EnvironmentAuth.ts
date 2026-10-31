@@ -639,8 +639,7 @@ export function selectRequestCredential(
   legacyCookieName: string | undefined,
 ) {
   const cookieToken = request.cookies[cookieName];
-  // An empty Set-Cookie value is present but not a session; fall through to bearer.
-  if (typeof cookieToken === "string" && cookieToken.length > 0) {
+  if (cookieToken) {
     return { token: cookieToken, source: "cookie" } as const;
   }
 
@@ -655,7 +654,7 @@ export function selectRequestCredential(
   }
 
   const legacyToken = legacyCookieName ? request.cookies[legacyCookieName] : undefined;
-  if (typeof legacyToken === "string" && legacyToken.length > 0) {
+  if (legacyToken !== undefined) {
     return { token: legacyToken, source: "legacy-cookie" } as const;
   }
 
