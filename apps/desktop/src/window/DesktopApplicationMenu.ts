@@ -178,7 +178,8 @@ export const make = Effect.gen(function* () {
           { role: "services" },
           { type: "separator" },
           { role: "hide", label: `Hide ${environment.displayName}` },
-          { role: "hideOthers" },
+          // alt+cmd+H focuses the pane on the left; Hide Others keeps its item.
+          { role: "hideOthers", accelerator: "" },
           { role: "unhide" },
           { type: "separator" },
           { role: "quit", label: `Quit ${environment.displayName}` },
@@ -244,9 +245,10 @@ export const make = Effect.gen(function* () {
             accelerator: "Shift+CmdOrCtrl+R",
             click: mainContentsClick("forceReload"),
           },
+          // alt+cmd+I and J belong to the layout keys on macOS.
           {
             label: "Toggle Developer Tools",
-            accelerator: environment.platform === "darwin" ? "Alt+Command+I" : "Ctrl+Shift+I",
+            accelerator: environment.platform === "darwin" ? "Alt+Shift+Command+I" : "Ctrl+Shift+I",
             click: mainContentsClick("toggleDevTools"),
           },
           { type: "separator" },

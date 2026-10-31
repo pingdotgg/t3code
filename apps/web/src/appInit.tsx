@@ -35,6 +35,7 @@ import { readLocalStorageValue, subscribeLocalStorageKey } from "./hooks/useLoca
 import {
   getClientSettings,
   getClientSettingsHydratedSnapshot,
+  startLegacyLayoutSettingsMigration,
   startModelPreferencesMigration,
   subscribeClientSettings,
   subscribeClientSettingsHydration,
@@ -195,6 +196,7 @@ export function startAppServices(): AppRouter {
   startBrowserChromeThemeSync(router);
   startDefaultThemeAdoption();
   startModelPreferencesMigration();
+  startLegacyLayoutSettingsMigration();
   startAgentOpenedPreviews();
   if (isElectron) startElectronBrowserHost();
   startPreviewTitleRecording();

@@ -172,10 +172,11 @@ they never leave the app; the browser's own buttons still can.
 
 ## Reserved shortcuts
 
-In the desktop app, `mod+w` closes the focused terminal or the active right-panel
-tab. When nothing remains to close, it does nothing; it never closes the window. In a browser, `mod+w`
-closes the browser tab; rebind `rightPanel.close` and `terminal.close` to an available
-shortcut such as `alt+w`.
+In the desktop app, `mod+w` closes the focused terminal, the active side-pane tab,
+or the focused tab. It never closes the window. In a browser,
+`mod+t`, `mod+n` and `mod+w` belong to the browser; use `+`, the tab menu, or rebind
+`tab.new` and `tab.close` (`mod+alt+w` also closes a tab). The layout keys are in
+[Tabs, panes and workspaces](./layout.md).
 
 `mod+shift+t` reopens the last closed tab across the app, including files,
 diffs, pull requests, browsers, and devices, in the order you closed them.

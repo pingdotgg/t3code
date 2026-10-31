@@ -64,6 +64,7 @@ export function RightPanelSurfaceContent(props: {
   readonly surface: RightPanelSurface | null;
   readonly activeSurfaceId: string | null;
   readonly threadRef: ScopedThreadRef;
+  readonly diffThreadRef: ScopedThreadRef | null;
   readonly environmentId: EnvironmentId;
   readonly visible: boolean;
   readonly composerDraftTarget: ScopedThreadRef | DraftId;
@@ -113,6 +114,7 @@ export function RightPanelSurfaceContent(props: {
             key={scopedThreadKey(threadRef)}
             mode="embedded"
             composerDraftTarget={props.composerDraftTarget}
+            threadRef={props.diffThreadRef}
             workspaceMutationId={props.workspaceMutationId}
             visible={visible}
           />

@@ -18,9 +18,16 @@ import type {
   PullRequestListState,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { useNavigate, useSearch } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { ArrowDownUpIcon, CircleAlertIcon, LayersIcon, Plug2Icon } from "lucide-react";
-import { useEffect, useEffectEvent, useRef, useState, type ComponentProps } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 
 import {
   collectPullRequestListFacets,
@@ -54,6 +61,7 @@ import {
 import { environmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 import {
+  PullRequestFilterRadioSubmenu,
   PullRequestFiltersMenu,
   describePullRequestListFilters,
   PullRequestSearchInput,
@@ -62,13 +70,14 @@ import {
   type PullRequestFilterOption,
 } from "./PullRequestListFilters";
 import { PullRequestCompactFilterMenu } from "./PullRequestCompactFilterMenu";
-import { INVOLVEMENT_TABS, SORT_OPTIONS } from "./pullRequestListOptions";
+import { INVOLVEMENT_TABS, SORT_OPTIONS, STATE_TABS } from "./pullRequestListOptions";
 import { PullRequestsColumn } from "./PullRequestsColumn";
 import { PullRequestListGroups } from "./PullRequestListGroups";
 import {
   usePullRequestDisplayGroups,
   usePullRequestQueryFilters,
   usePullRequestScope,
+  validatePullRequestsSearch,
   type PullRequestsSearch,
 } from "./usePullRequestListView";
 import { pullRequestGroups, pullRequestListEntryId } from "./pullRequestListGroups.logic";
@@ -78,12 +87,14 @@ import { PullRequestListGhost } from "./PullRequestGhosts";
 import { type PullRequestRowTarget } from "./PullRequestRow";
 import { RightPanelTabs } from "../RightPanelTabs";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
+import { isModalDialogOpen } from "~/lib/modalDialog";
 import { isElectron } from "~/env";
-import { resolveShortcutCommand, shortcutLabelForCommand } from "~/keybindings";
+import { resolveShortcutCommand } from "~/keybindings";
 import { registerCommands } from "~/shortcuts/dispatcher";
 import { isTerminalFocused } from "~/lib/terminalFocus";
-import { PanelLayoutControls, RightPanelMaximizeControl } from "../chat/PanelLayoutControls";
+import { RightPanelMaximizeControl } from "../chat/PanelLayoutControls";
 import { Button } from "../ui/button";
+import { MenuItem } from "../ui/menu";
 import { RefreshIcon } from "../ui/refresh-icon";
 import { SidebarInset } from "../ui/sidebar";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
@@ -91,6 +102,8 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { useOpenPanelPullRequestUrl } from "~/hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { toastManager } from "../ui/toast";
+import { useLayoutPageLocation } from "~/layout/pageNavigation";
+import { useLayoutPane, useLayoutPaneFocusedRef } from "~/layout/layoutPaneContext";
 import { usePanelAnimationSettings, usePanelPresence } from "~/panelAnimations";
 import {
   PULL_REQUESTS_PANEL_REF,
@@ -142,7 +155,10 @@ const EMPTY_PREVIEW_DESKTOP_STATE = {};
 const EMPTY_TERMINAL_LABELS = new Map<string, string>();
 const EMPTY_PENDING_SURFACES = new Set<string>();
 export function PullRequestsPage() {
-  const search = useSearch({ from: "/_chat/pull-requests" });
+  const { tabId, visible } = useLayoutPane();
+  const location = useLayoutPageLocation();
+  const search = validatePullRequestsSearch(location.search);
+  const focusedRef = useLayoutPaneFocusedRef();
   const sort = search.sort ?? "ready";
   const statsPolicy: PullRequestStatsPolicy =
     sort === "ready" || sort === "largest" || sort === "smallest" ? "eager" : "visible";
@@ -211,9 +227,12 @@ export function PullRequestsPage() {
     [Key in keyof PullRequestsSearch]?: PullRequestsSearch[Key] | undefined;
   }) =>
     void navigate({
-      search: (previous: PullRequestsSearch): PullRequestsSearch => {
+      to: "/pull-requests",
+      search: (): PullRequestsSearch => {
+        const previous = search;
         const next = { ...previous, ...patch };
         return {
+          ...(previous.pane === 1 ? { pane: 1 as const } : {}),
           involvement: next.involvement ?? previous.involvement,
           state: next.state ?? previous.state,
           ...(next.sort && next.sort !== "ready" ? { sort: next.sort } : {}),
@@ -1026,9 +1045,10 @@ export function PullRequestsPage() {
   const onGuideShown = () => setMaximized(true);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the URL-linked pull request in the right panel store
   useEffect(() => {
-    if (!pullRequestsSupported || rightPanelRef === null || linkedSelection === null) return;
+    if (!visible || !pullRequestsSupported || rightPanelRef === null || linkedSelection === null)
+      return;
     useRightPanelStore.getState().openPullRequest(rightPanelRef, linkedSelection);
-  }, [linkedSelection, pullRequestsSupported, rightPanelRef]);
+  }, [linkedSelection, pullRequestsSupported, rightPanelRef, visible]);
 
   const selected =
     rightPanelState.isOpen && activePullRequestSurface !== null
@@ -1105,39 +1125,17 @@ export function PullRequestsPage() {
       onSubmit={submitQuery}
     />
   );
-  const panelToggleControls = (
-    <PanelLayoutControls
-      showTerminalControl={false}
-      showThreadPanelControl={false}
-      terminalAvailable={false}
-      terminalOpen={false}
-      terminalShortcutLabel={null}
-      threadPanelOpen={false}
-      threadPanelPresentation="inline"
-      threadPanelShortcutLabel={null}
-      onToggleThreadPanel={() => undefined}
-      rightPanelAvailable={rightPanelAvailable}
-      rightPanelOpen={rightPanelState.isOpen}
-      rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
-      rightPanelUnavailableLabel="Select a pull request first"
-      onToggleTerminal={() => undefined}
-      onToggleRightPanel={toggleRightPanel}
-    />
-  );
-  const openPanelControls = (
+  const openPanelControls = rightPanelState.isOpen ? (
     <div
       className="absolute top-[var(--workspace-pane-local-controls-top)] right-[var(--workspace-pane-local-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]"
       data-workspace-titlebar-controls
     >
-      {rightPanelState.isOpen ? (
-        <RightPanelMaximizeControl
-          maximized={rightPanelMaximized}
-          onToggle={toggleRightPanelMaximized}
-        />
-      ) : null}
-      {panelToggleControls}
+      <RightPanelMaximizeControl
+        maximized={rightPanelMaximized}
+        onToggle={toggleRightPanelMaximized}
+      />
     </div>
-  );
+  ) : null;
   // Said in the empty list, so a list narrowed to nothing names what narrowed it.
   const hostFilterEntries = hosts.length > 0 ? hosts : expectedHosts;
   const hostFilterEntry = hostFilterEntries.find((entry) => entry.host === search.host);
@@ -1351,14 +1349,14 @@ export function PullRequestsPage() {
     <PullRequestCompactFilterMenu
       label="Sort pull requests"
       triggerIcon={<ArrowDownUpIcon aria-hidden className="size-3.5 shrink-0" />}
-      labelClassName="hidden @3xl/pr-list:inline"
       value={sort}
       options={SORT_OPTIONS}
       onChange={(next) => updateListScope({ sort: next })}
     />
   );
-  const filtersMenu = (
+  const renderFiltersMenu = (compactItems?: ReactNode) => (
     <PullRequestFiltersMenuInSidebarOrder
+      {...(compactItems ? { compactItems } : {})}
       onOpenChange={setFiltersOpen}
       involvement={search.involvement}
       involvementOptions={INVOLVEMENT_TABS}
@@ -1398,6 +1396,29 @@ export function PullRequestsPage() {
       }
     />
   );
+  const filtersMenu = renderFiltersMenu();
+  const compactMenu = renderFiltersMenu(
+    <>
+      <PullRequestFilterRadioSubmenu
+        label="State"
+        icon={PullRequestGlyph.pullRequest}
+        value={search.state}
+        options={STATE_TABS}
+        onChange={(state) => updateListScope({ state })}
+      />
+      <PullRequestFilterRadioSubmenu
+        label="Sort"
+        icon={ArrowDownUpIcon}
+        value={sort}
+        options={SORT_OPTIONS}
+        onChange={(next) => updateListScope({ sort: next })}
+      />
+      <MenuItem disabled={refreshing} onClick={() => void refreshFromHost()}>
+        <RefreshIcon size="sm" refreshing={refreshing} />
+        Refresh
+      </MenuItem>
+    </>,
+  );
   const columnProps = {
     refreshing,
     onRefresh: () => void refreshFromHost(),
@@ -1410,35 +1431,7 @@ export function PullRequestsPage() {
     searchInput,
     sortMenu,
     filtersMenu,
-    rightPanelControl: !pullRequestsSupported ? null : (
-      <span
-        aria-hidden
-        className={cn(
-          "shrink-0",
-          rightPanelState.isOpen ? "-ml-3 w-0" : "w-7 sm:w-5",
-          panelAnimationsActive && "transition-[width,margin] ease-out",
-        )}
-        style={
-          panelAnimationsActive
-            ? { transitionDuration: `${panelAnimationDurationMs}ms` }
-            : undefined
-        }
-      />
-    ),
-    titlebarControls:
-      // While the panel is closed the strip lives inside the header: a no-drag
-      // descendant beats the header's desktop drag-region, where a floating
-      // sibling loses (app-region hit-testing ignores z-index).
-      pullRequestsSupported ? (
-        rightPanelPresent ? (
-          <span
-            aria-hidden
-            className="pointer-events-none absolute inset-y-0 left-full w-7 [-webkit-app-region:no-drag]"
-          />
-        ) : (
-          openPanelControls
-        )
-      ) : null,
+    compactMenu,
     rightPanelOpen: rightPanelState.isOpen,
     maximizedAway: rightPanelMaximized,
     listBody,
@@ -1527,34 +1520,57 @@ export function PullRequestsPage() {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- document keydown listener for the right panel and copy-reference shortcuts
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || isCommandPaletteOpen()) return;
+      if (
+        !focusedRef.current ||
+        event.defaultPrevented ||
+        isCommandPaletteOpen() ||
+        isModalDialogOpen()
+      )
+        return;
       const command = resolveShortcutCommand(event, keybindings, {
         context: getShortcutContext(),
       });
-      if (command === "rightPanel.close") closeActiveSurfaceFromShortcut(event);
+      if (command === "rightPanel.close" || command === "tab.close")
+        closeActiveSurfaceFromShortcut(event);
       if (command === "rightPanel.toggle") toggleRightPanelFromShortcut(event);
       if (command === "rightPanel.toggleMaximized") toggleRightPanelMaximizedFromShortcut(event);
       if (command === "thread.copyReference") copyPullRequestFromShortcut(event);
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [keybindings]);
+  }, [focusedRef, keybindings]);
 
+  const splitPanes =
+    rightPanelPresent && renderedPullRequestSurface !== null && panelEnvironmentId !== null;
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
+    // An open review is its own pane beside the list's (pen bETcv), so the inset steps back to
+    // the chrome and each pane paints itself.
+    <SidebarInset
+      variant={splitPanes ? "split" : "pane"}
+      embedded={tabId === null}
+      className={cn(
+        "min-h-0 overflow-hidden overscroll-y-none",
+        tabId === null ? "h-dvh" : "h-full",
+      )}
+    >
       <div className="relative flex min-h-0 flex-1">
         {pullRequestsSupported && rightPanelPresent ? openPanelControls : null}
-        <PullRequestsColumn {...columnProps} />
+        <PullRequestsColumn {...columnProps} split={splitPanes} />
 
-        {rightPanelPresent && renderedPullRequestSurface && panelEnvironmentId !== null ? (
+        {splitPanes ? (
           <RightPanelTabs
             mode="inline"
+            pane
             open={rightPanelState.isOpen}
             maximized={rightPanelMaximized}
             keybindings={keybindings}
-            getShortcutContext={getShortcutContext}
             widthStorageKey="t3code:pull-request-panel-width"
-            defaultWidth={typeof window === "undefined" ? 640 : Math.floor(window.innerWidth / 2)}
+            // The pen's split (bETcv) gives the review 549 of 1280px, which
+            // leaves the list room for its whole "Pull requests › All
+            // repositories" tab. SSR has no window, so fall back to that.
+            defaultWidth={
+              typeof window === "undefined" ? 550 : Math.floor(window.innerWidth * 0.43)
+            }
             surfaces={renderedRightPanelSurfaces}
             environmentId={panelEnvironmentId}
             activeSurfaceId={renderedPullRequestSurface.id}

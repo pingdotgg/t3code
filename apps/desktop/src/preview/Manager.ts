@@ -5,6 +5,7 @@ import {
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
 } from "@t3tools/contracts";
 import type {
+  DesktopForwardedShortcut,
   DesktopPreviewAnnotationTheme,
   DesktopPreviewAnnotationVoiceConfig,
   DesktopPreviewAnnotationVoiceState,
@@ -62,6 +63,7 @@ import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts"
 import {
   MENU_ACTION_CHANNEL,
   PREVIEW_ANNOTATION_VOICE_EVENT_CHANNEL,
+  PREVIEW_FORWARDED_KEY_CHORD_CHANNEL,
   PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL,
 } from "../ipc/channels.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
@@ -476,6 +478,49 @@ export const previewWindowOpenAction = (details: {
     : "navigate";
 };
 
+const FORWARDED_SHORTCUT_CODE_KEYS: Readonly<Record<string, string>> = {
+  BracketLeft: "[",
+  BracketRight: "]",
+  Backslash: "\\",
+  Comma: ",",
+  Period: ".",
+  Slash: "/",
+  Semicolon: ";",
+  Quote: "'",
+  Backquote: "`",
+  Minus: "-",
+  Equal: "=",
+};
+
+/**
+ * The keybinding key token for a key press: letters and digits by physical
+ * position (Option on macOS changes the typed character, e.g. to "®"),
+ * named keys lowercased ("arrowleft", "home").
+ */
+const forwardedShortcutKey = (input: Electron.Input): string => {
+  const letter = input.code.match(/^Key([A-Z])$/)?.[1];
+  if (letter) return letter.toLowerCase();
+  const digit = input.code.match(/^Digit([0-9])$/)?.[1];
+  if (digit) return digit;
+  return FORWARDED_SHORTCUT_CODE_KEYS[input.code] ?? input.key.toLowerCase();
+};
+
+const isForwardedShortcut = (
+  input: Electron.Input,
+  shortcuts: ReadonlyArray<DesktopForwardedShortcut>,
+): boolean => {
+  if (input.type !== "keyDown" || shortcuts.length === 0) return false;
+  const key = forwardedShortcutKey(input);
+  return shortcuts.some(
+    (shortcut) =>
+      shortcut.key === key &&
+      shortcut.metaKey === input.meta &&
+      shortcut.ctrlKey === input.control &&
+      shortcut.altKey === input.alt &&
+      shortcut.shiftKey === input.shift,
+  );
+};
+
 const isPreviewRefreshShortcut = (input: Electron.Input): boolean =>
   input.type === "keyDown" &&
   input.key.toLowerCase() === "r" &&
@@ -556,6 +601,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     new Set(),
   );
   const pickSessionsRef = yield* Ref.make<ReadonlyMap<string, PickSession>>(new Map());
+  // Read synchronously in before-input-event, which must decide on the spot
+  // whether the page sees a key, so a plain variable rather than a Ref.
+  let forwardedKeyChords: ReadonlyArray<DesktopForwardedShortcut> = [];
   const controlSessionsRef = yield* SynchronizedRef.make<
     ReadonlyMap<number, BrowserControlSession>
   >(new Map());
@@ -1498,6 +1546,27 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           }
           host.send(MENU_ACTION_CHANNEL, forwarded.command);
         }
+        return;
+      }
+      // App chords (the layout map) go to the app window, not the page.
+      if (isForwardedShortcut(input, forwardedKeyChords)) {
+        event.preventDefault();
+        const forwardedKey = {
+          key: input.key,
+          code: input.code,
+          metaKey: input.meta,
+          ctrlKey: input.control,
+          altKey: input.alt,
+          shiftKey: input.shift,
+        };
+        runFork(
+          Ref.get(mainWindowRef).pipe(
+            Effect.map((window) => {
+              if (Option.isNone(window) || window.value.isDestroyed()) return;
+              window.value.webContents.send(PREVIEW_FORWARDED_KEY_CHORD_CHANNEL, forwardedKey);
+            }),
+          ),
+        );
         return;
       }
       if (isPreviewRefreshShortcut(input)) {
@@ -3369,6 +3438,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     setAnnotationSendEnabled,
     setAudioMuted,
     setColorScheme,
+    setForwardedKeyChords: (shortcuts: ReadonlyArray<DesktopForwardedShortcut>) =>
+      Effect.sync(() => {
+        forwardedKeyChords = shortcuts;
+      }),
     setMainWindow,
     setForwardedShortcuts: (shortcuts: ReadonlyArray<PreviewForwardedShortcut>) =>
       Effect.sync(() => {
@@ -3592,6 +3665,10 @@ export class PreviewManager extends Context.Service<
       tabId: string,
       enabled: boolean,
     ) => Effect.Effect<void, PreviewManagerError>;
+    /** Chords a focused preview webview hands back to the app window. */
+    readonly setForwardedKeyChords: (
+      shortcuts: ReadonlyArray<DesktopForwardedShortcut>,
+    ) => Effect.Effect<void>;
     readonly pickElement: (
       tabId: string,
       voice?: DesktopPreviewAnnotationVoiceConfig,
@@ -3746,6 +3823,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
       },
     ),
     setAnnotationTheme: operations.setAnnotationTheme,
+    setForwardedKeyChords: operations.setForwardedKeyChords,
     setAnnotationSendEnabled: operations.setAnnotationSendEnabled,
     pickElement: operations.pickElement,
     updateAnnotationVoice: operations.updateAnnotationVoice,

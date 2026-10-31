@@ -123,6 +123,9 @@ vi.mock("../composerDraftStore", () => ({
       clearProjectDraftThreadById: () => state.localEffects.push("clear-project-draft"),
     }),
 }));
+vi.mock("../components/ThreadSurfaceTab", () => ({
+  discardThreadSurfaces: () => state.localEffects.push("discard-surfaces"),
+}));
 vi.mock("../terminalUiStateStore", () => ({
   useTerminalUiStateStore: (select: (store: unknown) => unknown) =>
     select({
