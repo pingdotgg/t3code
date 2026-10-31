@@ -317,9 +317,12 @@ export function HomeScreen(props: HomeScreenProps) {
   const listRef = useRef<LegendListRef>(null);
   const searchMode = workspace?.state.tabs.threads.searchMode;
   const restoredOffset = workspace?.state.tabs.threads.scrollOffset;
+  const previousSearchMode = useRef(searchMode);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the thread list's saved scroll offset through the list ref when search goes back to resting
   useEffect(() => {
-    if (searchMode !== "resting" || restoredOffset === undefined) return;
+    const previous = previousSearchMode.current;
+    previousSearchMode.current = searchMode;
+    if (previous === "resting" || searchMode !== "resting" || restoredOffset === undefined) return;
     listRef.current?.scrollToOffset({
       offset: restoredOffset - (Platform.OS === "ios" ? insets.top : 0),
       animated: false,
@@ -817,10 +820,8 @@ export function HomeScreen(props: HomeScreenProps) {
               ListEmptyComponent={v2ListEmpty}
               style={{ flex: 1 }}
               automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
-              // UIKit owns the bar's inset, so a minimizing bar and a resized column move
-              // the list in the same frame as the bar.
-              contentInsetAdjustmentBehavior="automatic"
-              contentInsetStartAdjustment={Platform.OS === "ios" ? insets.top : 0}
+              contentInsetAdjustmentBehavior="never"
+              contentInset={Platform.OS === "ios" ? { top: insets.top } : undefined}
               initialScrollOffset={
                 initialScrollOffset > 0
                   ? initialScrollOffset - (Platform.OS === "ios" ? insets.top : 0)
@@ -838,7 +839,7 @@ export function HomeScreen(props: HomeScreenProps) {
                   (contentSideInsets?.right ?? 0) + (primaryColumn ? 8 : 0) + androidListGutter,
                 paddingBottom:
                   Platform.OS === "ios"
-                    ? iosBottomClearance - (columnMetrics?.safeArea.bottom ?? insets.bottom)
+                    ? iosBottomClearance
                     : (workspace?.bottomClearance ??
                       Math.max(insets.bottom, 16) +
                         (Platform.OS === "android" ? fabClearance : 88)),

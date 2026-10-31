@@ -859,7 +859,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       firstBufferedIndex == null ? undefined : state.elementAtIndex(firstBufferedIndex);
     const firstBufferedTop =
       firstBufferedIndex == null ? undefined : state.positionAtIndex(firstBufferedIndex);
-    const viewport: HTMLElement | undefined = listRef.current?.getScrollableNode();
+    const viewport = listRef.current?.getScrollableNode() ?? undefined;
     // Cached row positions exclude the header and pending scroll adjustments.
     const scroll =
       firstBufferedRow && viewport && firstBufferedTop !== undefined
@@ -1426,11 +1426,14 @@ function keyExtractor(item: MessagesTimelineRow) {
   return item.id;
 }
 
-// LegendList averages by type; length buckets prevent inflated estimates and nested-update loops.
+// LegendList estimates unmeasured rows from their type's average. Long messages of equal length
+// can differ in height by orders of magnitude, so each gets its own type to avoid nested-update loops.
 function getItemType(item: MessagesTimelineRow) {
   if (item.kind !== "message") return item.kind;
   const lengthBucket = Math.max(0, Math.floor(Math.log2(item.message.text.length / 1000)));
-  return `message:${item.message.role}:${lengthBucket}`;
+  return lengthBucket < 2
+    ? `message:${item.message.role}:${lengthBucket}`
+    : `message:${item.message.id}`;
 }
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
