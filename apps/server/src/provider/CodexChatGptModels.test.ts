@@ -36,7 +36,13 @@ it.effect(
                           default_reasoning_level: null,
                           supported_reasoning_levels: null,
                         },
-                        { slug: "first", display_name: "First from OpenAI", visibility: "list" },
+                        {
+                          slug: "first",
+                          display_name: "First from OpenAI",
+                          visibility: "list",
+                          default_reasoning_level: "high",
+                          supported_reasoning_levels: [{ effort: "high", description: "Deep" }],
+                        },
                       ]
                     : [{ slug: "account-b-only", display_name: "B", visibility: "list" }],
               }),
