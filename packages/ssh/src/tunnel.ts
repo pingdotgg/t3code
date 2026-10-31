@@ -15,6 +15,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -701,6 +702,12 @@ if [ -z "$REMOTE_PORT" ]; then
     fi
     exit 1
   fi
+  if [ -n "\${SSH_AUTH_SOCK:-}" ]; then
+    # sshd removes this session's forwarded agent socket when the launch exits.
+    # The tunnel session keeps this stable link pointed at a live one.
+    SSH_AUTH_SOCK="$STATE_DIR/agent.sock"
+    export SSH_AUTH_SOCK
+  fi
   nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
@@ -756,6 +763,19 @@ if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMO
 fi
 rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
 printf '{"stopped":true}\\n'
+`;
+
+const TUNNEL_SESSION_READY_LINE = "t3-ssh-tunnel-session-ready";
+
+// sshd only creates a forwarded agent socket for a session, and removes it when
+// the session ends, so the tunnel holds one open for as long as it is connected.
+// Reading stdin until the connection drops keeps the session alive.
+const REMOTE_TUNNEL_SESSION_SCRIPT = `STATE_DIR="$HOME/.t3/ssh-launch/$1"
+if [ -n "\${SSH_AUTH_SOCK:-}" ] && [ -d "$STATE_DIR" ]; then
+  ln -s "$SSH_AUTH_SOCK" "$STATE_DIR/agent.sock.$$" && mv -f "$STATE_DIR/agent.sock.$$" "$STATE_DIR/agent.sock"
+fi
+printf '%s\\n' ${TUNNEL_SESSION_READY_LINE}
+exec cat >/dev/null
 `;
 
 const REMOTE_LOG_TAIL_SCRIPT = `set -eu
@@ -1152,12 +1172,16 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     "ServerAliveInterval=15",
     "-o",
     "ServerAliveCountMax=3",
-    "-n",
-    "-N",
+    "-T",
     "-L",
     `${input.localPort}:127.0.0.1:${input.remotePort}`,
     "--",
     hostSpec,
+    "sh",
+    "-l",
+    "-s",
+    "--",
+    yield* remoteStateKey(input.resolvedTarget),
   ];
   const sshCommand = yield* resolveSshCommand;
   const tunnelCommand = [sshCommand, ...args];
@@ -1177,7 +1201,10 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
         env: childEnvironment,
         extendEnv: true,
         stdin: {
-          stream: Stream.empty,
+          stream: Stream.concat(
+            Stream.make(new TextEncoder().encode(REMOTE_TUNNEL_SESSION_SCRIPT)),
+            Stream.never,
+          ),
           endOnDone: true,
         },
       }),
@@ -1270,11 +1297,38 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
       }).pipe(Effect.andThen(Effect.fail(error)));
     }),
   );
-  yield* Effect.raceFirst(
-    waitForHttpReady({
-      baseUrl: input.httpBaseUrl,
-      timeoutMs: SSH_READY_TIMEOUT_MS,
+  // Until the session script reports in, the managed server may still point at
+  // an agent link from a previous connection.
+  const sessionReady = child.stdout.pipe(
+    Stream.decodeText(),
+    Stream.splitLines,
+    Stream.filter((line) => line.trim() === TUNNEL_SESSION_READY_LINE),
+    Stream.runHead,
+    Effect.mapError(
+      (cause) =>
+        new SshReadinessError({ message: "Failed to read the SSH tunnel session output.", cause }),
+    ),
+    // Output ending without the line means ssh is exiting, which exitFailure reports.
+    Effect.flatMap(Option.match({ onNone: () => Effect.never, onSome: () => Effect.void })),
+    Effect.timeoutOrElse({
+      duration: SSH_READY_TIMEOUT_MS,
+      orElse: () =>
+        Effect.fail(
+          new SshReadinessError({ message: "Timed out waiting for the SSH tunnel session." }),
+        ),
     }),
+  );
+  yield* Effect.raceFirst(
+    Effect.all(
+      [
+        waitForHttpReady({
+          baseUrl: input.httpBaseUrl,
+          timeoutMs: SSH_READY_TIMEOUT_MS,
+        }),
+        sessionReady,
+      ],
+      { concurrency: "unbounded", discard: true },
+    ),
     exitFailure,
   ).pipe(
     Effect.tap(() =>
