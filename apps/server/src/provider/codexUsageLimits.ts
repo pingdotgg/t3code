@@ -60,6 +60,8 @@ export function canAutoRedeemCodexReset(input: {
 }
 
 export function confirmsCodexResetCredit(input: {
+  readonly initialFingerprint: string;
+  readonly freshFingerprint: string | undefined;
   readonly outcome: ProviderConsumeResetCreditOutcome;
   readonly checkedBefore: string | undefined;
   readonly checkedAt: string | undefined;
@@ -67,6 +69,7 @@ export function confirmsCodexResetCredit(input: {
   readonly usageExhausted: boolean;
 }) {
   return (
+    input.freshFingerprint === input.initialFingerprint &&
     (input.outcome === "reset" || input.outcome === "alreadyRedeemed") &&
     input.checkedBefore !== undefined &&
     input.checkedAt !== undefined &&

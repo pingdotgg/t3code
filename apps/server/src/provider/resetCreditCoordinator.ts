@@ -1,6 +1,7 @@
 /** Instances sharing a login directory share credits; serialize redemptions on that directory. */
 import type { ProviderConsumeResetCreditOutcome } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -10,7 +11,7 @@ import * as Semaphore from "effect/Semaphore";
 
 interface AccountRedemptionState {
   readonly lock: Semaphore.Semaphore;
-  readonly pendingKey: Ref.Ref<string | null>;
+  readonly pendingKey: Ref.Ref<{ readonly key: string; readonly expiresAt?: number } | null>;
 }
 
 export class ResetCreditCoordinator extends Context.Service<
@@ -34,6 +35,8 @@ export class ResetCreditCoordinator extends Context.Service<
       shouldRedeem: () => Effect.Effect<boolean, E, R>,
       consume: (idempotencyKey: string) => Effect.Effect<A, E, R>,
       isSettled?: (error: E) => boolean,
+      isOutcomeSettled?: (outcome: A) => boolean,
+      expiresAt?: number,
     ) => Effect.Effect<
       | { readonly _tag: "declined" }
       | { readonly _tag: "conflict"; readonly pendingKey: string }
@@ -59,7 +62,9 @@ export const make = Effect.gen(function* () {
     if (existing) return existing;
     const candidate = {
       lock: yield* Semaphore.make(1),
-      pendingKey: yield* Ref.make<string | null>(null),
+      pendingKey: yield* Ref.make<{ readonly key: string; readonly expiresAt?: number } | null>(
+        null,
+      ),
     };
     return yield* Ref.modify(statesRef, (states) => {
       const current = states.get(accountKey);
@@ -91,14 +96,38 @@ export const make = Effect.gen(function* () {
     const keys = Array.from(
       new Set(typeof requested === "string" ? [requested] : requested),
     ).sort();
-    return Effect.forEach(keys, stateFor);
+    return Effect.gen(function* () {
+      const states = yield* Effect.forEach(keys, stateFor);
+      const now = yield* Clock.currentTimeMillis;
+      yield* Effect.forEach(
+        states,
+        (state) =>
+          Ref.update(state.pendingKey, (pending) =>
+            pending?.expiresAt !== undefined && pending.expiresAt <= now ? null : pending,
+          ),
+        { discard: true },
+      );
+      return states;
+    });
   };
-  const setPendingKey = (states: ReadonlyArray<AccountRedemptionState>, key: string | null) =>
-    Effect.forEach(states, (state) => Ref.set(state.pendingKey, key), { discard: true });
+  const setPendingKey = (
+    states: ReadonlyArray<AccountRedemptionState>,
+    key: string | null,
+    expiresAt?: number,
+  ) =>
+    Effect.forEach(
+      states,
+      (state) =>
+        Ref.set(
+          state.pendingKey,
+          key === null ? null : { key, ...(expiresAt === undefined ? {} : { expiresAt }) },
+        ),
+      { discard: true },
+    );
   const clearPendingKey = (states: ReadonlyArray<AccountRedemptionState>, key: string) =>
     Effect.forEach(
       states,
-      (state) => Ref.update(state.pendingKey, (current) => (current === key ? null : current)),
+      (state) => Ref.update(state.pendingKey, (current) => (current?.key === key ? null : current)),
       { discard: true },
     );
 
@@ -109,9 +138,9 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const states = yield* accountStates(accountKey);
         const pendingKeys = yield* Effect.forEach(states, (state) => Ref.get(state.pendingKey));
-        const existing = pendingKeys.find((key) => key !== null) ?? null;
-        const idempotencyKey = existing ?? requestedKey;
-        yield* setPendingKey(states, idempotencyKey);
+        const existing = pendingKeys.find((pending) => pending !== null) ?? null;
+        const idempotencyKey = existing?.key ?? requestedKey;
+        yield* setPendingKey(states, idempotencyKey, existing?.expiresAt);
         const outcome = yield* consume(idempotencyKey).pipe(
           Effect.tapError((error) =>
             isSettled?.(error) ? setPendingKey(states, null) : Effect.void,
@@ -125,27 +154,40 @@ export const make = Effect.gen(function* () {
 
   const redeemIf: ResetCreditCoordinator["Service"]["redeemIf"] = Effect.fn(
     "resetCreditCoordinator.redeemIf",
-  )(function* (accountKey, requestedKey, shouldRedeem, consume, isSettled) {
-    return yield* withAccountLocks(accountKey, () =>
-      Effect.gen(function* () {
-        const states = yield* accountStates(accountKey);
-        const pendingKeys = yield* Effect.forEach(states, (state) => Ref.get(state.pendingKey));
-        const existingKeys = pendingKeys.filter((key): key is string => key !== null);
-        const conflict = existingKeys.find((key) => key !== requestedKey);
-        if (conflict !== undefined) return { _tag: "conflict" as const, pendingKey: conflict };
-        if (!(yield* shouldRedeem())) return { _tag: "declined" as const };
-        yield* setPendingKey(states, requestedKey);
-        return yield* Effect.gen(function* () {
-          const outcome = yield* consume(requestedKey).pipe(
-            Effect.tapError((error) =>
-              isSettled?.(error) ? clearPendingKey(states, requestedKey) : Effect.void,
-            ),
+  )(
+    function* (
+      accountKey,
+      requestedKey,
+      shouldRedeem,
+      consume,
+      isSettled,
+      isOutcomeSettled,
+      expiresAt,
+    ) {
+      return yield* withAccountLocks(accountKey, () =>
+        Effect.gen(function* () {
+          const states = yield* accountStates(accountKey);
+          const pendingKeys = yield* Effect.forEach(states, (state) => Ref.get(state.pendingKey));
+          const existingKeys = pendingKeys.flatMap((pending) =>
+            pending === null ? [] : [pending.key],
           );
-          return { _tag: "sent" as const, idempotencyKey: requestedKey, outcome };
-        }).pipe(Effect.ensuring(clearPendingKey(states, requestedKey)));
-      }),
-    );
-  });
+          const conflict = existingKeys.find((key) => key !== requestedKey);
+          if (conflict !== undefined) return { _tag: "conflict" as const, pendingKey: conflict };
+          if (!(yield* shouldRedeem())) return { _tag: "declined" as const };
+          yield* setPendingKey(states, requestedKey, expiresAt);
+          return yield* Effect.gen(function* () {
+            const outcome = yield* consume(requestedKey).pipe(
+              Effect.tapError((error) =>
+                isSettled?.(error) ? clearPendingKey(states, requestedKey) : Effect.void,
+              ),
+            );
+            if (isOutcomeSettled?.(outcome) !== false) yield* clearPendingKey(states, requestedKey);
+            return { _tag: "sent" as const, idempotencyKey: requestedKey, outcome };
+          });
+        }),
+      );
+    },
+  );
 
   const redeem: ResetCreditCoordinator["Service"]["redeem"] = Effect.fn(
     "ResetCreditCoordinator.redeem",

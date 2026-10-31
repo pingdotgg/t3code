@@ -58,6 +58,7 @@ rl.on("line", (line) => {
     return;
   }
   if (method === "initialize") {
+    if (script.ignoreInitialize) return;
     write({
       id,
       result: {

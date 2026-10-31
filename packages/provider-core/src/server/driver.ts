@@ -79,6 +79,7 @@ export interface ProviderInstance {
     readonly model: string;
     readonly idempotencyKey: string;
     readonly expectedAccountFingerprint: string;
+    readonly resetAt?: string;
     readonly mode: "first" | "replay";
     readonly stillArmed?: () => Effect.Effect<boolean>;
   }) => Effect.Effect<ProviderAutoResetCreditResult, ProviderDriverError>;

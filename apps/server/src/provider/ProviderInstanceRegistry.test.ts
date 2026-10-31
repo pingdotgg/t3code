@@ -3,7 +3,7 @@ import * as CodexInstallation from "./CodexInstallation.ts";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -541,6 +541,76 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
           .trim()
           .split("\n");
         expect(consumeRowsAfterStop).toHaveLength(2);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live.skipIf(windowsHost)(
+    "releases the account lock when the reset client never initialises",
+    () =>
+      Effect.gen(function* () {
+        const fixtures = yield* makeTildeProviderFixtures();
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const script = {
+          rootThreadId: "probe-thread",
+          notifications: [],
+          account: { type: "chatgpt", email: "fixture@example.test", planType: "pro" },
+          rateLimits: {
+            accountId: "initialise-timeout-account",
+            rateLimits: {
+              primary: { usedPercent: 100, resetsAt: 4_102_444_800, windowDurationMins: 300 },
+            },
+            rateLimitResetCredits: { availableCount: 1 },
+          },
+          resetCreditOutcome: "alreadyRedeemed",
+          recordResetCreditConsumes: true,
+        };
+        yield* fs.writeFileString(fixtures.codexScriptPath, JSON.stringify(script));
+        const instanceId = ProviderInstanceId.make("codex_init_timeout_test");
+        const { registry } = yield* makeProviderInstanceRegistry<CodexDriverEnv>({
+          drivers: [CodexDriver],
+          configMap: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              enabled: true,
+              environment: [
+                {
+                  name: "T3_CODEX_COLLAB_SCRIPT",
+                  value: fixtures.codexScriptPath,
+                  sensitive: false,
+                },
+              ],
+              config: makeCodexConfig({
+                enabled: true,
+                binaryPath: fixtures.codexBinaryPath,
+                homePath: path.join(stateDir, "codex-init-timeout-home"),
+              }),
+            },
+          },
+        });
+        const instance = yield* registry.getInstance(instanceId);
+        assert(instance?.autoRedeemResetCredit && instance.consumeResetCredit);
+        const before = yield* instance.snapshot.refresh;
+        const fingerprint = before.usageLimits?.credentialFingerprint;
+        assert(fingerprint);
+        const result = yield* instance.autoRedeemResetCredit({
+          model: "gpt-5-codex",
+          idempotencyKey: "auto-init-timeout",
+          expectedAccountFingerprint: fingerprint,
+          mode: "first",
+          stillArmed: () =>
+            fs
+              .writeFileString(
+                fixtures.codexScriptPath,
+                JSON.stringify({ ...script, ignoreInitialize: true }),
+              )
+              .pipe(Effect.as(true), Effect.orDie),
+        });
+        expect(result).toMatchObject({ status: "notSent", reason: "probeFailed" });
+        expect(yield* fs.exists(`${fixtures.codexScriptPath}.resetCreditConsumes`)).toBe(false);
+        yield* fs.writeFileString(fixtures.codexScriptPath, JSON.stringify(script));
+        expect(yield* instance.consumeResetCredit()).toBe("alreadyRedeemed");
       }).pipe(Effect.provide(layerTest)),
   );
 

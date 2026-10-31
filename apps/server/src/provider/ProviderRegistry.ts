@@ -71,6 +71,7 @@ export class ProviderRegistry extends Context.Service<
       readonly model: string;
       readonly idempotencyKey: string;
       readonly expectedAccountFingerprint: string;
+      readonly resetAt?: string;
       readonly mode: "first" | "replay";
       readonly stillArmed?: () => Effect.Effect<boolean>;
     }) => Effect.Effect<ProviderAutoResetCreditResult | null, ProviderDriverError>;
@@ -698,6 +699,7 @@ export const layer = Layer.effect(
         model: input.model,
         idempotencyKey: input.idempotencyKey,
         expectedAccountFingerprint: input.expectedAccountFingerprint,
+        ...(input.resetAt === undefined ? {} : { resetAt: input.resetAt }),
         mode: input.mode,
         ...(input.stillArmed === undefined ? {} : { stillArmed: input.stillArmed }),
       });

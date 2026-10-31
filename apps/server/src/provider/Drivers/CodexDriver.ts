@@ -317,20 +317,30 @@ export const CodexDriver: ProviderDriver<
       homeLayout.sharedHomePath,
       ...(fingerprint === undefined ? [] : [`codex-account:${fingerprint}`]),
     ];
-    const consumeWithIdempotencyKey = Effect.fn("CodexDriver.consumeResetCredit")(function* (
-      idempotencyKey: string,
-    ) {
-      const { client } = yield* withCodexAppServerClient({
-        binaryPath: effectiveConfig.binaryPath,
-        homePath: effectiveConfig.homePath,
-        launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
-        cwd: process.cwd(),
-        environment: processEnv,
-      });
-      return (yield* client
-        .request("account/rateLimitResetCredit/consume", { idempotencyKey })
-        .pipe(Effect.timeout("20 seconds"))).outcome;
-    }, Effect.scoped);
+    const consumeWithIdempotencyKey = Effect.fn("CodexDriver.consumeResetCredit")(
+      function* (idempotencyKey: string, onSend?: () => void) {
+        const { client } = yield* withCodexAppServerClient({
+          binaryPath: effectiveConfig.binaryPath,
+          homePath: effectiveConfig.homePath,
+          launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+          cwd: process.cwd(),
+          environment: processEnv,
+        });
+        onSend?.();
+        const response = yield* client.request("account/rateLimitResetCredit/consume", {
+          idempotencyKey,
+        });
+        if (response.outcome === undefined)
+          return yield* new ProviderDriverError({
+            driver: DRIVER_KIND,
+            instanceId,
+            detail: "Codex returned an unrecognised reset outcome.",
+          });
+        return response.outcome;
+      },
+      Effect.scoped,
+      Effect.timeout("20 seconds"),
+    );
     const consumeResetCredit: NonNullable<ProviderInstance["consumeResetCredit"]> = Effect.fn(
       "CodexDriver.consumeResetCredit",
     )(function* () {
@@ -376,23 +386,15 @@ export const CodexDriver: ProviderDriver<
     )(function* (input) {
       const consumeAutoWithIdempotencyKey = Effect.fn("CodexDriver.consumeAutoResetCredit")(
         function* (idempotencyKey: string) {
-          const clientResult = yield* Effect.result(
-            withCodexAppServerClient({
-              binaryPath: effectiveConfig.binaryPath,
-              homePath: effectiveConfig.homePath,
-              launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
-              cwd: process.cwd(),
-              environment: processEnv,
+          let sent = false;
+          const response = yield* Effect.result(
+            consumeWithIdempotencyKey(idempotencyKey, () => {
+              sent = true;
             }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
           );
-          if (Result.isFailure(clientResult)) return { status: "notSent" as const };
-          const response = yield* Effect.result(
-            clientResult.success.client
-              .request("account/rateLimitResetCredit/consume", { idempotencyKey })
-              .pipe(Effect.timeout("20 seconds")),
-          );
-          if (Result.isFailure(response)) return { status: "sentUnknown" as const };
-          return { status: "sent" as const, outcome: response.success.outcome };
+          if (Result.isFailure(response))
+            return sent ? { status: "sentUnknown" as const } : { status: "notSent" as const };
+          return { status: "sent" as const, outcome: response.success };
         },
         Effect.scoped,
       );
@@ -481,6 +483,9 @@ export const CodexDriver: ProviderDriver<
               return true;
             }),
           consumeAutoWithIdempotencyKey,
+          undefined,
+          (outcome) => outcome.status !== "sentUnknown",
+          input.resetAt === undefined ? undefined : Date.parse(input.resetAt),
         )
         .pipe(
           Effect.mapError(
@@ -546,6 +551,8 @@ export const CodexDriver: ProviderDriver<
               const checkedAt = limits?.checkedAt;
               const now = DateTime.toEpochMillis(yield* DateTime.now);
               const allowanceCleared = confirmsCodexResetCredit({
+                initialFingerprint,
+                freshFingerprint: limits?.credentialFingerprint,
                 outcome,
                 checkedBefore: refreshedAt,
                 checkedAt,

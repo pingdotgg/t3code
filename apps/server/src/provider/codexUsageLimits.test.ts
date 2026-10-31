@@ -54,12 +54,18 @@ describe("automatic Codex reset checks", () => {
   it("confirms only a reset outcome with a newer, available probe and cleared limits", () => {
     const confirmed = {
       outcome: "reset" as const,
+      initialFingerprint: "account-fingerprint",
+      freshFingerprint: "account-fingerprint",
       checkedBefore: "2026-07-18T09:59:00.000Z",
       checkedAt,
       limitsUnavailable: false,
       usageExhausted: false,
     };
     expect(confirmsCodexResetCredit(confirmed)).toBe(true);
+    expect(confirmsCodexResetCredit({ ...confirmed, freshFingerprint: "other-account" })).toBe(
+      false,
+    );
+    expect(confirmsCodexResetCredit({ ...confirmed, freshFingerprint: undefined })).toBe(false);
     expect(confirmsCodexResetCredit({ ...confirmed, outcome: "alreadyRedeemed" })).toBe(true);
     expect(confirmsCodexResetCredit({ ...confirmed, outcome: "noCredit" })).toBe(false);
     expect(confirmsCodexResetCredit({ ...confirmed, checkedAt: confirmed.checkedBefore })).toBe(

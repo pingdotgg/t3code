@@ -3,6 +3,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 
@@ -30,6 +31,66 @@ describe("ResetCreditCoordinator", () => {
       assert.strictEqual(seen.length, 3);
       assert.strictEqual(seen[0], seen[1]);
       assert.notStrictEqual(seen[1], seen[2]);
+    }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
+  );
+
+  it.effect("keeps an ambiguous automatic key for both manual and automatic reconciliation", () =>
+    Effect.gen(function* () {
+      const { redeemIf, redeem } = yield* ResetCreditCoordinator.ResetCreditCoordinator;
+      const accounts = ["home:/codex", "codex-account:fingerprint"];
+      yield* redeemIf(
+        accounts,
+        "unknown-auto-key",
+        () => Effect.succeed(true),
+        () => Effect.succeed({ status: "sentUnknown" as const }),
+        undefined,
+        (outcome) => outcome.status !== "sentUnknown",
+      );
+      const conflict = yield* redeemIf(
+        accounts,
+        "different-auto-key",
+        () => Effect.succeed(true),
+        () => Effect.succeed("reset" as const),
+      );
+      assert.deepEqual(conflict, { _tag: "conflict", pendingKey: "unknown-auto-key" });
+      const keys = yield* Ref.make<ReadonlyArray<string>>([]);
+      const consume = (key: string) =>
+        Ref.update(keys, (seen) => [...seen, key]).pipe(Effect.as("alreadyRedeemed" as const));
+      yield* redeem(accounts, consume);
+      yield* redeem(accounts, consume);
+      const seen = yield* Ref.get(keys);
+      assert.strictEqual(seen[0], "unknown-auto-key");
+      assert.notStrictEqual(seen[1], "unknown-auto-key");
+    }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
+  );
+
+  it.effect("releases an unknown automatic key only after its ledger window expires", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(0);
+      const { redeemIf } = yield* ResetCreditCoordinator.ResetCreditCoordinator;
+      yield* redeemIf(
+        "account",
+        "expired-auto-key",
+        () => Effect.succeed(true),
+        () => Effect.succeed({ status: "sentUnknown" as const }),
+        undefined,
+        (outcome) => outcome.status !== "sentUnknown",
+        60_000,
+      );
+      const next = () =>
+        redeemIf(
+          "account",
+          "new-window-key",
+          () => Effect.succeed(true),
+          () => Effect.succeed("reset" as const),
+        );
+      assert.deepEqual(yield* next(), { _tag: "conflict", pendingKey: "expired-auto-key" });
+      yield* TestClock.adjust("1 minute");
+      assert.deepEqual(yield* next(), {
+        _tag: "sent",
+        idempotencyKey: "new-window-key",
+        outcome: "reset",
+      });
     }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
   );
 

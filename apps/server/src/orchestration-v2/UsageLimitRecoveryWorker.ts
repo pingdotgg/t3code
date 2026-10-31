@@ -264,7 +264,7 @@ export const makeSweep = Effect.gen(function* () {
           : attempt;
       let driverProvider = known;
       const notBefore = probeNotBefore.get(driverThread.providerInstanceId) ?? 0;
-      if (notBefore > nowMs) {
+      if (notBefore > nowMs && row?.outcome !== "reset") {
         retryAt = Math.min(retryAt ?? Infinity, notBefore);
         continue;
       }
@@ -272,64 +272,67 @@ export const makeSweep = Effect.gen(function* () {
         const nextCheckAt = DateTime.formatIso(
           DateTime.makeUnsafe(nowMs + AUTO_REDEEM_RETRY_BACKOFF_MS),
         );
-        probeNotBefore.set(driverThread.providerInstanceId, nowMs + AUTO_REDEEM_RETRY_BACKOFF_MS);
         yield* projections.updateCodexResetAttempt({ ...row, nextCheckAt });
-        const snapshots = yield* providers.refreshInstance(driverThread.providerInstanceId);
-        refreshedInstances.set(driverThread.providerInstanceId, snapshots);
-        driverProvider = snapshots.find(
-          (candidate) => candidate.instanceId === driverThread.providerInstanceId,
-        );
-      }
-      if (
-        !driverProvider ||
-        driverProvider.driver !== "codex" ||
-        (driverProvider.usageLimits?.credentialFingerprint !== undefined &&
-          driverProvider.usageLimits.credentialFingerprint !== fingerprint)
-      ) {
-        if (row && row.outcome === "reset" && !row.allowanceCleared)
-          yield* projections.updateCodexResetAttempt({
-            ...row,
-            nextCheckAt: DateTime.formatIso(
-              DateTime.makeUnsafe(nowMs + AUTO_REDEEM_RETRY_BACKOFF_MS),
-            ),
-          });
-        retryAt = Math.min(retryAt ?? Infinity, nowMs + AUTO_REDEEM_RETRY_BACKOFF_MS);
-        continue;
-      }
-
-      if (row?.outcome === "reset") {
-        const checkedAt = driverProvider.usageLimits?.checkedAt;
-        const freshAndClear =
-          driverProvider.usageLimits?.credentialFingerprint === fingerprint &&
-          checkedAt !== undefined &&
-          Date.parse(checkedAt) > Date.parse(row.attemptedAt) &&
-          driverProvider.usageLimits?.unavailable === undefined &&
-          exhaustedUsageWindow(driverProvider, nowMs, driverThread.modelSelection.model) ===
-            undefined;
-        const allowanceCleared = freshAndClear;
-        yield* projections.updateCodexResetAttempt({
-          ...row,
-          allowanceCleared,
-          ...(checkedAt === undefined ? {} : { checkedAt }),
-          nextCheckAt: DateTime.formatIso(
-            DateTime.makeUnsafe(nowMs + AUTO_REDEEM_RETRY_BACKOFF_MS),
-          ),
-        });
+        let driverAllowanceCleared = false;
+        let driverCheckedAt: string | undefined;
+        let driverLimitsMatch = false;
         for (const candidate of candidatesForGroup) {
+          const instanceId = candidate.providerInstanceId;
+          let candidateProvider = knownProviders.get(instanceId);
+          const refreshed = refreshedInstances.get(instanceId);
+          if (refreshed !== undefined) {
+            candidateProvider = refreshed.find((provider) => provider.instanceId === instanceId);
+          } else {
+            const candidateNotBefore = probeNotBefore.get(instanceId) ?? 0;
+            if (candidateNotBefore <= nowMs) {
+              probeNotBefore.set(instanceId, nowMs + AUTO_REDEEM_RETRY_BACKOFF_MS);
+              retryAt = Math.min(retryAt ?? Infinity, nowMs + AUTO_REDEEM_RETRY_BACKOFF_MS);
+              const snapshots = yield* providers
+                .refreshInstance(instanceId)
+                .pipe(Effect.catchCause(() => Effect.succeed([])));
+              refreshedInstances.set(instanceId, snapshots);
+              candidateProvider = snapshots.find((provider) => provider.instanceId === instanceId);
+              if (candidateProvider) knownProviders.set(instanceId, candidateProvider);
+            } else {
+              retryAt = Math.min(retryAt ?? Infinity, candidateNotBefore);
+              candidateProvider = undefined;
+            }
+          }
+          const limits = candidateProvider?.usageLimits;
+          const checkedAt =
+            limits?.credentialFingerprint === fingerprint ? limits.checkedAt : undefined;
+          const freshAndClear =
+            candidateProvider?.driver === "codex" &&
+            limits?.credentialFingerprint === fingerprint &&
+            checkedAt !== undefined &&
+            Date.parse(checkedAt) > Date.parse(row.attemptedAt) &&
+            limits.unavailable === undefined &&
+            exhaustedUsageWindow(candidateProvider, nowMs, candidate.modelSelection.model) ===
+              undefined;
+          if (candidate.id === driverThread.id) {
+            driverAllowanceCleared = freshAndClear;
+            driverCheckedAt = checkedAt;
+            driverLimitsMatch = limits?.credentialFingerprint === fingerprint;
+          }
           const report = {
             providerInstanceId: candidate.providerInstanceId,
             redeemedByProviderInstanceId:
               previousReport?.redeemedByProviderInstanceId ?? driverThread.providerInstanceId,
             accountFingerprint: fingerprint,
             accountLabel:
-              driverProvider.auth?.email ?? driverProvider.displayName ?? "Codex account",
+              candidateProvider?.auth?.email ??
+              candidateProvider?.displayName ??
+              previousReport?.accountLabel ??
+              "Codex account",
             idempotencyKey: row.idempotencyKey,
             attemptedAt: row.attemptedAt,
-            creditsBefore: previousReport?.creditsBefore ?? 1,
+            creditsBefore:
+              candidate.limitRecovery?.codexResetRedemption?.creditsBefore ??
+              previousReport?.creditsBefore ??
+              1,
             outcome: "reset" as const,
             ...(checkedAt === undefined ? {} : { checkedAt }),
-            allowanceCleared:
-              allowanceCleared && candidate.providerInstanceId === driverThread.providerInstanceId,
+            allowanceCleared: freshAndClear,
           };
           const saved = yield* orchestrator.recordCodexResetRedemption({
             commandId: CommandId.make(`limit-credit-view:${candidate.id}:${candidate.latestRunId}`),
@@ -339,7 +342,7 @@ export const makeSweep = Effect.gen(function* () {
             codexResetRedemption: report,
           });
           if (saved) acted = true;
-          if (freshAndClear && candidate.providerInstanceId === driverThread.providerInstanceId) {
+          if (freshAndClear) {
             const command = limitRecoveryCommand(
               {
                 ...candidate,
@@ -357,6 +360,24 @@ export const makeSweep = Effect.gen(function* () {
             }
           }
         }
+        yield* projections.updateCodexResetAttempt({
+          ...row,
+          allowanceCleared: driverAllowanceCleared,
+          ...(driverLimitsMatch && driverCheckedAt !== undefined
+            ? { checkedAt: driverCheckedAt }
+            : {}),
+          nextCheckAt,
+        });
+        retryAt = Math.min(retryAt ?? Infinity, nowMs + AUTO_REDEEM_RETRY_BACKOFF_MS);
+        continue;
+      }
+
+      if (
+        !driverProvider ||
+        driverProvider.driver !== "codex" ||
+        (driverProvider.usageLimits?.credentialFingerprint !== undefined &&
+          driverProvider.usageLimits.credentialFingerprint !== fingerprint)
+      ) {
         retryAt = Math.min(retryAt ?? Infinity, nowMs + AUTO_REDEEM_RETRY_BACKOFF_MS);
         continue;
       }
@@ -413,6 +434,7 @@ export const makeSweep = Effect.gen(function* () {
           instanceId: driverThread.providerInstanceId,
           model: driverThread.modelSelection.model,
           idempotencyKey,
+          resetAt: activeRow.resetAt,
           expectedAccountFingerprint: fingerprint,
           mode,
           stillArmed: Effect.fn("UsageLimitRecoveryWorker.stillArmed")(function* () {
@@ -460,12 +482,13 @@ export const makeSweep = Effect.gen(function* () {
         retryAt = Math.min(retryAt ?? Infinity, nowMs + AUTO_REDEEM_RETRY_BACKOFF_MS);
         continue;
       }
+      const resultReport = { ...pendingReport, creditsBefore: result.creditsBefore } as const;
       if (result.status === "notSent") {
         if (mode === "first") {
           yield* projections.releaseCodexResetAttempt(fingerprint, idempotencyKey);
           if (result.reason === "notExhausted" || result.reason === "noCredit") {
             const outcome = result.reason === "noCredit" ? "noCredit" : "nothingToReset";
-            const report = { ...pendingReport, outcome, allowanceCleared: false } as const;
+            const report = { ...resultReport, outcome, allowanceCleared: false } as const;
             yield* orchestrator.recordCodexResetRedemption({
               commandId: CommandId.make(
                 `limit-credit-not-sent:${driverThread.id}:${driverThread.latestRunId}`,
@@ -483,7 +506,7 @@ export const makeSweep = Effect.gen(function* () {
               threadId: driverThread.id,
               runId: driverThread.latestRunId!,
               resetAt: driverThread.usageLimitResetAt!,
-              codexResetRedemption: { ...pendingReport, outcome: "declined" },
+              codexResetRedemption: { ...resultReport, outcome: "declined" },
             });
           }
         } else {
@@ -496,7 +519,7 @@ export const makeSweep = Effect.gen(function* () {
               threadId: driverThread.id,
               runId: driverThread.latestRunId!,
               resetAt: driverThread.usageLimitResetAt!,
-              codexResetRedemption: { ...pendingReport, outcome: "declined" },
+              codexResetRedemption: { ...resultReport, outcome: "declined" },
             });
         }
         retryAt = Math.min(retryAt ?? Infinity, nowMs + AUTO_REDEEM_RETRY_BACKOFF_MS);
@@ -514,18 +537,23 @@ export const makeSweep = Effect.gen(function* () {
             ? "noCredit"
             : "nothingToReset";
       const confirmed =
-        outcome === "reset" && result.allowanceCleared && result.checkedAt !== undefined;
+        outcome === "reset" &&
+        result.accountFingerprint === fingerprint &&
+        result.allowanceCleared &&
+        result.checkedAt !== undefined &&
+        Date.parse(result.checkedAt) > Date.parse(attemptedAt);
       const report = {
-        ...pendingReport,
+        ...resultReport,
         outcome,
-        ...(result.checkedAt === undefined ? {} : { checkedAt: result.checkedAt }),
         allowanceCleared: confirmed,
       } as const;
       const accountResult: ProjectionStore.CodexResetAttempt = {
         ...activeRow,
         outcome,
         allowanceCleared: confirmed,
-        ...(result.checkedAt === undefined ? {} : { checkedAt: result.checkedAt }),
+        ...(result.accountFingerprint === fingerprint && result.checkedAt !== undefined
+          ? { checkedAt: result.checkedAt }
+          : {}),
         nextCheckAt,
       };
       yield* projections.updateCodexResetAttempt(accountResult);
@@ -553,8 +581,10 @@ export const makeSweep = Effect.gen(function* () {
           outcome === "reset" &&
           ((candidate.providerInstanceId === driverThread.providerInstanceId &&
             candidate.modelSelection.model === driverThread.modelSelection.model &&
+            result.accountFingerprint === fingerprint &&
             result.allowanceCleared &&
-            result.checkedAt !== undefined) ||
+            result.checkedAt !== undefined &&
+            Date.parse(result.checkedAt) > Date.parse(attemptedAt)) ||
             (limits?.credentialFingerprint === fingerprint &&
               candidate.providerInstanceId !== driverThread.providerInstanceId &&
               limits.checkedAt !== undefined &&
@@ -569,9 +599,13 @@ export const makeSweep = Effect.gen(function* () {
           redeemedByProviderInstanceId: driverThread.providerInstanceId,
           accountLabel:
             candidateProvider?.auth?.email ?? candidateProvider?.displayName ?? report.accountLabel,
-          ...(candidateClear && limits?.checkedAt !== undefined
-            ? { checkedAt: limits.checkedAt }
-            : {}),
+          ...(candidate.providerInstanceId === driverThread.providerInstanceId
+            ? result.accountFingerprint !== fingerprint || result.checkedAt === undefined
+              ? {}
+              : { checkedAt: result.checkedAt }
+            : candidateClear && limits?.checkedAt !== undefined
+              ? { checkedAt: limits.checkedAt }
+              : {}),
           allowanceCleared: candidateClear,
         } as const;
         const saved = yield* orchestrator.recordCodexResetRedemption({
