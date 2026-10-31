@@ -119,7 +119,6 @@ function fixture(
   };
 }
 
-/** A hub API whose every request fails the way `fail` says. */
 const unreachableHub = (
   fail: (
     request: Parameters<Parameters<typeof HttpClient.make>[0]>[0],

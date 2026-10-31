@@ -19,8 +19,7 @@ const TooltipProvider = TooltipPrimitive.Provider;
 
 type TooltipActionsRef = RefObject<TooltipPrimitive.Root.Actions | null>;
 
-// Context values are frozen to the compiler, so consumers update the hovered
-// tooltip through these calls rather than by writing to a shared ref.
+// The compiler freezes context values; update hovered tooltips through calls instead of shared ref writes.
 function createTooltipHoverTracker() {
   let hovered: { trigger: HTMLElement; actionsRef: TooltipActionsRef } | null = null;
   return {
@@ -65,6 +64,7 @@ function Tooltip<Payload>(props: TooltipPrimitive.Root.Props<Payload>) {
   const tracker = use(TooltipScrollContext);
   const localActionsRef = useRef<TooltipPrimitive.Root.Actions | null>(null);
   const actionsRef = props.actionsRef ?? localActionsRef;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases this tooltip from the scroll tracker on unmount
   useEffect(() => () => tracker?.release(actionsRef), [actionsRef, tracker]);
 
   if (!tracker) return <TooltipPrimitive.Root {...props} />;
