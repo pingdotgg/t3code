@@ -62,7 +62,7 @@ function useRunScopedPlan() {
     writer = createScopedSettingsWriter();
     scopedSettingsWriters.set(registry, writer);
   }
-  const readServer = useAtomCommand(serverEnvironment.getSettings, { reportFailure: false });
+  const readServer = useAtomCommand(serverEnvironment.getConfig, { reportFailure: false });
   const persistServer = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   return (
     environments: Parameters<typeof planScopedSettingsPatch>[1],
@@ -82,7 +82,10 @@ function useRunScopedPlan() {
     void writer(
       environments,
       planner,
-      (environmentId) => readServer({ environmentId, input: {} }),
+      async (environmentId) => {
+        const result = await readServer({ environmentId, input: {} });
+        return result._tag === "Failure" ? result : AsyncResult.success(result.value.settings);
+      },
       async (request) => {
         const missing = requiredScopesForServerSettingsPatch(request.input.patch).find(
           (scope) => !readEnvironmentScope(request.environmentId, scope),
