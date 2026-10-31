@@ -40,7 +40,7 @@ export interface MinimaxCodeAgentIdentity {
   readonly commandPath: string;
 }
 
-export function isMinimaxCodeAgent(identity: MinimaxCodeAgentIdentity): boolean {
+function isMinimaxCodeAgent(identity: MinimaxCodeAgentIdentity): boolean {
   if (identity.registryAgentId === MINIMAX_CODE_REGISTRY_AGENT_ID) return true;
   if (!identity.isLocal) return false;
   const command = identity.commandPath.split(/[\\/]/).pop() ?? "";
