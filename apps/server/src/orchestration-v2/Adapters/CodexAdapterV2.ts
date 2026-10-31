@@ -1924,8 +1924,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
 
-        const promptSuggestionsEnabled = (resolvedRuntime?.config ?? adapterOptions.settings)
-          .promptSuggestions;
+        const promptSuggestionsEnabled = input.promptSuggestions === true;
         // Best effort: older Codex lacks thread/sample, and a sample fails once the user sends again.
         const samplePromptSuggestion = (
           context: ActiveCodexTurnContext,
@@ -5955,6 +5954,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           });
           yield* emitRootTerminal(hold.context, { ...hold.event, status });
           yield* Deferred.succeed(hold.next, undefined);
+          const nativeThreadId = hold.context.providerThread.nativeThreadRef?.nativeId;
+          if (promptSuggestionsEnabled && status === "completed" && nativeThreadId != null) {
+            yield* samplePromptSuggestion(hold.context, nativeThreadId, hold.context.nativeTurnId);
+          }
         });
 
         const releaseGoalHold = Effect.fnUntraced(function* (
@@ -6282,14 +6285,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const retainSettledContext =
                 input.status === "completed" &&
                 (yield* turnHasRetainedBackgroundWork(input.nativeTurnId));
-              // Predict only once the run is done: not mid-goal and not while background work runs.
+              // A held goal predicts when settleGoalHold completes it.
               if (
                 promptSuggestionsEnabled &&
                 input.status === "completed" &&
                 input.context.subagent === null &&
                 !input.continueRun &&
                 !holdsForGoal &&
-                !retainSettledContext &&
                 nativeThreadId != null
               ) {
                 yield* samplePromptSuggestion(input.context, nativeThreadId, input.nativeTurnId);

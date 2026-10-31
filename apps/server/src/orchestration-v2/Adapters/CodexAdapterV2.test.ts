@@ -476,9 +476,7 @@ describe("CodexAdapterV2 fork boundary", () => {
   );
 });
 
-// Replays fail on unscripted frames; tests that cover suggestions opt back in.
-const DEFAULT_CODEX_SETTINGS = Schema.decodeSync(CodexSettings)({ promptSuggestions: false });
-const PROMPT_SUGGESTION_CODEX_SETTINGS = Schema.decodeSync(CodexSettings)({});
+const DEFAULT_CODEX_SETTINGS = Schema.decodeSync(CodexSettings)({});
 const CODEX_TEST_MODEL_SELECTION = {
   instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
   model: "gpt-5.4",
@@ -1144,7 +1142,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
     beforeEmitInbound?: CodexReplay.CodexAppServerReplayDriver["beforeEmitInbound"],
-    settings: CodexSettings = DEFAULT_CODEX_SETTINGS,
+    promptSuggestions = false,
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1192,7 +1190,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       };
       const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
-        settings,
+        settings: DEFAULT_CODEX_SETTINGS,
         environment: {},
         clientFactory,
         crypto: yield* Crypto.Crypto,
@@ -1212,6 +1210,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         providerSessionId: ProviderSessionId.make(`provider-session-${transcript.scenario}`),
         modelSelection: CODEX_TEST_MODEL_SELECTION,
         runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        promptSuggestions,
       });
       const providerThread = yield* runtime.ensureThread({
         threadId,
@@ -1755,7 +1754,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         undefined,
         undefined,
         undefined,
-        PROMPT_SUGGESTION_CODEX_SETTINGS,
+        true,
       );
       const turnInput = makeCodexTestTurnInput({
         threadId: harness.threadId,

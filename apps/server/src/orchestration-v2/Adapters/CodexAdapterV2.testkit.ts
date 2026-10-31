@@ -20,8 +20,7 @@ import {
 import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 
-// Replays fail on unscripted frames; tests that cover suggestions opt back in.
-const DEFAULT_CODEX_SETTINGS = Schema.decodeSync(CodexSettings)({ promptSuggestions: false });
+const DEFAULT_CODEX_SETTINGS = Schema.decodeSync(CodexSettings)({});
 
 export class CodexReplayTranscriptDecodeError extends Schema.TaggedError<CodexReplayTranscriptDecodeError>()(
   "CodexReplayTranscriptDecodeError",

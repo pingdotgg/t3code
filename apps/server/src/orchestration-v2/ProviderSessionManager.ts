@@ -350,13 +350,20 @@ export const layerWithOptions = (
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
-      const promptSuggestions = yield* SubscriptionRef.make<
+      const promptSuggestionStore = yield* SubscriptionRef.make<
         ReadonlyMap<ThreadId, NonNullable<OrchestrationV2PromptSuggestion>>
       >(new Map());
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const agentScope = yield* AgentScope;
+      // Labs flag, read once per provider session; unreadable settings keep it off.
+      const promptSuggestionsEnabled = Option.isNone(serverSettings)
+        ? Effect.succeed(false)
+        : serverSettings.value.getSettings.pipe(
+            Effect.map((settings) => settings.promptSuggestionsEnabled),
+            Effect.orElseSucceed(() => false),
+          );
       const agentAccessSettings = Effect.fn("ProviderSessionManagerV2.agentAccessSettings")(
         function* (threadId: ThreadId) {
           if (Option.isNone(serverSettings)) return { browser: true, device: false };
@@ -1961,7 +1968,7 @@ export const layerWithOptions = (
               return commandOutput.append(event);
             }
             if (event.type === "prompt_suggestion.updated") {
-              return SubscriptionRef.update(promptSuggestions, (current) => {
+              return SubscriptionRef.update(promptSuggestionStore, (current) => {
                 const next = new Map(current);
                 next.delete(event.threadId);
                 next.set(event.threadId, { runId: event.runId, text: event.text });
@@ -2202,12 +2209,14 @@ export const layerWithOptions = (
               });
               const sessionScope = yield* Scope.fork(sessionScopes);
               yield* agentScope.clear(input.threadId);
+              const promptSuggestions = yield* promptSuggestionsEnabled;
               const runtime = yield* adapter
                 .openSession({
                   threadId: input.threadId,
                   providerSessionId: input.providerSessionId,
                   modelSelection: input.modelSelection,
                   runtimePolicy: input.runtimePolicy,
+                  promptSuggestions,
                   ...(input.resumeFromSession === undefined
                     ? {}
                     : { resumeFromSession: input.resumeFromSession }),
@@ -2581,7 +2590,7 @@ export const layerWithOptions = (
             ),
         ),
         subscribePromptSuggestion: (threadId) =>
-          SubscriptionRef.changes(promptSuggestions).pipe(
+          SubscriptionRef.changes(promptSuggestionStore).pipe(
             Stream.map((suggestions) => suggestions.get(threadId) ?? null),
             Stream.changes,
           ),

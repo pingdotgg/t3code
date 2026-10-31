@@ -148,11 +148,12 @@ into a normal draft.
 
 ## Suggested next prompt
 
-After a Claude or Codex turn completes, the empty composer can show a predicted next message in
-gray. Press `Tab` to fill it in, then edit or send it. Claude skips suggestions on the first turn of
-a thread, in plan mode, and near usage limits. Codex makes one short cached request per turn and
-needs Codex 0.165 or later. Turn suggestions off with **Suggest next prompt** in each provider's
-settings. Suggestions show on web and desktop.
+Turn on **Suggest next prompt** in Settings > Labs. After a Claude or Codex turn completes, the empty
+composer shows a predicted next message in gray. Press `Tab` to fill it in, then edit or send it.
+Each suggestion is one extra request that reuses the turn's prompt cache, so it uses a little of
+your plan's usage. Claude skips suggestions on the first turn of a thread, in plan mode, and near
+usage limits. Codex needs version 0.165 or later. The setting applies to new sessions. Suggestions
+show on web and desktop.
 
 ## Edit an earlier prompt
 

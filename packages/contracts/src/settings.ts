@@ -676,18 +676,9 @@ export const CodexSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
-    promptSuggestions: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(true)),
-      Schema.annotateKey({
-        title: "Suggest next prompt",
-        description:
-          "After each turn, Codex predicts your next message with one short cached request. Press Tab in an empty composer to use it.",
-        providerSettingsForm: { control: "switch" },
-      }),
-    ),
   },
   {
-    order: ["binaryPath", "homePath", "shadowHomePath", "promptSuggestions", "launchArgs"],
+    order: ["binaryPath", "homePath", "shadowHomePath", "launchArgs"],
   },
 );
 export type CodexSettings = typeof CodexSettings.Type;
@@ -778,25 +769,9 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
-    promptSuggestions: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(true)),
-      Schema.annotateKey({
-        title: "Suggest next prompt",
-        description:
-          "After each turn, Claude predicts your next message. Press Tab in an empty composer to use it.",
-        providerSettingsForm: { control: "switch" },
-      }),
-    ),
   },
   {
-    order: [
-      "binaryPath",
-      "homePath",
-      "autoCompactWindow",
-      "idleCompaction",
-      "promptSuggestions",
-      "launchArgs",
-    ],
+    order: ["binaryPath", "homePath", "autoCompactWindow", "idleCompaction", "launchArgs"],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
@@ -1286,6 +1261,8 @@ export const ServerSettings = Schema.Struct({
    * and tasks on another machine; tasks already running there finish.
    */
   linkedEnvironmentsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Beta: Claude and Codex predict the next prompt after each turn. Applies to new provider sessions. */
+  promptSuggestionsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarAutoSettleKeepPullRequests: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
@@ -1642,6 +1619,7 @@ export const ServerSettingsPatch = Schema.Struct({
   snoozePresets: Schema.optionalKey(SnoozePresetSettings),
   guestSharingEnabled: Schema.optionalKey(Schema.Boolean),
   linkedEnvironmentsEnabled: Schema.optionalKey(Schema.Boolean),
+  promptSuggestionsEnabled: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),

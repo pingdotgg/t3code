@@ -1283,25 +1283,7 @@ export function ProviderInstanceCard({
             title="Runtime"
             headerPlacement="outside"
           >
-            {runtime === undefined ? (
-              runtimeFields
-            ) : (
-              <>
-                {runtime}
-                {driverOption ? (
-                  // Managed Codex owns its paths; its behavior switches stay editable.
-                  <ProviderSettingsForm
-                    definition={driverOption}
-                    value={instance.config}
-                    idPrefix={`provider-instance-${instanceId}`}
-                    variant="settings"
-                    onChange={updateConfig}
-                    environmentId={environmentId}
-                    fieldKeys={["promptSuggestions"]}
-                  />
-                ) : null}
-              </>
-            )}
+            {runtime ?? runtimeFields}
           </FoldedSettingsSection>
         </div>
       ) : !driverOption || deriveProviderSettingsFields(driverOption).length > 0 ? (
