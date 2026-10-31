@@ -340,13 +340,30 @@ const makeTestRelay = Effect.fnUntraced(function* (
 });
 
 describe("AgentAwarenessRelay", () => {
-  it.effect("publishes an approval already waiting at startup", () =>
+  it.effect.each([false, true])("publishes a startup approval through side chat: %s", (sideChat) =>
     Effect.gen(function* () {
       const parent = shell({ status: "idle" });
-      const child = waitingChild();
+      const intermediate = shell({
+        id: SECOND_THREAD_ID,
+        lineage: {
+          rootThreadId: THREAD_ID,
+          parentThreadId: THREAD_ID,
+          relationshipToParent: null,
+          sideChat: true,
+        },
+      });
+      const child = waitingChild({
+        lineage: {
+          rootThreadId: THREAD_ID,
+          parentThreadId: sideChat ? intermediate.id : parent.id,
+          relationshipToParent: "subagent",
+        },
+      });
+      const startupThreads = [parent, intermediate, child];
       const { relay, publications } = yield* makeTestRelay({
-        startupThreads: [parent, child],
-        readShell: (id) => Effect.succeed(id === child.id ? child : parent),
+        startupThreads,
+        readShell: (id) =>
+          Effect.succeed(startupThreads.find((thread) => thread.id === id) ?? null),
       });
       yield* relay.start();
       yield* TestClock.adjust("1 second");
