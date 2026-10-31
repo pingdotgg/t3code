@@ -91,6 +91,8 @@ export const ProviderAdapterV2Event = Schema.Union([
     type: Schema.Literal("provider_thread.updated"),
     driver: ProviderDriverKind,
     providerThread: OrchestrationV2ProviderThread,
+    /** Work remaining at this point in the event stream, including native continuations. */
+    pendingBackgroundWork: Schema.optional(Schema.Boolean),
     retainedNativeTurnIds: Schema.optional(Schema.Array(Schema.String)),
   }),
   Schema.Struct({
