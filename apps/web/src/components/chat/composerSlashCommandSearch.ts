@@ -23,6 +23,7 @@ export function slashCommandItemsForPromptPosition(
   return items.filter(
     (item) =>
       item.type === "skill" ||
+      item.type === "plugin-action" ||
       (item.type === "slash-command" && item.command !== "side" && item.command !== "btw"),
   );
 }
