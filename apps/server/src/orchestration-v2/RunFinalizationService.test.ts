@@ -53,7 +53,7 @@ it.effect("refreshes workspace after checkpoint capture, then records finalizati
               scope: undefined,
               providerThread: undefined,
               readyCheckpointOrdinals: [],
-        sideChat: false,
+              sideChat: false,
             }),
         }),
         Layer.mock(EventSink.EventSinkV2)({
@@ -115,7 +115,7 @@ it.effect("completes finalization when the post-checkpoint workspace refresh fai
               scope: undefined,
               providerThread: undefined,
               readyCheckpointOrdinals: [],
-        sideChat: false,
+              sideChat: false,
             }),
         }),
         Layer.succeed(RunFinalization.RunFinalizationObserver, {

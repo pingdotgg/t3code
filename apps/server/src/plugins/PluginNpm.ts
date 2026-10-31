@@ -615,7 +615,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
   });
 
   // The catalogue lock serializes recovery against consent/enable; persisted attempt outcomes decide the version.
-// Retain journal and previous files until cleanup succeeds so failures remain retryable.
+  // Retain journal and previous files until cleanup succeeds so failures remain retryable.
   const settle = Effect.fnUntraced(function* (entry: Installed) {
     const swap = entry.swap;
     if (swap === undefined) return;
