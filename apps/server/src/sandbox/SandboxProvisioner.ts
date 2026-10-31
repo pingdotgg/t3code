@@ -23,8 +23,10 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import { HttpClient, HttpClientRequest } from "effect/http";
 
+import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SandboxRecords from "../persistence/SandboxRecords.ts";
 import { requestJson, shellQuote, type SandboxProviderDriver } from "./SandboxProvider.ts";
@@ -497,3 +499,15 @@ const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(SandboxProvisioner, make);
+
+export const layerSweep = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const provisioner = yield* SandboxProvisioner;
+    yield* forkParked(
+      provisioner.sweepDeadlines.pipe(
+        Effect.catchCause((cause) => Effect.logWarning("sandbox sweep failed", { cause })),
+        Effect.repeat(Schedule.spaced("1 minute")),
+      ),
+    );
+  }),
+);
