@@ -63,6 +63,7 @@ const recordingSession = (
   initialConfig: Effect.succeed({ environment: { capabilities } } as ServerConfig),
   subscribeServerConfig: () => Stream.never,
   ready: Effect.void,
+    inboundFrames: Effect.succeed(0),
   probe: Effect.void,
   closed: Effect.never,
 });
@@ -212,6 +213,7 @@ const makeListHarness = Effect.fn("makeListHarness")(function* () {
     } as ServerConfig),
     subscribeServerConfig: () => Stream.never,
     ready: Effect.void,
+    inboundFrames: Effect.succeed(0),
     probe: Effect.void,
     closed: Effect.never,
   };
