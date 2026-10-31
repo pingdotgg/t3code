@@ -15,6 +15,10 @@ export function formatWorkingTimer(startIso: string, endIso: string): string | n
   return formatDuration(elapsedSeconds * 1_000);
 }
 
-export function formatWorkingTimerNow(startIso: string): string {
+export function formatWorkingTimerNow(startIso: string, clock = false): string {
+  if (clock) {
+    const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(startIso)) / 1000)) || 0;
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  }
   return formatWorkingTimer(startIso, new Date().toISOString()) ?? "0s";
 }
