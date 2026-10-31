@@ -16,7 +16,9 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
@@ -300,5 +302,67 @@ describe("IdleCompactionService", () => {
         }),
       );
     },
+  );
+
+  it.effect("compacts a thread that went idle before the server restarted", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const base = records({ cacheExpiresInMs: 30 * MINUTE_MS });
+        const data: OrchestrationV2ThreadProjection = {
+          ...base,
+          attempts: [],
+          nodes: [],
+          subagents: [],
+          providerSessions: [],
+          plans: [],
+          checkpointScopes: [],
+          checkpoints: [],
+          contextHandoffs: [],
+          visibleTurnItems: [],
+          updatedAt: at(),
+        };
+        const dispatched = yield* Deferred.make<ReadonlyArray<string>>();
+        const commandIds: Array<string> = [];
+        // Not object-literal arguments, so the mock can name a method main does not have yet.
+        const projectionStore = {
+          getThread: () => Effect.succeed(data.thread),
+          getThreadRecords: () => Effect.succeed(data),
+          listIdleCompactionCandidates: () => Effect.succeed([{ threadId, runId }]),
+        };
+        const dependencies = Layer.mergeAll(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            // The run completed before the restart, so no run.updated event arrives.
+            streamDomainEvents: Stream.never,
+            dispatch: (command) =>
+              Effect.sync(() => {
+                commandIds.push(command.commandId);
+                Deferred.doneUnsafe(dispatched, Effect.succeed(commandIds));
+                return { sequence: 1, storedEvents: [] };
+              }),
+          }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)(projectionStore),
+          Layer.mock(ServerSettings.ServerSettingsService)({
+            getSettings: Effect.succeed({
+              ...DEFAULT_SERVER_SETTINGS,
+              idleCompaction: "beforeCacheExpires",
+            }),
+          }),
+        );
+        const result = yield* Effect.gen(function* () {
+          const service = yield* IdleCompactionService.make;
+          yield* service.start();
+          const waiter = yield* Deferred.await(dispatched).pipe(
+            Effect.timeoutOption("1 hour"),
+            Effect.forkChild,
+          );
+          yield* TestClock.adjust("1 hour");
+          return yield* Fiber.join(waiter);
+        }).pipe(Effect.provide(dependencies));
+        expect(Option.getOrElse(result, () => [])).toEqual([
+          `server:idle-compact:${threadId}:${runId}`,
+        ]);
+      }),
+    ),
   );
 });
