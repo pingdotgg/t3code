@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import {
   AuthOrchestrationOperateScope,
@@ -361,32 +362,37 @@ export const OpenInPicker = memo(function OpenInPicker({
 
   if (isPanel) {
     return (
-      <div role="group" aria-label="Open in editor">
-        <ThreadDetailsControl
-          aria-label={primaryLabel}
-          disabled={!preferredEditor || !openInCwd || !canOpenEditor}
-          {...(enableShortcut && !backgroundThread ? { [OPEN_FAVORITE_EDITOR_ATTRIBUTE]: "" } : {})}
-          onClick={handleOpenPreferredEditor}
-        >
-          {primaryOption ? (
-            <primaryOption.Icon className={getOpenInIconClass(primaryOption.kind)} />
-          ) : (
-            <AppWindowIcon />
-          )}
-          <MenuItemLabel>{primaryLabel}</MenuItemLabel>
-          {openFavoriteEditorShortcutLabel && (
-            <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
-          )}
-        </ThreadDetailsControl>
+      <div className="flex shrink-0 items-center pe-1" role="group" aria-label="Open in editor">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <ThreadDetailsControl
+                part="icon"
+                aria-label={primaryLabel}
+                disabled={!preferredEditor || !openInCwd || !canOpenEditor}
+                {...(enableShortcut && !backgroundThread
+                  ? { [OPEN_FAVORITE_EDITOR_ATTRIBUTE]: "" }
+                  : {})}
+                onClick={handleOpenPreferredEditor}
+              />
+            }
+          >
+            {primaryOption ? (
+              <primaryOption.Icon className={getOpenInIconClass(primaryOption.kind)} />
+            ) : (
+              <AppWindowIcon />
+            )}
+          </TooltipTrigger>
+          <TooltipPopup>{primaryLabel}</TooltipPopup>
+        </Tooltip>
         <Menu open={menuOpen} onOpenChange={setMenuOpen}>
           <MenuTrigger
             disabled={isHostEditorDenied}
-            render={<ThreadDetailsControl part="choice" aria-label="Choose editor" />}
+            render={<ThreadDetailsControl part="icon" aria-label="Choose editor" />}
           >
-            <AppWindowIcon />
-            <MenuItemLabel>Open in…</MenuItemLabel>
+            <ChevronDownIcon />
           </MenuTrigger>
-          <MenuPopup side="right" align="start">
+          <MenuPopup side="bottom" align="end">
             {editorItems}
           </MenuPopup>
         </Menu>

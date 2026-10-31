@@ -81,10 +81,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   );
 });
 
-// Icon-only footer control, ported from the orchestrator v2 sidebar footer
-// (maria/feedback-orchestrator-local). Icons stay 16px there; the redesign's
-// menu buttons default to 14px, so callers size them. The 28px squares match
-// the titlebar's, so the footer repeats its column pitch.
+// The footer uses 32px icon-only controls with 16px glyphs (pen C0J52w).
 function SidebarUtilityItem({
   icon,
   label,
@@ -95,7 +92,7 @@ function SidebarUtilityItem({
   onClick: () => void;
 }) {
   return (
-    <SidebarHeaderIconButton label={label} onClick={onClick}>
+    <SidebarHeaderIconButton label={label} size="footer" onClick={onClick}>
       {icon}
     </SidebarHeaderIconButton>
   );
@@ -148,26 +145,27 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           </SidebarMenuButton>
         </SidebarMenuItem>
       ) : (
-        // Placed like the titlebar cluster (index.css), so Settings, Pull
-        // Requests and Usage sit under the toggle, back and forward glyphs.
-        <SidebarMenuItem className="ms-(--sidebar-icon-control-inset) flex shrink-0">
-          <SidebarUtilityItem
-            icon={<SettingsIcon className="size-4" />}
-            label="Settings"
-            onClick={handleSettingsClick}
-          />
-          {pullRequestsSupported ? (
+        // Keep the three utilities in the design's compact, icon-only row.
+        <SidebarMenuItem className="shrink-0">
+          <div className="flex gap-1">
             <SidebarUtilityItem
-              icon={<PullRequestGlyph.pullRequest className="size-4" />}
-              label="Pull Requests"
-              onClick={handlePullRequestsClick}
+              icon={<SettingsIcon className="size-4" />}
+              label="Settings"
+              onClick={handleSettingsClick}
             />
-          ) : null}
-          <SidebarUtilityItem
-            icon={<ChartNoAxesColumnIcon className="size-4" />}
-            label="Usage"
-            onClick={handleUsageClick}
-          />
+            {pullRequestsSupported ? (
+              <SidebarUtilityItem
+                icon={<PullRequestGlyph.pullRequest className="size-4" />}
+                label="Pull Requests"
+                onClick={handlePullRequestsClick}
+              />
+            ) : null}
+            <SidebarUtilityItem
+              icon={<ChartNoAxesColumnIcon className="size-4" />}
+              label="Usage"
+              onClick={handleUsageClick}
+            />
+          </div>
         </SidebarMenuItem>
       )}
       <SidebarThreadUndoNotice />

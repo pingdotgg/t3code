@@ -6,7 +6,7 @@ export function ThreadHoverCardPopup({ className, ...props }: ComponentProps<typ
   return (
     <TooltipPopup
       {...props}
-      variant="popover"
+      variant="thread"
       className={cn("max-w-80 text-left whitespace-normal", className)}
     />
   );
@@ -22,11 +22,11 @@ export function ThreadHoverCard({
   footer?: ReactNode;
 }) {
   return (
-    <div className="flex min-w-0 max-w-80 flex-col gap-2 px-1 py-2">
-      <div className="min-w-0 truncate text-xs leading-tight font-semibold text-strong-foreground">
+    <div className="flex min-w-0 max-w-80 flex-col gap-2">
+      <div className="min-w-0 truncate text-meta leading-tight font-semibold text-strong-foreground">
         {title}
       </div>
-      <div className="grid gap-1.5 pl-0.5 text-xs text-muted-foreground">{children}</div>
+      <div className="grid gap-1.5 text-meta font-normal text-muted-foreground">{children}</div>
       {footer}
     </div>
   );

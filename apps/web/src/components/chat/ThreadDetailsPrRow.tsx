@@ -422,42 +422,64 @@ export function ThreadDetailsPrRow({
   return (
     <>
       {detail !== null && (showChecks || trailingAction !== null || watching) ? (
-        <div className="pb-2">
-          {openRow(detail.title)}
-          <div className="mt-1.5 flex h-6 min-w-0 items-center gap-0.5 ps-9 pe-1 text-meta text-muted-foreground">
-            <span className="me-1 shrink-0 tabular-nums">#{number}</span>
+        <div className="flex min-h-9 min-w-0 items-center gap-1 ps-2.5 pe-1">
+          {icon}
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5 py-0.5">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <ThreadDetailsControl
+                    part="heading"
+                    aria-label={openAriaLabel}
+                    onClick={onOpen}
+                    onAuxClick={onOpen}
+                  />
+                }
+              >
+                <span className="truncate text-meta text-foreground">
+                  #{number} {detail.title}
+                </span>
+              </TooltipTrigger>
+              {rowTooltip}
+            </Tooltip>
             {showChecks && checksRollup !== null ? (
               <PullRequestChecksPopover
                 checksState={checksRollup}
                 checks={detail.checks}
-                variant="count"
-                render={<ThreadDetailsControl part="meta" />}
+                label={
+                  <span
+                    className={cn(
+                      "truncate text-caption",
+                      checksRollup === "failing"
+                        ? "text-error-foreground"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {describePullRequestChecks(detail.checks)}
+                  </span>
+                }
               />
             ) : null}
-            {watchControl(true)}
-            <span className="flex-1" />
-            {trailingAction ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <ThreadDetailsControl
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      part="meta"
-                      tone={trailingAction.destructive ? "destructive" : "primary"}
-                      disabled={actionPending || handoff !== null}
-                      onClick={trailingAction.onClick}
-                    />
-                  }
-                >
-                  {trailingAction.pending ? trailingAction.pendingLabel : trailingAction.label}
-                  {trailingAction.suffix}
-                </TooltipTrigger>
-                <TooltipPopup side="top">{trailingAction.tooltip}</TooltipPopup>
-              </Tooltip>
-            ) : null}
           </div>
+          {watchControl(true)}
+          {trailingAction ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <ThreadDetailsControl
+                    part="meta"
+                    tone={trailingAction.destructive ? "destructive" : "primary"}
+                    disabled={actionPending || handoff !== null}
+                    onClick={trailingAction.onClick}
+                  />
+                }
+              >
+                {trailingAction.pending ? trailingAction.pendingLabel : trailingAction.label}
+                {trailingAction.suffix}
+              </TooltipTrigger>
+              <TooltipPopup side="top">{trailingAction.tooltip}</TooltipPopup>
+            </Tooltip>
+          ) : null}
         </div>
       ) : watching ? (
         <div className={THREAD_DETAILS_PANEL_ACTION_GROUP_CLASS}>
