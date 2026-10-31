@@ -456,6 +456,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta boring sidebar folder rows multiline branch pull request details"],
   },
   {
+    id: "live-thinking",
+    title: "Live thinking",
+    to: "/settings/labs",
+    searchTerms: ["beta reasoning thought stream expand watch agent think transcript"],
+  },
+  {
     id: "guest-links",
     title: "Guest links",
     to: "/settings/labs",

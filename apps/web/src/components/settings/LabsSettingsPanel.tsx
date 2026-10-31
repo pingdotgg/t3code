@@ -18,6 +18,7 @@ export function LabsSettingsPanel() {
       <SettingsSection id="beta" title="Beta">
         <BoringSidebarRow />
         <BoringSidebarMultilineRow />
+        <LiveThinkingRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
@@ -63,6 +64,24 @@ function BoringSidebarMultilineRow() {
             updateSettings({ boringSidebarMultilineRows: Boolean(checked) })
           }
           aria-label="Two-line folder rows"
+        />
+      }
+    />
+  );
+}
+
+function LiveThinkingRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("live-thinking")}
+      description="While an agent works, its Thinking row expands to the full thought as it streams, like a live transcript. Off by default; the collapsed row keeps showing the one-line preview."
+      control={
+        <Switch
+          checked={settings.liveThinkingEnabled}
+          onCheckedChange={(checked) => updateSettings({ liveThinkingEnabled: Boolean(checked) })}
+          aria-label="Live thinking"
         />
       }
     />

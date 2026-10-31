@@ -360,23 +360,40 @@ function CompactingLabel({ createdAt }: { createdAt: string | null }) {
 export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "thinking" }> }) {
   const ctx = use(TimelineRowCtx);
   const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
+  // Labs live-thinking: local expansion of the streaming thought below the row.
+  const [thoughtExpanded, setThoughtExpanded] = useState(false);
   if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
   // A failed group keeps this disclosure while an approval waits, but nothing is thinking then.
   const live = ctx.pendingApprovals.size === 0;
   const activity = (
     <LiveActivityRow label="Thinking" iconName="brain" active={live} shimmer={live} />
   );
-  const { groupId } = row;
-  if (groupId === undefined) return activity;
+  const { groupId, thought } = row;
+  if (thought === undefined) {
+    if (groupId === undefined) return activity;
+    return (
+      <button
+        type="button"
+        className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        aria-expanded={row.expanded === true}
+        onClick={() => ctx.onToggleWorkGroup(groupId, row.id)}
+      >
+        {activity}
+      </button>
+    );
+  }
   return (
-    <button
-      type="button"
-      className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-      aria-expanded={row.expanded === true}
-      onClick={() => ctx.onToggleWorkGroup(groupId, row.id)}
-    >
-      {activity}
-    </button>
+    <div className="min-w-0 max-w-full">
+      <button
+        type="button"
+        className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        aria-expanded={thoughtExpanded}
+        onClick={() => setThoughtExpanded((expanded) => !expanded)}
+      >
+        {activity}
+      </button>
+      {thoughtExpanded ? <ReasoningTraceContent entries={[thought]} /> : null}
+    </div>
   );
 }
 
@@ -490,6 +507,8 @@ export function LiveWorkEntryTimelineRow({
   row: Extract<TimelineRow, { kind: "work-live" }>;
 }) {
   const ctx = use(TimelineRowCtx);
+  // Labs live-thinking: local expansion of the streaming thought below the row.
+  const [thoughtExpanded, setThoughtExpanded] = useState(false);
   const threadTarget = useThreadReadTarget(row.entry, ctx.activeThreadEnvironmentId);
   const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
   const threadLabel = threadReadLabel(label, threadTarget);
@@ -500,10 +519,16 @@ export function LiveWorkEntryTimelineRow({
   if (pendingApproval) return <TimelinePendingApprovalRow approval={pendingApproval} />;
 
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
-  const thoughtLine = row.thought && !row.expanded ? liveThoughtLine(row.thought.detail ?? "") : "";
+  const liveThought = row.liveThinking === true ? row.thought : undefined;
+  const thoughtLine =
+    liveThought !== undefined && thoughtExpanded
+      ? ""
+      : row.thought && !row.expanded
+        ? liveThoughtLine(row.thought.detail ?? "")
+        : "";
   const thoughtIsStatus = thoughtLine !== "" && row.entry === row.thought;
 
-  return (
+  const button = (
     <button
       type="button"
       className={cn(
@@ -515,8 +540,12 @@ export function LiveWorkEntryTimelineRow({
           ? `${thoughtLine ? `${thoughtLine} ` : ""}${threadLabel?.text ?? label}, tool call failed`
           : undefined
       }
-      aria-expanded={row.expanded}
-      onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
+      aria-expanded={liveThought !== undefined ? thoughtExpanded : row.expanded}
+      onClick={() =>
+        liveThought !== undefined
+          ? setThoughtExpanded((expanded) => !expanded)
+          : ctx.onToggleWorkGroup(row.groupId, row.id)
+      }
     >
       {thoughtLine ? (
         <WorkLogRow
@@ -576,6 +605,14 @@ export function LiveWorkEntryTimelineRow({
         active={row.active}
       />
     </button>
+  );
+
+  if (liveThought === undefined || !thoughtExpanded) return button;
+  return (
+    <div className="min-w-0 max-w-full">
+      {button}
+      <ReasoningTraceContent entries={[liveThought]} />
+    </div>
   );
 }
 

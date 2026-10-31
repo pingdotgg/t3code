@@ -2365,6 +2365,140 @@ describe("deriveMessagesTimelineRows", () => {
     expect(declinedRows.filter((row) => row.id === "live-activity-row")).toHaveLength(1);
   });
 
+  describe("labs live-thinking row", () => {
+    const liveThinkingBase = {
+      latestRun: {
+        runId: "turn-1" as never,
+        status: "running" as const,
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    };
+
+    it("flags the live work row so its click expands the streaming thought", () => {
+      const deriveRows = (liveThinkingEnabled?: boolean) =>
+        deriveMessagesTimelineRows({
+          ...(liveThinkingEnabled === undefined ? {} : { liveThinkingEnabled }),
+          ...liveThinkingBase,
+          timelineEntries: [
+            {
+              id: "streaming-thought-entry",
+              kind: "work",
+              createdAt: "2026-01-01T00:00:05Z",
+              entry: {
+                id: "streaming-thought",
+                createdAt: "2026-01-01T00:00:05Z",
+                runId: "turn-1" as never,
+                label: "Thinking",
+                tone: "thinking" as const,
+                itemType: "reasoning" as const,
+                toolLifecycleStatus: "inProgress" as const,
+                detail: "The build fails because the fixture is stale.",
+              },
+            },
+          ],
+        });
+
+      const enabledRow = deriveRows(true).find((row) => row.kind === "work-live");
+      expect(enabledRow).toMatchObject({
+        kind: "work-live",
+        liveThinking: true,
+        thought: { id: "streaming-thought" },
+      });
+      const disabledRow = deriveRows(false).find((row) => row.kind === "work-live");
+      expect(disabledRow).toMatchObject({
+        kind: "work-live",
+        thought: { id: "streaming-thought" },
+      });
+      expect(disabledRow?.liveThinking).toBeUndefined();
+      const defaultRow = deriveRows().find((row) => row.kind === "work-live");
+      expect(defaultRow?.liveThinking).toBeUndefined();
+    });
+
+    it("attaches the thought to the bare thinking row only when the toggle is on", () => {
+      const deriveRows = (liveThinkingEnabled?: boolean) =>
+        deriveMessagesTimelineRows({
+          ...(liveThinkingEnabled === undefined ? {} : { liveThinkingEnabled }),
+          ...liveThinkingBase,
+          timelineEntries: [
+            {
+              id: "settled-thought-entry",
+              kind: "work",
+              createdAt: "2026-01-01T00:00:04Z",
+              entry: {
+                id: "settled-thought",
+                createdAt: "2026-01-01T00:00:04Z",
+                runId: "turn-1" as never,
+                label: "Thinking",
+                tone: "thinking" as const,
+                itemType: "reasoning" as const,
+                toolLifecycleStatus: "completed" as const,
+                detail: "The build fails because the fixture is stale.",
+              },
+            },
+            {
+              id: "failed-command-entry",
+              kind: "work",
+              createdAt: "2026-01-01T00:00:05Z",
+              entry: {
+                id: "failed-command",
+                createdAt: "2026-01-01T00:00:05Z",
+                runId: "turn-1" as never,
+                label: "Ran rg",
+                command: "rg toolCall",
+                requestKind: "command",
+                tone: "tool" as const,
+                toolLifecycleStatus: "failed" as const,
+              },
+            },
+          ],
+        });
+
+      const enabledRow = deriveRows(true).find((row) => row.kind === "thinking");
+      expect(enabledRow).toMatchObject({
+        kind: "thinking",
+        thought: { id: "settled-thought" },
+      });
+      const disabledRow = deriveRows(false).find((row) => row.kind === "thinking");
+      expect(disabledRow).toMatchObject({ kind: "thinking" });
+      expect(disabledRow?.thought).toBeUndefined();
+      const defaultRow = deriveRows().find((row) => row.kind === "thinking");
+      expect(defaultRow?.thought).toBeUndefined();
+    });
+
+    it("leaves the live row bare while the thought is still empty", () => {
+      const rows = deriveMessagesTimelineRows({
+        liveThinkingEnabled: true,
+        ...liveThinkingBase,
+        timelineEntries: [
+          {
+            id: "empty-thought-entry",
+            kind: "work",
+            createdAt: "2026-01-01T00:00:05Z",
+            entry: {
+              id: "empty-thought",
+              createdAt: "2026-01-01T00:00:05Z",
+              runId: "turn-1" as never,
+              label: "Thinking",
+              tone: "thinking" as const,
+              itemType: "reasoning" as const,
+              toolLifecycleStatus: "inProgress" as const,
+              detail: "   ",
+            },
+          },
+        ],
+      });
+      const liveRow = rows.find((r) => r.kind === "work-live");
+      expect(liveRow).toBeUndefined();
+      const thinkingRow = rows.find((r) => r.kind === "thinking");
+      expect(thinkingRow?.thought).toBeUndefined();
+    });
+  });
+
   it("does not fold the session's running turn when latestRun regresses", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [

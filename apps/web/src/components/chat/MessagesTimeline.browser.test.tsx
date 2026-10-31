@@ -62,6 +62,23 @@ vi.mock(import("~/assets/assetUrls"), async (original) => {
   };
 });
 
+const liveThinkingState = vi.hoisted(() => ({ enabled: false }));
+vi.mock(import("../../hooks/useSettings"), async (original) => {
+  const actual = await original();
+  const { DEFAULT_UNIFIED_SETTINGS } = await import("@t3tools/contracts/settings");
+  const settings = () => ({
+    ...DEFAULT_UNIFIED_SETTINGS,
+    liveThinkingEnabled: liveThinkingState.enabled,
+  });
+  return {
+    ...actual,
+    useEnvironmentSettings: ((
+      _environmentId: EnvironmentId,
+      selector?: (s: ReturnType<typeof settings>) => unknown,
+    ) => (selector ? selector(settings()) : settings())) as never,
+  };
+});
+
 const ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const CREATED_AT = "2026-03-17T19:12:28.000Z";
 
@@ -1164,4 +1181,60 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
   await expect
     .element(screen.getByRole("button", { name: "Open the current tab", exact: true }))
     .toBeVisible();
+});
+
+describe("labs live-thinking row", () => {
+  const runId = RunId.make("run-live-thinking");
+  const thoughtDetail =
+    "The build fails because the fixture is stale. Let me check the fixture before touching anything else.";
+  const entries: Entry[] = [
+    {
+      id: "entry-live-thinking",
+      kind: "work",
+      createdAt: CREATED_AT,
+      entry: {
+        id: "live-thinking",
+        createdAt: CREATED_AT,
+        runId,
+        label: "Thinking",
+        tone: "thinking",
+        itemType: "reasoning",
+        toolLifecycleStatus: "inProgress",
+        detail: thoughtDetail,
+      },
+    },
+  ];
+  const liveProps = {
+    isWorking: true,
+    latestRun: { runId, status: "running" as const, startedAt: CREATED_AT, completedAt: null },
+  };
+  const liveRow = (screen: Awaited<ReturnType<typeof renderTimeline>>) =>
+    screen.container.querySelector("[data-timeline-row-kind='work-live'] button");
+  const liveRowScroller = (screen: Awaited<ReturnType<typeof renderTimeline>>) =>
+    screen.container.querySelector("[data-timeline-row-kind='work-live'] .max-h-96");
+
+  it("keeps the work-group toggle while the labs setting is off", async () => {
+    liveThinkingState.enabled = false;
+    await using screen = await renderTimeline(entries, liveProps);
+    expect(liveRow(screen)).not.toBeNull();
+    await click(liveRow(screen) as HTMLElement);
+    // The click toggles the work group: the group row appears and the thought stays
+    // folded in the entry row, never in the live row.
+    expect(screen.container.querySelector("[data-timeline-row-kind='work']")).not.toBeNull();
+    expect(liveRowScroller(screen)).toBeNull();
+  });
+
+  it("expands the full streaming thought on click while the labs setting is on", async () => {
+    liveThinkingState.enabled = true;
+    await using screen = await renderTimeline(entries, liveProps);
+    expect(liveRow(screen)).not.toBeNull();
+    await click(liveRow(screen) as HTMLElement);
+    // The thought expands directly below the live row; the work group stays folded.
+    expect(liveRowScroller(screen)?.textContent).toContain(
+      "Let me check the fixture before touching anything else",
+    );
+    expect(screen.container.querySelector("[data-timeline-row-kind='work']")).toBeNull();
+    await click(liveRow(screen) as HTMLElement);
+    expect(liveRowScroller(screen)).toBeNull();
+  });
 });
