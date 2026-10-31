@@ -187,6 +187,7 @@ export function PullRequestMarkdown({
   lineBreaks,
   className,
   onTaskListChange,
+  gallery = true,
 }: {
   text: string;
   cwd: string;
@@ -196,6 +197,7 @@ export function PullRequestMarkdown({
   className?: string;
   /** `markerOffset` is into `text`. Checkboxes stay read-only without it. */
   onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
+  gallery?: boolean;
 }) {
   const segments = splitPullRequestBody(text);
   const context = useContext(PullRequestMarkdownContext);
@@ -206,7 +208,7 @@ export function PullRequestMarkdown({
         "space-y-3 [&_[data-markdown-details]]:border-0 [&_[data-markdown-details-summary]]:text-foreground/80 [&_[data-markdown-details-summary]>svg]:text-muted-foreground/60",
         className,
       )}
-      data-image-gallery
+      data-image-gallery={gallery ? "" : undefined}
     >
       {segments.map((segment) => (
         <PullRequestBodySegmentView
