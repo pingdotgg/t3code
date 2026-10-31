@@ -33,8 +33,8 @@ export class ServerBrowserOperationError extends Error {
   readonly tag: string;
   readonly detail: unknown;
 
-  constructor(tag: string, message: string, detail?: unknown) {
-    super(message);
+  constructor(tag: string, message: string, detail?: unknown, options?: ErrorOptions) {
+    super(message, options);
     this.tag = tag;
     this.detail = detail;
   }
@@ -72,6 +72,7 @@ export const toOperationError = (
 };
 
 const DEFAULT_TIMEOUT_MS = 15_000;
+const TARGET_COUNT_MS = 250;
 
 const pageRefs = new WeakMap<Page, { generation: string; refs: Map<string, string> }>();
 // A compact runtime namespace prevents old refs from aliasing after a server restart.
@@ -633,6 +634,52 @@ export const click = async (
 ): Promise<{ readonly x: number; readonly y: number }> => {
   const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const locator = targetLocator(page, input);
+  try {
+    return await clickTarget(page, locator, input, timeout, pointer);
+  } catch (cause) {
+    throw locator === null ? cause : await namedTargetTimeout(locator, input, cause);
+  }
+};
+
+/**
+ * Playwright's timeout names neither the target nor why it waited. Counting only after the
+ * wait failed keeps auto-wait intact, but the count describes the page after the timeout, not
+ * what the click did: Playwright can dispatch the click and then time out waiting for the
+ * navigation it started.
+ */
+const namedTargetTimeout = async (
+  locator: Locator,
+  input: { readonly locator?: string | undefined; readonly selector?: string | undefined },
+  cause: unknown,
+) => {
+  if (!(cause instanceof Error && cause.name === "TimeoutError")) return cause;
+  const target = JSON.stringify(input.locator ?? input.selector);
+  // The host's reply must still beat the broker's short grace after the operation timeout.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const matches = await Promise.race([
+    locator.count().catch(() => undefined),
+    new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => resolve(undefined), TARGET_COUNT_MS);
+    }),
+  ]).finally(() => clearTimeout(timer));
+  if (matches === undefined) return cause;
+  return new ServerBrowserOperationError(
+    "PreviewAutomationTimeoutError",
+    matches === 0
+      ? `No element matches ${target} after the timeout. The click may have happened and removed its target or navigated; check the page before retrying, then take a fresh snapshot and use its locator.`
+      : `${target} still matches an element after the timeout. The click may have happened; check the page before retrying.`,
+    undefined,
+    { cause },
+  );
+};
+
+const clickTarget = async (
+  page: Page,
+  locator: Locator | null,
+  input: PreviewAutomationClickInput,
+  timeout: number,
+  pointer: PointerReporter,
+) => {
   const point = await targetPoint(page, locator, input, timeout);
   await pointer(point, "click");
   const options = { button: input.button ?? "left", clickCount: input.clickCount ?? 1 } as const;
