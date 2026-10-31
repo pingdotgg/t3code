@@ -134,7 +134,7 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.thread.pullRequests?.[0]).toBe(links[0]);
   });
 
-  it("keeps live token usage when the terminal provider turn omits it", () => {
+  it("keeps live token usage and input confirmation when the terminal provider turn omits them", () => {
     const providerTurnId = ProviderTurnId.make("provider-turn-reducer");
     const running = {
       id: providerTurnId,
@@ -151,6 +151,7 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
         maxTokens: 200_000,
         updatedAt: "2026-08-29T00:00:00.000Z",
       },
+      inputRecordedAt: now,
     };
     const projection = { ...emptyProjection, providerTurns: [running] };
     const event = {
@@ -164,6 +165,7 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
         status: "completed",
         completedAt: now,
         tokenUsage: undefined,
+        inputRecordedAt: undefined,
       },
     } as OrchestrationV2DomainEvent;
 
@@ -171,6 +173,7 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
 
     expect(next?.providerTurns[0]?.status).toBe("completed");
     expect(next?.providerTurns[0]?.tokenUsage).toEqual(running.tokenUsage);
+    expect(next?.providerTurns[0]?.inputRecordedAt).toEqual(now);
   });
 
   it("applies thread lifecycle payloads instead of leaving stale metadata", () => {

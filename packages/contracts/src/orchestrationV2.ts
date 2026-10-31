@@ -1179,6 +1179,8 @@ export const OrchestrationV2ProviderTurn = Schema.Struct({
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
   tokenUsage: Schema.optional(OrchestrationV2ProviderTurnTokenUsage),
   turnTokenUsage: Schema.optional(TurnTokenUsage),
+  /** When the provider confirmed it recorded the turn's user input in its native history. */
+  inputRecordedAt: Schema.optional(Schema.DateTimeUtc),
 });
 export type OrchestrationV2ProviderTurn = typeof OrchestrationV2ProviderTurn.Type;
 
@@ -2371,6 +2373,7 @@ export const OrchestrationV2ProviderTurnJson = OrchestrationV2ProviderTurn.mapFi
   ...fields,
   startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  inputRecordedAt: Schema.optional(Schema.DateTimeUtcFromString),
 }));
 export type OrchestrationV2ProviderTurnJson = typeof OrchestrationV2ProviderTurnJson.Type;
 

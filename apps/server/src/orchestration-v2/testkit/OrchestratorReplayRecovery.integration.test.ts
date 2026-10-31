@@ -1,11 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Stream from "effect/Stream";
 import * as CodexReplay from "effect-codex-app-server/replay";
 import {
   type OrchestrationV2ThreadProjection,
@@ -27,6 +29,7 @@ import {
 import * as CursorAdapterV2Testkit from "../Adapters/CursorAdapterV2.testkit.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as EffectWorker from "../EffectWorker.ts";
+import * as Orchestrator from "../Orchestrator.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import {
@@ -77,6 +80,49 @@ const readCodexTranscript = Effect.fn("readCodexRecoveryTranscript")(function* (
     new URL("./fixtures/provider_thread_resume/codex_transcript.ndjson", import.meta.url),
   );
   return yield* decodeCodexTranscript(materializeReplayTranscriptWorkspace(transcript, workspace));
+});
+/** The first runtime stops once Codex starts the turn, before it records the request; the second resumes it. */
+const readCodexCutTurnTranscripts = Effect.fn("readCodexCutTurnTranscripts")(function* (
+  workspace: string,
+) {
+  const recorded = materializeReplayTranscriptWorkspace(
+    yield* readRawTranscript(
+      new URL("./fixtures/provider_thread_resume/codex_transcript.ndjson", import.meta.url),
+    ),
+    workspace,
+  );
+  const { entries } = recorded;
+  type Frame = { readonly params?: Record<string, any> };
+  const frameOf = (entry: (typeof entries)[number] | undefined): Frame | undefined =>
+    entry === undefined || entry.type === "runtime_exit" ? undefined : (entry.frame as Frame);
+  const firstStart = entries.findIndex(
+    (entry) => entry.type === "expect_outbound" && entry.label === "turn/start",
+  );
+  const firstStarted = entries.findIndex(
+    (entry) => entry.type === "emit_inbound" && entry.label === "turn/started",
+  );
+  const secondRuntime = entries.findIndex(
+    (entry, index) =>
+      index > firstStarted && entry.type === "expect_outbound" && entry.label === "initialize",
+  );
+  const request = frameOf(entries[firstStart])?.params?.input;
+  const cutTurnId = frameOf(entries[firstStarted])?.params?.turn?.id;
+  if (firstStart < 0 || firstStarted < 0 || secondRuntime < 0 || cutTurnId === undefined) {
+    throw new Error("provider_thread_resume must record two Codex runtimes.");
+  }
+  const resumed = entries.slice(secondRuntime).flatMap((entry): Array<typeof entry> => {
+    if (entry.type === "runtime_exit") return [entry];
+    const frame = frameOf(entry);
+    if (entry.label === "thread/tokenUsage/updated" && frame?.params?.turnId === cutTurnId) {
+      return [];
+    }
+    if (entry.type !== "expect_outbound" || entry.label !== "turn/start") return [entry];
+    return [{ ...entry, frame: { ...frame, params: { ...frame?.params, input: request } } }];
+  });
+  return {
+    cut: yield* decodeCodexTranscript({ ...recorded, entries: entries.slice(0, firstStarted + 1) }),
+    resumed: yield* decodeCodexTranscript({ ...recorded, entries: resumed }),
+  };
 });
 const decodePromptPair = Schema.decodeUnknownEffect(Schema.Tuple([Schema.String, Schema.String]));
 const readClaudeSubagentResumeTranscript = Effect.fn("readClaudeSubagentResumeTranscript")(
@@ -363,6 +409,134 @@ describe("orchestrator replay recovery", () => {
           Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
         ),
       ),
+  );
+
+  it.effect("resends a Codex request a restart cut before Codex recorded it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const workspace = yield* checkpointWorkspace("provider_thread_resume");
+        const transcripts = yield* readCodexCutTurnTranscripts(workspace);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* Effect.acquireRelease(
+          fs.makeTempDirectory({ prefix: "t3-orchestration-v2-cut-turn-" }),
+          (directory) => fs.remove(directory, { recursive: true, force: true }).pipe(Effect.orDie),
+        );
+        const snapshotPath = path.join(tempDir, "restart-state.sqlite");
+        const materialized = yield* materializeFixtureInput({
+          scenario: "provider_thread_resume",
+          fixtureInput: { steps: [{ type: "message", text: PROVIDER_THREAD_RESUME_FIRST_PROMPT }] },
+          driver: ProviderDriverKind.make("codex"),
+          modelSelection: CODEX_MODEL_SELECTION,
+        });
+        const threadId = materialized.projectionThreadIds[0];
+        const idleIndex = materialized.steps.findIndex((step) => step.type === "await_thread_idle");
+        if (threadId === undefined || idleIndex < 0) {
+          return yield* Effect.die("cut-turn scenario needs one thread and an idle step");
+        }
+        const harnessFor = (transcript: CodexReplay.CodexAppServerReplayTranscript) => ({
+          ...CodexOrchestratorReplayHarness,
+          makeProviderAdapterRegistryLayer: () => CodexAdapterV2Testkit.layer({ transcript }),
+        });
+        const scenario = (
+          name: string,
+          transcript: CodexReplay.CodexAppServerReplayTranscript,
+          steps: typeof materialized.steps,
+        ) => ({
+          name: `provider_thread_resume/codex:${name}`,
+          transcript,
+          commands: steps.flatMap((step) => (step.type === "dispatch" ? [step.command] : [])),
+          steps,
+          projectionThreadIds: materialized.projectionThreadIds,
+          runtimePolicyOverride: { cwd: workspace },
+        });
+        const layerDatabase = SqlitePersistence.layerFromPath(
+          path.join(tempDir, "state.sqlite"),
+        ).pipe(Layer.provide(NodeServices.layer));
+
+        const cut = scenario("cut", transcripts.cut, materialized.steps.slice(0, idleIndex));
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            // Codex started the turn and has not yet confirmed recording the request.
+            const turnStarted = yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "provider-turn.updated" && event.payload.status === "running",
+              ),
+              Stream.runHead,
+              Effect.forkScoped,
+            );
+            yield* runOrchestratorV2Scenario(cut);
+            yield* Fiber.join(turnStarted);
+            const sql = yield* SqlClient.SqlClient;
+            yield* sql`VACUUM INTO ${snapshotPath}`;
+          }).pipe(
+            Effect.provide(
+              Layer.merge(
+                layerProviderReplay(cut, harnessFor(transcripts.cut), {
+                  databaseLayer: layerDatabase,
+                }),
+                layerDatabase,
+              ),
+            ),
+          ),
+        );
+
+        const resumed = scenario(
+          "resumed",
+          transcripts.resumed,
+          materialized.steps.slice(idleIndex),
+        );
+        const result = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            yield* worker.drain();
+            return yield* runOrchestratorV2Scenario(resumed);
+          }).pipe(
+            Effect.provide(
+              layerProviderReplay(resumed, harnessFor(transcripts.resumed), {
+                databaseLayer: SqlitePersistence.layerFromPath(snapshotPath).pipe(
+                  Layer.provide(NodeServices.layer),
+                ),
+                recoverOnStartup: true,
+                continueThreadsAfterServerUpdate: true,
+              }),
+            ),
+          ),
+        );
+
+        const projection = projectionFor(result, transcripts.resumed.scenario);
+        assert.deepEqual(
+          projection.runs.map((run) => [run.status, run.restartContinuationOfRunId]),
+          [
+            ["cancelled", undefined],
+            ["completed", projection.runs[0]?.id],
+          ],
+        );
+        // The replay only accepts the resumed turn/start when its input is the cut request.
+        assert.deepEqual(
+          projection.messages
+            .filter((message) => message.id === projection.runs[1]?.userMessageId)
+            .map((message) => message.text),
+          [PROVIDER_THREAD_RESUME_FIRST_PROMPT],
+        );
+        // Codex confirmed the resent request, and later usage updates kept that confirmation.
+        assert.deepEqual(
+          projection.providerTurns.map((turn) => [
+            turn.inputRecordedAt !== undefined,
+            turn.tokenUsage !== undefined,
+          ]),
+          [
+            [false, false],
+            [true, true],
+          ],
+        );
+      }).pipe(
+        provideDeterministicTestRuntime,
+        Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
+      ),
+    ),
   );
 
   it.effect(

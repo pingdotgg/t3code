@@ -280,6 +280,36 @@ export function isRestartNoteContinuation(
   );
 }
 
+/**
+ * Without the provider's confirmation, the native history may lack the request: Codex runs prompt
+ * hooks and pre-turn compaction first. Any native turn of the attempt counts, so a goal's later turns resume natively.
+ */
+export function restartSourceInputUnrecorded(
+  source: Pick<OrchestrationV2Run, "activeAttemptId">,
+  providerTurns: ReadonlyArray<
+    Pick<OrchestrationV2ProviderTurn, "runAttemptId" | "inputRecordedAt">
+  >,
+): boolean {
+  return (
+    source.activeAttemptId == null ||
+    !providerTurns.some(
+      (turn) => turn.runAttemptId === source.activeAttemptId && turn.inputRecordedAt !== undefined,
+    )
+  );
+}
+
+export function isRestartResendContinuation(
+  run: Pick<OrchestrationV2Run, "restartContinuationOfRunId">,
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  providerTurns: Parameters<typeof restartSourceInputUnrecorded>[1],
+): boolean {
+  const source =
+    run.restartContinuationOfRunId === undefined
+      ? undefined
+      : runs.find((candidate) => candidate.id === run.restartContinuationOfRunId);
+  return source !== undefined && restartSourceInputUnrecorded(source, providerTurns);
+}
+
 /** Derive delivery from later completed turns on the same provider thread, excluding compactions, resumes, and rolled-back runs. */
 export function pendingRestartCancelledBackgroundWork(input: {
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
