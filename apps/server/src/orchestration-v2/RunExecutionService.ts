@@ -1346,6 +1346,7 @@ export const layer: Layer.Layer<
         });
         // Held by the timer until it exits, so closing can always interrupt a blocked write.
         let idleFlushTimer: Fiber.Fiber<void> | undefined;
+        let idleFlushTimerAt: number | null = null;
         // A failed idle write keeps its text held and retries with backoff. The provider's next
         // update still writes, and fails ingestion, the normal way.
         let idleFlushFailures = 0;
@@ -1392,21 +1393,28 @@ export const layer: Layer.Layer<
         const idleFlushLoop: Effect.Effect<void> = Effect.gen(function* () {
           while (true) {
             const at = assistantStreaming.nextIdleFlushAt();
+            idleFlushTimerAt = at;
             const now = DateTime.toEpochMillis(yield* DateTime.now);
             if (at !== null && at > now) yield* Effect.sleep(Duration.millis(at - now));
             if (yield* flushDueAssistantText) return;
           }
         }).pipe(Effect.ignoreCause);
         // Runs under ingestLock, so the timer cannot exit between this check and the fork.
-        const scheduleIdleFlush = Effect.suspend(() =>
-          idleFlushTimer !== undefined ||
-          idleFlushClosed ||
-          assistantStreaming.nextIdleFlushAt() === null
-            ? Effect.void
-            : Effect.map(Effect.forkDetach(idleFlushLoop), (fiber) => {
-                idleFlushTimer = fiber;
-              }),
-        );
+        const scheduleIdleFlush = Effect.suspend(() => {
+          const at = assistantStreaming.nextIdleFlushAt();
+          if (
+            idleFlushClosed ||
+            at === null ||
+            (idleFlushTimer !== undefined && (idleFlushTimerAt === null || at >= idleFlushTimerAt))
+          )
+            return Effect.void;
+          const previous = idleFlushTimer;
+          return Effect.gen(function* () {
+            if (previous !== undefined) yield* Fiber.interrupt(previous);
+            idleFlushTimerAt = at;
+            idleFlushTimer = yield* Effect.forkDetach(idleFlushLoop);
+          });
+        });
         const closeIdleFlush = Effect.suspend(() => {
           idleFlushClosed = true;
           const timer = idleFlushTimer;

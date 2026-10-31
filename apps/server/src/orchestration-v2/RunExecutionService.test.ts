@@ -4133,6 +4133,68 @@ it.effect.each([
   }),
 );
 
+it.effect("reschedules idle text when a newer snapshot precedes a failed write's retry", () =>
+  Effect.gen(function* () {
+    const key = "idle-flush-earlier-deadline";
+    const ids = backgroundScenarioIds(key);
+    const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
+    const subagentIngested = yield* Deferred.make<void>();
+    const markers = yield* Queue.unbounded<void>();
+    const attempts = yield* Ref.make(0);
+    const childWrites = yield* Ref.make<ReadonlyArray<string>>([]);
+    const scenario = yield* runBackgroundItemScenario(key, () => Stream.fromQueue(events), {
+      onIngest: (event) =>
+        Effect.gen(function* () {
+          if (event.type === "subagent.updated")
+            yield* Deferred.succeed(subagentIngested, undefined);
+          if (event.type === "message.updated" && event.message.role === "user")
+            yield* Queue.offer(markers, undefined);
+          if (event.type !== "turn_item.updated" || event.turnItem.type !== "assistant_message")
+            return;
+          if ((yield* Ref.getAndUpdate(attempts, (n) => n + 1)) < 2)
+            return yield* Effect.die(new Error("disk I/O error"));
+          yield* Ref.update(childWrites, (current) => [...current, event.turnItem.text]);
+        }),
+    }).pipe(Effect.forkChild);
+    const marker = streamedMessageEvent({
+      id: `message:${key}:marker`,
+      threadId: ids.threadId,
+      runId: ids.runId,
+      role: "user",
+      text: "marker",
+      streaming: false,
+    });
+
+    yield* holdChildSnapshot(ids, events, subagentIngested);
+    yield* TestClock.adjust("1 second");
+    yield* Queue.offer(events, marker);
+    yield* Queue.take(markers);
+    assert.equal(yield* Ref.get(attempts), 1);
+    yield* TestClock.adjust("1 second");
+    yield* Queue.offer(events, marker);
+    yield* Queue.take(markers);
+    assert.equal(yield* Ref.get(attempts), 2);
+
+    const newer = childAssistantSnapshot(ids);
+    assert(newer.type === "turn_item.updated" && newer.turnItem.type === "assistant_message");
+    yield* Queue.offerAll(events, [
+      { ...newer, turnItem: { ...newer.turnItem, text: "New partial response" } },
+      marker,
+    ]);
+    yield* Queue.take(markers);
+    yield* TestClock.adjust("800 millis");
+    yield* Queue.offer(events, marker);
+    yield* Queue.take(markers);
+    assert.deepEqual(yield* Ref.get(childWrites), ["New partial response"]);
+
+    yield* Queue.offerAll(events, [
+      rootTerminalEvent(ids, "completed"),
+      linkedSubagentEvent(ids, "completed"),
+    ]);
+    yield* Fiber.join(scenario);
+  }),
+);
+
 function streamedMessageEvent(input: {
   readonly id: string;
   readonly threadId: ThreadId;
