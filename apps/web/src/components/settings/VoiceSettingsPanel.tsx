@@ -28,6 +28,7 @@ import {
   GaugeIcon,
   GlobeIcon,
   HardDriveIcon,
+  InfoIcon,
   LanguagesIcon,
   RefreshCwIcon,
   TargetIcon,
@@ -50,7 +51,24 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import {
+  Select,
+  SelectButton,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
+import {
+  Combobox,
+  ComboboxEmpty,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxPopup,
+  ComboboxSearchInput,
+  ComboboxTrigger,
+} from "../ui/combobox";
+import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
@@ -172,7 +190,7 @@ const modelSortOrder = (model: EnvironmentSpeechModel) => {
   return 3;
 };
 
-function ModelCard(props: {
+function ModelRow(props: {
   readonly model: EnvironmentSpeechModel;
   readonly busy: boolean;
   readonly failedDownload: boolean;
@@ -185,52 +203,66 @@ function ModelCard(props: {
   const downloading = model.state === "downloading" || model.state === "verifying";
   const progress = model.downloaded === undefined ? 0 : (model.downloaded / model.size) * 100;
   return (
-    <div
-      className={`rounded-lg border px-3 py-3 ${model.active ? "border-primary/40 bg-primary/5" : "border-border/70 bg-card/30"}`}
-    >
-      <div className="flex items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-label leading-5">{model.name}</span>
-            {model.recommended ? <Badge variant="secondary">Recommended</Badge> : null}
-            {model.supportsStreaming ? (
-              <Badge variant="secondary">
-                <AudioLinesIcon className="mr-1 size-3" />
-                Streaming
-              </Badge>
-            ) : null}
-            {model.supportsTranslation ? (
-              <Badge variant="secondary">
-                <LanguagesIcon className="mr-1 size-3" />
-                Translate
-              </Badge>
-            ) : null}
-          </div>
-          <p className="mt-1 text-meta leading-relaxed text-muted-foreground">
-            {model.description}
-          </p>
-          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-muted-foreground">
-            <span className="inline-flex items-center gap-1">
-              <GlobeIcon className="size-3" />
-              {model.languages.length === 1
-                ? languageLabel(model.languages[0]!)
-                : `${model.languages.length} languages`}
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <HardDriveIcon className="size-3" />
-              {formatSize(model.size)}
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <TargetIcon className="size-3" />
-              Accuracy {model.accuracy}
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <GaugeIcon className="size-3" />
-              Speed {model.speed}
-            </span>
-          </div>
-        </div>
+    <SettingsRow
+      title={
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span>{model.name}</span>
+          {model.recommended ? <Badge variant="secondary">Recommended</Badge> : null}
+        </span>
+      }
+      description={model.description}
+      control={
         <div className="flex shrink-0 items-center gap-1">
+          <Popover>
+            <PopoverTrigger
+              render={
+                <Button
+                  size="icon-sm"
+                  variant="ghost-muted"
+                  aria-label={`Details for ${model.name}`}
+                />
+              }
+            >
+              <InfoIcon className="size-3.5" />
+            </PopoverTrigger>
+            <PopoverContent align="end" width="md">
+              <p className="text-label">{model.name}</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {model.supportsStreaming ? (
+                  <Badge variant="secondary">
+                    <AudioLinesIcon className="mr-1 size-3" />
+                    Streaming
+                  </Badge>
+                ) : null}
+                {model.supportsTranslation ? (
+                  <Badge variant="secondary">
+                    <LanguagesIcon className="mr-1 size-3" />
+                    Translate
+                  </Badge>
+                ) : null}
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-muted-foreground">
+                <span className="inline-flex items-center gap-1">
+                  <GlobeIcon className="size-3" />
+                  {model.languages.length === 1
+                    ? languageLabel(model.languages[0]!)
+                    : `${model.languages.length} languages`}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <HardDriveIcon className="size-3" />
+                  {formatSize(model.size)}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <TargetIcon className="size-3" />
+                  Accuracy {model.accuracy}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <GaugeIcon className="size-3" />
+                  Speed {model.speed}
+                </span>
+              </div>
+            </PopoverContent>
+          </Popover>
           {downloading ? (
             <Button
               size="icon-sm"
@@ -267,7 +299,8 @@ function ModelCard(props: {
             </Button>
           ) : null}
         </div>
-      </div>
+      }
+    >
       {downloading ? (
         <div className="mt-3">
           <div className="h-1 overflow-hidden rounded-full bg-muted">
@@ -287,7 +320,7 @@ function ModelCard(props: {
           Download failed. Try again.
         </p>
       ) : null}
-    </div>
+    </SettingsRow>
   );
 }
 
@@ -554,10 +587,11 @@ export function VoiceSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection title="Environment">
+      <SettingsSection title="Input">
         <SettingsRow
           {...searchableSetting("transcription-environment")}
-          description="Run voice transcription on this environment for every thread."
+          title="Transcription environment"
+          description="Where voice models run for all threads."
           control={
             <Select
               disabled={!clientSettingsHydrated || operation !== null}
@@ -609,14 +643,13 @@ export function VoiceSettingsPanel() {
             </Select>
           }
         />
-      </SettingsSection>
-      <SettingsSection title="Input">
+
         <SettingsRow
           {...searchableSetting("microphone")}
           description={
             selectedIsUnavailable
               ? "The selected microphone is unavailable. Select another microphone to record."
-              : "Choose the microphone used by this browser or app."
+              : "Record with this microphone."
           }
           control={
             <div className="flex w-full max-w-80 items-center gap-1.5">
@@ -667,7 +700,8 @@ export function VoiceSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("dictation-shortcut-mode")}
-          description="Choose how the dictation shortcut starts and finishes recording. Change the Dictate shortcut in Keybindings settings."
+          title="Recording shortcut"
+          description="Hold or tap to record. Set the shortcut in Keybindings."
           control={
             <Select
               value={voiceShortcutMode}
@@ -695,13 +729,13 @@ export function VoiceSettingsPanel() {
           }
         />
       </SettingsSection>
-      <SettingsSection title="Transcription models" id={searchableSetting("local-voice-input").id}>
+      <SettingsSection title="Transcription">
         <SettingsRow
-          title="Active model"
+          title="Model"
           description={
             currentStatus && !currentStatus.supported
               ? currentStatus.reason
-              : "Models run on the selected environment. Recordings are deleted after transcription."
+              : "Recordings are deleted after transcription."
           }
           control={
             <span className="text-body text-muted-foreground">
@@ -712,15 +746,15 @@ export function VoiceSettingsPanel() {
           }
         />
         <SettingsRow
-          title="Transcription language"
+          title="Language"
           description={
             !activeModel
-              ? "Select a model to choose a transcription language."
+              ? "Download a model to choose a language."
               : activeModel.languages.length === 1
                 ? `This model only supports ${languageLabel(activeModel.languages[0]!)}.`
                 : activeModel.supportsLanguageDetection
-                  ? "Choose a language or let the model detect it from your speech."
-                  : "This model cannot detect language automatically. Choose the language you speak."
+                  ? "Choose your language or detect it automatically."
+                  : "Choose the language you speak."
           }
           control={
             <Select
@@ -775,99 +809,58 @@ export function VoiceSettingsPanel() {
             </Select>
           }
         />
-        <SettingsRow
-          title="Translate to English"
-          description={
-            !currentStatus?.supported || !currentStatus.supportsTranslation
-              ? "The active model does not support translation."
-              : currentStatus.effectiveLanguage === "en"
-                ? "English speech is transcribed without translation."
-                : "Convert speech in the selected or detected language directly into English text."
-          }
-          control={
-            <Switch
-              aria-label="Translate to English"
-              checked={currentStatus?.supported ? currentStatus.translateToEnglish : false}
-              disabled={
-                !prepared ||
-                !currentStatus?.supported ||
-                !currentStatus.supportsTranslation ||
-                operation !== null
-              }
-              onCheckedChange={(enabled) => {
-                if (!prepared) return;
-                setOperation("translation");
-                void runtime
-                  .runPromise(updateEnvironmentSpeechTranslation(prepared, enabled))
-                  .then((nextStatus) => setStatus({ prepared, value: nextStatus }))
-                  .catch((error) => {
-                    toastManager.add({
-                      type: "error",
-                      title: "Could not update speech translation",
-                      description: error instanceof Error ? error.message : String(error),
-                    });
-                  })
-                  .finally(() => setOperation(null));
-              }}
-            />
-          }
-        />
+      </SettingsSection>
+      <FoldedSettingsSection
+        id={searchableSetting("local-voice-input").id}
+        headerPlacement="outside"
+        title="Transcription models"
+        summary={activeModel?.name ?? "Choose a model"}
+      >
         {currentStatus?.supported && prepared ? (
-          <div className="flex h-80 min-h-0 flex-col border-t border-border/50 sm:flex-row">
-            <div className="flex min-h-0 shrink-0 flex-col border-b border-border/50 bg-muted/20 sm:w-44 sm:border-r sm:border-b-0">
-              <div className="flex items-center gap-1 p-2 sm:flex-col sm:items-stretch sm:gap-2 sm:px-4 sm:py-3">
-                <span className="hidden text-meta text-muted-foreground sm:block">Language</span>
-                <div className="flex min-w-0 flex-1 items-center gap-1 sm:flex-none">
-                  <Input
-                    type="search"
-                    size="compact"
-                    aria-label="Search languages"
-                    placeholder="Search languages"
-                    value={languageSearch}
-                    onChange={(event) => setLanguageSearch(event.target.value)}
-                  />
-                  {languageSearch ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label="Clear language search"
-                      onClick={() => setLanguageSearch("")}
-                    >
-                      <XIcon className="size-3.5" />
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-              <div
-                role="group"
-                aria-label="Browse transcription models by language"
-                className="flex min-h-0 gap-1 overflow-x-auto px-2 pb-2 sm:flex-1 sm:px-1.5 sm:flex-col sm:overflow-y-auto"
-              >
-                {matchingLanguages.map((code) => (
-                  <Button
-                    key={code}
-                    type="button"
-                    size="sm"
-                    variant={language === code ? "secondary" : "ghost-muted"}
-                    aria-pressed={language === code}
-                    className="shrink-0 justify-start"
-                    onClick={() => setSelectedLanguage({ environmentId, code })}
+          <>
+            <SettingsRow
+              title="Model language"
+              description="Find models that support your language."
+              control={
+                <Combobox
+                  items={matchingLanguages}
+                  filteredItems={matchingLanguages}
+                  value={language ?? null}
+                  onValueChange={(code) => {
+                    if (code) setSelectedLanguage({ environmentId, code });
+                  }}
+                  onOpenChange={() => setLanguageSearch("")}
+                >
+                  <ComboboxTrigger
+                    aria-label="Browse transcription models by language"
+                    render={<SelectButton size="sm" />}
                   >
-                    {languageLabel(code)}
-                  </Button>
-                ))}
-                {matchingLanguages.length === 0 ? (
-                  <p className="px-2.5 py-2 text-meta text-muted-foreground">No languages found</p>
-                ) : null}
-              </div>
-            </div>
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-              <div className="space-y-2 px-4 py-3">
-                <p className="text-meta text-muted-foreground">
-                  Models for {language ? languageLabel(language) : "this environment"}
-                </p>
-                <div className="flex items-center gap-1">
+                    {language ? languageLabel(language) : "Choose language"}
+                  </ComboboxTrigger>
+                  <ComboboxPopup align="end">
+                    <ComboboxSearchInput
+                      aria-label="Search languages"
+                      placeholder="Search languages"
+                      value={languageSearch}
+                      onChange={(event) => setLanguageSearch(event.target.value)}
+                      showClear
+                    />
+                    <ComboboxEmpty>No languages found</ComboboxEmpty>
+                    <ComboboxList>
+                      {(code: string) => (
+                        <ComboboxItem key={code} value={code}>
+                          {languageLabel(code)}
+                        </ComboboxItem>
+                      )}
+                    </ComboboxList>
+                  </ComboboxPopup>
+                </Combobox>
+              }
+            />
+            <SettingsRow
+              title="Search models"
+              control={
+                <div className="flex w-full max-w-80 items-center gap-1">
                   <Input
                     type="search"
                     size="compact"
@@ -888,85 +881,82 @@ export function VoiceSettingsPanel() {
                     </Button>
                   ) : null}
                 </div>
-              </div>
-              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-4 py-3">
-                {visibleModels.map((model) => (
-                  <ModelCard
-                    key={model.id}
-                    model={model}
-                    busy={operation !== null}
-                    failedDownload={
-                      failedDownloads?.prepared === prepared &&
-                      failedDownloads.modelIds.has(model.id)
-                    }
-                    onDownload={() =>
-                      runModelOperation(
-                        model.id,
-                        async () => {
-                          const result = await runtime.runPromise(
-                            downloadEnvironmentSpeechModel(prepared, model.id),
-                          );
-                          if (
-                            result.models.some(
-                              (candidate) =>
-                                candidate.id === model.id && candidate.state === "installed",
-                            )
-                          ) {
-                            await runtime.runPromise(
-                              selectEnvironmentSpeechModel(prepared, model.id),
-                            );
-                          }
-                        },
-                        "download",
-                      )
-                    }
-                    onSelect={() =>
-                      runModelOperation(model.id, () =>
-                        runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id)),
-                      )
-                    }
-                    onCancel={() =>
-                      void runtime
-                        .runPromise(cancelEnvironmentSpeechModelDownload(prepared, model.id))
-                        .then(refreshModels)
-                        .catch(reportModelError)
-                    }
-                    onDelete={() =>
-                      void ensureLocalApi()
-                        .dialogs.confirm(`Delete ${model.name} from this T3 environment?`)
-                        .then((confirmed) => {
-                          if (confirmed)
-                            runModelOperation(model.id, () =>
-                              runtime.runPromise(removeEnvironmentSpeechModel(prepared, model.id)),
-                            );
-                        })
-                    }
-                  />
-                ))}
-                {modelsForLanguage.length === 0 ? (
-                  <p className="py-8 text-center text-meta text-muted-foreground">
-                    No transcription models are available.
-                  </p>
-                ) : visibleModels.length === 0 ? (
-                  <p className="py-8 text-center text-meta text-muted-foreground">
-                    No models match your search.
-                  </p>
-                ) : null}
-              </div>
-            </div>
-          </div>
+              }
+            />
+            {visibleModels.map((model) => (
+              <ModelRow
+                key={model.id}
+                model={model}
+                busy={operation !== null}
+                failedDownload={
+                  failedDownloads?.prepared === prepared && failedDownloads.modelIds.has(model.id)
+                }
+                onDownload={() =>
+                  runModelOperation(
+                    model.id,
+                    async () => {
+                      const result = await runtime.runPromise(
+                        downloadEnvironmentSpeechModel(prepared, model.id),
+                      );
+                      if (
+                        result.models.some(
+                          (candidate) =>
+                            candidate.id === model.id && candidate.state === "installed",
+                        )
+                      ) {
+                        await runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id));
+                      }
+                    },
+                    "download",
+                  )
+                }
+                onSelect={() =>
+                  runModelOperation(model.id, () =>
+                    runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id)),
+                  )
+                }
+                onCancel={() =>
+                  void runtime
+                    .runPromise(cancelEnvironmentSpeechModelDownload(prepared, model.id))
+                    .then(refreshModels)
+                    .catch(reportModelError)
+                }
+                onDelete={() =>
+                  void ensureLocalApi()
+                    .dialogs.confirm(`Delete ${model.name} from this T3 environment?`)
+                    .then((confirmed) => {
+                      if (confirmed)
+                        runModelOperation(model.id, () =>
+                          runtime.runPromise(removeEnvironmentSpeechModel(prepared, model.id)),
+                        );
+                    })
+                }
+              />
+            ))}
+
+            {modelsForLanguage.length === 0 ? (
+              <SettingsRow title="No transcription models are available." />
+            ) : visibleModels.length === 0 ? (
+              <SettingsRow title="No models match your search." />
+            ) : null}
+          </>
         ) : (
-          <p className="border-t border-border/50 px-4 py-4 text-meta text-muted-foreground">
-            {currentStatus && !currentStatus.supported
-              ? "Models appear here once this environment supports voice transcription."
-              : "Connect to a current T3 environment to manage transcription models."}
-          </p>
+          <SettingsRow
+            title="Models unavailable"
+            description={
+              currentStatus && !currentStatus.supported
+                ? "This environment does not support voice transcription."
+                : "Connect an environment to manage models."
+            }
+          />
         )}
-      </SettingsSection>
-      <SettingsSection title="Transcription options">
+      </FoldedSettingsSection>
+      <VoicePostProcessingSettings />
+      <SettingsSection title="Dictionary">
         <SettingsRow
           {...searchableSetting("dictionary")}
-          description="Give the transcription model names and uncommon terms to recognize. The current project's name is included automatically. If a term is transcribed incorrectly, add that version to correct future transcripts."
+          title="Custom words"
+          description="Help recognize names and uncommon terms. Your project name is included."
           control={
             <div className="w-full max-w-80">
               <div className="flex items-center gap-1.5">
@@ -1180,9 +1170,49 @@ export function VoiceSettingsPanel() {
             </div>
           ) : null}
         </SettingsRow>
+      </SettingsSection>
+      <SettingsSection title="Advanced">
+        <SettingsRow
+          title="Translate to English"
+          description={
+            !currentStatus?.supported || !currentStatus.supportsTranslation
+              ? "The active model does not support translation."
+              : currentStatus.effectiveLanguage === "en"
+                ? "English speech is transcribed without translation."
+                : "Write your speech in English."
+          }
+          control={
+            <Switch
+              aria-label="Translate to English"
+              checked={currentStatus?.supported ? currentStatus.translateToEnglish : false}
+              disabled={
+                !prepared ||
+                !currentStatus?.supported ||
+                !currentStatus.supportsTranslation ||
+                operation !== null
+              }
+              onCheckedChange={(enabled) => {
+                if (!prepared) return;
+                setOperation("translation");
+                void runtime
+                  .runPromise(updateEnvironmentSpeechTranslation(prepared, enabled))
+                  .then((nextStatus) => setStatus({ prepared, value: nextStatus }))
+                  .catch((error) => {
+                    toastManager.add({
+                      type: "error",
+                      title: "Could not update speech translation",
+                      description: error instanceof Error ? error.message : String(error),
+                    });
+                  })
+                  .finally(() => setOperation(null));
+              }}
+            />
+          }
+        />
+
         <SettingsRow
           {...searchableSetting("remove-filler-words")}
-          description="Remove common hesitation words while preserving ambiguous words in multilingual transcription."
+          description="Leave out hesitation words like um and uh."
           control={
             <Switch
               aria-label="Remove filler words"
@@ -1206,12 +1236,12 @@ export function VoiceSettingsPanel() {
             />
           }
         />
-      </SettingsSection>
-      <VoicePostProcessingSettings />
-      <SettingsSection title="Advanced">
+
+        <VoicePostProcessingSettings advanced />
         <SettingsRow
           {...searchableSetting("speech-model-unload")}
-          description="Unload the model after it has been idle on the selected environment. Never keeps it loaded until that environment stops."
+          title="Keep model in memory"
+          description="Unload after this much idle time. Never keeps it loaded until the environment stops."
           control={
             <Select
               value={modelUnloadTimeout}
@@ -1266,7 +1296,8 @@ export function VoiceSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("speech-acceleration")}
-          description="Choose where transcription runs on the selected environment. Auto uses a GPU when available."
+          title="Hardware"
+          description="Auto uses a GPU when available."
           control={
             <Select
               value={acceleration}

@@ -87,16 +87,28 @@ vi.mock("./settingsSearch", () => ({ searchableSetting: () => ({}) }));
 vi.mock("./VoicePostProcessingSettings", () => ({ VoicePostProcessingSettings: () => null }));
 vi.mock("./settingsLayout", () => ({
   SettingsPageContainer: "div",
+  useSettingsSearchTargetId: () => null,
+  useSettingsSearchTarget: () => undefined,
   SettingsSection: "section",
   SettingsRow: ({
+    title,
     control,
     description,
     children,
   }: {
+    title?: ReactNode;
     control: ReactNode;
     description?: string;
     children?: ReactNode;
-  }) => createElement("div", null, createElement("p", null, description), control, children),
+  }) =>
+    createElement(
+      "div",
+      null,
+      createElement("h3", null, title),
+      createElement("p", null, description),
+      control,
+      children,
+    ),
 }));
 import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 
@@ -105,10 +117,15 @@ const modelDescriptions = (container: HTMLElement) =>
   [...container.querySelectorAll("p")]
     .map((paragraph) => paragraph.textContent ?? "")
     .filter((text) => text.endsWith(" description"));
-const languageButtons = (container: HTMLElement) =>
-  [
-    ...container.querySelectorAll('[aria-label="Browse transcription models by language"] button'),
-  ].map((button) => button.textContent);
+const languageOptions = () =>
+  [...document.querySelectorAll('[data-slot="combobox-item"]')].map((option) => option.textContent);
+async function renderPanel() {
+  await using stack = new AsyncDisposableStack();
+  const screen = stack.use(await render(createElement(VoiceSettingsPanel)));
+  await userEvent.click(page.getByRole("button", { name: /Transcription models/ }));
+  stack.move();
+  return screen;
+}
 
 function setup() {
   mocks.toast.mockClear();
@@ -167,7 +184,7 @@ it("shows translation for capable models and updates the environment preference"
       },
     ],
   });
-  await using _screen = await render(createElement(VoiceSettingsPanel));
+  await using _screen = await renderPanel();
   expect(_screen.container.textContent).toContain("Translate");
   await userEvent.click(page.getByRole("switch", { name: "Translate to English" }));
   expect(mocks.saveTranslation).toHaveBeenCalledWith(mocks.connection, true);
@@ -186,7 +203,7 @@ it("ignores a previous environment model response", async () => {
     resolve: (value: { models: unknown[] }) => resolve(value),
   };
   mocks.listModels.mockReturnValueOnce(pending.promise);
-  await using _screen = await render(createElement(VoiceSettingsPanel));
+  await using _screen = await renderPanel();
   await act(async () => {
     mocks.connection = {};
     for (const listener of connectionListeners) listener();
@@ -199,7 +216,7 @@ it("ignores a previous environment model response", async () => {
 });
 it("shows friendly labels for default voice options", async () => {
   using _env = setup();
-  await using _screen = await render(createElement(VoiceSettingsPanel));
+  await using _screen = await renderPanel();
 
   expect(_screen.container.textContent).toContain("My Computer (Primary)");
   expect(_screen.container.textContent).toContain("System default");
@@ -222,7 +239,7 @@ it("shows saved words as tags with misspelling controls in popovers", async () =
     { term: "T3 Code", aliases: ["tea three code"] },
     { term: "Codex", aliases: [] },
   ];
-  await using _screen = await render(createElement(VoiceSettingsPanel));
+  await using _screen = await renderPanel();
 
   expect(_screen.container.querySelector('[aria-label="Dictionary entries"]')).not.toBeNull();
   await expect.element(button("Edit misspellings for T3 Code")).toHaveTextContent("T3 Code(1)");
@@ -250,7 +267,7 @@ it("bulk adds normalized words and reports skipped entries", async () => {
     gpuDevices: [{ id: '["vulkan","gpu-1"]', name: "Test GPU" }],
     customWords: words,
   });
-  await using _screen = await render(createElement(VoiceSettingsPanel));
+  await using _screen = await renderPanel();
 
   await userEvent.click(button("Add multiple words"));
   await userEvent.fill(
@@ -272,7 +289,7 @@ it("limits bulk additions to the remaining dictionary capacity", async () => {
     term: `Word ${index}`,
     aliases: [],
   }));
-  await using _screen = await render(createElement(VoiceSettingsPanel));
+  await using _screen = await renderPanel();
   await userEvent.click(button("Add multiple words"));
   await userEvent.fill(page.getByRole("textbox", { name: "Words to add" }), "First\nSecond\nThird");
   const preview = _screen.container.querySelector('[role="status"]')!.textContent;
@@ -312,7 +329,7 @@ it("shows models for the selected language while keeping the active model summar
       },
     ],
   });
-  await using _screen = await render(createElement(VoiceSettingsPanel));
+  await using _screen = await renderPanel();
 
   const modelNames = () =>
     [..._screen.container.querySelectorAll("span")].map((span) => span.textContent);
@@ -322,7 +339,10 @@ it("shows models for the selected language while keeping the active model summar
     .element(page.getByRole("combobox", { name: "Transcription language" }))
     .toBeDisabled();
   expect(_screen.container.textContent).toContain("This model only supports English.");
-  await userEvent.click(button("French"));
+  await userEvent.click(
+    page.getByRole("combobox", { name: "Browse transcription models by language" }),
+  );
+  await userEvent.click(page.getByRole("option", { name: "French", exact: true }));
   expect(modelNames()).toContain("French Model");
   expect(modelNames()).toContain("English Model");
 });
@@ -346,7 +366,7 @@ it("orders supported languages by speaker ranking, then alphabetically", async (
       },
     ],
   });
-  await using _screen = await render(createElement(VoiceSettingsPanel));
+  await using _screen = await renderPanel();
 
   await expect
     .element(page.getByRole("combobox", { name: "Transcription language" }))
@@ -355,7 +375,10 @@ it("orders supported languages by speaker ranking, then alphabetically", async (
   await expect.element(page.getByRole("option", { name: "Auto", exact: true })).toBeVisible();
   await userEvent.keyboard("{Escape}");
 
-  expect(languageButtons(_screen.container)).toEqual([
+  await userEvent.click(
+    page.getByRole("combobox", { name: "Browse transcription models by language" }),
+  );
+  expect(languageOptions()).toEqual([
     "English",
     "Hindi",
     "Spanish",
@@ -364,10 +387,10 @@ it("orders supported languages by speaker ranking, then alphabetically", async (
     "Arabic",
     "Catalan",
   ]);
-  await userEvent.fill(page.getByRole("searchbox", { name: "Search languages" }), "ar");
-  expect(languageButtons(_screen.container)).toEqual(["Arabic"]);
-  await userEvent.click(button("Clear language search"));
-  expect(languageButtons(_screen.container)).toHaveLength(7);
+  await userEvent.fill(page.getByRole("combobox", { name: "Search languages" }), "ar");
+  expect(languageOptions()).toEqual(["Arabic"]);
+  await userEvent.fill(page.getByRole("combobox", { name: "Search languages" }), "");
+  expect(languageOptions()).toHaveLength(7);
 });
 it("puts the active model first, then installed and downloading models", async () => {
   using _env = setup();
@@ -392,7 +415,7 @@ it("puts the active model first, then installed and downloading models", async (
       model("Active", "installed", true),
     ],
   });
-  await using _screen = await render(createElement(VoiceSettingsPanel));
+  await using _screen = await renderPanel();
 
   expect(modelDescriptions(_screen.container)).toEqual([
     "Active description",
@@ -431,7 +454,7 @@ it("uses Handy's editorial ranks within each model state", async () => {
       model("Voxtral-Mini-4B-Realtime-2602", "Rank 6", "downloadable"),
     ],
   });
-  await using _screen = await render(createElement(VoiceSettingsPanel));
+  await using _screen = await renderPanel();
 
   expect(modelDescriptions(_screen.container)).toEqual([
     "Rank 1 description",
@@ -464,7 +487,7 @@ it("sorts unranked models by recommendation, accuracy, speed, then name", async 
       model("Recommended", 70, 50, true),
     ],
   });
-  await using _screen = await render(createElement(VoiceSettingsPanel));
+  await using _screen = await renderPanel();
 
   expect(modelDescriptions(_screen.container)).toEqual([
     "Recommended description",
@@ -477,7 +500,7 @@ it("sorts unranked models by recommendation, accuracy, speed, then name", async 
 it("shows cancellation errors without clearing the download state", async () => {
   using _env = setup();
   mocks.cancel.mockImplementation(() => Promise.reject(new Error("connection lost")));
-  await using _screen = await render(createElement(VoiceSettingsPanel));
+  await using _screen = await renderPanel();
   await userEvent.click(button("Cancel Model download"));
   await vi.waitFor(() =>
     expect(mocks.toast).toHaveBeenCalledWith(
