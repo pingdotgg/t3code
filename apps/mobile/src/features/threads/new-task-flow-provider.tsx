@@ -673,6 +673,7 @@ export function NewTaskFlowProvider(
     contextRecords: selectedProjectDraft.context?.records,
     linkedEnvironments,
     selectedModel,
+    storedModelSelection: selectedProjectDraft.modelSelection,
     // The option knows the driver even when this machine reports no status for it.
     selectedProviderDriver:
       selectedProviderStatus?.driver ?? selectedModelOption?.providerDriver ?? null,

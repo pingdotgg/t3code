@@ -52,6 +52,7 @@ export function useNewTaskAutoBalance(input: {
   /** The links of the machine the draft is on. */
   readonly linkedEnvironments: ReadonlyMap<EnvironmentId, string>;
   readonly selectedModel: ModelSelection | null;
+  readonly storedModelSelection: ModelSelection | undefined;
   readonly selectedProviderDriver: string | null;
   readonly workspaceMode: "local" | "worktree";
   readonly defaultWorkspaceModeSettled: boolean;
@@ -73,6 +74,7 @@ export function useNewTaskAutoBalance(input: {
     contextRecords,
     linkedEnvironments,
     selectedModel,
+    storedModelSelection,
     selectedProviderDriver,
     workspaceMode,
     defaultWorkspaceModeSettled,
@@ -170,6 +172,12 @@ export function useNewTaskAutoBalance(input: {
             ? { instanceId: selectedModelInstanceId, model: selectedModelName }
             : null,
           id,
+        ) &&
+        // A pick this machine can't run stands aside here but returns on the destination.
+        !isNewTaskModelSelectionBlocked(
+          serverConfigs.get(environmentId),
+          storedModelSelection ?? null,
+          id,
         )
           ? [environmentId]
           : [],
@@ -227,10 +235,6 @@ export function useNewTaskAutoBalance(input: {
         ? { mode: workspaceMode, branch: null, worktreePath: null }
         : undefined);
     if (movesMachine && workspaceSelection === undefined) return;
-    // The machine was checked for the model on screen, which may be an unwritten default.
-    if (selectedModel !== null && movesMachine) {
-      updateComposerDraftSettings(draftKey, { modelSelection: selectedModel });
-    }
     const movedDraftKey = carryDraftContentTo(target);
     if (movesMachine) {
       releaseWorkspaceSelectionFromMachine(movedDraftKey, workspaceSelection);
@@ -251,7 +255,6 @@ export function useNewTaskAutoBalance(input: {
     defaultWorkspaceModeSettled,
     readFlow,
     releaseWorkspaceSelectionFromMachine,
-    selectedModel,
     selectedProject,
     draftKey,
     linksOf,
