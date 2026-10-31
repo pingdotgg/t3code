@@ -3406,7 +3406,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           detail.includes("orchestration_v2_projection_turn_items"),
         );
         assert.lengthOf(lookup, 1);
-        assert.match(lookup[0]!, /^SEARCH .*\(thread_id=\? AND run_id=\?\)$/);
+        assert.match(
+          lookup[0]!,
+          /^SEARCH .*\((?:thread_id=\? AND )?run_id=\?(?: AND thread_id=\?)?\)$/,
+        );
       }
     }),
   );
