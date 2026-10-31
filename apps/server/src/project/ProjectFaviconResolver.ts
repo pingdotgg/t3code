@@ -99,7 +99,7 @@ export class ProjectFaviconResolutionError extends Schema.TaggedError<ProjectFav
 
 const isWorkspaceRootNotExistsError = Schema.is(WorkspacePaths.WorkspaceRootNotExistsError);
 
-export const isMissingWorkspaceRoot = (error: ProjectFaviconResolutionError): boolean =>
+const isMissingWorkspaceRoot = (error: ProjectFaviconResolutionError): boolean =>
   error.operation === "normalize-workspace" && isWorkspaceRootNotExistsError(error.cause);
 
 export class ProjectFaviconResolver extends Context.Service<
@@ -297,7 +297,10 @@ export const make = Effect.gen(function* () {
   const faviconCache = yield* Cache.makeWith<string, string | null, ProjectFaviconResolutionError>(
     (key) => {
       const { cwd, faviconPath } = parseFaviconCacheKey(key);
-      return resolvePathUncached(cwd, faviconPath);
+      // Failures get a zero TTL, so a deleted folder is answered as "no favicon" to be cached.
+      return resolvePathUncached(cwd, faviconPath).pipe(
+        Effect.catchIf(isMissingWorkspaceRoot, () => Effect.succeed(null)),
+      );
     },
     {
       capacity: FAVICON_CACHE_CAPACITY,
