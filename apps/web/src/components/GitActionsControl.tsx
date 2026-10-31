@@ -23,6 +23,7 @@ import {
   EllipsisIcon,
   BookUp2Icon,
   CheckIcon,
+  ChevronDownIcon,
   CloudDownloadIcon,
   CloudUploadIcon,
   FileDiffIcon,
@@ -61,6 +62,7 @@ import {
 import { GitCommitDialog, type GitCommitDialogSubmission } from "./GitCommitDialog";
 import { PublishRepositoryDialog } from "./PublishRepositoryDialog";
 import { Button } from "~/components/ui/button";
+import { Group, GroupSeparator } from "~/components/ui/group";
 import {
   Dialog,
   DialogDescription,
@@ -117,7 +119,7 @@ import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 
 interface GitActionsControlProps {
   /** "shortcut" keeps the commit and push shortcut and its dialogs live. */
-  presentation?: "shortcut";
+  presentation?: "shortcut" | "toolbar";
   displayMode?: "panel";
   gitCwd: string | null;
   activeThreadRef: ScopedThreadRef | null;
@@ -384,7 +386,7 @@ export default function GitActionsControl({
   workspaceMutationId = null,
   keybindings: panelKeybindings,
 }: GitActionsControlProps) {
-  const isPanel = presentation !== "shortcut";
+  const isPanel = presentation === undefined;
   const updateThreadMetadata = useAtomCommand(
     threadEnvironment.updateMetadata,
     "thread branch metadata update",
@@ -914,7 +916,7 @@ export default function GitActionsControl({
   };
 
   const runCommitPushFromShortcut = useEffectEvent(runCommitPush);
-  const handlesCommitPushShortcut = presentation === "shortcut" && isRepo;
+  const handlesCommitPushShortcut = presentation !== undefined && isRepo;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window keydown for the mounted git control's commit and push shortcuts
   useEffect(() => {
     if (!listenForShortcuts || !handlesCommitPushShortcut) return;
@@ -1242,6 +1244,38 @@ export default function GitActionsControl({
             </MenuPopup>
           </Menu>
         </div>
+      ) : presentation === "toolbar" && isRepo ? (
+        <Group aria-label="Git actions">
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={
+              !canWriteSourceControl ||
+              isGitActionRunning ||
+              quickAction.disabled ||
+              Boolean(quickActionDisabledReason)
+            }
+            onClick={runQuickAction}
+            aria-label={quickAction.label}
+          >
+            {quickAction.label}
+          </Button>
+          <GroupSeparator />
+          <Menu
+            onOpenChange={(open) => {
+              if (open) requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
+            }}
+          >
+            <MenuTrigger
+              render={<Button size="icon-sm" variant="secondary" aria-label="Git action options" />}
+            >
+              <ChevronDownIcon />
+            </MenuTrigger>
+            <MenuPopup side="bottom" align="end">
+              {gitItems}
+            </MenuPopup>
+          </Menu>
+        </Group>
       ) : !isRepo ? (
         showActions ? (
           <ThreadDetailsControl
