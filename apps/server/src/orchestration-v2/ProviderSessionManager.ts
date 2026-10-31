@@ -226,6 +226,12 @@ interface LiveSessionEntry {
   readonly eventSubscribers: Ref.Ref<
     ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
   >;
+  readonly latestThreadUpdates: Map<ProviderThreadId, ProviderThreadUpdateDelivery>;
+  readonly threadUpdateDeliveries: WeakMap<
+    ProviderAdapter.ProviderAdapterV2Event,
+    ProviderThreadUpdateDelivery
+  >;
+  readonly pendingRewinds: Map<ProviderThreadUpdateDelivery["event"], ProviderThreadUpdateDelivery>;
   readonly requestEventPermit: Semaphore.Semaphore;
   readonly scope: Scope.Closeable;
   readonly idleGeneration: number;
@@ -241,8 +247,21 @@ interface IdleThreadUnload {
   readonly fiber: Fiber.Fiber<void, never> | null;
 }
 
+interface ProviderThreadUpdateDelivery {
+  readonly event: Extract<
+    ProviderAdapter.ProviderAdapterV2Event,
+    { readonly type: "provider_thread.updated" }
+  >;
+  readonly recipients: Set<number>;
+  received: boolean;
+}
+
 type ProviderSessionEventSignal =
-  | { readonly type: "event"; readonly event: ProviderAdapter.ProviderAdapterV2Event }
+  | {
+      readonly type: "event";
+      readonly event: ProviderAdapter.ProviderAdapterV2Event;
+      readonly threadUpdate?: ProviderThreadUpdateDelivery;
+    }
   | {
       readonly type: "failure";
       readonly cause: Cause.Cause<ProviderAdapter.ProviderAdapterV2Error>;
@@ -517,19 +536,36 @@ export const layerWithOptions = (
               ),
             );
 
-      const publishToSubscribers = (
-        subscribers: Ref.Ref<
-          ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
-        >,
-        signal: ProviderSessionEventSignal,
-      ) =>
-        Ref.get(subscribers).pipe(
-          Effect.flatMap((current) =>
-            Effect.forEach(current.values(), (queue) => Queue.offer(queue, signal), {
-              discard: true,
-            }),
-          ),
-        );
+      const publishToSubscribers = Effect.fn("ProviderSessionManager.publishToSubscribers")(
+        function* (entry: LiveSessionEntry, signal: ProviderSessionEventSignal) {
+          const current = yield* Ref.get(entry.eventSubscribers);
+          const threadUpdate =
+            signal.type === "event" && signal.event.type === "provider_thread.updated"
+              ? { event: signal.event, recipients: new Set<number>(), received: false }
+              : undefined;
+          if (threadUpdate !== undefined) {
+            entry.latestThreadUpdates.set(threadUpdate.event.providerThread.id, threadUpdate);
+            entry.threadUpdateDeliveries.set(threadUpdate.event, threadUpdate);
+            if (threadUpdate.event.retainedNativeTurnIds !== undefined) {
+              entry.pendingRewinds.set(threadUpdate.event, threadUpdate);
+            }
+          }
+          let delivered = false;
+          for (const [id, queue] of current) {
+            const accepted = yield* Queue.offer(
+              queue,
+              threadUpdate === undefined
+                ? signal
+                : { type: "event", event: threadUpdate.event, threadUpdate },
+            );
+            if (accepted) {
+              delivered = true;
+              threadUpdate?.recipients.add(id);
+            }
+          }
+          return delivered;
+        },
+      );
 
       const failSubscribers = Effect.fn("ProviderSessionManager.failSubscribers")(function* (
         entry: LiveSessionEntry,
@@ -929,34 +965,49 @@ export const layerWithOptions = (
           if (candidate === undefined) {
             return [Option.none<LiveSessionEntry>(), yield* DateTime.now] as const;
           }
-          const removed = yield* Effect.zip(
-            Ref.modify(sessions, (current) => {
-              const existing = current.get(key);
-              if (existing !== candidate) {
-                return [existing === undefined ? "gone" : "changed", current] as const;
-              }
-              if (
-                input.onlyIfIdleGeneration !== undefined &&
-                (existing.busyTurns.size > 0 ||
-                  existing.idleGeneration !== input.onlyIfIdleGeneration)
-              ) {
-                return ["kept", current] as const;
-              }
-              const own = input.keepIfBusyOtherThan;
-              if (
-                own !== undefined &&
-                [...existing.busyTurns].some(
-                  (turnKey) => !own.some((id) => turnKey.startsWith(busyTurnPrefix(id))),
-                )
-              ) {
-                return ["kept", current] as const;
-              }
-              const updated = new Map(current);
-              updated.delete(key);
-              return ["removed", updated] as const;
-            }),
-            DateTime.now,
-          ).pipe(candidate.requestEventPermit.withPermits(1));
+          const removed = yield* Effect.gen(function* () {
+            const latest = (yield* Ref.get(sessions)).get(key);
+            if (latest !== candidate) {
+              return [latest === undefined ? "gone" : "changed", yield* DateTime.now] as const;
+            }
+            if (
+              input.onlyIfIdleGeneration !== undefined &&
+              (latest.busyTurns.size > 0 || latest.idleGeneration !== input.onlyIfIdleGeneration)
+            ) {
+              return ["kept", yield* DateTime.now] as const;
+            }
+            // Unread updates still belong to this runtime. Save them before removal makes
+            // subscription cleanup unable to find it, including on an event-stream failure.
+            yield* persistPendingThreadUpdates(candidate, true);
+            return yield* Effect.zip(
+              Ref.modify(sessions, (current) => {
+                const existing = current.get(key);
+                if (existing !== candidate) {
+                  return [existing === undefined ? "gone" : "changed", current] as const;
+                }
+                if (
+                  input.onlyIfIdleGeneration !== undefined &&
+                  (existing.busyTurns.size > 0 ||
+                    existing.idleGeneration !== input.onlyIfIdleGeneration)
+                ) {
+                  return ["kept", current] as const;
+                }
+                const own = input.keepIfBusyOtherThan;
+                if (
+                  own !== undefined &&
+                  [...existing.busyTurns].some(
+                    (turnKey) => !own.some((id) => turnKey.startsWith(busyTurnPrefix(id))),
+                  )
+                ) {
+                  return ["kept", current] as const;
+                }
+                const updated = new Map(current);
+                updated.delete(key);
+                return ["removed", updated] as const;
+              }),
+              DateTime.now,
+            );
+          }).pipe(candidate.requestEventPermit.withPermits(1));
           const [outcome, releasedAt] = removed;
           if (outcome === "changed") return yield* removeLiveEntry(input);
           return [
@@ -1651,6 +1702,106 @@ export const layerWithOptions = (
           ),
         );
 
+      // Callers hold `entry.requestEventPermit`.
+      const ingestRunlessEventHeld = Effect.fn("ProviderSessionManager.ingestRunlessEventHeld")(
+        function* (
+          entry: LiveSessionEntry,
+          threadId: ThreadId,
+          event: ProviderAdapter.ProviderAdapterV2Event,
+          skipProviderThreadSnapshot = false,
+        ) {
+          const input = {
+            providerSessionId: entry.runtime.providerSessionId,
+            providerInstanceId: entry.runtime.instanceId,
+            threadId,
+            event,
+            ...(skipProviderThreadSnapshot ? { skipProviderThreadSnapshot: true } : {}),
+          };
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const current = (yield* Ref.get(sessions)).get(
+              sessionKey(entry.runtime.providerSessionId),
+            );
+            if (current?.runtime !== entry.runtime) return true;
+            if (event.type !== "provider_thread.updated") {
+              yield* providerEventIngestor.ingestNormalized(input);
+              return true;
+            }
+            const projection = yield* projectionStore.getThreadRecords(threadId, [
+              "providerThreads",
+            ]);
+            const owner = projection.providerThreads.find(
+              (thread) => thread.id === event.providerThread.id,
+            );
+            // A pooled old runtime can outlive a selection restart. Its unread snapshot
+            // must not reclaim a thread that has moved to the replacement session.
+            if (owner !== undefined && owner.providerSessionId !== entry.runtime.providerSessionId)
+              return true;
+            const events = yield* providerEventIngestor.normalize(input);
+            if (events.length === 0) return true;
+            const written = yield* eventSink.writeIfProviderThreadUnchanged({
+              ...(owner === undefined
+                ? { expected: null, providerThreadId: event.providerThread.id }
+                : { expected: owner }),
+              events,
+            });
+            if (written.committed) return true;
+          }
+          return false;
+        },
+        (effect, entry) =>
+          effect.pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterEventStreamError({
+                  driver: entry.runtime.driver,
+                  providerSessionId: entry.runtime.providerSessionId,
+                  cause,
+                }),
+            ),
+          ),
+      );
+
+      const ingestRunlessEvent = (
+        entry: LiveSessionEntry,
+        threadId: ThreadId,
+        event: ProviderAdapter.ProviderAdapterV2Event,
+      ) =>
+        ingestRunlessEventHeld(entry, threadId, event).pipe(
+          entry.requestEventPermit.withPermits(1),
+        );
+
+      // Keep only the newest snapshot per provider thread. A subscriber joining later
+      // is not a recipient of an earlier signal, and must not prevent its persistence.
+      // Callers hold requestEventPermit, including the release cutoff.
+      const persistPendingThreadUpdates = Effect.fn(
+        "ProviderSessionManager.persistPendingThreadUpdates",
+      )(
+        function* (entry: LiveSessionEntry, releasing = false) {
+          const pending = new Set([
+            ...entry.pendingRewinds.values(),
+            ...entry.latestThreadUpdates.values(),
+          ]);
+          for (const update of pending) {
+            if (update.received || (!releasing && update.recipients.size > 0)) continue;
+            const threadId = update.event.providerThread.appThreadId;
+            if (threadId === null) continue;
+            const latest = entry.latestThreadUpdates.get(update.event.providerThread.id);
+            update.received = yield* ingestRunlessEventHeld(
+              entry,
+              threadId,
+              update.event,
+              latest !== update,
+            );
+            if (update.received) entry.pendingRewinds.delete(update.event);
+          }
+        },
+        Effect.catchCause((cause) =>
+          Effect.logWarning("orchestration-v2.driver-session.unread-thread-update-failed", {
+            cause,
+          }),
+        ),
+      );
+
       const makeEventSubscription = Effect.fn("ProviderSessionManager.makeEventSubscription")(
         function* (
           subscribers: Ref.Ref<
@@ -1664,21 +1815,57 @@ export const layerWithOptions = (
             updated.set(subscriberId, queue);
             return updated;
           });
-          const close = Ref.modify(subscribers, (current) => {
-            if (!current.has(subscriberId)) {
-              return [false, current] as const;
-            }
-            const updated = new Map(current);
-            updated.delete(subscriberId);
-            return [true, updated] as const;
-          }).pipe(
-            Effect.flatMap((removed) =>
-              removed
-                ? Queue.clear(queue).pipe(Effect.andThen(Queue.end(queue)), Effect.asVoid)
-                : Effect.void,
+          const removeAndDrain = (entry: LiveSessionEntry | undefined) =>
+            Ref.modify(subscribers, (current) => {
+              if (!current.has(subscriberId)) {
+                return [false, current] as const;
+              }
+              const updated = new Map(current);
+              updated.delete(subscriberId);
+              return [true, updated] as const;
+            }).pipe(
+              Effect.flatMap((removed) =>
+                removed
+                  ? // Ending first makes every later offer report it was refused, so a signal is
+                    // either drained here or seen as undelivered by its publisher.
+                    Queue.end(queue).pipe(
+                      Effect.andThen(Queue.clear(queue)),
+                      Effect.flatMap((unread) =>
+                        Effect.gen(function* () {
+                          for (const signal of unread) {
+                            if (signal.type === "event")
+                              signal.threadUpdate?.recipients.delete(subscriberId);
+                          }
+                          if (entry !== undefined) {
+                            for (const update of new Set([
+                              ...entry.latestThreadUpdates.values(),
+                              ...entry.pendingRewinds.values(),
+                            ])) {
+                              update.recipients.delete(subscriberId);
+                            }
+                            yield* persistPendingThreadUpdates(entry);
+                          }
+                        }),
+                      ),
+                    )
+                  : Effect.void,
+              ),
+            );
+          // The pump persists a refused update under the same permit. Holding it from
+          // the end of the queue through the drained writes keeps an older drained
+          // update from committing over a newer refused one.
+          const close = Ref.get(sessions).pipe(
+            Effect.map((current) =>
+              [...current.values()].find((candidate) => candidate.eventSubscribers === subscribers),
+            ),
+            Effect.flatMap((entry) =>
+              entry === undefined
+                ? removeAndDrain(undefined)
+                : removeAndDrain(entry).pipe(entry.requestEventPermit.withPermits(1)),
             ),
           );
-          const events = Stream.fromQueue(queue).pipe(
+          // One signal per pull, so what a reader never pulled is still queued at close.
+          const events = Stream.fromEffectRepeat(Queue.take(queue)).pipe(
             Stream.mapEffect((signal) =>
               signal.type === "event"
                 ? Effect.succeed(signal.event)
@@ -1686,7 +1873,64 @@ export const layerWithOptions = (
             ),
             Stream.ensuring(close),
           );
-          return { events, close } satisfies ProviderAdapter.ProviderAdapterV2EventSubscription;
+          const entry = [...(yield* Ref.get(sessions)).values()].find(
+            (candidate) => candidate.eventSubscribers === subscribers,
+          );
+          const persistEvent: NonNullable<
+            ProviderAdapter.ProviderAdapterV2EventSubscription["persistEvent"]
+          > = (event, persist) =>
+            event.type !== "provider_thread.updated" || entry === undefined
+              ? persist(true).pipe(Effect.map((storedEvents) => ({ storedEvents })))
+              : Effect.gen(function* () {
+                  const current = (yield* Ref.get(sessions)).get(
+                    sessionKey(entry.runtime.providerSessionId),
+                  );
+                  const latest = entry.latestThreadUpdates.get(event.providerThread.id);
+                  const delivery = entry.threadUpdateDeliveries.get(event);
+                  if (delivery?.received === true) {
+                    // The release path may persist the update before this subscriber reads it.
+                    // Report the committed snapshot so finalization cannot emit the old session.
+                    return {
+                      storedEvents: [],
+                      ...(current?.runtime === entry.runtime && latest?.received === true
+                        ? { persistedProviderThread: latest.event.providerThread }
+                        : {}),
+                    };
+                  }
+                  const snapshotCurrent =
+                    current?.runtime === entry.runtime &&
+                    (latest?.event === event || latest?.received !== true);
+                  const stored = yield* persist(snapshotCurrent);
+                  const persistedSnapshot = stored.some(
+                    (record) => record.event.type === "provider-thread.updated",
+                  );
+                  if (
+                    delivery !== undefined &&
+                    (persistedSnapshot ||
+                      (event.retainedNativeTurnIds !== undefined && stored.length > 0))
+                  ) {
+                    delivery.received = true;
+                  }
+                  if (delivery?.received === true) entry.pendingRewinds.delete(event);
+                  return {
+                    storedEvents: stored,
+                    ...(persistedSnapshot ? { persistedProviderThread: event.providerThread } : {}),
+                  };
+                }).pipe(entry.requestEventPermit.withPermits(1));
+          const discardEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+            entry === undefined || event.type !== "provider_thread.updated"
+              ? Effect.void
+              : Effect.gen(function* () {
+                  const delivery = entry.threadUpdateDeliveries.get(event);
+                  delivery?.recipients.delete(subscriberId);
+                  yield* persistPendingThreadUpdates(entry);
+                }).pipe(entry.requestEventPermit.withPermits(1));
+          return {
+            events,
+            close,
+            persistEvent,
+            discardEvent,
+          } satisfies ProviderAdapter.ProviderAdapterV2EventSubscription;
         },
       );
 
@@ -2006,32 +2250,43 @@ export const layerWithOptions = (
                   // request UI can answer them and unblock session setup.
                   const threadId = sessionScopedRuntimeRequestThreadId(event);
                   if (threadId !== undefined) {
-                    yield* Effect.gen(function* () {
-                      const current = (yield* Ref.get(sessions)).get(
-                        sessionKey(entry.runtime.providerSessionId),
-                      );
-                      if (current?.runtime !== entry.runtime) return;
-                      yield* providerEventIngestor
-                        .ingestNormalized({
-                          providerSessionId: entry.runtime.providerSessionId,
-                          providerInstanceId: entry.runtime.instanceId,
-                          threadId,
-                          event,
-                        })
-                        .pipe(
-                          Effect.mapError(
-                            (cause) =>
-                              new ProviderAdapter.ProviderAdapterEventStreamError({
-                                driver: entry.runtime.driver,
-                                providerSessionId: entry.runtime.providerSessionId,
-                                cause,
-                              }),
-                          ),
-                        );
-                    }).pipe(entry.requestEventPermit.withPermits(1));
+                    yield* ingestRunlessEvent(entry, threadId, event);
                     return;
                   }
-                  yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
+                  yield* Effect.gen(function* () {
+                    const delivered = yield* publishToSubscribers(entry, {
+                      type: "event",
+                      event,
+                    });
+                    // A provider thread can also change while idle (Claude adopts
+                    // a new session after `/clear`). With no run reading it, that
+                    // update would be dropped and a later resume would reopen the
+                    // old native session.
+                    if (
+                      !delivered &&
+                      event.type === "provider_thread.updated" &&
+                      event.providerThread.appThreadId !== null
+                    ) {
+                      // Keep the update pending when persistence fails. Letting the
+                      // failure escape would end the event pump and tear down the
+                      // session for an unread snapshot that a later retry can save.
+                      const received = yield* ingestRunlessEventHeld(
+                        entry,
+                        event.providerThread.appThreadId,
+                        event,
+                      ).pipe(
+                        Effect.catchCause((cause) =>
+                          Effect.logWarning(
+                            "orchestration-v2.driver-session.unread-thread-update-failed",
+                            { providerSessionId: entry.runtime.providerSessionId, cause },
+                          ).pipe(Effect.as(false)),
+                        ),
+                      );
+                      const update = entry.threadUpdateDeliveries.get(event);
+                      if (update !== undefined) update.received = received;
+                      if (received) entry.pendingRewinds.delete(event);
+                    }
+                  }).pipe(entry.requestEventPermit.withPermits(1));
                   yield* releaseLiveOutput;
                 }),
               ),
@@ -2066,7 +2321,7 @@ export const layerWithOptions = (
                         cause: "Provider event stream ended unexpectedly.",
                       }),
                     );
-              yield* publishToSubscribers(entry.eventSubscribers, {
+              yield* publishToSubscribers(entry, {
                 type: "failure",
                 cause,
               });
@@ -2246,6 +2501,9 @@ export const layerWithOptions = (
                 runtime,
                 exposedRuntime,
                 eventSubscribers,
+                latestThreadUpdates: new Map(),
+                threadUpdateDeliveries: new WeakMap(),
+                pendingRewinds: new Map(),
                 requestEventPermit: yield* Semaphore.make(1),
                 scope: sessionScope,
                 idleGeneration: 0,

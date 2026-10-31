@@ -105,6 +105,7 @@ function makeTestAdapter(input: {
   readonly nativeThreadGeneration?: Ref.Ref<number>;
   readonly failResume?: boolean;
   readonly failResumeOnce?: Ref.Ref<boolean>;
+  readonly clearNativeThreadOnRunOrdinal?: number;
   readonly initialContextUsage?: OrchestrationV2ProviderThread["contextUsage"];
   readonly getModelContextWindow?: (selection: ModelSelection) => number | undefined;
   readonly canReuseContextUsage?: ProviderAdapter.ProviderAdapterV2SessionRuntime["canReuseContextUsage"];
@@ -364,6 +365,23 @@ function makeTestAdapter(input: {
                     status: "running",
                     completedAt: null,
                     tokenUsage: { ...reportedUsage, updatedAt: DateTime.formatIso(eventTime) },
+                  },
+                });
+              }
+              // Claude's `/clear` starts a new native session inside the turn.
+              if (turnInput.runOrdinal === input.clearNativeThreadOnRunOrdinal) {
+                yield* PubSub.publish(events, {
+                  type: "provider_thread.updated",
+                  driver: input.driver,
+                  providerThread: {
+                    ...turnInput.providerThread,
+                    nativeThreadRef: {
+                      driver: input.driver,
+                      nativeId: `${turnInput.providerThread.nativeThreadRef?.nativeId}:cleared`,
+                      strength: "strong",
+                    },
+                    nativeConversationHeadRef: null,
+                    updatedAt: eventTime,
                   },
                 });
               }
@@ -1342,6 +1360,107 @@ describe("orchestration v2 provider switching", () => {
           );
         }),
       ),
+  );
+
+  it.live("resumes the native session /clear selected after the provider session restarts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("clear-native-session-restart");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            clearNativeThreadOnRunOrdinal: 1,
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const runToCompletion = Effect.fn("runToCompletion")(function* (
+            ordinal: number,
+            text: string,
+          ) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`clear-restart:${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`clear-restart:${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text,
+              attachments: [],
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.ordinal === ordinal &&
+                  (event.payload.status === "completed" || event.payload.status === "failed"),
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("clear-restart:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Clear then restart",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* runToCompletion(1, "/clear");
+          const providerThread = (yield* orchestrator.getThreadProjection(
+            threadId,
+          )).providerThreads.at(0);
+          if (providerThread === undefined || providerThread.providerSessionId === null) {
+            return yield* Effect.die("Expected a provider session after /clear.");
+          }
+          yield* orchestrator.dispatch({
+            type: "provider-session.detach",
+            commandId: CommandId.make("clear-restart:detach"),
+            threadId,
+            providerSessionId: providerThread.providerSessionId,
+          });
+          yield* worker.drain();
+          yield* runToCompletion(2, "Continue after the restart");
+
+          const turns = yield* Ref.get(capturedTurns);
+          assert.equal(turns.length, 2);
+          assert.equal(turns[1]?.nativeThreadId, `${turns[0]?.nativeThreadId}:cleared`);
+          // Claude writes the cleared session's transcript during /clear, so
+          // opening it with a fresh sessionId fails with "already in use".
+          assert.isTrue(turns[1]?.nativeThreadHasTurns);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "clear-native-session-restart",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
+      }),
+    ),
   );
 
   it.live.each(["an older handoff", "a missed request"] as const)(

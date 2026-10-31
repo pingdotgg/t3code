@@ -14,6 +14,7 @@ import {
   OrchestrationV2ProviderFailure,
   OrchestrationV2ProviderRetry,
   OrchestrationV2ProviderThread,
+  OrchestrationV2StoredEvent,
   OrchestrationV2ProviderTurn,
   OrchestrationV2RuntimeRequest,
   OrchestrationV2Subagent,
@@ -517,9 +518,25 @@ export interface ProviderAdapterV2ForkThreadInput {
   readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
 }
 
+export interface ProviderAdapterV2PersistEventResult {
+  readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
+  // Set when the snapshot is already persisted, so a skipped write still lets
+  // consumers (finalization) use the committed provider thread.
+  readonly persistedProviderThread?: OrchestrationV2ProviderThread;
+}
+
 export interface ProviderAdapterV2EventSubscription {
   readonly events: Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
   readonly close: Effect.Effect<void>;
+  // Managed sessions serialize snapshot persistence with delivery and release. Rewind
+  // side effects may still apply when the accompanying thread snapshot is stale.
+  readonly discardEvent?: (event: ProviderAdapterV2Event) => Effect.Effect<void>;
+  readonly persistEvent?: <E, R>(
+    event: ProviderAdapterV2Event,
+    persist: (
+      snapshotCurrent: boolean,
+    ) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, E, R>,
+  ) => Effect.Effect<ProviderAdapterV2PersistEventResult, E, R>;
 }
 
 export interface ProviderAdapterV2HistoricalContext {
