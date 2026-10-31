@@ -8646,6 +8646,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ) {
             const now = yield* DateTime.now;
             const nativeItemId = message.uuid;
+            // "local" covers a subagent or side question; absent (older CLIs) means "session".
+            if (message.subtype === "model_refusal_fallback" && message.scope !== "local") {
+              const modelSelection = {
+                ...context.input.modelSelection,
+                model: resolveClaudeModelSlug(subagentModelCatalog, message.fallback_model),
+              };
+              const live = yield* Ref.get(queryContext);
+              if (live !== null) live.selection = compileClaudeModelSelection(modelSelection);
+              yield* emitProviderEvent({
+                type: "app_thread.model_selection.updated",
+                driver: CLAUDE_PROVIDER,
+                threadId: context.input.threadId,
+                modelSelection,
+              });
+            }
             context.assistant.noticeTexts.add(message.content);
             yield* emitProviderEvent({
               type: "turn_item.updated",

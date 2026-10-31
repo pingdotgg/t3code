@@ -4853,6 +4853,83 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("moves the thread to the model a session refusal fallback switched to", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      const original = {
+        instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+        model: "claude-opus-5-5",
+      } satisfies ModelSelection;
+      const fallback = { ...original, model: "claude-opus-4-8" };
+      const turn = (ordinal: number, modelSelection: ModelSelection) =>
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make(`attempt-refusal-fallback:${ordinal}`),
+          text: `Request ${ordinal}`,
+          attachments: [],
+          providerTurnOrdinal: ordinal,
+          modelSelection,
+        });
+      const settle = Effect.gen(function* () {
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+      });
+      const refusalFallback = (scope: "session" | "local", uuid: string) =>
+        claudeSdkFrame({
+          type: "system",
+          subtype: "model_refusal_fallback",
+          trigger: "refusal",
+          direction: "retry",
+          scope,
+          original_model: original.model,
+          fallback_model: fallback.model,
+          request_id: null,
+          content: "Switched to Opus 4.8",
+          uuid,
+          session_id: WAKE_NATIVE_SESSION,
+        });
+
+      yield* harness.runtime.startTurn(turn(1, original));
+      yield* Queue.offer(
+        harness.sdkMessages,
+        refusalFallback("local", "00000000-0000-4000-8000-000000000401"),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        refusalFallback("session", "00000000-0000-4000-8000-000000000402"),
+      );
+      yield* settle;
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "app_thread.model_selection.updated" ? [event] : [],
+        ),
+        [
+          {
+            type: "app_thread.model_selection.updated",
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            threadId: harness.threadId,
+            modelSelection: fallback,
+          },
+        ],
+      );
+
+      yield* harness.runtime.startTurn(turn(2, fallback));
+      yield* settle;
+      assert.deepEqual(harness.liveSelectionChanges, []);
+      yield* harness.runtime.startTurn(turn(3, original));
+      yield* settle;
+      assert.deepEqual(harness.liveSelectionChanges[0], { model: original.model });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect.each(["completed", "interrupted"] as const)(
     "projects Claude thinking blocks when %s",
     (status) =>
