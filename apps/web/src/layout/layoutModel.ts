@@ -45,7 +45,6 @@ export type LayoutTabContent =
    */
   | { kind: "surface"; threadRef: ScopedThreadRef; surfaceId: string };
 
-export const LAYOUT_SETTINGS_CONTENT: LayoutTabContent = { kind: "settings" };
 
 export function isLayoutPageContent(content: LayoutTabContent): content is LayoutPageContent {
   return (
@@ -385,17 +384,6 @@ export function selectFocusedChatTab(state: LayoutState): LayoutTabLocation | nu
   const focused = selectFocusedTab(state);
   if (!focused) return null;
   return findLayoutTab(state, (tab) => tab.id === focused.id);
-}
-
-/** A tab is on screen while it is the active tab of a pane in the focused workspace. */
-export function isLayoutChatOnScreen(state: LayoutState, chatTabId: string): boolean {
-  // Every mounted chat asks this on every store change: no arrays built.
-  for (const column of selectFocusedWorkspace(state).columns) {
-    for (const pane of column.panes) {
-      if (pane.activeTabId === chatTabId) return true;
-    }
-  }
-  return false;
 }
 
 /** The tab is the focused one: what a maximized pane may stay maximized for. */
@@ -1587,13 +1575,6 @@ export function resizeLayoutColumn(
       ),
     };
   });
-}
-
-/** Snap a column width to the nearest of 1/3, 1/2, 2/3. */
-export function snapLayoutColumnWidth(width: number): number {
-  return LAYOUT_COLUMN_WIDTH_PRESETS.reduce((best, preset) =>
-    Math.abs(preset - width) < Math.abs(best - width) ? preset : best,
-  );
 }
 
 /** Step to the next width preset, wrapping from 2/3 back to 1/3. A lone column keeps filling the window. */
