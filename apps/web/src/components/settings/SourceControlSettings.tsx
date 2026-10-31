@@ -41,7 +41,7 @@ import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import {
   SettingsPageContainer,
-  SettingsRowTile,
+  SettingsRow,
   SettingsSearchTarget,
   SettingsSection,
   useSettingsSearchTargetId,
@@ -110,14 +110,6 @@ function sourceControlItemIcon(
     ? host && sourceControlIcon(host)
     : VCS_ICONS[item.kind];
   return Icon ? <Icon /> : null;
-}
-
-function SourceControlItemMark({
-  item,
-}: {
-  readonly item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem;
-}) {
-  return <SettingsRowTile>{sourceControlItemIcon(item)}</SettingsRowTile>;
 }
 
 function itemSummary({
@@ -224,11 +216,11 @@ function DiscoveryItemRow({
 
   return (
     <div className={cn(isVcsNotReady(item) && "opacity-80")}>
-      <div className="flex items-center gap-3 px-3 py-3 sm:px-4">
-        <SourceControlItemMark item={item} />
-        <div className="min-w-0 flex-1 space-y-0.5">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <span className="truncate text-label text-foreground">{item.label}</span>
+      <SettingsRow
+        leading={sourceControlItemIcon(item)}
+        title={
+          <span className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="truncate">{item.label}</span>
             {version ? <code className="text-meta text-dim-foreground">{version}</code> : null}
             {chip.variant === "warning" ? (
               <Badge variant="warning">{chip.label}</Badge>
@@ -237,40 +229,46 @@ function DiscoveryItemRow({
               item.auth.status === "unauthenticated" ? (
               <Badge variant="secondary">{chip.label}</Badge>
             ) : null}
-          </div>
-          <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-meta text-dim-foreground">
+          </span>
+        }
+        description={
+          <span className="flex min-w-0 flex-wrap items-center gap-x-1">
             {itemSummary({ item, auth, authAccount, version: null })}
-          </p>
-        </div>
-        {hasDetails ? (
-          <Button
-            size="icon-xs"
-            variant="ghost-muted"
-            onClick={() => setIsExpanded((open) => !open)}
-            aria-expanded={isExpanded}
-            aria-label={`Toggle ${item.label} details`}
-          >
-            <ChevronDownIcon
-              className={cn("size-3.5 transition-transform", isExpanded && "rotate-180")}
-            />
-          </Button>
-        ) : null}
-        {offered ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Switch
-                  checked={offered.checked}
-                  disabled={offered.disabled}
-                  onCheckedChange={offered.onChange}
-                  aria-label={`Offer ${item.label} when adding or publishing a project`}
-                />
-              }
-            />
-            <TooltipPopup side="top">Offer when adding or publishing a project</TooltipPopup>
-          </Tooltip>
-        ) : null}
-      </div>
+          </span>
+        }
+        trailing={
+          hasDetails ? (
+            <Button
+              size="icon-xs"
+              variant="ghost-muted"
+              onClick={() => setIsExpanded((open) => !open)}
+              aria-expanded={isExpanded}
+              aria-label={`Toggle ${item.label} details`}
+            >
+              <ChevronDownIcon
+                className={cn("size-3.5 transition-transform", isExpanded && "rotate-180")}
+              />
+            </Button>
+          ) : null
+        }
+        control={
+          offered ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Switch
+                    checked={offered.checked}
+                    disabled={offered.disabled}
+                    onCheckedChange={offered.onChange}
+                    aria-label={`Offer ${item.label} when adding or publishing a project`}
+                  />
+                }
+              />
+              <TooltipPopup side="top">Offer when adding or publishing a project</TooltipPopup>
+            </Tooltip>
+          ) : undefined
+        }
+      />
       {hasDetails ? (
         <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
           <CollapsibleContent>
