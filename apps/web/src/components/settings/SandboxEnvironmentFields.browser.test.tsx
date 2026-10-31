@@ -62,6 +62,33 @@ vi.mock(import("~/state/query"), async (original) => ({
                   templates: false,
                 },
               },
+              {
+                kind: "vercel",
+                label: "Vercel",
+                detail: "Firecracker microVMs.",
+                apiKeyLabel: "Vercel access token",
+                apiKeyPlaceholder: "vcp_...",
+                docsUrl: "https://vercel.com/account/settings/tokens",
+                configured: true,
+                sizes: [{ id: "vercel-2", label: "Small", detail: "2 vCPU" }],
+                settingsFields: [
+                  { id: "teamId", label: "Team", optional: true },
+                  {
+                    id: "projectId",
+                    label: "Project",
+                    placeholder: "t3-sandboxes",
+                    optional: true,
+                  },
+                ],
+                settings: { teamId: "", projectId: "saved-project" },
+                capabilities: {
+                  limits: false,
+                  stopResume: true,
+                  credentialEnvironments: false,
+                  extend: true,
+                  templates: false,
+                },
+              },
             ],
           }
         : atom === "limits"
@@ -105,6 +132,23 @@ describe("SandboxEnvironmentFields", () => {
 
     await userEvent.click(page.getByRole("button", { name: "Create anyway" }));
     expect(mocks.createSandbox).toHaveBeenCalledOnce();
+  });
+
+  it("sends the provider's settings fields, starting from the saved values", async () => {
+    setup({ canStart: true });
+    await using _screen = await render(fields());
+
+    await userEvent.click(page.getByRole("button", { name: /^Vercel/u }));
+    await userEvent.fill(page.getByRole("textbox", { name: "Team (optional)" }), "acme");
+    await userEvent.click(page.getByRole("button", { name: "Create Vercel sandbox" }));
+    expect(mocks.createSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          provider: "vercel",
+          settings: { teamId: "acme", projectId: "saved-project" },
+        }),
+      }),
+    );
   });
 
   it("disables creating when the provider would refuse the start", async () => {

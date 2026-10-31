@@ -6,9 +6,13 @@ machine. That machine must stay running and reachable while you work.
 ## Sandbox environments
 
 A sandbox is a cloud machine that runs its own T3 Code server. Open **Settings → Environments →
-Add environment**, choose **Sandbox**, and enter an API key for Boat or Daytona. The server creates
-the machine, installs T3 Code, exposes it on a public HTTPS URL, and pairs it. The new environment
-reconnects like any other remote environment.
+Add environment**, choose **Sandbox**, and enter an API key for Boat, Daytona, or Vercel. The server
+creates the machine, installs T3 Code, exposes it on a public HTTPS URL, and pairs it. The new
+environment reconnects like any other remote environment.
+
+For Vercel, create an access token at vercel.com/account/settings/tokens; T3 Code uses your only
+team and a `t3-sandboxes` project unless you fill in **Team** or **Project**, and a sandbox on the
+Hobby plan stops after 45 minutes, so resume it from the Sandboxes list to keep working.
 
 The key is saved on the T3 Code server that provisions the sandbox, not on the client. Creating a
 sandbox bills the provider account that owns the key. Stop and resume sandboxes from **Settings →

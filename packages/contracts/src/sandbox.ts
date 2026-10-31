@@ -8,7 +8,7 @@ import { EnvironmentId, TrimmedString } from "./baseSchemas.ts";
  * provider's API key is saved in that server's settings, so an environment can be created from
  * any client without ever sending its key to the other machines on the account.
  */
-export const SandboxProviderKind = Schema.Literals(["boat", "daytona"]);
+export const SandboxProviderKind = Schema.Literals(["boat", "daytona", "vercel"]);
 export type SandboxProviderKind = typeof SandboxProviderKind.Type;
 
 export const SandboxMachineSize = Schema.Struct({
@@ -17,6 +17,15 @@ export const SandboxMachineSize = Schema.Struct({
   detail: TrimmedString,
 });
 export type SandboxMachineSize = typeof SandboxMachineSize.Type;
+
+/** A non-secret account setting a provider needs besides its key, saved next to the key. */
+export const SandboxProviderSettingsField = Schema.Struct({
+  id: TrimmedString,
+  label: TrimmedString,
+  placeholder: Schema.optionalKey(TrimmedString),
+  optional: Schema.Boolean,
+});
+export type SandboxProviderSettingsField = typeof SandboxProviderSettingsField.Type;
 
 export const SandboxProviderInfo = Schema.Struct({
   kind: SandboxProviderKind,
@@ -28,6 +37,9 @@ export const SandboxProviderInfo = Schema.Struct({
   /** False until an API key is saved on this server. */
   configured: Schema.Boolean,
   sizes: Schema.Array(SandboxMachineSize),
+  settingsFields: Schema.optionalKey(Schema.Array(SandboxProviderSettingsField)),
+  /** The saved values of `settingsFields`, keyed by field id. */
+  settings: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   /** Derived from the optional methods the driver implements, so clients never branch on `kind`. */
   capabilities: Schema.Struct({
     limits: Schema.Boolean,
@@ -124,6 +136,8 @@ export const SandboxCreateInput = Schema.Struct({
   provider: SandboxProviderKind,
   /** Saved on this server when present; when omitted the saved key is used. */
   apiKey: Schema.optional(TrimmedString),
+  /** Values for the provider's `settingsFields`, saved on this server; an empty value clears one. */
+  settings: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   /** Shown as the environment and sandbox name. Defaults to a generated name. */
   label: Schema.optional(TrimmedString),
   /** One of the provider's machine size ids. Defaults to the provider's default size. */
@@ -494,6 +508,10 @@ export const SandboxSettings = Schema.Struct({
   apiKey: TrimmedString.pipe(
     Schema.withDecodingDefault(Effect.succeed("")),
     Schema.annotateKey({ settingsSecret: true }),
+  ),
+  /** Values for the driver's `settingsFields`. Not secret, so they stay in plain settings. */
+  settings: Schema.Record(Schema.String, Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
   ),
 });
 export type SandboxSettings = typeof SandboxSettings.Type;

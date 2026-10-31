@@ -12,9 +12,8 @@ remote path. Nothing downstream knows the machine is a sandbox.
 point: `create`, `execute`, `exposePort`, `destroy`, the optional `stop`/`resume` pair, `limits`,
 `listEnvironments`, `status`, `usage`, and templates, and the presentation metadata in `info`. Clients learn which optional
 methods exist from the `capabilities` the provisioner derives; they never branch on provider kind.
-[`providers/index.ts`](../../apps/server/src/sandbox/providers/index.ts) is the registry. Add one
-file and one array entry; settings, RPC, provisioning, and the Add environment UI read the driver's
-`info`.
+[`providers/index.ts`](../../apps/server/src/sandbox/providers/index.ts) is the registry; settings,
+RPC, provisioning, and the Add environment UI read the driver's `info`.
 
 Drivers must keep two invariants:
 
@@ -29,27 +28,33 @@ Drivers must keep two invariants:
 
 ## Adding a provider
 
-Boat and Daytona are two implementations of the same contract; a third provider is one file plus
-one registry entry.
+Boat, Daytona, and Vercel implement the same contract. A new provider is a driver file, a registry
+entry, its kind in contracts, and its logo; nothing else branches on the provider.
 
 1. **Write the driver.** Add `apps/server/src/sandbox/providers/<provider>.ts` exporting a
    `SandboxProviderDriver`. Start from
    [`boat.ts`](../../apps/server/src/sandbox/providers/boat.ts) when the provider returns the public
    URL at create time, or from
    [`daytona.ts`](../../apps/server/src/sandbox/providers/daytona.ts) when it needs a separate
-   preview-URL call. Reuse `requestJson`, `jsonBody`, and `authorize` from
-   `SandboxProvider.ts` so status handling and error mapping stay consistent. `requestJson` turns
+   preview-URL call, or from [`vercel.ts`](../../apps/server/src/sandbox/providers/vercel.ts) when
+   it names sandboxes and runs them in sessions. Reuse `requestJson` (or `requestText` for bodies
+   that are not one JSON document, such as an ND-JSON command stream), `jsonBody`, and `authorize`
+   from `SandboxProvider.ts` so status handling and error mapping stay consistent. `requestJson` turns
    provider error bodies into a stable `code` (rate limited, concurrency full, billing required,
    size unavailable, …) with a bounded message; add the provider's own error codes to its table
    instead of writing messages in the driver, because clients react to `code`.
 2. **Fill in `info`.** `kind`, `label`, `detail`, `apiKeyLabel`, `apiKeyPlaceholder`, `docsUrl`,
-   and `sizes`. The settings UI, the API-key field, and the machine picker are generated from it;
-   nothing else needs to know the provider exists.
-3. **Declare the provider kind.** Add it to `SandboxProviderKind` in
+   and `sizes`. The settings UI, the API-key field, and the machine picker are generated from it.
+   An account setting the provider needs besides the key (Vercel's team and project) is a
+   `settingsFields` entry: the form shows it under the key, the server saves it next to the key,
+   and the driver reads it from `config.settings`. These values are not secret and are sent to
+   clients, so a credential never goes in one. When an optional one is empty, the driver picks a
+   default or fails at the `config` stage with a short message naming the values that would work.
+3. **Declare the provider kind and its mark.** Add it to `SandboxProviderKind` in
    `packages/contracts/src/sandbox.ts`. This is what persists on records and settings, so changing
-   it later needs a migration.
+   it later needs a migration. Add the brand mark to `SandboxProviderLogo.tsx`.
 4. **Register the driver.** Add the import and the array entry in
-   `providers/index.ts`. Scopes, RPCs, and UI need no changes.
+   `providers/index.ts`. Scopes, RPCs, settings, and the rest of the UI need no changes.
 5. **Decide the optional capabilities.**
    - `stop`/`resume` only if the provider can stop and start the same machine. The record's hard
      deadline still rules: a provider TTL that stops ends at the deadline, and one that deletes ends
@@ -57,11 +62,13 @@ one registry entry.
    - `listEnvironments` only if the provider has named credential environments. Return **flags
      only** (`passGithub`, `passSecrets`, …). Never map `envContents`, `secretFiles`, or any other
      value that carries a real secret into `SandboxCredentialEnvironment`.
-   - `limits` only if the provider reports quotas. Return `null` when the account's limits can't be
-     read (a key without that scope, for example), never an error. The provisioner runs
-     `assessSandboxStart` before every create and resume, and it blocks only on what the provider
-     says it would refuse; unknown or failed limits let the start through so the provider decides.
-     A plan maximum for auto-stop (`maxTtlMinutes`) clamps the lifetime T3 records.
+   - `limits` only if the provider reports quotas; with no quota API, omit it rather than guess.
+     Return `null` when the account's limits can't be read (a key without that scope, for
+     example), never an error. The provisioner runs `assessSandboxStart` before every create and
+     resume, and it blocks only on what the provider says it would refuse; unknown or failed
+     limits let the start through so the provider decides. A plan maximum for auto-stop
+     (`maxTtlMinutes`) clamps the lifetime T3 records, so it is never a per-session cap: a
+     provider that caps sessions clamps its own timeout in the driver and lets the session stop.
    - `status` lets the sweep notice a machine stopped, expired, or deleted outside T3. A machine
      the provider no longer has is `deleted`, not an error, and a provider state T3 does not track
      returns `null` so the record is left alone.
@@ -72,8 +79,10 @@ one registry entry.
      `~/.t3/userdata`: the environment id, auth sessions, and secrets. The provisioner's scrub
      removes them before the driver saves, and create refuses any machine that answers with an id
      a record already has, so a copy never inherits its source's identity or valid bearer tokens.
-     Because the source loses its identity too, a successful save deletes it. List only templates
-     T3 saved, never the provider's base images.
+     Because the source loses its identity too, a successful save deletes it, so the template
+     must not depend on the source's disk. List only templates T3 saved, never the provider's base
+     images. A provider whose snapshots carry no name can keep a template as a stopped, tagged
+     machine and start new ones as forks of it, as Vercel does.
 6. **Add a size default and the server port.** `defaultSize` must be one of the `info.sizes` ids,
    and `serverPort` is `3773` unless the provider reserves it.
 7. **Test it without the network.** Follow `SandboxProvisioner.test.ts`: `HttpClient.make`
@@ -81,11 +90,14 @@ one registry entry.
    (including the published port and the TTL), execute failure, expose, destroy, and any cleanup
    path the driver owns. `check:changed` runs them.
 
-Two details apply to every provider:
+Three details apply to every provider:
 
 - **The first successful create must be usable.** Publish port `3773` with a public, ungated
   origin, and make sure the provider's own auto-stop or auto-delete is not shorter than T3's
-  eight-hour lifetime.
+  eight-hour lifetime. Where the plan caps it lower, `info.detail` says so.
+- **The sandbox id survives a resume.** Record the id that stays the same across stop and resume.
+  Vercel starts a new session on every resume, so its driver records the sandbox name and reads
+  the current session before each command, stop, or extend, caching nothing between calls.
 - **The sandbox labels itself.** Provisioning writes `<baseDir>/environment-label` (default
   `~/.t3/environment-label`) before starting the server, so the environment picks up the requested
   name without sudo or a writable `/etc`.
@@ -112,7 +124,10 @@ Boat's backstop is an auto-stop counted from create or resume, so extending a ru
 resets it to the time left, a stopped one gets it on resume, and a plan with a lower auto-stop
 maximum (trial: two hours) stops the machine early without moving T3's deadline. Daytona's TTL
 deletes the sandbox, disk included, even when stopped, so it is always set 24 hours past the
-deadline: a stopped Daytona sandbox keeps its disk for a day and is then gone.
+deadline: a stopped Daytona sandbox keeps its disk for a day and is then gone. Vercel's is the
+session timeout, set on create and resume and moved with `extend-timeout`, but the plan caps one
+session (45 minutes on Hobby, a day on Pro), so a Hobby sandbox stops early and the sweep records
+it as stopped until the user resumes it. Its stopped disk is kept for 30 days.
 
 The same sweep makes the record match the provider, because T3 usually runs where webhooks can't
 reach it. Each record gets at most one provider call per sweep, with a few in flight at a time. An

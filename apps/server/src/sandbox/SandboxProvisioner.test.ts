@@ -18,6 +18,7 @@ import type { SandboxRecord } from "@t3tools/contracts";
 import { requestJson } from "./SandboxProvider.ts";
 import { boatDriver } from "./providers/boat.ts";
 import { daytonaDriver } from "./providers/daytona.ts";
+import { vercelDriver } from "./providers/vercel.ts";
 
 const boatSandboxId = "bx_abcdefgh";
 const testEnvironmentId = EnvironmentId.make("11111111-1111-4111-8111-111111111111");
@@ -102,6 +103,60 @@ const boatResponse = (request: HttpClientRequest.HttpClientRequest) =>
     }),
   );
 
+const recording = (
+  requests: Array<{
+    readonly method: string;
+    readonly url: string;
+    readonly body: unknown;
+    readonly authorization?: string | undefined;
+  }>,
+  respond: (request: HttpClientRequest.HttpClientRequest) => Response,
+) =>
+  HttpClient.make((request) => {
+    const query = UrlParams.toString(request.urlParams);
+    requests.push({
+      method: request.method,
+      url: query === "" ? request.url : `${request.url}?${query}`,
+      body:
+        request.body._tag === "Uint8Array"
+          ? JSON.parse(new TextDecoder().decode(request.body.body))
+          : undefined,
+      authorization: request.headers.authorization,
+    });
+    return Effect.succeed(HttpClientResponse.fromWeb(request, respond(request)));
+  });
+
+const vercelConfig = { apiKey: "vcp_test", settings: {} };
+const vercelTeam = (plan: string) => ({ id: "team_1", slug: "acme", billing: { plan } });
+// Shaped like live `GET /v2/sandboxes/{name}` responses, with invented ids.
+const vercelSandbox = (
+  sandbox: Record<string, unknown> = {},
+  session: Record<string, unknown> = {},
+) => ({
+  sandbox: {
+    name: "box-attempt1",
+    status: "running",
+    currentSessionId: "sbx_current",
+    currentSnapshotId: "snap_source",
+    createdAt: 1793318400000,
+    vcpus: 2,
+    expiresAt: 20 * 60_000,
+    ...sandbox,
+  },
+  session: { id: "sbx_current", status: "running", timeout: 20 * 60_000, ...session },
+  routes: [
+    { port: 3773, url: "https://sb-t3.vercel.run", subdomain: "sb-t3" },
+    { port: 26661, url: "https://sb-system.vercel.run", subdomain: "sb-system", system: true },
+  ],
+});
+const ndjson = (lines: ReadonlyArray<unknown>) =>
+  new Response(lines.map((line) => JSON.stringify(line)).join("\n") + "\n", {
+    headers: { "content-type": "application/x-ndjson" },
+  });
+const vercelCommand = (exitCode: number | null) => ({
+  command: { id: "cmd_1", name: "sh", sessionId: "sbx_current", exitCode },
+});
+
 describe("boatDriver", () => {
   it.effect("creates a sandbox with a public T3 port and reads its URL", () =>
     Effect.gen(function* () {
@@ -126,7 +181,7 @@ describe("boatDriver", () => {
 
       const created = yield* boatDriver
         .create({
-          config: { apiKey: "boat_test" },
+          config: { apiKey: "boat_test", settings: {} },
           name: "Boat sandbox",
           size: "default",
           idempotencyKey: "attempt-1",
@@ -185,7 +240,7 @@ describe("boatDriver", () => {
           ),
         );
         const status = yield* boatDriver.status!({
-          config: { apiKey: "boat_test" },
+          config: { apiKey: "boat_test", settings: {} },
           sandboxId: boatSandboxId,
         }).pipe(Effect.provideService(HttpClient.HttpClient, client));
         expect(status, JSON.stringify(testCase)).toBe(testCase.expected);
@@ -212,7 +267,7 @@ describe("boatDriver", () => {
       return Effect.gen(function* () {
         const error = yield* boatDriver
           .execute({
-            config: { apiKey: "boat_test" },
+            config: { apiKey: "boat_test", settings: {} },
             sandboxId: boatSandboxId,
             command: "echo 'ok'; exit 0",
             timeoutSeconds: 60,
@@ -288,7 +343,7 @@ describe("daytonaDriver", () => {
 
       const created = yield* daytonaDriver
         .create({
-          config: { apiKey: "dtn_test" },
+          config: { apiKey: "dtn_test", settings: {} },
           name: "Daytona sandbox",
           size: "daytona-medium",
           ttlMinutes: 480,
@@ -297,21 +352,25 @@ describe("daytonaDriver", () => {
         .pipe(Effect.provideService(HttpClient.HttpClient, client));
       const executed = yield* daytonaDriver
         .execute({
-          config: { apiKey: "dtn_test" },
+          config: { apiKey: "dtn_test", settings: {} },
           sandboxId: created.id,
           command: "t3 pair",
           timeoutSeconds: 30,
         })
         .pipe(Effect.provideService(HttpClient.HttpClient, client));
       const preview = yield* daytonaDriver
-        .exposePort({ config: { apiKey: "dtn_test" }, sandboxId: created.id, port: 3773 })
+        .exposePort({
+          config: { apiKey: "dtn_test", settings: {} },
+          sandboxId: created.id,
+          port: 3773,
+        })
         .pipe(Effect.provideService(HttpClient.HttpClient, client));
 
       expect(created).toEqual({ id: "sandbox_1", name: "Daytona sandbox" });
       expect(executed.stdout).toContain("Token: pair_xyz");
       expect(preview).toBe("https://3773-sandbox_1.proxy.daytona.works");
       yield* daytonaDriver.extend!({
-        config: { apiKey: "dtn_test" },
+        config: { apiKey: "dtn_test", settings: {} },
         sandboxId: created.id,
         ttlMinutes: 180,
         running: false,
@@ -361,7 +420,7 @@ describe("daytonaDriver", () => {
           ),
         );
         const status = yield* daytonaDriver.status!({
-          config: { apiKey: "dtn_test" },
+          config: { apiKey: "dtn_test", settings: {} },
           sandboxId: "sandbox_1",
         }).pipe(Effect.provideService(HttpClient.HttpClient, client));
         expect(status, JSON.stringify(testCase)).toBe(testCase.expected);
@@ -370,24 +429,298 @@ describe("daytonaDriver", () => {
   );
 });
 
-describe("sandbox templates", () => {
-  const recording = (
-    requests: Array<{ readonly method: string; readonly url: string; readonly body: unknown }>,
-    respond: (request: HttpClientRequest.HttpClientRequest) => Response,
-  ) =>
-    HttpClient.make((request) => {
-      const query = UrlParams.toString(request.urlParams);
-      requests.push({
-        method: request.method,
-        url: query === "" ? request.url : `${request.url}?${query}`,
-        body:
-          request.body._tag === "Uint8Array"
-            ? JSON.parse(new TextDecoder().decode(request.body.body))
-            : undefined,
-      });
-      return Effect.succeed(HttpClientResponse.fromWeb(request, respond(request)));
+describe("vercelDriver", () => {
+  it.effect("creates a sandbox in the T3 project, making the project once", () => {
+    const requests: Array<{ method: string; url: string; body: unknown }> = [];
+    const client = recording(requests, (request) => {
+      const url = new URL(request.url);
+      if (url.pathname === "/v2/teams") return Response.json({ teams: [vercelTeam("pro")] });
+      if (url.pathname === "/v9/projects/t3-sandboxes") {
+        return Response.json({ error: { code: "not_found" } }, { status: 404 });
+      }
+      if (url.pathname === "/v11/projects") return Response.json({ id: "prj_1" });
+      return Response.json(vercelSandbox());
     });
+    return Effect.gen(function* () {
+      const created = yield* vercelDriver.create({
+        config: vercelConfig,
+        name: "My Box!",
+        size: "vercel-4",
+        ttlMinutes: 480,
+        idempotencyKey: "0f1e2d3c-aaaa-bbbb",
+      });
 
+      // The sandbox name is the record's id, since sessions change on every resume.
+      expect(created).toEqual({
+        id: "box-attempt1",
+        name: "My Box!",
+        publicUrl: "https://sb-t3.vercel.run",
+      });
+      expect(requests.map((request) => `${request.method} ${request.url}`)).toEqual([
+        "GET https://api.vercel.com/v2/teams?limit=20",
+        "GET https://api.vercel.com/v9/projects/t3-sandboxes?teamId=team_1",
+        "POST https://api.vercel.com/v11/projects?teamId=team_1",
+        "POST https://api.vercel.com/v4/sandboxes?teamId=team_1",
+      ]);
+      expect(requests[2]?.body).toEqual({ name: "t3-sandboxes" });
+      expect(requests[3]?.body).toEqual({
+        // Names are URL-safe and unique per project.
+        name: "my-box-0f1e2d3c",
+        projectId: "t3-sandboxes",
+        ports: [3773],
+        timeout: 480 * 60_000,
+        resources: { vcpus: 4 },
+        persistent: true,
+        tags: { "t3.code/role": "environment" },
+        snapshotExpiration: 30 * 24 * 60 * 60 * 1000,
+        keepLastSnapshots: { count: 1 },
+      });
+    }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+  });
+
+  it.effect("keeps a Hobby session inside the plan and refuses a size it cannot run", () => {
+    const requests: Array<{ method: string; url: string; body: unknown }> = [];
+    const client = recording(requests, (request) =>
+      new URL(request.url).pathname === "/v2/teams"
+        ? Response.json({ teams: [vercelTeam("hobby")] })
+        : Response.json(vercelSandbox()),
+    );
+    return Effect.gen(function* () {
+      yield* vercelDriver.create({
+        config: vercelConfig,
+        name: "Box",
+        size: "vercel-2",
+        ttlMinutes: 480,
+        idempotencyKey: "attempt1",
+      });
+      expect(requests.at(-1)?.body).toMatchObject({ timeout: 45 * 60_000 });
+
+      requests.length = 0;
+      const refused = yield* vercelDriver
+        .create({ config: vercelConfig, name: "Box", size: "vercel-8", idempotencyKey: "attempt2" })
+        .pipe(Effect.flip);
+      expect(refused).toMatchObject({ code: "size_unavailable", stage: "config" });
+      expect(requests.map((request) => request.method)).toEqual(["GET"]);
+    }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+  });
+
+  it.effect("finds the team from the token or the Team setting", () =>
+    Effect.gen(function* () {
+      const teamsOf = (respond: (pathname: string) => Response) => {
+        const requests: Array<{ method: string; url: string; body: unknown }> = [];
+        const client = recording(requests, (request) => respond(new URL(request.url).pathname));
+        return { requests, client };
+      };
+      const status = (
+        settings: Record<string, string>,
+        respond: (pathname: string) => Response,
+      ) => {
+        const { requests, client } = teamsOf(respond);
+        return vercelDriver.status!({
+          config: { apiKey: "vcp_test", settings },
+          sandboxId: "box-attempt1",
+        }).pipe(
+          Effect.provideService(HttpClient.HttpClient, client),
+          Effect.map((result) => ({ result, urls: requests.map((request) => request.url) })),
+        );
+      };
+      const sandbox = Response.json(vercelSandbox());
+
+      // A personal account has no team, so no `teamId` is sent.
+      const personal = yield* status({}, (path) =>
+        path === "/v2/teams" ? Response.json({ teams: [] }) : sandbox.clone(),
+      );
+      expect(personal.urls.at(-1)).toBe(
+        "https://api.vercel.com/v2/sandboxes/box-attempt1?projectId=t3-sandboxes",
+      );
+
+      const several = yield* status({}, () =>
+        Response.json({
+          teams: ["a", "b", "c", "d", "e", "f"].map((slug) => ({ id: `team_${slug}`, slug })),
+        }),
+      ).pipe(Effect.flip);
+      expect(several).toMatchObject({ stage: "config" });
+      expect(several.detail).toBe(
+        "This Vercel token can see 6 teams. Enter one under Team: a, b, c, d, e, ….",
+      );
+
+      // A slug in the setting resolves to the team's id, and the project setting replaces the default.
+      const chosen = yield* status({ teamId: "acme", projectId: "mine" }, (path) =>
+        path === "/v2/teams/acme" ? Response.json(vercelTeam("pro")) : sandbox.clone(),
+      );
+      expect(chosen.urls).toEqual([
+        "https://api.vercel.com/v2/teams/acme",
+        "https://api.vercel.com/v2/sandboxes/box-attempt1?teamId=team_1&projectId=mine",
+      ]);
+
+      // Vercel answers 403 for a team the token cannot see, which is not a rejected token.
+      const hidden = yield* status({ teamId: "other" }, (path) =>
+        path === "/v2/teams"
+          ? Response.json({ teams: [vercelTeam("pro")] })
+          : Response.json({ error: { code: "forbidden" } }, { status: 403 }),
+      ).pipe(Effect.flip);
+      expect(hidden).toMatchObject({ stage: "config" });
+      expect(hidden.code).toBeUndefined();
+      expect(hidden.detail).toContain("cannot see a team named other");
+
+      const badToken = yield* status({ teamId: "acme" }, () =>
+        Response.json({ error: { code: "forbidden", invalidToken: true } }, { status: 403 }),
+      ).pipe(Effect.flip);
+      expect(badToken).toMatchObject({ code: "api_key_rejected" });
+    }),
+  );
+
+  it.effect(
+    "runs a command in the current session and keeps a failure's output only in the cause",
+    () => {
+      const requests: Array<{ method: string; url: string; body: unknown }> = [];
+      let exitCode = 0;
+      const client = recording(requests, (request) => {
+        const url = new URL(request.url);
+        if (url.pathname === "/v2/teams") return Response.json({ teams: [] });
+        if (url.pathname.endsWith("/cmd")) {
+          return ndjson([
+            vercelCommand(null),
+            { data: "Token: pair_vercel\n", stream: "stdout" },
+            { data: "vcp_live_secret\n", stream: "stderr" },
+            vercelCommand(exitCode),
+          ]);
+        }
+        return Response.json(vercelSandbox({ currentSessionId: "sbx_resumed" }));
+      });
+      return Effect.gen(function* () {
+        const run = vercelDriver.execute({
+          config: vercelConfig,
+          sandboxId: "box-attempt1",
+          command: "t3 pair",
+          timeoutSeconds: 60,
+        });
+        const ok = yield* run;
+        expect(ok).toEqual({
+          exitCode: 0,
+          stdout: "Token: pair_vercel\n",
+          stderr: "vcp_live_secret\n",
+        });
+        expect(requests.at(-1)).toMatchObject({
+          method: "POST",
+          url: "https://api.vercel.com/v2/sandboxes/sessions/sbx_resumed/cmd",
+          body: { command: "sh", args: ["-c", "t3 pair"], wait: true, logs: true, timeout: 60_000 },
+        });
+
+        exitCode = 3;
+        const error = yield* run.pipe(Effect.flip);
+        expect(error).toMatchObject({ stage: "install", detail: "The command exited with 3." });
+        expect(error.message).not.toContain("vcp_live_secret");
+        expect(String(error.cause)).toContain("vcp_live_secret");
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+    },
+  );
+
+  it.effect("maps Vercel's sandbox states to the states T3 records", () =>
+    Effect.gen(function* () {
+      const cases = [
+        { status: "running", expected: "running" },
+        { status: "stopping", expected: "stopped" },
+        { status: "stopped", expected: "stopped" },
+        { httpStatus: 404, expected: "deleted" },
+        { status: "snapshotting", expected: null },
+      ] as const;
+      for (const testCase of cases) {
+        const client = recording([], (request) =>
+          new URL(request.url).pathname === "/v2/teams"
+            ? Response.json({ teams: [] })
+            : "httpStatus" in testCase
+              ? Response.json({ error: { code: "not_found" } }, { status: testCase.httpStatus })
+              : Response.json(vercelSandbox({ status: testCase.status })),
+        );
+        const status = yield* vercelDriver.status!({
+          config: vercelConfig,
+          sandboxId: "box-attempt1",
+        }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+        expect(status, JSON.stringify(testCase)).toBe(testCase.expected);
+      }
+    }),
+  );
+
+  it.effect(
+    "stops the current session, resumes into a new one, and extends within the plan",
+    () => {
+      const requests: Array<{ method: string; url: string; body: unknown }> = [];
+      let plan = "pro";
+      let running = true;
+      const client = recording(requests, (request) => {
+        const url = new URL(request.url);
+        if (url.pathname === "/v2/teams") return Response.json({ teams: [vercelTeam(plan)] });
+        if (request.method === "POST" || request.method === "PATCH") return Response.json({});
+        return Response.json(
+          url.searchParams.get("resume") === "true"
+            ? vercelSandbox({ currentSessionId: "sbx_next" }, { id: "sbx_next" })
+            : vercelSandbox({ status: running ? "running" : "stopped" }),
+        );
+      });
+      const calls = () => requests.map((request) => `${request.method} ${request.url}`);
+      return Effect.gen(function* () {
+        yield* vercelDriver.stop!({ config: vercelConfig, sandboxId: "box-attempt1" });
+        expect(calls().at(-1)).toBe(
+          "POST https://api.vercel.com/v2/sandboxes/sessions/sbx_current/stop?teamId=team_1",
+        );
+        // Vercel answers 415 to a POST without a JSON body.
+        expect(requests.at(-1)?.body).toEqual({});
+
+        requests.length = 0;
+        const resumed = yield* vercelDriver.resume!({
+          config: vercelConfig,
+          sandboxId: "box-attempt1",
+          ttlMinutes: 120,
+        });
+        expect(resumed).toEqual({ publicUrl: "https://sb-t3.vercel.run" });
+        // The new session takes the sandbox's timeout, so it is set before the resume.
+        expect(calls().slice(1)).toEqual([
+          "PATCH https://api.vercel.com/v2/sandboxes/box-attempt1?teamId=team_1&projectId=t3-sandboxes",
+          "GET https://api.vercel.com/v2/sandboxes/box-attempt1?teamId=team_1&projectId=t3-sandboxes&resume=true",
+        ]);
+        expect(requests[1]?.body).toEqual({ timeout: 120 * 60_000 });
+
+        // The session ends 20 minutes from now (TestClock starts at 0) and should end in 80.
+        requests.length = 0;
+        yield* vercelDriver.extend!({
+          config: vercelConfig,
+          sandboxId: "box-attempt1",
+          ttlMinutes: 80,
+          running: true,
+        });
+        expect(calls().at(-1)).toBe(
+          "POST https://api.vercel.com/v2/sandboxes/sessions/sbx_current/extend-timeout?teamId=team_1",
+        );
+        expect(requests.at(-1)?.body).toEqual({ duration: 60 * 60_000 });
+
+        // Hobby caps the session at 45 minutes; the rest of T3's deadline needs a resume.
+        plan = "hobby";
+        yield* vercelDriver.extend!({
+          config: vercelConfig,
+          sandboxId: "box-attempt1",
+          ttlMinutes: 80,
+          running: true,
+        });
+        expect(requests.at(-1)?.body).toEqual({ duration: 25 * 60_000 });
+
+        // A stopped sandbox gets its time when it resumes, and a stopped one is not stopped again.
+        requests.length = 0;
+        running = false;
+        yield* vercelDriver.extend!({
+          config: vercelConfig,
+          sandboxId: "box-attempt1",
+          ttlMinutes: 80,
+          running: false,
+        });
+        yield* vercelDriver.stop!({ config: vercelConfig, sandboxId: "box-attempt1" });
+        expect(requests.map((request) => request.method)).toEqual(["GET", "GET"]);
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+    },
+  );
+});
+
+describe("sandbox templates", () => {
   it.effect("lists Boat's ready saved snapshots with the allowance and deletes one", () => {
     const requests: Array<{ method: string; url: string; body: unknown }> = [];
     const client = recording(requests, (request) =>
@@ -415,8 +748,13 @@ describe("sandbox templates", () => {
           }),
     );
     return Effect.gen(function* () {
-      const listed = yield* boatDriver.listTemplates!({ config: { apiKey: "boat_test" } });
-      yield* boatDriver.deleteTemplate!({ config: { apiKey: "boat_test" }, name: "web-stack" });
+      const listed = yield* boatDriver.listTemplates!({
+        config: { apiKey: "boat_test", settings: {} },
+      });
+      yield* boatDriver.deleteTemplate!({
+        config: { apiKey: "boat_test", settings: {} },
+        name: "web-stack",
+      });
 
       // Only a ready snapshot can start a sandbox.
       expect(listed).toEqual({
@@ -481,7 +819,7 @@ describe("sandbox templates", () => {
       return Response.json({ id: "sandbox_1", state: "started" });
     });
     return Effect.gen(function* () {
-      const config = { apiKey: "dtn_test" };
+      const config = { apiKey: "dtn_test", settings: {} };
       const fiber = yield* daytonaDriver.saveTemplate!({
         config,
         sandboxId: "sandbox_1",
@@ -526,12 +864,143 @@ describe("sandbox templates", () => {
     }).pipe(Effect.provideService(HttpClient.HttpClient, client));
   });
 
+  it.effect("saves, lists, deletes, and starts from Vercel template sandboxes", () => {
+    const requests: Array<{ method: string; url: string; body: unknown }> = [];
+    const polls = new Map<string, number>();
+    let templateExists = true;
+    const client = recording(requests, (request) => {
+      const url = new URL(request.url);
+      const poll = (name: string) => {
+        polls.set(name, (polls.get(name) ?? 0) + 1);
+        return polls.get(name)!;
+      };
+      if (url.pathname === "/v2/teams") return Response.json({ teams: [] });
+      if (url.pathname === "/v2/sandboxes" && request.method === "GET") {
+        return Response.json({
+          sandboxes: [
+            vercelSandbox({ name: "t3-template-web", status: "stopped", vcpus: 4 }).sandbox,
+            // A template mid-save is still running and has no disk yet.
+            vercelSandbox({ name: "t3-template-saving", status: "running" }).sandbox,
+            vercelSandbox({ name: "someone-elses", status: "stopped" }).sandbox,
+          ],
+        });
+      }
+      if (url.pathname === "/v2/sandboxes/box-attempt1" && request.method === "GET") {
+        return Response.json(
+          vercelSandbox({ status: poll("source") < 2 ? "stopping" : "stopped" }),
+        );
+      }
+      if (url.pathname === "/v2/sandboxes/t3-template-web" && request.method === "GET") {
+        if (templateExists) {
+          templateExists = false;
+          return Response.json(vercelSandbox({ name: "t3-template-web", status: "stopped" }));
+        }
+        return Response.json(
+          vercelSandbox({
+            name: "t3-template-web",
+            status: poll("template") < 2 ? "stopping" : "stopped",
+            currentSnapshotId: "snap_template",
+            vcpus: 4,
+          }),
+        );
+      }
+      if (url.pathname.endsWith("/fork")) {
+        return Response.json(
+          vercelSandbox(
+            {
+              name: url.pathname.includes("t3-template-web/") ? "copy-attempt1" : "t3-template-web",
+              currentSessionId: "sbx_fork",
+            },
+            { id: "sbx_fork" },
+          ),
+        );
+      }
+      return Response.json({});
+    });
+    const calls = () => requests.map((request) => `${request.method} ${request.url}`);
+    return Effect.gen(function* () {
+      const fiber = yield* vercelDriver.saveTemplate!({
+        config: vercelConfig,
+        sandboxId: "box-attempt1",
+        name: "web",
+      }).pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 minute");
+      const saved = yield* Fiber.join(fiber);
+      expect(saved).toEqual({
+        name: "web",
+        createdAt: "2026-10-30T00:00:00.000Z",
+        size: "vercel-4",
+      });
+      const base = "https://api.vercel.com/v2/sandboxes";
+      expect(calls()).toEqual([
+        "GET https://api.vercel.com/v2/teams?limit=20",
+        // The provisioner's stop returns while Vercel still snapshots the disk.
+        `GET ${base}/box-attempt1?projectId=t3-sandboxes`,
+        `GET ${base}/box-attempt1?projectId=t3-sandboxes`,
+        // Saving under an existing name replaces that template.
+        `GET ${base}/t3-template-web?projectId=t3-sandboxes`,
+        `DELETE ${base}/t3-template-web?projectId=t3-sandboxes&deleteOrphanSnapshots=true`,
+        `POST ${base}/box-attempt1/fork?projectId=t3-sandboxes`,
+        `POST ${base}/sessions/sbx_fork/stop`,
+        `GET ${base}/t3-template-web?projectId=t3-sandboxes`,
+        `GET ${base}/t3-template-web?projectId=t3-sandboxes`,
+        // The template has its own snapshot now, so the source's stop snapshot is not kept.
+        `DELETE ${base}/snapshots/snap_source`,
+      ]);
+      expect(requests[5]?.body).toEqual({
+        name: "t3-template-web",
+        timeout: 5 * 60_000,
+        tags: { "t3.code/role": "template" },
+        persistent: true,
+        snapshotExpiration: 0,
+        keepLastSnapshots: { count: 1 },
+      });
+
+      requests.length = 0;
+      const listed = yield* vercelDriver.listTemplates!({ config: vercelConfig });
+      expect(listed).toEqual({
+        templates: [{ name: "web", createdAt: "2026-10-30T00:00:00.000Z", size: "vercel-4" }],
+      });
+      expect(calls()[1]).toBe(
+        `GET ${base}?project=t3-sandboxes&tags=t3.code%2Frole%3Atemplate&limit=50`,
+      );
+
+      requests.length = 0;
+      const created = yield* vercelDriver.create({
+        config: vercelConfig,
+        name: "Copy",
+        size: "vercel-2",
+        ttlMinutes: 480,
+        idempotencyKey: "attempt1",
+        template: "web",
+      });
+      expect(created).toMatchObject({ id: "copy-attempt1", publicUrl: "https://sb-t3.vercel.run" });
+      expect(calls().at(-1)).toBe(`POST ${base}/t3-template-web/fork?projectId=t3-sandboxes`);
+      // A fork copies the template's tags, ports, timeout, and never-expiring disk unless overridden.
+      expect(requests.at(-1)?.body).toEqual({
+        name: "copy-attempt1",
+        ports: [3773],
+        timeout: 45 * 60_000,
+        tags: { "t3.code/role": "environment" },
+        persistent: true,
+        snapshotExpiration: 30 * 24 * 60 * 60 * 1000,
+        keepLastSnapshots: { count: 1 },
+      });
+
+      requests.length = 0;
+      yield* vercelDriver.deleteTemplate!({ config: vercelConfig, name: "web" });
+      expect(calls().at(-1)).toBe(
+        `DELETE ${base}/t3-template-web?projectId=t3-sandboxes&deleteOrphanSnapshots=true`,
+      );
+    }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+  });
+
   it.effect("tells a Daytona key without snapshot permission apart from a bad key", () => {
     const client = recording([], () => Response.json({ message: "Forbidden" }, { status: 403 }));
     return Effect.gen(function* () {
-      const error = yield* daytonaDriver.listTemplates!({ config: { apiKey: "dtn_test" } }).pipe(
-        Effect.flip,
-      );
+      const error = yield* daytonaDriver.listTemplates!({
+        config: { apiKey: "dtn_test", settings: {} },
+      }).pipe(Effect.flip);
       expect(error).toMatchObject({ code: "api_key_rejected", status: 403, stage: "template" });
       expect(error.detail).toContain("cannot manage snapshots");
     }).pipe(Effect.provideService(HttpClient.HttpClient, client));
@@ -566,7 +1035,7 @@ describe("boat credential environments", () => {
 
     return Effect.gen(function* () {
       const environments = yield* boatDriver.listEnvironments!({
-        config: { apiKey: "boat_test" },
+        config: { apiKey: "boat_test", settings: {} },
       }).pipe(Effect.provideService(HttpClient.HttpClient, client));
 
       expect(environments).toEqual([
@@ -624,7 +1093,7 @@ describe("provider limits", () => {
   it.effect("normalizes Boat's limits and ignores the fields T3 does not use", () =>
     Effect.gen(function* () {
       const readLimits = (body: unknown) =>
-        boatDriver.limits!({ config: { apiKey: "boat_test" } }).pipe(
+        boatDriver.limits!({ config: { apiKey: "boat_test", settings: {} } }).pipe(
           Effect.provideService(HttpClient.HttpClient, respondWith(body)),
         );
 
@@ -693,9 +1162,9 @@ describe("provider limits", () => {
       );
     });
     return Effect.gen(function* () {
-      const limits = yield* daytonaDriver.limits!({ config: { apiKey: "dtn_test" } }).pipe(
-        Effect.provideService(HttpClient.HttpClient, client),
-      );
+      const limits = yield* daytonaDriver.limits!({
+        config: { apiKey: "dtn_test", settings: {} },
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
       expect(limits).toBeNull();
       expect(requests).toEqual([
         "GET https://app.daytona.io/api/api-keys/current",
@@ -814,6 +1283,36 @@ describe("provider limits", () => {
         { provider: "boat", status: 404, body: { code: "snapshot_not_found" }, code: "not_found" },
         { provider: "boat", status: 401, body: { code: "unauthorized" }, code: "api_key_rejected" },
         { provider: "boat", status: 404, body: {}, code: "not_found" },
+        {
+          provider: "vercel",
+          status: 403,
+          body: { error: { code: "forbidden", message: "Not authorized", invalidToken: true } },
+          code: "api_key_rejected",
+        },
+        {
+          provider: "vercel",
+          status: 429,
+          body: { error: { code: "rate_limited", message: "echo boat_live_secret" } },
+          headers: { "Retry-After": "30" },
+          code: "rate_limited",
+          retryAfterSeconds: 30,
+          detail: "Vercel is limiting requests right now. Try again in 30 s.",
+        },
+        // HTTP 402 is a payment refusal whatever the provider calls it.
+        {
+          provider: "vercel",
+          status: 402,
+          body: { error: { code: "payment_required" } },
+          code: "billing_required",
+        },
+        {
+          provider: "vercel",
+          status: 404,
+          body: {
+            error: { code: "not_found", message: "Sandbox 'x' not found for this project." },
+          },
+          code: "not_found",
+        },
         {
           provider: "daytona",
           status: 429,
@@ -1894,6 +2393,72 @@ describe("SandboxProvisioner", () => {
       ]);
       expect(idempotencyKeys).toEqual([expect.stringMatching(/^[0-9a-f-]{36}$/u)]);
     });
+  });
+
+  it.effect("saves a provider's settings fields with its key and passes them to the driver", () => {
+    const requests: Array<{
+      method: string;
+      url: string;
+      body: unknown;
+      authorization?: string | undefined;
+    }> = [];
+    let commands = 0;
+    const client = recording(requests, (request) => {
+      const url = new URL(request.url);
+      if (url.pathname === "/v2/teams/acme") return Response.json(vercelTeam("pro"));
+      if (url.pathname === "/v2/teams") return Response.json({ teams: [vercelTeam("pro")] });
+      if (url.pathname === "/.well-known/t3/environment") return Response.json(descriptor);
+      if (url.pathname.endsWith("/cmd")) {
+        commands += 1;
+        return ndjson([
+          ...(commands === 1 ? [] : [{ data: "Token: pair_vercel\n", stream: "stdout" }]),
+          vercelCommand(0),
+        ]);
+      }
+      if (url.pathname === "/v2/sandboxes" && request.method === "GET") {
+        return Response.json({ sandboxes: [] });
+      }
+      return Response.json(vercelSandbox());
+    });
+    return Effect.gen(function* () {
+      const provisioner = yield* SandboxProvisioner.SandboxProvisioner;
+      yield* provisioner.templates({ provider: "vercel" });
+      // The saved Team reaches the driver without the client sending it again.
+      expect(requests[0]).toMatchObject({
+        url: "https://api.vercel.com/v2/teams/acme",
+        authorization: "Bearer vcp_saved",
+      });
+
+      requests.length = 0;
+      const created = yield* provisioner.create({
+        provider: "vercel",
+        settings: { teamId: "", projectId: " mine ", unknown: "ignored" },
+      });
+      expect(created.pairingCode).toBe("pair_vercel");
+      // A cleared Team falls back to the token's only team, and the saved key is kept.
+      expect(requests[0]).toMatchObject({
+        url: "https://api.vercel.com/v2/teams?limit=20",
+        authorization: "Bearer vcp_saved",
+      });
+      expect(requests.find((request) => request.url.includes("/v4/sandboxes"))?.body).toMatchObject(
+        { projectId: "mine" },
+      );
+      const vercel = (yield* provisioner.providers).providers.find(
+        (provider) => provider.kind === "vercel",
+      );
+      expect(vercel).toMatchObject({
+        configured: true,
+        settings: { teamId: "", projectId: "mine" },
+      });
+      expect(vercel?.settingsFields?.map((field) => field.id)).toEqual(["teamId", "projectId"]);
+    }).pipe(
+      Effect.provide(
+        provisionerLayer({
+          sandboxProviders: { vercel: { apiKey: "vcp_saved", settings: { teamId: "acme" } } },
+        }),
+      ),
+      Effect.provideService(HttpClient.HttpClient, client),
+    );
   });
 
   it.effect("deletes the sandbox when the public port cannot be exposed", () => {

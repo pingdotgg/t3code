@@ -16,6 +16,8 @@ import * as Schema from "effect/Schema";
 
 export interface SandboxProviderConfig {
   readonly apiKey: string;
+  /** Saved values of the driver's `info.settingsFields`, keyed by id; unset fields are absent. */
+  readonly settings: Readonly<Record<string, string>>;
 }
 
 export interface CreatedSandbox {
@@ -46,7 +48,7 @@ export interface SandboxUsage {
 }
 
 export interface SandboxProviderDriver {
-  readonly info: Omit<SandboxProviderInfo, "configured" | "capabilities">;
+  readonly info: Omit<SandboxProviderInfo, "configured" | "capabilities" | "settings">;
   readonly defaultSize: string;
   readonly serverPort: number;
   readonly create: (input: {
@@ -251,18 +253,12 @@ const describeProviderFailure = (input: {
   }
 };
 
-export const requestJson = Effect.fn("SandboxProvider.requestJson")(function* <
-  S extends Schema.Top,
->(input: {
+// Untraced: `requestJson` and `requestText` own the span for the request.
+const executeChecked = Effect.fnUntraced(function* (input: {
   readonly provider: SandboxProviderKind;
   readonly stage: SandboxStage;
   readonly request: HttpClientRequest.HttpClientRequest;
-  readonly schema: S;
-}): Effect.fn.Return<
-  S["Type"],
-  SandboxProviderError,
-  HttpClient.HttpClient | S["DecodingServices"]
-> {
+}) {
   const client = yield* HttpClient.HttpClient;
   const response = yield* client.execute(input.request).pipe(
     Effect.mapError(
@@ -290,7 +286,9 @@ export const requestJson = Effect.fn("SandboxProvider.requestJson")(function* <
           ? "not_found"
           : response.status === 429
             ? "rate_limited"
-            : "unknown");
+            : response.status === 402
+              ? "billing_required"
+              : "unknown");
     const retryAfterSeconds = parsed.retryAfterSeconds ?? retryAfterHeader(response.headers);
     return yield* new SandboxProviderError({
       provider: input.provider,
@@ -308,6 +306,22 @@ export const requestJson = Effect.fn("SandboxProvider.requestJson")(function* <
       cause: new Error(body.slice(0, 2000)),
     });
   }
+  return response;
+});
+
+export const requestJson = Effect.fn("SandboxProvider.requestJson")(function* <
+  S extends Schema.Top,
+>(input: {
+  readonly provider: SandboxProviderKind;
+  readonly stage: SandboxStage;
+  readonly request: HttpClientRequest.HttpClientRequest;
+  readonly schema: S;
+}): Effect.fn.Return<
+  S["Type"],
+  SandboxProviderError,
+  HttpClient.HttpClient | S["DecodingServices"]
+> {
+  const response = yield* executeChecked(input);
   return yield* HttpClientResponse.schemaBodyJson(input.schema)(response).pipe(
     Effect.mapError(
       () =>
@@ -315,6 +329,26 @@ export const requestJson = Effect.fn("SandboxProvider.requestJson")(function* <
           provider: input.provider,
           stage: input.stage,
           detail: "Unexpected response from the sandbox provider.",
+        }),
+    ),
+  );
+});
+
+/** For bodies that are not one JSON document, such as an ND-JSON stream; errors map as above. */
+export const requestText = Effect.fn("SandboxProvider.requestText")(function* (input: {
+  readonly provider: SandboxProviderKind;
+  readonly stage: SandboxStage;
+  readonly request: HttpClientRequest.HttpClientRequest;
+}) {
+  const response = yield* executeChecked(input);
+  return yield* response.text.pipe(
+    Effect.mapError(
+      (cause) =>
+        new SandboxProviderError({
+          provider: input.provider,
+          stage: input.stage,
+          detail: "The sandbox provider's response could not be read.",
+          cause,
         }),
     ),
   );

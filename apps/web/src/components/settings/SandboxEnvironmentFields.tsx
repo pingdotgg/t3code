@@ -94,6 +94,8 @@ export function SandboxEnvironmentFields({
   const connectPairing = useAtomCommand(connectPairingAtom, { reportFailure: false });
   const [selectedKind, setSelectedKind] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState("");
+  // Edits to the provider's settings fields; untouched fields show the saved value.
+  const [settingsDraft, setSettingsDraft] = useState<Readonly<Record<string, string>>>({});
   const [label, setLabel] = useState("");
   const [size, setSize] = useState("");
   const [repositoryUrl, setRepositoryUrl] = useState("");
@@ -146,6 +148,9 @@ export function SandboxEnvironmentFields({
     startCheck.blocked !== null ||
     (passesCredentials && !allowCredentials);
 
+  const settingsFields = provider?.settingsFields ?? [];
+  const settingValue = (id: string) => settingsDraft[id] ?? provider?.settings?.[id] ?? "";
+
   const handleCreate = async () => {
     if (provider === undefined) return;
     startCheck.cancel();
@@ -157,6 +162,13 @@ export function SandboxEnvironmentFields({
       input: {
         provider: provider.kind,
         ...(apiKey.trim() === "" ? {} : { apiKey: apiKey.trim() }),
+        ...(settingsFields.length === 0
+          ? {}
+          : {
+              settings: Object.fromEntries(
+                settingsFields.map((field) => [field.id, settingValue(field.id).trim()]),
+              ),
+            }),
         ...(label.trim() === "" ? {} : { label: label.trim() }),
         ...(template !== undefined
           ? { template: template.name }
@@ -253,6 +265,7 @@ export function SandboxEnvironmentFields({
                   setTemplateName("");
                   // Never carry one provider's key into another provider's replacement field.
                   setApiKey("");
+                  setSettingsDraft({});
                   setCredentialEnvironment("");
                   setAllowCredentials(false);
                 }}
@@ -324,6 +337,29 @@ export function SandboxEnvironmentFields({
               </Select>
             </label>
           </div>
+          {settingsFields.length === 0 ? null : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {settingsFields.map((field) => (
+                <label key={field.id} className="block">
+                  <span className="mb-1.5 block text-xs font-medium text-foreground">
+                    {field.label}
+                    {field.optional ? (
+                      <span className="font-normal text-muted-foreground"> (optional)</span>
+                    ) : null}
+                  </span>
+                  <Input
+                    value={settingValue(field.id)}
+                    onChange={(event) =>
+                      setSettingsDraft({ ...settingsDraft, [field.id]: event.target.value })
+                    }
+                    placeholder={field.placeholder}
+                    disabled={isProvisioning}
+                    spellCheck={false}
+                  />
+                </label>
+              ))}
+            </div>
+          )}
           {startCheck.limits === null ? null : (
             <SandboxQuotaLine limits={startCheck.limits} defaultTtlMinutes={DEFAULT_TTL_MINUTES} />
           )}
