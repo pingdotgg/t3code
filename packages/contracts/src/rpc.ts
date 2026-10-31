@@ -38,6 +38,7 @@ import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ContributionStatusSnapshot } from "./contributionStatus.ts";
 import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
@@ -610,6 +611,7 @@ export const WS_METHODS = {
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
+  subscribeContributionStatus: "subscribeContributionStatus",
 } as const;
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -1964,6 +1966,14 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
   stream: true,
 });
 
+/** Streams every live thread status in the environment: one snapshot on subscribe, then a full replacement after each change. Gated by the `contributionStatus` capability. */
+const WsSubscribeContributionStatusRpc = Rpc.make(WS_METHODS.subscribeContributionStatus, {
+  payload: Schema.Struct({}),
+  success: ContributionStatusSnapshot,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthorization>()(
   "t3/contracts/RpcScopeAuthorization",
   { error: EnvironmentAuthorizationError },
@@ -2159,6 +2169,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
   WsSubscribeResourceTelemetryRpc,
+  WsSubscribeContributionStatusRpc,
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2StopWorkflowRpc,
