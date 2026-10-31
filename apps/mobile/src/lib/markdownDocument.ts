@@ -298,8 +298,31 @@ export type MarkdownDetailsSegment =
 const DETAILS_TAG = /^<(\/?)details(?=[\s/>])/i;
 const SUMMARY_TAG = /^<summary(?=[\s/>])/i;
 const SUMMARY_CLOSE_TAG = /^<\/summary\s*>$/i;
-// Matches the directive `splitCodexArtifactTemplateMarkdown` renders as a card.
-const ARTIFACT_TEMPLATE_DIRECTIVE = /::artifact-template\{[^\n]*/g;
+const ARTIFACT_TEMPLATE_START = "::artifact-template{";
+
+/**
+ * Spans of the directives `splitCodexArtifactTemplateMarkdown` renders as cards, each through
+ * the `}` that closes it (quoted values may hold `}`). Resuming where a scan stopped keeps it linear.
+ */
+function artifactTemplateRanges(markdown: string): Array<{ start: number; end: number }> {
+  const ranges: Array<{ start: number; end: number }> = [];
+  let from = 0;
+  for (;;) {
+    const start = markdown.indexOf(ARTIFACT_TEMPLATE_START, from);
+    if (start === -1) return ranges;
+    let at = start + ARTIFACT_TEMPLATE_START.length;
+    let quote: string | null = null;
+    for (; at < markdown.length && markdown[at] !== "\n"; at += 1) {
+      const char = markdown[at];
+      if (quote !== null) {
+        if (char === quote) quote = null;
+      } else if (char === '"' || char === "'") quote = char;
+      else if (char === "}") break;
+    }
+    if (markdown[at] === "}") ranges.push({ start, end: at + 1 });
+    from = at + 1;
+  }
+}
 
 interface HtmlToken {
   readonly at: number;
@@ -406,15 +429,15 @@ export function splitMarkdownDetails(markdown: string): MarkdownDetailsSplit {
   };
   collect(parser.parse(markdown));
   // An artifact template directive's attributes are literal text, so a `<details>` in its label
-  // is not a tag. Tokens arrive in source order, so one pass drops those inside a directive line.
-  const directives = [...markdown.matchAll(ARTIFACT_TEMPLATE_DIRECTIVE)];
+  // is not a tag. Tokens arrive in source order, so one pass drops those inside a directive.
+  const directives = artifactTemplateRanges(markdown);
   if (directives.length > 0) {
     let next = 0;
     const literal = (at: number) => {
       while (next < directives.length) {
         const directive = directives[next]!;
-        if (at < directive.index) return false;
-        if (at < directive.index + directive[0].length) return true;
+        if (at < directive.start) return false;
+        if (at < directive.end) return true;
         next += 1;
       }
       return false;

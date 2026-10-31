@@ -218,6 +218,17 @@ describe("details folds in chat Markdown", () => {
     ]);
   });
 
+  it("closes a fold at a </details> after an artifact template directive on the same line", () => {
+    const directive =
+      '::artifact-template{skill_name="artifact-template-x" skill_directory="/tmp/x" display_name="<details> {demo}" artifact_kind="document"}';
+    expect(
+      split(`<details>\n<summary>A</summary>${directive}</details>\n\nOutside.`),
+    ).toMatchObject([
+      { kind: "details", summary: "A", body: directive },
+      { kind: "markdown", markdown: "\n\nOutside." },
+    ]);
+  });
+
   it("finds definitions inside a compact HTML block and labels that wrap", () => {
     const markdown =
       "See [the\n  doc].\n\n<details><summary>A</summary>a</details>\n[The Doc]: https://example.com";
