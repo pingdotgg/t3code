@@ -5,7 +5,6 @@ import type {
   ProviderOptionDescriptor,
 } from "@t3tools/contracts";
 import {
-  applyClaudePromptEffortPrefix,
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
@@ -140,8 +139,6 @@ export function getDaybreakModelChangeChoices(
   ];
 }
 
-export const ULTRATHINK_PROMPT_PREFIX = "Ultrathink:\n";
-
 export const REASONING_SELECT_DESCRIPTOR_IDS: ReadonlySet<string> = new Set([
   ...REASONING_EFFORT_OPTION_IDS,
   "thinking",
@@ -179,14 +176,17 @@ export function getDescriptorStringValue(
   return typeof value === "string" ? value : null;
 }
 
+// Prompt-injected levels such as Ultrathink still work when typed, but pickers do not offer them.
 export function selectableProviderOptionChoices(
   descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
 ) {
-  return descriptor.id === DAYBREAK_OPTION_ID
-    ? descriptor.options.filter(
-        (option) => option.id === "standard" || daybreakLabel(option.id) !== null,
-      )
-    : descriptor.options;
+  return descriptor.options.filter(
+    (option) =>
+      !descriptor.promptInjectedValues?.includes(option.id) &&
+      (descriptor.id !== DAYBREAK_OPTION_ID ||
+        option.id === "standard" ||
+        daybreakLabel(option.id) !== null),
+  );
 }
 
 export function getPromptControlledTraits(
@@ -219,15 +219,7 @@ export function getTraitSelectChange(
   prompt: string,
   value: string,
 ) {
-  if (!value) return null;
-  if (descriptor.promptInjectedValues?.includes(value)) {
-    return {
-      prompt:
-        prompt.trim().length === 0
-          ? ULTRATHINK_PROMPT_PREFIX
-          : applyClaudePromptEffortPrefix(prompt, "ultrathink"),
-    };
-  }
+  if (!value || descriptor.promptInjectedValues?.includes(value)) return null;
   const isPrimary = descriptor.id === selected.primarySelectDescriptor?.id;
   if (isPrimary && selected.ultrathinkInBodyText) return null;
   return {
