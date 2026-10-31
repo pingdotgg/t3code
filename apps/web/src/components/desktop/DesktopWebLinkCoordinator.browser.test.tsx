@@ -5,6 +5,7 @@ import { AsyncResult, type Atom } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render, stubGlobal } from "../../../test/render";
+import { toastManager } from "../ui/toast";
 
 const state = vi.hoisted(() => ({
   projects: [] as EnvironmentProject[],
@@ -378,10 +379,16 @@ it.each([false, true])(
   },
 );
 
-it.each(["https://app.t3.codes/unknown/thread", "t3code://threads/unknown/thread"])(
-  "opens an uncatalogued thread in the external browser: %s",
-  async (url) => {
+it.each([
+  { url: "https://app.t3.codes/unknown/thread", opened: true },
+  { url: "t3code://threads/unknown/thread", opened: true },
+  { url: "https://app.t3.codes/unknown/thread", opened: false },
+])(
+  "opens an uncatalogued thread externally and reports failure: $url (opened: $opened)",
+  async ({ url, opened }) => {
     setup();
+    state.openExternal.mockResolvedValueOnce(opened);
+    using notification = vi.spyOn(toastManager, "add");
     await using _coordinator = await mount(url);
     await vi.waitFor(() =>
       expect(state.openExternal).toHaveBeenCalledWith("https://app.t3.codes/unknown/thread"),
@@ -389,5 +396,16 @@ it.each(["https://app.t3.codes/unknown/thread", "t3code://threads/unknown/thread
     expect(state.openScratchProject).not.toHaveBeenCalled();
     expect(state.preview).not.toHaveBeenCalled();
     expect(state.navigate).not.toHaveBeenCalled();
+    if (!opened) {
+      await vi.waitFor(() =>
+        expect(notification).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: "error",
+            title: "Could not open the link",
+            description: "Unable to open link.",
+          }),
+        ),
+      );
+    }
   },
 );

@@ -87,7 +87,7 @@ export function useHostedPromptLinkLanding(enabled: boolean): ReactNode | null {
     <HostedPromptLinkLanding
       appPath={appPath}
       canContinue={canContinue}
-      openInAppRemembered={opener === "app"}
+      openInAppRemembered={opener === "app" && threadAction !== "choose-manually"}
       onChoose={(choice, remember) => {
         if (remember) setOpener(choice);
         if (choice === "browser") setContinuedHref(href);

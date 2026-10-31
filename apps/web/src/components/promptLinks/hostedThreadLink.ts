@@ -8,5 +8,6 @@ export function hostedThreadLinkAction(
   const ref = parseThreadPath(url.pathname);
   if (!ref || url.searchParams.has("prompt")) return "choose";
   if (!ready) return "wait";
-  return environmentIds.includes(ref.environmentId) ? "continue" : "choose";
+  // Desktop may hand an unknown thread back here; never automatically send it back again.
+  return environmentIds.includes(ref.environmentId) ? "continue" : "choose-manually";
 }

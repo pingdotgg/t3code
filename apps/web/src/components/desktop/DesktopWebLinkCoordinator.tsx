@@ -226,7 +226,11 @@ export function DesktopWebLinkCoordinator() {
       return;
     }
     if (bareThread !== null) {
-      await readLocalApi()?.shell.openExternal(threadDeepLink(bareThread));
+      try {
+        await readLocalApi()?.shell.openExternal(threadDeepLink(bareThread));
+      } catch (error) {
+        reportFailure(url, error instanceof Error ? error.message : url);
+      }
       return;
     }
     const routeParams = router.state.matches.at(-1)?.params ?? {};
