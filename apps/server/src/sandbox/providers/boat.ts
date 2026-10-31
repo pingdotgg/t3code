@@ -65,6 +65,9 @@ export const boatDriver: SandboxProviderDriver = {
         {
           name: input.name,
           type: input.size,
+          // A sandbox created by T3 must never inherit the account's GitHub token,
+          // secrets, or agent logins by default. Credentials are opt-in per environment.
+          noEnv: true,
           ttlSeconds: input.ttlMinutes === undefined ? 3600 : input.ttlMinutes * 60,
           hostedPorts: [{ port: 3773, public: true, title: "T3 Code" }],
         },

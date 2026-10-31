@@ -261,6 +261,7 @@ export function SandboxEnvironmentFields({
           </div>
 
           <p className="text-2xs leading-relaxed text-muted-foreground">
+            The sandbox starts without your Boat account's secrets, GitHub token, or agent logins.
             The server creates the machine, installs T3 Code, and pairs it. This usually takes one
             to three minutes and bills the provider account that owns the key.
           </p>
