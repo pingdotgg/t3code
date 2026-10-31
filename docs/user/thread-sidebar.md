@@ -291,7 +291,7 @@ with what the thread knows, and the thread keeps working while you ask.
 On web and desktop, start a message with `/side` or `/btw`, then your question.
 You can also choose **Side chat** from the **+** menu in the right panel. The side
 chat opens as a tab there, with its own composer. Side chats do not show in the
-sidebar. Find one again under **Lineage** in thread details.
+sidebar. Find one again under **Side chats** in thread details.
 
 A side chat works in the same folder as the thread. Its first reply asks before it
 edits files or runs commands. After that, it uses the permission mode you choose
