@@ -1,4 +1,4 @@
-import type { Definition, Root, RootContent } from "mdast";
+import type { Root, RootContent } from "mdast";
 import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
@@ -313,10 +313,36 @@ interface DetailsFold {
   readonly open: boolean;
 }
 
-// The identifier keeps the label's source escapes, and labels match case-insensitively.
-function definitionLine(node: Definition): string {
-  const title = node.title == null ? "" : ` "${node.title.replace(/["\\&]/g, "\\$&")}"`;
-  return `[${node.identifier}]: ${markdownDestination(node.url)}${title}`;
+export interface MarkdownReferenceDefinition {
+  /** Lowercased label as written, escapes included. */
+  readonly label: string;
+  /** Source text rather than the decoded URL, so a Windows path keeps its backslashes. */
+  readonly source: string;
+}
+
+export interface MarkdownDetailsSplit {
+  readonly segments: ReadonlyArray<MarkdownDetailsSegment>;
+  readonly definitions: ReadonlyArray<MarkdownReferenceDefinition>;
+}
+
+function referenceDefinition(source: string): MarkdownReferenceDefinition | null {
+  let end = 1;
+  while (end < source.length && source[end] !== "]") end += source[end] === "\\" ? 2 : 1;
+  if (source[0] !== "[" || end >= source.length) return null;
+  return { label: source.slice(1, end).replace(/\s+/g, " ").toLowerCase(), source };
+}
+
+/** Each fragment renders as its own document, so it carries the definitions it mentions. */
+export function withReferenceDefinitions(
+  markdown: string,
+  definitions: ReadonlyArray<MarkdownReferenceDefinition>,
+): string {
+  if (definitions.length === 0 || !markdown.includes("[")) return markdown;
+  const text = markdown.toLowerCase();
+  const used = definitions.filter((definition) => text.includes(`[${definition.label}]`));
+  return used.length === 0
+    ? markdown
+    : `${used.map((definition) => definition.source).join("\n")}\n\n${markdown}`;
 }
 
 /** The summary only counts once its closing tag arrives, as the fold's first child. */
@@ -354,15 +380,23 @@ function detailsSummary(
  * `markdownWithHtml` to flatten, but an open fold closes at any `</details>` outside code, as
  * web's HTML parser does. An unclosed fold runs to the end while a reply streams.
  */
-export function splitMarkdownDetails(markdown: string): ReadonlyArray<MarkdownDetailsSegment> {
-  const whole = [{ kind: "markdown" as const, markdown, sourceOffset: 0 }];
+export function splitMarkdownDetails(markdown: string): MarkdownDetailsSplit {
+  const whole = {
+    segments: [{ kind: "markdown" as const, markdown, sourceOffset: 0 }],
+    definitions: [],
+  };
   if (!/<details/i.test(markdown)) return whole;
   const tokens: HtmlToken[] = [];
-  const definitions: string[] = [];
+  const definitions: MarkdownReferenceDefinition[] = [];
   const collect = (node: MarkdownNode) => {
     if (!("children" in node)) return;
     for (const child of node.children) {
-      if (child.type === "definition") definitions.push(definitionLine(child));
+      if (child.type === "definition") {
+        const definition = referenceDefinition(
+          markdown.slice(child.position?.start.offset, child.position?.end.offset),
+        );
+        if (definition) definitions.push(definition);
+      }
       if (child.type !== "html") {
         collect(child);
         continue;
@@ -376,23 +410,18 @@ export function splitMarkdownDetails(markdown: string): ReadonlyArray<MarkdownDe
     }
   };
   collect(parser.parse(markdown));
-  // Each segment renders as its own document, so it carries every definition.
-  const definitionBlock = definitions.join("\n");
-  const withDefinitions = (text: string) =>
-    definitionBlock && text.includes("[") ? `${definitionBlock}\n\n${text}` : text;
   const segments: MarkdownDetailsSegment[] = [];
   let cursor = 0;
   const pushMarkdown = (end: number) => {
     const text = markdown.slice(cursor, end);
-    if (text.trim())
-      segments.push({ kind: "markdown", markdown: withDefinitions(text), sourceOffset: cursor });
+    if (text.trim()) segments.push({ kind: "markdown", markdown: text, sourceOffset: cursor });
   };
   const pushFold = (fold: DetailsFold, end: number) => {
     pushMarkdown(fold.start);
     segments.push({
       kind: "details",
       summary: fold.summary,
-      body: withDefinitions(markdown.slice(fold.bodyStart, end)),
+      body: markdown.slice(fold.bodyStart, end),
       open: fold.open,
       sourceOffset: fold.start,
     });
@@ -430,7 +459,7 @@ export function splitMarkdownDetails(markdown: string): ReadonlyArray<MarkdownDe
   }
   if (segments.length === 0) return whole;
   pushMarkdown(markdown.length);
-  return segments;
+  return { segments, definitions };
 }
 
 // Start only at the beginning of a backtick run to avoid retrying every suffix.

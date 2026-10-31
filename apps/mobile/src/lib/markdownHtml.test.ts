@@ -6,6 +6,7 @@ import {
   markdownWithFileEmbeds,
   parseMarkdownDocument,
   splitMarkdownDetails,
+  withReferenceDefinitions,
   type MarkdownNode,
 } from "./markdownDocument";
 import { markdownImageSources } from "./markdownImageSources";
@@ -120,10 +121,12 @@ describe("HTML in native Markdown", () => {
 });
 
 describe("details folds in chat Markdown", () => {
+  const split = (markdown: string) => splitMarkdownDetails(markdown).segments;
+
   it("splits a closed fold out with its summary and keeps the text around it", () => {
     const markdown =
       "Short answer.\n\n<details>\n<summary>Long &amp; <b>details</b></summary>\n\nA long paragraph.\n\n</details>\n\nAfter.";
-    expect(splitMarkdownDetails(markdown)).toEqual([
+    expect(split(markdown)).toEqual([
       { kind: "markdown", markdown: "Short answer.\n\n", sourceOffset: 0 },
       {
         kind: "details",
@@ -138,12 +141,10 @@ describe("details folds in chat Markdown", () => {
 
   it("opens a fold with the open attribute and splits a fold written as one HTML block", () => {
     expect(
-      splitMarkdownDetails('<details open class="x"><summary>Logs</summary>\n\nBody\n\n</details>'),
+      split('<details open class="x"><summary>Logs</summary>\n\nBody\n\n</details>'),
     ).toMatchObject([{ kind: "details", summary: "Logs", body: "\n\nBody\n\n", open: true }]);
     expect(
-      splitMarkdownDetails(
-        '<details data-x="open">\nBody\n</details>\n<details><summary>B</summary>b</details>',
-      ),
+      split('<details data-x="open">\nBody\n</details>\n<details><summary>B</summary>b</details>'),
     ).toMatchObject([
       { kind: "details", summary: "Details", body: "\nBody\n", open: false },
       { kind: "details", summary: "B", body: "b" },
@@ -152,44 +153,55 @@ describe("details folds in chat Markdown", () => {
 
   it("keeps a nested fold in the outer fold's body", () => {
     const inner = "<details open><summary>B</summary>\n\nb\n\n</details>";
-    expect(
-      splitMarkdownDetails(`<details><summary>A</summary>\n\n${inner}\n\n</details>\n\nAfter`),
-    ).toMatchObject([
-      { kind: "details", summary: "A", body: `\n\n${inner}\n\n`, open: false },
-      { kind: "markdown", markdown: "\n\nAfter" },
-    ]);
+    expect(split(`<details><summary>A</summary>\n\n${inner}\n\n</details>\n\nAfter`)).toMatchObject(
+      [
+        { kind: "details", summary: "A", body: `\n\n${inner}\n\n`, open: false },
+        { kind: "markdown", markdown: "\n\nAfter" },
+      ],
+    );
   });
 
   it("takes fold boundaries and the summary only from real tags", () => {
     expect(
-      splitMarkdownDetails(
+      split(
         '<details><summary title="a > b">Logs</summary>\n<!-- </details> -->\nBody\n</details>',
       ),
     ).toMatchObject([{ kind: "details", summary: "Logs", body: "\n<!-- </details> -->\nBody\n" }]);
   });
 
   it("reads open only as a boolean attribute", () => {
-    expect(splitMarkdownDetails("<details title= open>\nBody\n</details>")).toMatchObject([
+    expect(split("<details title= open>\nBody\n</details>")).toMatchObject([
       { kind: "details", open: false },
     ]);
-    expect(splitMarkdownDetails("<details title=x open>\nBody\n</details>")).toMatchObject([
+    expect(split("<details title=x open>\nBody\n</details>")).toMatchObject([
       { kind: "details", open: true },
     ]);
   });
 
-  it("gives every segment every reference definition, wherever it was written", () => {
-    const quoted = '> [a\\]b]: https://example.com/a "T \\"q\\""\n> [S]: https://example.com/s';
-    const definitions =
-      '[a\\]b]: <https://example.com/a> "T \\"q\\""\n[s]: <https://example.com/s>\n\n';
+  it("gives each final fragment the definitions it mentions, as written", () => {
+    const markdown =
+      "See [config][c] and [Docs][a\\]b].\n\n<details>\n<summary>A</summary>\n\n![B][a\\]b]\n\n</details>\n\nUnrelated.\n\n[c]: C:\\work\\.t3\\settings.json\n> [a\\]b]: https://example.com/a";
+    const { segments, definitions } = splitMarkdownDetails(markdown);
+    const destinations = (text: string) => {
+      const urls: string[] = [];
+      const visit = (node: MarkdownNode) => {
+        if (node.type === "definition") urls.push(node.url);
+        if ("children" in node) node.children.forEach(visit);
+      };
+      visit(parseMarkdownDocument(text));
+      return urls.toSorted();
+    };
+    const [before, fold, after] = segments;
     expect(
-      splitMarkdownDetails(
-        `See [Docs][a\\]b] and [ſ].\n\n<details>\n<summary>A</summary>\n\n![B][a\\]b]\n\n</details>\n\n${quoted}`,
-      ),
-    ).toMatchObject([
-      { kind: "markdown", markdown: `${definitions}See [Docs][a\\]b] and [ſ].\n\n` },
-      { kind: "details", body: `${definitions}\n\n![B][a\\]b]\n\n` },
-      { kind: "markdown", markdown: `${definitions}\n\n${quoted}` },
-    ]);
+      before?.kind === "markdown" &&
+        destinations(withReferenceDefinitions(before.markdown, definitions)),
+    ).toEqual(destinations(markdown));
+    expect(
+      fold?.kind === "details" && destinations(withReferenceDefinitions(fold.body, definitions)),
+    ).toEqual(["https://example.com/a"]);
+    expect(after?.kind === "markdown" && withReferenceDefinitions("Unrelated.", definitions)).toBe(
+      "Unrelated.",
+    );
   });
 
   it.each([
@@ -212,7 +224,7 @@ describe("details folds in chat Markdown", () => {
       " tail\n\nVisible answer.",
     ],
   ])("closes a fold at a closing tag inside %s", (_, markdown, body, after) => {
-    expect(splitMarkdownDetails(markdown)).toMatchObject([
+    expect(split(markdown)).toMatchObject([
       { kind: "details", summary: "A", body },
       { kind: "markdown", markdown: after },
     ]);
@@ -220,7 +232,7 @@ describe("details folds in chat Markdown", () => {
 
   it("splits compact sibling folds with text between them in one HTML block", () => {
     expect(
-      splitMarkdownDetails(
+      split(
         "<details><summary>A</summary>a</details>\nExplanation\n<details><summary>B</summary>b</details>",
       ),
     ).toMatchObject([
@@ -231,14 +243,14 @@ describe("details folds in chat Markdown", () => {
   });
 
   it("reads the summary after a comment", () => {
-    expect(
-      splitMarkdownDetails("<details> <!-- c -->\n<summary>A</summary>\n\nBody\n</details>"),
-    ).toMatchObject([{ kind: "details", summary: "A", body: "\n\nBody\n" }]);
+    expect(split("<details> <!-- c -->\n<summary>A</summary>\n\nBody\n</details>")).toMatchObject([
+      { kind: "details", summary: "A", body: "\n\nBody\n" },
+    ]);
   });
 
   it("folds an unclosed fold to the end while the reply streams", () => {
     const markdown = "Answer\n\n<details>\n<summary>Still streaming</summary>\n\nPartial";
-    expect(splitMarkdownDetails(markdown)).toEqual([
+    expect(split(markdown)).toEqual([
       { kind: "markdown", markdown: "Answer\n\n", sourceOffset: 0 },
       {
         kind: "details",
@@ -248,7 +260,7 @@ describe("details folds in chat Markdown", () => {
         sourceOffset: 8,
       },
     ]);
-    expect(splitMarkdownDetails("Answer\n\n<details>\n<summary>Still")).toMatchObject([
+    expect(split("Answer\n\n<details>\n<summary>Still")).toMatchObject([
       { kind: "markdown", sourceOffset: 0 },
       { kind: "details", summary: "Details", body: "\n<summary>Still", sourceOffset: 8 },
     ]);
@@ -262,14 +274,12 @@ describe("details folds in chat Markdown", () => {
     ],
     ["a fold inside inline code", "Use `<details>` and `</details>`."],
   ])("leaves %s as Markdown", (_, markdown) => {
-    expect(splitMarkdownDetails(markdown)).toEqual([
-      { kind: "markdown", markdown, sourceOffset: 0 },
-    ]);
+    expect(split(markdown)).toEqual([{ kind: "markdown", markdown, sourceOffset: 0 }]);
   });
 
   it("does not count a closing tag inside fenced code in the fold body", () => {
     const markdown = "<details>\n<summary>A</summary>\n\n```html\n</details>\n```\n\n</details>";
-    expect(splitMarkdownDetails(markdown)).toMatchObject([
+    expect(split(markdown)).toMatchObject([
       { kind: "details", summary: "A", body: "\n\n```html\n</details>\n```\n\n" },
     ]);
   });
