@@ -6705,6 +6705,192 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  // Claude 2.1.303 stream-json recording (2026-10-21) of a Stop hook returning
+  // {"systemMessage":"T3 issue 22949 probe: 40 scans, 0 findings"}.
+  // Machine-specific init is omitted, IDs sanitized, and the assistant timestamp removed.
+  const recordedStopHookFrames = NodeFS.readFileSync(
+    new URL("./fixtures/claude-stop-system-message.ndjson", import.meta.url),
+    "utf8",
+  )
+    .trim()
+    .split("\n")
+    .map((line) => claudeSdkFrame(JSON.parse(line)));
+
+  it.effect("suppresses recorded Stop-hook notice summaries across turns", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      for (const ordinal of [1, 2]) {
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`claude-stop-hook-attempt-${ordinal}`),
+            providerTurnOrdinal: ordinal,
+            text: "Reply OK.",
+            attachments: [],
+          }),
+        );
+        for (const [index, frame] of recordedStopHookFrames.entries()) {
+          // Replaying the same recording on a second turn is synthetic; use fresh
+          // item IDs so adapter item deduplication cannot hide a repeated summary.
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              ...frame,
+              uuid: `00000000-0000-4000-8000-${String(ordinal * 1000 + index).padStart(12, "0")}`,
+              ...(frame.type === "assistant"
+                ? { message: { ...frame.message, id: `msg_stop_hook_probe_${ordinal}` } }
+                : {}),
+            }),
+          );
+        }
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+      }
+      const notices = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+          ? [event.turnItem.message]
+          : [],
+      );
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "message.updated" &&
+          event.message.role === "assistant" &&
+          !event.message.streaming
+            ? [event.message.text]
+            : [],
+        ),
+        ["OK", "OK"],
+      );
+      assert.deepEqual(notices, []);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
+  // Synthetic boundary cases, not additional recorded streams.
+  it.effect.each([
+    {
+      name: "explicit non-blocking Stop notice",
+      level: "notice",
+      content: "Stop says: Summary",
+      prevent_continuation: false,
+      visible: false,
+    },
+    {
+      name: "blocking Stop notice",
+      level: "notice",
+      content: "Stop says: Resolve the hook failure",
+      prevent_continuation: true,
+      visible: true,
+    },
+    {
+      name: "warning Stop summary",
+      level: "warning",
+      content: "Stop says: Summary",
+      visible: true,
+    },
+    {
+      name: "warning failing hook",
+      level: "warning",
+      content: "Stop hook failed: exit code 1",
+      prevent_continuation: true,
+      visible: true,
+    },
+    {
+      name: "other informational notice",
+      level: "notice",
+      content: "Context checkpoint",
+      visible: true,
+    },
+    {
+      name: "other informational suggestion",
+      level: "suggestion",
+      content: "Try /compact",
+      visible: true,
+    },
+    { name: "Stop suggestion", level: "suggestion", content: "Stop says: Summary", visible: true },
+    {
+      name: "notice with leading whitespace",
+      level: "notice",
+      content: " Stop says: Summary",
+      visible: true,
+    },
+    {
+      name: "notice with different case",
+      level: "notice",
+      content: "stop says: Summary",
+      visible: true,
+    },
+    {
+      name: "notice without the exact trailing space",
+      level: "notice",
+      content: "Stop says:Summary",
+      visible: true,
+    },
+    {
+      name: "model refusal notice",
+      subtype: "model_refusal_fallback",
+      level: "notice",
+      content: "Stop says: Summary",
+      visible: true,
+    },
+  ])("preserves the Stop-hook suppression boundary: $name", (testCase) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("claude-stop-hook-boundary-attempt"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "system",
+          subtype: testCase.subtype ?? "informational",
+          level: testCase.level,
+          content: testCase.content,
+          ...(testCase.prevent_continuation === undefined
+            ? {}
+            : { prevent_continuation: testCase.prevent_continuation }),
+          session_id: WAKE_NATIVE_SESSION,
+          uuid: "00000000-0000-4000-8000-000000000820",
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000821",
+          result: "",
+        }),
+      );
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+            ? [event.turnItem.message]
+            : [],
+        ),
+        testCase.visible ? [testCase.content] : [],
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
+  // Recorded by [#21231](https://github.com/pingdotgg/t3code/pull/21231) with
+  // Claude 2.1.302: blocked-prompt warning + prevent_continuation.
   it.effect("shows a hook-dropped Claude prompt once and skips info-level lines", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
