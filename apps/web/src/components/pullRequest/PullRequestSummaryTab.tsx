@@ -235,7 +235,7 @@ function CollapsedComment({
   const statusTriggerRef = useRef<HTMLButtonElement>(null);
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <article className="group rounded-card border border-border surface-card [contain-intrinsic-block-size:44px] [content-visibility:auto]">
+      <article className="group rounded-xl surface-panel [contain-intrinsic-block-size:44px] [content-visibility:auto]">
         <div className="p-3">
           <div className="flex flex-wrap items-baseline gap-2">
             <CommentIdentity comment={comment} detail={detail} />
@@ -561,7 +561,7 @@ export function PullRequestSummaryTab({
 
   const reactionBarFor = (comment: PullRequestComment) => (
     <PullRequestReactionBar
-      className="ml-auto justify-end"
+      className="justify-start"
       reactions={comment.reactions ?? []}
       canReact={detail.capabilities.reactions === true}
       subjectId={comment.id}
@@ -591,9 +591,9 @@ export function PullRequestSummaryTab({
     return (
       <article
         key={`${detail.url}:${comment.id}`}
-        className="group rounded-card border border-border surface-card [contain-intrinsic-block-size:160px] [content-visibility:auto]"
+        className="group rounded-xl surface-panel py-2.5 [contain-intrinsic-block-size:160px] [content-visibility:auto]"
       >
-        <div className="flex flex-wrap items-baseline gap-2 rounded-t-card surface-selected-soft px-3 py-2.5">
+        <div className="flex flex-wrap items-center gap-1.5 px-3">
           <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-2 text-meta text-muted-foreground">
             <CommentIdentity comment={comment} detail={detail} />
             {outcome ? (
@@ -620,7 +620,6 @@ export function PullRequestSummaryTab({
               </span>
             </Button>
           ) : null}
-          {reactionBarFor(comment)}
         </div>
         {reply ? null : (
           <div className="px-3">
@@ -628,8 +627,9 @@ export function PullRequestSummaryTab({
           </div>
         )}
         {body === null && !commentEditing.canEdit(comment) ? null : (
-          <CommentBody className="px-3 py-3" comment={comment} editing={commentEditing} />
+          <CommentBody className="mt-2 px-3" comment={comment} editing={commentEditing} />
         )}
+        <div className="mt-2 flex px-3">{reactionBarFor(comment)}</div>
         {footer}
       </article>
     );
@@ -757,7 +757,7 @@ export function PullRequestSummaryTab({
 
   return (
     <div ref={scrollerRef} className="h-full overflow-y-auto" data-pull-request-summary-scroll>
-      {readiness ? <section className="px-4 pt-3 pb-4">{readiness}</section> : null}
+      {readiness ? <section className="px-4 pt-3.5 pb-1.5">{readiness}</section> : null}
 
       <Section key={`description:${detail.url}`} title="Description" keepMounted>
         <div className="group">
@@ -776,7 +776,9 @@ export function PullRequestSummaryTab({
             />
           ) : (
             <div className="flex items-start gap-1">
-              <PullRequestMarkdown
+              <PullRequestCommentBody
+                key={detail.url}
+                variant="description"
                 className="min-w-0 flex-1"
                 text={description.trim().length > 0 ? description : "_No description provided._"}
                 cwd={detail.workspaceRoot}

@@ -61,7 +61,7 @@ function RailMarker({
     <span
       aria-hidden
       className={cn(
-        "absolute top-0 left-0 z-10 flex size-6 items-center justify-center rounded-full border border-border bg-(--code-surface) text-dim-foreground",
+        "absolute top-0 left-0 z-10 flex size-6 items-center justify-center rounded-full surface-pill text-dim-foreground",
         className,
       )}
     >
@@ -208,6 +208,9 @@ function RailEntry({
               {commit.oid.slice(0, 7)}
             </code>
             {commit.checks ? <CommitChecksPill checks={commit.checks} /> : null}
+            <time dateTime={entry.at} className="shrink-0 text-meta text-muted-foreground">
+              <TimelineRelativeTime timestamp={entry.at} />
+            </time>
           </button>
         </li>
       );
