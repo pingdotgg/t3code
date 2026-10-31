@@ -24,7 +24,7 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { AppText as Text, AppTextInput, type AppTextInputProps } from "../../components/ui/AppText";
 import { FrostedCutout } from "../../components/ui/FrostedCutout";
 import { buildPairingUrl, extractPairingUrlFromQrPayload, parsePairingUrl } from "./pairing";
-import { pairAgainAddress } from "@t3tools/client-runtime/connection/presentation";
+import { pairAgainAddress } from "@t3tools/client-runtime/connection";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SymbolView } from "../../components/ui/AppSymbol";

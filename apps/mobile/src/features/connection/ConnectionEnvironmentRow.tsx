@@ -24,7 +24,7 @@ import { cn } from "../../lib/cn";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { serverEnvironment } from "../../state/server";
 import { environmentPresentations } from "../../state/presentation";
-import { SettingsActionRow } from "../settings/components/SettingsActionRow";
+import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { ConnectionDiagnosisDetails, useConnectionDiagnosis } from "./ConnectionDiagnosisDetails";
 import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
