@@ -87,10 +87,9 @@ export function goalNowItem(input: {
         ? presentation.title
         : `${presentation.title} · ${presentation.usage}`,
     description: presentation.objective,
-    // Clear stops goal work; Resume would stop unrelated work, so it waits.
     actions: (
       <>
-        {presentation.canResume && !isWorking ? (
+        {presentation.canResume ? (
           <>
             <InlineButton
               onClick={() => void onSendCommand("/goal resume", "Failed to resume goal.")}
