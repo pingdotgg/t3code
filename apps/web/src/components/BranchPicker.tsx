@@ -231,7 +231,7 @@ export function BranchPicker({
                 render={
                   <label
                     htmlFor={startFromOriginSwitchId}
-                    className="mx-1.5 mb-1.5 flex cursor-pointer items-center gap-2 border-t border-divider px-2.5 pt-2 pb-1 text-meta font-normal"
+                    className="mx-1.5 mb-1.5 flex cursor-pointer items-center gap-2 border-t border-divider px-2.5 pt-2 pb-1 text-meta"
                   >
                     <Switch
                       id={startFromOriginSwitchId}
