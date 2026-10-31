@@ -243,6 +243,28 @@ export function AppearanceSettingsPanel() {
         />
 
         <SettingsRow
+          {...searchableSetting("hover-previews")}
+          description="Show thread, subagent, and message previews on hover."
+          resetAction={
+            settings.hoverPreviews !== DEFAULT_UNIFIED_SETTINGS.hoverPreviews ? (
+              <SettingResetButton
+                label="hover previews"
+                onClick={() =>
+                  updateSettings({ hoverPreviews: DEFAULT_UNIFIED_SETTINGS.hoverPreviews })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.hoverPreviews}
+              onCheckedChange={(checked) => updateSettings({ hoverPreviews: Boolean(checked) })}
+              aria-label="Show hover previews"
+            />
+          }
+        />
+
+        <SettingsRow
           {...searchableSetting("chat-width")}
           description="Set how wide messages and the composer can grow on large screens."
           resetAction={

@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
-import { ThreadHoverCardPopup } from "../ThreadHoverCard";
+import { ThreadHoverCardPopup, useHoverPreviewsEnabled } from "../ThreadHoverCard";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { SectionHeaderStatus } from "../ui/collapsible-section-header";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
@@ -377,6 +377,7 @@ export function ThreadRelationshipsPanel(props: {
       : null;
   const parentProjection = useThreadProjection(parentRef)?.projection;
   const navigate = useNavigate();
+  const hoverPreviews = useHoverPreviewsEnabled();
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack);
   const stopSession = useAtomCommand(threadEnvironment.stopSession);
   const interruptTurn = useAtomCommand(threadEnvironment.interruptTurn);
@@ -684,8 +685,9 @@ export function ThreadRelationshipsPanel(props: {
               const relationshipHint = node?.missing
                 ? "This related thread is unavailable"
                 : `Open ${relationship.toLowerCase()} in this chat`;
-              const RelationshipPopup = agent ? ThreadHoverCardPopup : TooltipPopup;
-              const relationshipTooltip = agent ? (
+              const showAgentCard = agent && hoverPreviews;
+              const RelationshipPopup = showAgentCard ? ThreadHoverCardPopup : TooltipPopup;
+              const relationshipTooltip = showAgentCard ? (
                 <SubagentTooltipContent
                   title={threadTitle}
                   model={agent.model}

@@ -11,6 +11,7 @@ import {
   TIMELINE_MINIMAP_MIN_ITEMS,
 } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useHoverPreviewsEnabled } from "../ThreadHoverCard";
 import { cn } from "~/lib/utils";
 
 function timelineMinimapEventTargetsPreview(target: EventTarget): boolean {
@@ -52,6 +53,7 @@ export function TimelineMinimap({
   onSelect: (item: TimelineMinimapItem) => void;
 }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const hoverPreviews = useHoverPreviewsEnabled();
   const wheelTargetRef = (node: HTMLDivElement | null) => {
     if (!node) return;
     node.addEventListener("wheel", onWheel, { passive: false });
@@ -66,6 +68,8 @@ export function TimelineMinimap({
   const activeItem = resolveTimelineMinimapPreview(
     resolvedActiveIndex === null ? null : (items[resolvedActiveIndex] ?? null),
   );
+  // Hidden previews must not widen the hit area over the chat.
+  const previewItem = hoverPreviews ? activeItem : null;
   const navigationInteractive =
     resolveTimelineMinimapNavigationInteractive(hitStripWidth) && !passThrough;
   const activeTopPercent =
@@ -144,7 +148,7 @@ export function TimelineMinimap({
           }}
           style={{
             height: resolveTimelineMinimapHeightStyle(items.length),
-            width: resolveTimelineMinimapInteractiveWidth(hitStripWidth, activeItem !== null),
+            width: resolveTimelineMinimapInteractiveWidth(hitStripWidth, previewItem !== null),
           }}
         >
           <TimelineMinimapNavigationButton
@@ -243,7 +247,7 @@ export function TimelineMinimap({
                 </span>
               );
             })}
-            {activeItem ? (
+            {previewItem ? (
               <span
                 className="pointer-events-auto absolute left-8 w-80 cursor-text select-text"
                 data-minimap-preview
@@ -255,9 +259,9 @@ export function TimelineMinimap({
               >
                 <span className="dropdown-glass block rounded-xl p-3 text-left text-popover-foreground shadow-xl shadow-black/25">
                   <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium leading-5">
-                    {activeItem.userText ?? "User message"}
+                    {previewItem.userText ?? "User message"}
                   </span>
-                  {activeItem.assistantText ? (
+                  {previewItem.assistantText ? (
                     <span
                       className="mt-1 max-h-[3.75rem] overflow-hidden text-muted-foreground text-sm leading-5"
                       style={{
@@ -266,7 +270,7 @@ export function TimelineMinimap({
                         WebkitLineClamp: 3,
                       }}
                     >
-                      {activeItem.assistantText}
+                      {previewItem.assistantText}
                     </span>
                   ) : null}
                 </span>
