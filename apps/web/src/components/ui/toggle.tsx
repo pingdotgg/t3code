@@ -15,6 +15,7 @@ const toggleVariants = cva(
         compact:
           "h-7 min-w-7 rounded-md px-[calc(--spacing(1)-1px)] text-meta [&_svg:not([class*='size-'])]:size-3.5",
         default: "h-9 min-w-9 px-[calc(--spacing(2)-1px)] sm:h-8 sm:min-w-8",
+        tile: "h-14 min-w-14 px-[calc(--spacing(2.5)-1px)]",
         lg: "h-10 min-w-10 px-[calc(--spacing(2.5)-1px)] sm:h-9 sm:min-w-9",
         segmented:
           "h-6 min-w-0 rounded-item px-2.5 text-label [&_svg:not([class*='size-'])]:[scale:calc(13/18)] sm:[&_svg:not([class*='size-'])]:[scale:calc(13/16)]",
