@@ -502,7 +502,7 @@ export function ScheduledTasksSettings(target: {
   // New task lives on the first environment group's header; the dialog picks the machine.
   const newTaskButton = (
     <Button
-      size="xs"
+      size="sm"
       variant="secondary"
       disabled={!creationEnvironment}
       onClick={() =>
@@ -515,7 +515,7 @@ export function ScheduledTasksSettings(target: {
     </Button>
   );
   return (
-    <SettingsPageContainer>
+    <SettingsPageContainer className="max-w-[688px]">
       {scope.kind === "unavailable" ? (
         <SettingsSection title="Unavailable selection">
           <SettingsRow title={scope.message} />
