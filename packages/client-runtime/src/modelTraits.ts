@@ -1,10 +1,12 @@
 import type {
   ModelSelection,
   ProviderDriverKind,
+  ProviderInstanceId,
   ProviderOptionDescriptor,
 } from "@t3tools/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
+  getModelSelectionStringOptionValue,
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
   isClaudeUltrathinkPrompt,
@@ -69,6 +71,30 @@ export function selectableProviderOptionChoices(
   return descriptor.options.filter(
     (option) => !descriptor.promptInjectedValues?.includes(option.id),
   );
+}
+
+/**
+ * The choice to mark as Default: the configured default model's value when that default is this
+ * exact instance and model and still offers the value, otherwise the provider's default.
+ */
+export function resolveDefaultChoiceId(
+  descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
+  model: {
+    readonly instanceId?: ProviderInstanceId | undefined;
+    readonly model: string | null | undefined;
+  },
+  defaultModelSelection: ModelSelection | null,
+): string | undefined {
+  const choices = selectableProviderOptionChoices(descriptor);
+  const configured =
+    defaultModelSelection &&
+    defaultModelSelection.instanceId === model.instanceId &&
+    defaultModelSelection.model === model.model
+      ? getModelSelectionStringOptionValue(defaultModelSelection, descriptor.id)
+      : undefined;
+  return (
+    choices.find((option) => option.id === configured) ?? choices.find((option) => option.isDefault)
+  )?.id;
 }
 
 export function getPromptControlledTraits(

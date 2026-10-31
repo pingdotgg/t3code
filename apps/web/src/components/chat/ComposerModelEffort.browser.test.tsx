@@ -81,7 +81,7 @@ function Column() {
   return (
     <>
       <div data-model-picker-effort>
-        <ComposerEffortColumn traits={traits} />
+        <ComposerEffortColumn traits={traits} defaultModelSelection={null} />
       </div>
       <p role="status">{describeComposerEffort(traits, "bars", "sm").suffix}</p>
     </>

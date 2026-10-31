@@ -233,7 +233,11 @@ import { toastManager } from "../ui/toast";
 import { PlayIcon } from "lucide-react";
 import { proposedPlanTitle } from "@t3tools/shared/proposedPlanText";
 import { hasProviderSetup } from "./ProviderStatusBanner";
-import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelSelection";
+import {
+  type AppModelOption,
+  getAppModelOptionsForInstance,
+  resolveEffectiveDefaultModelSelection,
+} from "../../modelSelection";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import {
   isVideoAttachment,
@@ -953,6 +957,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedModel,
     selectedModelOptionsForDispatch,
   );
+  // Resolved like the composer's own model, so a stored alias still matches the model it names.
+  const defaultModelSelection = activeProjectDefaultModelSelection
+    ? resolveEffectiveDefaultModelSelection(
+        settings,
+        providerStatuses,
+        activeProjectDefaultModelSelection,
+      )
+    : null;
   const selectedModelForPicker = selectedModel;
   const modelOptionsByInstance = new Map<ProviderInstanceId, ReadonlyArray<AppModelOption>>();
   for (const entry of providerInstanceEntries) {
@@ -2334,6 +2346,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedModelSelection={selectedModelSelection}
       onProviderModelSelect={onProviderModelSelect}
       activeThreadModelSelection={activeThreadModelSelection}
+      defaultModelSelection={defaultModelSelection}
       selectedModelForPickerWithCustomFallback={selectedModelForPickerWithCustomFallback}
       lockedProvider={lockedProvider}
       lockedContinuationGroupKey={lockedContinuationGroupKey}

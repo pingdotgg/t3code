@@ -2,9 +2,10 @@ import {
   buildTraitsTriggerDisplay,
   getDescriptorStringValue,
   isReasoningControl,
+  resolveDefaultChoiceId,
   selectableProviderOptionChoices,
 } from "@t3tools/client-runtime/model-traits";
-import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
+import type { ModelSelection, ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { getProviderOptionCurrentLabel } from "@t3tools/shared/model";
 import { CheckIcon, ChevronRightIcon, ChevronUpIcon } from "lucide-react";
@@ -238,7 +239,10 @@ function moveBetweenRows(event: KeyboardEvent<HTMLElement>) {
   next.scrollIntoView({ block: "nearest" });
 }
 
-function EffortLevels(props: { traits: TraitsSelectionInput }) {
+function EffortLevels(props: {
+  traits: TraitsSelectionInput;
+  defaultModelSelection: ModelSelection | null;
+}) {
   const traits = useTraitsSelection(props.traits);
   const { effort, others } = columnControls(
     props.traits.provider,
@@ -264,9 +268,20 @@ function EffortLevels(props: { traits: TraitsSelectionInput }) {
   // Ultrathink in the prompt locks the levels; the first option then holds the tab stop.
   const locked =
     effort?.descriptor.id === traits.primarySelectDescriptor?.id && traits.ultrathinkInBodyText;
+  const defaultChoiceId = (descriptor: SelectDescriptor) =>
+    resolveDefaultChoiceId(descriptor, props.traits, props.defaultModelSelection);
   return (
     <>
-      {effort ? <EffortRows control={effort} traits={traits} locked={locked} /> : null}
+      {effort ? (
+        <EffortRows
+          control={effort}
+          traits={traits}
+          locked={locked}
+          defaultChoiceId={
+            effort.kind === "select" ? defaultChoiceId(effort.descriptor) : undefined
+          }
+        />
+      ) : null}
       {others.length > 0 ? (
         <div
           className={cn("flex flex-col gap-0.5", effort && "mt-1 border-t border-border/70 pt-1")}
@@ -285,6 +300,7 @@ function EffortLevels(props: { traits: TraitsSelectionInput }) {
                 descriptor={control.descriptor}
                 traits={traits}
                 tabStop={(!effort || locked) && index === 0}
+                defaultChoiceId={defaultChoiceId(control.descriptor)}
               />
             ),
           )}
@@ -296,7 +312,13 @@ function EffortLevels(props: { traits: TraitsSelectionInput }) {
 
 type TraitsSelection = ReturnType<typeof useTraitsSelection>;
 
-function EffortRows(props: { control: ColumnControl; traits: TraitsSelection; locked: boolean }) {
+function EffortRows(props: {
+  control: ColumnControl;
+  traits: TraitsSelection;
+  locked: boolean;
+  /** The level marked Default; see resolveDefaultChoiceId. */
+  defaultChoiceId: string | undefined;
+}) {
   const { control, traits } = props;
   const { descriptor } = control;
   if (control.kind === "boolean") {
@@ -333,7 +355,7 @@ function EffortRows(props: { control: ColumnControl; traits: TraitsSelection; lo
           selected={option.id === value}
           tabStop={shown ? option.id === value : index === 0}
           description={option.description}
-          isDefault={option.isDefault}
+          isDefault={option.id === props.defaultChoiceId}
           disabled={locked}
           onPick={() => traits.changeSelect(control.descriptor, option.id)}
         />
@@ -363,6 +385,8 @@ function OptionMenuRow(props: {
   traits: TraitsSelection;
   /** Holds the column's tab stop when the model has no levels. */
   tabStop: boolean;
+  /** The choice marked Default; see resolveDefaultChoiceId. */
+  defaultChoiceId: string | undefined;
 }) {
   const { descriptor, traits } = props;
   const [open, setOpen] = useState(false);
@@ -444,7 +468,7 @@ function OptionMenuRow(props: {
                     </span>
                   ) : null}
                 </span>
-                {choice.isDefault ? (
+                {choice.id === props.defaultChoiceId ? (
                   <span className="text-muted-foreground/70 text-xs">Default</span>
                 ) : null}
                 <MenuRadioItemIndicator />
@@ -487,7 +511,10 @@ function NoEffortRow() {
 }
 
 /** The model picker's effort column: the selected model's levels and its other options. */
-export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | null }) {
+export function ComposerEffortColumn(props: {
+  traits: TraitsSelectionInput | null;
+  defaultModelSelection: ModelSelection | null;
+}) {
   const picker = use(DockedPickerContext);
   const visibility = props.traits ? getTraitsSectionVisibility(props.traits) : null;
   const controls =
@@ -517,7 +544,11 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
         // Capture, so Up and Down on an option row move rows instead of opening its menu.
         onKeyDownCapture={moveBetweenRows}
       >
-        {props.traits ? <EffortLevels traits={props.traits} /> : <NoEffortRow />}
+        {props.traits ? (
+          <EffortLevels traits={props.traits} defaultModelSelection={props.defaultModelSelection} />
+        ) : (
+          <NoEffortRow />
+        )}
       </div>
     </>
   );
