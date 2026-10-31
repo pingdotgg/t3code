@@ -627,16 +627,6 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     return null;
   }
 
-  const cacheKey = [platform, pathValue, windowsPathExtensions.join(";"), command].join(
-    COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR,
-  );
-  const cache = yield* CommandResolutionCache;
-  const nowNanos = yield* Clock.monotonicTimeNanos;
-  const cached = cache.get(cacheKey);
-  if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
-    return cached.resolvedPath;
-  }
-
   // Keep case variants: Windows can make PATH directories case-sensitive.
   const pathEntries: string[] = [];
   const seenPathEntries = new Set<string>();
@@ -649,12 +639,31 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     pathEntries.push(pathEntry);
   }
 
+  const cwd =
+    platform !== "win32" && pathEntries.some((entry) => !path.isAbsolute(entry))
+      ? process.cwd()
+      : undefined;
+  const cacheKey = [
+    platform,
+    pathValue,
+    windowsPathExtensions.join(";"),
+    command,
+    ...(cwd === undefined ? [] : [cwd]),
+  ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
+  const cache = yield* CommandResolutionCache;
+  const nowNanos = yield* Clock.monotonicTimeNanos;
+  const cached = cache.get(cacheKey);
+  if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
+    return cached.resolvedPath;
+  }
+
   const listings = yield* PathDirectoryListings;
   for (const pathEntry of pathEntries) {
-    let listing = listings && (yield* Cache.get(listings, pathEntry));
-    if (listings && listing?.names && listing.modified !== (yield* directoryMtime(pathEntry))) {
-      yield* Cache.invalidate(listings, pathEntry);
-      listing = yield* Cache.get(listings, pathEntry);
+    const directory = cwd === undefined ? pathEntry : path.resolve(cwd, pathEntry);
+    let listing = listings && (yield* Cache.get(listings, directory));
+    if (listings && listing?.names && listing.modified !== (yield* directoryMtime(directory))) {
+      yield* Cache.invalidate(listings, directory);
+      listing = yield* Cache.get(listings, directory);
     }
     for (const candidate of commandCandidates) {
       if (listing?.names && !listing.names.has(candidate.toLowerCase())) continue;
