@@ -984,7 +984,6 @@ function KeybindingSettingsRow(props: KeybindingRowProps & { activate: boolean }
       role="row"
       data-keybinding-row={row.id}
       onFocusCapture={() => setFocused(true)}
-      style={{ contentVisibility: "auto", containIntrinsicSize: "auto 38px" }}
       className={cn(KEYBINDING_TABLE_ROW, "group/row min-h-9.5 py-1 outline-none")}
     >
       <span role="cell" tabIndex={active ? undefined : 0} className={KEYBINDING_TABLE_COMMAND}>
@@ -1064,7 +1063,6 @@ function EditableKeybindingSettingsRow(
     <SettingsSearchTarget
       id={anchorId}
       role="row"
-      style={{ contentVisibility: "auto", containIntrinsicSize: "auto 38px" }}
       className={cn(KEYBINDING_TABLE_ROW, "group/row min-h-9.5 py-1 outline-none")}
     >
       <span role="cell" className={KEYBINDING_TABLE_COMMAND}>
