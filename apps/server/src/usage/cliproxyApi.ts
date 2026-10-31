@@ -1,5 +1,6 @@
 import {
   ProviderDriverKind,
+  TrimmedNonEmptyString,
   UsageLimitSourceError,
   type ProviderConsumeResetCreditResult,
   type UsageLimitSourceAccount,
@@ -52,6 +53,9 @@ const ClaudeWindow = Schema.Struct({
   utilization: Schema.Number,
   resets_at: Schema.NullOr(Schema.String),
 });
+const ClaudeProfile = Schema.Struct({
+  organization: Schema.Struct({ uuid: TrimmedNonEmptyString }),
+});
 const ClaudeUsage = Schema.Struct({
   five_hour: Schema.optional(Schema.NullOr(ClaudeWindow)),
   seven_day: Schema.optional(Schema.NullOr(ClaudeWindow)),
@@ -88,6 +92,7 @@ const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeApiResponse = Schema.decodeUnknownEffect(ApiResponse);
 const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(CreditList));
 const decodeClaudeUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeUsage));
+const decodeClaudeProfile = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeProfile));
 const decodeCodexUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexUsage));
 const isUsageLimitSourceError = Schema.is(UsageLimitSourceError);
 
@@ -266,6 +271,11 @@ export const makeCliproxyApi = Effect.gen(function* () {
     };
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {
+        const profile = yield* apiCall(
+          config,
+          account,
+          "https://api.anthropic.com/api/oauth/profile",
+        ).pipe(Effect.flatMap(decodeClaudeProfile));
         const body = yield* apiCall(config, account, "https://api.anthropic.com/api/oauth/usage");
         const usage = yield* decodeClaudeUsage(body);
         const model_scoped = (usage.limits ?? []).flatMap((limit) =>
@@ -281,6 +291,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
         );
         return {
           ...base,
+          workspaceId: profile.organization.uuid,
           plan: "Claude Subscription",
           usageLimits: claudeUsageResponseToLimits({
             checkedAt,
