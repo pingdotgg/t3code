@@ -189,7 +189,16 @@ export function ThreadMarkdownImageView(props: {
                   <ThreadMarkdownImageRequest
                     key={props.sourceKey}
                     uri={props.uri}
-                    onLoad={(size) => setDecoded({ sourceKey: props.sourceKey, size })}
+                    onLoad={(size) =>
+                      // Only the first decode counts: later loads report the bitmap
+                      // downsampled for the current frame (969 vs 970 wide), so keeping
+                      // them resizes the frame, which reloads the image, and so on.
+                      setDecoded((current) =>
+                        current?.sourceKey === props.sourceKey
+                          ? current
+                          : { sourceKey: props.sourceKey, size },
+                      )
+                    }
                     onError={() => setFailure({ uri: props.uri, failed: true })}
                   />
                 )}
