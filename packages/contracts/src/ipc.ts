@@ -1027,9 +1027,8 @@ export interface DesktopBridge {
   revealWindow: () => Promise<void>;
   /**
    * The OS locale as a BCP-47 tag, which the renderer cannot read for itself:
-   * the packaged app ships only the `en-US` Chromium locale pak, so
-   * `navigator.language` and the default `Intl` locale are pinned to `en-US`
-   * regardless of OS settings.
+   * `navigator.language` and the default `Intl` locale snap to the closest
+   * Chromium locale pak and can drop the OS region.
    */
   getSystemLocale: () => string | null;
   getLocalEnvironmentBootstraps: () => readonly DesktopEnvironmentBootstrap[];

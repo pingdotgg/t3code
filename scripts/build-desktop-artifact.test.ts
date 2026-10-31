@@ -546,6 +546,25 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  it.effect.each([
+    ["mac", "dmg"],
+    ["linux", "AppImage"],
+    ["win", "nsis"],
+  ] as const)("ships every Chromium locale for %s", ([platform, target]) =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        platform,
+        target,
+        "0.0.33-pr.23736.1",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      assert.notProperty(config, "electronLanguages");
+    }),
+  );
+
   // pnpm writes "set this to true or false" placeholders into allowBuilds when a
   // tarball changes. pnpm ignores them, but the release build decode rejects them.
   it.effect("decodes the repo allowBuilds and every file: tarball it names exists", () =>
