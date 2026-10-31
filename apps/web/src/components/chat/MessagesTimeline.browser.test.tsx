@@ -341,7 +341,6 @@ describe("MessagesTimeline minimap integration", () => {
         timelineEntries={entries(completed)}
         isWorking={!completed}
         isCompacting={!completed}
-        activeTurnInProgress={!completed}
         activeTurnStartedAt={fixture.time(5)}
         latestRun={{
           runId: fixture.runId,
@@ -370,20 +369,25 @@ describe("MessagesTimeline minimap integration", () => {
       expectMinimapMatchesViewport(screen.container, list, ordinaryEntries);
     };
     await vi.waitFor(() => {
-      expect(screen.text()).toContain("Compacting after being idle…");
       expect(list.getState().indexByKey("working-indicator-row")).toBeDefined();
+    });
+    await act(() => {
+      void list.scrollToEnd({ animated: false });
+    });
+    await vi.waitFor(() => {
+      expect(screen.text()).toContain("Compacting for");
       expect(screen.container.querySelector('[role="separator"]')).toBeNull();
       expectMarkers(before);
     });
     const canvas = screen.container.querySelector("[data-minimap-canvas]");
 
-    // Retain the parent, list ref and thread identity as the divider replaces working status.
+    // Retain the parent, list ref and thread identity as the live divider finishes.
     await screen.rerender(ui(true));
     const ordinaryEntries = [...before, ...after];
     await vi.waitFor(() => {
       expect(props.listRef.current).toBe(list);
       expect(screen.container.querySelector("[data-minimap-canvas]")).toBe(canvas);
-      expect(screen.text()).not.toContain("Compacting after being idle…");
+      expect(screen.text()).not.toContain("Compacting for");
       expect(list.getState().indexByKey("working-indicator-row")).toBeUndefined();
       expectMarkers(ordinaryEntries);
     });
@@ -396,7 +400,7 @@ describe("MessagesTimeline minimap integration", () => {
     });
     await vi.waitFor(() => {
       expect(screen.container.querySelectorAll('[role="separator"]')).toHaveLength(1);
-      expect(screen.text()).toContain("Context compacted after being idle 899K");
+      expect(screen.text()).toContain("Context compacted before sending 899K");
       expect(screen.text()).toContain("19K tokens");
       expectMarkers(ordinaryEntries);
     });

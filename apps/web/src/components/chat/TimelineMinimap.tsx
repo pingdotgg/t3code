@@ -292,7 +292,7 @@ export function TimelineMinimap({
     animateCanvasWidths(rail);
   });
   const railMounted = items.length >= TIMELINE_MINIMAP_MIN_ITEMS;
-  // oxlint-disable-next-line t3code/react-effect-budget -- Canvas resources and browser observers attach after DOM refs commit and must dispose together.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Canvas resources and browser observers attach after DOM refs commit and must dispose together.
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
     const activeProbe = activeColorRef.current;
@@ -442,7 +442,7 @@ export function TimelineMinimap({
       canvas.width = canvas.height = base.width = base.height = 0;
     };
   }, [railMounted, refreshCanvasRail]);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Canvas pixels must match committed props before paint; drawing during render would mutate the previous commit.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Canvas pixels must match committed props before paint; drawing during render would mutate the previous commit.
   useLayoutEffect(() => {
     // Count changes can resize the logical rail before ResizeObserver delivers.
     if (canvasRailRef.current?.count !== items.length) measureRailRef.current?.();
@@ -450,7 +450,7 @@ export function TimelineMinimap({
     refreshCanvasRail(true);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Stable callback reads current data; count and active index changes must rebuild the rail.
   }, [items.length, resolvedActiveIndex, refreshCanvasRail]);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Reapply the retained viewport range after row mappings commit, including same-count replacements.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Reapply the retained viewport range after row mappings commit, including same-count replacements.
   useLayoutEffect(() => {
     updateVisibleRange(visibleRowsRef.current.start, visibleRowsRef.current.end);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Stable callback reads the current mapping; new row indices must refresh the retained range.
