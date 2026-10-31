@@ -32,7 +32,7 @@ import {
   selectHistoryPageFromCursor,
   THREAD_HISTORY_PAGE_POLICY,
 } from "./threadHistoryPaging.ts";
-import { projectTurnItemForWire } from "./WireProjection.ts";
+import { projectTurnItemForWire } from "@t3tools/shared/wireProjection";
 
 vi.mock("@t3tools/shared/threadFindText", { spy: true });
 

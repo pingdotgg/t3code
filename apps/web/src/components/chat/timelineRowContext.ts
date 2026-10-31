@@ -1,11 +1,9 @@
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
-import type {
-  ProviderApprovalDecision,
-  ResponseContextRecord,
-  RuntimeRequestId,
-  WorktreeSetupSnapshot,
-} from "@t3tools/contracts";
 import {
+  type ProviderApprovalDecision,
+  type ResponseContextRecord,
+  type RuntimeRequestId,
+  type WorktreeSetupSnapshot,
   type EnvironmentId,
   type MessageId,
   type OrchestrationV2TurnItem,
@@ -103,6 +101,8 @@ export interface TimelineRowSharedState {
   onRetryWorkspacePreparation: ((runId: RunId) => void) | null;
   onWorktreeSetupWorkLocally: (() => void) | null;
   onOpenWorktreeSetupTerminal: ((terminalId: string) => void) | null;
+  onToggleWorkingHistory: (key: string) => void;
+  onFocusComposer: (() => void) | null;
   workGroupViewState: WorkGroupViewState;
 }
 
@@ -110,12 +110,21 @@ export interface TimelineRowActivityState {
   isWorking: boolean;
   isCompacting: boolean;
   isRevertingCheckpoint: boolean;
+  turnEnded: boolean;
+  activeTurnStartedAt: string | null;
   awaitingUser: boolean;
   isPreparingWorktree: boolean;
   providerStartingLabel: string | null;
   latestRunId: RunId | null;
   backgroundWorktreeSetup: WorktreeSetupSnapshot | null;
   liveAnswerPreview: string | null;
+  /** The approval or question the running turn waits on; it pauses the clock. */
+  pendingRequest: TimelinePendingRequest | null;
+  /** Background work that outlived the latest turn, named on its fold. */
+  backgroundTaskLabel: string | null;
+  usageLimit: TimelineUsageLimit | null;
+  /** The latest run's error as the composer banner shows it. */
+  threadErrorMessage: string | null;
 }
 
 export const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
@@ -149,4 +158,19 @@ export function useInitialOutputReady(pending: boolean, onReady: (() => void) | 
       onReady?.();
     }
   }, [pending, onReady]);
+}
+
+/** The latest run stopped at a usage limit; its fold offers to snooze until the reset. */
+export interface TimelineUsageLimit {
+  readonly runId: RunId;
+  readonly resetAt: string | null;
+  readonly snoozed: boolean;
+  readonly onToggleSnooze: (() => void) | null;
+}
+
+export interface TimelinePendingRequest {
+  readonly kind: "approval" | "question";
+  readonly label: string;
+  readonly createdAt: string;
+  readonly blocking?: boolean;
 }

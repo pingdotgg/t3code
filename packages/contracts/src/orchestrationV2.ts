@@ -1737,6 +1737,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     monitor: Schema.optional(Schema.Boolean),
     /** The provider wakes the agent when this command finishes after its turn. */
     completionWake: Schema.optional(Schema.Literal("always")),
+    /** Failing tests named by a test runner summary, derived when output is stripped for the wire. */
+    failedTestCount: Schema.optional(NonNegativeInt),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2600,6 +2602,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     monitor: Schema.optional(Schema.Boolean),
     /** The provider wakes the agent when this command finishes after its turn. */
     completionWake: Schema.optional(Schema.Literal("always")),
+    /** Failing tests named by a test runner summary, derived when output is stripped for the wire. */
+    failedTestCount: Schema.optional(NonNegativeInt),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
