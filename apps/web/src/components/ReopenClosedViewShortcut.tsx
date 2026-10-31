@@ -19,6 +19,7 @@ import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import {
   planNextReopen,
+  closedChatTarget,
   pullRequestsSearchForRestore,
   reopenClosedView,
 } from "../reopenClosedView";
@@ -107,7 +108,8 @@ export function ReopenClosedViewShortcut() {
         catalogReady: catalog.isReady,
         ownerExists: isThreadlessSurfacesRef(ref)
           ? threadlessProject === null || readProject(threadlessProject) !== null
-          : readThreadShell(ref) !== null || drafts.getDraftThreadByRef(ref) !== null,
+          : readThreadShell(ref) !== null || drafts.getDraftThreadByRef(ref) !== null ||
+            (entry.kind === "chat" && entry.draftId !== undefined && drafts.getDraftSession(entry.draftId) !== null),
         sideChatExists:
           entry.kind !== "panel-tab" ||
           entry.surface.kind !== "side-chat" ||
@@ -135,6 +137,12 @@ export function ReopenClosedViewShortcut() {
       return;
     }
     useClosedViewStore.getState().remove(restore.id);
+    if (restore.kind === "chat") {
+      const target = closedChatTarget(restore);
+      if (target.kind === "draft") await navigate({ to: "/draft/$draftId", params: buildDraftThreadRouteParams(target.draftId) });
+      else await navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(target.threadRef) });
+      return;
+    }
     if (globalPullRequests) {
       const selected = selectSelectedRightPanelSurface(
         useRightPanelStore.getState().byThreadKey,
