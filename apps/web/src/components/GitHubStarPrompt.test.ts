@@ -5,13 +5,16 @@ import type { toastManager } from "./ui/toast";
 
 const { add, starred } = vi.hoisted(() => ({
   add: vi.fn<typeof toastManager.add>(),
-  starred: { value: false },
+  starred: { value: false, duringCheck: () => {} },
 }));
 vi.mock("./ui/toast", () => ({ toastManager: { add, close: vi.fn() } }));
 vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
 vi.mock("../state/sourceControl", () => ({ sourceControlEnvironment: { checkStarred: {} } }));
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
-  runAtomCommand: async () => ({ _tag: "Success", value: starred.value }),
+  runAtomCommand: async () => {
+    starred.duringCheck();
+    return { _tag: "Success", value: starred.value };
+  },
 }));
 
 const environmentId = EnvironmentId.make("environment-1");
@@ -19,6 +22,7 @@ const environmentId = EnvironmentId.make("environment-1");
 function setup({ sent = 0, writable = true, alreadyStarred = false } = {}) {
   add.mockReset();
   starred.value = alreadyStarred;
+  starred.duringCheck = () => {};
   const store = new Map([["t3code:github-star-prompt:sent", String(sent)]]);
   vi.stubGlobal("window", {
     localStorage: {
@@ -29,6 +33,7 @@ function setup({ sent = 0, writable = true, alreadyStarred = false } = {}) {
       },
     },
   });
+  return store;
 }
 
 // A fresh module import stands in for an app reload; storage survives it.
@@ -71,6 +76,14 @@ describe("recordPromptSent", () => {
     setup({ sent: 5, alreadyStarred: true });
     await (await startSession()).send();
     starred.value = false;
+    await (await startSession()).send();
+    expect(add).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("never asks when another tab dismisses it during the star check", async () => {
+    const store = setup({ sent: 5 });
+    starred.duringCheck = () => store.set("t3code:github-star-prompt:dismissed", "true");
     await (await startSession()).send();
     expect(add).not.toHaveBeenCalled();
     vi.unstubAllGlobals();

@@ -83,6 +83,12 @@ export async function recordPromptSent(environmentId: EnvironmentId): Promise<vo
     return;
   }
   shownThisSession = true;
-  if (await alreadyStarred(environmentId)) dismiss();
-  else showStarPrompt();
+  if (await alreadyStarred(environmentId)) return dismiss();
+  try {
+    // Another tab can dismiss while the check runs.
+    if (getLocalStorageItem(DISMISSED_KEY, Schema.Boolean)) return;
+  } catch {
+    return;
+  }
+  showStarPrompt();
 }
