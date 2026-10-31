@@ -155,7 +155,7 @@ export function buildTraitsTriggerDisplay(input: {
       input.ultrathinkPromptControlled && descriptor.id === input.primarySelectDescriptorId
         ? "Ultrathink"
         : descriptor.type === "boolean"
-          ? `${descriptor.label} ${descriptor.currentValue === true ? "On" : "Off"}`
+          ? `${descriptor.label} ${getProviderOptionCurrentValue(descriptor, input.modelSelection, input.reportedModelSelection) === true ? "On" : "Off"}`
           : getProviderOptionCurrentLabel(
               descriptor,
               input.modelSelection,
