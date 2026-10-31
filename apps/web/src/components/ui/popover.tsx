@@ -1,4 +1,5 @@
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
+import type { CSSProperties } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -42,6 +43,8 @@ function PopoverPopup({
   keepMounted = false,
   anchor,
   touchBackdrop = false,
+  animationDurationMs,
+  style,
   ...props
 }: PopoverPrimitive.Popup.Props & {
   padding?: keyof typeof popoverViewportPaddingClassName;
@@ -56,6 +59,7 @@ function PopoverPopup({
   anchor?: PopoverPrimitive.Positioner.Props["anchor"];
   width?: keyof typeof popoverPopupWidthClassName;
   touchBackdrop?: boolean;
+  animationDurationMs?: number;
 }) {
   // Viewport rekeys on close; persistent single-trigger forms need stable containers for drafts and submit
   // guards.
@@ -95,11 +99,23 @@ function PopoverPopup({
               variant !== "panel" &&
               "shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]",
             width !== "auto" && ["max-w-[calc(100vw-2rem)]", popoverPopupWidthClassName[width]],
+            animationDurationMs !== undefined && "duration-(--popover-animation-duration)",
             variant === "panel" &&
               "w-full overflow-visible rounded-none border-0 bg-transparent shadow-none before:hidden [backdrop-filter:none] [-webkit-backdrop-filter:none]",
             className,
           )}
           data-slot="popover-popup"
+          // A variable, not an inline transitionDuration: Base UI sets `transition: none`
+          // inline on mount, and removing that shorthand also clears the longhand.
+          style={
+            animationDurationMs === undefined
+              ? style
+              : (state) =>
+                  ({
+                    ...(typeof style === "function" ? style(state) : style),
+                    "--popover-animation-duration": `${animationDurationMs}ms`,
+                  }) as CSSProperties
+          }
           {...props}
         >
           <Viewport
