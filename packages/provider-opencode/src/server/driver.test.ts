@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import type { OpenCodeSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
@@ -385,6 +385,38 @@ it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
         const v2 = yield* instance.snapshot.resolveMaintenance({ fresh: true });
         assert.strictEqual(v2.packageName, "@opencode/cli");
         assert.isNull(v2.update);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "opens sessions through OpenCode 2 after the binary is upgraded in place from 1.x",
+    () =>
+      Effect.gen(function* () {
+        serverStarts.length = 0;
+        versionOutput.current = "1.18.18\n";
+        const instance = yield* create({}, noHttp);
+        const openSession = instance.orchestrationAdapter
+          .openSession({
+            threadId: ThreadId.make("thread-upgraded"),
+            providerSessionId: ProviderSessionId.make("session-upgraded"),
+            modelSelection: { instanceId: instance.instanceId, model: "opencode/big-pickle" },
+            runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+          })
+          .pipe(Effect.scoped, Effect.flip);
+
+        yield* openSession;
+        assert.deepStrictEqual(serverStarts, ["connect"], "1.x opens through the 1.x adapter");
+
+        versionOutput.current = "opencode v2.2.4\n";
+        serverStarts.length = 0;
+        yield* openSession;
+        // The initial status check may also start a 2.x server here; only the 1.x adapter connects.
+        assert.notInclude(
+          serverStarts,
+          "connect",
+          "after upgrading to 2.x, the next session must not open through the 1.x adapter",
+        );
+        assert.include(serverStarts, "start", "the OpenCode 2 adapter starts its server");
       }).pipe(Effect.scoped),
   );
 });
