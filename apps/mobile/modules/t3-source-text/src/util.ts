@@ -64,7 +64,7 @@ function fontWeightToNativeProp(fontWeight: TextStyle["fontWeight"]): NativeFont
       return "semibold";
     case 700:
     case "700":
-      return "semibold";
+      return "bold";
     case 800:
     case "800":
       return "bold";
