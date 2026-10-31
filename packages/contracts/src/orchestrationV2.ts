@@ -668,6 +668,45 @@ export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
 
 export const ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE = "workspace_preparation_failed";
 
+/**
+ * How a finalized run ended. A rolled-back run is discarded, not finalized.
+ */
+export const OrchestrationV2RunFinalizedOutcome = Schema.Literals([
+  "completed",
+  "failed",
+  "interrupted",
+  "cancelled",
+]);
+export type OrchestrationV2RunFinalizedOutcome = typeof OrchestrationV2RunFinalizedOutcome.Type;
+
+// Finalization follows capture/workspace refresh, or the terminal write for runs without capture.
+// Each run records either this or finalization-failed once; occurredAt is the finalization time.
+export const OrchestrationV2RunFinalized = Schema.Struct({
+  runId: RunId,
+  outcome: OrchestrationV2RunFinalizedOutcome,
+  checkpointId: Schema.NullOr(CheckpointId),
+});
+export type OrchestrationV2RunFinalized = typeof OrchestrationV2RunFinalized.Type;
+
+/** The finalization step that failed. */
+export const OrchestrationV2RunFinalizationOperation = Schema.Literals([
+  "capture-checkpoint",
+  "refresh-workspace",
+  "record-finalized",
+]);
+export type OrchestrationV2RunFinalizationOperation =
+  typeof OrchestrationV2RunFinalizationOperation.Type;
+
+/**
+ * A run's finalization gave up after its last attempt, so the run will not
+ * record `run.finalized`. The run row keeps whatever status it reached.
+ */
+export const OrchestrationV2RunFinalizationFailed = Schema.Struct({
+  runId: RunId,
+  operation: OrchestrationV2RunFinalizationOperation,
+});
+export type OrchestrationV2RunFinalizationFailed = typeof OrchestrationV2RunFinalizationFailed.Type;
+
 export const OrchestrationV2Run = Schema.Struct({
   id: RunId,
   threadId: ThreadId,
@@ -1903,6 +1942,16 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("run.finalized"),
+    payload: OrchestrationV2RunFinalized,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("run.finalization-failed"),
+    payload: OrchestrationV2RunFinalizationFailed,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("run-attempt.created"),
     payload: OrchestrationV2RunAttempt,
   }),
@@ -2780,6 +2829,16 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
     ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("run.background-work-cancelled"),
     payload: OrchestrationV2RunBackgroundWorkCancelled,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("run.finalized"),
+    payload: OrchestrationV2RunFinalized,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("run.finalization-failed"),
+    payload: OrchestrationV2RunFinalizationFailed,
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,

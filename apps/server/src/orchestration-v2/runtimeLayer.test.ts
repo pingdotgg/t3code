@@ -20,6 +20,7 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2RuntimeRequest,
   ProjectId,
+  PluginInstallationId,
   type PullRequestDetail,
   type PullRequestComment,
   PullRequestOperationError,
@@ -40,6 +41,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
+import * as Exit from "effect/Exit";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -53,6 +56,8 @@ import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.t
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
+import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as PluginTools from "../plugins/PluginTools.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -273,25 +278,30 @@ const moveProject = (projectId: ProjectId, workspaceRoot: string, updatedAt: str
     }),
   );
 
-const layerTest = Layer.mergeAll(
-  RuntimeLayer.layer,
-  RuntimeLayer.layerEventSink,
-  ProjectStore.layer,
-  ProjectionStore.layer,
-  EffectOutbox.layer,
-  ThreadCommandExecutor.layer,
-).pipe(
-  Layer.provide(McpSessionRegistryTestkit.layer),
-  Layer.provide(McpProviderSessions.layer),
-  Layer.provide(SqlitePersistence.layerMemory),
-  Layer.provide(layerCheckpointStoreTest),
-  Layer.provide(layerServerConfig),
-  Layer.provide(ServerSettings.layerTest()),
-  Layer.provide(layerTestProviderInstanceRegistry),
-  Layer.provide(layerGitWorkflowTest),
-  Layer.provide(layerProjectServiceTest),
-  Layer.provide(layerPlatformTest),
-);
+const layerTestWithMcpRegistry = (
+  registryLayer: Layer.Layer<McpSessionRegistry.McpSessionRegistry>,
+) =>
+  Layer.mergeAll(
+    RuntimeLayer.layer,
+    RuntimeLayer.layerEventSink,
+    ProjectStore.layer,
+    ProjectionStore.layer,
+    EffectOutbox.layer,
+    ThreadCommandExecutor.layer,
+  ).pipe(
+    Layer.provide(registryLayer),
+    Layer.provide(McpProviderSessions.layer),
+    Layer.provide(SqlitePersistence.layerMemory),
+    Layer.provide(layerCheckpointStoreTest),
+    Layer.provide(layerServerConfig),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(layerTestProviderInstanceRegistry),
+    Layer.provide(layerGitWorkflowTest),
+    Layer.provide(layerProjectServiceTest),
+    Layer.provide(layerPlatformTest),
+  );
+
+const layerTest = layerTestWithMcpRegistry(McpSessionRegistryTestkit.layer);
 
 const layerLegacyImportTest = RuntimeLayer.layer.pipe(
   Layer.provide(McpSessionRegistryTestkit.layer),
@@ -8390,4 +8400,71 @@ it.layer(layerQueueResumeDisabledInstanceTest)(
         }),
     );
   },
+);
+
+it.effect("runtime layers snapshot outer plugin tool grants into session credentials", () =>
+  Effect.gen(function* () {
+    const requests = yield* Ref.make<ReadonlyArray<McpSessionRegistry.McpCredentialRequest>>([]);
+    const grants = [
+      { installationId: PluginInstallationId.make("runtime-tool-plugin"), generation: 3 },
+    ];
+    const registryLayer = Layer.effect(
+      McpSessionRegistry.McpSessionRegistry,
+      Effect.gen(function* () {
+        const delegate = yield* McpSessionRegistry.McpSessionRegistry;
+        return McpSessionRegistry.McpSessionRegistry.of({
+          ...delegate,
+          issue: (request) =>
+            delegate
+              .issue(request)
+              .pipe(Effect.tap(() => Ref.update(requests, (current) => [...current, request]))),
+        });
+      }),
+    ).pipe(Layer.provide(McpSessionRegistryTestkit.layer));
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const threadId = ThreadId.make("runtime-plugin-grants-thread");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-plugin-grants-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-plugin-grants-project"),
+        title: "Plugin grants",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      // The lifecycle adapter deliberately refuses to open; credentials are issued before that boundary.
+      const opened = yield* manager
+        .open({
+          threadId,
+          providerSessionId: ProviderSessionId.make("runtime-plugin-grants-session"),
+          modelSelection,
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+          },
+        })
+        .pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(opened));
+      assert.deepEqual(
+        (yield* Ref.get(requests)).map((request) => request.pluginToolGrants),
+        [grants],
+      );
+    }).pipe(
+      Effect.provide(
+        layerTestWithMcpRegistry(registryLayer).pipe(
+          Layer.provideMerge(
+            Layer.mock(PluginTools.PluginTools)({ grants: Effect.succeed(grants) }),
+          ),
+        ),
+      ),
+    );
+  }),
 );

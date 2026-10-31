@@ -65,6 +65,32 @@ describe("buildThreadActionMenuItems", () => {
     },
   );
 
+  it("lists plugin actions as their own section before Copy", () => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      pluginActions: [
+        { id: "plugin-action:a", label: "Open dashboard" },
+        { id: "plugin-action:b", label: "Deploy" },
+      ],
+    });
+    const first = items.findIndex((item) => item.id === "plugin-action:a");
+    expect(items.slice(first, first + 3).map((item) => [item.id, item.separatorBefore])).toEqual([
+      ["plugin-action:a", true],
+      ["plugin-action:b", undefined],
+      ["copy", true],
+    ]);
+    expect(buildThreadActionMenuItems(baseState).map((item) => item.id)).not.toContain(
+      "plugin-action:a",
+    );
+    const denied = buildThreadActionMenuItems({
+      ...baseState,
+      canOperate: false,
+      pluginActions: [{ id: "plugin-action:a", label: "Open dashboard" }],
+    });
+    // Running a plugin action needs orchestration:operate, like the thread mutations.
+    expect(denied.find((item) => item.id === "plugin-action:a")?.disabled).toBe(true);
+  });
+
   it("disables archive and turning into a project while the thread is running", () => {
     const items = buildThreadActionMenuItems({
       ...baseState,
