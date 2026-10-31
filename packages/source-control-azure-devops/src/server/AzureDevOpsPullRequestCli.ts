@@ -632,7 +632,7 @@ export const make = Effect.gen(function* () {
           ? {}
           : { queryParameters: [`$iteration=${input.iterationId}`, "$baseIteration=0"] }),
         maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
-        decode: decodeThreadsJson,
+        decode: (raw: string) => decodeThreadsJson(raw, input.iterationId),
       });
     }),
 

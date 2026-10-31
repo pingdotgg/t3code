@@ -191,9 +191,9 @@ describe("getChangeRequest", () => {
 
 describe("getChangeRequestActivity", () => {
   it.effect.each([
-    { iterations: "read", trackedTo: ITERATION.id, line: 12 },
-    { iterations: "failed", trackedTo: undefined, line: null },
-  ] as const)("places file threads on the diff only when the push list is $iterations", (input) =>
+    { iterations: "read", trackedTo: ITERATION.id },
+    { iterations: "failed", trackedTo: undefined },
+  ] as const)("carries the threads pinned to files when the push list is $iterations", (input) =>
     Effect.gen(function* () {
       const remark = {
         id: "4:1",
@@ -247,7 +247,7 @@ describe("getChangeRequestActivity", () => {
         number: 7,
       });
 
-      expect(activity.reviewThreads).toEqual([{ ...thread, line: input.line }]);
+      expect(activity.reviewThreads).toEqual([thread]);
       expect(activity.comments.map((comment) => comment.id)).toEqual(["4:1"]);
       expect(activity.commentsTruncated).toBe(false);
       // The Code tab diffs the latest push, so the lines are the ones that push has.

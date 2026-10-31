@@ -245,6 +245,7 @@ describe("decodeThreadsJson", () => {
                 rightFileStart: { line: 12, offset: 1 },
                 rightFileEnd: { line: 12, offset: 1 },
               },
+              pullRequestThreadContext: { iterationContext: { secondComparingIteration: 2 } },
               comments: [
                 remark(1, "Rename this."),
                 { id: 2, content: "Bilal updated the thread", commentType: "system" },
@@ -256,6 +257,7 @@ describe("decodeThreadsJson", () => {
               id: 2,
               status: "fixed",
               threadContext: { filePath: "/src/old.ts", leftFileStart: { line: 3, offset: 1 } },
+              pullRequestThreadContext: { iterationContext: { secondComparingIteration: 2 } },
               comments: [remark(1, "Why was this dropped?")],
             },
             {
@@ -273,6 +275,7 @@ describe("decodeThreadsJson", () => {
             { id: 5, status: "closed", comments: [remark(1, "On the whole change.")] },
           ],
         }),
+        2,
       ),
     );
 
@@ -313,6 +316,43 @@ describe("decodeThreadsJson", () => {
       ["3:1", "README.md"],
       ["5:1", null],
       ["1:4", "src/app.ts"],
+    ]);
+  });
+
+  it.each([
+    { thread: "written on the push asked for", written: 3, tracked: false, trackedTo: 3, line: 12 },
+    { thread: "moved by Azure to the push", written: 1, tracked: true, trackedTo: 3, line: 12 },
+    { thread: "left on an older push", written: 1, tracked: false, trackedTo: 3, line: null },
+    { thread: "read without a push", written: 3, tracked: false, trackedTo: undefined, line: null },
+  ])("places a file thread $thread on the line only when it is on that push", (input) => {
+    const { reviewThreads } = expectSuccess(
+      decodeThreadsJson(
+        asJson({
+          value: [
+            {
+              id: 1,
+              threadContext: { filePath: "/src/app.ts", rightFileStart: { line: 12, offset: 1 } },
+              pullRequestThreadContext: {
+                iterationContext: {
+                  firstComparingIteration: input.written,
+                  secondComparingIteration: input.written,
+                },
+                ...(input.tracked
+                  ? {
+                      trackingCriteria: { firstComparingIteration: 3, secondComparingIteration: 1 },
+                    }
+                  : {}),
+              },
+              comments: [{ id: 1, content: "Rename this.", publishedDate: "2026-07-02T00:00:00Z" }],
+            },
+          ],
+        }),
+        input.trackedTo,
+      ),
+    );
+
+    expect(reviewThreads.map((thread) => [thread.path, thread.line])).toEqual([
+      ["src/app.ts", input.line],
     ]);
   });
 

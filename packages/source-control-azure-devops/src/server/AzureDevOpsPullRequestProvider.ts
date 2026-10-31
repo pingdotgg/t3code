@@ -403,23 +403,12 @@ export const make = Effect.gen(function* () {
                   Effect.map((iterations) => iterations.at(-1)?.id),
                   Effect.orElseSucceed(() => undefined),
                   Effect.flatMap((iterationId) =>
-                    cli
-                      .listThreads({ cwd: input.cwd, location, number: input.number, iterationId })
-                      .pipe(
-                        // Untracked lines are where the threads were written, which a later
-                        // push may have moved; keep the threads off the diff.
-                        Effect.map((threads) =>
-                          iterationId === undefined
-                            ? {
-                                ...threads,
-                                reviewThreads: threads.reviewThreads.map((thread) => ({
-                                  ...thread,
-                                  line: null,
-                                })),
-                              }
-                            : threads,
-                        ),
-                      ),
+                    cli.listThreads({
+                      cwd: input.cwd,
+                      location,
+                      number: input.number,
+                      iterationId,
+                    }),
                   ),
                   Effect.map((threads) => ({ ...threads, truncated: false })),
                   Effect.orElseSucceed(() => ({

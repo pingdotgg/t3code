@@ -91,6 +91,18 @@ const RawThreadSchema = Schema.Struct({
       }),
     ),
   ),
+  pullRequestThreadContext: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        iterationContext: Schema.optional(
+          Schema.NullOr(
+            Schema.Struct({ secondComparingIteration: Schema.optional(Schema.NullOr(Schema.Int)) }),
+          ),
+        ),
+        trackingCriteria: Schema.optional(Schema.NullOr(Schema.Unknown)),
+      }),
+    ),
+  ),
   comments: Schema.optional(
     Schema.NullOr(
       Schema.Array(
@@ -318,8 +330,25 @@ function toThreadAnchor(
   return { line: null, side: "right" };
 }
 
+/**
+ * Azure moves a thread to the push it was asked to track to only when the thread's line moved, and
+ * says so in `trackingCriteria`. An untracked thread from an older push may name a line that has
+ * since changed, so it keeps no line.
+ */
+function isOnPush(
+  context: Schema.Schema.Type<typeof RawThreadSchema>["pullRequestThreadContext"],
+  trackedTo: number | undefined,
+): boolean {
+  if (trackedTo === undefined) return false;
+  if (context?.trackingCriteria != null) return true;
+  return context?.iterationContext?.secondComparingIteration === trackedTo;
+}
+
 /** Every remark in order, and each file thread once more as a whole for the diff. */
-export function decodeThreadsJson(raw: string): Result.Result<AzureDevOpsThreads, DecodeFailure> {
+export function decodeThreadsJson(
+  raw: string,
+  trackedTo?: number,
+): Result.Result<AzureDevOpsThreads, DecodeFailure> {
   const decoded = decodeThreadPage(raw);
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
@@ -362,7 +391,9 @@ export function decodeThreadsJson(raw: string): Result.Result<AzureDevOpsThreads
     reviewThreads.push({
       id: String(thread.id),
       path,
-      ...toThreadAnchor(thread.threadContext),
+      ...(isOnPush(thread.pullRequestThreadContext, trackedTo)
+        ? toThreadAnchor(thread.threadContext)
+        : { line: null, side: "right" as const }),
       isResolved: RESOLVED_THREAD_STATUSES.has(thread.status?.trim().toLowerCase() ?? ""),
       // Azure states no such thing about a thread, so each is shown against the line it names.
       isOutdated: false,
