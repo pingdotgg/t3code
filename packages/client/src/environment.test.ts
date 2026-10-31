@@ -141,7 +141,7 @@ const environmentWith = Effect.fn("TestEnvironment.make")(function* (
         };
       }),
     // The scripted credential has a single route, so route checks never run.
-    checkRoute: () => Effect.succeed("unchecked"),
+    checkHost: () => Effect.succeed("unchecked"),
     preflight: () => Effect.succeed("unchecked"),
   });
   const environment = yield* makeEnvironment(credential).pipe(
