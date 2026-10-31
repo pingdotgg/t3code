@@ -1,7 +1,11 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { ConnectionTraceId } from "./ConnectionTraceId";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { hasSavedBearerRoute, hostFreezeNotice } from "@t3tools/client-runtime/connection";
+import {
+  hasSavedBearerRoute,
+  hostFreezeNotice,
+  pairAgainAddress,
+} from "@t3tools/client-runtime/connection";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -20,6 +24,7 @@ import { cn } from "../../lib/cn";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { serverEnvironment } from "../../state/server";
 import { environmentPresentations } from "../../state/presentation";
+import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { ConnectionDiagnosisDetails, useConnectionDiagnosis } from "./ConnectionDiagnosisDetails";
 import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
@@ -42,6 +47,8 @@ export function ConnectionEnvironmentRow(props: {
   readonly opensDetails?: boolean;
   readonly onToggle: () => void;
   readonly onReconnect: (environmentId: EnvironmentId) => void;
+  /** Opens pairing for this machine when it refused the saved pairing. */
+  readonly onPairAgain?: (environmentId: EnvironmentId) => void;
   readonly onRemove: (environmentId: EnvironmentId) => void;
   readonly onSetEnabled: (environmentId: EnvironmentId, enabled: boolean) => void;
   readonly onUpdate: (
@@ -70,6 +77,10 @@ export function ConnectionEnvironmentRow(props: {
   const freeze = enabled
     ? hostFreezeNotice(props.environment.environmentLabel, serverConfig?.lastEventLoopStall)
     : null;
+  const canPairAgain =
+    enabled && props.onPairAgain !== undefined && presentation !== null
+      ? pairAgainAddress(presentation) !== null
+      : false;
   const isRetrying =
     enabled &&
     (props.environment.connectionState === "connecting" ||
@@ -195,6 +206,14 @@ export function ConnectionEnvironmentRow(props: {
           />
         </Pressable>
       </View>
+
+      {canPairAgain ? (
+        <SettingsActionRow
+          icon="qrcode.viewfinder"
+          label="Pair again"
+          onPress={() => props.onPairAgain?.(props.environment.environmentId)}
+        />
+      ) : null}
 
       {props.expanded ? (
         <Animated.View

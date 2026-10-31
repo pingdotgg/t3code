@@ -107,6 +107,11 @@ created in Settings can only be copied from the client that created them while
 its Sharing & access page stays open. If you leave or reload that page, create
 another link to share.
 
+A direct pairing lasts 30 days. When it runs out, the saved machine reports that
+its credential is invalid. Create a fresh pairing link on the host, then choose
+**Pair again** on that machine. Its address is filled in, and it keeps its
+threads, so you do not need to remove it and add it again.
+
 ### Reach one machine several ways
 
 A machine can have more than one route: LAN, Tailscale, another VPN, a public

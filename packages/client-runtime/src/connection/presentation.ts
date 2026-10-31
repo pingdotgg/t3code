@@ -3,7 +3,7 @@ import * as Option from "effect/Option";
 
 import type { ConnectionCatalogEntry } from "./catalog.ts";
 import type { ConnectionTarget, SupervisorConnectionState } from "./model.ts";
-import { connectionRouteId, connectionRoutes, routeHttpBaseUrl } from "./routes.ts";
+import { connectionRouteId, connectionRoutes, isLearned, routeHttpBaseUrl } from "./routes.ts";
 
 export type EnvironmentConnectionPhase =
   | "available"
@@ -18,6 +18,8 @@ export interface EnvironmentConnectionPresentation {
   readonly phase: EnvironmentConnectionPhase;
   readonly error: string | null;
   readonly traceId: string | null;
+  /** The environment refused this device's saved pairing, as when its session expired. */
+  readonly credentialRejected?: true;
 }
 
 /**
@@ -60,8 +62,24 @@ export function presentConnectionState(
         phase: state.lastFailure?.reason === "unsupported" ? "unsupported" : "error",
         error: state.lastFailure?.message ?? null,
         traceId: state.lastFailure?.traceId ?? null,
+        // T3 Connect sign-in refusals are also "authentication"; only a paired
+        // address refusing its saved credential is fixed by pairing again.
+        ...(state.lastFailure?.reason === "authentication" && state.lastFailure.via === "direct"
+          ? { credentialRejected: true }
+          : {}),
       };
   }
+}
+
+// Learned routes borrow a saved route's credential; pair its owner again.
+export function pairAgainAddress(
+  presentation: Pick<EnvironmentPresentation, "entry" | "connection">,
+): string | null {
+  if (presentation.connection.credentialRejected !== true) return null;
+  const route = connectionRoutes(presentation.entry).find(
+    (candidate) => candidate.target._tag === "BearerConnectionTarget" && !isLearned(candidate),
+  );
+  return route === undefined ? null : routeHttpBaseUrl(route);
 }
 
 export function connectionStatusText(connection: EnvironmentConnectionPresentation): string {

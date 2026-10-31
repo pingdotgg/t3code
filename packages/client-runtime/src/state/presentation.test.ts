@@ -4,7 +4,11 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
-import { AVAILABLE_CONNECTION_STATE, PrimaryConnectionTarget } from "../connection/model.ts";
+import {
+  AVAILABLE_CONNECTION_STATE,
+  ConnectionBlockedError,
+  PrimaryConnectionTarget,
+} from "../connection/model.ts";
 import {
   createEnvironmentPresentationAtoms,
   createEnvironmentSummaryAtoms,
@@ -87,6 +91,33 @@ describe("environment summary subscriptions", () => {
       expect(h.registry.get(h.environmentsAtom)).toEqual([]);
     } finally {
       stop();
+      h.registry.dispose();
+    }
+  });
+
+  it("republishes a connection when only the credential refusal changes", () => {
+    const h = harness();
+    const blocked = (reason: "authentication" | "configuration") =>
+      AsyncResult.success({
+        ...AVAILABLE_CONNECTION_STATE,
+        phase: "blocked" as const,
+        lastFailure: new ConnectionBlockedError({
+          reason,
+          detail: "Refused.",
+          hop: "server",
+          via: "direct",
+        }),
+      });
+    try {
+      h.registry.set(h.state, blocked("configuration"));
+      expect(
+        h.registry.get(h.full.presentationsAtom).get(FIRST)?.connection.credentialRejected,
+      ).toBeUndefined();
+      h.registry.set(h.state, blocked("authentication"));
+      expect(
+        h.registry.get(h.full.presentationsAtom).get(FIRST)?.connection.credentialRejected,
+      ).toBe(true);
+    } finally {
       h.registry.dispose();
     }
   });
