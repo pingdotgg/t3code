@@ -459,11 +459,17 @@ const make = Effect.gen(function* () {
         ...(afterPosition === undefined ? {} : { afterPosition }),
       });
       const run = read.recentRuns.find((candidate) => candidate.runId === runId);
-      // Older environments omit executedModel.
+      // Older environments omit executedModel and modelSubstituted.
       resultModel ??=
         run === undefined
           ? undefined
-          : { model: run.model, executedModel: run.executedModel ?? null };
+          : {
+              model: run.model,
+              executedModel: run.executedModel ?? null,
+              ...(run.modelSubstituted === undefined
+                ? {}
+                : { modelSubstituted: run.modelSubstituted }),
+            };
       reply =
         read.items.findLast(
           (item) => item.type === "assistant_message" && (runId === null || item.runId === runId),
@@ -655,6 +661,7 @@ const make = Effect.gen(function* () {
         : withSubstitutedModelNote(text ?? noReply, {
             requestedModel: resultModel.model,
             executedModel: resultModel.executedModel,
+            modelSubstituted: resultModel.modelSubstituted,
           }),
       "ran-out",
       undefined,
