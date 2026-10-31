@@ -60,6 +60,7 @@ function dispatchProjection(
       sessionCapabilities === undefined
         ? []
         : [{ runAttemptId: activeAttemptId, status: "running" }],
+    runtimeRequests: [],
   } as unknown as OrchestrationV2ThreadProjection;
 }
 
@@ -243,6 +244,52 @@ it.each(["/compact", " /LOGOUT "])("queues a steer sent while %s runs", (text) =
     { type: "restart_active", targetRunId: activeRunId },
   );
 });
+
+it.each(["user_input", "command"] as const)(
+  "queues every steer while the active turn waits on a pending %s request",
+  (kind) => {
+    const projection = dispatchProjection(baseCapabilities);
+    const waiting = {
+      ...projection,
+      runtimeRequests: [{ kind, status: "pending" }],
+    } as unknown as OrchestrationV2ThreadProjection;
+    for (const deliveryIntent of ["auto", "steer"] as const) {
+      assert.deepEqual(
+        CommandPolicy.resolveMessageDispatchIntent(
+          waiting,
+          { type: "start_immediately" },
+          deliveryIntent,
+        ),
+        { type: "queue_after_active" },
+      );
+    }
+    assert.deepEqual(
+      CommandPolicy.resolveMessageDispatchIntent(waiting, {
+        type: "steer_active",
+        targetRunId: activeRunId,
+      }),
+      { type: "queue_after_active" },
+    );
+    assert.deepEqual(
+      CommandPolicy.resolveMessageDispatchIntent(waiting, { type: "start_immediately" }, "restart"),
+      { type: "restart_active", targetRunId: activeRunId },
+    );
+    const answered = {
+      ...projection,
+      runtimeRequests: [{ kind, status: "resolved" }],
+    } as unknown as OrchestrationV2ThreadProjection;
+    for (const deliveryIntent of ["auto", "steer"] as const) {
+      assert.deepEqual(
+        CommandPolicy.resolveMessageDispatchIntent(
+          answered,
+          { type: "start_immediately" },
+          deliveryIntent,
+        ),
+        { type: "steer_active", targetRunId: activeRunId },
+      );
+    }
+  },
+);
 
 const layer = it.layer(CommandPolicy.layer);
 
