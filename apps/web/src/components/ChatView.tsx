@@ -4,7 +4,7 @@ import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
-import { ScrollToEndButton, WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
+import { ScrollToEndButton } from "./chat/TimelineOverlays";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
 import { useFocusComposerOnThreadOpen } from "./chat/useFocusComposerOnThreadOpen";
 import { configuredHostedAppUrl } from "../hostedPairing";
@@ -640,6 +640,7 @@ export default function ChatView(props: ChatViewProps) {
   const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const branchToolbarRef = useRef<BranchToolbarHandle>(null);
+  const [composerStashHost, setComposerStashHost] = useState<HTMLDivElement | null>(null);
   const [composerTrayControlsHost, setComposerTrayControlsHost] = useState<HTMLDivElement | null>(
     null,
   );
@@ -3538,7 +3539,6 @@ export default function ChatView(props: ChatViewProps) {
             onDrop={workspaceFileDropHandlers.onDrop}
           >
             <ThreadFind onClose={focusComposerStable} />
-            {isWorkspaceFileDragActive ? <WorkspaceFileDropOverlay /> : null}
             <div
               {...conversationArea}
               className="relative flex min-h-0 flex-1 flex-col bg-background"
@@ -3881,6 +3881,7 @@ export default function ChatView(props: ChatViewProps) {
                               threadPullRequests={(activeThreadShell ?? activeThread)?.pullRequests}
                               onRespondToApproval={onRespondToApprovalStable}
                               requestCardHost={composerRequestCardHost}
+                              stashHost={composerStashHost}
                               trayControlsHost={composerTrayControlsHost}
                               onComposerOverlayHeightChange={publishComposerOverlayHeightStable}
                               permissionsShownInStrip={showComposerContextStrip && !isServerThread}
@@ -3972,6 +3973,9 @@ export default function ChatView(props: ChatViewProps) {
                                 }
                                 availableEnvironments={logicalProjectEnvironments}
                                 environmentUnavailable={activeEnvironmentUnavailableState !== null}
+                                afterBranch={
+                                  <div ref={setComposerStashHost} className="flex shrink-0" />
+                                }
                                 trailing={
                                   <div
                                     ref={setComposerTrayControlsHost}
