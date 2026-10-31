@@ -96,8 +96,8 @@ function parseField(
       const values = new Set(options.map(optionValue));
       const minItems = typeof property.minItems === "number" ? property.minItems : 0;
       const maxItems = typeof property.maxItems === "number" ? property.maxItems : Infinity;
-      // Counts no selection can meet make a question nobody can answer.
-      if (minItems > maxItems || minItems > values.size) return undefined;
+      // Clients require a selection, so empty-only questions cannot be answered.
+      if (maxItems === 0 || minItems > maxItems || minItems > values.size) return undefined;
       return { field: { kind: "multiChoice", values, minItems, maxItems }, options };
     }
     case "boolean":
@@ -161,15 +161,7 @@ function typedAnswer(
   }
 }
 
-/**
- * Reads an ACP form elicitation's `requestedSchema` as one question per
- * property. Fixed choices (string enums, titled `oneOf`, multi-selects of
- * string enums or titled `anyOf` items, booleans) allow no custom answer.
- * Multi-select answers are arrays of option values within `minItems` and
- * `maxItems`; other constraints are not checked. Returns undefined when a
- * property has a shape T3 cannot ask for, or selection counts no answer can
- * meet, so the caller declines without asking.
- */
+// Decline unaskable forms; validate types and selection counts, leaving other constraints to the agent.
 export function parseElicitationForm(
   requestedSchema: unknown,
   message: string,

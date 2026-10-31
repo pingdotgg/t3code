@@ -946,6 +946,26 @@ export const EnumOption = Schema.Struct({
   identifier: "EnumOption",
 });
 
+export type TitledMultiSelectItems = {
+  readonly anyOf: ReadonlyArray<EnumOption>;
+  readonly _meta?: { readonly [x: string]: Schema.Json } | null;
+};
+export const TitledMultiSelectItems = Schema.Struct({
+  anyOf: Schema.Array(EnumOption).annotate({ description: "Titled enum options." }),
+  _meta: Schema.optionalKey(
+    Schema.Union([
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
+        description:
+          "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
+      }),
+      Schema.Null,
+    ]),
+  ),
+}).annotate({
+  description: "Items definition for titled multi-select enum properties.",
+  identifier: "TitledMultiSelectItems",
+});
+
 export type McpServerAcpId = string;
 export const McpServerAcpId = Schema.String.annotate({
   description:
@@ -3244,24 +3264,48 @@ export const McpServerStdio = Schema.Struct({
   identifier: "McpServerStdio",
 });
 
-export type TitledMultiSelectItems = {
-  readonly anyOf: ReadonlyArray<EnumOption>;
-  readonly _meta?: { readonly [x: string]: Schema.Json } | null;
-};
-export const TitledMultiSelectItems = Schema.Struct({
-  anyOf: Schema.Array(EnumOption).annotate({ description: "Titled enum options." }),
-  _meta: Schema.optionalKey(
-    Schema.Union([
-      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
+export type MultiSelectItems =
+  | {
+      readonly type: "string";
+      readonly enum: ReadonlyArray<string>;
+      readonly _meta?: { readonly [x: string]: Schema.Json } | null;
+    }
+  | ({ readonly type: string } & { readonly [x: string]: Schema.Json })
+  | TitledMultiSelectItems;
+export const MultiSelectItems = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("string"),
+    enum: Schema.Array(Schema.String).annotate({ description: "Allowed enum values." }),
+    _meta: Schema.optionalKey(
+      Schema.Union([
+        Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
+          description:
+            "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
+        }),
+        Schema.Null,
+      ]),
+    ),
+  }).annotate({ description: "String item schema for multi-select enum properties." }),
+  Schema.StructWithRest(
+    Schema.Struct({
+      type: Schema.String.annotate({
         description:
-          "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
-      }),
-      Schema.Null,
-    ]),
-  ),
-}).annotate({
-  description: "Items definition for titled multi-select enum properties.",
-  identifier: "TitledMultiSelectItems",
+          "Custom or future multi-select item type.\n\nValues beginning with `_` are reserved for implementation-specific\nextensions. Unknown values that do not begin with `_` are reserved for\nfuture ACP variants.",
+      }).check(
+        Schema.isPattern(new RegExp("^(?!(?:\\x73tring)$)[\\s\\S]*$")).annotate({
+          expected: "a string matching the RegExp ^(?!(?:\\x73tring)$)[\\s\\S]*$",
+        }),
+      ),
+    }),
+    [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+  ).annotate({ title: "other", description: "Custom or future typed multi-select items." }),
+  Schema.suspend((): Schema.Codec<TitledMultiSelectItems> => TitledMultiSelectItems).annotate({
+    title: "titled",
+    description: "Titled multi-select items with human-readable labels.",
+  }),
+]).annotate({
+  description: "Items for a multi-select (array) property schema.",
+  identifier: "MultiSelectItems",
 });
 
 export type ConnectMcpRequest = {
@@ -4412,18 +4456,151 @@ export const McpServer = Schema.Union([
   identifier: "McpServer",
 });
 
-export type MultiSelectItems =
+export type ElicitationPropertySchema =
   | {
       readonly type: "string";
-      readonly enum: ReadonlyArray<string>;
+      readonly title?: string | null;
+      readonly description?: string | null;
+      readonly minLength?: number | null;
+      readonly maxLength?: number | null;
+      readonly pattern?: string | null;
+      readonly format?: StringFormat | null;
+      readonly default?: string | null;
+      readonly enum?: ReadonlyArray<string> | null;
+      readonly oneOf?: ReadonlyArray<EnumOption> | null;
       readonly _meta?: { readonly [x: string]: Schema.Json } | null;
     }
-  | ({ readonly type: string } & { readonly [x: string]: Schema.Json })
-  | TitledMultiSelectItems;
-export const MultiSelectItems = Schema.Union([
+  | {
+      readonly type: "number";
+      readonly title?: string | null;
+      readonly description?: string | null;
+      readonly minimum?: number | null;
+      readonly maximum?: number | null;
+      readonly default?: number | null;
+      readonly _meta?: { readonly [x: string]: Schema.Json } | null;
+    }
+  | {
+      readonly type: "integer";
+      readonly title?: string | null;
+      readonly description?: string | null;
+      readonly minimum?: number | null;
+      readonly maximum?: number | null;
+      readonly default?: number | null;
+      readonly _meta?: { readonly [x: string]: Schema.Json } | null;
+    }
+  | {
+      readonly type: "boolean";
+      readonly title?: string | null;
+      readonly description?: string | null;
+      readonly default?: boolean | null;
+      readonly _meta?: { readonly [x: string]: Schema.Json } | null;
+    }
+  | {
+      readonly type: "array";
+      readonly title?: string | null;
+      readonly description?: string | null;
+      readonly minItems?: number | null;
+      readonly maxItems?: number | null;
+      readonly items: MultiSelectItems;
+      readonly default?: ReadonlyArray<string> | null;
+      readonly _meta?: { readonly [x: string]: Schema.Json } | null;
+    }
+  | ({ readonly type: string } & { readonly [x: string]: Schema.Json });
+export const ElicitationPropertySchema = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("string"),
-    enum: Schema.Array(Schema.String).annotate({ description: "Allowed enum values." }),
+    title: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Optional title for the property.\n\nOptional. Omitted and `null` are equivalent and mean no title is provided.",
+        }),
+        Schema.Null,
+      ]),
+    ),
+    description: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Human-readable description.\n\nOptional. Omitted and `null` are equivalent and mean no description is provided.",
+        }),
+        Schema.Null,
+      ]),
+    ),
+    minLength: Schema.optionalKey(
+      Schema.Union([
+        Schema.Number.annotate({
+          description:
+            "Minimum string length.\n\nOptional. Omitted and `null` are equivalent and mean there is no minimum length constraint.",
+          format: "uint32",
+        })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(0).annotate({
+              expected: "a value greater than or equal to 0",
+            }),
+          ),
+        Schema.Null,
+      ]),
+    ),
+    maxLength: Schema.optionalKey(
+      Schema.Union([
+        Schema.Number.annotate({
+          description:
+            "Maximum string length.\n\nOptional. Omitted and `null` are equivalent and mean there is no maximum length constraint.",
+          format: "uint32",
+        })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(0).annotate({
+              expected: "a value greater than or equal to 0",
+            }),
+          ),
+        Schema.Null,
+      ]),
+    ),
+    pattern: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Pattern the string must match.\n\nOptional. Omitted and `null` are equivalent and mean there is no pattern constraint.",
+        }),
+        Schema.Null,
+      ]),
+    ),
+    format: Schema.optionalKey(
+      Schema.Union([StringFormat, Schema.Null]).annotate({
+        description:
+          "String format.\n\nOptional. Omitted and `null` are equivalent and mean there is no format constraint.",
+      }),
+    ),
+    default: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Default value.\n\nOptional. Omitted and `null` are equivalent and mean no default value is provided.",
+        }),
+        Schema.Null,
+      ]),
+    ),
+    enum: Schema.optionalKey(
+      Schema.Union([
+        Schema.Array(Schema.String).annotate({
+          description:
+            "Enum values for untitled single-select enums.\nOptional. Omitted and `null` are equivalent and mean no untitled single-select choices are\ndeclared by `enum`.",
+        }),
+        Schema.Null,
+      ]),
+    ),
+    oneOf: Schema.optionalKey(
+      Schema.Union([
+        Schema.Array(EnumOption).annotate({
+          description:
+            "Titled enum options for titled single-select enums.\nOptional. Omitted and `null` are equivalent and mean no titled single-select choices are\ndeclared by `oneOf`.",
+        }),
+        Schema.Null,
+      ]),
+    ),
     _meta: Schema.optionalKey(
       Schema.Union([
         Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
@@ -4433,27 +4610,271 @@ export const MultiSelectItems = Schema.Union([
         Schema.Null,
       ]),
     ),
-  }).annotate({ description: "String item schema for multi-select enum properties." }),
+  }).annotate({
+    description:
+      'Schema for string properties in an elicitation form.\n\nWhen `enum` or `oneOf` is set, this represents a single-select enum\nwith `"type": "string"`.',
+  }),
+  Schema.Struct({
+    type: Schema.Literal("number"),
+    title: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Optional title for the property.\n\nOptional. Omitted and `null` are equivalent and mean no title is provided.",
+        }),
+        Schema.Null,
+      ]),
+    ),
+    description: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Human-readable description.\n\nOptional. Omitted and `null` are equivalent and mean no description is provided.",
+        }),
+        Schema.Null,
+      ]),
+    ),
+    minimum: Schema.optionalKey(
+      Schema.Union([
+        Schema.Number.annotate({
+          description:
+            "Minimum value (inclusive).\n\nOptional. Omitted and `null` are equivalent and mean there is no inclusive lower bound.",
+          format: "double",
+        }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        Schema.Null,
+      ]),
+    ),
+    maximum: Schema.optionalKey(
+      Schema.Union([
+        Schema.Number.annotate({
+          description:
+            "Maximum value (inclusive).\n\nOptional. Omitted and `null` are equivalent and mean there is no inclusive upper bound.",
+          format: "double",
+        }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        Schema.Null,
+      ]),
+    ),
+    default: Schema.optionalKey(
+      Schema.Union([
+        Schema.Number.annotate({
+          description:
+            "Default value.\n\nOptional. Omitted and `null` are equivalent and mean no default value is provided.",
+          format: "double",
+        }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        Schema.Null,
+      ]),
+    ),
+    _meta: Schema.optionalKey(
+      Schema.Union([
+        Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
+          description:
+            "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
+        }),
+        Schema.Null,
+      ]),
+    ),
+  }).annotate({
+    description: "Schema for number (floating-point) properties in an elicitation form.",
+  }),
+  Schema.Struct({
+    type: Schema.Literal("integer"),
+    title: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Optional title for the property.\n\nOptional. Omitted and `null` are equivalent and mean no title is provided.",
+        }),
+        Schema.Null,
+      ]),
+    ),
+    description: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Human-readable description.\n\nOptional. Omitted and `null` are equivalent and mean no description is provided.",
+        }),
+        Schema.Null,
+      ]),
+    ),
+    minimum: Schema.optionalKey(
+      Schema.Union([
+        Schema.Number.annotate({
+          description:
+            "Minimum value (inclusive).\n\nOptional. Omitted and `null` are equivalent and mean there is no inclusive lower bound.",
+          format: "int64",
+        }).check(Schema.isInt().annotate({ expected: "an integer" })),
+        Schema.Null,
+      ]),
+    ),
+    maximum: Schema.optionalKey(
+      Schema.Union([
+        Schema.Number.annotate({
+          description:
+            "Maximum value (inclusive).\n\nOptional. Omitted and `null` are equivalent and mean there is no inclusive upper bound.",
+          format: "int64",
+        }).check(Schema.isInt().annotate({ expected: "an integer" })),
+        Schema.Null,
+      ]),
+    ),
+    default: Schema.optionalKey(
+      Schema.Union([
+        Schema.Number.annotate({
+          description:
+            "Default value.\n\nOptional. Omitted and `null` are equivalent and mean no default value is provided.",
+          format: "int64",
+        }).check(Schema.isInt().annotate({ expected: "an integer" })),
+        Schema.Null,
+      ]),
+    ),
+    _meta: Schema.optionalKey(
+      Schema.Union([
+        Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
+          description:
+            "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
+        }),
+        Schema.Null,
+      ]),
+    ),
+  }).annotate({ description: "Schema for integer properties in an elicitation form." }),
+  Schema.Struct({
+    type: Schema.Literal("boolean"),
+    title: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Optional title for the property.\n\nOptional. Omitted and `null` are equivalent and mean no title is provided.",
+        }),
+        Schema.Null,
+      ]),
+    ),
+    description: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Human-readable description.\n\nOptional. Omitted and `null` are equivalent and mean no description is provided.",
+        }),
+        Schema.Null,
+      ]),
+    ),
+    default: Schema.optionalKey(
+      Schema.Union([
+        Schema.Boolean.annotate({
+          description:
+            "Default value.\n\nOptional. Omitted and `null` are equivalent and mean no default value is provided.",
+        }),
+        Schema.Null,
+      ]),
+    ),
+    _meta: Schema.optionalKey(
+      Schema.Union([
+        Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
+          description:
+            "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
+        }),
+        Schema.Null,
+      ]),
+    ),
+  }).annotate({ description: "Schema for boolean properties in an elicitation form." }),
+  Schema.Struct({
+    type: Schema.Literal("array"),
+    title: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Optional title for the property.\n\nOptional. Omitted and `null` are equivalent and mean no title is provided.",
+        }),
+        Schema.Null,
+      ]),
+    ),
+    description: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({
+          description:
+            "Human-readable description.\n\nOptional. Omitted and `null` are equivalent and mean no description is provided.",
+        }),
+        Schema.Null,
+      ]),
+    ),
+    minItems: Schema.optionalKey(
+      Schema.Union([
+        Schema.Number.annotate({
+          description:
+            "Minimum number of items to select.\n\nOptional. Omitted and `null` are equivalent and mean there is no minimum selection count.",
+          format: "uint64",
+        })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(0).annotate({
+              expected: "a value greater than or equal to 0",
+            }),
+          ),
+        Schema.Null,
+      ]),
+    ),
+    maxItems: Schema.optionalKey(
+      Schema.Union([
+        Schema.Number.annotate({
+          description:
+            "Maximum number of items to select.\n\nOptional. Omitted and `null` are equivalent and mean there is no maximum selection count.",
+          format: "uint64",
+        })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(0).annotate({
+              expected: "a value greater than or equal to 0",
+            }),
+          ),
+        Schema.Null,
+      ]),
+    ),
+    items: Schema.suspend((): Schema.Codec<MultiSelectItems> => MultiSelectItems).annotate({
+      description: "The items definition describing allowed values.",
+    }),
+    default: Schema.optionalKey(
+      Schema.Union([
+        Schema.Array(Schema.String).annotate({
+          description:
+            "Default selected values.\n\nOptional. Omitted and `null` are equivalent and mean no default selections are provided.",
+        }),
+        Schema.Null,
+      ]),
+    ),
+    _meta: Schema.optionalKey(
+      Schema.Union([
+        Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
+          description:
+            "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
+        }),
+        Schema.Null,
+      ]),
+    ),
+  }).annotate({
+    description: "Schema for multi-select (array) properties in an elicitation form.",
+  }),
   Schema.StructWithRest(
     Schema.Struct({
       type: Schema.String.annotate({
         description:
-          "Custom or future multi-select item type.\n\nValues beginning with `_` are reserved for implementation-specific\nextensions. Unknown values that do not begin with `_` are reserved for\nfuture ACP variants.",
+          "Custom or future elicitation property schema type.\n\nValues beginning with `_` are reserved for implementation-specific\nextensions. Unknown values that do not begin with `_` are reserved for\nfuture ACP variants.",
       }).check(
-        Schema.isPattern(new RegExp("^(?!(?:\\x73tring)$)[\\s\\S]*$")).annotate({
-          expected: "a string matching the RegExp ^(?!(?:\\x73tring)$)[\\s\\S]*$",
+        Schema.isPattern(
+          new RegExp("^(?!(?:\\x73tring|\\x6eumber|\\x69nteger|\\x62oolean|\\x61rray)$)[\\s\\S]*$"),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^(?!(?:\\x73tring|\\x6eumber|\\x69nteger|\\x62oolean|\\x61rray)$)[\\s\\S]*$",
         }),
       ),
     }),
     [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
-  ).annotate({ title: "other", description: "Custom or future typed multi-select items." }),
-  Schema.suspend((): Schema.Codec<TitledMultiSelectItems> => TitledMultiSelectItems).annotate({
-    title: "titled",
-    description: "Titled multi-select items with human-readable labels.",
+  ).annotate({
+    title: "other",
+    description:
+      "Custom or future elicitation property schema.\n\nValues beginning with `_` are reserved for implementation-specific\nextensions. Unknown values that do not begin with `_` are reserved for\nfuture ACP variants.\n\nClients that do not understand this property schema type should preserve\nthe raw schema when storing, replaying, proxying, or forwarding\nelicitation requests. They MUST NOT render it as a known input control.",
   }),
 ]).annotate({
-  description: "Items for a multi-select (array) property schema.",
-  identifier: "MultiSelectItems",
+  description:
+    'Property schema for elicitation form fields.\n\nEach variant corresponds to a JSON Schema `"type"` value.\nSingle-select enums use the `String` variant with `enum` or `oneOf` set.\nMulti-select enums use the `Array` variant.',
+  identifier: "ElicitationPropertySchema",
 });
 
 export type AuthMethod =
@@ -5050,425 +5471,67 @@ export const ResumeSessionRequest = Schema.Struct({
   identifier: "ResumeSessionRequest",
 });
 
-export type ElicitationPropertySchema =
-  | {
-      readonly type: "string";
-      readonly title?: string | null;
-      readonly description?: string | null;
-      readonly minLength?: number | null;
-      readonly maxLength?: number | null;
-      readonly pattern?: string | null;
-      readonly format?: StringFormat | null;
-      readonly default?: string | null;
-      readonly enum?: ReadonlyArray<string> | null;
-      readonly oneOf?: ReadonlyArray<EnumOption> | null;
-      readonly _meta?: { readonly [x: string]: Schema.Json } | null;
-    }
-  | {
-      readonly type: "number";
-      readonly title?: string | null;
-      readonly description?: string | null;
-      readonly minimum?: number | null;
-      readonly maximum?: number | null;
-      readonly default?: number | null;
-      readonly _meta?: { readonly [x: string]: Schema.Json } | null;
-    }
-  | {
-      readonly type: "integer";
-      readonly title?: string | null;
-      readonly description?: string | null;
-      readonly minimum?: number | null;
-      readonly maximum?: number | null;
-      readonly default?: number | null;
-      readonly _meta?: { readonly [x: string]: Schema.Json } | null;
-    }
-  | {
-      readonly type: "boolean";
-      readonly title?: string | null;
-      readonly description?: string | null;
-      readonly default?: boolean | null;
-      readonly _meta?: { readonly [x: string]: Schema.Json } | null;
-    }
-  | {
-      readonly type: "array";
-      readonly title?: string | null;
-      readonly description?: string | null;
-      readonly minItems?: number | null;
-      readonly maxItems?: number | null;
-      readonly items: MultiSelectItems;
-      readonly default?: ReadonlyArray<string> | null;
-      readonly _meta?: { readonly [x: string]: Schema.Json } | null;
-    }
-  | ({ readonly type: string } & { readonly [x: string]: Schema.Json });
-export const ElicitationPropertySchema = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("string"),
-    title: Schema.optionalKey(
-      Schema.Union([
-        Schema.String.annotate({
-          description:
-            "Optional title for the property.\n\nOptional. Omitted and `null` are equivalent and mean no title is provided.",
-        }),
-        Schema.Null,
-      ]),
-    ),
-    description: Schema.optionalKey(
-      Schema.Union([
-        Schema.String.annotate({
-          description:
-            "Human-readable description.\n\nOptional. Omitted and `null` are equivalent and mean no description is provided.",
-        }),
-        Schema.Null,
-      ]),
-    ),
-    minLength: Schema.optionalKey(
-      Schema.Union([
-        Schema.Number.annotate({
-          description:
-            "Minimum string length.\n\nOptional. Omitted and `null` are equivalent and mean there is no minimum length constraint.",
-          format: "uint32",
-        })
-          .check(Schema.isInt().annotate({ expected: "an integer" }))
-          .check(
-            Schema.isGreaterThanOrEqualTo(0).annotate({
-              expected: "a value greater than or equal to 0",
-            }),
-          ),
-        Schema.Null,
-      ]),
-    ),
-    maxLength: Schema.optionalKey(
-      Schema.Union([
-        Schema.Number.annotate({
-          description:
-            "Maximum string length.\n\nOptional. Omitted and `null` are equivalent and mean there is no maximum length constraint.",
-          format: "uint32",
-        })
-          .check(Schema.isInt().annotate({ expected: "an integer" }))
-          .check(
-            Schema.isGreaterThanOrEqualTo(0).annotate({
-              expected: "a value greater than or equal to 0",
-            }),
-          ),
-        Schema.Null,
-      ]),
-    ),
-    pattern: Schema.optionalKey(
-      Schema.Union([
-        Schema.String.annotate({
-          description:
-            "Pattern the string must match.\n\nOptional. Omitted and `null` are equivalent and mean there is no pattern constraint.",
-        }),
-        Schema.Null,
-      ]),
-    ),
-    format: Schema.optionalKey(
-      Schema.Union([StringFormat, Schema.Null]).annotate({
+export type ElicitationSchema = {
+  readonly type?: ElicitationSchemaType;
+  readonly title?: string | null;
+  readonly properties?: { readonly [x: string]: ElicitationPropertySchema };
+  readonly required?: ReadonlyArray<string> | null;
+  readonly description?: string | null;
+  readonly _meta?: { readonly [x: string]: Schema.Json } | null;
+};
+export const ElicitationSchema = Schema.Struct({
+  type: Schema.optionalKey(
+    Schema.suspend((): Schema.Codec<ElicitationSchemaType> => ElicitationSchemaType).annotate({
+      description: 'Type discriminator. Always `"object"`.',
+      default: "object",
+    }),
+  ),
+  title: Schema.optionalKey(
+    Schema.Union([
+      Schema.String.annotate({
         description:
-          "String format.\n\nOptional. Omitted and `null` are equivalent and mean there is no format constraint.",
+          "Optional title for the schema.\n\nOptional. Omitted and `null` are equivalent and mean no title is provided.",
       }),
-    ),
-    default: Schema.optionalKey(
-      Schema.Union([
-        Schema.String.annotate({
-          description:
-            "Default value.\n\nOptional. Omitted and `null` are equivalent and mean no default value is provided.",
-        }),
-        Schema.Null,
-      ]),
-    ),
-    enum: Schema.optionalKey(
-      Schema.Union([
-        Schema.Array(Schema.String).annotate({
-          description:
-            "Enum values for untitled single-select enums.\nOptional. Omitted and `null` are equivalent and mean no untitled single-select choices are\ndeclared by `enum`.",
-        }),
-        Schema.Null,
-      ]),
-    ),
-    oneOf: Schema.optionalKey(
-      Schema.Union([
-        Schema.Array(EnumOption).annotate({
-          description:
-            "Titled enum options for titled single-select enums.\nOptional. Omitted and `null` are equivalent and mean no titled single-select choices are\ndeclared by `oneOf`.",
-        }),
-        Schema.Null,
-      ]),
-    ),
-    _meta: Schema.optionalKey(
-      Schema.Union([
-        Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
-          description:
-            "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
-        }),
-        Schema.Null,
-      ]),
-    ),
-  }).annotate({
-    description:
-      'Schema for string properties in an elicitation form.\n\nWhen `enum` or `oneOf` is set, this represents a single-select enum\nwith `"type": "string"`.',
-  }),
-  Schema.Struct({
-    type: Schema.Literal("number"),
-    title: Schema.optionalKey(
-      Schema.Union([
-        Schema.String.annotate({
-          description:
-            "Optional title for the property.\n\nOptional. Omitted and `null` are equivalent and mean no title is provided.",
-        }),
-        Schema.Null,
-      ]),
-    ),
-    description: Schema.optionalKey(
-      Schema.Union([
-        Schema.String.annotate({
-          description:
-            "Human-readable description.\n\nOptional. Omitted and `null` are equivalent and mean no description is provided.",
-        }),
-        Schema.Null,
-      ]),
-    ),
-    minimum: Schema.optionalKey(
-      Schema.Union([
-        Schema.Number.annotate({
-          description:
-            "Minimum value (inclusive).\n\nOptional. Omitted and `null` are equivalent and mean there is no inclusive lower bound.",
-          format: "double",
-        }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
-        Schema.Null,
-      ]),
-    ),
-    maximum: Schema.optionalKey(
-      Schema.Union([
-        Schema.Number.annotate({
-          description:
-            "Maximum value (inclusive).\n\nOptional. Omitted and `null` are equivalent and mean there is no inclusive upper bound.",
-          format: "double",
-        }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
-        Schema.Null,
-      ]),
-    ),
-    default: Schema.optionalKey(
-      Schema.Union([
-        Schema.Number.annotate({
-          description:
-            "Default value.\n\nOptional. Omitted and `null` are equivalent and mean no default value is provided.",
-          format: "double",
-        }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
-        Schema.Null,
-      ]),
-    ),
-    _meta: Schema.optionalKey(
-      Schema.Union([
-        Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
-          description:
-            "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
-        }),
-        Schema.Null,
-      ]),
-    ),
-  }).annotate({
-    description: "Schema for number (floating-point) properties in an elicitation form.",
-  }),
-  Schema.Struct({
-    type: Schema.Literal("integer"),
-    title: Schema.optionalKey(
-      Schema.Union([
-        Schema.String.annotate({
-          description:
-            "Optional title for the property.\n\nOptional. Omitted and `null` are equivalent and mean no title is provided.",
-        }),
-        Schema.Null,
-      ]),
-    ),
-    description: Schema.optionalKey(
-      Schema.Union([
-        Schema.String.annotate({
-          description:
-            "Human-readable description.\n\nOptional. Omitted and `null` are equivalent and mean no description is provided.",
-        }),
-        Schema.Null,
-      ]),
-    ),
-    minimum: Schema.optionalKey(
-      Schema.Union([
-        Schema.Number.annotate({
-          description:
-            "Minimum value (inclusive).\n\nOptional. Omitted and `null` are equivalent and mean there is no inclusive lower bound.",
-          format: "int64",
-        }).check(Schema.isInt().annotate({ expected: "an integer" })),
-        Schema.Null,
-      ]),
-    ),
-    maximum: Schema.optionalKey(
-      Schema.Union([
-        Schema.Number.annotate({
-          description:
-            "Maximum value (inclusive).\n\nOptional. Omitted and `null` are equivalent and mean there is no inclusive upper bound.",
-          format: "int64",
-        }).check(Schema.isInt().annotate({ expected: "an integer" })),
-        Schema.Null,
-      ]),
-    ),
-    default: Schema.optionalKey(
-      Schema.Union([
-        Schema.Number.annotate({
-          description:
-            "Default value.\n\nOptional. Omitted and `null` are equivalent and mean no default value is provided.",
-          format: "int64",
-        }).check(Schema.isInt().annotate({ expected: "an integer" })),
-        Schema.Null,
-      ]),
-    ),
-    _meta: Schema.optionalKey(
-      Schema.Union([
-        Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
-          description:
-            "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
-        }),
-        Schema.Null,
-      ]),
-    ),
-  }).annotate({ description: "Schema for integer properties in an elicitation form." }),
-  Schema.Struct({
-    type: Schema.Literal("boolean"),
-    title: Schema.optionalKey(
-      Schema.Union([
-        Schema.String.annotate({
-          description:
-            "Optional title for the property.\n\nOptional. Omitted and `null` are equivalent and mean no title is provided.",
-        }),
-        Schema.Null,
-      ]),
-    ),
-    description: Schema.optionalKey(
-      Schema.Union([
-        Schema.String.annotate({
-          description:
-            "Human-readable description.\n\nOptional. Omitted and `null` are equivalent and mean no description is provided.",
-        }),
-        Schema.Null,
-      ]),
-    ),
-    default: Schema.optionalKey(
-      Schema.Union([
-        Schema.Boolean.annotate({
-          description:
-            "Default value.\n\nOptional. Omitted and `null` are equivalent and mean no default value is provided.",
-        }),
-        Schema.Null,
-      ]),
-    ),
-    _meta: Schema.optionalKey(
-      Schema.Union([
-        Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
-          description:
-            "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
-        }),
-        Schema.Null,
-      ]),
-    ),
-  }).annotate({ description: "Schema for boolean properties in an elicitation form." }),
-  Schema.Struct({
-    type: Schema.Literal("array"),
-    title: Schema.optionalKey(
-      Schema.Union([
-        Schema.String.annotate({
-          description:
-            "Optional title for the property.\n\nOptional. Omitted and `null` are equivalent and mean no title is provided.",
-        }),
-        Schema.Null,
-      ]),
-    ),
-    description: Schema.optionalKey(
-      Schema.Union([
-        Schema.String.annotate({
-          description:
-            "Human-readable description.\n\nOptional. Omitted and `null` are equivalent and mean no description is provided.",
-        }),
-        Schema.Null,
-      ]),
-    ),
-    minItems: Schema.optionalKey(
-      Schema.Union([
-        Schema.Number.annotate({
-          description:
-            "Minimum number of items to select.\n\nOptional. Omitted and `null` are equivalent and mean there is no minimum selection count.",
-          format: "uint64",
-        })
-          .check(Schema.isInt().annotate({ expected: "an integer" }))
-          .check(
-            Schema.isGreaterThanOrEqualTo(0).annotate({
-              expected: "a value greater than or equal to 0",
-            }),
-          ),
-        Schema.Null,
-      ]),
-    ),
-    maxItems: Schema.optionalKey(
-      Schema.Union([
-        Schema.Number.annotate({
-          description:
-            "Maximum number of items to select.\n\nOptional. Omitted and `null` are equivalent and mean there is no maximum selection count.",
-          format: "uint64",
-        })
-          .check(Schema.isInt().annotate({ expected: "an integer" }))
-          .check(
-            Schema.isGreaterThanOrEqualTo(0).annotate({
-              expected: "a value greater than or equal to 0",
-            }),
-          ),
-        Schema.Null,
-      ]),
-    ),
-    items: Schema.suspend((): Schema.Codec<MultiSelectItems> => MultiSelectItems).annotate({
-      description: "The items definition describing allowed values.",
+      Schema.Null,
+    ]),
+  ),
+  properties: Schema.optionalKey(
+    Schema.Record(Schema.String, ElicitationPropertySchema).annotate({
+      description: "Property definitions (must be primitive types).",
+      default: {},
     }),
-    default: Schema.optionalKey(
-      Schema.Union([
-        Schema.Array(Schema.String).annotate({
-          description:
-            "Default selected values.\n\nOptional. Omitted and `null` are equivalent and mean no default selections are provided.",
-        }),
-        Schema.Null,
-      ]),
-    ),
-    _meta: Schema.optionalKey(
-      Schema.Union([
-        Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
-          description:
-            "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
-        }),
-        Schema.Null,
-      ]),
-    ),
-  }).annotate({
-    description: "Schema for multi-select (array) properties in an elicitation form.",
-  }),
-  Schema.StructWithRest(
-    Schema.Struct({
-      type: Schema.String.annotate({
+  ),
+  required: Schema.optionalKey(
+    Schema.Union([
+      Schema.Array(Schema.String).annotate({
         description:
-          "Custom or future elicitation property schema type.\n\nValues beginning with `_` are reserved for implementation-specific\nextensions. Unknown values that do not begin with `_` are reserved for\nfuture ACP variants.",
-      }).check(
-        Schema.isPattern(
-          new RegExp("^(?!(?:\\x73tring|\\x6eumber|\\x69nteger|\\x62oolean|\\x61rray)$)[\\s\\S]*$"),
-        ).annotate({
-          expected:
-            "a string matching the RegExp ^(?!(?:\\x73tring|\\x6eumber|\\x69nteger|\\x62oolean|\\x61rray)$)[\\s\\S]*$",
-        }),
-      ),
-    }),
-    [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
-  ).annotate({
-    title: "other",
-    description:
-      "Custom or future elicitation property schema.\n\nValues beginning with `_` are reserved for implementation-specific\nextensions. Unknown values that do not begin with `_` are reserved for\nfuture ACP variants.\n\nClients that do not understand this property schema type should preserve\nthe raw schema when storing, replaying, proxying, or forwarding\nelicitation requests. They MUST NOT render it as a known input control.",
-  }),
-]).annotate({
+          "List of required property names.\n\nOptional. Omitted and `null` are equivalent and mean no property names are required.",
+      }),
+      Schema.Null,
+    ]),
+  ),
+  description: Schema.optionalKey(
+    Schema.Union([
+      Schema.String.annotate({
+        description:
+          "Optional description of what this schema represents.\n\nOptional. Omitted and `null` are equivalent and mean no schema description is provided.",
+      }),
+      Schema.Null,
+    ]),
+  ),
+  _meta: Schema.optionalKey(
+    Schema.Union([
+      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
+        description:
+          "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
+      }),
+      Schema.Null,
+    ]),
+  ),
+}).annotate({
   description:
-    'Property schema for elicitation form fields.\n\nEach variant corresponds to a JSON Schema `"type"` value.\nSingle-select enums use the `String` variant with `enum` or `oneOf` set.\nMulti-select enums use the `Array` variant.',
-  identifier: "ElicitationPropertySchema",
+    "Type-safe elicitation schema for requesting structured user input.\n\nThis represents a JSON Schema object with primitive-typed properties,\nas required by the elicitation specification.",
+  identifier: "ElicitationSchema",
 });
 
 export type ListProvidersResponse = {
@@ -5985,68 +6048,248 @@ export const SessionConfigOption = Schema.Union([
   }).annotate({ description: "A boolean on/off toggle session configuration option payload." }),
 ]).annotate({ identifier: "SessionConfigOption" });
 
-export type ElicitationSchema = {
-  readonly type?: ElicitationSchemaType;
-  readonly title?: string | null;
-  readonly properties?: { readonly [x: string]: ElicitationPropertySchema };
-  readonly required?: ReadonlyArray<string> | null;
-  readonly description?: string | null;
-  readonly _meta?: { readonly [x: string]: Schema.Json } | null;
-};
-export const ElicitationSchema = Schema.Struct({
-  type: Schema.optionalKey(
-    Schema.suspend((): Schema.Codec<ElicitationSchemaType> => ElicitationSchemaType).annotate({
-      description: 'Type discriminator. Always `"object"`.',
-      default: "object",
+export type CreateElicitationRequest =
+  | {
+      readonly message: string;
+      readonly _meta?: { readonly [x: string]: Schema.Json } | null;
+      readonly mode: "form";
+      readonly requestedSchema: ElicitationSchema;
+      readonly sessionId: SessionId;
+      readonly toolCallId?: ToolCallId | null;
+    }
+  | {
+      readonly message: string;
+      readonly _meta?: { readonly [x: string]: Schema.Json } | null;
+      readonly mode: "form";
+      readonly requestedSchema: ElicitationSchema;
+      readonly requestId: RequestId;
+    }
+  | {
+      readonly message: string;
+      readonly _meta?: { readonly [x: string]: Schema.Json } | null;
+      readonly mode: "url";
+      readonly elicitationId: ElicitationId;
+      readonly url: string;
+      readonly sessionId: SessionId;
+      readonly toolCallId?: ToolCallId | null;
+    }
+  | {
+      readonly message: string;
+      readonly _meta?: { readonly [x: string]: Schema.Json } | null;
+      readonly mode: "url";
+      readonly elicitationId: ElicitationId;
+      readonly url: string;
+      readonly requestId: RequestId;
+    }
+  | ({
+      readonly message: string;
+      readonly _meta?: { readonly [x: string]: Schema.Json } | null;
+      readonly mode: string;
+      readonly sessionId: SessionId;
+      readonly toolCallId?: ToolCallId | null;
+    } & { readonly [x: string]: Schema.Json })
+  | ({
+      readonly message: string;
+      readonly _meta?: { readonly [x: string]: Schema.Json } | null;
+      readonly mode: string;
+      readonly requestId: RequestId;
+    } & { readonly [x: string]: Schema.Json });
+export const CreateElicitationRequest = Schema.Union([
+  Schema.Union([
+    Schema.Struct({
+      message: Schema.String.annotate({
+        description: "A human-readable message describing what input is needed.",
+      }),
+      _meta: Schema.optionalKey(
+        Schema.Union([
+          Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
+            description:
+              "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
+          }),
+          Schema.Null,
+        ]),
+      ),
+      mode: Schema.Literal("form"),
+      requestedSchema: Schema.suspend(
+        (): Schema.Codec<ElicitationSchema> => ElicitationSchema,
+      ).annotate({
+        description: "A JSON Schema describing the form fields to present to the user.",
+      }),
+      sessionId: Schema.suspend((): Schema.Codec<SessionId> => SessionId).annotate({
+        description: "The session this elicitation is tied to.",
+      }),
+      toolCallId: Schema.optionalKey(
+        Schema.Union([ToolCallId, Schema.Null]).annotate({
+          description:
+            "Optional tool call within the session.\n\nOptional. Omitted and `null` are equivalent and mean the elicitation is scoped to the\nsession without a specific tool call.",
+        }),
+      ),
+    }).annotate({
+      description:
+        "Session-scoped elicitation, optionally tied to a specific tool call.\n\nWhen `tool_call_id` is set, the elicitation is tied to a specific tool call.\nThis is useful when an agent receives an elicitation from an MCP server\nduring a tool call and needs to redirect it to the user.",
     }),
-  ),
-  title: Schema.optionalKey(
-    Schema.Union([
-      Schema.String.annotate({
-        description:
-          "Optional title for the schema.\n\nOptional. Omitted and `null` are equivalent and mean no title is provided.",
+    Schema.Struct({
+      message: Schema.String.annotate({
+        description: "A human-readable message describing what input is needed.",
       }),
-      Schema.Null,
-    ]),
-  ),
-  properties: Schema.optionalKey(
-    Schema.Record(Schema.String, ElicitationPropertySchema).annotate({
-      description: "Property definitions (must be primitive types).",
-      default: {},
+      _meta: Schema.optionalKey(
+        Schema.Union([
+          Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
+            description:
+              "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
+          }),
+          Schema.Null,
+        ]),
+      ),
+      mode: Schema.Literal("form"),
+      requestedSchema: Schema.suspend(
+        (): Schema.Codec<ElicitationSchema> => ElicitationSchema,
+      ).annotate({
+        description: "A JSON Schema describing the form fields to present to the user.",
+      }),
+      requestId: Schema.suspend((): Schema.Codec<RequestId> => RequestId).annotate({
+        description: "The request this elicitation is tied to.",
+      }),
+    }).annotate({
+      description:
+        "Request-scoped elicitation, tied to a specific JSON-RPC request outside of a session\n(e.g., during auth/configuration phases before any session is started).",
     }),
-  ),
-  required: Schema.optionalKey(
-    Schema.Union([
-      Schema.Array(Schema.String).annotate({
-        description:
-          "List of required property names.\n\nOptional. Omitted and `null` are equivalent and mean no property names are required.",
+  ]),
+  Schema.Union([
+    Schema.Struct({
+      message: Schema.String.annotate({
+        description: "A human-readable message describing what input is needed.",
       }),
-      Schema.Null,
-    ]),
-  ),
-  description: Schema.optionalKey(
-    Schema.Union([
-      Schema.String.annotate({
-        description:
-          "Optional description of what this schema represents.\n\nOptional. Omitted and `null` are equivalent and mean no schema description is provided.",
+      _meta: Schema.optionalKey(
+        Schema.Union([
+          Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
+            description:
+              "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
+          }),
+          Schema.Null,
+        ]),
+      ),
+      mode: Schema.Literal("url"),
+      elicitationId: Schema.suspend((): Schema.Codec<ElicitationId> => ElicitationId).annotate({
+        description: "The unique identifier for this elicitation.",
       }),
-      Schema.Null,
-    ]),
-  ),
-  _meta: Schema.optionalKey(
-    Schema.Union([
-      Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
-        description:
-          "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
+      url: Schema.String.annotate({ description: "The URL to direct the user to.", format: "uri" }),
+      sessionId: Schema.suspend((): Schema.Codec<SessionId> => SessionId).annotate({
+        description: "The session this elicitation is tied to.",
       }),
-      Schema.Null,
-    ]),
-  ),
-}).annotate({
-  description:
-    "Type-safe elicitation schema for requesting structured user input.\n\nThis represents a JSON Schema object with primitive-typed properties,\nas required by the elicitation specification.",
-  identifier: "ElicitationSchema",
-});
+      toolCallId: Schema.optionalKey(
+        Schema.Union([ToolCallId, Schema.Null]).annotate({
+          description:
+            "Optional tool call within the session.\n\nOptional. Omitted and `null` are equivalent and mean the elicitation is scoped to the\nsession without a specific tool call.",
+        }),
+      ),
+    }).annotate({
+      description:
+        "Session-scoped elicitation, optionally tied to a specific tool call.\n\nWhen `tool_call_id` is set, the elicitation is tied to a specific tool call.\nThis is useful when an agent receives an elicitation from an MCP server\nduring a tool call and needs to redirect it to the user.",
+    }),
+    Schema.Struct({
+      message: Schema.String.annotate({
+        description: "A human-readable message describing what input is needed.",
+      }),
+      _meta: Schema.optionalKey(
+        Schema.Union([
+          Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
+            description:
+              "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
+          }),
+          Schema.Null,
+        ]),
+      ),
+      mode: Schema.Literal("url"),
+      elicitationId: Schema.suspend((): Schema.Codec<ElicitationId> => ElicitationId).annotate({
+        description: "The unique identifier for this elicitation.",
+      }),
+      url: Schema.String.annotate({ description: "The URL to direct the user to.", format: "uri" }),
+      requestId: Schema.suspend((): Schema.Codec<RequestId> => RequestId).annotate({
+        description: "The request this elicitation is tied to.",
+      }),
+    }).annotate({
+      description:
+        "Request-scoped elicitation, tied to a specific JSON-RPC request outside of a session\n(e.g., during auth/configuration phases before any session is started).",
+    }),
+  ]),
+  Schema.Union([
+    Schema.StructWithRest(
+      Schema.Struct({
+        message: Schema.String.annotate({
+          description: "A human-readable message describing what input is needed.",
+        }),
+        _meta: Schema.optionalKey(
+          Schema.Union([
+            Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate(
+              {
+                description:
+                  "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
+              },
+            ),
+            Schema.Null,
+          ]),
+        ),
+        mode: Schema.String.annotate({
+          description:
+            "Custom or future elicitation mode.\n\nValues beginning with `_` are reserved for implementation-specific\nextensions. Unknown values that do not begin with `_` are reserved for\nfuture ACP variants.",
+        }).check(
+          Schema.isPattern(new RegExp("^(?!(?:\\x66orm|\\x75rl)$)[\\s\\S]*$")).annotate({
+            expected: "a string matching the RegExp ^(?!(?:\\x66orm|\\x75rl)$)[\\s\\S]*$",
+          }),
+        ),
+        sessionId: Schema.suspend((): Schema.Codec<SessionId> => SessionId).annotate({
+          description: "The session this elicitation is tied to.",
+        }),
+        toolCallId: Schema.optionalKey(
+          Schema.Union([ToolCallId, Schema.Null]).annotate({
+            description:
+              "Optional tool call within the session.\n\nOptional. Omitted and `null` are equivalent and mean the elicitation is scoped to the\nsession without a specific tool call.",
+          }),
+        ),
+      }),
+      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+    ).annotate({
+      title: "other",
+      description:
+        "Session-scoped elicitation, optionally tied to a specific tool call.\n\nWhen `tool_call_id` is set, the elicitation is tied to a specific tool call.\nThis is useful when an agent receives an elicitation from an MCP server\nduring a tool call and needs to redirect it to the user.",
+    }),
+    Schema.StructWithRest(
+      Schema.Struct({
+        message: Schema.String.annotate({
+          description: "A human-readable message describing what input is needed.",
+        }),
+        _meta: Schema.optionalKey(
+          Schema.Union([
+            Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate(
+              {
+                description:
+                  "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
+              },
+            ),
+            Schema.Null,
+          ]),
+        ),
+        mode: Schema.String.annotate({
+          description:
+            "Custom or future elicitation mode.\n\nValues beginning with `_` are reserved for implementation-specific\nextensions. Unknown values that do not begin with `_` are reserved for\nfuture ACP variants.",
+        }).check(
+          Schema.isPattern(new RegExp("^(?!(?:\\x66orm|\\x75rl)$)[\\s\\S]*$")).annotate({
+            expected: "a string matching the RegExp ^(?!(?:\\x66orm|\\x75rl)$)[\\s\\S]*$",
+          }),
+        ),
+        requestId: Schema.suspend((): Schema.Codec<RequestId> => RequestId).annotate({
+          description: "The request this elicitation is tied to.",
+        }),
+      }),
+      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+    ).annotate({
+      title: "other",
+      description:
+        "Request-scoped elicitation, tied to a specific JSON-RPC request outside of a session\n(e.g., during auth/configuration phases before any session is started).",
+    }),
+  ]),
+]).annotate({ identifier: "CreateElicitationRequest" });
 
 export type SuggestNesResponse = {
   readonly suggestions: ReadonlyArray<NesSuggestion>;
@@ -6945,249 +7188,6 @@ export const SetSessionConfigOptionResponse = Schema.Struct({
   description: "Response to `session/set_config_option` method.",
   identifier: "SetSessionConfigOptionResponse",
 });
-
-export type CreateElicitationRequest =
-  | {
-      readonly message: string;
-      readonly _meta?: { readonly [x: string]: Schema.Json } | null;
-      readonly mode: "form";
-      readonly requestedSchema: ElicitationSchema;
-      readonly sessionId: SessionId;
-      readonly toolCallId?: ToolCallId | null;
-    }
-  | {
-      readonly message: string;
-      readonly _meta?: { readonly [x: string]: Schema.Json } | null;
-      readonly mode: "form";
-      readonly requestedSchema: ElicitationSchema;
-      readonly requestId: RequestId;
-    }
-  | {
-      readonly message: string;
-      readonly _meta?: { readonly [x: string]: Schema.Json } | null;
-      readonly mode: "url";
-      readonly elicitationId: ElicitationId;
-      readonly url: string;
-      readonly sessionId: SessionId;
-      readonly toolCallId?: ToolCallId | null;
-    }
-  | {
-      readonly message: string;
-      readonly _meta?: { readonly [x: string]: Schema.Json } | null;
-      readonly mode: "url";
-      readonly elicitationId: ElicitationId;
-      readonly url: string;
-      readonly requestId: RequestId;
-    }
-  | ({
-      readonly message: string;
-      readonly _meta?: { readonly [x: string]: Schema.Json } | null;
-      readonly mode: string;
-      readonly sessionId: SessionId;
-      readonly toolCallId?: ToolCallId | null;
-    } & { readonly [x: string]: Schema.Json })
-  | ({
-      readonly message: string;
-      readonly _meta?: { readonly [x: string]: Schema.Json } | null;
-      readonly mode: string;
-      readonly requestId: RequestId;
-    } & { readonly [x: string]: Schema.Json });
-export const CreateElicitationRequest = Schema.Union([
-  Schema.Union([
-    Schema.Struct({
-      message: Schema.String.annotate({
-        description: "A human-readable message describing what input is needed.",
-      }),
-      _meta: Schema.optionalKey(
-        Schema.Union([
-          Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
-            description:
-              "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
-          }),
-          Schema.Null,
-        ]),
-      ),
-      mode: Schema.Literal("form"),
-      requestedSchema: Schema.suspend(
-        (): Schema.Codec<ElicitationSchema> => ElicitationSchema,
-      ).annotate({
-        description: "A JSON Schema describing the form fields to present to the user.",
-      }),
-      sessionId: Schema.suspend((): Schema.Codec<SessionId> => SessionId).annotate({
-        description: "The session this elicitation is tied to.",
-      }),
-      toolCallId: Schema.optionalKey(
-        Schema.Union([ToolCallId, Schema.Null]).annotate({
-          description:
-            "Optional tool call within the session.\n\nOptional. Omitted and `null` are equivalent and mean the elicitation is scoped to the\nsession without a specific tool call.",
-        }),
-      ),
-    }).annotate({
-      description:
-        "Session-scoped elicitation, optionally tied to a specific tool call.\n\nWhen `tool_call_id` is set, the elicitation is tied to a specific tool call.\nThis is useful when an agent receives an elicitation from an MCP server\nduring a tool call and needs to redirect it to the user.",
-    }),
-    Schema.Struct({
-      message: Schema.String.annotate({
-        description: "A human-readable message describing what input is needed.",
-      }),
-      _meta: Schema.optionalKey(
-        Schema.Union([
-          Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
-            description:
-              "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
-          }),
-          Schema.Null,
-        ]),
-      ),
-      mode: Schema.Literal("form"),
-      requestedSchema: Schema.suspend(
-        (): Schema.Codec<ElicitationSchema> => ElicitationSchema,
-      ).annotate({
-        description: "A JSON Schema describing the form fields to present to the user.",
-      }),
-      requestId: Schema.suspend((): Schema.Codec<RequestId> => RequestId).annotate({
-        description: "The request this elicitation is tied to.",
-      }),
-    }).annotate({
-      description:
-        "Request-scoped elicitation, tied to a specific JSON-RPC request outside of a session\n(e.g., during auth/configuration phases before any session is started).",
-    }),
-  ]),
-  Schema.Union([
-    Schema.Struct({
-      message: Schema.String.annotate({
-        description: "A human-readable message describing what input is needed.",
-      }),
-      _meta: Schema.optionalKey(
-        Schema.Union([
-          Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
-            description:
-              "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
-          }),
-          Schema.Null,
-        ]),
-      ),
-      mode: Schema.Literal("url"),
-      elicitationId: Schema.suspend((): Schema.Codec<ElicitationId> => ElicitationId).annotate({
-        description: "The unique identifier for this elicitation.",
-      }),
-      url: Schema.String.annotate({ description: "The URL to direct the user to.", format: "uri" }),
-      sessionId: Schema.suspend((): Schema.Codec<SessionId> => SessionId).annotate({
-        description: "The session this elicitation is tied to.",
-      }),
-      toolCallId: Schema.optionalKey(
-        Schema.Union([ToolCallId, Schema.Null]).annotate({
-          description:
-            "Optional tool call within the session.\n\nOptional. Omitted and `null` are equivalent and mean the elicitation is scoped to the\nsession without a specific tool call.",
-        }),
-      ),
-    }).annotate({
-      description:
-        "Session-scoped elicitation, optionally tied to a specific tool call.\n\nWhen `tool_call_id` is set, the elicitation is tied to a specific tool call.\nThis is useful when an agent receives an elicitation from an MCP server\nduring a tool call and needs to redirect it to the user.",
-    }),
-    Schema.Struct({
-      message: Schema.String.annotate({
-        description: "A human-readable message describing what input is needed.",
-      }),
-      _meta: Schema.optionalKey(
-        Schema.Union([
-          Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate({
-            description:
-              "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
-          }),
-          Schema.Null,
-        ]),
-      ),
-      mode: Schema.Literal("url"),
-      elicitationId: Schema.suspend((): Schema.Codec<ElicitationId> => ElicitationId).annotate({
-        description: "The unique identifier for this elicitation.",
-      }),
-      url: Schema.String.annotate({ description: "The URL to direct the user to.", format: "uri" }),
-      requestId: Schema.suspend((): Schema.Codec<RequestId> => RequestId).annotate({
-        description: "The request this elicitation is tied to.",
-      }),
-    }).annotate({
-      description:
-        "Request-scoped elicitation, tied to a specific JSON-RPC request outside of a session\n(e.g., during auth/configuration phases before any session is started).",
-    }),
-  ]),
-  Schema.Union([
-    Schema.StructWithRest(
-      Schema.Struct({
-        message: Schema.String.annotate({
-          description: "A human-readable message describing what input is needed.",
-        }),
-        _meta: Schema.optionalKey(
-          Schema.Union([
-            Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate(
-              {
-                description:
-                  "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
-              },
-            ),
-            Schema.Null,
-          ]),
-        ),
-        mode: Schema.String.annotate({
-          description:
-            "Custom or future elicitation mode.\n\nValues beginning with `_` are reserved for implementation-specific\nextensions. Unknown values that do not begin with `_` are reserved for\nfuture ACP variants.",
-        }).check(
-          Schema.isPattern(new RegExp("^(?!(?:\\x66orm|\\x75rl)$)[\\s\\S]*$")).annotate({
-            expected: "a string matching the RegExp ^(?!(?:\\x66orm|\\x75rl)$)[\\s\\S]*$",
-          }),
-        ),
-        sessionId: Schema.suspend((): Schema.Codec<SessionId> => SessionId).annotate({
-          description: "The session this elicitation is tied to.",
-        }),
-        toolCallId: Schema.optionalKey(
-          Schema.Union([ToolCallId, Schema.Null]).annotate({
-            description:
-              "Optional tool call within the session.\n\nOptional. Omitted and `null` are equivalent and mean the elicitation is scoped to the\nsession without a specific tool call.",
-          }),
-        ),
-      }),
-      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
-    ).annotate({
-      title: "other",
-      description:
-        "Session-scoped elicitation, optionally tied to a specific tool call.\n\nWhen `tool_call_id` is set, the elicitation is tied to a specific tool call.\nThis is useful when an agent receives an elicitation from an MCP server\nduring a tool call and needs to redirect it to the user.",
-    }),
-    Schema.StructWithRest(
-      Schema.Struct({
-        message: Schema.String.annotate({
-          description: "A human-readable message describing what input is needed.",
-        }),
-        _meta: Schema.optionalKey(
-          Schema.Union([
-            Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate(
-              {
-                description:
-                  "The _meta property is reserved by ACP to allow clients and agents to attach additional\nmetadata to their interactions. Implementations MUST NOT make assumptions about values at\nthese keys.\n\nOptional. Omitted and `null` are equivalent and mean no metadata.\n\nSee protocol docs: [Extensibility](https://agentclientprotocol.com/protocol/extensibility)",
-              },
-            ),
-            Schema.Null,
-          ]),
-        ),
-        mode: Schema.String.annotate({
-          description:
-            "Custom or future elicitation mode.\n\nValues beginning with `_` are reserved for implementation-specific\nextensions. Unknown values that do not begin with `_` are reserved for\nfuture ACP variants.",
-        }).check(
-          Schema.isPattern(new RegExp("^(?!(?:\\x66orm|\\x75rl)$)[\\s\\S]*$")).annotate({
-            expected: "a string matching the RegExp ^(?!(?:\\x66orm|\\x75rl)$)[\\s\\S]*$",
-          }),
-        ),
-        requestId: Schema.suspend((): Schema.Codec<RequestId> => RequestId).annotate({
-          description: "The request this elicitation is tied to.",
-        }),
-      }),
-      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
-    ).annotate({
-      title: "other",
-      description:
-        "Request-scoped elicitation, tied to a specific JSON-RPC request outside of a session\n(e.g., during auth/configuration phases before any session is started).",
-    }),
-  ]),
-]).annotate({ identifier: "CreateElicitationRequest" });
 
 export type InitializeResponse = {
   readonly protocolVersion: ProtocolVersion;

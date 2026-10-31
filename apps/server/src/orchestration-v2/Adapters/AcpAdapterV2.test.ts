@@ -5705,12 +5705,13 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.live("declines a form whose selection counts no answer can meet, without asking", () =>
+  it.live("declines a form whose selection counts the client cannot answer, without asking", () =>
     Effect.gen(function* () {
       const items = { type: "string", enum: ["a", "b"] };
       for (const [name, bounds] of [
         ["min-above-max", { minItems: 2, maxItems: 1 }],
         ["min-above-options", { minItems: 3 }],
+        ["empty-only", { maxItems: 0 }],
       ] as const) {
         const { questions, response } = yield* runFormElicitation({
           name,
