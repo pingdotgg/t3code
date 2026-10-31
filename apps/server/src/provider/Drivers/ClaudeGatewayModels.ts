@@ -65,8 +65,9 @@ export const discoverClaudeGatewayModels = Effect.fn("discoverClaudeGatewayModel
     endpoint.searchParams.set("limit", "1000");
 
     const headers = new Headers({ "anthropic-version": "2023-06-01" });
-    if (env.ANTHROPIC_AUTH_TOKEN?.trim()) {
-      headers.set("authorization", `Bearer ${env.ANTHROPIC_AUTH_TOKEN.trim()}`);
+    const token = env.ANTHROPIC_AUTH_TOKEN?.trim();
+    if (token) {
+      yield* Effect.try(() => headers.set("authorization", `Bearer ${token}`));
     } else {
       let key = env.ANTHROPIC_API_KEY?.trim();
       if (!key && apiKeyHelper?.trim()) {
@@ -82,11 +83,14 @@ export const discoverClaudeGatewayModels = Effect.fn("discoverClaudeGatewayModel
         if (result.code !== 0) return undefined;
         key = result.stdout.trim();
       }
-      if (key) headers.set("x-api-key", key);
+      if (key) yield* Effect.try(() => headers.set("x-api-key", key));
     }
     for (const line of env.ANTHROPIC_CUSTOM_HEADERS?.split("\n") ?? []) {
       const colon = line.indexOf(":");
-      if (colon >= 0) headers.set(line.slice(0, colon).trim(), line.slice(colon + 1).trim());
+      if (colon >= 0)
+        yield* Effect.try(() =>
+          headers.set(line.slice(0, colon).trim(), line.slice(colon + 1).trim()),
+        );
     }
 
     const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
@@ -123,17 +127,20 @@ export function applyClaudeGatewayModels(
   const offered = new Set(models.map((model) => model.id));
   return {
     ...provider,
-    models: models
-      .filter((model) => !unavailable.has(model.id))
-      .map(
-        (model) =>
-          known.get(model.id) ?? {
-            slug: model.id,
-            name: model.display_name || model.id,
-            isCustom: true,
-            capabilities: { optionDescriptors: [] },
-          },
-      ),
+    models: [
+      ...models
+        .filter((model) => !unavailable.has(model.id))
+        .map(
+          (model) =>
+            known.get(model.id) ?? {
+              slug: model.id,
+              name: model.display_name || model.id,
+              isCustom: true,
+              capabilities: { optionDescriptors: [] },
+            },
+        ),
+      ...provider.models.filter((model) => model.isCustom && !offered.has(model.slug)),
+    ],
     ...(provider.updateRequiredModels
       ? {
           updateRequiredModels: provider.updateRequiredModels.filter((model) =>

@@ -280,8 +280,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               ? Cache.invalidateAll(capabilitiesProbeCache)
               : Effect.void,
           ),
-          Effect.flatMap(
-            Effect.fn(function* (provider) {
+          Effect.flatMap((provider) =>
+            Effect.gen(function* () {
               if (!provider.enabled || !provider.installed) return provider;
               const models = yield* discoverClaudeGatewayModels(
                 effectiveConfig,
