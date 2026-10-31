@@ -187,7 +187,10 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
       }. --yes takes the default.`,
     });
   }
+  // Nothing to run in the background, but a route left on still gets turned off.
   if (!before.service.installed && !routes.connect && !routes.lan) {
+    if (current.connect) yield* disconnectCloud({ clearAuthorization: false });
+    if (current.lan) yield* CliService.writeServiceEnv(baseDir, { T3CODE_LAN: "false" });
     return yield* Console.log(formatNextSteps(routes));
   }
   const { installedVersion } = before.service;

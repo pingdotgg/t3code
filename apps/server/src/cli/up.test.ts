@@ -93,6 +93,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       lan: "true",
     },
     {
+      label: "a route turns off with no service to run",
+      installed: false,
+      env: "T3CODE_LAN=true\n",
+      args: ["--no-lan"],
+      installs: 0,
+      restarts: 0,
+      lan: "false",
+    },
+    {
       label: "the old default is kept",
       installed: true,
       env: "",
