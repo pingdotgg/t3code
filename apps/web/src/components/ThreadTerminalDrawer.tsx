@@ -43,7 +43,7 @@ import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { PaneNotch } from "~/components/PaneNotch";
 import { beginLayoutTabDrag } from "~/layout/layoutDrag";
 import { useLayoutPane, useLayoutPaneFocusedRef } from "~/layout/layoutPaneContext";
-import { LayoutPaneTab, useLayoutPaneSiblingTabs } from "~/layout/PaneTabs";
+import { LayoutPaneTab, LayoutPaneTabStrip, useLayoutPaneSiblingTabs } from "~/layout/PaneTabs";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -1390,7 +1390,7 @@ function TerminalTabsNotch({
   if (!notch) return children;
   return (
     <PaneNotch>
-      {children}
+      <LayoutPaneTabStrip>{children}</LayoutPaneTabStrip>
       <span data-pane-notch-add="" className="flex shrink-0">
         {newTerminalButton}
       </span>
@@ -1411,10 +1411,12 @@ function TerminalTabStrip({
   ref: RefObject<HTMLDivElement | null>;
   children: ReactNode;
 }) {
+  const { tabId } = useLayoutPane();
   if (notch) {
     return (
       <div
         ref={ref}
+        data-layout-pane-tab={tabId ?? undefined}
         className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden"
         role="tablist"
         aria-label="Terminals"
