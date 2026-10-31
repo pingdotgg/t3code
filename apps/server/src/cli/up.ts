@@ -99,7 +99,7 @@ const needsRestart = (before: Routes, after: Routes) =>
   after.lan !== before.lan || (after.connect && !before.connect);
 
 const CHOICES = {
-  connect: { title: "T3 Connect", description: "Your T3 account. Works from anywhere." },
+  connect: { title: "T3 Connect", description: "Creates a tunnel to control your PC." },
   lan: { title: "Local network", description: "LAN and tailnet. Pairing code required." },
 } satisfies Record<Route, { readonly title: string; readonly description: string }>;
 
