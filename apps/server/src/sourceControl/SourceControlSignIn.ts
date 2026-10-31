@@ -5,6 +5,7 @@ import {
   type SourceControlSignInInput,
   type SourceControlSignInPrompt,
   type SourceControlSignInResult,
+  type SourceControlStarredInput,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -12,7 +13,7 @@ import * as Layer from "effect/Layer";
 
 import * as SourceControlBuiltInDrivers from "./builtInDrivers.ts";
 
-/** Signs the server in to a forge through the forge's own app, for hosts whose driver offers it. */
+/** Signs the server in to a forge through the forge's own app, and reads what its account did. */
 export class SourceControlSignIn extends Context.Service<
   SourceControlSignIn,
   {
@@ -26,6 +27,7 @@ export class SourceControlSignIn extends Context.Service<
       input: SourceControlSignInInput,
     ) => Effect.Effect<void, SourceControlSignInError>;
     readonly access: (input: SourceControlAppAccessInput) => Effect.Effect<SourceControlAppAccess>;
+    readonly starred: (input: SourceControlStarredInput) => Effect.Effect<boolean>;
   }
 >()("t3/sourceControl/SourceControlSignIn") {}
 
@@ -62,6 +64,11 @@ const make = Effect.gen(function* () {
         status:
           signIn === undefined ? "signed-out" : yield* signIn.access(input.host, input.repository),
       } satisfies SourceControlAppAccess;
+    }),
+    starred: Effect.fn("SourceControlSignIn.starred")(function* (input) {
+      const isStarred = drivers.find(({ driver }) => driver.kind === input.provider)?.instance
+        .isRepositoryStarred;
+      return isStarred === undefined ? false : yield* isStarred(input.host, input.repository);
     }),
   });
 });
