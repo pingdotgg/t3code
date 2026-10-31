@@ -47,15 +47,7 @@ export function useThreadContributionStatusStripInset(input: {
   return reservesContributionStatusBand({ ...input, hasStatus }) ? STRIP_HEIGHT : 0;
 }
 
-/**
- * Advisory statuses the thread's provider set, such as Pi extension
- * `setStatus` text, and statuses plugins set, as one row of chips floating
- * just under the navigation header. It overlays the feed like the header
- * does, so a status changing never resizes the composer; the feed reserves
- * its band through `useThreadContributionStatusStripInset`. Renders nothing
- * when the server lacks the capability or the thread has no statuses.
- * Pressing a chip shows its tooltip and where it came from.
- */
+// The strip overlays the feed; useThreadContributionStatusStripInset reserves its band.
 export function ThreadContributionStatusStrip(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
