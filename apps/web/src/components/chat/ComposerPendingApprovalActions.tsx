@@ -95,13 +95,14 @@ export function ComposerPendingApprovalActions({
     );
 
   return (
-    <div className="flex min-w-0 grow basis-72 flex-wrap items-center gap-2">
+    <div className="flex min-w-0 grow basis-72 flex-wrap items-center justify-end gap-2">
       {sessionOption ? (
         <Button
           size="sm"
           variant="secondary"
           disabled={disabled}
           aria-pressed={alwaysAllow}
+          data-pressed={alwaysAllow ? "" : undefined}
           aria-description={sessionOption.warning}
           onClick={() => onAlwaysAllowChange?.(!alwaysAllow)}
         >
@@ -112,7 +113,7 @@ export function ComposerPendingApprovalActions({
           ) : null}
         </Button>
       ) : null}
-      <div className="ms-auto flex shrink-0 items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         {moreOptions.length > 0 ? (
           <Menu>
             <MenuTrigger
