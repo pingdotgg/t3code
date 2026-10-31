@@ -16,6 +16,7 @@ import {
   resolveSidebarSweepKeys,
   resolveSidebarRowStatus,
   resolveSidebarThreadStatus,
+  resolveSidebarV2TopStatus,
   resolveThreadStatusPill,
   resolveWindowTitleThreadStatus,
   resolveWorkingStartedAt,
@@ -288,6 +289,17 @@ describe("resolveSidebarThreadStatus", () => {
       expect(resolveWindowTitleThreadStatus(thread)).toBe(title);
     }
   });
+
+  it("shows Merged ahead of Done but behind live and wake states", () => {
+    const merged = { isUnread: false, isWoke: false, isMerged: true };
+    expect(resolveSidebarV2TopStatus({ ...merged, status: "ready" })).toBe("merged");
+    expect(resolveSidebarV2TopStatus({ ...merged, status: "ready", isUnread: true })).toBe(
+      "merged",
+    );
+    expect(resolveSidebarV2TopStatus({ ...merged, status: "working" })).toBe("working");
+    expect(resolveSidebarV2TopStatus({ ...merged, status: "approval" })).toBe("approval");
+    expect(resolveSidebarV2TopStatus({ ...merged, status: "ready", isWoke: true })).toBe("woke");
+  });
 });
 
 describe("resolveSidebarRowStatus", () => {
@@ -467,7 +479,7 @@ describe("resolveThreadStatusPill", () => {
         },
       }),
     ).toMatchObject({
-      label: "Waiting",
+      label: "Monitoring",
       colorClass: "text-sidebar-muted-foreground",
       dotClass: "bg-sidebar-muted-foreground",
       pulse: false,
@@ -974,7 +986,7 @@ describe("unseen completion with background work", () => {
       task: { kind: "command", awaited: true },
       status: "waiting",
       receded: true,
-      pill: "Waiting",
+      pill: "Monitoring",
     },
   ] as const)("presents a completed thread with a $roster roster", (expected) => {
     const thread = presentThreadShell(localEnvironmentId, {

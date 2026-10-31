@@ -245,7 +245,9 @@ export function SnapShotSetupDialog({
         <WizardPanel>
           <div className="space-y-4 text-sm">
             <div className="space-y-2" aria-live="polite">
-              <h3 className="flex items-center gap-2 font-medium">{title}</h3>
+              <h3 className="flex items-center gap-2 font-medium text-strong-foreground">
+                {title}
+              </h3>
               <DialogDescription>{description}</DialogDescription>
             </div>
             {step === "access" ? (
@@ -292,7 +294,7 @@ export function SnapShotSetupDialog({
                 {helperBackend && helper?.status === "error" ? (
                   <Button
                     size="xs"
-                    variant="outline"
+                    variant="secondary"
                     disabled={busy}
                     onClick={() => void onAction(installHelper)}
                   >

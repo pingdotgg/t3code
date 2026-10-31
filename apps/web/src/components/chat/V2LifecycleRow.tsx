@@ -114,17 +114,17 @@ export function V2LifecycleRow(props: {
       return (
         <div
           data-v2-item-type={item.type}
-          className="flex min-w-0 items-center gap-3 rounded-lg border border-border/60 p-3"
+          className="flex min-w-0 items-center gap-3 rounded-card border border-transparent surface-card p-3"
         >
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted/60">
-            <MessageSquareIcon className="size-4 text-secondary-label" aria-hidden />
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-control bg-muted">
+            <MessageSquareIcon className="size-4 text-muted-foreground" aria-hidden />
           </span>
           <span className="min-w-0 flex-1 truncate text-sm font-medium">
             {item.title ?? "Created thread"}
           </span>
           <Button
             size="xs"
-            variant="outline"
+            variant="secondary"
             aria-label={`Open ${item.title ?? "created thread"}`}
             onClick={() => props.onOpenThread(item.targetThreadId)}
           >
@@ -137,7 +137,12 @@ export function V2LifecycleRow(props: {
       <WorkLogRow
         data-v2-item-type={item.type}
         icon={<T3Wordmark className="size-4 text-icon-muted" aria-hidden />}
-        label={<>Created thread{item.title ? ` · ${item.title}` : ""}</>}
+        label={
+          <Tooltip>
+            <TooltipTrigger render={<span tabIndex={0} />}>Created thread</TooltipTrigger>
+            <TooltipPopup>{item.title ?? "Created thread"}</TooltipPopup>
+          </Tooltip>
+        }
         trailing={
           <InlineButton
             aria-label={`Open ${item.title ?? "created thread"}`}
@@ -179,11 +184,11 @@ const STATUS_VISUALS: Record<
   pending: { dotClass: "bg-info", label: "Queued" },
   running: { dotClass: "bg-info", label: "Running" },
   waiting: { dotClass: "bg-info", label: "Waiting" },
-  idle: { dotClass: "bg-muted-foreground/50", label: "Idle · resumable" },
+  idle: { dotClass: "bg-dim-foreground", label: "Idle" },
   completed: { dotClass: "bg-success", label: "Completed" },
   failed: { dotClass: "bg-destructive", label: "Failed" },
-  cancelled: { dotClass: "bg-muted-foreground/60", label: "Stopped" },
-  interrupted: { dotClass: "bg-muted-foreground/60", label: "Stopped" },
+  cancelled: { dotClass: "bg-dim-foreground", label: "Stopped" },
+  interrupted: { dotClass: "bg-dim-foreground", label: "Stopped" },
 };
 
 function subagentStatusVisual(status: OrchestrationV2TurnItem["status"]) {
@@ -269,6 +274,7 @@ export function EnvironmentSubagentAvatar({
 }: {
   environmentId: EnvironmentId;
   providerInstanceId: ProviderInstanceId;
+  className?: string;
   driver?: ProviderDriverKind | undefined;
   /** A task in a linked environment runs a provider instance there; its driver here is only a label. */
   remote?: OrchestrationV2RemoteTaskChild | undefined;
@@ -459,7 +465,7 @@ function SubagentTimelineLink(props: {
       />
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline gap-2">
-          <span className="min-w-0 truncate text-xs font-medium text-foreground">
+          <span className="min-w-0 truncate text-xs font-medium text-strong-foreground">
             {props.title}
           </span>
           {remote !== undefined ? (
@@ -469,7 +475,7 @@ function SubagentTimelineLink(props: {
         <span
           className={cn(
             "block text-2xs leading-relaxed",
-            failed ? "text-destructive" : "text-muted-foreground",
+            failed ? "text-error-foreground" : "text-muted-foreground",
           )}
         >
           {detail === null ? (
@@ -483,24 +489,27 @@ function SubagentTimelineLink(props: {
       </span>
       {detail !== null && (props.event !== undefined || status !== "completed") ? (
         <span
-          className={cn("shrink-0 text-xs", failed ? "text-destructive" : "text-muted-foreground")}
+          className={cn(
+            "shrink-0 text-meta",
+            failed ? "text-error-foreground" : "text-muted-foreground",
+          )}
         >
           {statusLabel}
         </span>
       ) : null}
-      <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+      <span className="shrink-0 font-mono text-3xs text-dim-foreground tabular-nums">
         {props.event ? props.event.timestamp : <SubagentElapsed agent={timing} />}
       </span>
       {open !== null ? (
         <ChevronRightIcon
           aria-hidden
-          className="size-3.5 shrink-0 text-muted-foreground/60 transition-colors group-hover/subagent:text-foreground"
+          className="size-3.5 shrink-0 text-dim-foreground transition-colors group-hover/subagent:text-foreground"
         />
       ) : null}
     </>
   );
   const className =
-    "group/subagent flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-left";
+    "group/subagent flex w-full min-w-0 items-center gap-2.5 rounded-row px-2 py-1.5 text-left";
   return (
     <Tooltip>
       <TooltipTrigger
@@ -519,7 +528,7 @@ function SubagentTimelineLink(props: {
               onClick={open}
               className={cn(
                 className,
-                "cursor-pointer transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+                "cursor-pointer transition-colors hover:surface-ghost-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
               )}
             >
               {content}
@@ -640,7 +649,6 @@ export function HandoffRow(props: {
     <TimelineSystemDivider
       label={props.pending ? "Context handoff pending" : "Context handoff"}
       icon={ArrowRightLeftIcon}
-      showDetailSeparator={false}
       tone={props.failed ? "danger" : "neutral"}
       detail={
         <span className="inline-flex min-w-0 flex-wrap items-center justify-center gap-1.5">
@@ -712,7 +720,7 @@ function HandoffEndpoint(props: {
               indicatorBackground="var(--background)"
             />
             <span
-              className={cn("truncate font-medium", labelColor.className)}
+              className={cn("truncate text-label", labelColor.className)}
               style={labelColor.style}
             >
               {label}
@@ -721,7 +729,8 @@ function HandoffEndpoint(props: {
         }
       />
       <TooltipPopup>
-        {entry?.displayName ?? props.instanceId} · {label}
+        <span className="block">{entry?.displayName ?? props.instanceId}</span>
+        <span className="block">{label}</span>
       </TooltipPopup>
     </Tooltip>
   );
