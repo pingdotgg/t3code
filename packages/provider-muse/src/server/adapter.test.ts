@@ -1,3 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Mock native realpath to exercise macOS case correction on every platform.
+import * as NodeFSP from "node:fs/promises";
+import { vi } from "vite-plus/test";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { MspError } from "@muse-code/sdk";
@@ -379,6 +382,8 @@ const approval = (turnId: string) => ({
   subject: { kind: "shell", command: "touch result.txt" },
 });
 
+vi.mock("node:fs/promises", { spy: true });
+
 describe("MuseAdapterV2", () => {
   it.effect("connects the thread's MCP credential on native start and resume", () =>
     Effect.gen(function* () {
@@ -566,6 +571,36 @@ describe("MuseAdapterV2", () => {
       Effect.provideService(HostProcess.Platform, "win32"),
       Effect.scoped,
       Effect.provide(testLayer),
+    ),
+  );
+
+  it.effect("pins sessions and turns to native canonical case", () =>
+    Effect.gen(function* () {
+      using _realpath = vi.spyOn(NodeFSP, "realpath").mockResolvedValue("/workspace/eevee");
+      const fake = yield* makeFakeMuse();
+      const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        ...runtimePolicy,
+        cwd: "/workspace/EEVEE",
+      });
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        policy,
+      );
+      yield* startConversation(harness, fake);
+      const sessionStart = fake.calls.find((call) => call.method === "session/start");
+      const turnStart = fake.calls.find((call) => call.method === "turn/start");
+      assert.strictEqual(sessionStart?.params.workspaceRoot, "/workspace/eevee");
+      assert.deepStrictEqual(turnStart?.params.workspaceRoots, [
+        sessionStart?.params.workspaceRoot,
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(testLayer),
+      Effect.provideService(HostProcess.Platform, "darwin"),
     ),
   );
 
