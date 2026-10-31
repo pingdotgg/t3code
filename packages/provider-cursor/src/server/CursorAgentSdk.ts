@@ -11,14 +11,20 @@ import {
   ProviderDriverKind,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as ScopedCache from "effect/ScopedCache";
 
 import * as CursorSdk from "./CursorSdk.ts";
+import { getDefaultSdkStateRoot } from "./sdk.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 
 export const CURSOR_AGENT_SDK_PROTOCOL = "cursor-agent-sdk.local" as const;
@@ -340,7 +346,29 @@ function makeCursorAgentSdkProtocolLogger(input: {
 export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(function* (
   protocolLoggerFor: (input: CursorAgentSdkOpenInput) => CursorAgentSdkProtocolLogger | undefined,
 ) {
-  const { Agent, createAgentPlatform } = yield* CursorSdk.CursorSdk;
+  const { Agent, createAgentPlatform, SqliteLocalAgentStore } = yield* CursorSdk.CursorSdk;
+  const platform = yield* HostProcess.Platform;
+  const path = yield* Path.Path;
+
+  // SQLite cannot open the SDK's default per-agent store.db once its path passes MAX_PATH,
+  // even with LongPathsEnabled. A \\?\ root keeps the same files reachable. Like the SDK's
+  // default, keep one store per workspace for the runner's lifetime.
+  const windowsAgentStores = yield* ScopedCache.makeWith({
+    lookup: (cwd: string) =>
+      Effect.acquireRelease(
+        Effect.tryPromise({
+          try: () =>
+            SqliteLocalAgentStore.open({
+              workspaceRef: cwd,
+              stateRoot: path.toNamespacedPath(getDefaultSdkStateRoot(cwd)),
+            }),
+          catch: (cause) => runnerError(cause, "store.open"),
+        }),
+        (store) => Effect.tryPromise(() => store.dispose()).pipe(Effect.ignore({ log: true })),
+      ),
+    capacity: Number.MAX_SAFE_INTEGER,
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
+  });
 
   // Prime with cursorsandbox before any Full access run; the SDK caches sandbox support per process.
   const sandboxSupportPrimeStarted = yield* Ref.make(false);
@@ -375,6 +403,21 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
       const log = (event: CursorAgentSdkProtocolLogEvent) =>
         protocolLogger === undefined ? Effect.void : protocolLogger(event);
 
+      const cwd = input.options.local?.cwd;
+      const options =
+        platform === "win32" && input.options.local?.store === undefined
+          ? {
+              ...input.options,
+              local: {
+                ...input.options.local,
+                store: yield* ScopedCache.get(
+                  windowsAgentStores,
+                  cwd ?? (yield* HostProcess.WorkingDirectory),
+                ),
+              },
+            }
+          : input.options;
+
       yield* log({
         direction: "outgoing",
         stage: "decoded",
@@ -382,15 +425,15 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
           type: "agent.open",
           operation: input.operation,
           ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
-          options: loggedCursorAgentOptions(input.options),
+          options: loggedCursorAgentOptions(options),
         },
       });
 
       const agent = yield* Effect.tryPromise({
         try: () =>
           input.operation === "create"
-            ? Agent.create(input.options)
-            : Agent.resume(input.agentId!, input.options),
+            ? Agent.create(options)
+            : Agent.resume(input.agentId!, options),
         catch: (cause) => runnerError(cause, `agent.${input.operation}`),
       });
 
@@ -403,14 +446,10 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
         },
       });
 
-      const cwd =
-        typeof input.options.local?.cwd === "string"
-          ? input.options.local.cwd
-          : input.options.local?.cwd?.[0];
       const runOptions = {
         runtime: "local" as const,
         ...(cwd === undefined ? {} : { cwd }),
-        ...(input.options.local?.store === undefined ? {} : { store: input.options.local.store }),
+        ...(options.local?.store === undefined ? {} : { store: options.local.store }),
       };
       let abandonedRunRecoveryAvailable = input.operation === "resume";
 
@@ -580,11 +619,7 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
         }).pipe(
           Effect.andThen(
             Effect.tryPromise({
-              try: () =>
-                Agent.messages.list(agent.agentId, {
-                  runtime: "local",
-                  ...(cwd === undefined ? {} : { cwd }),
-                }),
+              try: () => Agent.messages.list(agent.agentId, runOptions),
               catch: (cause) => runnerError(cause, "agent.messages.list"),
             }),
           ),
