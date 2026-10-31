@@ -131,7 +131,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
             {props.isFavorite ? "Remove from favorites" : "Add to favorites"}
           </TooltipPopup>
         </Tooltip>
-        {/* Last, and always reserved, so stars and the check keep fixed columns. */}
+        {/* Keep the selection column reserved when a different row is selected. */}
         <CheckIcon
           className={cn("size-3.5", !props.isSelected && "invisible")}
           aria-hidden="true"

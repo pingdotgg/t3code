@@ -21,6 +21,8 @@ import { useComposerDraftStore } from "../../composerDraftStore";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { toastManager } from "../ui/toast";
 import { usePendingThreadRequests } from "./usePendingThreadRequests";
+import { BackgroundThreadContext } from "./backgroundThread";
+import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 
 const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
 
@@ -37,6 +39,57 @@ const prompt = {
     multiSelect: false,
   })),
 };
+
+it("suspends question Enter and number shortcuts under an app modal and resumes them afterward", async () => {
+  const onSubmit = vi.fn();
+  const onWriteAnswer = vi.fn();
+  const onToggleOption = vi.fn();
+  const panel = (
+    <ComposerPendingUserInputPanel
+      pendingUserInputs={[prompt]}
+      cwd={undefined}
+      threadRef={threadRef}
+      respondingRequestIds={[]}
+      answers={{}}
+      questionIndex={0}
+      onToggleOption={onToggleOption}
+      onAdvance={vi.fn()}
+      onDismiss={vi.fn()}
+      onSubmit={onSubmit}
+      onWriteAnswer={onWriteAnswer}
+      primaryAction={{
+        questionIndex: 0,
+        isLastQuestion: false,
+        canAdvance: true,
+        isResponding: false,
+        isComplete: false,
+      }}
+    />
+  );
+  await using screen = await render(
+    <BackgroundThreadContext value={true}>{panel}</BackgroundThreadContext>,
+  );
+  for (const key of ["Enter", "1", "2"]) {
+    const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+    await act(() => {
+      document.body.dispatchEvent(event);
+    });
+    expect(event.defaultPrevented).toBe(false);
+  }
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(onWriteAnswer).not.toHaveBeenCalled();
+  expect(onToggleOption).not.toHaveBeenCalled();
+
+  await screen.rerender(<BackgroundThreadContext value={false}>{panel}</BackgroundThreadContext>);
+  for (const key of ["Enter", "2"]) {
+    await act(() => {
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    });
+  }
+  expect(onSubmit).toHaveBeenCalledTimes(1);
+  expect(onWriteAnswer).toHaveBeenCalledTimes(1);
+  expect(onToggleOption).not.toHaveBeenCalled();
+});
 
 function questionProjection(threadId: ThreadId, requestIds = ["first", "second"]) {
   const projection = makeThreadProjectionFixture();

@@ -443,7 +443,7 @@ function QueuedMessage(props: {
       {/* Dashed: a turn that has not been sent yet. */}
       <div
         className={cn(
-          "flex min-w-0 max-w-[80%] flex-col rounded-card border border-dashed text-body surface-card",
+          "flex min-w-0 max-w-[80%] flex-col rounded-card border border-dashed text-body surface-card group-hover/queued:text-foreground group-focus-within/queued:text-foreground",
           props.isEditing
             ? "border-primary/60 text-foreground"
             : attribution === "guest"

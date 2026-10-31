@@ -33,7 +33,7 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import { loadSubscriberShellSnapshot } from "./ShellStream.ts";
 import { boundedSnapshotResponseFields } from "./ThreadStream.ts";
-import { projectThreadProjectionForWire } from "./WireProjection.ts";
+import { projectThreadProjectionForWire } from "@t3tools/shared/wireProjection";
 
 const isThreadTranscriptTooLargeError = Schema.is(
   ThreadManagementService.ThreadTranscriptTooLargeError,

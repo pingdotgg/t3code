@@ -1,15 +1,26 @@
 import { memo, useRef, useState, type ReactNode, type KeyboardEvent } from "react";
+import { cn } from "~/lib/utils";
+import {
+  CopyIcon,
+  DownloadIcon,
+  ExternalLinkIcon,
+  ImageIcon,
+  MinusIcon,
+  PlusIcon,
+  VideoIcon,
+  XIcon,
+} from "lucide-react";
+import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { flushSync } from "react-dom";
-import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
-import { Image as ImageGlyph, Text as TextGlyph } from "lucide";
 import { Button } from "../ui/button";
+import { Image as ImageGlyph, Text as TextGlyph } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import type { ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { resolveExternalWebLinkHost } from "./externalLinkContextMenu";
 import { useAssetUrlRefresh, useAssetUrlState } from "../../assets/assetUrls";
 import { OpenMediaLink } from "../media/OpenMediaLink";
-import { MediaActions, type MediaActionSource } from "../media/MediaActions";
+import { MediaActions, useMediaByteAction, type MediaActionSource } from "../media/MediaActions";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { isContextMenuOpen } from "../../contextMenuFallback";
 import {
@@ -18,7 +29,9 @@ import {
   snapShotAccessibilityDetails,
 } from "./SnapShotAttachmentDetails";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { ZoomableImage, type ZoomableImageHandle } from "./ZoomableImage";
+import { ZoomableImage, type ZoomableImageHandle, type ZoomableImageView } from "./ZoomableImage";
+import { readLocalApi } from "../../localApi";
+import { toastManager } from "../ui/toast";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
@@ -34,7 +47,7 @@ interface ExpandedImageDialogProps {
 }
 
 const EXPANDED_MEDIA_STATE_CLASS_NAME =
-  "flex aspect-auto h-48 min-h-0 w-[min(var(--media-width),32rem)] flex-col items-center justify-center gap-3 rounded-card border border-border bg-black p-6 text-center text-sm text-white shadow-dialog";
+  "flex aspect-auto h-48 min-h-0 w-[min(var(--media-width),32rem)] flex-col items-center justify-center gap-3 rounded-card border border-border bg-black p-6 text-center text-body text-white shadow-dialog";
 
 function ExpandedMediaFailure({ children }: { children: ReactNode }) {
   return (
@@ -79,6 +92,69 @@ function ExpandedVideo({ item }: { readonly item: ExpandedImageItem }) {
   );
 }
 
+/** An http(s) destination the viewer can hand to the system browser, never a blob or data URL. */
+function browserUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const protocol = new URL(url, window.location.href).protocol;
+    return protocol === "http:" || protocol === "https:" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+function MediaBarButton({
+  label,
+  onClick,
+  disabled,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            aria-label={label}
+            disabled={disabled}
+            onClick={onClick}
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipPopup side="bottom">{label}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function MediaThumbnail({ item }: { item: ExpandedImageItem }) {
+  const [failed, setFailed] = useState(false);
+  if (item.type === "video" || item.src === null || failed) {
+    const Icon = item.type === "video" ? VideoIcon : ImageIcon;
+    return <Icon aria-hidden="true" className="size-3.5 text-dim-foreground" />;
+  }
+  return (
+    <img
+      src={item.src}
+      alt=""
+      aria-hidden="true"
+      draggable={false}
+      loading="lazy"
+      decoding="async"
+      className="size-full object-cover"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   preview,
   onClose,
@@ -86,6 +162,12 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   const [imageOffset, setImageOffset] = useState(0);
   const [failedImageSrc, setFailedImageSrc] = useState<string | null>(null);
   const [accessibilityDetailsSrc, setAccessibilityDetailsSrc] = useState<string | null>(null);
+  const [naturalSize, setNaturalSize] = useState<{
+    src: string;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [view, setView] = useState<ZoomableImageView | null>(null);
   const zoomableImageRef = useRef<ZoomableImageHandle>(null);
   const [returnFocusTarget] = useState(() =>
     document.activeElement instanceof HTMLElement ? document.activeElement : null,
@@ -117,9 +199,13 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
         },
       }
     : source;
+  const runByteAction = useMediaByteAction(actionsSource);
 
   const navigateImage = (direction: -1 | 1) => {
     setImageOffset((current) => current + direction);
+  };
+  const selectImage = (target: number) => {
+    setImageOffset(target - preview.index);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -157,6 +243,49 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     : accessibilityDetails?.format === "json"
       ? "Show accessibility JSON"
       : "Show extracted text";
+  const imageFailed = item.src === null || failedImageSrc === item.src;
+  const zoomable = item.type !== "video" && !showingAccessibilityDetails && !imageFailed;
+  const unavailable = actionsSource.src === null && actionsSource.asset === undefined;
+  const canCopyImage =
+    item.type !== "video" &&
+    !unavailable &&
+    typeof navigator !== "undefined" &&
+    Boolean(navigator.clipboard?.write) &&
+    typeof ClipboardItem !== "undefined";
+  const externalUrl =
+    item.originalUrl && resolveExternalWebLinkHost(item.originalUrl) !== null
+      ? item.originalUrl
+      : browserUrl(item.src);
+  const openExternally = actionsSource.onOpenFile
+    ? { label: "Open in file viewer", run: actionsSource.onOpenFile }
+    : externalUrl
+      ? {
+          label: item.originalUrl ? "Open original" : "Open in browser",
+          run: () => {
+            void readLocalApi()
+              ?.shell.openExternal(externalUrl)
+              .catch((error: unknown) => {
+                toastManager.add({
+                  type: "error",
+                  title: "Could not open link",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                });
+              });
+          },
+        }
+      : null;
+  const dimensions =
+    naturalSize && naturalSize.src === item.src
+      ? `${naturalSize.width.toLocaleString()} × ${naturalSize.height.toLocaleString()}`
+      : null;
+  const meta = [
+    imageCount > 1 ? `${index + 1} of ${imageCount}` : null,
+    item.type === "video" ? null : dimensions,
+    item.sizeBytes !== undefined ? formatAttachmentSize(item.sizeBytes) : null,
+  ]
+    .filter((part) => part !== null)
+    .join(" · ");
+  const zoomPercent = view ? `${Math.round(view.scale * 100)}%` : "100%";
 
   return (
     <Dialog
@@ -176,7 +305,20 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
         variant="media"
         showCloseButton={false}
         bottomStickOnMobile={false}
-        className="row-start-1 h-full max-h-[92vh] w-[92vw] max-w-[92vw] items-center justify-center overflow-visible [--media-width:92vw] [--media-height:min(calc((100vh-var(--native-titlebar-height,0px))*0.86),calc(100vh-var(--native-titlebar-height,0px)-160px))] sm:[--media-width:calc(92vw-96px)]"
+        // --media-height keeps ZoomableImage's reserved 200px for the bar and thumbnails.
+        className="row-start-1 h-full max-h-[92vh] w-[92vw] max-w-[92vw] items-center justify-center overflow-visible [--media-width:92vw] [--media-height:min(calc((100vh-var(--native-titlebar-height,0px))*0.86),calc(100vh-var(--native-titlebar-height,0px)-200px))] sm:[--media-width:calc(92vw-96px)]"
+        onKeyDownCapture={(event) => {
+          if (
+            event.key !== "Escape" ||
+            isContextMenuOpen() ||
+            !(event.target instanceof Node) ||
+            !event.currentTarget.contains(event.target)
+          )
+            return;
+          event.preventDefault();
+          event.stopPropagation();
+          close();
+        }}
         onKeyDown={onKeyDown}
         initialFocus={closeButtonRef}
         finalFocus={() => returnFocusTarget}
@@ -185,105 +327,200 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
         }}
       >
         <DialogTitle className="sr-only">Expanded {mediaLabel} preview</DialogTitle>
-        <Button
-          type="button"
-          ref={closeButtonRef}
-          size="icon-sm"
-          variant="media-close"
-          className="absolute right-0 top-0 z-20"
-          onClick={close}
-          aria-label={`Close ${mediaLabel} preview`}
-        >
-          <XIcon />
-        </Button>
-        {preview.images.length > 1 && (
-          <Button
-            type="button"
-            size="icon"
-            variant="media-navigation"
-            className="left-0 top-auto bottom-0 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
-            aria-label="Previous media"
-            onClick={() => navigateImage(-1)}
+        <div className="relative isolate z-10 flex w-fit min-w-[min(var(--media-width),36rem)] max-w-[var(--media-width)] flex-col items-center gap-2.5">
+          <div
+            role="toolbar"
+            aria-label={`${item.name} actions`}
+            className="flex h-10 w-0 min-w-full items-center gap-2 rounded-card surface-popover pr-1.5 pl-3"
           >
-            <ChevronLeftIcon className="size-5" />
-          </Button>
-        )}
-        <MediaActions source={actionsSource}>
-          <div className="relative isolate z-10 flex max-h-full max-w-[var(--media-width)] flex-col items-center">
-            {item.type === "video" ? (
-              <ExpandedVideo key={index} item={item} />
-            ) : showingAccessibilityDetails ? (
-              accessibilityDetails ? (
-                <SnapShotAccessibilityData
-                  details={accessibilityDetails}
-                  className="h-[min(var(--media-height),40rem)] w-[min(var(--media-width),42rem)] transition-opacity duration-140 ease-out starting:opacity-0 rounded-card surface-panel p-4 text-xs leading-5 motion-reduce:transition-none"
-                />
-              ) : null
-            ) : item.src === null || failedImageSrc === item.src ? (
-              <ExpandedMediaFailure>
-                <p>
-                  {openOriginalLink
-                    ? "This image could not be loaded."
-                    : "Image unavailable. The file may have been moved or deleted."}
-                </p>
-                {openOriginalLink}
-              </ExpandedMediaFailure>
-            ) : (
-              <ZoomableImage
-                ref={zoomableImageRef}
-                key={`${index}:${item.src}`}
-                src={item.src}
-                name={item.name}
-                mimeType={itemMimeType(item)}
-                onError={() => setFailedImageSrc(item.src)}
-              />
-            )}
-            <div className="mt-2 flex max-w-[var(--media-width)] items-center justify-center gap-1.5 text-xs text-white/80 max-sm:px-10">
-              <span className="truncate" aria-live="polite" aria-atomic="true">
-                {item.name}
-                {preview.images.length > 1 ? ` (${index + 1}/${preview.images.length})` : ""}
+            <ImageIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+            <span
+              className="min-w-0 truncate text-label text-foreground"
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              {item.name}
+              <span className="sr-only">
+                {imageCount > 1 ? ` (${index + 1}/${imageCount})` : ""}
               </span>
-              {accessibilityDetails && item.source ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        aria-label={contentsLabel}
-                        aria-pressed={showingAccessibilityDetails}
-                        onClick={() =>
-                          setAccessibilityDetailsSrc(showingAccessibilityDetails ? null : item.src)
-                        }
-                        size="icon-micro"
-                        variant="overlay"
-                      />
-                    }
-                  >
-                    <MorphIcon
-                      className="size-3"
-                      aria-hidden="true"
-                      icon={showingAccessibilityDetails ? ImageGlyph : TextGlyph}
+            </span>
+            {meta ? (
+              <span className="shrink-0 text-meta text-dim-foreground tabular-nums max-sm:hidden">
+                {meta}
+              </span>
+            ) : null}
+            <span className="flex-1" />
+            {accessibilityDetails && item.source ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      variant={showingAccessibilityDetails ? "secondary" : "ghost"}
+                      aria-label={contentsLabel}
+                      aria-pressed={showingAccessibilityDetails}
+                      onClick={() =>
+                        setAccessibilityDetailsSrc(showingAccessibilityDetails ? null : item.src)
+                      }
                     />
-                  </TooltipTrigger>
-                  <TooltipPopup side="top">{contentsLabel}</TooltipPopup>
-                </Tooltip>
-              ) : item.source ? (
-                <SnapShotContentsButton source={item.source} side="top" />
-              ) : null}
-            </div>
+                  }
+                >
+                  <MorphIcon
+                    aria-hidden="true"
+                    icon={showingAccessibilityDetails ? ImageGlyph : TextGlyph}
+                  />
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">{contentsLabel}</TooltipPopup>
+              </Tooltip>
+            ) : item.source ? (
+              <SnapShotContentsButton source={item.source} side="bottom" />
+            ) : null}
+            {zoomable ? (
+              <div className="flex h-7 shrink-0 items-center rounded-control surface-well px-0.5 max-sm:hidden">
+                {/* aria-disabled keeps focus in the dialog when a click reaches a zoom limit, so arrow keys still navigate. */}
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost-muted"
+                  aria-label="Zoom out"
+                  aria-disabled={!view?.canZoomOut}
+                  onClick={() => zoomableImageRef.current?.zoomOut()}
+                >
+                  <MinusIcon aria-hidden="true" />
+                </Button>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost-muted"
+                  aria-label={`Zoom ${zoomPercent}, reset to fit`}
+                  aria-disabled={!view?.canZoomOut}
+                  onClick={() => zoomableImageRef.current?.resetZoom()}
+                >
+                  <span className="min-w-8 text-center tabular-nums">{zoomPercent}</span>
+                </Button>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost-muted"
+                  aria-label="Zoom in"
+                  aria-disabled={!view?.canZoomIn}
+                  onClick={() => zoomableImageRef.current?.zoomIn()}
+                >
+                  <PlusIcon aria-hidden="true" />
+                </Button>
+              </div>
+            ) : null}
+            {item.type !== "video" ? (
+              <MediaBarButton
+                label="Copy image"
+                disabled={!canCopyImage}
+                onClick={() => void runByteAction("copy-image")}
+              >
+                <CopyIcon aria-hidden="true" />
+              </MediaBarButton>
+            ) : null}
+            <MediaBarButton
+              label={`Save ${mediaLabel}`}
+              disabled={unavailable}
+              onClick={() => void runByteAction("save")}
+            >
+              <DownloadIcon aria-hidden="true" />
+            </MediaBarButton>
+            {openExternally ? (
+              <MediaBarButton label={openExternally.label} onClick={openExternally.run}>
+                <ExternalLinkIcon aria-hidden="true" />
+              </MediaBarButton>
+            ) : null}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    ref={closeButtonRef}
+                    size="icon-sm"
+                    variant="secondary"
+                    onClick={close}
+                    aria-label={`Close ${mediaLabel} preview`}
+                  />
+                }
+              >
+                <XIcon aria-hidden="true" />
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">Close</TooltipPopup>
+            </Tooltip>
           </div>
-        </MediaActions>
-        {preview.images.length > 1 && (
-          <Button
-            type="button"
-            size="icon"
-            variant="media-navigation"
-            className="right-0 top-auto bottom-0 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
-            aria-label="Next media"
-            onClick={() => navigateImage(1)}
-          >
-            <ChevronRightIcon className="size-5" />
-          </Button>
-        )}
+          <MediaActions source={actionsSource}>
+            <div className="max-w-[var(--media-width)]">
+              {item.type === "video" ? (
+                <ExpandedVideo key={index} item={item} />
+              ) : showingAccessibilityDetails ? (
+                accessibilityDetails ? (
+                  <SnapShotAccessibilityData
+                    details={accessibilityDetails}
+                    className="h-[min(var(--media-height),40rem)] w-[min(var(--media-width),42rem)] transition-opacity duration-140 ease-out starting:opacity-0 rounded-card surface-panel p-4 text-meta leading-5 motion-reduce:transition-none"
+                  />
+                ) : null
+              ) : item.src === null || failedImageSrc === item.src ? (
+                <ExpandedMediaFailure>
+                  <p>
+                    {openOriginalLink
+                      ? "This image could not be loaded."
+                      : "Image unavailable. The file may have been moved or deleted."}
+                  </p>
+                  {openOriginalLink}
+                </ExpandedMediaFailure>
+              ) : (
+                <ZoomableImage
+                  ref={zoomableImageRef}
+                  key={`${index}:${item.src}`}
+                  src={item.src}
+                  name={item.name}
+                  mimeType={itemMimeType(item)}
+                  onError={() => setFailedImageSrc(item.src)}
+                  onNaturalSize={(size) => {
+                    if (item.src !== null) setNaturalSize({ src: item.src, ...size });
+                  }}
+                  onViewChange={setView}
+                />
+              )}
+            </div>
+          </MediaActions>
+          {imageCount > 1 ? (
+            <div
+              role="listbox"
+              aria-label="Media in this message"
+              aria-orientation="horizontal"
+              className="flex w-0 min-w-full justify-center-safe gap-2 overflow-x-auto p-0.5"
+            >
+              {preview.images.map((thumbnail, thumbnailIndex) => (
+                <button
+                  // Items have no ids and the same media can repeat, so the position is the identity.
+                  // oxlint-disable-next-line react/no-array-index-key
+                  key={thumbnailIndex}
+                  type="button"
+                  role="option"
+                  aria-selected={thumbnailIndex === index}
+                  aria-label={`${thumbnail.name} (${thumbnailIndex + 1}/${imageCount})`}
+                  tabIndex={thumbnailIndex === index ? 0 : -1}
+                  className="group flex h-9 w-14 shrink-0 cursor-pointer outline-none"
+                  onClick={() => selectImage(thumbnailIndex)}
+                >
+                  <span
+                    className={cn(
+                      "flex size-full items-center justify-center overflow-hidden rounded-row bg-muted group-focus-visible:ring-2 group-focus-visible:ring-inset group-focus-visible:ring-ring",
+                      thumbnailIndex === index
+                        ? "ring-2 ring-ring"
+                        : "opacity-70 ring-1 ring-border group-hover:opacity-100",
+                    )}
+                  >
+                    <MediaThumbnail item={thumbnail} />
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
       </DialogPopup>
     </Dialog>
   );

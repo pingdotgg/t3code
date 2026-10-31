@@ -5,11 +5,12 @@ import { useAtomValue } from "@effect/atom-react";
 import { shortcutLabelForCommand } from "../keybindings";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { PlusIcon, ScaleIcon } from "lucide-react";
+import { ChevronDownIcon, PlusIcon, ScaleIcon } from "lucide-react";
 import { memo } from "react";
 
 import { ADD_TO_MACHINE_LABEL_CLASS, type EnvironmentOption } from "./BranchToolbar.logic";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { cn } from "../lib/utils";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
   Select,
@@ -28,6 +29,8 @@ interface BranchToolbarEnvironmentSelectorProps {
   availableEnvironments: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
   onAddToMachine?: (() => void) | undefined;
+  /** The machine is offline or reconnecting: the chip turns amber; the tray notice explains. */
+  unavailable?: boolean;
 }
 
 // Action values cannot collide with server-minted environment IDs.
@@ -43,7 +46,9 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   availableEnvironments,
   onEnvironmentChange,
   onAddToMachine,
+  unavailable = false,
 }: BranchToolbarEnvironmentSelectorProps) {
+  const unavailableTone = unavailable;
   const composerFloatingLayerProps = useComposerMenuProps();
   const shortcutLabel = shortcutLabelForCommand(
     useAtomValue(primaryServerKeybindingsAtom),
@@ -63,12 +68,13 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
     ...(onAddToMachine ? [{ value: ADD_MACHINE_VALUE, label: "Add to another machine" }] : []),
   ];
 
-  // Match the xs control's height and padding: the composer strip has no min-height,
-  // and its glass seam assumes that height even when this label is the only control.
   if (envLocked || (onEnvironmentChange === undefined && onAddToMachine === undefined)) {
     const lockedRow = (
       <span
-        className="inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 border border-transparent px-1.75 font-normal text-dim-foreground text-xs sm:h-6"
+        className={cn(
+          "inline-flex h-7 min-w-0 max-w-full items-center gap-1.25 border border-transparent px-2 font-medium text-muted-foreground text-xs sm:h-5.5",
+          unavailableTone && "text-warning-foreground",
+        )}
         data-composer-context-control
       >
         <EnvironmentMachineIcon
@@ -113,17 +119,28 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
             />
           }
         >
-          {autoEnvironmentLabel ? (
-            <ScaleIcon className="size-3 shrink-0" aria-hidden="true" />
-          ) : (
-            <EnvironmentMachineIcon
-              kind={activeEnvironment?.machine ?? "server"}
-              className="size-3 shrink-0"
-            />
-          )}
-          <ComposerContextLabel>
-            <SelectValue />
-          </ComposerContextLabel>
+          {/* The trigger owns its color, so the offline tone lives on its content. */}
+          <span className={cn("contents", unavailableTone && "text-warning-foreground")}>
+            {autoEnvironmentLabel ? (
+              <ScaleIcon className="size-3 shrink-0" aria-hidden="true" />
+            ) : (
+              <EnvironmentMachineIcon
+                kind={activeEnvironment?.machine ?? "server"}
+                className="size-3 shrink-0"
+              />
+            )}
+            <ComposerContextLabel>
+              <SelectValue />
+            </ComposerContextLabel>
+          </span>
+          <ChevronDownIcon
+            aria-hidden
+            data-composer-chevron
+            className={cn(
+              "size-2.5 shrink-0 group-data-[compact]/composer-context:hidden",
+              unavailableTone ? "text-warning-foreground" : "text-muted-foreground",
+            )}
+          />
         </TooltipTrigger>
         <TooltipPopup>
           {autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}

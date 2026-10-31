@@ -214,6 +214,32 @@ export function toolOutputIndicatesFailure(text: string): boolean {
   );
 }
 
+const TEST_COMMAND_PATTERN =
+  /(?:^|[\s;&|(/])(?:vitest|jest|pytest|mocha|ava|rspec|phpunit|ctest|playwright\s+test|(?:bun|deno|go|cargo|dotnet|mix|swift|npm|pnpm|yarn|vp)\s+(?:run\s+)?test(?::\S+)?|(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?t(?:est)?)(?=$|[\s;&|)])/i;
+
+/** Whether a shell command runs a test suite, so a failure reads as failing tests. */
+export function commandRunsTests(command: string): boolean {
+  return TEST_COMMAND_PATTERN.test(command);
+}
+
+/**
+ * Failed test count from common runner summaries (vitest, jest, bun, pytest,
+ * cargo, go). Undefined when the output names no count.
+ */
+export function countFailedTests(output: string): number | undefined {
+  const summary =
+    /^\s*Tests?:?\s+(\d+)\s+failed\b/im.exec(output) ??
+    /^\s*(\d+)\s+fail\b/m.exec(output) ??
+    /\btest result: FAILED\.[^\n]*?\b(\d+) failed\b/i.exec(output) ??
+    /^=+[^\n]*?\b(\d+) failed\b[^\n]*=+\s*$/m.exec(output);
+  if (summary) {
+    const count = Number(summary[1]);
+    return Number.isSafeInteger(count) && count > 0 ? count : undefined;
+  }
+  const goFailures = output.match(/^\s*--- FAIL: /gm)?.length ?? 0;
+  return goFailures > 0 ? goFailures : undefined;
+}
+
 export interface ToolOutputImage {
   readonly mimeType: string;
   readonly data?: string;

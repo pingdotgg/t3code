@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  commandRunsTests,
   compactDynamicToolOutput,
+  countFailedTests,
   MAX_TOOL_OUTPUT_IMAGES,
   toolOutputImages,
   toolOutputIndicatesFailure,
@@ -169,6 +171,57 @@ describe("toolOutputIndicatesFailure", () => {
     ]) {
       expect(toolOutputIndicatesFailure(text)).toBe(false);
     }
+  });
+});
+
+describe("commandRunsTests", () => {
+  it("recognizes common test runners and package scripts", () => {
+    for (const command of [
+      "pnpm vitest run ChatComposer",
+      "bun test",
+      "npm test",
+      "yarn run test:unit",
+      "vp test run src/a.test.ts",
+      "cd apps/web && npx jest --ci",
+      "go test ./...",
+      "cargo test -p core",
+      "uv run pytest -q",
+    ]) {
+      expect(commandRunsTests(command), command).toBe(true);
+    }
+  });
+
+  it("ignores commands that only mention tests", () => {
+    for (const command of [
+      "bun typecheck",
+      "cat test.ts",
+      "git log --grep test",
+      "ls tests",
+      "rg available src",
+      "cat avatar.tsx",
+      "cat vitest.config.ts",
+      "ls jest.config.js",
+    ]) {
+      expect(commandRunsTests(command), command).toBe(false);
+    }
+  });
+});
+
+describe("countFailedTests", () => {
+  it("reads runner summaries", () => {
+    expect(
+      countFailedTests(" Test Files  1 failed (1)\n      Tests  2 failed | 12 passed (14)"),
+    ).toBe(2);
+    expect(countFailedTests("Tests:       3 failed, 9 passed, 12 total")).toBe(3);
+    expect(countFailedTests(" 12 pass\n 4 fail\n 16 expect() calls")).toBe(4);
+    expect(countFailedTests("===== 5 failed, 10 passed in 0.42s =====")).toBe(5);
+    expect(countFailedTests("test result: FAILED. 8 passed; 1 failed; 0 ignored")).toBe(1);
+    expect(countFailedTests("--- FAIL: TestA (0.00s)\n--- FAIL: TestB (0.00s)\nFAIL")).toBe(2);
+  });
+
+  it("returns undefined when no count is reported", () => {
+    expect(countFailedTests("error: something broke")).toBeUndefined();
+    expect(countFailedTests("Tests  14 passed (14)")).toBeUndefined();
   });
 });
 

@@ -206,14 +206,27 @@ function CommandPanel({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-function CommandGroup({ className, ...props }: React.ComponentProps<typeof AutocompleteGroup>) {
-  return <AutocompleteGroup className={className} data-slot="command-group" {...props} />;
+// The composer's floating menus stack their groups flush; the header carries the spacing.
+function CommandGroup({
+  className,
+  spacing = "default",
+  ...props
+}: React.ComponentProps<typeof AutocompleteGroup> & { spacing?: "default" | "composer" }) {
+  return (
+    <AutocompleteGroup
+      className={cn(spacing === "composer" && "[[role=group]+&]:mt-0", className)}
+      data-slot="command-group"
+      {...props}
+    />
+  );
 }
 
+// The composer's floating menus pair their 32px rows with a tighter, smaller header.
 function CommandGroupLabel({
   className,
+  spacing = "default",
   ...props
-}: React.ComponentProps<typeof AutocompleteGroupLabel>) {
+}: React.ComponentProps<typeof AutocompleteGroupLabel> & { spacing?: "default" | "composer" }) {
   return (
     <AutocompleteGroupLabel
       className={cn("px-2.5 pt-2 pb-1 text-caption", className)}
@@ -242,7 +255,7 @@ function CommandItem({
       automaticHighlight={false}
       className={cn(
         "min-h-8.5 px-2.5 py-1.5 text-control sm:min-h-8.5",
-        spacing === "composer" && "px-2.5 gap-2.5",
+        spacing === "composer" && "min-h-8 gap-2.5 px-2.5 py-0 sm:min-h-8",
         active === undefined
           ? "hover:surface-selected data-highlighted:surface-selected data-highlighted:text-strong-foreground data-selected:surface-selected data-selected:text-strong-foreground"
           : "cursor-pointer",
