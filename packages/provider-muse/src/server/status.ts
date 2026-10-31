@@ -7,7 +7,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as ChildProcess from "effect/process/ChildProcess";
 
-import { createMuseSdkHost, makeMuseEnvironment } from "./sdk.ts";
+import { createMuseSdkHost, makeMuseEnvironment, museLaunch } from "./sdk.ts";
 import { parseMuseVersion } from "./maintenance.ts";
 import { discoverMuseModels, museModelCapabilities } from "./modelCatalog.ts";
 import {
@@ -70,7 +70,10 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
       probe,
     });
   const versionResult = yield* Effect.gen(function* () {
-    const spawnCommand = yield* resolveSpawnCommand(settings.binaryPath, ["--version"], {
+    const launch = /\.ps1$/i.test(settings.binaryPath)
+      ? yield* museLaunch(settings.binaryPath, museEnvironment)
+      : { command: settings.binaryPath, args: [] };
+    const spawnCommand = yield* resolveSpawnCommand(launch.command, [...launch.args, "--version"], {
       env: museEnvironment,
     });
     return yield* spawnAndCollect(
