@@ -23,6 +23,7 @@ export type SettingsPath =
   | "/settings/appearance"
   | "/settings/chat"
   | "/settings/diffs"
+  | "/settings/layout"
   | "/settings/keybindings"
   | "/settings/snap-shot"
   | "/settings/providers"
@@ -93,6 +94,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/appearance": "Appearance",
   "/settings/chat": "Chat",
   "/settings/diffs": "Diffs & pull requests",
+  "/settings/layout": "Layout",
   "/settings/keybindings": "Keybindings",
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
@@ -122,6 +124,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     paths: [
       "/settings/general",
       "/settings/appearance",
+      "/settings/layout",
       "/settings/chat",
       "/settings/voice",
       "/settings/diffs",
@@ -297,6 +300,52 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [
       "new thread default runtime mode supervised approvals auto accept edits full access",
     ],
+  },
+  {
+    id: "layout-template",
+    title: "Your layout",
+    to: "/settings/layout",
+    searchTerms: [
+      "layout panes split columns template chat terminal diff files browser drag resize",
+    ],
+  },
+  {
+    id: "layout-terminal-placement",
+    title: "Terminal",
+    to: "/settings/layout",
+    searchTerms: ["terminal placement where cmd+j opens it below the chat new tab new column"],
+  },
+  {
+    id: "layout-side-pane-placement",
+    title: "Side pane",
+    to: "/settings/layout",
+    searchTerms: ["side pane placement diff files browser pull request beside the chat new column"],
+  },
+  {
+    id: "layout-side-pane-opens-on",
+    title: "Side pane opens on",
+    to: "/settings/layout",
+    searchTerms: ["side pane first tab last used diff files browser pull request"],
+  },
+  {
+    id: "layout-new-tab-position",
+    title: "New tabs",
+    to: "/settings/layout",
+    searchTerms: ["where new tabs open after the current tab at the end cmd+t"],
+  },
+  {
+    id: "layout-when-no-room",
+    title: "When it doesn't fit",
+    to: "/settings/layout",
+    searchTerms: ["no room shrink then scroll always shrink always scroll strip columns width"],
+  },
+  {
+    id: "layout-three-finger-swipe",
+    title: "Three-finger swipe",
+    to: "/settings/layout",
+    searchTerms: ["trackpad gesture swipe between pages column workspace"],
+    desktopOnly: true,
+    macOnly: true,
   },
   {
     id: "color-scheme",
@@ -1308,6 +1357,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/appearance": null,
   "/settings/chat": null,
   "/settings/diffs": null,
+  "/settings/layout": null,
   "/settings/snap-shot": null,
   "/settings/keybindings": null,
   "/settings/providers": null,

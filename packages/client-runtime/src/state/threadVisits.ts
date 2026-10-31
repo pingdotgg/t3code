@@ -32,6 +32,8 @@ interface VisitedShell {
 }
 
 export interface ThreadVisitTrackerOptions {
+  /** Persist dispatched watermarks when a layout tab unmounts its visible thread. */
+  readonly dispatchedVisits?: Map<string, string>;
   readonly threadShellAtom: (ref: ScopedThreadRef) => Atom.Atom<VisitedShell | null>;
   readonly visit: AtomCommand<
     { readonly environmentId: EnvironmentId; readonly input: VisitThreadInput },
@@ -63,7 +65,7 @@ export function createThreadVisitTracker(options: ThreadVisitTrackerOptions) {
       // Dedupe per watermark: the shell updates again before the command's echo
       // lands. It also keeps a mark-unread on the open thread sticky, since the
       // rewind leaves updatedAt untouched.
-      let lastDispatchedUpdatedAt: string | null = null;
+      let lastDispatchedUpdatedAt: string | null = options.dispatchedVisits?.get(key) ?? null;
       let lastDispatchAt = 0;
       let timer: ReturnType<typeof setTimeout> | undefined;
       const clearTimer = () => {
@@ -76,6 +78,8 @@ export function createThreadVisitTracker(options: ThreadVisitTrackerOptions) {
       const dispatch = (shell: VisitedShell, visitedAt: string, opened: boolean) => {
         clearTimer();
         lastDispatchedUpdatedAt = visitedAt;
+        options.dispatchedVisits?.clear();
+        options.dispatchedVisits?.set(key, visitedAt);
         lastDispatchAt = Date.now();
         void runAtomCommand(
           registry,
@@ -110,8 +114,10 @@ export function createThreadVisitTracker(options: ThreadVisitTrackerOptions) {
         // the shell arrives, so it still counts toward search ranking.
         if (openPending) {
           openPending = false;
-          dispatch(shell, visitedAt, true);
-          return;
+          if (lastDispatchedUpdatedAt !== visitedAt) {
+            dispatch(shell, visitedAt, true);
+            return;
+          }
         }
         const lastVisitedAtMs = shell.lastVisitedAt ? Date.parse(shell.lastVisitedAt) : NaN;
         if (!Number.isNaN(lastVisitedAtMs) && lastVisitedAtMs >= updatedAtMs) return;

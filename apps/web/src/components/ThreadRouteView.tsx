@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
 import { visibilityParentKey } from "@t3tools/client-runtime/state/threads";
 import * as Option from "effect/Option";
@@ -8,8 +8,8 @@ import { useEffect, useState } from "react";
 
 import ChatView from "./ChatView";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
-import { SidebarInset } from "./ui/sidebar";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { closeLayoutThread } from "../layout/layoutActions";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import {
   useEnvironmentThreadRefs,
@@ -25,17 +25,16 @@ import {
   type ThreadRouteTarget,
 } from "../threadRoutes";
 
-/**
- * Unkeyed so navigating between server threads reuses one ChatView. Rendered by the `_chat`
- * layout, since an element only survives a route swap when the same parent renders it. Draft
- * promotion runs in the draft store; this only follows the redirect it leaves behind.
- * `background` keeps the thread mounted, inert and in place under Settings or Usage.
- */
+/** Each layout tab retains ChatView across route swaps; only the focused tab owns the URL. */
 export function ThreadRouteView({
   target,
+  tabId = null,
+  focused = true,
   background = false,
 }: {
   target: ThreadRouteTarget;
+  tabId?: string | null;
+  focused?: boolean;
   background?: boolean;
 }) {
   const navigate = useNavigate();
@@ -51,6 +50,9 @@ export function ThreadRouteView({
   const shellStatus = useEnvironmentShellStatus(serverThreadRef?.environmentId ?? null);
   const environmentThreadRefs = useEnvironmentThreadRefs(serverThreadRef?.environmentId ?? null);
   const bootstrapComplete = isThreadRouteSnapshotAuthoritative(shellStatus);
+  // The cached snapshot can predate a thread made just before a reload; only
+  // the server's own snapshot can say a thread is gone.
+  const shellLive = shellStatus === "live";
   const draftThread = useComposerDraftStore((store) =>
     serverThreadRef ? store.getDraftThreadByRef(serverThreadRef) : null,
   );
@@ -61,11 +63,14 @@ export function ThreadRouteView({
   // The ChatView that carried a draft keeps its key through the redirect to its thread, and only
   // until the route leaves that thread, so later visits reuse the shared unkeyed ChatView.
   const [handoffKey, setHandoffKey] = useState<{ threadKey: string; key: string } | null>(null);
+  const draftThreadRef = draftSession
+    ? scopeThreadRef(draftSession.environmentId, draftSession.threadId)
+    : draftRedirect;
   const nextHandoffKey =
-    draftId !== null && draftSession === null && draftRedirect
-      ? handoffKey?.key === draftId
+    draftId !== null && draftThreadRef
+      ? handoffKey?.key === draftId && handoffKey.threadKey === scopedThreadKey(draftThreadRef)
         ? handoffKey
-        : { threadKey: scopedThreadKey(draftRedirect), key: draftId }
+        : { threadKey: scopedThreadKey(draftThreadRef), key: draftId }
       : serverThreadRef && handoffKey?.threadKey === scopedThreadKey(serverThreadRef)
         ? handoffKey
         : serverThreadRef && serverThreadDraftId
@@ -121,17 +126,21 @@ export function ThreadRouteView({
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears pending file drops and navigates the router home once a server thread is confirmed missing
   useEffect(() => {
-    if (target.kind !== "server" || !bootstrapComplete) {
+    if (target.kind !== "server" || !shellLive) {
       return;
     }
     if (renderState === "missing") {
       const { clearPendingFileDropsForThread } = useSidebarPendingFileDropStore.getState();
       clearPendingFileDropsForThread(target.threadRef);
-      if (environmentHasAnyThreads && !background) {
+      if (tabId !== null) {
+        closeLayoutThread(target.threadRef);
+        return;
+      }
+      if (!background && environmentHasAnyThreads) {
         void navigate({ to: "/", replace: true });
       }
     }
-  }, [background, bootstrapComplete, environmentHasAnyThreads, navigate, renderState, target]);
+  }, [background, environmentHasAnyThreads, navigate, renderState, shellLive, tabId, target]);
 
   let view: React.ReactNode = null;
   let redirect: React.ReactNode = null;
@@ -204,12 +213,9 @@ export function ThreadRouteView({
   }
 
   return (
-    <SidebarInset
-      className="h-svh min-h-0 overflow-hidden overscroll-y-none md:h-dvh"
-      inert={background}
-    >
-      <BackgroundThreadContext value={background}>{view}</BackgroundThreadContext>
-      {background ? null : redirect}
-    </SidebarInset>
+    <BackgroundThreadContext value={background}>
+      {view}
+      {background || !focused ? null : redirect}
+    </BackgroundThreadContext>
   );
 }

@@ -52,10 +52,10 @@ function ownsShortcut(id: symbol) {
     return phase !== "idle" && phase !== "error";
   });
   if (busy) return busy[0] === id;
-  const focused = entries.find(
-    ([, read]) =>
-      read().ownsFocus?.() || read().targetRef?.current?.contains(document.activeElement),
-  );
+  // A focused text field wins over the pane it sits in (a comment editor in a chat).
+  const focused =
+    entries.find(([, read]) => read().targetRef?.current?.contains(document.activeElement)) ??
+    entries.find(([, read]) => read().ownsFocus?.());
   if (focused) return focused[0] === id;
   return entries.find(([, read]) => !read().targetRef && !read().ownsFocus)?.[0] === id;
 }

@@ -37,6 +37,8 @@ export interface ShortcutMatchContext {
   previewOpen: boolean;
   isWeb: boolean;
   isDesktop: boolean;
+  /** macOS, where mod is Cmd. Optional: derived from the platform unless given. */
+  isMac?: boolean;
   editableFocus?: boolean;
   [key: string]: boolean;
 }
@@ -67,6 +69,7 @@ function resolveContext(options: ShortcutMatchOptions | undefined): ShortcutMatc
     previewOpen: false,
     isWeb: !isElectron,
     isDesktop: isElectron,
+    isMac: isMacPlatform(resolvePlatform(options)),
     editableFocus: false,
     ...options?.context,
   };
@@ -463,4 +466,38 @@ export function terminalNavigationShortcutData(
   }
 
   return null;
+}
+
+const ELECTRON_KEY_NAMES: Record<string, string> = {
+  arrowleft: "Left",
+  arrowright: "Right",
+  arrowup: "Up",
+  arrowdown: "Down",
+  escape: "Escape",
+  enter: "Enter",
+  " ": "Space",
+  home: "Home",
+  end: "End",
+  tab: "Tab",
+};
+
+/**
+ * A command's key for a context menu row: the label the web menu shows and
+ * the accelerator the desktop menu shows beside the item. Empty when the
+ * command has no key.
+ */
+export function contextMenuShortcutFields(
+  keybindings: ResolvedKeybindingsConfig,
+  command: KeybindingCommand,
+): { shortcut?: string; accelerator?: string } {
+  const shortcut = findEffectiveShortcutForCommand(keybindings, command);
+  if (!shortcut) return {};
+  const parts: string[] = [];
+  if (shortcut.modKey) parts.push("CmdOrCtrl");
+  if (shortcut.metaKey) parts.push("Super");
+  if (shortcut.ctrlKey) parts.push("Ctrl");
+  if (shortcut.altKey) parts.push("Alt");
+  if (shortcut.shiftKey) parts.push("Shift");
+  parts.push(ELECTRON_KEY_NAMES[shortcut.key] ?? shortcut.key.toUpperCase());
+  return { shortcut: formatShortcutLabel(shortcut), accelerator: parts.join("+") };
 }

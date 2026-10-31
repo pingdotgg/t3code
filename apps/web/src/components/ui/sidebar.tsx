@@ -602,15 +602,27 @@ function SidebarRail({
   );
 }
 
-function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
+/**
+ * `pane` draws the single inset pane. `split` keeps the same insets but draws
+ * nothing, for a layout whose panes each draw their own pane with gaps.
+ */
+function SidebarInset({
+  className,
+  variant = "pane",
+  embedded = false,
+  ...props
+}: React.ComponentProps<"main"> & { variant?: "pane" | "split"; embedded?: boolean }) {
   return (
     <main
       className={cn(
-        "relative flex min-w-0 w-full flex-1 flex-col bg-background surface-grain",
+        "relative flex min-w-0 w-full flex-1 flex-col",
+        variant === "pane" && "bg-background surface-grain",
+        variant === "pane" && embedded && "md:rounded-pane",
         // The inset pane (pen mSaSF) on the window chrome: 12px from the window
         // and from the sidebar's content, centered on the chrome row at the top.
         // It stretches in the flex wrapper, so the route's own height yields.
-        "md:peer-data-[variant=inset]:h-auto md:peer-data-[variant=inset]:overflow-hidden md:peer-data-[variant=inset]:rounded-pane md:peer-data-[variant=inset]:mt-(--workspace-pane-inset-top) md:peer-data-[variant=inset]:me-(--workspace-pane-inset) md:peer-data-[variant=inset]:mb-(--workspace-pane-inset) md:peer-data-[variant=inset]:ms-(--workspace-sidebar-edge-inset) md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ms-(--workspace-pane-inset)",
+        "md:peer-data-[variant=inset]:h-auto md:peer-data-[variant=inset]:overflow-hidden md:peer-data-[variant=inset]:mt-(--workspace-pane-inset-top) md:peer-data-[variant=inset]:me-(--workspace-pane-inset) md:peer-data-[variant=inset]:mb-(--workspace-pane-inset) md:peer-data-[variant=inset]:ms-(--workspace-sidebar-edge-inset) md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ms-(--workspace-pane-inset)",
+        variant === "pane" && "md:peer-data-[variant=inset]:rounded-pane",
         className,
       )}
       data-slot="sidebar-inset"

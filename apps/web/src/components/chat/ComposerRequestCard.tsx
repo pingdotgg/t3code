@@ -3,6 +3,7 @@ import { useRender } from "@base-ui/react/use-render";
 import { use, useEffect, useEffectEvent, type ComponentProps, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
 import { Kbd } from "../ui/kbd";
 import { BackgroundThreadContext } from "./backgroundThread";
 
@@ -128,11 +129,13 @@ export const ComposerRequestCard = {
 };
 
 /**
- * Enter runs a card's primary action while nothing else has focus. Focused
- * controls keep Enter for themselves, and the composer routes its own Enter.
+ * Enter runs a card's primary action while nothing else has focus, in the
+ * layout-focused pane only. Focused controls keep Enter for themselves, and
+ * the composer routes its own Enter.
  */
 export function useRequestCardEnterShortcut(action: (() => void) | null) {
   const backgroundThread = use(BackgroundThreadContext);
+  const paneFocusedRef = useLayoutPaneFocusedRef();
   const runAction = useEffectEvent((event: globalThis.KeyboardEvent) => {
     if (!action) return;
     event.preventDefault();
@@ -145,10 +148,11 @@ export function useRequestCardEnterShortcut(action: (() => void) | null) {
     const handler = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "Enter" || event.defaultPrevented || event.isComposing) return;
       if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      if (!paneFocusedRef.current) return;
       if (event.target !== document.body && event.target !== document.documentElement) return;
       runAction(event);
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [enabled]);
+  }, [enabled, paneFocusedRef]);
 }

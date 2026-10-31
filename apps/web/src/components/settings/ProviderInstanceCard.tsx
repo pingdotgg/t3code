@@ -17,7 +17,7 @@ import {
 import { Lock as LockGlyph, LockOpen } from "lucide";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
-import { Fragment, useState, type ReactElement, type ReactNode } from "react";
+import { Fragment, useId, useState, type ReactElement, type ReactNode } from "react";
 import {
   isProviderDriverKind,
   resolveProviderInstanceEnabled,
@@ -286,7 +286,8 @@ function ProviderEnvironmentFieldRow(props: {
   readonly managedReason?: string | undefined;
   readonly secretSources: ReadonlyArray<SecretSource>;
 }) {
-  const inputId = `${props.idPrefix}-environment-${props.field.name}`;
+  const id = useId();
+  const inputId = `${props.idPrefix}-${id}-environment-${props.field.name}`;
   const value = props.variable?.valueRedacted ? "" : (props.variable?.value ?? "");
 
   return (
