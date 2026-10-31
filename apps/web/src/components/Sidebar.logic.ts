@@ -665,6 +665,26 @@ export function buildBulkUnpinContextMenuItem(input: {
   return { id: "unpin", label: `Unpin (${input.pinnedCount})` };
 }
 
+export function buildBulkArchiveContextMenuItem(input: {
+  selectedCount: number;
+  archivableCount: number;
+}): ContextMenuItem<"archive"> | null {
+  if (input.selectedCount === 0) return null;
+  if (input.archivableCount === 0) {
+    return {
+      id: "archive",
+      label: `Archive (${input.selectedCount})`,
+      separatorBefore: true,
+      disabled: true,
+    };
+  }
+  return {
+    id: "archive",
+    label: `Archive (${input.archivableCount})`,
+    separatorBefore: true,
+  };
+}
+
 export interface ThreadStatusPill {
   label:
     | "Working"

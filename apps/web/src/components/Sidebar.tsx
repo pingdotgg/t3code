@@ -174,6 +174,8 @@ import {
   filterSidebarV2VisibleThreads,
   groupSidebarThreadsByProject,
   sidebarFolderExpansionKeys,
+  archiveSelectedThreadEntries,
+  buildBulkArchiveContextMenuItem,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
   deleteSelectedThreadEntries,
@@ -2215,6 +2217,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       const settlingThreads = selectedThreads.filter(
         (thread) => thread.settledOverride !== "settled",
       );
+      const archivableThreads = selectedThreads.filter(
+        (thread) =>
+          serverConfigs.has(thread.environmentId) && threadRuntimeCanArchive(thread.runtime),
+      );
+      const archiveMenuItem = buildBulkArchiveContextMenuItem({
+        selectedCount: selectedThreads.length,
+        archivableCount: archivableThreads.length,
+      });
       const canSnoozeSelection = selectedThreads.every(
         (thread) =>
           serverConfigs.has(thread.environmentId) &&
@@ -2288,6 +2298,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 ]
               : []),
             { id: "mark-unread", label: `Mark unread (${count})` },
+            ...(archiveMenuItem
+              ? [
+                  {
+                    ...archiveMenuItem,
+                    disabled: archiveMenuItem.disabled || !canOperateThreads(archivableThreads),
+                  },
+                ]
+              : []),
             {
               id: "delete",
               label: `Delete (${count})`,
@@ -2304,15 +2322,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           ? pinnedSelectedThreads
           : clicked.value === "regenerate-title"
             ? regeneratableTitleThreads
-            : clicked.value === "settle"
-              ? settlingThreads.flatMap((thread) => {
-                  const current = threadByKeyRef.current.get(
-                    scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-                  );
-                  return current && current.settledOverride !== "settled" ? [current] : [];
-                })
-              : selectedThreads;
+            : clicked.value === "archive"
+              ? archivableThreads
+              : clicked.value === "settle"
+                ? settlingThreads.flatMap((thread) => {
+                    const current = threadByKeyRef.current.get(
+                      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+                    );
+                    return current && current.settledOverride !== "settled" ? [current] : [];
+                  })
+                : selectedThreads;
       if (clicked.value === "settle" && actionTargets.length === 0) return;
+      if (clicked.value === "archive" && actionTargets.length === 0) return;
       if (clicked.value !== "mark-unread" && !checkThreadOperations(actionTargets)) return;
       if (clicked.value?.startsWith("snooze:")) {
         const preset =
@@ -2402,6 +2423,39 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           if (thread) markThreadUnread(scopeThreadRef(thread.environmentId, thread.id));
         }
         clearSelection();
+        return;
+      }
+      if (clicked.value === "archive") {
+        const archiveCount = archivableThreads.length;
+        if (confirmThreadArchive) {
+          const confirmed = await settlePromise(() =>
+            api.dialogs.confirm(`Archive ${archiveCount} thread${archiveCount === 1 ? "" : "s"}?`),
+          );
+          if (confirmed._tag === "Failure" || !confirmed.value) return;
+        }
+        const { mutationFailure, followupFailures } = await archiveSelectedThreadEntries({
+          entries: archivableThreads.map((thread) => ({
+            threadKey: scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+            thread,
+          })),
+          archive: ({ thread }, onArchived) =>
+            archiveThread(scopeThreadRef(thread.environmentId, thread.id), { onArchived }),
+        });
+        clearSelection();
+        const failure =
+          mutationFailure && !isAtomCommandInterrupted(mutationFailure)
+            ? mutationFailure
+            : (followupFailures[0] ?? null);
+        if (failure !== null) {
+          const error = squashAtomCommandFailure(failure);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to archive threads",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
         return;
       }
       if (clicked.value !== "delete") return;

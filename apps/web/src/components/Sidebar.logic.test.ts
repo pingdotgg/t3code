@@ -7,6 +7,7 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
   archiveSelectedThreadEntries,
+  buildBulkArchiveContextMenuItem,
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
@@ -171,6 +172,29 @@ describe("archiveSelectedThreadEntries", () => {
       mutationFailure: null,
       followupFailures: [failure],
     });
+  });
+});
+
+describe("buildBulkArchiveContextMenuItem", () => {
+  it("labels the item with the archivable count and separates it from the actions above", () => {
+    expect(buildBulkArchiveContextMenuItem({ selectedCount: 5, archivableCount: 3 })).toEqual({
+      id: "archive",
+      label: "Archive (3)",
+      separatorBefore: true,
+    });
+  });
+
+  it("stays disabled when every selected thread is running", () => {
+    expect(buildBulkArchiveContextMenuItem({ selectedCount: 2, archivableCount: 0 })).toEqual({
+      id: "archive",
+      label: "Archive (2)",
+      separatorBefore: true,
+      disabled: true,
+    });
+  });
+
+  it("is omitted without a selection", () => {
+    expect(buildBulkArchiveContextMenuItem({ selectedCount: 0, archivableCount: 0 })).toBeNull();
   });
 });
 
