@@ -218,6 +218,55 @@ function setup({ scheduledTasks = [] as ReadonlyArray<{ id: string; title: strin
 const TASK_ID = ScheduledTaskId.make("task-1");
 const AUTOMATION_PROMPT = "Triage the inbox\n\nLabel every new issue and close duplicates.";
 
+it("keeps collapsed approval shortcuts and disabled cancel actions inert", async () => {
+  const requestId = RuntimeRequestId.make("guarded-approval");
+  const onRespond = vi.fn(async () => {});
+  const ui = (disabled = false, isResponding = false) => (
+    <ComposerApprovalPanel
+      approval={{
+        requestId,
+        requestKind: "file-change",
+        createdAt: "2026-11-01T12:00:00.000Z",
+        responseCapability: "live",
+        files: [{ path: "src/index.ts", additions: 1 }],
+      }}
+      count={1}
+      disabled={disabled}
+      isResponding={isResponding}
+      onRespond={onRespond}
+    />
+  );
+  await using screen = await renderElement(ui());
+  const header = screen.container.querySelector<HTMLButtonElement>(
+    '[data-chat-composer-request-card="approval"] > button',
+  )!;
+  await click(header);
+  await expect.element(screen.getByText("src/index.ts")).not.toBeInTheDocument();
+  for (const key of ["Enter", "Escape"]) {
+    const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+    document.body.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+  }
+  expect(onRespond).not.toHaveBeenCalled();
+  await click(header);
+  await expect.element(screen.getByText("src/index.ts")).toBeVisible();
+  document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  expect(onRespond).toHaveBeenLastCalledWith(requestId, "accept");
+  onRespond.mockClear();
+  for (const [disabled, isResponding] of [
+    [true, false],
+    [false, true],
+  ]) {
+    await screen.rerender(ui(disabled, isResponding));
+    const cancel = screen.getByRole("button", { name: "Cancel approval", exact: true }).element();
+    cancel.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    for (const key of ["Enter", " "]) {
+      cancel.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    }
+    expect(onRespond).not.toHaveBeenCalled();
+  }
+});
+
 describe("MessagesTimeline work rows", () => {
   it("loads a streamed approval patch when review opens and hides it again", async () => {
     setup();
@@ -1456,6 +1505,17 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
     />
   );
   await using screen = await renderElement(ui());
+  for (const target of [
+    screen.getByRole("link", { name: "Approval test link" }),
+    screen.getByRole("link", { name: "Approval role link" }),
+    screen.getByText("Approval summary"),
+    screen.getByLabelText("Approval editable"),
+  ]) {
+    const key = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    target.element().dispatchEvent(key);
+    expect(key.defaultPrevented).toBe(false);
+  }
+  expect(onRespondToApproval).not.toHaveBeenCalled();
   await expect.element(screen.getByRole("group", { name: "Command approval" })).toBeVisible();
   await expect
     .element(screen.getByRole("group", { name: "App permission approval" }))
