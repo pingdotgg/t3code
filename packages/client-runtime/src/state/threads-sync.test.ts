@@ -15,6 +15,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -114,6 +115,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   readonly httpSnapshot?: ThreadSnapshotLoadResult;
   /** Verdicts consumed in order; the last verdict repeats for later probes. */
   readonly httpSnapshots?: ReadonlyArray<ThreadSnapshotLoadResult>;
+  /** Virtual clock time each load consumes, simulating probe request time. */
+  readonly httpSnapshotCostMillis?: number;
   /** The test sends the completion marker itself instead of the fake server sending it first. */
   readonly completionMarker?: boolean;
   readonly resumeCache?: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]>;
@@ -180,18 +183,27 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   );
   const snapshotLoader = ThreadSnapshotLoader.ThreadSnapshotLoader.of({
     load: (_prepared, threadId) =>
-      Ref.modify(loaderCalls, (count) => {
-        const call = count + 1;
-        const verdict: ThreadSnapshotLoadResult =
-          threadId === THREAD_ID
-            ? options?.httpSnapshots !== undefined
-              ? (options.httpSnapshots[Math.min(call - 1, options.httpSnapshots.length - 1)] ?? {
-                  _tag: "unavailable",
-                })
-              : (options?.httpSnapshot ?? { _tag: "unavailable" })
-            : { _tag: "unavailable" };
-        return [verdict, call];
-      }),
+      (options?.httpSnapshotCostMillis !== undefined
+        ? Effect.sleep(Duration.millis(options.httpSnapshotCostMillis))
+        : Effect.void
+      ).pipe(
+        Effect.andThen(
+          Ref.modify(loaderCalls, (count) => {
+            const call = count + 1;
+            const verdict: ThreadSnapshotLoadResult =
+              threadId === THREAD_ID
+                ? options?.httpSnapshots !== undefined
+                  ? (options.httpSnapshots[
+                      Math.min(call - 1, options.httpSnapshots.length - 1)
+                    ] ?? {
+                      _tag: "unavailable",
+                    })
+                  : (options?.httpSnapshot ?? { _tag: "unavailable" })
+                : { _tag: "unavailable" };
+            return [verdict, call];
+          }),
+        ),
+      ),
   });
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: TARGET,
@@ -498,6 +510,26 @@ describe("EnvironmentThreads", () => {
       expect(Option.isNone(state.data)).toBe(true);
       expect(yield* Ref.get(h.loaderCalls)).toBe(17);
       // The parked subscription must not have opened the socket.
+      expect(yield* SubscriptionRef.get(h.subscriptionCount)).toBe(0);
+    }),
+  );
+
+  it.effect("counts probe request time against the pending-creation budget", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({
+        httpSnapshot: { _tag: "missing" },
+        httpSnapshotCostMillis: 30_000,
+      });
+      yield* awaitThreadState(h.observed, (value) => value.status === "synchronizing");
+
+      // Three 30s probes plus backoff spend the 90s budget; sleep-only accounting
+      // would probe 17 times before lapsing.
+      for (let i = 0; i < 10; i++) {
+        yield* TestClock.adjust("30 seconds");
+      }
+      const state = yield* awaitThreadState(h.observed, (value) => value.status === "deleted");
+      expect(Option.isNone(state.data)).toBe(true);
+      expect(yield* Ref.get(h.loaderCalls)).toBe(3);
       expect(yield* SubscriptionRef.get(h.subscriptionCount)).toBe(0);
     }),
   );

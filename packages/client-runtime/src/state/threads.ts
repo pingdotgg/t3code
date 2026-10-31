@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -972,7 +973,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               }),
             ),
           );
-          let missingWaitMillis = 0;
+          const budgetStartMillis = yield* Clock.currentTimeMillis;
           let missingProbes = 0;
           probe: for (;;) {
             const httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =
@@ -1010,17 +1011,18 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               case "missing": {
                 // The send holding this pre-allocated id commits its launch seconds
                 // later; keep probing with backoff so the subscription revives on
-                // the same instance instead of parking an empty timeline. Once the
-                // budget lapses the id is treated as deleted as before.
-                if (missingWaitMillis >= THREAD_PENDING_CREATION_PROBE_BUDGET_MILLIS) {
+                // the same instance. The budget counts probe request time, so once
+                // it lapses the id is treated as deleted as before.
+                const elapsedMillis = (yield* Clock.currentTimeMillis) - budgetStartMillis;
+                if (elapsedMillis >= THREAD_PENDING_CREATION_PROBE_BUDGET_MILLIS) {
                   yield* setDeleted();
                   return yield* Effect.never;
                 }
                 const delay = Math.min(
                   THREAD_PENDING_CREATION_PROBE_DELAY_START_MILLIS * 2 ** missingProbes,
                   THREAD_PENDING_CREATION_PROBE_DELAY_MAX_MILLIS,
+                  THREAD_PENDING_CREATION_PROBE_BUDGET_MILLIS - elapsedMillis,
                 );
-                missingWaitMillis += delay;
                 missingProbes += 1;
                 yield* Effect.sleep(Duration.millis(delay));
                 continue probe;
