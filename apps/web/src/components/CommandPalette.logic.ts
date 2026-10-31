@@ -20,7 +20,6 @@ import {
 } from "@t3tools/client-runtime/operations/projects";
 import {
   type EnvironmentId,
-  type ProjectId,
   type EnvironmentMachineKind,
   type FilesystemBrowseEntry,
   type KeybindingCommand,

@@ -5,7 +5,7 @@ import {
   ThreadId,
   type PluginAction,
 } from "@t3tools/contracts";
-import { act, createElement, useState } from "react";
+import { act, createElement, useLayoutEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -75,7 +75,6 @@ function Composer(props: {
   report: (menu: Menu, draft: string) => void;
 }) {
   const [draft, setDraft] = useState(props.initialDraft);
-  editDraft = setDraft;
   const menu = useComposerCommandMenu({
     draftMessage: draft,
     ownerKey: "draft-1",
@@ -93,7 +92,11 @@ function Composer(props: {
     onUpdateInteractionMode,
     onUsageLimits,
   });
-  props.report(menu, draft);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed callbacks and draft state to the external test driver
+  useLayoutEffect(() => {
+    editDraft = setDraft;
+    props.report(menu, draft);
+  });
   return null;
 }
 
