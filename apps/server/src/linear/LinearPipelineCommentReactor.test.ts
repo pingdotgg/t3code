@@ -58,40 +58,4 @@ describe("LinearPipelineCommentReactor", () => {
       }).pipe(Effect.provide(layer));
     }),
   );
-
-  it.effect("never syncs a link whose run is on another machine", () =>
-    Effect.gen(function* () {
-      const synced = yield* Queue.unbounded<string>();
-      const remote = {
-        ...stored,
-        link: { linkId: "link-remote", environmentId: "env-b" },
-      } as unknown as LinearLinkStore.StoredLink;
-      const local = {
-        ...stored,
-        link: { linkId: "link-local", environmentId: null },
-      } as unknown as LinearLinkStore.StoredLink;
-      const layer = LinearPipelineCommentReactor.layer.pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            Layer.mock(LinearService.LinearService)({
-              syncPipelineComment: (link) =>
-                Queue.offer(synced, link.link.linkId).pipe(Effect.asVoid),
-            }),
-            Layer.mock(LinearLinkStore.LinearLinkStore)({
-              listByCommentMode: () => Effect.succeed([remote, local]),
-            }),
-            Layer.mock(PipelineService.PipelineService)({
-              subscribeLiveRuns: () => Stream.never,
-            }),
-          ),
-        ),
-      );
-
-      yield* Effect.gen(function* () {
-        yield* TestClock.adjust("1 second");
-        assert.strictEqual(yield* Queue.take(synced), "link-local");
-        assert.strictEqual(yield* Queue.size(synced), 0);
-      }).pipe(Effect.provide(layer));
-    }),
-  );
 });

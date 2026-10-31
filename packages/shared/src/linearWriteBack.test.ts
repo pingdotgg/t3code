@@ -4,6 +4,7 @@ import {
   isStateMoveEligible,
   renderChatCommentBody,
   renderPipelineCommentBody,
+  renderRemotePipelineCommentBody,
 } from "./linearWriteBack.ts";
 
 describe("isStateMoveEligible", () => {
@@ -87,6 +88,20 @@ describe("renderChatCommentBody", () => {
     expect(render("not a url")).toBe("Ada started a T3 Code chat: Fix");
     expect(render("https://t3.example/e/t) [x](https://evil.example")).toBe(
       "Ada started a T3 Code chat: [Fix](https://t3.example/e/t%29%20[x]%28https://evil.example)",
+    );
+  });
+});
+
+describe("renderRemotePipelineCommentBody", () => {
+  it("keeps names from another machine on one line without links or images", () => {
+    expect(
+      renderRemotePipelineCommentBody({
+        pipelineName: "Ship [it]",
+        machineName: "box\n\n![](https://tracker.example/px)",
+        threadUrl: "https://t3.example/e/t",
+      }),
+    ).toBe(
+      '**T3 Code pipeline "Ship it"** started on box !(https://tracker.example/px)\n\n[Open in T3 Code](https://t3.example/e/t)',
     );
   });
 });

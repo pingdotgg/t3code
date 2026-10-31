@@ -419,7 +419,8 @@ export const layer = Layer.effect(
       const issue = Option.getOrNull(loaded);
       const { target } = input;
       // A pipeline comment is the reactor's job, so it still lands once Linear is readable again.
-      // A run on another machine cannot be read here, so its comment is a static one-off post.
+      // A run on another machine cannot be read here, so its comment is a static one-off post and
+      // its link never reaches the reactor, which only lists "pipeline" links.
       const commentMode = !input.writeBack.comment
         ? "none"
         : target.kind === "pipeline_run" && input.remote === undefined

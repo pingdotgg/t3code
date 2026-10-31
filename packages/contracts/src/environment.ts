@@ -188,6 +188,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   pipelines: Schema.optionalKey(Schema.Boolean),
   /** Server keeps attachments and context on a pipeline start; older servers drop them silently. */
   pipelineAttachments: Schema.optionalKey(Schema.Boolean),
+  /** linear.recordLaunch accepts `remote`: a pipeline run on another machine. */
+  linearRemoteLinks: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

@@ -95,7 +95,9 @@ export function renderRemotePipelineCommentBody(input: {
   readonly machineName: string;
   readonly threadUrl: string;
 }): string {
+  // Both names come from another machine: one line each, and no brackets to forge a link or image.
+  const plain = (value: string) => value.replace(/[[\]]/gu, "").replace(/\s+/gu, " ").trim();
   const target = linkTarget(input.threadUrl);
-  const text = `**T3 Code pipeline "${input.pipelineName}"** started on ${input.machineName}`;
+  const text = `**T3 Code pipeline "${plain(input.pipelineName)}"** started on ${plain(input.machineName)}`;
   return target === null ? text : `${text}\n\n[Open in T3 Code](${target})`;
 }
