@@ -3537,71 +3537,126 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("releases a paused workflow even when its notice reports detached members", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakePi;
-      const { runtime, takeEvent, observed } = yield* openRuntime(fake);
-      const providerThread = yield* runtime.ensureThread({
-        threadId: THREAD_ID,
-        modelSelection: modelSelection("default"),
-        runtimePolicy,
-      });
-      yield* startTurn(runtime, providerThread);
-      yield* fake.takeRequest("prompt");
-      yield* fake.emit({ type: "agent_start" });
-      yield* asyncSubagentTool(fake, "workflow", "workflow", { workflow: true, async: true });
-      yield* fake.emit(
-        subagentWidget([
-          {
-            id: "workflow",
-            kind: "workflow",
-            label: "workflow",
-            state: "running",
-            children: [
-              { id: "alpha", kind: "step", label: "alpha", agent: "scout", state: "running" },
-            ],
+  it.effect.each(["paused", "stopped"] as const)(
+    "releases a %s workflow and persists its late completion",
+    (nativeStatus) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent, observed } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* startTurn(runtime, providerThread);
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({ type: "agent_start" });
+        yield* asyncSubagentTool(fake, "workflow", "workflow", { workflow: true, async: true });
+        yield* fake.emit(
+          subagentWidget([
+            {
+              id: "workflow",
+              kind: "workflow",
+              label: "workflow",
+              state: "running",
+              children: [
+                { id: "alpha", kind: "step", label: "alpha", agent: "scout", state: "running" },
+              ],
+            },
+          ]),
+        );
+        yield* piEventBarrier(fake, takeEvent);
+        assert.lengthOf(
+          observed.filter((event) => event.type === "subagent.updated"),
+          2,
+        );
+        yield* fake.emit({ type: "agent_settled" });
+        yield* takeEvent((event) => event.type === "turn.terminal");
+        yield* fake.emit({
+          type: "message_end",
+          message: {
+            role: "custom",
+            customType: "subagent-notify",
+            details: {
+              runs: [
+                {
+                  runId: "workflow",
+                  status: nativeStatus,
+                  childRuns: [
+                    {
+                      runId: "unavailable",
+                      workflowKey: "alpha",
+                      status: "running",
+                      agent: "scout",
+                    },
+                  ],
+                },
+              ],
+            },
           },
-        ]),
-      );
-      yield* piEventBarrier(fake, takeEvent);
-      assert.lengthOf(
-        observed.filter((event) => event.type === "subagent.updated"),
-        2,
-      );
-      yield* fake.emit({ type: "agent_settled" });
-      yield* takeEvent((event) => event.type === "turn.terminal");
-      yield* fake.emit({
-        type: "message_end",
-        message: {
-          role: "custom",
-          customType: "subagent-notify",
-          details: {
-            runs: [
-              {
-                runId: "workflow",
-                status: "paused",
-                childRuns: [
-                  { runId: "unavailable", workflowKey: "alpha", status: "running", agent: "scout" },
-                ],
-              },
-            ],
+        });
+        yield* takeEvent(
+          (event) =>
+            event.type === "subagent.updated" &&
+            event.subagent.status === (nativeStatus === "paused" ? "idle" : "interrupted"),
+        );
+        const final = new Map(
+          observed.flatMap((event) =>
+            event.type === "subagent.updated" ? [[event.subagent.id, event.subagent] as const] : [],
+          ),
+        );
+        assert.deepEqual(
+          [...final.values()].map((row) => row.status),
+          [nativeStatus === "paused" ? "idle" : "interrupted", "interrupted"],
+        );
+        assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+        yield* startTurn(runtime, providerThread, "default", [], "Follow up", undefined, 2);
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({ type: "agent_start" });
+        yield* fake.emit({
+          type: "message_end",
+          message: {
+            role: "custom",
+            customType: "subagent-notify",
+            content: "workflow finished",
+            details: {
+              runs: [
+                {
+                  runId: "workflow",
+                  status: "completed",
+                  childRuns: [
+                    {
+                      runId: "unavailable",
+                      workflowKey: "alpha",
+                      status: "completed",
+                      agent: "scout",
+                    },
+                  ],
+                  childOutputs: [
+                    {
+                      runId: "unavailable",
+                      workflowKey: "alpha",
+                      savedOutputPath: "/output/scout.txt",
+                    },
+                  ],
+                },
+              ],
+            },
           },
-        },
-      });
-      yield* takeEvent(
-        (event) => event.type === "subagent.updated" && event.subagent.status === "idle",
-      );
-      const final = new Map(
-        observed.flatMap((event) =>
-          event.type === "subagent.updated" ? [[event.subagent.id, event.subagent] as const] : [],
-        ),
-      );
-      assert.deepEqual(
-        [...final.values()].map((row) => row.status),
-        ["idle", "interrupted"],
-      );
-      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
-    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+        });
+        yield* piEventBarrier(fake, takeEvent);
+        const settled = new Map(
+          observed.flatMap((event) =>
+            event.type === "subagent.updated" ? [[event.subagent.id, event.subagent] as const] : [],
+          ),
+        );
+        assert.deepEqual(
+          [...settled.values()].map((row) => row.status),
+          ["completed", "completed"],
+        );
+        assert.equal([...settled.values()][1]?.result, "/output/scout.txt");
+        assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("observes official subagent results without inventing child threads", () =>

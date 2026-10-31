@@ -1143,7 +1143,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         // Explicit terminal outcomes survive stale widgets and duplicate notices.
         const status =
           previous?.completedAt != null &&
-          (active(patch.status) || previous.status !== "interrupted")
+          (active(patch.status) ||
+            (previous.status !== "interrupted" && previous.status !== "idle"))
             ? previous.status
             : patch.status;
         const startedAt =
@@ -1293,7 +1294,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         }
         // Retain identity for duplicate receipts and late structured inventory, without
         // pinning the run. Publish the coordinator last so its subscriber sees all members.
-        launch.retired = patch.status === "idle" || patch.status === "interrupted";
         yield* emitSubagentRow(launch, [], patch, startedAt);
       });
 
@@ -1871,11 +1871,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         if (turn.interrupted) yield* interruptAsyncSubagents(turn);
         const completedAt = yield* DateTime.now;
         yield* completeOpenStreamItems(turn);
-        // Background launches retain only their item owner, independent of this transcript.
-        turn.streamItems.clear();
-        turn.toolArgs.clear();
-        turn.toolStartedAt.clear();
-        turn.subagentLaunches.clear();
         if (turn.activeCompaction !== null) {
           const status = interrupted ? "cancelled" : turn.failure === null ? "completed" : "failed";
           yield* emitCompaction(turn, turn.activeCompaction, status);
