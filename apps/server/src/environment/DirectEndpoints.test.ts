@@ -122,6 +122,38 @@ describe("resolveBoundEndpoints", () => {
     ]);
   });
 
+  it("skips the Windows Mobile hotspot adapter, which only devices on this machine's hotspot reach", () => {
+    const interfaces = {
+      ...INTERFACES,
+      "Local Area Connection* 2": virtualInterface("192.168.137.1"),
+      "LAN-Verbindung* 10": virtualInterface("192.168.137.2"),
+    };
+    expect(resolveBoundEndpoints({ host: "0.0.0.0", port: 3773, interfaces })).toEqual([
+      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+      { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
+    ]);
+  });
+
+  it("skips VPN tunnel addresses in the 198.18.0.0/15 benchmarking range, which is never a LAN", () => {
+    const interfaces = {
+      ...INTERFACES,
+      utun40: [
+        {
+          address: "198.19.2.2",
+          netmask: "255.255.255.0",
+          family: "IPv4" as const,
+          mac: "00:00:00:00:00:00",
+          internal: false,
+          cidr: "198.19.2.2/24",
+        },
+      ],
+    };
+    expect(resolveBoundEndpoints({ host: "0.0.0.0", port: 3773, interfaces })).toEqual([
+      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+      { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
+    ]);
+  });
+
   it("tags only addresses on Tailscale's interface as tailnet, not other VPNs in its range", () => {
     const interfaces = {
       en0: INTERFACES.en0,

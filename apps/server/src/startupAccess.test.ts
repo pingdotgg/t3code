@@ -55,6 +55,15 @@ it("prefers a LAN address over a tailnet one for a private-network pairing URL",
   ).toBe("http://192.168.1.42:3773");
 });
 
+it("skips a VPN tunnel address for a private-network pairing URL", () => {
+  expect(
+    resolveHeadlessConnectionString("0.0.0.0", 3773, {
+      interfaces: { utun40: [ipv4("198.19.2.2")], en0: [ipv4("192.168.1.42")] },
+      privateNetworkOnly: true,
+    }),
+  ).toBe("http://192.168.1.42:3773");
+});
+
 describe("acceptsPrivateNetworkConnection", () => {
   const accepts = (localAddress: string | undefined, remoteAddress: string | undefined) =>
     acceptsPrivateNetworkConnection({ localAddress, remoteAddress });
