@@ -56,6 +56,7 @@ const FAVICON_CANDIDATES = [
   "assets/icon.png",
   "assets/logo.svg",
   "assets/logo.png",
+  "assets/images/icon.png",
   ".idea/icon.svg",
   "Resources/AppIcon.icns",
   "AppIcon.icns",
