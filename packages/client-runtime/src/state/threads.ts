@@ -2,6 +2,7 @@ import {
   isOrchestrationV2WorkActive,
   ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId as EnvironmentIdType,
+  type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadDetailSnapshot,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadStreamItem,
@@ -22,7 +23,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient } from "effect/http";
-import { Atom } from "effect/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
@@ -54,6 +55,8 @@ import {
   type EnvironmentThreadState,
   type EnvironmentThreadStatus,
 } from "./threadState.ts";
+
+const NEVER_LISTED = Stream.concat(Stream.make(false), Stream.never);
 
 function statusWithoutLiveData(
   data: Option.Option<OrchestrationV2ThreadProjection>,
@@ -191,6 +194,7 @@ function cachedThreadState(value: EnvironmentThreadState): EnvironmentThreadStat
 export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make")(function* (
   threadId: ThreadIdType,
   resumeCache?: ThreadResumeCache,
+  listedInShell: Stream.Stream<boolean> = NEVER_LISTED,
 ) {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
   const cache = yield* Persistence.EnvironmentCacheStore;
@@ -206,6 +210,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const wakeups = yield* Effect.serviceOption(ConnectionWakeups.ConnectionWakeups);
   const environmentId = supervisor.target.environmentId;
   const retained = resumeCache?.snapshot;
+  // A delete event is final. A 404 can predate the thread's creation, so it stands only until the
+  // shell lists the thread, and never outlives this scope.
+  let notFound = false;
   const owner = {};
   if (resumeCache) resumeCache.owner = owner;
   const cached =
@@ -275,7 +282,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         committed.persisted &&
         matchesThreadSnapshot(committed, Option.getOrNull(current.data), sequence, current.history),
     };
-    if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
+    if (resumeCache?.owner === owner) resumeCache.snapshot = notFound ? undefined : committed;
   });
   const persistence = yield* Queue.sliding<OrchestrationV2ThreadDetailSnapshot>(1);
   let queuedSnapshot = Option.getOrUndefined(cached);
@@ -446,6 +453,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       ...current,
       history: patch(current.history),
     }));
+
+  const isListedInShell = Stream.runHead(listedInShell).pipe(
+    Effect.map(Option.getOrElse(() => false)),
+  );
+  const reopenNotFound = Effect.suspend(() => {
+    notFound = false;
+    return SubscriptionRef.set(state, EMPTY_ENVIRONMENT_THREAD_STATE);
+  });
 
   const setDeleted = Effect.fn("EnvironmentThreadState.setDeleted")(function* () {
     yield* Ref.set(awaitingCompletion, false);
@@ -938,11 +953,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       ORCHESTRATION_V2_WS_METHODS.subscribeThread,
       Effect.fn("EnvironmentThreadState.makeSubscribeInput")(function* (session) {
         let current = yield* SubscriptionRef.get(state);
-        // A prior definitive miss (or delete event) already cleared this thread.
-        // Park the subscription attempt without opening the socket so we do not
-        // retry forever against a known-missing id.
-        if (current.status === "deleted") {
+        // A delete event already cleared this thread. Park the subscription attempt
+        // without opening the socket so we do not retry forever against a known-missing id.
+        if (current.status === "deleted" && !notFound) {
           return yield* Effect.never;
+        }
+        if (notFound) {
+          yield* reopenNotFound;
+          current = yield* SubscriptionRef.get(state);
         }
 
         yield* Effect.ignore(session.initialConfig);
@@ -965,8 +983,17 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               }),
             ),
           );
-          const httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =
+          let httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =
             yield* snapshotLoader.load(prepared, threadId);
+          while (httpResult._tag === "missing" && !(yield* isListedInShell)) {
+            notFound = true;
+            yield* setDeleted();
+            yield* listedInShell.pipe(Stream.filter(Boolean), Stream.runHead);
+            yield* reopenNotFound;
+            yield* Ref.set(awaitingCompletion, true);
+            yield* markSynchronizing;
+            httpResult = yield* snapshotLoader.load(prepared, threadId);
+          }
           switch (httpResult._tag) {
             case "present": {
               if (canLoadHistory && httpResult.history !== undefined) {
@@ -996,10 +1023,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               current = yield* SubscriptionRef.get(state);
               break;
             }
-            case "missing": {
-              yield* setDeleted();
-              return yield* Effect.never;
-            }
+            // A thread the shell lists can answer 404 while the two race; the socket decides.
+            case "missing":
             case "unavailable": {
               break;
             }
@@ -1040,12 +1065,15 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 function threadStateChanges(
   environmentId: EnvironmentIdType,
   threadId: ThreadIdType,
-  resumeCache?: ThreadResumeCache,
+  resumeCache: ThreadResumeCache,
+  listedInShell: Stream.Stream<boolean>,
 ) {
   return followStreamInEnvironment(
     environmentId,
     Stream.unwrap(
-      makeEnvironmentThreadState(threadId, resumeCache).pipe(Effect.map(SubscriptionRef.changes)),
+      makeEnvironmentThreadState(threadId, resumeCache, listedInShell).pipe(
+        Effect.map(SubscriptionRef.changes),
+      ),
     ),
   );
 }
@@ -1058,6 +1086,9 @@ export function createEnvironmentThreadStateAtoms<R, E>(
     | R,
     E
   >,
+  snapshotAtom: (
+    environmentId: EnvironmentIdType,
+  ) => Atom.Atom<OrchestrationV2ShellSnapshot | null>,
 ) {
   // Cache definitions must outlive collectible live-atom definitions. The
   // registry retains these nodes without retaining environment or RPC scopes.
@@ -1073,12 +1104,23 @@ export function createEnvironmentThreadStateAtoms<R, E>(
   const family = Atom.family((key: string) => {
     const { environmentId, threadId } = parseThreadKey(key);
     const resumeAtom = resumeFamily(key);
+    const listedAtom = Atom.make(
+      (get) =>
+        get(snapshotAtom(environmentId))?.threads.some(
+          (thread) => thread.id === threadId && thread.deletedAt === null,
+        ) ?? false,
+    );
     return runtime
       .atom(
         (get) => {
           get.mount(resumeAtom);
           const resume = get.once(resumeAtom);
-          const live = threadStateChanges(environmentId, threadId, resume);
+          const live = threadStateChanges(
+            environmentId,
+            threadId,
+            resume,
+            AtomRegistry.toStream(get.registry, listedAtom),
+          );
           return resume.snapshot === undefined
             ? live
             : Stream.concat(Stream.succeed(cachedThreadState(resume.snapshot.state)), live);

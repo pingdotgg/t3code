@@ -673,6 +673,17 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("asks the server again when the session changes after a 404", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ httpSnapshot: { _tag: "missing" } });
+      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
+      yield* harness.replaceSession;
+      yield* awaitThreadState(harness.observed, (value) => value.status === "synchronizing");
+      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(2);
+    }),
+  );
+
   it.effect("resumes a warm cache via afterSequence without an HTTP fetch", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_PROJECTION });
