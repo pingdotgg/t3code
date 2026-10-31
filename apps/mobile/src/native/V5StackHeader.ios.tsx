@@ -5,19 +5,27 @@ import type {
 } from "@react-navigation/native-stack";
 import { isValidElement, useEffect, useRef } from "react";
 import { StyleSheet } from "react-native";
+import { KeyboardController, useKeyboardState } from "react-native-keyboard-controller";
+import { isDuoDevice } from "../lib/device-type";
 import { useMobileNavigationTheme } from "../lib/useMobileNavigationTheme";
 import { useDeviceType, useNativeLayoutMetrics } from "../native/native-layout-metrics";
+import { HeaderItemsWidthContext } from "./header-items-width";
 import {
   SearchBar,
   Stack,
   type HeaderBarButtonMailSearchToolbarItem,
   type SearchBarCommands,
   type StackHeaderConfigProps,
+  type StackHeaderMinimizationBehaviorIOS,
   type StackHeaderMenuElementIOS,
   type StackHeaderMenuIOS,
   type HeaderBarButtonItemWithMenu,
   type HeaderBarButtonSearchBarPlacementItem,
 } from "react-native-screens";
+
+// UIKit's bar margins, and the width of a glass bar button.
+const BAR_MARGINS = 32;
+const BAR_BUTTON_WIDTH = 44;
 
 type HeaderItem = NonNullable<NonNullable<StackHeaderConfigProps["ios"]>["leadingItems"]>[number];
 type ToolbarItem =
@@ -26,6 +34,7 @@ type ToolbarItem =
   | HeaderBarButtonSearchBarPlacementItem;
 type Options = NativeStackNavigationOptions & {
   readonly unstable_navigationItemStyle?: "editor" | "navigator";
+  readonly unstable_headerMinimizationBehavior?: StackHeaderMinimizationBehaviorIOS;
   readonly headerSubtitle?: string;
   readonly unstable_headerSubtitle?: string;
   readonly headerSubtitleStyle?: { color?: string; fontSize?: number; fontFamily?: string };
@@ -150,6 +159,7 @@ export function V5StackHeader(props: {
   const theme = useMobileNavigationTheme();
   const nativeMetrics = useNativeLayoutMetrics();
   const deviceType = useDeviceType();
+  const keyboardVisible = useKeyboardState((state) => state.isVisible);
   const searchRef = useRef<SearchBarCommands>(null);
   const itemProps = { tintColor: options.headerTintColor, canGoBack: props.canGoBack };
   const leading = convertItems(options.unstable_headerLeftItems?.(itemProps) ?? [], "leading");
@@ -202,12 +212,14 @@ export function V5StackHeader(props: {
   }
   // UIKit doesn't stack a column's toolbar against the workspace tab bar, which owns the
   // bottom of the vertical bar and draws over it. Those columns keep the group in their
-  // navigation items. An expanded sidebar's toolbar stays horizontal, outside the bar.
+  // navigation items. Integrated search stays in the column's horizontal bottom toolbar.
   if (
     props.column &&
     nativeMetrics &&
     nativeMetrics.verticalBarEdge !== "none" &&
-    (props.column === "detail" || nativeMetrics.horizontalSizeClass === "compact")
+    (props.column === "detail" ||
+      (nativeMetrics.horizontalSizeClass === "compact" &&
+        !toolbar.some((item) => item.type === "searchBarPlacement")))
   ) {
     if (trailing.length && bottom.length)
       trailing.push({ type: "spacer", id: "toolbar-group", sizing: "fixed", width: 8 });
@@ -215,15 +227,38 @@ export function V5StackHeader(props: {
     bottom.length = 0;
   }
   if (props.onCompose) {
-    if (trailing.length)
-      trailing.push({ type: "spacer", id: "compose-group", sizing: "fixed", width: 8 });
-    trailing.push({
+    const compose: HeaderItem = {
       type: "item",
       id: "workspace-compose",
       title: "New task",
       icon: { type: "sfSymbol", name: "square.and.pencil" },
       onPress: props.onCompose,
-    });
+    };
+    if (trailing.length)
+      trailing.push({ type: "spacer", id: "compose-group", sizing: "fixed", width: 8 });
+    trailing.push(compose);
+  }
+  // The vertical bar has no keyboard accessory row, so it carries its own dismiss. A regular-width
+  // primary column draws a horizontal bar beside the detail column's vertical one. The first
+  // trailing item sits at the bar's far end; the flexible space keeps it next to the keyboard.
+  if (
+    keyboardVisible &&
+    nativeMetrics &&
+    nativeMetrics.verticalBarEdge !== "none" &&
+    (props.column !== "primary" || nativeMetrics.horizontalSizeClass === "compact")
+  ) {
+    trailing.unshift(
+      {
+        type: "item",
+        id: "dismiss-keyboard",
+        title: "Dismiss keyboard",
+        icon: { type: "sfSymbol", name: "keyboard.chevron.compact.down" },
+        onPress: () => void KeyboardController.dismiss(),
+        // The folded bar is short; keep this out of the overflow menu.
+        visibilityPriority: "high",
+      },
+      { type: "spacer", id: "dismiss-keyboard-space", sizing: "flexible" },
+    );
   }
   const left = options.headerLeft?.(itemProps);
   const right = options.headerRight?.(itemProps);
@@ -238,27 +273,36 @@ export function V5StackHeader(props: {
       : undefined;
   const searchOptions = options.headerSearchBarOptions;
   const autofocusRef = searchOptions?.ref ?? searchRef;
-  const searchHasFocus = useRef(false);
+  // iOS ignores the native autoFocus prop, and SearchBar's imperative handle changes every
+  // commit, so a ref callback would refocus on each render; focus once after the header mounts.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules a frame to focus the native SearchBar once after the header mounts, since iOS ignores autoFocus
   useEffect(() => {
-    searchHasFocus.current = false;
     if (!searchOptions?.autoFocus) return;
-    // UIKit attaches integrated search during the toolbar transition. Native
-    // onFocus acknowledges readiness; a single frame can reach it too early.
-    const deadline = Date.now() + 500;
-    let frame = 0;
-    const focusWhenAttached = () => {
-      if (searchHasFocus.current) return;
-      autofocusRef.current?.focus();
-      if (Date.now() < deadline) frame = requestAnimationFrame(focusWhenAttached);
-    };
-    frame = requestAnimationFrame(focusWhenAttached);
+    const frame = requestAnimationFrame(() => autofocusRef.current?.focus());
     return () => cancelAnimationFrame(frame);
   }, [searchOptions?.autoFocus, autofocusRef]);
+  const searchButton = !bottomSearch && searchOptions?.placement === "integratedButton";
+  const itemsWidth =
+    BAR_MARGINS +
+    (props.canGoBack && options.headerBackVisible !== false ? BAR_BUTTON_WIDTH : 0) +
+    (searchButton ? BAR_BUTTON_WIDTH : 0) +
+    [...leading, ...trailing].reduce(
+      (width, item) =>
+        width +
+        (item.type === "spacer"
+          ? item.sizing === "fixed"
+            ? item.width
+            : 0
+          : // The keyboard dismiss rides the vertical bar, not beside the title.
+            item.id === "dismiss-keyboard"
+            ? 0
+            : BAR_BUTTON_WIDTH),
+      0,
+    );
   const titleStyle = StyleSheet.flatten(options.headerTitleStyle);
   const headerStyle = StyleSheet.flatten(options.headerStyle);
   const appearance = {
-    // A clear color also removes UIKit's material. Let UIKit supply it for
-    // translucent bars so scrolling content can appear beneath native blur.
+    // Clear colors remove UIKit material; let translucent bars supply their own blur background.
     backgroundColor: options.headerTransparent
       ? undefined
       : (headerStyle?.backgroundColor ?? theme.colors.card),
@@ -271,48 +315,58 @@ export function V5StackHeader(props: {
     subtitleFontColor: options.headerSubtitleStyle?.color,
   };
   return (
-    <Stack.HeaderConfig
-      hidden={options.headerShown === false}
-      transparent={options.headerTransparent}
-      title={title}
-      subtitle={options.unstable_headerSubtitle ?? options.headerSubtitle}
-      backButtonHidden={options.headerBackVisible === false}
-      ios={{
-        navigationItemStyle: options.unstable_navigationItemStyle,
-        tintColor: options.headerTintColor,
-        searchBar:
-          mailSearch || searchOptions ? (
-            <SearchBar
-              {...searchOptions}
-              ref={searchOptions?.ref ?? searchRef}
-              hideNavigationBar={false}
-              hideWhenScrolling={false}
-              allowToolbarIntegration={searchOptions?.allowToolbarIntegration ?? true}
-              placement={bottomSearch ? "integrated" : (searchOptions?.placement ?? "automatic")}
-              placeholder={mailSearch?.placeholder ?? searchOptions?.placeholder ?? "Search"}
-              onFocus={(event) => {
-                searchHasFocus.current = true;
-                searchOptions?.onFocus?.(event);
-              }}
-              onChangeText={(event) => {
-                mailSearch?.onSearchTextChange?.(event.nativeEvent.text);
-                searchOptions?.onChangeText?.(event);
-              }}
-            />
-          ) : undefined,
-        toolbarItems: bottom,
-        leadingItems: leading,
-        trailingItems: trailing,
-        titleItem: isValidElement(titleElement)
-          ? { id: "title", render: () => titleElement }
-          : undefined,
-        largeTitleEnabled: options.headerLargeTitle,
-        backButtonDisplayMode: options.headerBackButtonDisplayMode ?? "minimal",
-        backButtonMenuEnabled: options.headerBackButtonMenuEnabled ?? true,
-        backButtonTitle: options.headerBackTitle,
-        standardAppearance: appearance,
-        scrollEdgeAppearance: appearance,
-      }}
-    />
+    <HeaderItemsWidthContext value={itemsWidth}>
+      <Stack.HeaderConfig
+        hidden={options.headerShown === false}
+        transparent={options.headerTransparent}
+        title={title}
+        subtitle={options.unstable_headerSubtitle ?? options.headerSubtitle}
+        backButtonHidden={options.headerBackVisible === false}
+        ios={{
+          navigationItemStyle: options.unstable_navigationItemStyle,
+          // Opt-ins apply only where the Duo is short: folded, or held landscape. The Duo
+          // resolves `automatic` to minimize on scroll, so the tall unfolded display opts out.
+          minimizationBehavior: !isDuoDevice(deviceType)
+            ? undefined
+            : deviceType === "duo-unfolded" &&
+                nativeMetrics &&
+                nativeMetrics.height > nativeMetrics.width
+              ? "never"
+              : options.unstable_headerMinimizationBehavior,
+          tintColor: options.headerTintColor,
+          searchBar:
+            mailSearch || searchOptions ? (
+              <SearchBar
+                {...searchOptions}
+                ref={searchOptions?.ref ?? searchRef}
+                hideNavigationBar={false}
+                hideWhenScrolling={false}
+                allowToolbarIntegration={searchOptions?.allowToolbarIntegration ?? true}
+                placement={bottomSearch ? "integrated" : (searchOptions?.placement ?? "automatic")}
+                placeholder={mailSearch?.placeholder ?? searchOptions?.placeholder ?? "Search"}
+                onFocus={(event) => {
+                  searchOptions?.onFocus?.(event);
+                }}
+                onChangeText={(event) => {
+                  mailSearch?.onSearchTextChange?.(event.nativeEvent.text);
+                  searchOptions?.onChangeText?.(event);
+                }}
+              />
+            ) : undefined,
+          toolbarItems: bottom,
+          leadingItems: leading,
+          trailingItems: trailing,
+          titleItem: isValidElement(titleElement)
+            ? { id: "title", render: () => titleElement }
+            : undefined,
+          largeTitleEnabled: options.headerLargeTitle,
+          backButtonDisplayMode: options.headerBackButtonDisplayMode ?? "minimal",
+          backButtonMenuEnabled: options.headerBackButtonMenuEnabled ?? true,
+          backButtonTitle: options.headerBackTitle,
+          standardAppearance: appearance,
+          scrollEdgeAppearance: appearance,
+        }}
+      />
+    </HeaderItemsWidthContext>
   );
 }

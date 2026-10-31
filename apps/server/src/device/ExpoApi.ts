@@ -173,13 +173,9 @@ const toExpoApiError = (
   const reason = error.reason;
   const status =
     reason._tag === "TransportError" || reason._tag === "ResponseError" ? reason.status : undefined;
-  // Expo refused: a request it never got, a 4xx, or GraphQL errors at a 2xx
-  // or 4xx that are the user's fault. Expo marks those `errorType: "USER"`
-  // and not `isTransient` (eas-cli's rule; Apollo's `code` says nothing, as
-  // Expo puts INTERNAL_SERVER_ERROR on user errors too) and answers them with
-  // `data: null`, since its mutations are non-null. GraphQL errors at a 5xx,
-  // beside data (the request ran), or that are Expo's own fault came from a
-  // request that may have run.
+  // Expo user errors have `errorType: "USER"`, no `isTransient`, and null data (eas-cli's rule).
+  // Apollo's `code` is unreliable: Expo also uses INTERNAL_SERVER_ERROR for user errors.
+  // GraphQL errors at 5xx, beside data, or caused by Expo may follow a request that ran.
   const errors = reason._tag === "ResponseError" ? reason.errors : [];
   const fault = errors.some(
     ({ extensions }) =>

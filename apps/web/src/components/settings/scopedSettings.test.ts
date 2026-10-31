@@ -17,6 +17,7 @@ import {
   planProjectOverridesClear,
   planScopedSettingsClear,
   planScopedSettingsPatch,
+  scopedIdleCompaction,
   resolveScopedSettingsTargets,
   scopedSettingsAreMixed,
   scopedSettingsSource,
@@ -30,7 +31,6 @@ function environment(
     connected?: boolean;
     loaded?: boolean;
     settings?: Partial<ServerSettings>;
-    projectOverrides?: boolean;
   } = {},
 ) {
   return {
@@ -44,9 +44,6 @@ function environment(
         ? null
         : {
             settings: { ...DEFAULT_SERVER_SETTINGS, ...options.settings },
-            environment: {
-              capabilities: { projectSettingsOverrides: options.projectOverrides !== false },
-            },
           },
   };
 }
@@ -189,6 +186,42 @@ describe("scoped settings writes", () => {
         worktreeUnchanged: false,
         worktreeKeepWhen: "uncommitted-changes",
       },
+    ]);
+  });
+
+  it("compares idle compaction by mode, and offers Never only where every server stores it", () => {
+    const fixed = {
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        compactIdleThreads: false,
+        idleCompaction: "onReturn" as const,
+      },
+    };
+    const modes = {
+      settings: { ...DEFAULT_SERVER_SETTINGS, compactIdleThreads: "onReturn" as const },
+    };
+    const legacy = { settings: { ...DEFAULT_SERVER_SETTINGS, compactIdleThreads: false } };
+    expect(scopedIdleCompaction([fixed, modes])).toEqual({ mixed: false, neverAvailable: true });
+    expect(scopedIdleCompaction([fixed, legacy])).toEqual({ mixed: false, neverAvailable: false });
+    expect(
+      scopedIdleCompaction([fixed, { settings: { ...fixed.settings, idleCompaction: "off" } }])
+        .mixed,
+    ).toBe(true);
+  });
+
+  it("sends an idle compaction mode in the form each environment's server reads", () => {
+    const targets = [
+      environment("Fixed", { settings: { compactIdleThreads: false, idleCompaction: "onReturn" } }),
+      environment("Modes", { settings: { compactIdleThreads: "onReturn" } }),
+      environment("Switch", { settings: { compactIdleThreads: false } }),
+    ];
+    const plan = planScopedSettingsPatch(resolveSettingsScope({}, [], targets), targets, {
+      idleCompaction: "beforeCacheExpires",
+    });
+    expect(plan.serverWrites.map((write) => write.patch)).toEqual([
+      { idleCompaction: "beforeCacheExpires" },
+      { compactIdleThreads: "beforeCacheExpires" },
+      { compactIdleThreads: true },
     ]);
   });
 
@@ -423,17 +456,13 @@ describe("scoped settings writes", () => {
     }
   });
 
-  it("refuses environment-wide keys and older servers at project scope", () => {
+  it("refuses environment-wide keys at project scope", () => {
     expect(
       planScopedSettingsPatch(project, environments, { enableProviderUpdateChecks: false }),
     ).toMatchObject({
       serverWrites: [],
       unavailableReason: "This setting is environment-wide and cannot be overridden by a project.",
     });
-    const legacy = environment("Server", { projectOverrides: false });
-    expect(
-      planScopedSettingsPatch(checkout, [laptop, legacy], { defaultAutoPull: true }),
-    ).toMatchObject({ serverWrites: [], unavailableReason: expect.stringContaining("update") });
   });
 
   it("clears overrides per member and removes an emptied entry", () => {
@@ -660,7 +689,6 @@ describe("partial object patches at project scope", () => {
           connection: { phase: "connected" },
           serverConfig: {
             settings,
-            environment: { capabilities: { projectSettingsOverrides: true } },
           },
         },
       ],
