@@ -10235,6 +10235,81 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("offers a later wake after an earlier wake's continuation dispatch failed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const SECOND_TASK_ID = "b2ndwake";
+        const SECOND_TOOL_USE_ID = "toolu_second_wake";
+        const SECOND_SUMMARY = 'Background command "Second sleep" completed (exit code 0)';
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-wake-dispatch-failed-1"),
+            text: "Run two builds in the background.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            ...wakeTaskStarted,
+            task_id: SECOND_TASK_ID,
+            tool_use_id: SECOND_TOOL_USE_ID,
+            description: "Second sleep",
+            uuid: "00000000-0000-4000-8000-000000000121",
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* harness.awaitTerminal(1);
+
+        yield* harness.offerAndWait(wakeNotification);
+        yield* harness.offerAndWait(wakeTurnInit);
+        assert.lengthOf(harness.continuationRequests, 1);
+        yield* harness.offerAndWait(wakeAssistant);
+        yield* harness.offerAndWait(wakeResult);
+
+        // The continuation service could not dispatch the first wake (e.g. a full disk),
+        // so it never attaches; the service's only way to release the adapter is clearIfCurrent.
+        const failed = harness.continuationRequests[0]!;
+        assert.isDefined(
+          failed.clearIfCurrent,
+          "the Claude wake request offers no clearIfCurrent, so a failed dispatch can never " +
+            "release the wake latch and every later wake on this process is dropped",
+        );
+        yield* failed.clearIfCurrent!();
+
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...wakeNotification,
+            task_id: SECOND_TASK_ID,
+            tool_use_id: SECOND_TOOL_USE_ID,
+            output_file: `/tmp/claude-replay/tasks/${SECOND_TASK_ID}.output`,
+            summary: SECOND_SUMMARY,
+            uuid: "00000000-0000-4000-8000-000000000123",
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({ ...wakeTurnInit, uuid: "00000000-0000-4000-8000-000000000124" }),
+        );
+        assert.lengthOf(
+          harness.continuationRequests,
+          2,
+          "a later wake after a failed continuation dispatch must still be offered",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([true, false])(
     "carries a rejected wake rate limit into the continuation failure (event=%s)",
     (standaloneEvent) =>
