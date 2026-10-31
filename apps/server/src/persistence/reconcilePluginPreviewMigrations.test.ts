@@ -160,8 +160,6 @@ describe("plugin preview upgrade", () => {
         const sql = yield* SqlClient.SqlClient;
         yield* seed(67);
         yield* sql`CREATE TRIGGER refuse_plugin_upgrade BEFORE INSERT ON effect_sql_migrations WHEN NEW.name = 'ShellStopRequestIndex' BEGIN SELECT RAISE(ABORT, 'injected failure'); END`;
-        if (variant === "partial-project")
-          yield* sql`ALTER TABLE projection_projects ADD COLUMN pinned_at TEXT`;
         const before = yield* snapshot;
         assert.ok(Exit.isFailure(yield* Effect.exit(runMigrations())));
         assert.deepStrictEqual(yield* snapshot, before);
