@@ -10,6 +10,6 @@ export function installDesktopPasteAsText(
   return bridge?.onMenuAction((action) => {
     if (action !== "paste-as-text") return;
     target.dispatchEvent(new Event(DESKTOP_PASTE_AS_TEXT_EVENT));
-    void bridge.pasteAsText?.();
+    void bridge.pasteAsText();
   });
 }

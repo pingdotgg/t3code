@@ -43,10 +43,7 @@ const zipFixtures = {
     "UEsDBBQAAAAIAAAAIl1zEy/oFAAAABQAAAASAAAAYWd5X2FjcF9zZXJ2ZXIuZXhlS8wryUwvSizLLKlUKCoFcnJTuQBQSwMEFAAAAAgAAAAiXV9yAykQAAAADgAAABkAAABsb2NhbGhhcm5lc3NfZXh0ZXJuYWwuZXhly8lPTsxRyEgsykstLuYCAFBLAQIUAxQAAAAIAAAAIl1zEy/oFAAAABQAAAASAAAAAAAAAAAAAADtgQAAAABhZ3lfYWNwX3NlcnZlci5leGVQSwECFAMUAAAACAAAACJdX3IDKRAAAAAOAAAAGQAAAAAAAAAAAAAA7YFEAAAAbG9jYWxoYXJuZXNzX2V4dGVybmFsLmV4ZVBLBQYAAAAAAgACAIcAAACLAAAAAAA=",
 };
 
-// The installation checks POSIX exec bits off the real filesystem unless the
-// platform is win32, so a linux platform mock cannot pass on NTFS. Default to
-// the host and let the fixture names follow; the suite is about install
-// mechanics, which are the same on every platform.
+// Linux platform mocks cannot enforce POSIX exec bits on NTFS; use the host platform.
 const hostPlatform: NodeJS.Platform =
   HostProcess.Platform.defaultValue() === "win32" ? "win32" : "linux";
 const completeArchive = Buffer.from(
@@ -300,8 +297,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
 
   it.effect("accepts an encoded Content-Length when the body is compressed", () =>
     Effect.gen(function* () {
-      // dl.google.com gzips the archive and reports the encoded size. The decoded
-      // stream is still checked byte for byte and by hash.
+      // dl.google.com reports the gzip-encoded size; byte and hash checks use the decoded stream.
       const { installation, validations } = yield* makeHarness({
         contentLength: completeArchive.byteLength - 1_000,
         contentEncoding: "gzip",
@@ -573,8 +569,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       }),
   );
 
-  // Real posix executables in a real temp dir, resolved by a linux-mocked
-  // PATH walk; a Windows temp path cannot be split on `:`.
+  // The mocked Linux PATH walk needs POSIX paths; Windows temp paths contain colons.
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "honors explicit paths and reports invalid overrides without falling back",
     () =>

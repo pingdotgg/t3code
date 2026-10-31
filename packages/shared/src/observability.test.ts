@@ -24,7 +24,15 @@ import {
   type TraceRecord,
   OtlpHeadersFromString,
   truncateTraceAttributes,
+  processServiceInstanceId,
 } from "./observability.ts";
+
+describe("processServiceInstanceId", () => {
+  it("stays the same for the process unless the operator set one", () => {
+    expect(processServiceInstanceId()).toBe(processServiceInstanceId({}));
+    expect(processServiceInstanceId({ "service.instance.id": "pod-7" })).toBe("pod-7");
+  });
+});
 
 describe("errorTag", () => {
   it("reports structural tags without retaining arbitrary values", () => {
@@ -204,6 +212,39 @@ describe("observability", () => {
         set: ["[Circular]"],
       },
     );
+  });
+
+  it("keeps an object that appears twice without marking it circular", () => {
+    const shared = { cwd: "/repo" };
+    const sharedMap = new Map([["cwd", "/repo"]]);
+    const sharedSet = new Set(["/repo"]);
+
+    assert.deepStrictEqual(
+      compactTraceAttributes({
+        ctx: { first: shared, second: shared },
+        list: [shared, shared],
+        maps: [sharedMap, sharedMap],
+        sets: [sharedSet, sharedSet],
+      }),
+      {
+        ctx: { first: { cwd: "/repo" }, second: { cwd: "/repo" } },
+        list: [{ cwd: "/repo" }, { cwd: "/repo" }],
+        maps: [{ cwd: "/repo" }, { cwd: "/repo" }],
+        sets: [["/repo"], ["/repo"]],
+      },
+    );
+  });
+
+  it("caps shared references that would expand exponentially", () => {
+    let graph: Record<string, unknown> = { cwd: "/repo" };
+    for (let depth = 0; depth < 20; depth++) {
+      graph = { left: graph, right: graph };
+    }
+
+    const serialized = JSON.stringify(compactTraceAttributes({ graph }));
+
+    assert.include(serialized, '"[Truncated]"');
+    assert.isBelow(serialized.length, 1_000_000);
   });
 
   nodeServicesIt("node services", (it) => {

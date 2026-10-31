@@ -26,6 +26,33 @@ export interface SignalExport {
   readonly exportIntervalMs: number;
 }
 
+/**
+ * `process.runtime.*` resource attributes for a Node process, matching the
+ * OpenTelemetry Node process detector. Electron embeds Node, so an Electron
+ * process reports Node and names Electron in the description.
+ */
+export const nodeProcessRuntimeAttributes = (): Record<string, string> => ({
+  "process.runtime.name": "nodejs",
+  "process.runtime.version": process.versions.node,
+  "process.runtime.description": process.versions.electron
+    ? `Electron ${process.versions.electron}`
+    : "Node.js",
+});
+let generatedServiceInstanceId: string | undefined;
+
+/**
+ * `service.instance.id` shared by every resource this process exports. Effect lets code
+ * attributes beat `OTEL_RESOURCE_ATTRIBUTES`, so callers pass the operator's in to keep it winning.
+ */
+export const processServiceInstanceId = (
+  operatorAttributes: Readonly<Record<string, string>> = {},
+): string => {
+  if (operatorAttributes["service.instance.id"]) return operatorAttributes["service.instance.id"];
+  // @effect-diagnostics-next-line cryptoRandomUUID:off -- Resources are built synchronously, outside any Effect.
+  generatedServiceInstanceId ??= crypto.randomUUID();
+  return generatedServiceInstanceId;
+};
+
 export const DEFAULT_SIGNAL_EXPORT: SignalExport = {
   protocol: "http/json",
   headers: undefined,
@@ -178,15 +205,28 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function markSeen(value: object, seen: WeakSet<object>): boolean {
-  if (seen.has(value)) {
-    return true;
-  }
-  seen.add(value);
-  return false;
+// Repeated references expand once per path, so a small shared graph can grow exponentially.
+const TRACE_ATTRIBUTE_MAX_NODES = 10_000;
+
+interface NormalizeState {
+  // Only the current ancestors, so a value repeated under two keys is not a cycle.
+  readonly seen: WeakSet<object>;
+  remainingNodes: number;
 }
 
-function normalizeJsonValue(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
+function enterNode(value: object, state: NormalizeState): string | undefined {
+  if (state.seen.has(value)) {
+    return "[Circular]";
+  }
+  if (state.remainingNodes <= 0) {
+    return "[Truncated]";
+  }
+  state.remainingNodes--;
+  state.seen.add(value);
+  return undefined;
+}
+
+function normalizeJsonValue(value: unknown, state: NormalizeState): unknown {
   if (
     value === null ||
     value === undefined ||
@@ -210,46 +250,59 @@ function normalizeJsonValue(value: unknown, seen: WeakSet<object> = new WeakSet(
     };
   }
   if (Array.isArray(value)) {
-    if (markSeen(value, seen)) {
-      return "[Circular]";
+    const marker = enterNode(value, state);
+    if (marker) {
+      return marker;
     }
-    return value.map((entry) => normalizeJsonValue(entry, seen));
+    const normalized = value.map((entry) => normalizeJsonValue(entry, state));
+    state.seen.delete(value);
+    return normalized;
   }
   if (value instanceof Map) {
-    if (markSeen(value, seen)) {
-      return "[Circular]";
+    const marker = enterNode(value, state);
+    if (marker) {
+      return marker;
     }
-    return Object.fromEntries(
+    const normalized = Object.fromEntries(
       Array.from(value.entries(), ([key, entryValue]) => [
         String(key),
-        normalizeJsonValue(entryValue, seen),
+        normalizeJsonValue(entryValue, state),
       ]),
     );
+    state.seen.delete(value);
+    return normalized;
   }
   if (value instanceof Set) {
-    if (markSeen(value, seen)) {
-      return "[Circular]";
+    const marker = enterNode(value, state);
+    if (marker) {
+      return marker;
     }
-    return Array.from(value.values(), (entry) => normalizeJsonValue(entry, seen));
+    const normalized = Array.from(value.values(), (entry) => normalizeJsonValue(entry, state));
+    state.seen.delete(value);
+    return normalized;
   }
   if (!isPlainObject(value)) {
     return String(value);
   }
-  if (markSeen(value, seen)) {
-    return "[Circular]";
+  const marker = enterNode(value, state);
+  if (marker) {
+    return marker;
   }
-  return Object.fromEntries(
-    Object.entries(value).map(([key, entryValue]) => [key, normalizeJsonValue(entryValue, seen)]),
+  const normalized = Object.fromEntries(
+    Object.entries(value).map(([key, entryValue]) => [key, normalizeJsonValue(entryValue, state)]),
   );
+  state.seen.delete(value);
+  return normalized;
 }
 
 export function compactTraceAttributes(
   attributes: Readonly<Record<string, unknown>>,
 ): TraceAttributes {
+  const state: NormalizeState = { seen: new WeakSet(), remainingNodes: TRACE_ATTRIBUTE_MAX_NODES };
   const entries: Array<[string, unknown]> = [];
   for (const [key, value] of Object.entries(attributes)) {
     if (value !== undefined) {
-      entries.push([key, normalizeJsonValue(value)]);
+      entries.push([key, normalizeJsonValue(value, state)]);
     }
   }
   return Object.fromEntries(entries);
@@ -299,10 +352,7 @@ function truncateNestedValue(value: unknown): unknown {
   return value;
 }
 
-/**
- * Returns a new record when anything was clamped; never mutates the input (the live span's
- * attributes are shared with other tracers).
- */
+/** Clones only when clamping; never mutates attributes shared with other tracers. */
 export function truncateTraceAttributes(attributes: TraceAttributes): TraceAttributes {
   let truncated: Record<string, unknown> | undefined;
   for (const [key, value] of Object.entries(attributes)) {
@@ -402,9 +452,7 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
       const startedAt = performance.now();
       const written = yield* sink.write(chunk).pipe(Effect.result);
       if (Result.isFailure(written)) {
-        // A failing disk (ENOSPC, EACCES, EIO) drops the rest of the batch.
-        // Retrying it would grow the backlog, and every later push would
-        // retry all of it.
+        // Drop the batch after disk failure to avoid an ever-growing retry backlog.
         writeFailing = true;
         droppedCount += records.length - persistedCount;
         return;
@@ -452,12 +500,10 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
       }),
     )
     .pipe(
-      // A cancelled write still completes in the OS. Finish it before another
-      // flush rotates the file or the scope's finalizer drains the remaining records.
+      // Cancelled OS writes still finish; await completion before rotation or finalizer drain.
       Effect.uninterruptible,
       Effect.withTracerEnabled(false),
-      // The timed fiber inherits the makeTraceSink span. That span has ended but
-      // lives as long as the sink, so the tracer logger must not add logs to it.
+      // Drop the ended makeTraceSink parent span so timed-fiber logs cannot accumulate on it.
       Effect.updateContext(Context.omit(Tracer.ParentSpan)<never>),
     );
 

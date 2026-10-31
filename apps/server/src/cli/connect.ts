@@ -529,7 +529,7 @@ const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function* <A, E
   },
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
-  const config = yield* resolveCliAuthConfig(flags, logLevel);
+  const config = yield* resolveCliAuthConfig(flags, logLevel, options);
   const minimumLogLevel = options?.quietLogs ? "Error" : config.logLevel;
   const layerRuntime = Layer.mergeAll(
     ServerSecretStore.layer,
@@ -610,7 +610,7 @@ const connectLinkCommand = Command.make("link", {
   headless: headlessFlag,
   publishOnly: Flag.Boolean("publish-only").pipe(
     Flag.withDescription(
-      "Link to publish agent activity only — no managed tunnel. Reach this environment out of band (e.g. Tailscale).",
+      "Link to publish agent activity only, with no managed tunnel. Reach this environment out of band (e.g. Tailscale).",
     ),
     Flag.withDefault(false),
   ),
@@ -719,10 +719,8 @@ const connectPublishCommand = Command.make("publish", {
           stringToBytes(enabled ? "true" : "false"),
         );
         if (!enabled) {
-          // If enabling scheduled a publish-only link that hasn't been
-          // provisioned yet, disabling must cancel it too — otherwise the next
-          // start still links an environment whose only purpose was publishing.
-          // A pending managed link is left alone; it exists for the tunnel.
+          // Cancel unprovisioned publish-only links too, or the next start will recreate them.
+          // Managed links also serve the tunnel and must survive.
           const linkedNow = Option.isSome(yield* secrets.get(CLOUD_LINKED_USER_ID));
           if (!linkedNow && (yield* CliState.readCliDesiredLinkMode) === "publish_only") {
             yield* CliState.setCliDesiredCloudLink(false);
@@ -744,10 +742,7 @@ const connectPublishCommand = Command.make("publish", {
           );
           return;
         }
-        // A link may already be desired (e.g. `t3 connect link` before the
-        // server's first start). Never downgrade it: a desired managed link
-        // also covers publishing, so only request a publish-only link when no
-        // link is pending at all.
+        // A desired managed link already covers publishing and must not be downgraded.
         if (yield* CliState.readCliDesiredCloudLink) {
           yield* Console.log(
             "A T3 Connect link is already pending. Start T3 to finish provisioning it; publishing starts once it links.",

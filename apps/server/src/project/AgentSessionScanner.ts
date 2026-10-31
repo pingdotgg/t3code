@@ -24,20 +24,19 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-import {
-  normalizeGitRemoteUrl,
-  isBareGitConfig,
-  parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
-  parseOriginUrlFromGitConfig,
-} from "@t3tools/shared/git";
+import { isBareGitConfig, parseOriginUrlFromGitConfig } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
+import { repositoryPathFromRemoteUrl } from "@t3tools/source-control-core/server/SourceControlProvider";
 
 import * as ServerConfig from "../config.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { resolvePiSessionsDir } from "@t3tools/provider-pi/server/usage";
 import * as ServerSettings from "../serverSettings.ts";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import {
   createTranscriptJsonReader,
   createTranscriptJsonSelector,
@@ -56,11 +55,7 @@ const MAX_METADATA_OPERATIONS_PER_SOURCE = MAX_TRANSCRIPTS_PER_SOURCE * 4;
 const MAX_METADATA_RECORDS_PER_SOURCE = 100_000;
 const MAX_METADATA_RECORDS_PER_TRANSCRIPT = 1_000;
 const RECENT_THREAD_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
-/**
- * Large tool results (especially screenshots) can make an otherwise ordinary
- * Codex transcript several GiB. Streaming field selection avoids allocating
- * those payloads.
- */
+// Screenshot-heavy transcripts can reach GiB; select fields while streaming to avoid allocating payloads.
 const MAX_IMPORTED_TRANSCRIPT_BYTES = 4 * 1024 * 1024 * 1024;
 const MAX_IMPORTED_MESSAGES = 200;
 const MAX_IMPORT_HISTORY_BYTES = 32 * 1024 * 1024;
@@ -85,6 +80,10 @@ const CodexTurnMetadata = Schema.Struct({
 
 const TranscriptRecord = Schema.Struct({
   type: Schema.optional(Schema.String),
+  // Pi entries form a tree through id/parentId; session_info entries carry its name.
+  id: Schema.optional(Schema.String),
+  parentId: Schema.optional(Schema.NullOr(Schema.String)),
+  name: Schema.optional(Schema.String),
   timestamp: Schema.optional(Schema.String),
   cwd: Schema.optional(Schema.String),
   sessionId: Schema.optional(Schema.String),
@@ -113,6 +112,13 @@ const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
 const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
 const decodeTranscriptRecord = Schema.decodeUnknownOption(Schema.fromJsonString(TranscriptRecord));
 const decodeTranscriptValue = Schema.decodeUnknownOption(TranscriptRecord);
+const decodePiEntryLinks = Schema.decodeUnknownOption(
+  Schema.Struct({
+    type: TranscriptRecord.fields.type,
+    id: TranscriptRecord.fields.id,
+    parentId: TranscriptRecord.fields.parentId,
+  }),
+);
 const selectTranscriptPath = createTranscriptJsonSelector(TranscriptRecord);
 const decodeCodexTurnMetadata = Schema.decodeUnknownOption(CodexTurnMetadata);
 
@@ -294,6 +300,39 @@ function deriveTitle(source: AgentSessionSource, text: string): string | undefin
   return request.trim().split("\n")[0]?.slice(0, 100).trim() || undefined;
 }
 
+// Pi keeps abandoned branches in the file; its active branch runs from the last entry to the root.
+function activePiBranch(
+  records: ReadonlyArray<DecodedTranscriptRecord>,
+): ReadonlyArray<DecodedTranscriptRecord> {
+  const entries = records.filter((record) => record.type !== "session");
+  const leaf = entries.at(-1);
+  // Version 1 sessions predate the tree and are linear.
+  if (leaf?.id === undefined) return entries;
+  const byId = new Map(
+    entries.flatMap((entry) => (entry.id === undefined ? [] : [[entry.id, entry] as const])),
+  );
+  const branch: Array<DecodedTranscriptRecord> = [];
+  for (
+    let entry: DecodedTranscriptRecord | undefined = leaf;
+    entry !== undefined && branch.length < entries.length;
+    entry = entry.parentId ? byId.get(entry.parentId) : undefined
+  ) {
+    branch.push(entry);
+  }
+  return branch.toReversed();
+}
+
+function isPiConversationRecord(
+  record: DecodedTranscriptRecord,
+): record is DecodedTranscriptRecord & {
+  readonly message: typeof TranscriptMessage.Type & { readonly role: "user" | "assistant" };
+} {
+  return (
+    record.type === "message" &&
+    (record.message?.role === "user" || record.message?.role === "assistant")
+  );
+}
+
 export function parseAgentSessionTranscript(
   input: AgentSessionTranscriptMetadata & {
     readonly contents: string;
@@ -318,8 +357,16 @@ function parseAgentSessionRecords(
   // Claude filenames are session IDs. Codex rollout filenames include extra
   // timestamp text, so only transcript metadata can provide a resumable ID.
   let providerSessionId =
-    input.source === "codex" ? "" : (claudeFields.sessionId ?? input.fallbackSessionId);
-  const title = claudeFields.title ?? null;
+    input.source === "codex"
+      ? ""
+      : input.source === "pi"
+        ? records.find((record) => record.type === "session")?.id?.trim() || input.fallbackSessionId
+        : (claudeFields.sessionId ?? input.fallbackSessionId);
+  // Pi titles a session by its latest session_info on any branch; an empty name clears it.
+  const title =
+    input.source === "pi"
+      ? records.findLast((record) => record.type === "session_info")?.name?.trim() || null
+      : (claudeFields.title ?? null);
   let model = claudeFields.model ?? null;
   let derivedTitle: string | undefined;
   let hasCodexSessionId = false;
@@ -410,8 +457,20 @@ function parseAgentSessionRecords(
   };
 
   let recordIndex = -1;
-  for (const record of records) {
+  for (const record of input.source === "pi" ? activePiBranch(records) : records) {
     recordIndex += 1;
+    if (input.source === "pi") {
+      if (!isPiConversationRecord(record)) continue;
+      const text = extractText(record.message.content);
+      if (text.length === 0) continue;
+      retainMessage({
+        role: record.message.role,
+        text,
+        createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
+        codexResponseUser: false,
+      });
+      continue;
+    }
     if (input.source === "claudeAgent") {
       if (isHiddenClaudeRecord(record)) continue;
       if (record.type !== "user" && record.type !== "assistant") continue;
@@ -441,9 +500,7 @@ function parseAgentSessionRecords(
     if (record.type === "event_msg" && record.payload?.type === "user_message") {
       const text = record.payload.message ?? "";
       if (text.trim().length === 0) continue;
-      // Codex can write the same prompt as both a response item and an event.
-      // Remove only the matching response copy so mixed-format logs keep every
-      // distinct user message.
+      // Codex can duplicate prompts across formats; remove only matching response copies.
       for (let index = messages.length - 1; index >= 0; index--) {
         const message = messages[index];
         if (message?.role === "assistant") break;
@@ -516,6 +573,8 @@ function shouldRetainDecodedRecord(
   source: AgentSessionSource,
   record: DecodedTranscriptRecord,
 ): boolean {
+  // Any Pi entry can be a link on the active branch.
+  if (source === "pi") return true;
   if (source === "claudeAgent") {
     if (isHiddenClaudeRecord(record) || (record.type !== "user" && record.type !== "assistant")) {
       return false;
@@ -629,11 +688,10 @@ function sameTranscriptIdentity(left: TranscriptIdentity, right: TranscriptIdent
   );
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
-  // Different project imports can arrive concurrently from multiple clients.
-  // Only one transcript may hold its selected-history budget at a time.
+  // Concurrent client imports must not hold multiple selected-history budgets.
   const importReadLock = yield* Semaphore.make(1);
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
@@ -725,8 +783,9 @@ export const make = Effect.gen(function* () {
     return {
       _tag: "Repository",
       git: {
-        remoteKey: originUrl === null ? null : normalizeGitRemoteUrl(originUrl),
-        repository: parseGitHubRepositoryNameWithOwnerFromRemoteUrl(originUrl),
+        remoteKey:
+          originUrl === null ? null : sourceControlDefinitions.repositoryKeyFromRemote(originUrl),
+        repository: repositoryPathFromRemoteUrl(originUrl),
       },
     } as const;
   });
@@ -852,15 +911,29 @@ export const make = Effect.gen(function* () {
               reader.write(decoder.decode());
               recordCount += 1;
               if (recordCount > recordLimit) return false;
-              const decoded = decodeTranscriptValue(reader.finish());
-              if (Option.isSome(decoded)) {
+              const value = reader.finish();
+              const decoded = decodeTranscriptValue(value);
+              if (Option.isNone(decoded) && source === "pi") {
+                // Pi accepts messages this schema rejects, such as null content; keep their tree links.
+                records.push(...Option.toArray(decodePiEntryLinks(value)));
+              } else if (Option.isSome(decoded)) {
                 if (Option.isNone(cwd)) cwd = Option.fromNullOr(extractDecodedCwd(decoded.value));
                 if (source === "claudeAgent") {
                   claudeFields = foldClaudeFields(claudeFields, decoded.value);
                 }
                 if (shouldRetainDecodedRecord(source, decoded.value)) {
-                  records.push(decoded.value);
-                  historyBytes += recordBytes;
+                  if (
+                    source === "pi" &&
+                    decoded.value.type === "message" &&
+                    !isPiConversationRecord(decoded.value)
+                  ) {
+                    // Tool output can dwarf the conversation; keep only the tree links.
+                    const { message: _message, ...links } = decoded.value;
+                    records.push(links);
+                  } else {
+                    records.push(decoded.value);
+                    historyBytes += recordBytes;
+                  }
                 }
               }
               recordBytes = 0;
@@ -1039,6 +1112,59 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // Pi nests sessions in one directory per cwd, but a custom session directory holds them flat.
+  const discoverPiTranscripts = Effect.fn("AgentSessionScanner.discoverPiTranscripts")(function* (
+    sessionsDir: string,
+    providerInstanceId: ProviderInstanceId,
+    operationBudget: number,
+  ) {
+    let operationsRemaining = operationBudget;
+    let truncated = false;
+    const readDirectory = (directory: string) => {
+      if (operationsRemaining <= 0) {
+        truncated = true;
+        return Effect.succeed<ReadonlyArray<string>>([]);
+      }
+      operationsRemaining -= 1;
+      return listDirectory(directory);
+    };
+    const transcripts: Array<TranscriptCandidate> = [];
+    for (const entry of yield* readDirectory(sessionsDir)) {
+      if (operationsRemaining <= 0) {
+        truncated = true;
+        break;
+      }
+      const entryPath = path.join(sessionsDir, entry);
+      const filePaths = entry.endsWith(".jsonl")
+        ? [entryPath]
+        : (yield* readDirectory(entryPath))
+            .filter((nested) => nested.endsWith(".jsonl"))
+            .map((nested) => path.join(entryPath, nested));
+
+      for (const filePath of filePaths) {
+        if (operationsRemaining <= 0) {
+          truncated = true;
+          break;
+        }
+        operationsRemaining -= 1;
+        const stats = yield* statOption(filePath);
+        if (
+          Option.isSome(stats) &&
+          stats.value.type === "File" &&
+          Option.isSome(stats.value.mtime)
+        ) {
+          transcripts.push({
+            filePath,
+            mtimeMs: stats.value.mtime.value.getTime(),
+            providerInstanceId,
+            size: Number(stats.value.size),
+          });
+        }
+      }
+    }
+    return { transcripts, truncated };
+  });
+
   const groupTranscriptsByCwd = Effect.fn("AgentSessionScanner.groupTranscriptsByCwd")(function* (
     source: AgentSessionSource,
     transcripts: ReadonlyArray<TranscriptCandidate>,
@@ -1090,7 +1216,7 @@ export const make = Effect.gen(function* () {
     const raw: Array<RawCandidate> = [];
     let truncated = false;
 
-    for (const source of ["claudeAgent", "codex"] as const) {
+    for (const source of ["claudeAgent", "codex", "pi"] as const) {
       const instances: Array<{
         readonly instanceId: ProviderInstanceId;
         readonly config: ProviderInstanceConfig;
@@ -1120,24 +1246,36 @@ export const make = Effect.gen(function* () {
       const homes: Array<{ homePath: string; providerInstanceId: ProviderInstanceId }> = [];
       const seenHomes = new Set<string>();
       for (const { instanceId, config: instance } of instances) {
-        const homeVariable = source === "claudeAgent" ? "CLAUDE_CONFIG_DIR" : "CODEX_HOME";
-        const environmentHome =
-          instance.environment?.findLast((variable) => variable.name === homeVariable)?.value ??
-          hostEnvironment[homeVariable];
+        const environmentHome = (name: "CLAUDE_CONFIG_DIR" | "CODEX_HOME") => {
+          const configured = instance.environment?.findLast(
+            (variable) => variable.name === name,
+          )?.value;
+          return typeof configured === "string" ? configured : hostEnvironment[name];
+        };
 
         let homePath: string;
-        if (source === "claudeAgent") {
+        if (source === "pi") {
+          const environment = yield* mergeProviderInstanceEnvironment(
+            instance.environment,
+            hostEnvironment,
+          ).pipe(Effect.provideService(HostProcess.HomeDirectory, homeDir));
+          homePath = resolvePiSessionsDir(environment, homeDir, path);
+        } else if (source === "claudeAgent") {
           const config = decodeClaudeSettings(instance.config ?? {});
           if (Option.isNone(config)) continue;
-          homePath = resolveClaudeConfigDir(config.value.homePath, environmentHome);
+          homePath = resolveClaudeConfigDir(
+            config.value.homePath,
+            environmentHome("CLAUDE_CONFIG_DIR"),
+          );
         } else {
           const config = decodeCodexSettings(instance.config ?? {});
           if (Option.isNone(config)) continue;
+          const codexHome = environmentHome("CODEX_HOME");
           const codexSettings =
             config.value.homePath.trim().length === 0 &&
             config.value.shadowHomePath.trim().length === 0 &&
-            environmentHome?.trim()
-              ? { ...config.value, homePath: environmentHome }
+            codexHome?.trim()
+              ? { ...config.value, homePath: codexHome }
               : config.value;
           const layout = yield* resolveCodexHomeLayout(codexSettings).pipe(
             Effect.provideService(Path.Path, path),
@@ -1162,9 +1300,13 @@ export const make = Effect.gen(function* () {
           truncated = true;
           continue;
         }
-        const discovered = yield* source === "claudeAgent"
-          ? discoverClaudeTranscripts(home.homePath, home.providerInstanceId, operationBudget)
-          : discoverCodexTranscripts(home.homePath, home.providerInstanceId, operationBudget);
+        const discover =
+          source === "claudeAgent"
+            ? discoverClaudeTranscripts
+            : source === "codex"
+              ? discoverCodexTranscripts
+              : discoverPiTranscripts;
+        const discovered = yield* discover(home.homePath, home.providerInstanceId, operationBudget);
         truncated ||= discovered.truncated;
         transcriptCandidates.push(...discovered.transcripts);
       }
@@ -1224,8 +1366,7 @@ export const make = Effect.gen(function* () {
         const realPath = yield* fileSystem
           .realPath(resolved)
           .pipe(Effect.orElseSucceed(() => resolved));
-        // A symlink can point into the worktrees directory even when its own
-        // spelling doesn't; check again with links resolved.
+        // Symlinks can disguise excluded worktree paths; re-check their targets.
         if (isExcludedProjectPath(realPath)) {
           key = "";
         } else {
@@ -1262,8 +1403,7 @@ export const make = Effect.gen(function* () {
           : Math.max(existing.lastActiveAtMs, candidate.lastActiveAtMs);
     }
 
-    // Resolve persisted roots too. A project and a transcript can name
-    // different symlinks to the same directory.
+    // Resolve persisted roots too; transcripts may use different symlinks to the same directory.
     const importedProjects = yield* projectStore
       .listShells()
       .pipe(
