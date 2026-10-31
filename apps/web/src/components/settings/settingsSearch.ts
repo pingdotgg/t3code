@@ -334,6 +334,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "colorize-pull-request-text",
+    title: "Color PR text",
+    to: "/settings/appearance",
+    searchTerms: ["pull request merge request sidebar indicator badge number stack status color"],
+  },
+  {
     id: "effort-display",
     title: "Effort display",
     to: "/settings/appearance",

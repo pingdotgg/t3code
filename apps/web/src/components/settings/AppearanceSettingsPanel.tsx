@@ -276,6 +276,32 @@ export function AppearanceSettingsPanel() {
         />
         <ThreadDetailsItemsRow />
         <SettingsRow
+          {...searchableSetting("colorize-pull-request-text")}
+          description="Color sidebar PR numbers and stack counts to match their status icons."
+          resetAction={
+            settings.colorizePullRequestText !==
+            DEFAULT_UNIFIED_SETTINGS.colorizePullRequestText ? (
+              <SettingResetButton
+                label="color PR text"
+                onClick={() =>
+                  updateSettings({
+                    colorizePullRequestText: DEFAULT_UNIFIED_SETTINGS.colorizePullRequestText,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.colorizePullRequestText}
+              onCheckedChange={(checked) =>
+                updateSettings({ colorizePullRequestText: Boolean(checked) })
+              }
+              aria-label="Color PR text"
+            />
+          }
+        />
+        <SettingsRow
           {...searchableSetting("effort-display")}
           description="Show reasoning effort in the composer as its name, such as High, or as bars."
           resetAction={
