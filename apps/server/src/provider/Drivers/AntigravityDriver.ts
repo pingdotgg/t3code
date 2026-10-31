@@ -14,6 +14,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
@@ -68,6 +69,8 @@ import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIden
 import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./AntigravitySkills.ts";
 
 const DRIVER = ProviderDriverKind.make("antigravity");
+const MODEL_CATALOG_MIGRATION_MARKER = ".t3-model-catalog-v1";
+const modelCatalogMigrationGate = Semaphore.makeUnsafe(1);
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const isNodeRuntimeUnavailableError = Schema.is(NodeRuntimeUnavailableError);
 
@@ -501,6 +504,34 @@ export const AntigravityDriver: ProviderDriver<
             }),
       ),
     );
+
+    // Existing Antigravity accounts can have a provider-status cache created before
+    // account-scoped Claude/GPT discovery was supported. Refresh that catalog once
+    // after upgrading, then leave periodic health checks lightweight (the ACP bundle
+    // is a large PyInstaller executable and must not be spawned every minute).
+    if (settings.enabled) {
+      const migrationMarkerPath = path.join(profileDirectory, MODEL_CATALOG_MIGRATION_MARKER);
+      yield* modelCatalogMigrationGate
+        .withPermits(1)(
+          Effect.gen(function* () {
+            const alreadyMigrated = yield* fileSystem
+              .exists(migrationMarkerPath)
+              .pipe(Effect.orElseSucceed(() => false));
+            if (alreadyMigrated) return;
+
+            yield* refreshModels();
+            yield* fileSystem.writeFileString(migrationMarkerPath, "1\n");
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                "Could not complete the one-time Antigravity model catalog refresh.",
+                { instanceId, cause },
+              ),
+            ),
+          ),
+        )
+        .pipe(Effect.forkScoped);
+    }
 
     return {
       instanceId,
