@@ -99,8 +99,13 @@ function resolveSpawnExecutableWithNode(
     return candidates.find(isExecutable);
   }
 
-  for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
-    const normalizedPathEntry = stripWrappingQuotes(pathEntry.trim());
+  const pathValue = readEnvPath(env) ?? "";
+  for (const pathEntry of pathValue.split(pathDelimiterForPlatform(platform))) {
+    // A raw empty component of a nonempty POSIX PATH is the current directory.
+    const normalizedPathEntry =
+      pathEntry === "" && pathValue !== "" && platform !== "win32"
+        ? "."
+        : stripWrappingQuotes(pathEntry.trim());
     if (normalizedPathEntry.length === 0) continue;
     for (const candidate of candidates) {
       const candidatePath = path.join(normalizedPathEntry, candidate);
@@ -444,6 +449,16 @@ function resolvePathEnvironmentVariable(env: NodeJS.ProcessEnv): string {
   return readEnvPath(env) ?? "";
 }
 
+function pathSearchCwd(pathValue: string, platform: NodeJS.Platform): string | undefined {
+  if (platform === "win32" || pathValue.length === 0) return undefined;
+  return pathValue.split(POSIX_PATH_DELIMITER).some((entry) => {
+    const directory = entry === "" ? "." : stripWrappingQuotes(entry.trim());
+    return directory.length > 0 && !NodePath.posix.isAbsolute(directory);
+  })
+    ? process.cwd()
+    : undefined;
+}
+
 function resolveWindowsPathExtensions(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
   const rawValue = env.PATHEXT;
   const fallback = [".COM", ".EXE", ".BAT", ".CMD"];
@@ -622,9 +637,26 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     return null;
   }
 
-  const cacheKey = [platform, pathValue, windowsPathExtensions.join(";"), command].join(
-    COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR,
-  );
+  // Keep case variants: Windows can make PATH directories case-sensitive.
+  const pathEntries: string[] = [];
+  const seenPathEntries = new Set<string>();
+  for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
+    const pathEntry =
+      entry === "" && platform !== "win32" ? "." : stripWrappingQuotes(entry.trim());
+    if (pathEntry.length === 0 || seenPathEntries.has(pathEntry)) continue;
+
+    seenPathEntries.add(pathEntry);
+    pathEntries.push(pathEntry);
+  }
+
+  const cwd = pathSearchCwd(pathValue, platform);
+  const cacheKey = [
+    platform,
+    pathValue,
+    windowsPathExtensions.join(";"),
+    command,
+    ...(cwd === undefined ? [] : [cwd]),
+  ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
   const cache = yield* CommandResolutionCache;
   const nowNanos = yield* Clock.monotonicTimeNanos;
   const cached = cache.get(cacheKey);
@@ -632,23 +664,13 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     return cached.resolvedPath;
   }
 
-  // Keep case variants: Windows can make PATH directories case-sensitive.
-  const pathEntries: string[] = [];
-  const seenPathEntries = new Set<string>();
-  for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
-    const pathEntry = stripWrappingQuotes(entry.trim());
-    if (pathEntry.length === 0 || seenPathEntries.has(pathEntry)) continue;
-
-    seenPathEntries.add(pathEntry);
-    pathEntries.push(pathEntry);
-  }
-
   const listings = yield* PathDirectoryListings;
   for (const pathEntry of pathEntries) {
-    let listing = listings && (yield* Cache.get(listings, pathEntry));
-    if (listings && listing?.names && listing.modified !== (yield* directoryMtime(pathEntry))) {
-      yield* Cache.invalidate(listings, pathEntry);
-      listing = yield* Cache.get(listings, pathEntry);
+    const directory = cwd === undefined ? pathEntry : path.resolve(cwd, pathEntry);
+    let listing = listings && (yield* Cache.get(listings, directory));
+    if (listings && listing?.names && listing.modified !== (yield* directoryMtime(directory))) {
+      yield* Cache.invalidate(listings, directory);
+      listing = yield* Cache.get(listings, directory);
     }
     for (const candidate of commandCandidates) {
       if (listing?.names && !listing.names.has(candidate.toLowerCase())) continue;
@@ -781,12 +803,15 @@ const resolveMacosGit = Effect.fnUntraced(function* (
 ) {
   const locateXcodeGit = yield* XcodeGitLocation;
   const cache = yield* CommandResolutionCache;
+  const pathValue = resolvePathEnvironmentVariable(env);
+  const cwd = pathSearchCwd(pathValue, "darwin");
   const cacheKey = [
     "xcode-git",
     String(spawnResolverCacheId(resolveExecutable)),
     String(spawnResolverCacheId(locateXcodeGit)),
-    resolvePathEnvironmentVariable(env),
+    pathValue,
     env.DEVELOPER_DIR ?? "",
+    ...(cwd === undefined ? [] : [cwd]),
   ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
   const nowNanos = yield* Clock.currentTimeNanos;
   const cached = cache.get(cacheKey);
