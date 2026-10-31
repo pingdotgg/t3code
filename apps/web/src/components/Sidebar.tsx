@@ -1032,6 +1032,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const [renamingTitle, setRenamingTitle] = useState("");
   const settlingThreadKeysRef = useRef(new Set<string>());
   const threadListRef = useRef<HTMLUListElement | null>(null);
+  const threadSearchListRef = useRef<HTMLUListElement | null>(null);
   const dragLabelOffsetRef = useRef(0);
   const listMotionRef = useRef<ReturnType<typeof createSidebarListMotion> | null>(null);
   const [dragState, setDragState] = useState<{
@@ -1723,7 +1724,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     });
   };
   const pointerOutsideThreadList = (point: { x: number; y: number }) => {
-    const bounds = threadListRef.current?.getBoundingClientRect();
+    // Search results replace the list, so their drags measure the results instead.
+    const bounds = (threadListRef.current ?? threadSearchListRef.current)?.getBoundingClientRect();
     return bounds !== undefined && (point.x < bounds.left || point.x > bounds.right);
   };
   const moveThreadContextDrag = (point: { x: number; y: number }) => {
@@ -1738,8 +1740,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       return false;
     }
     const threads = contextDragThreads();
-    const title =
-      threadByKeyRef.current.get(contextDragKeyRef.current ?? "")?.title.trim() || "Thread";
+    // Search reaches threads in collapsed shelves, which threadByKey omits.
+    const draggedRef = parseScopedThreadKey(contextDragKeyRef.current ?? "");
+    const title = (draggedRef && readThreadShell(draggedRef))?.title.trim() || "Thread";
     moveThreadContextDragGhost(point, { title, count: threads.length });
     return true;
   };
@@ -1757,6 +1760,25 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     onDrop: dropThreadContextDrag,
   };
   const dndSensors = useSensors(useSensor(SidebarPointerSensor, pointerSensorOptions));
+  // Search results sit outside the DndContext and have no order, so they only context-drag.
+  const startThreadSearchResultDrag = useStableCallback(
+    (threadRef: ScopedThreadRef, event: PointerEvent) => {
+      const key = scopedThreadKey(threadRef);
+      dragSensorRef.current = new SidebarPointerSensor({
+        active: key,
+        event,
+        options: pointerSensorOptions,
+        onPending: () => {},
+        onStart: () => {
+          contextDragKeyRef.current = key;
+        },
+        onMove: () => {},
+        onEnd: () => {},
+        onCancel: () => {},
+        onAbort: () => {},
+      });
+    },
+  );
   const sectionByThreadKeyRef = useRef(sectionByThreadKey);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed list data to refs read by stable drag and sweep callbacks
   useLayoutEffect(() => {
@@ -3175,6 +3197,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 timeout={400}
               >
                 <ul
+                  ref={threadSearchListRef}
                   id="sidebar-thread-search-results"
                   role="listbox"
                   aria-label="Thread search results"
@@ -3221,6 +3244,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         onHighlight={() => setActiveSearchResultIndex(index)}
                         onSelect={() => selectThreadSearchResult(thread)}
                         onFileDropThreads={handleThreadFileDrop}
+                        onContextDragStart={startThreadSearchResultDrag}
                       />
                     );
                   })}
