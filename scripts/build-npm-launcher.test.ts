@@ -371,6 +371,19 @@ fs.readFileSync = (file, ...rest) => {
         // `install` links npm's copy, so it never hands off.
         const install = yield* run(process.execPath, [launcher, "install"], { cwd: root, env });
         assert.equal(install.stdout.trim(), `stub install launcher=${launcher}`, install.stderr);
+        const flagged = yield* run(
+          process.execPath,
+          [launcher, "--log-level", "debug", "install"],
+          {
+            cwd: root,
+            env,
+          },
+        );
+        assert.equal(
+          flagged.stdout.trim(),
+          `stub --log-level debug install launcher=${launcher}`,
+          flagged.stderr,
+        );
 
         // Only `<version>/t3` counts, not another executable inside a completed version.
         const nested = path.join(home, "runtime/versions/1.2.4-nightly.20261026.1/helper");

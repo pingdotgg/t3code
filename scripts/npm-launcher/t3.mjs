@@ -230,6 +230,14 @@ function newestInstalled(home) {
   return found.sort((a, b) => compareVersions(b.version, a.version))[0];
 }
 
+/** The subcommand, past global flags that may come first; `--log-level` and `--completions` take a value. */
+function topLevelCommand(args) {
+  for (let index = 0; index < args.length; index++) {
+    if (args[index] === "--log-level" || args[index] === "--completions") index++;
+    else if (!args[index].startsWith("-")) return args[index];
+  }
+}
+
 function note(message) {
   if (process.stderr.isTTY) process.stderr.write(`t3: ${message}\n`);
 }
@@ -240,7 +248,9 @@ async function main() {
   const ipc = process.send !== undefined;
   // `install` links npm's copy itself; the desktop app's t3 cannot install itself.
   const installed =
-    ipc || process.env.T3CODE_USE_NPM === "1" || process.argv[2] === "install"
+    ipc ||
+    process.env.T3CODE_USE_NPM === "1" ||
+    topLevelCommand(process.argv.slice(2)) === "install"
       ? undefined
       : newestInstalled(home);
   if (installed && compareVersions(installed.version, version) >= 0) {
