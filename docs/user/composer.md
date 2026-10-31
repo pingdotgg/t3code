@@ -275,14 +275,15 @@ excerpt, Terminal 1 lines 3-4" and similar to screen readers.
 
 A pull request, issue, or discussion appears as its icon and number. A pull request chip's color
 reflects whether it was open, draft, merged, or closed when it was attached. Select a chip to
-inspect the captured title (and branches for a pull request), then open it on the host. On web and
-desktop, type `#` to browse recent references in the current project's repository: pull requests
-everywhere, issues on GitHub and GitLab, and discussions on GitHub. Pull requests linked to the
-thread are included from any repository and listed first, after any exact number match. Continue
-typing digits to filter the recent list by any part of those numbers. A complete number is also
-resolved directly, even when that item is older than the recent list—and when GitLab reuse means
-the same IID is both a merge request and an issue, both appear. Type a single word after `#` to
-search titles in the repository by text. Choose a result to insert it as a chip.
+inspect the captured title (and branches for a pull request). From a pull request chip you can also
+open it on the host. On web and desktop, type `#` to browse recent references in the current
+project's repository: pull requests everywhere, issues on GitHub and GitLab, and discussions on
+GitHub. Pull requests linked to the thread are included from any repository and listed first, after
+any exact number match. Continue typing digits to filter the recent list by any part of those
+numbers. A complete number is also resolved directly, even when that item is older than the recent
+list—and when GitLab reuse means the same IID is both a merge request and an issue, both appear.
+Type a single word after `#` to search titles in the repository by text. Choose a result to insert
+it as a chip.
 
 Another thread can be context too. Type `@` followed by part of its title to pick one from
 the same server, or from a machine it links to while the Linked environments beta is on; those

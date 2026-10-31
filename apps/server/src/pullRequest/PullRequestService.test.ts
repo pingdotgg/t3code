@@ -4589,3 +4589,185 @@ it.effect.each(["expiry", "commit expiry", "cache hit", "commit cache hit", "ref
       assert.strictEqual(diffReads, 2);
     }),
 );
+
+it.effect("searchReferences fetches an exact PR omitted from the recent list", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: () =>
+            Effect.succeed({
+              items: [changeRequest(10, "2026-07-10T00:00:00Z")],
+              truncated: false,
+              continues: true,
+            }),
+          getChangeRequest: (input) =>
+            input.number === 42
+              ? Effect.succeed(changeRequest(42, "2026-06-01T00:00:00Z"))
+              : Effect.fail(
+                  new PullRequestProviderError({
+                    provider: SourceControlProviderKind.make("github"),
+                    operation: "getChangeRequest",
+                    reason: "not-found",
+                    detail: "missing",
+                  }),
+                ),
+          searchHashReferences: () => Effect.succeed({ items: [] }),
+        }),
+      ],
+    });
+    const result = yield* service.searchReferences({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      query: "42",
+      limit: 12,
+    });
+    assert.deepStrictEqual(
+      result.entries.map((entry) => ({ kind: entry.kind, number: entry.number })),
+      [{ kind: "pull-request", number: 42 }],
+    );
+    assert.deepStrictEqual(result.errors, []);
+  }),
+);
+
+it.effect("searchReferences keeps a same-number issue beside its pull request", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: () =>
+            Effect.succeed({
+              items: [changeRequest(7, "2026-07-07T00:00:00Z")],
+              truncated: false,
+              continues: true,
+            }),
+          searchHashReferences: () =>
+            Effect.succeed({
+              items: [
+                {
+                  kind: "issue" as const,
+                  number: 7,
+                  title: "Issue 7",
+                  url: "https://host/issues/7",
+                  state: "open" as const,
+                  updatedAt: "2026-07-08T00:00:00Z",
+                },
+              ],
+            }),
+        }),
+      ],
+    });
+    const result = yield* service.searchReferences({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      query: "7",
+      limit: 12,
+    });
+    assert.deepStrictEqual(
+      result.entries.map((entry) => ({ kind: entry.kind, number: entry.number })),
+      [
+        { kind: "issue", number: 7 },
+        { kind: "pull-request", number: 7 },
+      ],
+    );
+    assert.deepStrictEqual(result.errors, []);
+  }),
+);
+
+it.effect("searchReferences preserves successful results when one source fails", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: () => Effect.fail(requestFailed),
+          getChangeRequest: () =>
+            Effect.fail(
+              new PullRequestProviderError({
+                provider: SourceControlProviderKind.make("github"),
+                operation: "getChangeRequest",
+                reason: "failed",
+                detail: "PR lookup failed",
+              }),
+            ),
+          searchHashReferences: () =>
+            Effect.succeed({
+              items: [
+                {
+                  kind: "discussion" as const,
+                  number: 3,
+                  title: "Discussion 3",
+                  url: "https://host/discussions/3",
+                  state: "open" as const,
+                  updatedAt: "2026-07-03T00:00:00Z",
+                },
+              ],
+            }),
+        }),
+      ],
+    });
+    const result = yield* service.searchReferences({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      query: "3",
+      limit: 12,
+    });
+    assert.deepStrictEqual(
+      result.entries.map((entry) => ({ kind: entry.kind, number: entry.number })),
+      [{ kind: "discussion", number: 3 }],
+    );
+    assert.deepStrictEqual(
+      result.errors.map((error) => error.message),
+      ["HTTP 404", "PR lookup failed"],
+    );
+  }),
+);
+
+it.effect("searchReferences suppresses exact PR not-found for issue-or-discussion numbers", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: () =>
+            Effect.succeed({ items: [], truncated: false, continues: true }),
+          getChangeRequest: () =>
+            Effect.fail(
+              new PullRequestProviderError({
+                provider: SourceControlProviderKind.make("github"),
+                operation: "getChangeRequest",
+                reason: "not-found",
+                detail: "No PR",
+              }),
+            ),
+          searchHashReferences: () =>
+            Effect.succeed({
+              items: [
+                {
+                  kind: "issue" as const,
+                  number: 99,
+                  title: "Issue 99",
+                  url: "https://host/issues/99",
+                  state: "open" as const,
+                  updatedAt: "2026-07-09T00:00:00Z",
+                },
+              ],
+            }),
+        }),
+      ],
+    });
+    const result = yield* service.searchReferences({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      query: "99",
+      limit: 12,
+    });
+    assert.deepStrictEqual(
+      result.entries.map((entry) => ({ kind: entry.kind, number: entry.number })),
+      [{ kind: "issue", number: 99 }],
+    );
+    assert.deepStrictEqual(result.errors, []);
+  }),
+);

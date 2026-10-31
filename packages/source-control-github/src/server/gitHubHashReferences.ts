@@ -115,6 +115,20 @@ function toDiscussionReference(item: {
   };
 }
 
+/** Cap text-query discussion scans so a huge repo cannot fan out unbounded REST pages. */
+export const DISCUSSION_TEXT_SEARCH_MAX_PAGES = 5;
+export const DISCUSSION_TEXT_SEARCH_PAGE_SIZE = 100;
+
+export function discussionListPath(input: {
+  readonly owner: string;
+  readonly name: string;
+  readonly perPage: number;
+  readonly page?: number | undefined;
+}): string {
+  const page = input.page ?? 1;
+  return `repos/${input.owner}/${input.name}/discussions?per_page=${input.perPage}&page=${page}&sort=updated`;
+}
+
 export function hashReferenceSearchPaths(input: {
   readonly repository: string;
   readonly query?: string | undefined;
@@ -125,6 +139,8 @@ export function hashReferenceSearchPaths(input: {
   readonly number: number | null;
   readonly issueSearchPath: string | null;
   readonly discussionListPath: string;
+  readonly discussionListPerPage: number;
+  readonly paginateDiscussions: boolean;
   readonly issueDetailPath: string | null;
   readonly discussionDetailPath: string | null;
 } | null {
@@ -137,6 +153,10 @@ export function hashReferenceSearchPaths(input: {
       ? Number(query)
       : null;
   const limit = Math.max(1, Math.min(50, input.limit));
+  // Recent (empty) queries stay limit-sized; text queries page at 100 so matches past the first
+  // page still surface.
+  const paginateDiscussions = number === null && query.length > 0;
+  const discussionListPerPage = paginateDiscussions ? DISCUSSION_TEXT_SEARCH_PAGE_SIZE : limit;
   const issueSearch =
     number !== null
       ? null
@@ -154,7 +174,14 @@ export function hashReferenceSearchPaths(input: {
       issueSearch === null
         ? null
         : `search/issues?q=${encodeURIComponent(issueSearch)}&per_page=${limit}`,
-    discussionListPath: `repos/${owner}/${name}/discussions?per_page=${limit}&sort=updated`,
+    discussionListPath: discussionListPath({
+      owner,
+      name,
+      perPage: discussionListPerPage,
+      page: 1,
+    }),
+    discussionListPerPage,
+    paginateDiscussions,
     issueDetailPath: number === null ? null : `repos/${owner}/${name}/issues/${number}`,
     discussionDetailPath: number === null ? null : `repos/${owner}/${name}/discussions/${number}`,
   };
@@ -178,23 +205,36 @@ export function decodeIssueDetailBody(body: string): ProviderHashReference | nul
   });
 }
 
+export function decodeDiscussionListPage(
+  body: string,
+  query: string,
+): {
+  readonly items: ReadonlyArray<ProviderHashReference>;
+  readonly rawCount: number;
+} {
+  return Option.match(decodeDiscussionList(body), {
+    onNone: () => ({ items: [], rawCount: 0 }),
+    onSome: (items) => {
+      const words = query.toLowerCase().split(/\s+/u).filter(Boolean);
+      return {
+        rawCount: items.length,
+        items: items.flatMap((item) => {
+          const reference = toDiscussionReference(item);
+          if (reference === null) return [];
+          if (words.length === 0) return [reference];
+          const text = `#${reference.number} ${reference.title}`.toLowerCase();
+          return words.every((word) => text.includes(word)) ? [reference] : [];
+        }),
+      };
+    },
+  });
+}
+
 export function decodeDiscussionListBody(
   body: string,
   query: string,
 ): ReadonlyArray<ProviderHashReference> {
-  return Option.match(decodeDiscussionList(body), {
-    onNone: () => [],
-    onSome: (items) => {
-      const words = query.toLowerCase().split(/\s+/u).filter(Boolean);
-      return items.flatMap((item) => {
-        const reference = toDiscussionReference(item);
-        if (reference === null) return [];
-        if (words.length === 0) return [reference];
-        const text = `#${reference.number} ${reference.title}`.toLowerCase();
-        return words.every((word) => text.includes(word)) ? [reference] : [];
-      });
-    },
-  });
+  return decodeDiscussionListPage(body, query).items;
 }
 
 export function decodeDiscussionDetailBody(body: string): ProviderHashReference | null {

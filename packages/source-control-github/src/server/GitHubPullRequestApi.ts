@@ -118,10 +118,12 @@ import type {
   ProviderListCursor,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import {
+  DISCUSSION_TEXT_SEARCH_MAX_PAGES,
   decodeDiscussionDetailBody,
-  decodeDiscussionListBody,
+  decodeDiscussionListPage,
   decodeIssueDetailBody,
   decodeIssueSearchBody,
+  discussionListPath,
   hashReferenceSearchPaths,
 } from "./gitHubHashReferences.ts";
 
@@ -2011,7 +2013,33 @@ export const make = Effect.gen(function* () {
         return { items };
       }
 
-      const [issueBody, discussionBody] = yield* Effect.all(
+      const loadDiscussions = Effect.gen(function* () {
+        const discussions: ProviderHashReference[] = [];
+        const maxPages = paths.paginateDiscussions ? DISCUSSION_TEXT_SEARCH_MAX_PAGES : 1;
+        for (let page = 1; page <= maxPages && discussions.length < input.limit; page++) {
+          const body = yield* ignoreNotFound(
+            api
+              .rest({
+                host: input.host,
+                operation: "searchHashReferences",
+                path: discussionListPath({
+                  owner: paths.owner,
+                  name: paths.name,
+                  perPage: paths.discussionListPerPage,
+                  page,
+                }),
+              })
+              .pipe(Effect.map((response) => response.body)),
+          );
+          if (body === null) break;
+          const decoded = decodeDiscussionListPage(body, query);
+          discussions.push(...decoded.items);
+          if (decoded.rawCount < paths.discussionListPerPage) break;
+        }
+        return discussions;
+      });
+
+      const [issueBody, discussions] = yield* Effect.all(
         [
           paths.issueSearchPath === null
             ? Effect.succeed(null as string | null)
@@ -2022,21 +2050,11 @@ export const make = Effect.gen(function* () {
                   path: paths.issueSearchPath,
                 })
                 .pipe(Effect.map((response) => response.body)),
-          ignoreNotFound(
-            api
-              .rest({
-                host: input.host,
-                operation: "searchHashReferences",
-                path: paths.discussionListPath,
-              })
-              .pipe(Effect.map((response) => response.body)),
-          ),
+          loadDiscussions,
         ],
         { concurrency: 2 },
       );
       const issues = issueBody === null ? [] : decodeIssueSearchBody(issueBody);
-      const discussions =
-        discussionBody === null ? [] : decodeDiscussionListBody(discussionBody, query);
       return {
         items: [...issues, ...discussions]
           .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
