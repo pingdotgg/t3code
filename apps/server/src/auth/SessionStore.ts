@@ -1059,17 +1059,16 @@ const make = Effect.gen(function* () {
         const original = yield* readRow(sessionId);
         if (Option.isNone(original)) return;
         let current = original.value;
+        // Revoking any session the socket has used closes it, including one revoked mid-handoff.
+        const chain = new Set([sessionId]);
         while (current.revokedAt === null) {
           const now = yield* DateTime.now;
           const remaining = current.expiresAt.epochMilliseconds - now.epochMilliseconds;
           if (remaining > 0) {
-            const watched = current.sessionId;
             const removed = yield* Effect.raceFirst(
               Stream.fromSubscription(subscription).pipe(
                 Stream.filter(
-                  (change) =>
-                    change.type === "clientRemoved" &&
-                    (change.sessionId === sessionId || change.sessionId === watched),
+                  (change) => change.type === "clientRemoved" && chain.has(change.sessionId),
                 ),
                 Stream.runHead,
                 Effect.as(true),
@@ -1096,6 +1095,7 @@ const make = Effect.gen(function* () {
               ? undefined
               : latestSessionByProofKey.get(proofKeyThumbprint);
           if (successorId === undefined || successorId === current.sessionId) return;
+          chain.add(successorId);
           const successor = yield* readRow(successorId);
           // The socket keeps its original scopes, so the renewal must still grant all of them.
           if (
