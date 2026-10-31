@@ -1321,7 +1321,10 @@ export function appendComposerDraftText(draftKey: string, value: string): void {
   });
 }
 
-/** Restore with allowOverflow to preserve every attachment after failed sends. */
+/**
+ * Restore with allowOverflow to preserve every attachment after failed sends.
+ * appendReference chips file attachments into the text; images, like on web, show only in the strip.
+ */
 export function appendComposerDraftAttachments(
   draftKey: string,
   attachments: ReadonlyArray<DraftComposerAttachment>,
@@ -1339,8 +1342,11 @@ export function appendComposerDraftAttachments(
   let removed: ReadonlyArray<DraftComposerAttachment> = [];
   updateComposerDrafts((current) => {
     const existing = normalizeDraft(current[draftKey]);
-    const retained = options?.appendReference
-      ? draftWithoutInsertionSelection(draftKey, existing, options.insertion)
+    const needsReference = (attachment: DraftComposerAttachment) =>
+      options?.appendReference === true && attachment.type !== "image";
+    const referencing = attachments.some(needsReference);
+    const retained = referencing
+      ? draftWithoutInsertionSelection(draftKey, existing, options?.insertion)
       : existing;
     const remaining = options?.allowOverflow
       ? attachments.length
@@ -1351,7 +1357,7 @@ export function appendComposerDraftAttachments(
             options?.maxAttachments ?? PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
           ) - retained.attachments.length,
         );
-    const contextCapacity = options?.appendReference
+    const contextCapacity = referencing
       ? Math.max(0, COMPOSER_CONTEXT_MAX_RECORDS - (retained.context?.records.length ?? 0))
       : attachments.length;
     const accepted = attachments.slice(0, Math.min(remaining, contextCapacity));
@@ -1360,8 +1366,10 @@ export function appendComposerDraftAttachments(
       return current;
     }
     let draft = { ...existing, attachments: [...existing.attachments, ...accepted] };
-    if (options?.appendReference) {
-      const records = accepted.map((attachment) => attachmentContextRecord(attachment));
+    const records = accepted
+      .filter(needsReference)
+      .map((attachment) => attachmentContextRecord(attachment));
+    if (records.length > 0) {
       const inserted = draftWithInsertedContext(
         draftKey,
         draft,

@@ -269,6 +269,9 @@ describe("host context compatibility", () => {
       text: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
       context,
     });
+    expect(serializeComposerMessageForServer(" ", undefined)).toEqual({
+      text: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+    });
     const withProse = `${reference} what is this?`;
     expect(serializeComposerMessageForServer(withProse, context)).toEqual({
       text: withProse,
