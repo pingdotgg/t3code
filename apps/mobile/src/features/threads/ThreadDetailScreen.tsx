@@ -1053,13 +1053,32 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
     scheduleOverlayRepin(50);
   };
   const floatingCoverageTarget = showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0;
+  // A turn's last row grows the list as its coverage collapses. Scrolling along with the
+  // shrinking inset would pull the list down just before that row pushes it back up. A frozen
+  // list misses keyboard inset events, so skip this while the keyboard is up or moving.
+  const coverageCollapseFroze = useSharedValue(false);
+  useAnimatedReaction(
+    () => floatingCoverageTarget,
+    (target, previous) => {
+      if (target === 0 && previous !== null && previous > 0 && keyboardTranslation.value === 0) {
+        coverageCollapseFroze.set(true);
+        freeze.set(true);
+      }
+    },
+    [floatingCoverageTarget],
+  );
   const floatingControlCoverage = useDerivedValue(
     () =>
       withTiming(
         floatingCoverageTarget,
         { duration: 180, reduceMotion: ReduceMotion.System },
         (finished) => {
-          if (finished) runOnJS(repinAfterCoverageSettles)(floatingCoverageTarget);
+          if (!finished) return;
+          if (coverageCollapseFroze.get()) {
+            coverageCollapseFroze.set(false);
+            freeze.set(false);
+          }
+          runOnJS(repinAfterCoverageSettles)(floatingCoverageTarget);
         },
       ),
     [floatingCoverageTarget],
