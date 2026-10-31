@@ -231,6 +231,17 @@ function concealPendingQuitWindow(
   window.setOpacity(0);
 }
 
+const PINCH_MAGNIFY_MAX_SCALE = 5;
+
+function allowPinchMagnify(webContents: Electron.WebContents): Promise<void> {
+  return webContents.setVisualZoomLevelLimits(1, PINCH_MAGNIFY_MAX_SCALE);
+}
+
+// Collapsing the limits snaps a pinch-magnified window back to 100%.
+function resetPinchMagnify(webContents: Electron.WebContents): Promise<void> {
+  return webContents.setVisualZoomLevelLimits(1, 1).then(() => allowPinchMagnify(webContents));
+}
+
 function getWindowTitleBarOptions(
   shouldUseDarkColors: boolean,
   platform: NodeJS.Platform,
@@ -340,6 +351,7 @@ export const make = Effect.gen(function* () {
     webContents.setZoomLevel(
       direction === "reset" ? 0 : webContents.getZoomLevel() + (direction === "in" ? 0.5 : -0.5),
     );
+    if (direction === "reset") void resetPinchMagnify(webContents).catch(() => undefined);
     if (environment.platform === "darwin") syncMacosWindowButtons(window);
     // App zoom propagates to guests; restore each preview's own zoom.
     yield* previewManager.reapplyZoom();
@@ -670,6 +682,11 @@ export const make = Effect.gen(function* () {
     window.webContents.on("zoom-changed", (_event, direction) => {
       if (window.isDestroyed()) return;
       runFork(zoomWindow(window, direction));
+    });
+    // Electron turns off trackpad pinch-zoom; restore it so a pinch magnifies the app without
+    // relayout. Elements with their own wheel listener (expanded images) still claim the pinch.
+    window.webContents.on("dom-ready", () => {
+      void allowPinchMagnify(window.webContents).catch(() => undefined);
     });
 
     window.on("page-title-updated", (event) => {
