@@ -744,7 +744,7 @@ export function BackgroundActivityTimelineRow({
       onClick={() => ctx.onToggleWorkGroup(row.id, row.id)}
       icon={<BellIcon aria-hidden className="size-3.5 text-muted-foreground" />}
       label={
-        <span className="flex min-w-0 items-center gap-1.5" title={summary}>
+        <span className="flex min-w-0 items-center gap-1.5">
           <span className="shrink-0 text-label">{label}</span>
           {[...sources].map(([kind, count]) => {
             const Icon =
