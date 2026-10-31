@@ -3,6 +3,8 @@ import {
   UsageLimitSourceError,
   type UsageLimitSourceConsumeResetCreditInput,
   type ProviderConsumeResetCreditResult,
+  type ProviderDriverKind,
+  type ProviderInstanceId,
   type ServerSettings,
   type UsageLimitSourceConfig,
   type UsageLimitSourceId,
@@ -21,6 +23,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import { isClaudeModelScopedWindow } from "../provider/claudeUsageLimits.ts";
 import * as Settings from "../serverSettings.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
 
@@ -30,6 +33,9 @@ export class UsageLimitSources extends Context.Service<
     readonly current: Effect.Effect<ReadonlyArray<UsageLimitSourceSnapshot>>;
     readonly streamChanges: Stream.Stream<ReadonlyArray<UsageLimitSourceSnapshot>>;
     readonly refresh: Effect.Effect<void>;
+    readonly read: (
+      sourceIds: ReadonlySet<string>,
+    ) => Effect.Effect<ReadonlyArray<UsageLimitSourceSnapshot>>;
     readonly consumeResetCredit: (
       input: UsageLimitSourceConsumeResetCreditInput,
     ) => Effect.Effect<ProviderConsumeResetCreditResult, UsageLimitSourceError>;
@@ -100,6 +106,19 @@ export const make = Effect.gen(function* () {
     yield* publish(snapshots);
   }).pipe(refreshLock.withPermits(1), Effect.ignoreCause({ log: true }));
 
+  // Targeted reads do not publish, so unrelated refreshes and redemptions keep cache ownership.
+  const read = Effect.fn("UsageLimitSources.read")(function* (sourceIds: ReadonlySet<string>) {
+    const settings = yield* settingsService.getSettings.pipe(Effect.option);
+    const entries = Object.entries(
+      settings._tag === "Some" ? settings.value.usageLimitSources : {},
+    ).filter(([id, config]) => sourceIds.has(id) && config.enabled);
+    return yield* Effect.forEach(
+      entries,
+      ([id, config]) => readSource(id as UsageLimitSourceId, config),
+      { concurrency: 4 },
+    );
+  });
+
   // Shares the refresh lock so a stale in-flight read cannot overwrite a redemption.
   const consumeResetCredit = Effect.fn("UsageLimitSources.consumeResetCredit")(function* (
     input: UsageLimitSourceConsumeResetCreditInput,
@@ -151,6 +170,7 @@ export const make = Effect.gen(function* () {
 
   return {
     current: Ref.get(stateRef),
+    read,
     consumeResetCredit,
     refresh,
     get streamChanges() {
@@ -168,3 +188,93 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(UsageLimitSources, make);
+
+/**
+ * A hub answers for a 429 only when every account it pools for the driver is spent;
+ * the pool recovers when its first account does.
+ */
+export function hubPoolResetAt(
+  sources: ReadonlyArray<UsageLimitSourceSnapshot>,
+  driver: ProviderDriverKind,
+  nowMs: number,
+): string | null {
+  let earliest: number | null = null;
+  for (const account of sources.flatMap((source) => source.accounts)) {
+    if (account.driver !== driver) continue;
+    const windows = account.usageLimits.windows.filter(
+      (window) => !isClaudeModelScopedWindow(window),
+    );
+    const exhausted = windows.filter((window) => window.usedPercent >= 100);
+    if (exhausted.length === 0) {
+      if (windows.length > 0) return null;
+      continue;
+    }
+    const resets = exhausted.map((window) => Date.parse(window.resetsAt ?? ""));
+    if (resets.some((reset) => !Number.isFinite(reset))) continue;
+    const recoversAt = Math.max(...resets);
+    if (recoversAt <= nowMs) return null;
+    earliest = earliest === null ? recoversAt : Math.min(earliest, recoversAt);
+  }
+  return earliest === null ? null : DateTime.formatIso(DateTime.makeUnsafe(earliest));
+}
+
+/** CLIProxyAPI serves agents and management on one address, so an instance uses the hubs it names. */
+export function instanceHubIds(
+  settings: Pick<ServerSettings, "providerInstances" | "usageLimitSources">,
+  instanceId: ProviderInstanceId,
+): ReadonlySet<string> {
+  const instance = settings.providerInstances[instanceId];
+  if (!instance) return new Set();
+  const origins = new Set(
+    (
+      JSON.stringify([instance.environment ?? [], instance.config ?? null]).match(
+        /https?:\/\/[^\s"'\\]+/gi,
+      ) ?? []
+    ).flatMap((url) => (URL.canParse(url) ? [new URL(url).origin] : [])),
+  );
+  return new Set(
+    Object.entries(settings.usageLimitSources).flatMap(([id, config]) =>
+      config.enabled && URL.canParse(config.url) && origins.has(new URL(config.url).origin)
+        ? [id]
+        : [],
+    ),
+  );
+}
+
+/** Supplies a reset time for usage limits a provider reports without one. */
+export class UsageLimitResetFallback extends Context.Reference<{
+  readonly resetAt: (input: {
+    readonly instanceId: ProviderInstanceId;
+    readonly driver: ProviderDriverKind;
+  }) => Effect.Effect<string | null>;
+}>("t3/usage/UsageLimitResetFallback", {
+  defaultValue: () => ({ resetAt: () => Effect.succeed(null) }),
+}) {}
+
+export const layerResetFallback = Layer.effect(
+  UsageLimitResetFallback,
+  Effect.gen(function* () {
+    const sources = yield* UsageLimitSources;
+    const settingsService = yield* Settings.ServerSettingsService;
+    return {
+      resetAt: Effect.fn("UsageLimitResetFallback.resetAt")(function* (input: {
+        readonly instanceId: ProviderInstanceId;
+        readonly driver: ProviderDriverKind;
+      }) {
+        const settings = yield* settingsService.getSettings.pipe(Effect.option);
+        if (settings._tag === "None") return null;
+        const hubIds = instanceHubIds(settings.value, input.instanceId);
+        if (hubIds.size === 0) return null;
+        // The terminal waits on this read, so a slow hub falls back to its last snapshot.
+        const refreshed = yield* sources.read(hubIds).pipe(Effect.timeoutOption("5 seconds"));
+        const snapshots = refreshed._tag === "Some" ? refreshed.value : yield* sources.current;
+        const now = yield* DateTime.now;
+        return hubPoolResetAt(
+          snapshots.filter((source) => hubIds.has(source.id)),
+          input.driver,
+          DateTime.toEpochMillis(now),
+        );
+      }),
+    };
+  }),
+);
