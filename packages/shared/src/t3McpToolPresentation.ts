@@ -50,6 +50,11 @@ export type T3McpToolSummaryAction =
   | "project-update"
   | "project-delete"
   | "project-clone"
+  | "pairing-create"
+  | "pairing-list"
+  | "pairing-revoke"
+  | "client-list"
+  | "client-revoke"
   | "environment-read"
   | "environment-links"
   | "environment-link"
@@ -324,6 +329,17 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Read", "Reading", "Read", "environment preferences"],
     "environment-read",
   ),
+  t3_pairing_create: tool(
+    ["Create", "Creating", "Created", "a pairing credential"],
+    "pairing-create",
+  ),
+  t3_pairing_list: tool(["List", "Listing", "Listed", "pairing credentials"], "pairing-list"),
+  t3_pairing_revoke: tool(
+    ["Revoke", "Revoking", "Revoked", "a pairing credential"],
+    "pairing-revoke",
+  ),
+  t3_client_list: tool(["List", "Listing", "Listed", "trusted clients"], "client-list"),
+  t3_client_revoke: tool(["Revoke", "Revoking", "Revoked", "a trusted client"], "client-revoke"),
   t3_environment_links: tool(
     ["List", "Listing", "Listed", "linked environments"],
     "environment-links",

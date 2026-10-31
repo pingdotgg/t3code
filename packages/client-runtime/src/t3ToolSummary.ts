@@ -330,6 +330,21 @@ export function summarizeT3ToolCalls(
         quantity(countEntities(entityIds("cwd")), "repository", "repositories"),
       );
       break;
+    case "pairing-create":
+      label = phrase("Created", "create", `pairing credentials ${times}`);
+      break;
+    case "pairing-list":
+      label = phrase("Listed", "list", `pairing credentials ${times}`);
+      break;
+    case "pairing-revoke":
+      label = phrase("Requested revocation of", "revoke", `pairing credentials ${times}`);
+      break;
+    case "client-list":
+      label = phrase("Listed", "list", `trusted clients ${times}`);
+      break;
+    case "client-revoke":
+      label = phrase("Requested revocation of", "revoke", `trusted clients ${times}`);
+      break;
     case "environment-read":
       label = phrase("Checked", "check", `environment preferences ${times}`);
       break;
