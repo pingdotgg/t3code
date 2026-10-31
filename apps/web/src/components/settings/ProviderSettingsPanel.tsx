@@ -275,6 +275,7 @@ function EnvironmentUnavailablePlaceholder({
 }
 
 interface ProviderSettingsTarget {
+  readonly resumeEnvironmentId?: EnvironmentId;
   readonly environmentId?: EnvironmentId;
   readonly instanceId?: ProviderInstanceId;
   readonly scoped?: boolean;
@@ -285,6 +286,23 @@ interface ProviderSettingsTarget {
 export function ProviderSettingsPanel(target: ProviderSettingsTarget) {
   return (
     <SettingsPageContainer className="@container/providers max-w-[808px]">
+      {target.resumeEnvironmentId ? (
+        <div>
+          <Button
+            variant="secondary"
+            size="sm"
+            render={
+              <Link
+                to="/welcome"
+                hash="setup"
+                search={{ resumeEnvironmentId: target.resumeEnvironmentId }}
+              />
+            }
+          >
+            Back to setup
+          </Button>
+        </div>
+      ) : null}
       <ProviderSettingsPanelContent
         key={`${target.environmentId ?? ""}:${target.instanceId ?? ""}`}
         {...target}

@@ -1,4 +1,5 @@
 import { useAuth } from "@clerk/react";
+import { Link } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   AgentSessionProjectCandidate,
@@ -449,6 +450,7 @@ function ConnectionStep({
           .
         </p>
         <Button
+          size="standard"
           className="shrink-0 self-end"
           ref={continueRef}
           autoFocus={!expandPairingInitially}
@@ -600,7 +602,7 @@ function PairingForm({
             aria-invalid={errorMessage.length > 0}
             aria-describedby={errorMessage ? "onboarding-pairing-error" : undefined}
             className="mt-2"
-            size="lg"
+            size="default"
             autoCapitalize="none"
             autoComplete="off"
             autoCorrect="off"
@@ -634,7 +636,11 @@ function PairingForm({
               <ChevronRightIcon className="size-3.5 group-data-panel-open:rotate-90" />
               Need a pairing link?
             </CollapsibleTrigger>
-            <Button type="submit" disabled={isPairing || pairingUrl.trim().length === 0}>
+            <Button
+              size="standard"
+              type="submit"
+              disabled={isPairing || pairingUrl.trim().length === 0}
+            >
               {isPairing ? "Pairing..." : "Pair"}
             </Button>
           </div>
@@ -675,10 +681,7 @@ function AgentsStep({
 }) {
   const { environments } = useEnvironments();
   return (
-    <StepShell
-      title="Connect your agents"
-      description="Choose an agent to start coding. You can add more later."
-    >
+    <StepShell title="Your agents" description="Agents available on your selected computers.">
       <ScrollArea scrollFade className="mt-5 h-auto max-h-[min(32rem,55dvh)]">
         <div className="space-y-5 pr-3">
           {environmentIds.map((environmentId) => (
@@ -694,7 +697,7 @@ function AgentsStep({
         </div>
       </ScrollArea>
       <div className="mt-6 flex justify-end">
-        <Button autoFocus onClick={onContinue}>
+        <Button size="standard" autoFocus onClick={onContinue}>
           Continue
           <ArrowRightIcon className="size-3.5" />
         </Button>
@@ -838,6 +841,56 @@ function ConnectedAgentsStep({
           ),
         )}
       </div>
+      {providers?.some(
+        (provider) => provider.driver !== "codex" && provider.driver !== "claudeAgent",
+      ) ? (
+        <div className="mt-2 flex flex-col gap-1.5">
+          {providers
+            .filter((provider) => provider.driver !== "codex" && provider.driver !== "claudeAgent")
+            .map((provider) => (
+              <div
+                key={provider.instanceId}
+                className="flex items-center gap-3 rounded-control border border-border surface-card px-3 py-2.5"
+              >
+                <ProviderInstanceIcon
+                  driverKind={provider.driver}
+                  displayName={
+                    provider.displayName ??
+                    providerClients.get(provider.driver)?.label ??
+                    provider.driver
+                  }
+                  iconClassName="size-4"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-label">
+                    {provider.displayName ??
+                      providerClients.get(provider.driver)?.label ??
+                      provider.driver}
+                  </span>
+                  <span className="block text-meta text-muted-foreground">
+                    {getProviderSummary(provider).headline}
+                  </span>
+                </span>
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  render={
+                    <Link
+                      to="/settings/providers"
+                      search={{
+                        environmentId,
+                        instanceId: provider.instanceId,
+                        resumeEnvironmentId: environmentId,
+                      }}
+                    />
+                  }
+                >
+                  Set up
+                </Button>
+              </div>
+            ))}
+        </div>
+      ) : null}
       {chatGptAllowed &&
       providers?.some(
         (provider) =>
@@ -971,7 +1024,7 @@ function AgentCard({
   const providerState = getOnboardingProviderState(provider);
 
   return (
-    <div className="flex items-center gap-3 rounded-control border border-border surface-card px-4 py-4">
+    <div className="flex items-center gap-3 rounded-control border border-border surface-card px-3 py-2.5">
       <ProviderInstanceIcon
         driverKind={ProviderDriverKind.make(driver)}
         displayName={displayName}
@@ -1431,7 +1484,7 @@ function ImportStep({
           </p>
         </div>
         <div className="flex justify-end">
-          <Button variant="ghost-muted" onClick={() => void onDone()}>
+          <Button size="standard" variant="ghost-muted" onClick={() => void onDone()}>
             Do not import projects
           </Button>
         </div>
@@ -1535,10 +1588,16 @@ function ImportStep({
         <p className="mt-3 text-body text-destructive">{visibleImportError}</p>
       ) : null}
       <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
-        <Button variant="ghost-muted" disabled={isImporting} onClick={finishAfterImport}>
+        <Button
+          size="standard"
+          variant="ghost-muted"
+          disabled={isImporting}
+          onClick={finishAfterImport}
+        >
           Do not import projects
         </Button>
         <Button
+          size="standard"
           autoFocus
           disabled={!canImport || isImporting || selected.length === 0}
           onClick={() => void runImport(selected)}
