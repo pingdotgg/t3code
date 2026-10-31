@@ -522,7 +522,10 @@ export function UsagePage() {
         </header>
 
         <ScrollArea className="min-h-0 flex-1">
-          <WorkspacePageContainer width="wide" className="gap-5">
+          <WorkspacePageContainer
+            width="wide"
+            className="@container/usage-page max-w-[1040px] gap-5 pt-5.5"
+          >
             {selectedEnvironments.length === 0 ? (
               <UsageNotice
                 icon={ServerIcon}
@@ -751,13 +754,13 @@ function UsageOverview({
   }
 
   return (
-    <div aria-busy={loadingPartial} className="flex flex-col gap-6">
+    <div aria-busy={loadingPartial} className="flex flex-col gap-5">
       {sourceMessages.map((message) => (
         <p key={message} className="mb-4 text-sm text-muted-foreground">
           {message}
         </p>
       ))}
-      <section className="grid gap-6 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+      <section className="grid gap-6 @min-[48rem]/usage-page:grid-cols-[18rem_minmax(0,1fr)]">
         <div className="flex min-w-0 flex-col gap-5">
           <div className="flex flex-col gap-1">
             <span
@@ -1590,7 +1593,7 @@ function UsageProviderFilter({
 function UsageSkeleton() {
   return (
     <>
-      <section className="grid gap-6 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+      <section className="grid gap-6 @min-[48rem]/usage-page:grid-cols-[18rem_minmax(0,1fr)]">
         <div className="flex flex-col gap-5">
           <div className="flex flex-col gap-1">
             <Skeleton className="h-10 w-36" />
