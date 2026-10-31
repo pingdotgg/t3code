@@ -3410,9 +3410,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         const session = yield* requireSession(input.threadId, terminalId);
         session.history.clear();
         session.pendingHistoryControlSequence = "";
-        session.pendingProcessEvents = [];
+        // Scrollback clearing must preserve lifecycle events and the active drain owner.
+        session.pendingProcessEvents = session.pendingProcessEvents
+          .slice(session.pendingProcessEventIndex)
+          .filter((event) => event.type === "exit");
         session.pendingProcessEventIndex = 0;
-        session.processEventDrainRunning = false;
         const eventStamp = advanceEventSequence(session);
         yield* persistHistory(input.threadId, terminalId, session.history);
         yield* publishEvent({
