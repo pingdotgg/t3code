@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeFSP from "node:fs/promises";
 import { it, afterEach, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -676,6 +677,228 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
   });
 
   describe("browse", () => {
+    it.effect(
+      "offers directory links in browsing and autocomplete while retaining their symlink paths",
+      () =>
+        Effect.gen(function* () {
+          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir({ prefix: "t3code-picker-links-" });
+          const target = yield* makeTempDir({ prefix: "t3code-picker-target-" });
+          yield* writeTextFile(target, "nested-project/package.json", "{}");
+          yield* writeTextFile(cwd, "ordinary/package.json", "{}");
+          const names = ["linked-project", "Templates", "Recent", ".linked-hidden"];
+          for (const name of names) {
+            yield* Effect.tryPromise(() =>
+              NodeFSP.symlink(target, path.join(cwd, name), "junction"),
+            );
+          }
+          const root = yield* appendSeparator(cwd);
+          const directory = yield* workspaceEntries.browse({ partialPath: root });
+          expect(directory).toEqual({
+            parentPath: cwd,
+            entries: [...names, "ordinary"]
+              .toSorted((a, b) => a.localeCompare(b))
+              .map((name) => ({
+                name,
+                fullPath: path.join(cwd, name),
+              })),
+          });
+          expect(yield* workspaceEntries.browse({ partialPath: `${root}LiNk` })).toEqual({
+            parentPath: cwd,
+            entries: [{ name: "linked-project", fullPath: path.join(cwd, "linked-project") }],
+          });
+          expect(yield* workspaceEntries.browse({ partialPath: `${root}.link` })).toEqual({
+            parentPath: cwd,
+            entries: [{ name: ".linked-hidden", fullPath: path.join(cwd, ".linked-hidden") }],
+          });
+          const alias = path.join(cwd, "linked-project");
+          expect(
+            yield* workspaceEntries.browse({ partialPath: yield* appendSeparator(alias) }),
+          ).toEqual({
+            parentPath: alias,
+            entries: [{ name: "nested-project", fullPath: path.join(alias, "nested-project") }],
+          });
+        }),
+    );
+
+    it.effect(
+      "omits file, broken, cyclic, and inaccessible link targets without losing other directories",
+      () =>
+        Effect.gen(function* () {
+          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir({ prefix: "t3code-picker-link-errors-" });
+          const fs = yield* FileSystem.FileSystem;
+          const target = yield* fs.realPath(
+            yield* makeTempDir({ prefix: "t3code-picker-link-target-" }),
+          );
+          yield* writeTextFile(cwd, "plain-file.txt");
+          yield* writeTextFile(cwd, "ordinary/package.json", "{}");
+          for (const name of [
+            "linked-good",
+            "linked-file",
+            "linked-broken",
+            "linked-loop",
+            "linked-denied",
+          ]) {
+            yield* fs.makeDirectory(path.join(target, name));
+            yield* Effect.tryPromise(() =>
+              NodeFSP.symlink(path.join(target, name), path.join(cwd, name), "junction"),
+            );
+          }
+          const originalStat = NodeFSP.stat;
+          const fileStat = yield* Effect.tryPromise(() =>
+            originalStat(path.join(cwd, "plain-file.txt")),
+          );
+          const failures = new Map([
+            [path.join(target, "linked-broken"), "ENOENT"],
+            [path.join(target, "linked-loop"), "ELOOP"],
+            [path.join(target, "linked-denied"), "EACCES"],
+          ]);
+          // Inject target states so this also runs on Windows without file-symlink privileges.
+          using _stat = vi.spyOn(NodeFSP, "stat").mockImplementation((file, options) => {
+            const code = failures.get(String(file));
+            if (code) return Promise.reject(Object.assign(new Error(code), { code }));
+            if (String(file) === path.join(target, "linked-file")) return Promise.resolve(fileStat);
+            return originalStat(file, options);
+          });
+          const result = yield* workspaceEntries.browse({
+            partialPath: yield* appendSeparator(cwd),
+          });
+          expect(result.entries).toEqual([
+            { name: "linked-good", fullPath: path.join(cwd, "linked-good") },
+            { name: "ordinary", fullPath: path.join(cwd, "ordinary") },
+          ]);
+        }),
+    );
+
+    it.effect("omits direct and chained network links without statting their targets", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const cwd = yield* fs.realPath(yield* makeTempDir({ prefix: "t3code-picker-network-" }));
+        const target = yield* makeTempDir({ prefix: "t3code-picker-local-" });
+        const direct = path.join(cwd, "network");
+        const chained = path.join(cwd, "chained");
+        const local = path.join(cwd, "local");
+        for (const link of [direct, local]) {
+          yield* Effect.tryPromise(() => NodeFSP.symlink(target, link, "junction"));
+        }
+        yield* Effect.tryPromise(() => NodeFSP.symlink(direct, chained, "junction"));
+        const originalReadlink = NodeFSP.readlink;
+        const networkTarget = String.raw`\\host\share`;
+        using _readlink = vi
+          .spyOn(NodeFSP, "readlink")
+          .mockImplementation((file, options) =>
+            String(file) === direct
+              ? Promise.resolve(networkTarget)
+              : originalReadlink(file, options),
+          );
+        using stat = vi.spyOn(NodeFSP, "stat");
+        using lstat = vi.spyOn(NodeFSP, "lstat");
+        const result = yield* workspaceEntries.browse({
+          partialPath: yield* appendSeparator(cwd),
+        });
+        expect(result.entries).toEqual([{ name: "local", fullPath: local }]);
+        expect(stat.mock.calls.map(([file]) => String(file))).not.toContain(direct);
+        expect(stat.mock.calls.map(([file]) => String(file))).not.toContain(chained);
+        expect(stat.mock.calls.map(([file]) => String(file))).not.toContain(networkTarget);
+        expect(lstat.mock.calls.map(([file]) => String(file))).not.toContain(networkTarget);
+      }),
+    );
+
+    it.effect(
+      "rejects a network redirect in an intermediate target component before probing it",
+      () =>
+        Effect.gen(function* () {
+          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+          const path = yield* Path.Path;
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.realPath(
+            yield* makeTempDir({ prefix: "t3code-picker-component-" }),
+          );
+          const cwd = path.join(root, "projects");
+          const target = path.join(root, "target");
+          yield* fs.makeDirectory(cwd);
+          yield* fs.makeDirectory(path.join(target, "project"), { recursive: true });
+          const redirect = path.join(root, "redirect");
+          const localRedirect = path.join(root, "local-redirect");
+          for (const link of [redirect, localRedirect]) {
+            yield* Effect.tryPromise(() => NodeFSP.symlink(target, link, "junction"));
+          }
+          const blocked = path.join(cwd, "blocked");
+          const local = path.join(cwd, "local");
+          const unsafeTarget = path.join(redirect, "project");
+          yield* Effect.tryPromise(() => NodeFSP.symlink(unsafeTarget, blocked, "junction"));
+          yield* Effect.tryPromise(() =>
+            NodeFSP.symlink(path.join(localRedirect, "project"), local, "junction"),
+          );
+          const originalReadlink = NodeFSP.readlink;
+          const networkTarget = String.raw`\\host\share`;
+          using _readlink = vi
+            .spyOn(NodeFSP, "readlink")
+            .mockImplementation((file, options) =>
+              String(file) === redirect
+                ? Promise.resolve(networkTarget)
+                : originalReadlink(file, options),
+            );
+          using stat = vi.spyOn(NodeFSP, "stat");
+          using lstat = vi.spyOn(NodeFSP, "lstat");
+          const result = yield* workspaceEntries.browse({
+            partialPath: yield* appendSeparator(cwd),
+          });
+          expect(result.entries).toEqual([{ name: "local", fullPath: local }]);
+          expect(lstat.mock.calls.map(([file]) => String(file))).not.toContain(unsafeTarget);
+          expect(lstat.mock.calls.map(([file]) => String(file))).not.toContain(networkTarget);
+          expect(stat.mock.calls.map(([file]) => String(file))).not.toContain(blocked);
+          expect(stat.mock.calls.map(([file]) => String(file))).not.toContain(local);
+          expect(stat.mock.calls.map(([file]) => String(file))).not.toContain(unsafeTarget);
+          expect(stat.mock.calls.map(([file]) => String(file))).toContain(
+            path.join(target, "project"),
+          );
+        }),
+    );
+
+    it.effect("resolves parent components after local links and bounds cyclic links", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.realPath(yield* makeTempDir({ prefix: "t3code-picker-relative-" }));
+        const cwd = path.join(root, "projects");
+        const target = path.join(root, "physical", "sibling");
+        const via = path.join(root, "via");
+        yield* fs.makeDirectory(cwd);
+        yield* fs.makeDirectory(target, { recursive: true });
+        yield* fs.makeDirectory(path.join(root, "physical", "child"));
+        yield* Effect.tryPromise(() =>
+          NodeFSP.symlink(path.join(root, "physical", "child"), via, "junction"),
+        );
+        const relative = path.join(cwd, "relative");
+        const cycle = path.join(cwd, "cycle");
+        for (const link of [relative, cycle]) {
+          yield* Effect.tryPromise(() => NodeFSP.symlink(target, link, "junction"));
+        }
+        const originalReadlink = NodeFSP.readlink;
+        // Junction fixtures avoid Windows symlink privileges; inject relative and cyclic targets.
+        using readlink = vi.spyOn(NodeFSP, "readlink").mockImplementation((file, options) => {
+          if (String(file) === relative)
+            return Promise.resolve(["..", "via", "..", "sibling"].join(path.sep));
+          if (String(file) === cycle) return Promise.resolve(cycle);
+          return originalReadlink(file, options);
+        });
+        using stat = vi.spyOn(NodeFSP, "stat");
+        const result = yield* workspaceEntries.browse({ partialPath: yield* appendSeparator(cwd) });
+        expect(result.entries).toEqual([{ name: "relative", fullPath: relative }]);
+        expect(stat.mock.calls.map(([file]) => String(file))).toContain(target);
+        expect(stat.mock.calls.map(([file]) => String(file))).not.toContain(relative);
+        expect(stat.mock.calls.map(([file]) => String(file))).not.toContain(cycle);
+        expect(readlink.mock.calls.filter(([file]) => String(file) === cycle)).toHaveLength(40);
+      }),
+    );
+
     it.effect("shows dot directories in directory mode and hidden-prefix mode", () =>
       Effect.gen(function* () {
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;

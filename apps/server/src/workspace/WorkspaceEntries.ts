@@ -22,7 +22,7 @@ import type {
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
+import { isExplicitRelativePath, isNetworkPath, isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -201,6 +201,43 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const resolveBrowseLink = Effect.fn("WorkspaceEntries.resolveBrowseLink")(function* (
+    fullPath: string,
+  ) {
+    if (isNetworkPath(fullPath)) return undefined;
+    const separators = path.sep === "\\" ? /[\\/]+/ : /\/+/;
+    let currentPath = path.parse(fullPath).root;
+    const remaining = fullPath.slice(currentPath.length).split(separators);
+    let hops = 0;
+    while (remaining.length > 0) {
+      const component = remaining.shift()!;
+      if (component === "" || component === ".") continue;
+      if (component === "..") {
+        currentPath = path.dirname(currentPath);
+        continue;
+      }
+      const nextPath = path.join(currentPath, component);
+      const stats = yield* Effect.tryPromise(() => NodeFSP.lstat(nextPath));
+      if (!stats.isSymbolicLink()) {
+        if (remaining.length > 0 && !stats.isDirectory()) return undefined;
+        currentPath = nextPath;
+        continue;
+      }
+      if (++hops > 40) return undefined;
+      const target = yield* Effect.tryPromise(() => NodeFSP.readlink(nextPath));
+      // Inspect every link before following it: UNC paths can trigger Windows NTLM sign-in.
+      if (isNetworkPath(target)) return undefined;
+      const root = path.parse(target).root;
+      if (root) {
+        if (!path.isAbsolute(target)) return undefined;
+        currentPath = path.parse(path.resolve(currentPath, root)).root;
+      }
+      // Expand before processing '..' so it applies to the resolved directory.
+      remaining.unshift(...target.slice(root.length).split(separators));
+    }
+    return currentPath;
+  });
+
   const browse: WorkspaceEntries["Service"]["browse"] = Effect.fn("WorkspaceEntries.browse")(
     function* (input) {
       const resolvedInputPath = yield* resolveBrowseTarget(input, path);
@@ -229,23 +266,32 @@ export const make = Effect.gen(function* () {
 
       const showHidden = endsWithSeparator || prefix.startsWith(".");
       const lowerPrefix = prefix.toLowerCase();
-      const entries: Array<{ readonly name: string; readonly fullPath: string }> = [];
-      for (const dirent of dirents) {
-        if (
-          dirent.isDirectory() &&
+      const candidates = dirents.filter(
+        (dirent) =>
+          (dirent.isDirectory() || dirent.isSymbolicLink()) &&
           dirent.name.toLowerCase().startsWith(lowerPrefix) &&
-          (showHidden || !dirent.name.startsWith("."))
-        ) {
-          entries.push({
-            name: dirent.name,
-            fullPath: path.join(parentPath, dirent.name),
-          });
-        }
-      }
+          (showHidden || !dirent.name.startsWith(".")),
+      );
+      const entries = yield* Effect.forEach(
+        candidates,
+        (dirent) => {
+          const entry = { name: dirent.name, fullPath: path.join(parentPath, dirent.name) };
+          if (dirent.isDirectory()) return Effect.succeed(entry);
+          return Effect.gen(function* () {
+            const target = yield* resolveBrowseLink(entry.fullPath);
+            if (target === undefined) return undefined;
+            const stats = yield* Effect.tryPromise(() => NodeFSP.stat(target));
+            return stats.isDirectory() ? entry : undefined;
+          }).pipe(Effect.orElseSucceed(() => undefined));
+        },
+        { concurrency: 16 },
+      );
 
       return {
         parentPath,
-        entries: entries.toSorted((left, right) => left.name.localeCompare(right.name)),
+        entries: entries
+          .filter((entry) => entry !== undefined)
+          .toSorted((left, right) => left.name.localeCompare(right.name)),
       };
     },
   );
