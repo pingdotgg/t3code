@@ -13,7 +13,12 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
-import { cursorSdkParameterPriority, cursorSdkProviderOptionId } from "./sdkModel.ts";
+import {
+  CURSOR_SDK_MAX_MODE_OPTION_ID,
+  cursorSdkModelOffersOptionalMaxMode,
+  cursorSdkParameterPriority,
+  cursorSdkProviderOptionId,
+} from "./sdkModel.ts";
 import {
   buildBooleanOptionDescriptor,
   buildSelectOptionDescriptor,
@@ -33,6 +38,11 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 });
 
 const CURSOR_SDK_CATALOG_TIMEOUT_MS = 15_000;
+
+export interface CursorProviderStatusResult {
+  readonly provider: ServerProviderDraft;
+  readonly sdkModels: ReadonlyArray<SDKModel> | undefined;
+}
 
 export const buildInitialCursorProviderSnapshot = Effect.fn(
   "CursorProviderStatus.buildInitialCursorProviderSnapshot",
@@ -157,6 +167,16 @@ export function buildCursorCapabilitiesFromSdkModel(model: SDKModel): ModelCapab
     );
   }
 
+  if (cursorSdkModelOffersOptionalMaxMode(model)) {
+    optionDescriptors.push(
+      buildBooleanOptionDescriptor({
+        id: CURSOR_SDK_MAX_MODE_OPTION_ID,
+        label: "Max Mode",
+        currentValue: false,
+      }),
+    );
+  }
+
   return createModelCapabilities({ optionDescriptors });
 }
 
@@ -248,41 +268,47 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
   authenticationType: "api-key" | "browser" = "api-key",
-): Effect.fn.Return<ServerProviderDraft, never, CursorSdkCatalog.CursorSdkCatalog> {
+): Effect.fn.Return<CursorProviderStatusResult, never, CursorSdkCatalog.CursorSdkCatalog> {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = getCursorFallbackModels(cursorSettings);
 
   if (!cursorSettings.enabled) {
-    return buildServerProvider({
-      presentation: CURSOR_PRESENTATION,
-      enabled: false,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: false,
-        version: null,
-        status: "warning",
-        auth: { status: "unknown" },
-        message: "Cursor is disabled in T3 Code settings.",
-      },
-    });
+    return {
+      provider: buildServerProvider({
+        presentation: CURSOR_PRESENTATION,
+        enabled: false,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: false,
+          version: null,
+          status: "warning",
+          auth: { status: "unknown" },
+          message: "Cursor is disabled in T3 Code settings.",
+        },
+      }),
+      sdkModels: undefined,
+    };
   }
 
   const sdkApiKey = environment?.CURSOR_API_KEY?.trim();
   if (!sdkApiKey) {
-    return buildServerProvider({
-      presentation: CURSOR_PRESENTATION,
-      enabled: cursorSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version: null,
-        status: "error",
-        auth: { status: "unauthenticated" },
-        message: "Sign in with Cursor or add CURSOR_API_KEY in provider settings.",
-      },
-    });
+    return {
+      provider: buildServerProvider({
+        presentation: CURSOR_PRESENTATION,
+        enabled: cursorSettings.enabled,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: true,
+          version: null,
+          status: "error",
+          auth: { status: "unauthenticated" },
+          message: "Sign in with Cursor or add CURSOR_API_KEY in provider settings.",
+        },
+      }),
+      sdkModels: undefined,
+    };
   }
 
   const sdkCatalog = yield* CursorSdkCatalog.CursorSdkCatalog;
@@ -307,50 +333,59 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
           ? "Cursor needs a paid plan to run in T3 Code. Upgrade this account or sign in with a different one."
           : "Cursor needs a paid plan to run in T3 Code. Upgrade the account that owns CURSOR_API_KEY or use a key from a paid account.";
     }
-    return buildServerProvider({
-      presentation: CURSOR_PRESENTATION,
-      enabled: cursorSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version: null,
-        status: "error",
-        auth: { status: failure.authenticationFailure ? "unauthenticated" : "unknown" },
-        message,
-      },
-    });
+    return {
+      provider: buildServerProvider({
+        presentation: CURSOR_PRESENTATION,
+        enabled: cursorSettings.enabled,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: true,
+          version: null,
+          status: "error",
+          auth: { status: failure.authenticationFailure ? "unauthenticated" : "unknown" },
+          message,
+        },
+      }),
+      sdkModels: undefined,
+    };
   }
 
   if (Option.isNone(catalogResult.success)) {
-    return buildServerProvider({
-      presentation: CURSOR_PRESENTATION,
-      enabled: cursorSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version: null,
-        status: "error",
-        auth: { status: "unknown" },
-        message: `Cursor SDK catalog request timed out after ${CURSOR_SDK_CATALOG_TIMEOUT_MS}ms.`,
-      },
-    });
+    return {
+      provider: buildServerProvider({
+        presentation: CURSOR_PRESENTATION,
+        enabled: cursorSettings.enabled,
+        checkedAt,
+        models: fallbackModels,
+        probe: {
+          installed: true,
+          version: null,
+          status: "error",
+          auth: { status: "unknown" },
+          message: `Cursor SDK catalog request timed out after ${CURSOR_SDK_CATALOG_TIMEOUT_MS}ms.`,
+        },
+      }),
+      sdkModels: undefined,
+    };
   }
 
   const snapshot = catalogResult.success.value;
   const discoveredModels = buildCursorDiscoveredModelsFromSdk(snapshot.models);
-  return buildCursorProviderSnapshot({
-    checkedAt,
-    cursorSettings,
-    parsed: {
-      version: null,
-      status: "ready",
-      auth: cursorSdkAuth(snapshot.user, authenticationType),
-    },
-    discoveredModels,
-    ...(discoveredModels.length === 0
-      ? { discoveryWarning: "Cursor SDK model discovery returned no built-in models." }
-      : {}),
-  });
+  return {
+    provider: buildCursorProviderSnapshot({
+      checkedAt,
+      cursorSettings,
+      parsed: {
+        version: null,
+        status: "ready",
+        auth: cursorSdkAuth(snapshot.user, authenticationType),
+      },
+      discoveredModels,
+      ...(discoveredModels.length === 0
+        ? { discoveryWarning: "Cursor SDK model discovery returned no built-in models." }
+        : {}),
+    }),
+    sdkModels: snapshot.models,
+  };
 });
