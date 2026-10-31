@@ -280,7 +280,11 @@ export function projectContextHandoffForWire(
   handoff: OrchestrationV2ContextHandoff,
 ): OrchestrationV2ContextHandoff {
   const { history: _history, delivery: _delivery, ...projected } = handoff;
-  return { ...projected, summaryText: "", delivered: handoff.delivery !== undefined };
+  return {
+    ...projected,
+    summaryText: "",
+    delivered: handoff.delivery !== undefined || handoff.delivered === true,
+  };
 }
 
 export function projectThreadProjectionForWire(

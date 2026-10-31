@@ -118,6 +118,8 @@ describe("orchestration V2 wire projection", () => {
     expect(undelivered.payload).toMatchObject({ delivered: false, summaryText: "" });
     expect(delivered.payload).toMatchObject({ delivered: true, summaryText: "" });
     expect(delivered.payload).not.toHaveProperty("delivery");
+    // Live thread events are projected by the event sink and again by the WebSocket handler.
+    expect(projectDomainEventForWire(delivered).payload).toMatchObject({ delivered: true });
   });
 
   it("preserves image metadata through wire and JSON contracts while redacting output", () => {
