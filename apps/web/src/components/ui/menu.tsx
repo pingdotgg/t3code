@@ -9,6 +9,14 @@ import { Input, type InputProps } from "./input";
 import { MENU_ROW_TEXT_CLASS } from "./menu-row-text";
 import { Spinner } from "./spinner";
 import { RELAXED_PICKER_CLASS } from "./picker-styles";
+import { createPartPresence } from "./part-presence";
+
+// A radio item whose children bring their own indicator hides the default one.
+const {
+  PartPresenceContext: RadioItemIndicatorContext,
+  useParts: useRadioItemIndicators,
+  usePart: useRadioItemIndicator,
+} = createPartPresence<"indicator">();
 
 export const MENU_ITEM_ROW_CLASS = `flex min-h-8 cursor-pointer select-none items-center gap-2 rounded-[8px] px-2 py-1 ${MENU_ROW_TEXT_CLASS} text-foreground outline-none data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-highlighted:surface-selected-soft data-inset:ps-8 data-[variant=destructive]:text-destructive-foreground data-highlighted:not-data-[variant=destructive]:text-strong-foreground data-selected:surface-selected-soft data-selected:text-strong-foreground data-disabled:opacity-45 sm:min-h-7 [&>svg:not([class*='size-'])]:size-[15px] [&>svg:not([class*='text-'])]:text-muted-foreground data-highlighted:[&>svg:not([class*='text-'])]:text-foreground data-selected:[&>svg:not([class*='text-'])]:text-foreground data-[variant=destructive]:[&>svg:not([class*='text-'])]:text-current [&>svg]:pointer-events-none [&>svg]:shrink-0`;
 
@@ -260,6 +268,7 @@ function MenuRadioItem({
 }: MenuPrimitive.RadioItem.Props & {
   hideIndicator?: boolean;
 }) {
+  const [indicators, registerIndicator] = useRadioItemIndicators();
   return (
     <MenuPrimitive.RadioItem
       className={cn(
@@ -269,10 +278,12 @@ function MenuRadioItem({
       data-slot="menu-radio-item"
       {...props}
     >
-      <span className="min-w-0 flex-1 [&:has([data-slot=menu-radio-item-indicator])+[data-slot=menu-radio-item-indicator]]:hidden">
-        {children}
+      <span className="min-w-0 flex-1">
+        <RadioItemIndicatorContext value={registerIndicator}>{children}</RadioItemIndicatorContext>
       </span>
-      {!hideIndicator && <MenuRadioItemIndicator />}
+      {!hideIndicator && (
+        <MenuRadioItemIndicator className={indicators.length > 0 ? "hidden" : undefined} />
+      )}
     </MenuPrimitive.RadioItem>
   );
 }
@@ -282,6 +293,7 @@ function MenuRadioItemIndicator({
   children,
   ...props
 }: MenuPrimitive.RadioItemIndicator.Props) {
+  useRadioItemIndicator("indicator");
   return (
     <MenuPrimitive.RadioItemIndicator
       aria-hidden
