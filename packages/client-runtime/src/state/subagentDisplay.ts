@@ -15,6 +15,7 @@ import {
 } from "@t3tools/shared/model";
 import { fileBasename } from "@t3tools/shared/path";
 import { resolveModelShortName } from "../providerClients.ts";
+import { REASONING_EFFORT_OPTION_IDS } from "./threadExecution.ts";
 import { isTerminalSubagentStatus } from "./subagentRuntime.ts";
 
 export function subagentGroupSummary(
@@ -119,14 +120,6 @@ export function resolveSubagentMetadata(input: {
   return { modelLabel, workspace };
 }
 
-const EFFORT_OPTION_IDS = [
-  "reasoningEffort",
-  "effort",
-  "reasoning",
-  "variant",
-  "reasoning_effort",
-] as const;
-
 /**
  * The reasoning effort and speed a subagent runs at, named as the composer
  * names them. Only a selection for the model the subagent reported counts,
@@ -167,9 +160,9 @@ export function resolveSubagentModelTraits(input: {
       ?.optionDescriptors ?? [];
   // Claude native selections can contain inherited effort instead of the agent definition's value.
   const effortLabel =
-    input.origin === "provider_native" && provider?.driver === "claudeAgent"
+    input.origin === "provider_native" && (provider == null || provider.driver === "claudeAgent")
       ? null
-      : (EFFORT_OPTION_IDS.map((id) => {
+      : (REASONING_EFFORT_OPTION_IDS.map((id) => {
           const value = getModelSelectionStringOptionValue(selection, id);
           if (value === undefined) return undefined;
           const descriptor = descriptors.find((candidate) => candidate.id === id);

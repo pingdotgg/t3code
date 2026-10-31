@@ -83,6 +83,16 @@ describe("resolveSubagentModelTraits", () => {
         modelSelection: selection(claudeInstance, "claude-opus-4-7", [
           { id: "effort", value: "high" },
         ]),
+      }).effortLabel,
+    ).toBeNull();
+    expect(
+      resolveSubagentModelTraits({
+        model: "claude-opus-4-7",
+        providerInstanceId: claudeInstance,
+        origin: "provider_native",
+        modelSelection: selection(claudeInstance, "claude-opus-4-7", [
+          { id: "effort", value: "high" },
+        ]),
         provider: claude(),
       }).effortLabel,
     ).toBeNull();
@@ -109,7 +119,10 @@ describe("resolveSubagentModelTraits", () => {
     ).toEqual({ effortLabel: "High", speed: null });
   });
 
-  it("names Cursor's reasoning effort", () => {
+  it.each([
+    ["cursor", "reasoning_effort"],
+    ["antigravity", "thinking_level"],
+  ] as const)("names %s reasoning effort", (driver, optionId) => {
     const cursorInstance = ProviderInstanceId.make("cursor");
     expect(
       resolveSubagentModelTraits({
@@ -117,16 +130,16 @@ describe("resolveSubagentModelTraits", () => {
         providerInstanceId: cursorInstance,
         origin: "provider_native",
         modelSelection: selection(cursorInstance, "gpt-6.1-sol", [
-          { id: "reasoning_effort", value: "xhigh" },
+          { id: optionId, value: "xhigh" },
         ]),
         provider: {
-          driver: ProviderDriverKind.make("cursor"),
+          driver: ProviderDriverKind.make(driver),
           models: [
             {
               slug: "gpt-6.1-sol",
               name: "GPT-6.1-Sol",
               isCustom: false,
-              capabilities: { optionDescriptors: [{ ...effort, id: "reasoning_effort" }] },
+              capabilities: { optionDescriptors: [{ ...effort, id: optionId }] },
             },
           ],
         },

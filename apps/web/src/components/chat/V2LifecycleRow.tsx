@@ -430,7 +430,9 @@ function SubagentTimelineLink(props: {
   const model = agent?.model ?? null;
   // Select only the derived labels so provider status pushes, which replace
   // the provider objects, do not re-render every row.
-  const providersAtom = serverEnvironment.providersValueAtom(props.parentRef.environmentId);
+  const providersAtom = serverEnvironment.providersValueAtom(
+    remote?.environmentId ?? props.parentRef.environmentId,
+  );
   const findProvider = (providers: ReadonlyArray<ServerProvider> | null | undefined) =>
     providers?.find((provider) => provider.instanceId === props.providerInstanceId);
   const modelTraits = (providers: ReadonlyArray<ServerProvider> | null | undefined) =>
