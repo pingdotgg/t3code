@@ -1673,7 +1673,6 @@ describe("resolveSidebarRouteReveal", () => {
         findThread,
       }),
     ).toEqual({ pendingKey: hiddenKey, widensScope: true });
-
   });
 
   it("never widens for a thread whose reveal already completed", () => {

@@ -304,14 +304,22 @@ describe("environment grouping", () => {
   });
 });
 
-
 it("keeps visible selected projects and grouped clones when environment filtering hides another selection", () => {
   const groups = buildSidebarProjectSnapshots({
     projects: [
       makeProject({ id: ProjectId.make("local"), title: "local", workspaceRoot: "/local/only" }),
-      makeProject({ id: ProjectId.make("remote"), title: "remote", workspaceRoot: "/remote/only", environmentId: remoteEnvironmentId }),
+      makeProject({
+        id: ProjectId.make("remote"),
+        title: "remote",
+        workspaceRoot: "/remote/only",
+        environmentId: remoteEnvironmentId,
+      }),
       makeProject({ id: ProjectId.make("shared-local"), repositoryIdentity }),
-      makeProject({ id: ProjectId.make("shared-remote"), repositoryIdentity, environmentId: remoteEnvironmentId }),
+      makeProject({
+        id: ProjectId.make("shared-remote"),
+        repositoryIdentity,
+        environmentId: remoteEnvironmentId,
+      }),
     ],
     settings: defaultGroupingSettings,
     primaryEnvironmentId,
@@ -327,8 +335,18 @@ it("keeps visible selected projects and grouped clones when environment filterin
     [[primaryEnvironmentId], [remote, shared]],
     [[primaryEnvironmentId, remoteEnvironmentId], []],
   ] as const) {
-    const resolved = resolveSidebarProjectScopeKeys({ groups, keys, disabledEnvironmentIds: new Set(disabled) });
+    const resolved = resolveSidebarProjectScopeKeys({
+      groups,
+      keys,
+      disabledEnvironmentIds: new Set(disabled),
+    });
     expect(new Set(resolved)).toEqual(new Set(expected));
   }
-  expect(resolveSidebarProjectScopeKeys({ groups, keys: ["not-loaded"], disabledEnvironmentIds: new Set([remoteEnvironmentId]) })).toEqual(["not-loaded"]);
+  expect(
+    resolveSidebarProjectScopeKeys({
+      groups,
+      keys: ["not-loaded"],
+      disabledEnvironmentIds: new Set([remoteEnvironmentId]),
+    }),
+  ).toEqual(["not-loaded"]);
 });

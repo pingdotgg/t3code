@@ -493,7 +493,10 @@ function useSidebarThreads(input: {
     partition;
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const olderSettledShelf = useOlderSettledShelf({
-    scopes: olderSettledScopes([...serverConfigs.keys()].filter((id) => !disabledEnvironmentIds.has(id)), scopedProjectKeys),
+    scopes: olderSettledScopes(
+      [...serverConfigs.keys()].filter((id) => !disabledEnvironmentIds.has(id)),
+      scopedProjectKeys,
+    ),
     expanded: settledShelfExpanded,
     visibleCount: settledVisibleCount,
   });
@@ -623,7 +626,11 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     sortActiveBySend,
   } = input;
   const preciseNow = new Date().toISOString();
-  const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys, delegatedUnderParent).filter((thread) => !input.disabledEnvironmentIds.has(thread.environmentId));
+  const visible = filterSidebarV2VisibleThreads(
+    threads,
+    scopedProjectKeys,
+    delegatedUnderParent,
+  ).filter((thread) => !input.disabledEnvironmentIds.has(thread.environmentId));
   const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
@@ -1133,7 +1140,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // A scope whose project is gone reads as all projects once every snapshot has
   // loaded. The stored keys are left alone, so the scope returns with its project.
   // An archived project's scope reads as all projects, matching the menu.
-  const projectHasEnabledEnvironment = (project: SidebarProjectSnapshot) => project.memberProjectRefs.some((ref) => !disabledEnvironmentIds.has(ref.environmentId));
+  const projectHasEnabledEnvironment = (project: SidebarProjectSnapshot) =>
+    project.memberProjectRefs.some((ref) => !disabledEnvironmentIds.has(ref.environmentId));
   const scopeGroups = pickableProjectGroups(projectGroups).filter(projectHasEnabledEnvironment);
   const archivedProjectKeys = new Set(
     projectGroups.filter((project) => project.archived).map((project) => project.projectKey),
@@ -1149,13 +1157,22 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   useEffect(() => {
     const next = persistedProjectScopeKeys.filter((key) => {
       const project = projectGroupByScopeKey.get(key);
-      return project === undefined || project.memberProjectRefs.some((ref) => !disabledEnvironmentIds.has(ref.environmentId));
+      return (
+        project === undefined ||
+        project.memberProjectRefs.some((ref) => !disabledEnvironmentIds.has(ref.environmentId))
+      );
     });
     if (next.length !== persistedProjectScopeKeys.length) {
       clearSelection();
       setPersistedProjectScopeKeys(next);
     }
-  }, [clearSelection, disabledEnvironmentIds, persistedProjectScopeKeys, projectGroupByScopeKey, setPersistedProjectScopeKeys]);
+  }, [
+    clearSelection,
+    disabledEnvironmentIds,
+    persistedProjectScopeKeys,
+    projectGroupByScopeKey,
+    setPersistedProjectScopeKeys,
+  ]);
   const chosenProjectGroups = scopeGroups.filter((project) =>
     chosenProjectScopeKeys.includes(project.projectKey),
   );
@@ -1194,9 +1211,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     routeKey: routeRowThreadKey,
     isSearching: isSearchingThreads,
     scopedProjectKeys: chosenScopeProjectKeys,
+    disabledEnvironmentIds,
     delegatedUnderParent,
     findThread: (key) => threads.find((candidate) => threadShellKey(candidate) === key),
   });
+  if (
+    revealWidensScope &&
+    routeThreadRef !== null &&
+    disabledEnvironmentIds.has(routeThreadRef.environmentId)
+  ) {
+    const next = new Set(disabledEnvironmentIds);
+    next.delete(routeThreadRef.environmentId);
+    setConfiguredDisabledEnvironmentIds(next);
+  }
   const projectScopeKeys = revealWidensScope ? [] : chosenProjectScopeKeys;
   const projectScopeKey = projectScopeKeys.length === 0 ? null : projectScopeKeys.join("\n");
   const toggleProjectScopeKey = (key: string) =>
@@ -1232,7 +1259,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
   // Pinning from a row keeps rows in place while the menu is open.
   const projectScopeItems = useOrderWhileOpen(
-    lookupProjectScopeItems.filter((item) => item.value === "all" || (projectGroupByScopeKey.get(item.value)?.memberProjectRefs.some((ref) => !disabledEnvironmentIds.has(ref.environmentId)) ?? false)),
+    lookupProjectScopeItems.filter(
+      (item) =>
+        item.value === "all" ||
+        (projectGroupByScopeKey
+          .get(item.value)
+          ?.memberProjectRefs.some((ref) => !disabledEnvironmentIds.has(ref.environmentId)) ??
+          false),
+    ),
     (item) => item.value,
     projectScopeMenuState.open,
   );
@@ -1411,7 +1445,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     folderGroups: boringSidebarEnabled
       ? scopedProjectGroups.length === 0
         ? // An archived project keeps a folder for its active threads, below the rest.
-          [...scopeGroups, ...projectGroups.filter((project) => project.archived && projectHasEnabledEnvironment(project))]
+          [
+            ...scopeGroups,
+            ...projectGroups.filter(
+              (project) => project.archived && projectHasEnabledEnvironment(project),
+            ),
+          ]
         : scopedProjectGroups
       : null,
     keepEmptyFolders: (group) =>
@@ -3308,7 +3347,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         if (!isLastEnabled) return item;
                         return (
                           <Tooltip key={environment.environmentId}>
-                            <TooltipTrigger render={<span className="block" tabIndex={0} />}>{item}</TooltipTrigger>
+                            <TooltipTrigger render={<span className="block" tabIndex={0} />}>
+                              {item}
+                            </TooltipTrigger>
                             <TooltipPopup side="top" className="max-w-80">
                               At least one environment must remain selected
                             </TooltipPopup>
