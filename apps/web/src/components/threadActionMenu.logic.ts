@@ -186,9 +186,7 @@ export function buildThreadActionMenuItems(
       ? [
           {
             id: "filter-by-project" as const,
-            label: state.projectFilter.isActive
-              ? "Show all projects"
-              : `Filter by ${state.projectFilter.label}`,
+            label: state.projectFilter.isActive ? "Show all projects" : "Show only this project",
             icon: "folder-tree",
           },
         ]

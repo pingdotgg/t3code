@@ -30,13 +30,14 @@ import {
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import { filterFilesystemBrowseEntries } from "@t3tools/client-runtime/state/filesystem";
-import { type ReactNode } from "react";
+import { createElement, type ReactNode } from "react";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
 import { isSidebarHiddenThread } from "./Sidebar.logic";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-export const RECENT_THREAD_LIMIT = 12;
-export const ITEM_ICON_CLASS = "size-4 text-icon-muted";
+export const RECENT_THREAD_LIMIT = 3;
+export const ITEM_ICON_CLASS = "size-3.5 text-icon-muted";
 export const ADDON_ICON_CLASS = "size-4";
 
 export function buildLinkedThreadActionItems(
@@ -74,7 +75,8 @@ export function browseInputEndPaddingClass(input: {
 export type SearchOverlayMode = "command" | "files" | "content";
 
 export type CommandPaletteOpenIntent =
-  | { readonly kind: "add-project" | "new-thread-in" | "change-theme" }
+  | { readonly kind: "add-project" | "change-theme" }
+  | { readonly kind: "new-thread-in"; readonly onSelectProject?: (project: Project) => void }
   | {
       readonly kind: "search";
       readonly query: string;
@@ -101,7 +103,7 @@ export type CommandPaletteUiAction =
       readonly linkedThreads?: CommandPaletteLinkedThreads;
     }
   | { readonly _tag: "OpenAddProject" }
-  | { readonly _tag: "OpenNewThreadIn" }
+  | { readonly _tag: "OpenNewThreadIn"; readonly onSelectProject?: (project: Project) => void }
   | { readonly _tag: "OpenChangeTheme" }
   | {
       readonly _tag: "OpenChildSearch";
@@ -157,7 +159,10 @@ export function reduceCommandPaletteUiState(
     case "OpenAddProject":
       return openWithIntent({ kind: "add-project" });
     case "OpenNewThreadIn":
-      return openWithIntent({ kind: "new-thread-in" });
+      return openWithIntent({
+        kind: "new-thread-in",
+        ...(action.onSelectProject ? { onSelectProject: action.onSelectProject } : {}),
+      });
     case "OpenChangeTheme":
       return openWithIntent({ kind: "change-theme" });
   }
@@ -427,6 +432,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
   threads: ReadonlyArray<TThread>;
   activeThread?: Pick<Thread, "environmentId" | "id">;
   projectByKey: ReadonlyMap<string, Pick<Project, "title">>;
+  nowMs?: number;
   icon: ReactNode;
   renderLeadingContent?: (thread: TThread) => ReactNode;
   renderTrailingContent?: (thread: TThread) => ReactNode;
@@ -463,7 +469,22 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
     const trailingContent = input.renderTrailingContent?.(thread);
     const description = input.renderDescription
       ? input.renderDescription(thread, { projectTitle })
-      : descriptionParts.join(` · `);
+      : createElement(
+          Tooltip,
+          null,
+          createElement(
+            TooltipTrigger,
+            { render: createElement("span", { tabIndex: 0 }) },
+            descriptionParts[0] ?? "Thread",
+          ),
+          createElement(
+            TooltipPopup,
+            null,
+            descriptionParts.map((part) =>
+              createElement("span", { key: part, className: "block" }, part),
+            ),
+          ),
+        );
 
     return Object.assign(
       {
@@ -484,6 +505,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
         description,
         timestamp: formatRelativeTimeLabel(
           thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
+          input.nowMs,
         ),
         icon: input.icon,
       },
@@ -576,16 +598,19 @@ export function filterCommandPaletteGroups(input: {
   const searchQuery = isActionsFilter ? input.query.slice(1) : input.query;
   const normalizedQuery = foldSearchQuery(searchQuery);
 
+  const isActionGroup = (group: CommandPaletteGroup) =>
+    group.value === "actions" || group.value === "settings";
+
   if (normalizedQuery.length === 0) {
     if (isActionsFilter) {
-      return input.activeGroups.filter((group) => group.value === "actions");
+      return input.activeGroups.filter(isActionGroup);
     }
     return [...input.activeGroups];
   }
 
   let baseGroups = [...input.activeGroups];
   if (isActionsFilter) {
-    baseGroups = baseGroups.filter((group) => group.value === "actions");
+    baseGroups = baseGroups.filter(isActionGroup);
   } else if (!input.isInSubmenu) {
     baseGroups = baseGroups.filter((group) => group.value !== "recent-threads");
   }
@@ -617,11 +642,21 @@ export function filterCommandPaletteGroups(input: {
       });
     }
     if (input.settingsSearchItems && input.settingsSearchItems.length > 0) {
-      searchableGroups.push({
-        value: "settings-search",
-        label: "Settings",
-        items: input.settingsSearchItems,
-      });
+      // Settings matches join the root Settings actions so the list shows one Settings group.
+      const settingsIndex = searchableGroups.findIndex((group) => group.value === "settings");
+      const settingsGroup = searchableGroups[settingsIndex];
+      if (settingsGroup) {
+        searchableGroups[settingsIndex] = {
+          ...settingsGroup,
+          items: [...settingsGroup.items, ...input.settingsSearchItems],
+        };
+      } else {
+        searchableGroups.push({
+          value: "settings-search",
+          label: "Settings",
+          items: input.settingsSearchItems,
+        });
+      }
     }
   }
 
@@ -767,11 +802,9 @@ export function getCommandPaletteMode(input: {
 export function buildRootGroups(input: {
   actionItems: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>;
   recentThreadItems: ReadonlyArray<CommandPaletteActionItem>;
+  settingsItems?: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>;
 }): CommandPaletteGroup[] {
   const groups: CommandPaletteGroup[] = [];
-  if (input.actionItems.length > 0) {
-    groups.push({ value: "actions", label: "Actions", items: input.actionItems });
-  }
   if (input.recentThreadItems.length > 0) {
     groups.push({
       value: "recent-threads",
@@ -779,13 +812,19 @@ export function buildRootGroups(input: {
       items: input.recentThreadItems,
     });
   }
+  if (input.actionItems.length > 0) {
+    groups.push({ value: "actions", label: "Actions", items: input.actionItems });
+  }
+  if (input.settingsItems && input.settingsItems.length > 0) {
+    groups.push({ value: "settings", label: "Settings", items: input.settingsItems });
+  }
   return groups;
 }
 
 export function getCommandPaletteInputPlaceholder(mode: CommandPaletteMode): string {
   switch (mode) {
     case "root":
-      return "Search commands, projects, and threads...";
+      return "Search threads, projects, and commands…";
     case "root-browse":
       return "Enter project path (e.g. ~/projects/my-app)";
     case "submenu":

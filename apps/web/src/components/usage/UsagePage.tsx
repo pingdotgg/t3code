@@ -357,7 +357,7 @@ export function UsagePage() {
       ? `${formatDateTimeShort(shownWindow.sinceTime, shownWindow.timeZone, hour12)} to ${formatDateTimeShort(shownWindow.untilTime, shownWindow.timeZone, hour12)}`
       : `${formatDayShort(shownWindow.sinceDay)} to ${formatDayShort(shownWindow.untilDay)}`;
   const topbarContent = (
-    <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 @4xl/usage-header:flex">
+    <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-1 @4xl/usage-header:flex">
       <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0">
         <WorkspaceBreadcrumbItem>
           <h1>Usage</h1>
@@ -667,12 +667,16 @@ function UsageOverview({
               {metric === "cost" ? formatUsd(merged.costUsd) : formatTokens(merged.totalTokens)}
             </span>
             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-              <span>
-                <span className={figureClass(loadingPartial)}>
-                  {formatCount(merged.sessions)} sessions
-                </span>
-                {metric === "cost" && " · API estimate"}
-              </span>
+              <Tooltip>
+                <TooltipTrigger render={<span tabIndex={0} />}>
+                  <span className={figureClass(loadingPartial)}>
+                    {formatCount(merged.sessions)} sessions
+                  </span>
+                </TooltipTrigger>
+                <TooltipPopup>
+                  {metric === "cost" ? "API cost estimate" : "Sessions with processed tokens"}
+                </TooltipPopup>
+              </Tooltip>
               {metric === "cost" && merged.costQuality.unpricedShare > 0 && (
                 <Popover>
                   <PopoverTrigger
@@ -747,14 +751,21 @@ function UsageOverview({
                 </div>
                 <span
                   className={cn(
-                    "text-xs text-muted-foreground",
+                    "text-meta text-muted-foreground",
                     figureClass(providerLoading),
                     awaitingData && "invisible",
                   )}
                 >
-                  {metric === "cost"
-                    ? `${formatPercent(share)} of cost · ${formatTokens(totals?.totalTokens ?? 0)} tokens`
-                    : `${formatPercent(share)} of tokens · ${formatUsd(totals?.costUsd ?? 0)}`}
+                  <Tooltip>
+                    <TooltipTrigger render={<span tabIndex={0} />}>
+                      {formatPercent(share)} of {metric === "cost" ? "cost" : "tokens"}
+                    </TooltipTrigger>
+                    <TooltipPopup>
+                      {metric === "cost"
+                        ? `${formatTokens(totals?.totalTokens ?? 0)} tokens`
+                        : formatUsd(totals?.costUsd ?? 0)}
+                    </TooltipPopup>
+                  </Tooltip>
                 </span>
               </div>
             );
@@ -871,7 +882,7 @@ function UsageOverview({
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-right text-xs text-muted-foreground">
-                <th className="py-2 pr-3 pl-2 text-left font-normal">#</th>
+                <th className="py-2 pr-3 pl-2 text-left text-caption">#</th>
                 <th className="w-full py-2 text-left font-normal">Model</th>
                 <th className="py-2 pl-6 font-normal">Cost</th>
                 <th className="hidden py-2 pl-6 font-normal sm:table-cell">Share</th>
@@ -897,19 +908,23 @@ function UsageOverview({
                       key={key}
                       className="relative border-b border-border/50 text-right whitespace-nowrap text-muted-foreground tabular-nums transition-colors hover:bg-muted/50 has-focus-visible:bg-muted/50"
                     >
-                      <td className="py-2.5 pr-3 pl-2 text-left text-xs">{index + 1}</td>
+                      <td className="py-2.5 pr-3 pl-2 text-left text-caption">{index + 1}</td>
                       <td className="py-2.5 text-left whitespace-normal">
                         <button
                           type="button"
+                          aria-label={model.model}
                           onClick={() => onSelectModel(key)}
+                          className="absolute inset-0 outline-none"
+                        />
+                        <span
                           className={cn(
-                            "flex items-center gap-2 text-left text-foreground outline-none after:absolute after:inset-0",
+                            "flex items-center gap-2 text-foreground",
                             !hasBar && "py-1",
                           )}
                         >
                           <ProviderMark provider={model.provider} className="size-3.5" />
                           {model.model}
-                        </button>
+                        </span>
                         {hasBar ? (
                           <div aria-hidden className={cn("mt-1.5 h-0.5 max-w-48", rowFigures)}>
                             <div
@@ -1368,7 +1383,7 @@ function MetricSkeletons({ labels }: { readonly labels: readonly string[] }) {
     <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
       {labels.map((label) => (
         <div key={label} className="flex flex-col gap-0.5">
-          <span className="text-xs text-muted-foreground">{label}</span>
+          <span className="text-meta text-muted-foreground">{label}</span>
           <Skeleton className="h-6 w-16" />
         </div>
       ))}
