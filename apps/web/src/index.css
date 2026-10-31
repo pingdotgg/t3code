@@ -2248,12 +2248,8 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   background-size: var(--surface-grain-size);
 }
 
-/* A layout pane's surface: its color and grain (::after) over a solid
-   composited layer of its color (::before). A pane tile not rastered yet
-   when a frame draws (a burst of new panes, a fast slide) then shows the
-   pane's color, not the window chrome behind the strip. The solid layer
-   stays 6px inside the pane's rounded edge, so it never tints its
-   antialiased corners; at rest the pane paints as bg-background surface-grain. */
+/* A pane's color and grain paint together. Promoting the fallback to its own
+   layer leaves stale compositor tiles in column gutters after a pane resizes. */
 @utility pane-surface {
   isolation: isolate;
   &::before,
@@ -2266,7 +2262,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
     inset: 6px;
     z-index: -2;
     background-color: var(--background);
-    transform: translateZ(0);
   }
   &::after {
     inset: 0;
