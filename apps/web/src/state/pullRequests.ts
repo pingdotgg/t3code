@@ -37,6 +37,7 @@ import {
 } from "../components/pullRequest/pullRequestList.logic";
 import { writePullRequestDetailSnapshot } from "../components/pullRequest/pullRequestDetail.logic";
 import { pullRequestChecksState } from "../components/pullRequest/pullRequestPresentation";
+import { useGuideRunStore } from "../components/pullRequest/guide/guideRunStore";
 import { formatEnvironmentQueryError } from "./query";
 import { environmentThreadShells } from "./threads";
 
@@ -403,6 +404,20 @@ export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connecti
         }),
       );
     }),
+  // Covers runs started elsewhere (another client, an agent) as well as this client's own.
+  reviewGuide: ({ environmentId, input }, guide) =>
+    Effect.map(Clock.currentTimeMillis, (since) => {
+      if (guide.run?._tag !== "Running") return;
+      useGuideRunStore.getState().watch({
+        environmentId,
+        reference: input,
+        title: null,
+        previousGuideAt: guide.guide?.generatedAt ?? null,
+        previousFailedAt: null,
+        since,
+        answeredRunning: true,
+      });
+    }),
 });
 
 export const linkedPullRequestDetailAtom = createLinkedPullRequestSummaryAtomFamily(
@@ -467,6 +482,17 @@ const savedPullRequestSummaryAtom = Atom.family((key: string) =>
   ),
 );
 
+export function observedPullRequestTitle(
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
+  reference: PullRequestRef,
+): string | null {
+  return (
+    registry.get(pullRequestObservationsAtom(pullRequestSummaryKey(environmentId, reference)))
+      .metadata?.summary.title ?? null
+  );
+}
+
 /** The newest of every list, detail, checks and linked-summary answer and the thread's saved link. */
 export function useSharedPullRequestSummary(
   environmentId: EnvironmentId | null,
@@ -521,7 +547,7 @@ function createMergedEnvironmentQuery<Input, A>(
         if (result._tag === "Failure" && error === null) {
           error = formatEnvironmentQueryError(result.cause);
         }
-        const value = Option.getOrNull(AsyncResult.value(result));
+        const value = AsyncResult.getOrElse(result, () => null);
         if (value !== null) values.push([target.environmentId, value]);
       }
       return { values, error, isPending };
@@ -577,7 +603,7 @@ export function usePullRequestTurnRefreshes(
 
 export function usePullRequestTurnRefresh(environmentId: EnvironmentId): number | null {
   const result = useAtomValue(pullRequestEnvironment.refreshes({ environmentId, input: {} }));
-  return Option.getOrNull(AsyncResult.value(result));
+  return AsyncResult.getOrElse(result, () => null);
 }
 
 export interface MergedPullRequestListView {

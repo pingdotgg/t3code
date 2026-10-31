@@ -48,11 +48,13 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
 import {
+  knownProviderFailureMessage,
   makeProviderFailure,
   makeProviderFailureTurnItem,
 } from "@t3tools/provider-core/server/failure";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import { userFacingDatabaseErrorMessage } from "./UserFacingErrors.ts";
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
@@ -507,6 +509,8 @@ export function routeProviderEvent(
             state.ownedProviderTurns.has(event.runtimeRequest.providerTurnId)),
         state,
       ];
+    case "background_work.updated":
+      return [state.ownedProviderTurns.has(event.providerTurnId), state];
     case "command_output.delta":
       // The session manager hands live output to the command output hub; runs never see it.
       return [false, state];
@@ -635,7 +639,7 @@ export const layer: Layer.Layer<
         };
       }) {
         const completedAt = input.completedAt ?? (yield* DateTime.now);
-        const finalizedAttempt: OrchestrationV2RunAttempt | null = {
+        const finalizedAttempt: OrchestrationV2RunAttempt = {
           ...input.attempt,
           status: input.terminal.status,
           completedAt,
@@ -765,20 +769,16 @@ export const layer: Layer.Layer<
                     payload: input.abandonedProviderTurn,
                   },
                 ]),
-            ...(finalizedAttempt === null
-              ? []
-              : [
-                  {
-                    id: yield* allocateEventId(),
-                    type: "run-attempt.updated" as const,
-                    threadId: input.run.threadId,
-                    runId: input.run.id,
-                    nodeId: input.rootNode.id,
-                    providerInstanceId: input.run.providerInstanceId,
-                    occurredAt: completedAt,
-                    payload: finalizedAttempt,
-                  },
-                ]),
+            {
+              id: yield* allocateEventId(),
+              type: "run-attempt.updated" as const,
+              threadId: input.run.threadId,
+              runId: input.run.id,
+              nodeId: input.rootNode.id,
+              providerInstanceId: input.run.providerInstanceId,
+              occurredAt: completedAt,
+              payload: finalizedAttempt,
+            },
             ...(input.terminal.status === "interrupted"
               ? [
                   {
@@ -1034,6 +1034,7 @@ export const layer: Layer.Layer<
         const rootTerminalSeen = yield* Ref.make(false);
         const rootRunFinalized = yield* Ref.make(false);
         const providerThreadOwnerLost = yield* Ref.make(false);
+        const pendingBackgroundProviderTurns = new Set<ProviderTurnId>();
         const activeChildProviderTurns = yield* Ref.make<ReadonlySet<ProviderTurnId>>(new Set());
         const activeChildSubagents = yield* Ref.make<ReadonlyMap<NodeId, ThreadId>>(new Map());
         const activeBackgroundTurnItems = yield* Ref.make<
@@ -1235,6 +1236,9 @@ export const layer: Layer.Layer<
           ) {
             return true;
           }
+          if (pendingBackgroundProviderTurns.size > 0) {
+            return false;
+          }
           const childProviderTurns = yield* Ref.get(activeChildProviderTurns);
           if (childProviderTurns.size > 0) {
             return false;
@@ -1354,6 +1358,11 @@ export const layer: Layer.Layer<
                   (current) =>
                     new Set([...current].filter((id) => routing.ownedProviderTurns.has(id))),
                 );
+                for (const id of pendingBackgroundProviderTurns) {
+                  if (!routing.ownedProviderTurns.has(id)) {
+                    pendingBackgroundProviderTurns.delete(id);
+                  }
+                }
                 yield* Ref.update(
                   activeBackgroundTurnItems,
                   (current) => new Set([...current].filter((id) => !detached.itemIds.has(id))),
@@ -1458,6 +1467,13 @@ export const layer: Layer.Layer<
                 yield* Ref.set(rootTerminalSeen, true);
                 yield* finalizeRootRun(event);
               }
+              if (event.type === "background_work.updated") {
+                if (event.pending) {
+                  pendingBackgroundProviderTurns.add(event.providerTurnId);
+                } else {
+                  pendingBackgroundProviderTurns.delete(event.providerTurnId);
+                }
+              }
               yield* trackChildLifecycle(event, deliveredEvent !== null);
             }),
           ),
@@ -1540,6 +1556,7 @@ export const layer: Layer.Layer<
                     : null;
                 const latestItemOrdinal = yield* Ref.get(latestTurnItemOrdinal);
                 const openSubagents = yield* Ref.get(openRunOwnedSubagents);
+                const squashed = Cause.squash(cause);
                 let nextRetryWarningAt = completedAt;
                 yield* writeFinalRunEvents({
                   run: input.run,
@@ -1555,7 +1572,13 @@ export const layer: Layer.Layer<
                   ...(abandonedProviderTurn === null ? {} : { abandonedProviderTurn }),
                   completedAt,
                   terminal: makeFailedTerminalEvent(
-                    makeProviderFailure({ cause: Cause.squash(cause), class: "unknown" }),
+                    makeProviderFailure({
+                      cause: squashed,
+                      message:
+                        knownProviderFailureMessage(squashed) ??
+                        userFacingDatabaseErrorMessage(squashed),
+                      class: "unknown",
+                    }),
                     latestItemOrdinal + 1,
                   ),
                   failureItemPersisted: false,

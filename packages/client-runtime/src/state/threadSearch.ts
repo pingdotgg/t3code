@@ -150,7 +150,7 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
           }),
         );
         isLoading ||= result.waiting;
-        const value = Option.getOrNull(AsyncResult.value(result));
+        const value = AsyncResult.getOrElse(result, () => null);
         if (value !== null) {
           matches.push(...value.matches.map((match) => ({ ...match, environmentId })));
           if (value.threads !== undefined && value.threads.length > 0) {
