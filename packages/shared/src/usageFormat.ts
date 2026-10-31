@@ -8,13 +8,6 @@ import {
 
 import type { UsageContractMismatch } from "./usageMerge.ts";
 
-const CURRENCY = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
-
 const INTEGER = new Intl.NumberFormat("en-US");
 
 export function formatMalformedUsageWarning(count: number): string {
@@ -54,10 +47,6 @@ export function usageSourceMessages(sources: readonly UsageSource[]): readonly s
   );
   if (malformedRecords > 0) messages.add(formatMalformedUsageWarning(malformedRecords));
   return [...messages];
-}
-
-export function formatUsd(value: number): string {
-  return CURRENCY.format(value);
 }
 
 const MONEY_FORMATTERS = new Map<string, Intl.NumberFormat>();

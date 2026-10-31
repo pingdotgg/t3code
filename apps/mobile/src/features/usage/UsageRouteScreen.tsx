@@ -25,7 +25,6 @@ import {
   formatPercent,
   formatTokens,
   formatUsageContractMismatch,
-  formatUsd,
   makeWindow,
   usageSourceMessages,
 } from "@t3tools/shared/usageFormat";
@@ -45,6 +44,8 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { UsageDailyChart } from "./UsageDailyChart";
+import { UsageCurrencyMenu } from "./UsageCurrencyMenu";
+import { useUsageCurrency } from "./usageCurrency";
 import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
 import { useRefreshLimits } from "./UsageLimitsSection";
 import { UsageLimitsSection } from "./UsageLimitsPooled";
@@ -347,6 +348,7 @@ function UsageScreen(props: {
               />
             ) : (
               <>
+                <UsageCurrencyMenu />
                 {wide ? null : (
                   <SegmentedControl
                     options={WINDOW_OPTIONS}
@@ -656,6 +658,7 @@ function ChartCard(props: {
 }
 
 function UsageSummary(props: { readonly merged: MergedUsage; readonly metric: UsageChartMetric }) {
+  const currency = useUsageCurrency();
   const { merged, metric } = props;
   return (
     <View className="gap-0.5">
@@ -663,7 +666,9 @@ function UsageSummary(props: { readonly merged: MergedUsage; readonly metric: Us
         {metric === "cost" ? "Raw token cost" : "Processed tokens"}
       </Text>
       <Text className="text-4xl font-t3-bold tabular-nums text-foreground">
-        {metric === "cost" ? `${formatUsd(merged.costUsd)}*` : formatTokens(merged.totalTokens)}
+        {metric === "cost"
+          ? `${currency.format(merged.costUsd)}*`
+          : formatTokens(merged.totalTokens)}
       </Text>
       <Text className="text-sm text-foreground-muted">
         {metric === "cost"
@@ -683,6 +688,7 @@ function ProviderSection(props: {
   /** Drops the share bar so the list fits beside the chart. */
   readonly compact: boolean;
 }) {
+  const currency = useUsageCurrency();
   const { merged, metric } = props;
   const colors = useProviderColors();
   if (merged.providers.length === 0 && props.cursorAccessEnvironments.length === 0) return null;
@@ -756,7 +762,7 @@ function ProviderSection(props: {
                 }
               >
                 {metric === "cost"
-                  ? formatUsd(provider.costUsd)
+                  ? currency.format(provider.costUsd)
                   : formatTokens(provider.totalTokens)}
               </Text>
             </View>
@@ -772,7 +778,7 @@ function ProviderSection(props: {
             <Text className="text-sm text-foreground-muted">
               {metric === "cost"
                 ? `${formatPercent(share)} of cost · ${formatTokens(provider.totalTokens)} tokens`
-                : `${formatPercent(share)} of tokens · ${formatUsd(provider.costUsd)}`}
+                : `${formatPercent(share)} of tokens · ${currency.format(provider.costUsd)}`}
             </Text>
           </View>
         );
@@ -786,6 +792,7 @@ function TotalsSection(props: {
   readonly isPast24Hours: boolean;
   readonly columns: number;
 }) {
+  const currency = useUsageCurrency();
   const { merged } = props;
   const activePeriods = (props.isPast24Hours ? merged.hourly : merged.daily).filter(
     (period) => period.totalTokens > 0,
@@ -806,7 +813,7 @@ function TotalsSection(props: {
         <MetricCell
           columns={props.columns}
           label="Cache savings"
-          value={formatUsd(merged.costQuality.cacheSavingsUsd)}
+          value={currency.format(merged.costQuality.cacheSavingsUsd)}
           detail={
             merged.costUsd > 0
               ? `${(merged.costQuality.cacheSavingsUsd / merged.costUsd).toFixed(1)}x the raw cost`
@@ -843,6 +850,7 @@ function TotalsSection(props: {
 }
 
 function CostSection(props: { readonly merged: MergedUsage; readonly wide: boolean }) {
+  const currency = useUsageCurrency();
   const { categoryCost, speedCost } = props.merged;
   const colors = useUsageMixColors();
   const byType = [
@@ -882,7 +890,7 @@ function CostSection(props: { readonly merged: MergedUsage; readonly wide: boole
             <ShareBar
               label="By speed"
               segments={bySpeed}
-              aside={`${formatUsd(speedCost.premium)} premium`}
+              aside={`${currency.format(speedCost.premium)} premium`}
             />
           </View>
         ) : null}
@@ -896,6 +904,7 @@ function ShareBar(props: {
   readonly segments: readonly { label: string; value: number; color: string }[];
   readonly aside?: string;
 }) {
+  const currency = useUsageCurrency();
   const visible = props.segments.filter((segment) => segment.value > 0);
   if (visible.length === 0) return null;
 
@@ -921,7 +930,9 @@ function ShareBar(props: {
           <View key={segment.label} className="flex-row items-center gap-1.5">
             <View className="size-2 rounded-sm" style={{ backgroundColor: segment.color }} />
             <Text className="text-sm text-foreground-muted">{segment.label}</Text>
-            <Text className="text-sm tabular-nums text-foreground">{formatUsd(segment.value)}</Text>
+            <Text className="text-sm tabular-nums text-foreground">
+              {currency.format(segment.value)}
+            </Text>
           </View>
         ))}
       </View>
@@ -949,6 +960,7 @@ function ModelsSection(props: {
   readonly metric: UsageChartMetric;
   readonly columns: 1 | 2;
 }) {
+  const currency = useUsageCurrency();
   const { merged, metric } = props;
   const colors = useProviderColors();
   if (merged.models.length === 0) return null;
@@ -984,7 +996,7 @@ function ModelsSection(props: {
               <Text className="text-sm text-foreground-muted">
                 {metric === "tokens"
                   ? `${formatPercent(model.tokenShare)} of tokens · ${
-                      isModelCostUnknown(model) ? "no known rates" : formatUsd(model.costUsd)
+                      isModelCostUnknown(model) ? "no known rates" : currency.format(model.costUsd)
                     }`
                   : isModelCostUnknown(model)
                     ? `no known rates · ${formatTokens(model.totalTokens)} tokens`
@@ -996,7 +1008,7 @@ function ModelsSection(props: {
                 ? formatTokens(model.totalTokens)
                 : isModelCostUnknown(model)
                   ? "Unpriced"
-                  : formatUsd(model.costUsd)}
+                  : currency.format(model.costUsd)}
             </Text>
           </View>
         ))}
