@@ -305,6 +305,7 @@ export const ServerProvider = Schema.Struct({
   availability: Schema.optional(ServerProviderAvailability),
   unavailableReason: Schema.optional(TrimmedNonEmptyString),
   models: Schema.Array(ServerProviderModel),
+  modelsAuthoritative: Schema.optionalKey(Schema.Boolean),
   // Pickers group `models` under these, in order, by `subProvider`.
   subProviders: Schema.optional(Schema.Array(ServerProviderSubProvider)),
   // Set for the one failed check that follows a ready one: pickers keep offering `models`.

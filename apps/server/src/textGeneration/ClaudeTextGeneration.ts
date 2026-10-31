@@ -9,6 +9,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { type ClaudeSettings, TextGenerationError } from "@t3tools/contracts";
+import type { Settings as ClaudeSdkSettings } from "@anthropic-ai/claude-agent-sdk";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { deepMerge } from "@t3tools/shared/Struct";
 
@@ -39,6 +40,7 @@ import {
 import { readClaudeUserSettings } from "../provider/Drivers/ClaudeSkills.ts";
 import { readClaudeLaunchArgSettings } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
+import { resolveClaudeGatewayAlias } from "../claudeModelOptions.ts";
 import * as ServerConfig from "../config.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
@@ -131,6 +133,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   routeModelCatalog: (
     catalog: ClaudeModelCatalog,
     cwd: string,
+    launchSettings?: ClaudeSdkSettings,
   ) => Effect.Effect<ClaudeModelCatalog> = Effect.succeed,
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -228,7 +231,22 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
               ),
             )
         : cwd;
-    const catalog = yield* routeModelCatalog(yield* scopedModelCatalog, workingDirectory);
+    const launchArgSettings = yield* readClaudeLaunchArgSettings({
+      settings: claudeSettings,
+      // The investigated checkout holds the change under review, not the user's files.
+      cwd: investigate?.projectCwd ?? cwd,
+      fileSystem,
+      path,
+    }).pipe(
+      Effect.mapError(
+        (cause) => new TextGenerationError({ operation, detail: cause.message, cause }),
+      ),
+    );
+    const catalog = yield* routeModelCatalog(
+      yield* scopedModelCatalog,
+      workingDirectory,
+      launchArgSettings,
+    );
     const resolvedModelSelection = {
       ...modelSelection,
       model: resolveClaudeModelSlug(catalog, modelSelection.model),
@@ -265,17 +283,16 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         : undefined;
     const fastMode =
       fastModeDescriptor?.type === "boolean" ? fastModeDescriptor.currentValue : undefined;
-    const launchArgSettings = yield* readClaudeLaunchArgSettings({
-      settings: claudeSettings,
-      // The investigated checkout holds the change under review, not the user's files.
-      cwd: investigate?.projectCwd ?? cwd,
-      fileSystem,
-      path,
-    }).pipe(
-      Effect.mapError(
-        (cause) => new TextGenerationError({ operation, detail: cause.message, cause }),
-      ),
-    );
+    const gatewayAlias = resolveClaudeGatewayAlias(catalog, modelSelection.model);
+    const launchSettings = gatewayAlias
+      ? {
+          ...launchArgSettings,
+          env: {
+            ...launchArgSettings?.env,
+            [`ANTHROPIC_DEFAULT_${gatewayAlias.toUpperCase()}_MODEL`]: gatewayAlias,
+          },
+        }
+      : launchArgSettings;
     const settings = {
       ...(investigate
         ? investigationSettings(
@@ -283,9 +300,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
               Effect.provideService(FileSystem.FileSystem, fileSystem),
               Effect.provideService(Path.Path, path),
             ),
-            launchArgSettings,
+            launchSettings,
           )
-        : launchArgSettings),
+        : launchSettings),
       disableAllHooks: true,
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
       ...(fastMode ? { fastMode: true } : {}),
@@ -309,7 +326,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       : settingsJson;
 
     // `claude -p` accepts images only as content blocks of a stream-json user message.
-    const apiModelId = resolveClaudeCatalogApiModelId(catalog, resolvedModelSelection);
+    const apiModelId = resolveClaudeCatalogApiModelId(catalog, modelSelection);
     const imageBlocks = textOnlyModels.has(apiModelId) ? [] : yield* readImageBlocks(attachments);
     const imageStdin =
       imageBlocks.length > 0

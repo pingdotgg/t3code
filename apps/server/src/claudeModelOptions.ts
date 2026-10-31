@@ -19,12 +19,18 @@ import {
 
 const CLAUDE_CODE_MODEL_ALIASES = new Set(["opus", "sonnet", "haiku", "fable"]);
 
+export function resolveClaudeGatewayAlias(catalog: ClaudeModelCatalog, model: string) {
+  return CLAUDE_CODE_MODEL_ALIASES.has(model) && catalog.gatewayModelIds?.has(model)
+    ? model
+    : undefined;
+}
+
 export interface CompiledClaudeModelSelection {
   readonly apiModelId: string;
   readonly effort: string | undefined;
   readonly promptEffort: string | undefined;
   readonly settings: Readonly<Record<string, boolean>>;
-  /** The alias of a custom model named like one, which Claude Code would otherwise expand. */
+  /** A custom or gateway model ID that Claude Code would otherwise expand as an alias. */
   readonly pinnedAlias: string | undefined;
   readonly queryIdentity: string;
 }
@@ -61,10 +67,11 @@ export function compileClaudeModelSelection(
   const promptEffort = resolvePromptInjectedEffort(capabilities, rawEffort) ?? undefined;
   // An alias the catalog routes a built-in model to is Claude Code's own and is not pinned.
   const pinnedAlias =
-    CLAUDE_CODE_MODEL_ALIASES.has(apiModelId) &&
+    resolveClaudeGatewayAlias(catalog, selection.model) ??
+    (CLAUDE_CODE_MODEL_ALIASES.has(apiModelId) &&
     resolveClaudeModelSlug(catalog, selection.model) === apiModelId
       ? apiModelId
-      : undefined;
+      : undefined);
   return {
     apiModelId,
     effort,

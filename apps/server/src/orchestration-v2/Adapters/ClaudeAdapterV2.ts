@@ -2668,8 +2668,7 @@ export function makeClaudeQueryOptions(input: {
           ...(typeof querySettings === "object" && querySettings !== null ? querySettings : {}),
           autoCompactWindow: Number(autoCompactWindow),
         } as ClaudeSdkSettings);
-  // Claude Code expands a bare alias to its own model, so a custom model with an alias's name
-  // pins the alias to itself.
+  // Claude Code expands bare aliases unless they are pinned to the exact model ID.
   const aliasOverrideEnv =
     compiledSelection.pinnedAlias === undefined
       ? undefined
