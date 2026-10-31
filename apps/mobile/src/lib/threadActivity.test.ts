@@ -888,6 +888,72 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  it.each(["commentary", undefined] as const)(
+    "keeps confirmed final answers visible across continuations ending with %s",
+    (trailingPhase) => {
+      const reply = (id: string, phase?: "final_answer" | "commentary") => ({
+        ...assistantMessage(),
+        id: TurnItemId.make(id),
+        messageId: MessageId.make(id),
+        ...(phase === undefined ? {} : { phase }),
+      });
+      const items: OrchestrationV2TurnItem[] = [
+        userMessage(),
+        command(),
+        reply("first-answer", "final_answer"),
+        {
+          ...base("wake", "2026-06-20T00:00:04.000Z", 4),
+          type: "notification",
+          source: { kind: "system" },
+          outcome: "completed",
+          summary: "Delegated task finished",
+        },
+        reply("progress", "commentary"),
+        {
+          ...userMessage(),
+          id: TurnItemId.make("steer"),
+          messageId: MessageId.make("steer"),
+          inputIntent: "steer",
+        },
+        reply("second-answer", "final_answer"),
+        reply("trailing", trailingPhase),
+      ];
+      const present = (turnItems: typeof items, expanded = false) =>
+        deriveThreadFeedPresentation(
+          buildThreadFeed(turnItems.map((item, position) => projected(item, position))),
+          null,
+          expanded ? new Set([runId]) : new Set(),
+        );
+      const assistantIds = (entries: ThreadFeedEntry[]) =>
+        entries.flatMap((entry) =>
+          entry.type === "message" && entry.message.role === "assistant" ? [entry.id] : [],
+        );
+      expect(assistantIds(present(items.slice(0, 3)))).toEqual(["first-answer"]);
+      expect(assistantIds(present(items))).toEqual([
+        "first-answer",
+        "second-answer",
+        ...(trailingPhase === undefined ? ["trailing"] : []),
+      ]);
+      expect(
+        assistantIds(
+          present(
+            items.map((item) =>
+              item.id === "first-answer"
+                ? { ...item, status: "interrupted", completedAt: null }
+                : item,
+            ),
+          ),
+        ),
+      ).not.toContain("first-answer");
+      expect(assistantIds(present(items, true))).toEqual([
+        "first-answer",
+        "progress",
+        "second-answer",
+        "trailing",
+      ]);
+    },
+  );
+
   // regression: #21393 show plans and fold settled progress notes
   it("folds progress even when a response has no tool calls", () => {
     const feed = buildThreadFeed([

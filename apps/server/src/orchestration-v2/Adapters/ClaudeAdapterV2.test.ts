@@ -6340,15 +6340,25 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  const usageStreamFrame = (event: unknown, parentToolUseId: string | null = null) =>
+  const usageStreamFrame = (
+    event: unknown,
+    parentToolUseId: string | null = null,
+    apiMessageId?: string,
+  ) =>
     claudeSdkFrame({
       type: "stream_event",
       event,
       parent_tool_use_id: parentToolUseId,
       session_id: WAKE_NATIVE_SESSION,
       uuid: "usage-stream-frame",
+      ...(apiMessageId === undefined ? {} : { api_message_id: apiMessageId }),
     });
-  const usageSnapshotFrame = (id: string, uuid: string, usage: unknown) =>
+  const usageSnapshotFrame = (
+    id: string,
+    uuid: string,
+    usage: unknown,
+    stopReason: "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" | null = null,
+  ) =>
     claudeSdkFrame({
       type: "assistant",
       message: {
@@ -6357,7 +6367,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         type: "message",
         role: "assistant",
         content: [{ type: "text", text: "Working." }],
-        stop_reason: null,
+        stop_reason: stopReason,
         stop_sequence: null,
         usage,
       },
@@ -6377,6 +6387,55 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ? [event.providerTurn.tokenUsage.usedTokens]
         : [],
     );
+
+  it.effect.each([
+    { reason: "end_turn", phase: "final_answer" },
+    { reason: "tool_use", phase: "commentary" },
+    { reason: "max_tokens", phase: undefined },
+    { reason: "stop_sequence", phase: undefined },
+    { reason: null, phase: undefined },
+    { reason: "end_turn", phase: "final_answer", resultOnly: true },
+  ] as const)(
+    "preserves only confirmed assistant intent from snapshot stop reason $reason",
+    (input) =>
+      Effect.gen(function* () {
+        const { reason, phase } = input;
+        const resultOnly = "resultOnly" in input;
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-answer-phase"),
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        if (!resultOnly) {
+          yield* Queue.offer(
+            harness.sdkMessages,
+            usageSnapshotFrame("msg_answer_phase", "answer-phase", zeroUsage, reason),
+          );
+        }
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "result-answer-phase", result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const items = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+            ? [event.turnItem]
+            : [],
+        );
+        assert.equal(items.at(-1)?.phase, phase);
+        assert.equal(items.at(-1)?.text, resultOnly ? "Done." : "Working.");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
 
   it.effect("reports context from final stream usage when the request starts at zero", () =>
     Effect.gen(function* () {
@@ -6429,11 +6488,93 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const terminal = yield* Queue.take(harness.terminalReceipts);
       assert.equal(terminal.status, "completed");
       assert.deepEqual(reportedContextTokens(harness.events), [38_123]);
+      const assistantItems = new Map(
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+            ? [[event.turnItem.nativeItemRef?.nativeId, event.turnItem.phase] as const]
+            : [],
+        ),
+      );
+      assert.deepEqual([...assistantItems.values()], ["commentary", "commentary", "final_answer"]);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
       ),
     ),
+  );
+
+  it.effect(
+    "matches delayed stop metadata to its native message across blocks and continuations",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-delayed-answer-phase"),
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        const frames = [
+          usageStreamFrame({ type: "message_start", message: { id: "msg_answer" } }),
+          usageSnapshotFrame("msg_answer", "answer-block-1", zeroUsage),
+          usageSnapshotFrame("msg_answer", "answer-block-2", zeroUsage),
+          usageStreamFrame({ type: "message_start", message: { id: "msg_progress" } }),
+          usageSnapshotFrame("msg_progress", "progress-block", zeroUsage),
+          usageStreamFrame(
+            { type: "message_delta", delta: { stop_reason: "end_turn" } },
+            null,
+            "msg_answer",
+          ),
+          usageStreamFrame(
+            { type: "message_delta", delta: { stop_reason: "end_turn" } },
+            "child-tool",
+            "msg_progress",
+          ),
+          usageStreamFrame(
+            { type: "message_delta", delta: { stop_reason: "tool_use" } },
+            null,
+            "msg_progress",
+          ),
+          usageSnapshotFrame("msg_answer", "answer-block-3", zeroUsage),
+          makeResultFrame({ uuid: "result-delayed-answer-phase", result: "Done." }),
+        ];
+        for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
+        yield* Queue.take(harness.terminalReceipts);
+        const phases = new Map(
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+              ? [[event.turnItem.nativeItemRef?.nativeId, event.turnItem.phase] as const]
+              : [],
+          ),
+        );
+        assert.deepEqual(
+          [...phases],
+          [
+            ["answer-block-1", "final_answer"],
+            ["answer-block-2", "final_answer"],
+            ["progress-block", "commentary"],
+            ["answer-block-3", "final_answer"],
+          ],
+        );
+        assert.equal(
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "assistant_message" &&
+              event.turnItem.nativeItemRef?.nativeId === "progress-block" &&
+              event.turnItem.phase === "final_answer",
+          ),
+          false,
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
   );
 
   it.effect("merges cumulative stream usage into the message_start counts", () =>

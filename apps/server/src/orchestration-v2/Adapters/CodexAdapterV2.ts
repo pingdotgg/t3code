@@ -1131,6 +1131,7 @@ interface ActiveCodexTurnContext {
   readonly subagent: CodexSubagentThreadContext | null;
   readonly startedAt: DateTime.Utc;
   readonly runningCompactionItemIds: Set<string>;
+  readonly assistantMessagePhases: Map<string, "commentary" | "final_answer">;
   // Modern approval requests omit paths; keep the kinds without retaining patch bodies.
   readonly fileChangeKindsByItem: Map<string, CodexFileChangeKinds>;
   readonly itemPositions: Map<
@@ -2021,6 +2022,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             subagent: null,
             startedAt: input.startedAt,
             itemPositions: new Map(),
+            assistantMessagePhases: new Map(),
             fileChangeKindsByItem: new Map(),
             runningCompactionItemIds: new Set(),
           };
@@ -2627,6 +2629,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               subagent,
               startedAt: turn.startedAt,
               itemPositions: new Map(),
+              assistantMessagePhases: new Map(),
               fileChangeKindsByItem: new Map(),
               runningCompactionItemIds: new Set(),
             };
@@ -3305,6 +3308,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             completedAt,
             updatedAt,
             type: "assistant_message",
+            phase: context.assistantMessagePhases.get(item.id),
             messageId,
             text: item.text,
             streaming: !completed,
@@ -4771,6 +4775,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             if (payload.item.type === "agentMessage") {
+              if (payload.item.phase != null) {
+                context.assistantMessagePhases.set(
+                  payload.item.id,
+                  payload.item.phase === "final_answer" ? "final_answer" : "commentary",
+                );
+              }
               if (payload.item.phase == null || payload.item.phase === "final_answer") {
                 yield* Ref.update(finalAnswerItemIdsByTurn, (current) => {
                   const updated = new Map(current);
@@ -5135,6 +5145,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             const finalAnswer = payload.item.phase == null || payload.item.phase === "final_answer";
+            if (payload.item.phase != null) {
+              context.assistantMessagePhases.set(
+                payload.item.id,
+                payload.item.phase === "final_answer" ? "final_answer" : "commentary",
+              );
+            }
             if (finalAnswer) {
               yield* Ref.update(finalAnswerItemIdsByTurn, (current) => {
                 const updated = new Map(current);
@@ -6482,6 +6498,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             subagent: null,
             startedAt: now,
             itemPositions: new Map(),
+            assistantMessagePhases: new Map(),
             fileChangeKindsByItem: new Map(),
             runningCompactionItemIds: new Set(),
           };

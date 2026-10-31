@@ -3420,6 +3420,61 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             assistantMessages(harness.events).map((event) => event.message.text),
             ["CODEX_RECOVERY_OK", "CODEX_RECOVERY_OK"],
           );
+          assert.deepEqual(
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+                ? [event.turnItem.phase]
+                : [],
+            ),
+            ["commentary", "final_answer"],
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
+  it.effect.each([false, true])(
+    "retains explicit answer phases without inferring missing phases (streamed: %s)",
+    (streamed) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const transcript = finalAnswerTranscript("codex-answer-phases", [
+            { id: "commentary", text: "Checking.", phase: "commentary", streamed },
+            { id: "answer-first", text: "First answer.", phase: "final_answer", streamed },
+            { id: "unknown-null", text: "Unknown null.", phase: null, streamed },
+            { id: "answer-second", text: "Second answer.", phase: "final_answer", streamed },
+            { id: "unknown-omitted", text: "Unknown omitted.", omitPhase: true, streamed },
+          ]);
+          const harness = yield* makeCodexReplayHarness(transcript);
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-codex-answer-phases"),
+              text: "Reply with the requested recovery marker.",
+            }),
+          );
+          yield* harness.awaitTerminal(1);
+          assert.deepEqual(
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "assistant_message" &&
+              event.turnItem.status === "completed"
+                ? [[event.turnItem.text, event.turnItem.phase]]
+                : [],
+            ),
+            [
+              ["Checking.", "commentary"],
+              ["First answer.", "final_answer"],
+              ["Unknown null.", undefined],
+              ["Second answer.", "final_answer"],
+              ["Unknown omitted.", undefined],
+            ],
+          );
         }).pipe(
           Effect.provide(
             Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
@@ -3499,6 +3554,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.strictEqual(messages.at(-1)?.message.text, expected);
       assert.strictEqual(messages.at(-1)?.message.streaming, false);
       assert.strictEqual(new Set(messages.map(({ message }) => message.id)).size, 1);
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+            ? [event.turnItem.phase]
+            : [],
+        ),
+        reply === null ? [undefined] : ["final_answer", "final_answer"],
+      );
       // Image bytes stay with Codex; clients load the saved file.
       assert.notInclude(encodeUnknownJson(harness.events), result);
     }).pipe(
