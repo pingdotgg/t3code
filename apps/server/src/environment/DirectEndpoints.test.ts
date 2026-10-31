@@ -13,6 +13,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as ServerConfig from "../config.ts";
 import * as DirectEndpoints from "./DirectEndpoints.ts";
 import { resolveBoundEndpoints } from "./DirectEndpoints.ts";
+import * as TailscaleStatusCache from "./TailscaleStatusCache.ts";
 
 const INTERFACES: ReturnType<typeof NodeOS.networkInterfaces> = {
   lo0: [
@@ -273,7 +274,11 @@ const resolveWithServe = (probeStatus: number) =>
     Effect.provide(
       DirectEndpoints.layer.pipe(
         Layer.provide(
-          Layer.mergeAll(layerServeConfig, layerTailscaleUp, layerServeProbe(probeStatus)),
+          Layer.mergeAll(
+            layerServeConfig,
+            TailscaleStatusCache.layer.pipe(Layer.provide(layerTailscaleUp)),
+            layerServeProbe(probeStatus),
+          ),
         ),
       ),
     ),
