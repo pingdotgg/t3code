@@ -428,24 +428,26 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
   return path.join(home, ".claude");
 });
 
-const SettingsBaseUrl = fromLenientJson(
+const ConnectionSettings = fromLenientJson(
   Schema.Struct({
-    env: Schema.optional(Schema.Struct({ ANTHROPIC_BASE_URL: Schema.optional(Schema.String) })),
+    env: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+    apiKeyHelper: Schema.optional(Schema.Unknown),
   }),
 );
-const decodeSettingsBaseUrl = Schema.decodeUnknownEffect(SettingsBaseUrl);
+const decodeConnectionSettings = Schema.decodeUnknownEffect(ConnectionSettings);
 
-/** ANTHROPIC_BASE_URL from Claude's settings `env`, which Claude Code applies over the process env. */
-export const readClaudeSettingsBaseUrl = Effect.fn("readClaudeSettingsBaseUrl")(function* (
+/** Claude Code applies settings `env` over its inherited process environment. */
+export const readClaudeConnectionSettings = Effect.fn("readClaudeConnectionSettings")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   cwd: string | undefined,
   environment: NodeJS.ProcessEnv,
-): Effect.fn.Return<string | undefined, never, FileSystem.FileSystem | Path.Path> {
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   const configDirPath = yield* resolveClaudeConfigDirPath(config, environment, cwd);
-  let baseUrl: string | undefined;
+  const env = { ...environment };
+  let apiKeyHelper: string | undefined;
   for (const settingsPath of claudeSettingsPaths(
     path,
     configDirPath,
@@ -457,12 +459,15 @@ export const readClaudeSettingsBaseUrl = Effect.fn("readClaudeSettingsBaseUrl")(
       .readFileString(settingsPath)
       .pipe(Effect.orElseSucceed(() => undefined));
     if (contents === undefined) continue;
-    const parsed = yield* decodeSettingsBaseUrl(contents).pipe(
+    const parsed = yield* decodeConnectionSettings(contents).pipe(
       Effect.orElseSucceed(() => undefined),
     );
-    baseUrl = parsed?.env?.ANTHROPIC_BASE_URL ?? baseUrl;
+    for (const [name, value] of Object.entries(parsed?.env ?? {})) {
+      if (typeof value === "string") env[name] = value;
+    }
+    if (typeof parsed?.apiKeyHelper === "string") apiKeyHelper = parsed.apiKeyHelper;
   }
-  return baseUrl;
+  return { env, apiKeyHelper };
 });
 
 // Claude's --add-dir is repeatable and variadic; parseCliArgs keeps only one value.

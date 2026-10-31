@@ -123,6 +123,10 @@ requirements, use the
 
 ## Other routers
 
+A custom `ANTHROPIC_BASE_URL` also supplies the model list through `/v1/models`.
+T3 refreshes it using Claude Code's configured credentials and keeps its built-in
+catalog if the gateway cannot provide a list.
+
 A local router uses an ordinary Claude provider instance. Give it a separate
 config directory and put the router's endpoint and credential variables in that
 instance's **Environment variables**. The router must run where the environment
