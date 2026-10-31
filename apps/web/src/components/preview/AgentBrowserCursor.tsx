@@ -85,10 +85,10 @@ export function AgentCursorMark(props: {
       {phase === "click" ? (
         <span
           key={sequence}
-          className="absolute left-0.5 top-0.5 size-4 animate-status-ping rounded-full bg-primary/25 motion-reduce:animate-none"
+          className="absolute left-0.5 top-0.5 size-4 animate-status-ping rounded-full bg-info/25 motion-reduce:animate-none"
         />
       ) : null}
-      <MousePointer2 className="relative size-5 -translate-x-0.5 -translate-y-0.5 fill-background stroke-2 text-primary drop-shadow-sm" />
+      <MousePointer2 className="relative size-4.5 -translate-x-0.5 -translate-y-0.5 fill-background stroke-2 text-info drop-shadow-sm" />
     </div>
   );
 }

@@ -330,7 +330,7 @@ const isRefusedRequestedReviewersOnly = (error: unknown): boolean =>
       path?.length === 6 &&
       path[0] === "repository" &&
       path[1] === "pullRequest" &&
-      path[2] === "reviewRequests" &&
+      (path[2] === "reviewRequests" || path[2] === "reviewRequestEvents") &&
       path[3] === "nodes" &&
       typeof path[4] === "number" &&
       Number.isInteger(path[4]) &&
@@ -2220,12 +2220,26 @@ export const make = Effect.gen(function* () {
           input,
           50,
           (requestedReviewers) =>
-            client.ReviewThreads({ owner, name, number: input.number, requestedReviewers }),
+            client.ReviewThreads({
+              owner,
+              name,
+              number: input.number,
+              requestedReviewers,
+              requestEvents: requestedReviewers > 0,
+            }),
         ).pipe(graphql(target), Effect.map(toReviewThreadPage), Effect.flatMap(found(target)));
         const entries: GitHubReviewThreadEntry[] = [...first.threads];
         const avatarsByLogin = new Map(first.avatarsByLogin);
         const botLogins = new Set(first.botLogins);
-        const { reviewers, reactions, reactionsById, editedAtById, commits, viewer } = first;
+        const {
+          reviewers,
+          reactions,
+          reactionsById,
+          editedAtById,
+          commits,
+          viewer,
+          reviewRequests,
+        } = first;
         const dismissalsByReviewId = new Map(first.dismissalsByReviewId);
         const dismissalCursor = first.nextDismissalCursor;
         let cursor = first.nextCursor;
@@ -2299,6 +2313,7 @@ export const make = Effect.gen(function* () {
           botLogins,
           commits,
           viewer,
+          reviewRequests,
         };
       },
     ),
