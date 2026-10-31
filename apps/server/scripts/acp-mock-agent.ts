@@ -785,6 +785,15 @@ const program = Effect.gen(function* () {
   yield* agent.handlePrompt((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
+      if (process.env.T3_ACP_ECHO_ACCEPTED_PROMPT === "1") {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "user_message_chunk",
+            content: { type: "text", text: "Accepted test prompt" },
+          },
+        });
+      }
       beginAcpMockPrompt(cancelledSessions, requestedSessionId);
       promptCount += 1;
       const idleError = process.env.T3_ACP_IDLE_ERROR;

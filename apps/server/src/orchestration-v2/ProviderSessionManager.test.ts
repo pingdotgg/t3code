@@ -14,7 +14,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
-  type ProviderSessionId,
+  ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -3076,6 +3076,174 @@ it.effect("ProviderSessionManagerV2 settles a request the event pump persists du
       Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, flakyReleaseWrites: flaky })),
     );
   }),
+);
+
+it.effect.each([
+  "current",
+  "queued-completion",
+  "released-completion",
+  "repeated-close",
+  "contended-close",
+  "newer-run",
+  "newer-session",
+] as const)(
+  "ProviderSessionManagerV2 persists instruction invalidation only for its owner (%s)",
+  (owner) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const beforeUnchangedWrite = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("instruction-invalidation");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const providerThread = {
+          ...makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+          lastRunOrdinal: 1,
+          nativeMetadata: {
+            title: "current title",
+            acpInstructions: {
+              nativeSessionId: "native-thread",
+              digest: "delivered-instructions",
+            },
+          },
+        };
+        const stored = {
+          ...providerThread,
+          ...(owner === "newer-run" ? { lastRunOrdinal: 2 } : {}),
+          ...(owner === "newer-session"
+            ? { providerSessionId: ProviderSessionId.make("newer-session") }
+            : {}),
+        };
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
+            {
+              id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+              type: "provider-thread.updated",
+              threadId,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: stored,
+            },
+          ],
+        });
+        const before = (yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]))
+          .providerThreads[0]!;
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const subscription = yield* runtime.subscribeEvents!;
+        const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+        assert.isDefined(queue);
+        yield* Queue.offer(queue!, {
+          type: "provider_thread.updated",
+          driver: CODEX_DRIVER,
+          providerThread: {
+            ...providerThread,
+            nativeMetadata: { title: "stale title", acpInstructions: null },
+          },
+        });
+        const completionEventId = yield* idAllocator.allocate.event({
+          threadId,
+          providerSessionId,
+        });
+        const restoreCompletion = eventSink.write({
+          events: [
+            {
+              id: completionEventId,
+              type: "provider-thread.updated",
+              threadId,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: before,
+            },
+          ],
+        });
+        let conflicts = 0;
+        let release: Fiber.Fiber<void> | undefined;
+        const raceWithCleanup: Effect.Effect<void> = Effect.gen(function* () {
+          conflicts++;
+          if (conflicts === 1) {
+            release = yield* manager
+              .release({ providerSessionId, reason: "manual_shutdown" })
+              .pipe(Effect.orDie, Effect.forkChild({ startImmediately: true }));
+          } else {
+            assert.isFalse(
+              yield* manager.isLive(providerSessionId),
+              "release must enter between retries",
+            );
+          }
+          yield* eventSink.write({
+            events: [
+              {
+                id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+                type: "provider-thread.updated",
+                threadId,
+                driver: CODEX_DRIVER,
+                occurredAt: now,
+                payload: {
+                  ...before,
+                  nativeMetadata: { ...before.nativeMetadata, title: `conflict ${conflicts}` },
+                },
+              },
+            ],
+          });
+          if (conflicts < 4) yield* Ref.set(beforeUnchangedWrite, raceWithCleanup);
+        }).pipe(Effect.orDie);
+        yield* subscription.events.pipe(
+          Stream.tap(() =>
+            Effect.gen(function* () {
+              if (owner === "released-completion")
+                yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
+              if (owner === "queued-completion" || owner === "released-completion")
+                yield* restoreCompletion;
+              if (owner === "contended-close") {
+                yield* restoreCompletion;
+                yield* Ref.set(beforeUnchangedWrite, raceWithCleanup);
+              }
+            }),
+          ),
+          Stream.runHead,
+        );
+        if (release !== undefined) yield* Fiber.join(release);
+        if (owner === "contended-close") assert.equal(conflicts, 4);
+        if (owner === "repeated-close") {
+          yield* restoreCompletion;
+          yield* subscription.close;
+        }
+        const projection = yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]);
+        const updated = projection.providerThreads.find(
+          (candidate) => candidate.id === providerThread.id,
+        );
+        assert.deepEqual(
+          updated,
+          owner === "current" ||
+            owner === "queued-completion" ||
+            owner === "released-completion" ||
+            owner === "repeated-close" ||
+            owner === "contended-close"
+            ? {
+                ...before,
+                nativeMetadata: {
+                  ...before.nativeMetadata,
+                  ...(owner === "contended-close" ? { title: "conflict 4" } : {}),
+                  acpInstructions: null,
+                },
+              }
+            : before,
+        );
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000, beforeUnchangedWrite })));
+    }),
 );
 
 it.effect.each(["manual_shutdown", "server_shutdown"] as const)(
