@@ -2016,6 +2016,31 @@ it.live("an agent action waits for an in-flight restore instead of racing ahead"
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a viewer disconnected during restoration leaves an idle hide scheduled", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      yield* useFakeTimers;
+      const { browser, tabId } = yield* ready;
+      const started = Promise.withResolvers<void>();
+      const restore = Promise.withResolvers<void>();
+      const events = recordWindowEvents(contexts[0]!.sessions[0]!, () => {
+        started.resolve();
+        return restore.promise;
+      });
+      yield* advanceTime(60_000);
+      const viewer = yield* browser
+        .attachViewer(viewerInput(tabId, false))
+        .pipe(Effect.scoped, Effect.forkChild);
+      yield* Effect.promise(() => started.promise);
+      yield* Fiber.interrupt(viewer);
+      restore.resolve();
+      yield* settleMicrotasks;
+      yield* advanceTime(60_000);
+      expect(events).toEqual(["minimized", "normal", "minimized"]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("visibility failures retry hiding and prevent actions until restoration succeeds", () =>
   Effect.scoped(
     Effect.gen(function* () {

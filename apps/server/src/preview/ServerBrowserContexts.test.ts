@@ -348,7 +348,13 @@ describe("ServerBrowserContexts", () => {
           })()`);
         expect(await paintedDuring()).toBeGreaterThan(0);
 
+        const sibling = await context.newPage();
+        const siblingCdp = await context.newCDPSession(sibling);
+        const ownWindow = await cdp.send("Browser.getWindowForTarget");
+        const siblingWindow = await siblingCdp.send("Browser.getWindowForTarget");
+        expect(ownWindow.windowId).not.toBe(siblingWindow.windowId);
         await setPageHidden(cdp, true);
+        expect(await sibling.evaluate("document.visibilityState")).toBe("visible");
         expect(await page.evaluate("document.visibilityState")).toBe("hidden");
         expect(await paintedDuring()).toBe(0);
 

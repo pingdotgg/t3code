@@ -1376,7 +1376,7 @@ const make = Effect.gen(function* () {
   const show = async (tab: ServerTab) => {
     if (tab.hideTimer !== null) clearTimeout(tab.hideTimer);
     tab.hideTimer = null;
-    await setHidden(tab, false);
+    await setHidden(tab, false).finally(() => hideWhenUnwatched(tab));
   };
 
   const whileShown = async <A>(tab: ServerTab, run: () => Promise<A>): Promise<A> => {
