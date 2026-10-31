@@ -19,13 +19,11 @@ The composer writes Markdown and shows it styled as you type. Markers such as
 them. Lines starting with `- `, `1. `, `- [ ] `, `> `, `# ` or `---` become lists,
 task lists, quotes, headings and rules; ` ``` ` followed by Enter opens a code
 block. What you typed is what the agent receives, markers and numbering
-included, and `#1234` without a space still looks up a pull request. To see the
-plain Markdown instead, press the **¶** button beside attach; it is the same
-switch as **Settings → Chat → Rich text composer**.
+included, and `#1234` without a space still looks up a pull request.
 
 Enter sends. In a list or quote, **Shift+Enter** continues it, and Shift+Enter
 on an empty line moves out one level, then leaves it; **Tab** nests a list item
-under the one above. In a code block, Enter
+under the one above and **Shift+Tab** moves it back out. In a code block, Enter
 starts a new line at the current indentation, **Tab** and **Shift+Tab** indent
 the selected lines, and a closing ` ``` ` followed by Enter, or two blank lines
 at the end, leave the block. **Backspace** at the start of a code block turns it
