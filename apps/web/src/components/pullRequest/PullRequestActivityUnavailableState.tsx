@@ -25,7 +25,7 @@ export function PullRequestActivityUnavailableState({
     >
       <p className="text-sm font-medium text-foreground">Could not load {term} activity</p>
       <p className="max-w-md text-xs text-muted-foreground">{error}</p>
-      <Button size="sm" variant="outline" onClick={onRetry}>
+      <Button size="sm" variant="secondary" onClick={onRetry}>
         <RefreshIcon aria-hidden size="sm" />
         Retry
       </Button>

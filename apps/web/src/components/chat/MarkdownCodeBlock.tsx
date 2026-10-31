@@ -65,7 +65,11 @@ export function MarkdownCodeBlockFrame({
   return (
     <Wrapper
       dir="ltr"
-      className="chat-markdown-codeblock my-[0.65rem] text-start overflow-hidden rounded-lg border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
+      className={cn(
+        "chat-markdown-codeblock surface-well my-[0.65rem] text-start overflow-hidden rounded-lg shadow-none! leading-snug",
+        /^(?:text|plaintext|txt)$/.test(language) &&
+          "[&_pre]:text-foreground! [&_code]:text-foreground! [&_.line_span]:text-foreground!",
+      )}
       data-language={language}
       data-wrap={wrapped ? "true" : "false"}
     >
@@ -77,7 +81,7 @@ export function MarkdownCodeBlockFrame({
         )}
       >
         {title ?? (
-          <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-2xs">
+          <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-2xs text-muted-foreground">
             <MarkdownCodeBlockTitleContent
               fenceTitle={fenceTitle}
               language={language}
