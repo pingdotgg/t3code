@@ -101,7 +101,7 @@ export function SecretProviderDialog({
                 <p
                   id="secret-provider-name-error"
                   role="alert"
-                  className="text-xs text-destructive"
+                  className="text-meta text-destructive-foreground"
                 >
                   {nameError}
                 </p>
@@ -125,12 +125,12 @@ export function SecretProviderDialog({
                 <p
                   id="secret-provider-account-error"
                   role="alert"
-                  className="text-xs text-destructive"
+                  className="text-meta text-destructive-foreground"
                 >
                   {accountError}
                 </p>
               ) : null}
-              <p className="text-xs text-muted-foreground">
+              <p className="text-meta text-muted-foreground">
                 The account shorthand, sign-in address without https://, or ID that op account list
                 shows.
               </p>
@@ -138,7 +138,7 @@ export function SecretProviderDialog({
           </form>
         </DialogPanel>
         <DialogFooter variant="bare">
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
           <Button

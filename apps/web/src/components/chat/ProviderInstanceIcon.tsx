@@ -25,7 +25,7 @@ const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
 };
 
 const PROVIDER_TEXT_COLOR_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
-  [ProviderDriverKind.make("codex")]: "text-black dark:text-white",
+  [ProviderDriverKind.make("codex")]: "text-foreground",
   [ProviderDriverKind.make("claudeAgent")]: "text-[#d97757]",
   [ProviderDriverKind.make("antigravity")]: "text-[#5b87bf]",
 };

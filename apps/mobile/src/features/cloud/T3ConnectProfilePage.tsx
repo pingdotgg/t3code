@@ -214,7 +214,7 @@ const ENVIRONMENT_MENU_ACTIONS = [
 
 function ClerkSectionHeader(props: { readonly children: string }) {
   return (
-    <Text className="min-h-4 border-b border-clerk-border px-6 pt-8 pb-4 text-xs font-medium tracking-[0.3px] text-clerk-foreground-muted uppercase">
+    <Text className="min-h-4 border-b border-clerk-border px-6 pt-8 pb-4 text-xs font-medium text-clerk-foreground-muted">
       {props.children}
     </Text>
   );

@@ -2,7 +2,7 @@ import type { ComponentProps, ReactNode } from "react";
 
 export function DiscoveryList({ children }: { readonly children: ReactNode }) {
   return (
-    <div className="flex flex-col divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70 bg-background">
+    <div className="surface-card-settings border border-transparent flex flex-col divide-y divide-border/60 overflow-hidden rounded-card">
       {children}
     </div>
   );
@@ -24,12 +24,12 @@ export function DiscoveryListRow({
     <button
       type="button"
       {...props}
-      className="group flex w-full items-center gap-3 px-3 py-3 text-left hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64"
+      className="group flex w-full items-center gap-3 px-3 py-3 text-left hover:bg-accent focus-visible:outline-solid focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-64"
     >
       {icon}
       <div className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-sm font-medium text-foreground">{title}</span>
-        <span className="truncate text-xs text-muted-foreground">{description}</span>
+        <span className="truncate text-label text-foreground">{title}</span>
+        <span className="truncate text-meta text-muted-foreground">{description}</span>
       </div>
       {action}
     </button>

@@ -128,12 +128,16 @@ export function PullRequestLinkPreview({
                 <div className="flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
                   <span className="min-w-0 truncate">{card.repository}</span>
                   <span className="shrink-0">#{card.number}</span>
-                  <span aria-hidden>·</span>
                   {state === null ? null : (
-                    <span className="inline-flex shrink-0 items-center gap-1">
-                      <state.Icon aria-hidden className={`size-3 ${state.toneClassName}`} />
-                      {state.label}
-                    </span>
+                    <Tooltip>
+                      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
+                        <state.Icon
+                          aria-label={state.label}
+                          className={`size-3 ${state.toneClassName}`}
+                        />
+                      </TooltipTrigger>
+                      <TooltipPopup>{state.label}</TooltipPopup>
+                    </Tooltip>
                   )}
                 </div>
                 <p className="mt-1 text-sm font-medium leading-snug text-foreground text-pretty">
@@ -142,15 +146,14 @@ export function PullRequestLinkPreview({
                 {card.author === undefined ? null : (
                   <div className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                     <PullRequestActorAvatar actor={card.author} className="size-4" />
-                    <span className="min-w-0 truncate">{authorLabel}</span>
-                    {preview === null ? null : (
-                      <>
-                        <span aria-hidden>·</span>
-                        <span className="shrink-0">
+                    <span className="min-w-0">
+                      <span className="block truncate">{authorLabel}</span>
+                      {preview === null ? null : (
+                        <span className="block">
                           opened <RelativeTime timestamp={preview.createdAt} />
                         </span>
-                      </>
-                    )}
+                      )}
+                    </span>
                   </div>
                 )}
               </div>

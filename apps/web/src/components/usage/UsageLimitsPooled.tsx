@@ -158,6 +158,7 @@ function SegmentPopover({
       : account.sourceLabel;
   const credits =
     redeem && account.limits.resetCredits?.availableCount ? account.limits.resetCredits : null;
+  const creditSummary = credits ? resetCreditsSummary(credits, now, true) : null;
   return (
     <div className="flex w-72 max-w-[calc(100vw-3rem)] flex-col gap-2.5 text-xs">
       <div className="flex min-w-0 flex-col gap-0.5">
@@ -187,8 +188,10 @@ function SegmentPopover({
         <Row label="Left">{remaining}%</Row>
         {window.resetsAt ? (
           <Row label="Resets">
-            {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
-            {resetsIn ? ` · ${resetsIn.replace("resets in ", "in ")}` : ""}
+            <span className="flex flex-col items-end">
+              {resetsIn ? <span>{resetsIn.replace("resets in ", "in ")}</span> : null}
+              <span>{formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}</span>
+            </span>
           </Row>
         ) : null}
         {timeLeft !== null ? <Row label="Even pace">{timeLeft}% left by now</Row> : null}
@@ -199,10 +202,13 @@ function SegmentPopover({
       {credits && redeem ? (
         <div className="border-t border-border/60 pt-2.5 text-muted-foreground">
           <span className="flex items-center gap-3">
-            <span className="tabular-nums">{resetCreditsSummary(credits, now, true)}</span>
+            <span className="flex flex-col tabular-nums">
+              <span>{creditSummary?.label}</span>
+              {creditSummary?.expiry ? <span>{creditSummary.expiry}</span> : null}
+            </span>
             <Button
               size="xs"
-              variant="outline"
+              variant="secondary"
               disabled={redeem.busy || !redeem.canManageProviders}
               className="ms-auto"
               onClick={onRedeem}
@@ -415,11 +421,6 @@ function SegmentTriggers({
               {resetsIn?.replace("resets in ", "↻ ") ?? ""}
               {credits ? (
                 <>
-                  {resetsIn ? (
-                    <span aria-hidden className="text-muted-foreground">
-                      ·
-                    </span>
-                  ) : null}
                   <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
                     <TicketIcon className="size-3" aria-hidden />
                     {credits}
@@ -474,7 +475,6 @@ function LegendRow({
         {resetsIn?.replace("resets in ", "↻ ") ?? ""}
         {credits ? (
           <>
-            {resetsIn ? <span aria-hidden>·</span> : null}
             <span
               aria-hidden
               className="inline-flex items-center gap-0.5 font-semibold text-foreground"
@@ -660,7 +660,7 @@ export function UsageLimitsPooled({
                   View usage in ChatGPT with your connected account.
                 </p>
               ) : link.message ? (
-                <p className="max-w-xl text-xs text-muted-foreground">{link.message}</p>
+                <p className="max-w-xl text-meta text-muted-foreground">{link.message}</p>
               ) : null}
             </div>
           </div>

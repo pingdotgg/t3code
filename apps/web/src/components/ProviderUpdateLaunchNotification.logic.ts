@@ -203,12 +203,12 @@ export function getProviderUpdateRunOutcome(
   | { readonly status: "interrupted" | "updated" }
   | { readonly status: "failed"; readonly line: string } {
   if (isAtomCommandInterrupted(run.result)) return { status: "interrupted" };
-  const label = `${run.machineLabel} · ${PROVIDER_DISPLAY_NAMES[run.driver] ?? run.driver}`;
+  const label = PROVIDER_DISPLAY_NAMES[run.driver] ?? run.driver;
   if (run.result._tag === "Failure") {
     const error = squashAtomCommandFailure(run.result);
     return {
       status: "failed",
-      line: `${label}: ${error instanceof Error ? error.message : "Provider update failed."}`,
+      line: `${label}: ${error instanceof Error ? error.message : "Provider update failed."}\n${run.machineLabel}`,
     };
   }
   const updateState = run.result.value.providers.find(
@@ -218,7 +218,7 @@ export function getProviderUpdateRunOutcome(
     ? { status: "updated" }
     : {
         status: "failed",
-        line: `${label}: ${updateState?.message ?? "Provider update did not finish."}`,
+        line: `${label}: ${updateState?.message ?? "Provider update did not finish."}\n${run.machineLabel}`,
       };
 }
 

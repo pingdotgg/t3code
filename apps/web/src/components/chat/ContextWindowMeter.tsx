@@ -35,9 +35,7 @@ export function ContextWindowMeter(props: {
   const totalProcessedTokens = usage.totalProcessedTokens ?? null;
   const showTotalProcessed = totalProcessedTokens !== null && totalProcessedTokens > 0;
   const isOverloaded = normalizedPercentage > 90;
-  const usageColor = isOverloaded
-    ? "var(--color-error)"
-    : "color-mix(in oklab, var(--color-muted-foreground) 72%, transparent)";
+  const usageColor = isOverloaded ? "var(--error-foreground)" : "var(--muted-foreground)";
 
   return (
     <Popover>
@@ -67,7 +65,7 @@ export function ContextWindowMeter(props: {
                   cy="12"
                   r={radius}
                   fill="none"
-                  className="stroke-muted-foreground/24"
+                  className="stroke-border"
                   strokeWidth="3"
                 />
                 <circle
@@ -102,7 +100,7 @@ export function ContextWindowMeter(props: {
             {usage.maxTokens !== null && usedPercentage ? (
               <div className="text-secondary-label text-2xs tabular-nums">
                 <span>{usedPercentage}</span>
-                <span className="mx-1">·</span>
+                <br />
                 <span>
                   {formatContextWindowTokens(usage.usedTokens)}/
                   {formatContextWindowTokens(usage.maxTokens ?? null)}
@@ -116,7 +114,7 @@ export function ContextWindowMeter(props: {
           </div>
           {usage.maxTokens !== null ? (
             <div
-              className="h-1.5 w-full overflow-hidden rounded-full bg-muted/60"
+              className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
               role="progressbar"
               aria-valuemin={0}
               aria-valuemax={100}
@@ -154,7 +152,7 @@ export function ContextWindowMeter(props: {
             <>
               <Button
                 size="xs"
-                variant="outline"
+                variant="secondary"
                 className="mt-1 w-full justify-center"
                 disabled={compactDisabled}
                 onClick={onCompact}

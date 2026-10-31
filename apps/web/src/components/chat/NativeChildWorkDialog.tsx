@@ -64,11 +64,11 @@ function NativeChildWorkContent(props: {
     <>
       <DialogPanel>
         {query.error !== null ? (
-          <p className="text-sm text-destructive-foreground">{query.error}</p>
+          <p className="text-body text-destructive-foreground">{query.error}</p>
         ) : children === undefined ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
+          <p className="text-body text-muted-foreground">Loading…</p>
         ) : children.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-body text-muted-foreground">
             The provider has no record of which subagents this call started.
           </p>
         ) : (
@@ -76,7 +76,7 @@ function NativeChildWorkContent(props: {
         )}
       </DialogPanel>
       <DialogFooter variant="bare">
-        <Button size="sm" variant="outline" disabled={query.isPending} onClick={query.refresh}>
+        <Button size="sm" variant="secondary" disabled={query.isPending} onClick={query.refresh}>
           Refresh
         </Button>
       </DialogFooter>
@@ -88,15 +88,15 @@ function NativeChild(props: { readonly child: OrchestrationV2NativeChildWork }) 
   const { child } = props;
   return (
     <section aria-label={child.role || "Subagent"} className="flex min-w-0 flex-col gap-2">
-      <h3 className="text-sm font-medium text-foreground">{child.role || "Subagent"}</h3>
-      <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
+      <h3 className="text-label text-foreground">{child.role || "Subagent"}</h3>
+      <p className="whitespace-pre-wrap break-words text-body text-muted-foreground">
         {child.prompt}
       </p>
       {child.truncated ? (
-        <p className="text-xs text-muted-foreground">Earlier steps are not shown.</p>
+        <p className="text-meta text-muted-foreground">Earlier steps are not shown.</p>
       ) : null}
       {child.steps === null ? (
-        <p className="text-xs text-muted-foreground">No transcript yet.</p>
+        <p className="text-meta text-muted-foreground">No transcript yet.</p>
       ) : (
         <ol className="m-0 flex list-none flex-col gap-2 border-s ps-3">
           {child.steps.map((step) => (
@@ -112,17 +112,19 @@ function NativeChildStep(props: { readonly step: OrchestrationV2NativeChildStep 
   const { step } = props;
   return (
     <li className="flex min-w-0 flex-col gap-1">
-      <span className="text-xs font-medium text-muted-foreground">
+      <span className="flex flex-col gap-0.5 text-caption text-muted-foreground">
         {stepLabel(step.type)}
-        {step.status !== null && step.status !== "DONE" ? ` · ${stepLabel(step.status)}` : ""}
+        {step.status !== null && step.status !== "DONE" ? (
+          <span>{stepLabel(step.status)}</span>
+        ) : null}
       </span>
       {step.toolCalls.length === 0 ? null : (
-        <code className="whitespace-pre-wrap break-all text-xs text-foreground">
+        <code className="whitespace-pre-wrap break-all text-meta text-foreground">
           {step.toolCalls.map((call) => `${call.name} ${call.input}`).join("\n")}
         </code>
       )}
       {step.text === null ? null : (
-        <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-xs text-foreground">
+        <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-meta text-foreground">
           {step.text}
         </pre>
       )}
