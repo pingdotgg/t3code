@@ -250,6 +250,7 @@ async function click(element: Element) {
 describe("ChatComposer plugin actions in the slash menu", () => {
   it("runs a thread action picked with Enter and removes the typed command", async () => {
     using _setup = await setup();
+    // The composer uses explicit test layers; these action tests do not navigate.
     await using screen = await renderScreen(null, { router: false });
     const { onSend, promptRef } = await renderComposer(screen, "server");
     await typePrompt(screen, "please\n/depl", " now");
@@ -267,6 +268,7 @@ describe("ChatComposer plugin actions in the slash menu", () => {
   });
   it("runs a thread action picked with the pointer and removes the typed command", async () => {
     using _setup = await setup();
+    // The composer uses explicit test layers; these action tests do not navigate.
     await using screen = await renderScreen(null, { router: false });
     const { onSend, promptRef } = await renderComposer(screen, "server");
     await typePrompt(screen, "please\n/depl", " now");
@@ -283,6 +285,7 @@ describe("ChatComposer plugin actions in the slash menu", () => {
   });
   it("offers only project actions on a draft and runs them on the project", async () => {
     using _setup = await setup();
+    // The composer uses explicit test layers; these action tests do not navigate.
     await using screen = await renderScreen(null, { router: false });
     const { onSend, promptRef } = await renderComposer(screen, "draft");
     await typePrompt(screen, "/");
@@ -301,6 +304,7 @@ describe("ChatComposer plugin actions in the slash menu", () => {
   });
   it("offers no plugin actions to a read-only connection and keeps the typed command", async () => {
     using _setup = await setup();
+    // The composer uses explicit test layers; these action tests do not navigate.
     await using screen = await renderScreen(null, { router: false });
     const { promptRef } = await renderComposer(screen, "server", false);
     await typePrompt(screen, "please\n/depl", " now");
@@ -312,6 +316,7 @@ describe("ChatComposer plugin actions in the slash menu", () => {
   });
   it("keeps the typed command when the grant is lost while the menu is open", async () => {
     using _setup = await setup();
+    // The composer uses explicit test layers; these action tests do not navigate.
     await using screen = await renderScreen(null, { router: false });
     const { promptRef, render } = await renderComposer(screen, "server");
     await typePrompt(screen, "please\n/depl", " now");
@@ -323,6 +328,7 @@ describe("ChatComposer plugin actions in the slash menu", () => {
   });
   it("reads the live grant when the action is picked and keeps the draft if it is gone", async () => {
     using _setup = await setup();
+    // The composer uses explicit test layers; these action tests do not navigate.
     await using screen = await renderScreen(null, { router: false });
     const { promptRef } = await renderComposer(screen, "server");
     await typePrompt(screen, "please\n/depl", " now");
@@ -336,6 +342,7 @@ describe("ChatComposer plugin actions in the slash menu", () => {
   });
   it("removes the command when it is picked, before the action settles, and runs it once", async () => {
     using _setup = await setup();
+    // The composer uses explicit test layers; these action tests do not navigate.
     await using screen = await renderScreen(null, { router: false });
     let finish: (ran: boolean) => void = () => {};
     pluginActionsMock.runPluginAction.mockReturnValue(new Promise((resolve) => (finish = resolve)));
@@ -350,6 +357,7 @@ describe("ChatComposer plugin actions in the slash menu", () => {
   });
   it("leaves the draft alone when the action settles after the composer is gone", async () => {
     using _setup = await setup();
+    // The composer uses explicit test layers; these action tests do not navigate.
     await using screen = await renderScreen(null, { router: false });
     let finish: (ran: boolean) => void = () => {};
     pluginActionsMock.runPluginAction.mockReturnValue(new Promise((resolve) => (finish = resolve)));

@@ -59,6 +59,7 @@ const KEYWORDS_BY_TYPE: Record<string, ReadonlyArray<string>> = {
 };
 const TYPED_KEYWORDS = new Set(Object.values(KEYWORDS_BY_TYPE).flat());
 const DEFINITION_NAME = /^[A-Za-z0-9_.-]{1,64}$/;
+const MAX_UNGUARDED_SCHEMA_REFERENCES = 4096;
 
 const isObject = (value: unknown): value is JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -112,8 +113,10 @@ const refuseUnguardedCycles = (definitions: JsonObject) => {
     edges.set(name, into);
   }
   const state = new Map<string, "visiting" | "done">();
+  const expandedReferences = new Map<string, number>();
   const visit = (name: string) => {
     state.set(name, "visiting");
+    let expanded = 1;
     for (const edge of edges.get(name)!) {
       const seen = state.get(edge.name);
       if (seen === "visiting")
@@ -121,7 +124,14 @@ const refuseUnguardedCycles = (definitions: JsonObject) => {
           `${edge.path}: a reference cycle must pass through properties or items.`,
         );
       if (seen === undefined) visit(edge.name);
+      // Effect traverses repeated union references separately, even when their compiled schema is shared.
+      expanded += expandedReferences.get(edge.name)!;
+      if (expanded > MAX_UNGUARDED_SCHEMA_REFERENCES)
+        throw new SchemaProblem(
+          `${edge.path}: references expand beyond ${MAX_UNGUARDED_SCHEMA_REFERENCES} unguarded schema visits.`,
+        );
     }
+    expandedReferences.set(name, expanded);
     state.set(name, "done");
   };
   for (const name of edges.keys()) if (!state.has(name)) visit(name);
