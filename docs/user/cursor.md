@@ -50,7 +50,8 @@ The adapter supports:
 - thread-scoped T3 Code MCP tools alongside ambient Cursor MCP/plugins from disk;
 - image attachments;
 - interruption, queued app messages, and orchestrator-owned interrupt/restart steering;
-- provider conversation snapshots through `Agent.messages.list()`;
+- native conversation compaction;
+- provider conversation snapshots;
 - Cursor `task` subagents, projected as read-only child app threads with their tool activity and
   final result.
 

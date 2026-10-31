@@ -62,7 +62,7 @@ describe("CursorAdapterV2", () => {
           authorizationHeader: "Bearer synthetic-cursor-token",
           browserToolsAvailable: true,
         });
-        let sentWithMcpOverride = true;
+        let sentWithMcpOverride = false;
         const modelSelection = { instanceId, model: "composer-2.5" };
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "full-access",
@@ -80,6 +80,20 @@ describe("CursorAdapterV2", () => {
                 agentId: "native-cursor-lifecycle",
                 listMessages: Effect.succeed([]),
                 close: Effect.void,
+                summarize: () =>
+                  Effect.succeed({
+                    agentId: "native-cursor-lifecycle",
+                    runId: "native-cursor-summarize",
+                    wait: Effect.succeed({
+                      id: "native-cursor-summarize",
+                      requestId: "native-summarize-request",
+                      status: "finished" as const,
+                      model: { id: "composer-2.5" },
+                      durationMs: 1,
+                      result: "summary",
+                    }),
+                    cancel: Effect.void,
+                  }),
                 send: (input) =>
                   Effect.gen(function* () {
                     sentWithMcpOverride = Object.hasOwn(input.options ?? {}, "mcpServers");
@@ -351,6 +365,20 @@ describe("CursorAdapterV2", () => {
               agentId: "native-cursor-failure",
               listMessages: Effect.succeed([]),
               close: Effect.void,
+              summarize: () =>
+                Effect.succeed({
+                  agentId: "native-cursor-failure",
+                  runId: "native-cursor-summarize",
+                  wait: Effect.succeed({
+                    id: "native-cursor-summarize",
+                    requestId: "native-summarize-request",
+                    status: "finished" as const,
+                    model: { id: "composer-2.5" },
+                    durationMs: 1,
+                    result: "summary",
+                  }),
+                  cancel: Effect.void,
+                }),
               send: (input) =>
                 Effect.gen(function* () {
                   for (const update of updates) {
@@ -446,12 +474,13 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
-  it.effect("fails standalone SDK transport diagnostics and sends compaction as /compress", () =>
+  it.effect("fails standalone SDK transport diagnostics and compacts with summarize", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-errors-" });
       const sentMessages: Array<string> = [];
       let sendCalls = 0;
+      let summarizeCalls = 0;
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-transport-error-thread");
       const modelSelection = { instanceId, model: "composer-2.5" };
@@ -471,6 +500,23 @@ describe("CursorAdapterV2", () => {
               agentId: "native-cursor-error",
               listMessages: Effect.succeed([]),
               close: Effect.void,
+              summarize: () =>
+                Effect.sync(() => {
+                  summarizeCalls += 1;
+                  return {
+                    agentId: "native-cursor-error",
+                    runId: `native-cursor-summarize-${summarizeCalls}`,
+                    wait: Effect.succeed({
+                      id: `native-cursor-summarize-${summarizeCalls}`,
+                      requestId: `native-summarize-request-${summarizeCalls}`,
+                      status: "finished" as const,
+                      model: { id: "composer-2.5" },
+                      durationMs: 1,
+                      result: "Compacted conversation summary.",
+                    }),
+                    cancel: Effect.void,
+                  };
+                }),
               send: (input) =>
                 Effect.sync(() => {
                   sendCalls += 1;
@@ -582,11 +628,20 @@ describe("CursorAdapterV2", () => {
           attachments: [],
         },
       });
-      yield* runtime.events.pipe(
-        Stream.filter((event) => event.type === "turn.terminal"),
-        Stream.runHead,
+      const compactEvents = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
       );
-      assert.equal(sentMessages[1], "/compress");
+      assert.equal(summarizeCalls, 1);
+      assert.equal(sentMessages.length, 1);
+      assert.isTrue(
+        compactEvents.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "compaction" &&
+            event.turnItem.status === "completed",
+        ),
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -631,6 +686,20 @@ describe("CursorAdapterV2", () => {
               agentId: "native-cursor-device",
               listMessages: Effect.succeed([]),
               close: Effect.void,
+              summarize: () =>
+                Effect.succeed({
+                  agentId: "native-cursor-device",
+                  runId: "native-cursor-summarize",
+                  wait: Effect.succeed({
+                    id: "native-cursor-summarize",
+                    requestId: "native-summarize-request",
+                    status: "finished" as const,
+                    model: { id: "composer-2.5" },
+                    durationMs: 1,
+                    result: "summary",
+                  }),
+                  cancel: Effect.void,
+                }),
               send: (input) =>
                 Effect.sync(() => {
                   sentMessages.push(
@@ -990,6 +1059,20 @@ describe("CursorAdapterV2", () => {
               agentId: "native-cursor-search",
               listMessages: Effect.succeed([]),
               close: Effect.void,
+              summarize: () =>
+                Effect.succeed({
+                  agentId: "native-cursor-search",
+                  runId: "native-cursor-summarize",
+                  wait: Effect.succeed({
+                    id: "native-cursor-summarize",
+                    requestId: "native-summarize-request",
+                    status: "finished" as const,
+                    model: { id: "composer-2.5" },
+                    durationMs: 1,
+                    result: "summary",
+                  }),
+                  cancel: Effect.void,
+                }),
               send: (input) =>
                 Effect.gen(function* () {
                   for (const update of updates) {
@@ -1258,6 +1341,20 @@ describe("CursorAdapterV2", () => {
               agentId: "native-cursor-task-ls",
               listMessages: Effect.succeed([]),
               close: Effect.void,
+              summarize: () =>
+                Effect.succeed({
+                  agentId: "native-cursor-task-ls",
+                  runId: "native-cursor-summarize",
+                  wait: Effect.succeed({
+                    id: "native-cursor-summarize",
+                    requestId: "native-summarize-request",
+                    status: "finished" as const,
+                    model: { id: "composer-2.5" },
+                    durationMs: 1,
+                    result: "summary",
+                  }),
+                  cancel: Effect.void,
+                }),
               send: (input) =>
                 Effect.gen(function* () {
                   const args = {
@@ -1442,6 +1539,7 @@ describe("CursorAdapterV2", () => {
                 agentId: "native-cursor-custom-model",
                 listMessages: Effect.succeed([]),
                 close: Effect.void,
+                summarize: () => Effect.die("unexpected Cursor summarize"),
                 send: (sendInput) =>
                   checkModel("run.start", sendInput.options?.model).pipe(
                     Effect.andThen(Effect.die("unexpected Cursor run")),
