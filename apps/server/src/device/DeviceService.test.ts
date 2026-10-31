@@ -403,18 +403,27 @@ describe("device setup consent", () => {
     "opens a stopped Android AVD from %s threads using its emulator serial",
     (count) =>
       Effect.gen(function* () {
-        const { service, requests } = yield* fixture();
-        yield* service.configure({ enabled: true });
-        const sessions = yield* Effect.all(
-          Array.from({ length: count }, (_, index) =>
-            service.open({
-              threadId: ThreadId.make(`thread-${index}`),
-              deviceId: "Pixel_API_35",
-              platform: "android",
-            }),
-          ),
-          { concurrency: "unbounded" },
+        const booting = yield* Queue.unbounded<void>();
+        const allowBoot = yield* Deferred.make<void>();
+        const { service, requests } = yield* fixture(
+          Queue.offer(booting, undefined).pipe(Effect.andThen(Deferred.await(allowBoot))),
         );
+        yield* service.configure({ enabled: true });
+        const opening = yield* Effect.forkChild(
+          Effect.all(
+            Array.from({ length: count }, (_, index) =>
+              service.open({
+                threadId: ThreadId.make(`thread-${index}`),
+                deviceId: "Pixel_API_35",
+                platform: "android",
+              }),
+            ),
+            { concurrency: "unbounded" },
+          ),
+        );
+        yield* Effect.forEach(Array.from({ length: count }), () => Queue.take(booting));
+        yield* Deferred.succeed(allowBoot, undefined);
+        const sessions = yield* Fiber.join(opening);
         expect(sessions.map((session) => session.deviceId)).toEqual(
           Array(count).fill("emulator-5554"),
         );
@@ -1875,6 +1884,22 @@ describe("locating a device id across hosts", () => {
       deviceId: DeviceId.make(deviceId),
       platform: deviceId.startsWith("Pixel") ? "android" : "ios",
     });
+
+  it.effect("rejects an open whose platform does not match the device", () =>
+    withTwoHosts((service) =>
+      Effect.gen(function* () {
+        const error = yield* service
+          .open({ threadId, hostId: macMini.id, deviceId: "MAC-UDID", platform: "android" })
+          .pipe(Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "DeviceNotFoundError",
+          hostId: macMini.id,
+          deviceId: "MAC-UDID",
+        });
+        expect((yield* service.state).sessions).toEqual([]);
+      }),
+    ),
+  );
 
   // The hub fails a stream start that overlaps another one on the same device.
   it.effect.each([
