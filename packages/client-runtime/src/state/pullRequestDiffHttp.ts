@@ -86,14 +86,19 @@ export const layer: Layer.Layer<PullRequestDiffLoader, never, HttpClient.HttpCli
     const remoteAuthorization = yield* Effect.serviceOption(
       RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
     );
+    // The HTTP fetch owns the load span.
     return PullRequestDiffLoader.of({
-      load: (prepared, input) =>
-        fetchEnvironmentPullRequestDiff({
-          prepared,
-          diff: input,
-          signer,
-          remoteAuthorization,
-        }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
+      load: Effect.fnUntraced(
+        function* (prepared, input) {
+          return yield* fetchEnvironmentPullRequestDiff({
+            prepared,
+            diff: input,
+            signer,
+            remoteAuthorization,
+          });
+        },
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      ),
     });
   }),
 );

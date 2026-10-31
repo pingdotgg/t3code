@@ -4,6 +4,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import { SourceControlProviderError } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
@@ -94,7 +95,8 @@ export const makeDiscovery = Effect.gen(function* () {
         logins.find((entry) => entry.default === "true") ||
         logins[0];
       const fj = yield* probeSourceControlProvider({
-        cwd,
+        // fj reads the cwd repository even with --host and fails on an unborn branch.
+        cwd: yield* HostProcess.HomeDirectory,
         process,
         spec: {
           ...discovery,
@@ -193,10 +195,7 @@ export function repositoryNameFromRemoteUrl(url: string): string | null {
     : path.split("/").slice(-2).join("/");
 }
 
-/**
- * A Forgejo remote's URL can't say which server it belongs to (an SSH alias, an installation
- * mount), so the identity's browser URL comes from the login that serves it.
- */
+// Resolve browser URLs from the serving login to handle SSH aliases and mounts.
 const refineRepositoryIdentity: NonNullable<
   SourceControlProvider.SourceControlProvider["Service"]["refineRepositoryIdentity"]
 > = Effect.fn("ForgejoSourceControlProvider.refineRepositoryIdentity")(function* ({
@@ -232,6 +231,27 @@ const refineRepositoryIdentity: NonNullable<
     provider: SourceControlProviderKind.make("forgejo"),
     webUrl: `${baseUrl}/${path}`,
   };
+});
+
+// An SSH remote names an alias rather than the web server, so the login that serves it says which.
+const resolveRemoteWebHost: NonNullable<
+  SourceControlProvider.SourceControlProvider["Service"]["resolveRemoteWebHost"]
+> = Effect.fn("ForgejoSourceControlProvider.resolveRemoteWebHost")(function* ({
+  cwd,
+  context,
+  resolveContext,
+}) {
+  if (!ForgejoCli.parseForgejoRemote(context.remoteUrl)?.ssh) return null;
+  const resolved = yield* resolveContext({
+    cwd,
+    context: {
+      ...context,
+      provider: { kind: SourceControlProviderKind.make("unknown"), name: "Unknown", baseUrl: "" },
+    },
+  });
+  return resolved?.provider.kind === "forgejo"
+    ? new URL(resolved.provider.baseUrl).host.toLowerCase()
+    : null;
 });
 
 const RepositorySchema = Schema.Struct({
@@ -306,6 +326,7 @@ export const make = Effect.gen(function* () {
     kind: SourceControlProviderKind.make("forgejo"),
     repositoryNameFromRemoteUrl,
     refineRepositoryIdentity,
+    resolveRemoteWebHost,
     listChangeRequests: Effect.fn("ForgejoSourceControlProvider.listChangeRequests")(
       function* (input) {
         const repo = yield* cli.resolveRepository(input);
@@ -337,11 +358,12 @@ export const make = Effect.gen(function* () {
       },
       (effect, input) => effect.pipe(mapError("listChangeRequests", input.cwd)),
     ),
-    getChangeRequest: (input) =>
-      getPull(input).pipe(
+    getChangeRequest: Effect.fn("ForgejoSourceControlProvider.getChangeRequest")(function (input) {
+      return getPull(input).pipe(
         Effect.map(toForgejoChangeRequest),
         mapError("getChangeRequest", input.cwd),
-      ),
+      );
+    }),
     createChangeRequest: Effect.fn("ForgejoSourceControlProvider.createChangeRequest")(
       function* (input) {
         const repo = yield* cli.resolveRepository(input);
@@ -461,7 +483,7 @@ export const make = Effect.gen(function* () {
             ],
           });
         if (input.force) {
-          // The sha comes from the server and git would read anything but a commit as an option.
+          // Non-commit server input could become git options.
           if (!/^[0-9a-f]{7,64}$/i.test(pull.head.sha))
             return yield* new ForgejoCli.ForgejoCliError({
               command: repo.command ?? "tea",
@@ -469,8 +491,7 @@ export const make = Effect.gen(function* () {
               detail: "Forgejo reported a pull request head that is not a commit.",
               reason: "invalid-response",
             });
-          // tea leaves an existing PR branch at its old tip. Keep dirty files safe
-          // while bringing the selected branch to the PR revision we fetched.
+          // tea leaves PR branches stale; `--keep` updates them without discarding dirty files.
           yield* process.run({
             operation: "ForgejoSourceControlProvider.checkoutChangeRequest",
             command: "git",
