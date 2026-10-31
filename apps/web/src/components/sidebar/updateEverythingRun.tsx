@@ -152,6 +152,10 @@ export function postponeUpdateRestart(): void {
   decideRestart?.(false);
 }
 
+export function restartUpdateNow(): void {
+  decideRestart?.(true);
+}
+
 const SAVED_RESULT_KEY = "t3code:update-everything-result:v1";
 const SAVED_RESULT_MAX_AGE_MS = 10 * 60 * 1000;
 // Covers a background service's 30-minute trial start, like the server update itself.
