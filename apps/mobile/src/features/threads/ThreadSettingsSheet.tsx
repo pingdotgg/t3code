@@ -120,11 +120,10 @@ import {
 } from "./thread-settings-options";
 import {
   canCommitPendingModel,
-  favoritesFirst,
   modelFavoriteKey,
-  modelMatchesCatalogQuery,
   pendingModelAfterPress,
   providerSectionIsCollapsed,
+  visibleCatalogModels,
 } from "./thread-settings-sheet-state";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
 
@@ -750,28 +749,15 @@ function buildThreadSettingsCatalogItems(
       return [];
     }
     const driver = group.models[0]?.providerDriver ?? group.providerKey;
-    const catalogModels =
-      session.manageHidden ||
-      session.showLegacy ||
-      session.providerFilter === FAVORITES_PROVIDER_FILTER
-        ? group.models
-        : group.models.filter(
-            (model) =>
-              !model.isLegacy || session.isDisplayed(model) || session.favoriteKeys.has(model.key),
-          );
-    const visibleModels = favoritesFirst(
-      catalogModels.filter(
-        (model) =>
-          (session.providerFilter !== FAVORITES_PROVIDER_FILTER ||
-            session.favoriteKeys.has(model.key)) &&
-          modelMatchesCatalogQuery({
-            model,
-            providerLabel: group.providerLabel,
-            query: session.searchQuery,
-          }),
-      ),
-      session.favoriteKeys,
-    );
+    const visibleModels = visibleCatalogModels({
+      models: group.models,
+      providerLabel: group.providerLabel,
+      query: session.searchQuery,
+      favoriteKeys: session.favoriteKeys,
+      favoritesOnly: session.providerFilter === FAVORITES_PROVIDER_FILTER,
+      showLegacy: session.manageHidden || session.showLegacy,
+      isDisplayed: session.isDisplayed,
+    });
     const updateRequiredNotice =
       group.updateRequired && session.providerFilter !== FAVORITES_PROVIDER_FILTER
         ? formatProviderUpdateRequiredNotice(group.updateRequired, session.searchQuery)
