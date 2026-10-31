@@ -6,6 +6,7 @@ import {
   CommandId,
   EventId,
   MessageId,
+  type ModelSelection,
   NodeId,
   type OrchestrationV2Run,
   ProjectId,
@@ -641,7 +642,10 @@ const parentScope: McpInvocationContext.McpInvocationScope = {
 };
 
 /** The laptop's parent thread, mid-turn when its agent delegates. */
-const seedParent = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>) =>
+const seedParent = (
+  laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>,
+  parentModelSelection: ModelSelection = modelSelection,
+) =>
   Effect.gen(function* () {
     const now = yield* DateTime.now;
     const providerThreadId = ProviderThreadId.make("provider-thread:laptop-parent");
@@ -653,7 +657,7 @@ const seedParent = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>) =>
       threadId: parentThreadId,
       projectId: ProjectId.make("project:laptop"),
       title: "Laptop parent",
-      modelSelection,
+      modelSelection: parentModelSelection,
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: null,
@@ -934,6 +938,50 @@ it.effect("a task named only by environment inherits the parent's model, within 
         clientRequestId: "broader",
       });
       expect(broader.isError).toBe(true);
+
+      // Only the user picks a cyber access program; the parent here has none.
+      const cyber = yield* a.call("delegate_task", {
+        task: "Run the suite on the box.",
+        target: {
+          environmentId: box.environmentId,
+          options: { cyberAccessProgram: "daybreakRed" },
+        },
+        clientRequestId: "cyber",
+      });
+      expect(cyber.isError).toBe(true);
+      expect(JSON.stringify(cyber.content)).toContain("stays on this machine");
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a task there inherits the parent's model without its cyber access program", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a, {
+        ...modelSelection,
+        options: [
+          { id: "reasoningEffort", value: "high" },
+          { id: "cyberAccessProgram", value: "daybreakBlue" },
+        ],
+      });
+
+      const result = yield* a.call("delegate_task", {
+        task: "Run the suite on the box.",
+        target: { environmentId: box.environmentId },
+      });
+      expect(result.isError, JSON.stringify(result.content)).toBe(false);
+      expect((yield* Ref.get(thread.launchedWith))?.modelSelection).toEqual({
+        ...modelSelection,
+        options: [{ id: "reasoningEffort", value: "high" }],
+      });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

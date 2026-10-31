@@ -24,7 +24,7 @@ import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as DateTime from "effect/DateTime";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
+import { resolveCyberAccessProgram, resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
@@ -127,9 +127,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           Effect.mapError(unavailable),
           Effect.map(Option.getOrUndefined),
         );
-        // A retry of an accepted launch replays it: it keeps the model it started
-        // with and skips the checks only a new launch needs, which the project
-        // may no longer pass, such as a base branch deleted since.
+        // A retry of an accepted launch replays it: without a modelSelection it keeps
+        // the launched model, and it skips the checks only a new launch needs, which
+        // the project may no longer pass, such as a base branch deleted since.
         const launched =
           input.clientRequestId === undefined
             ? null
@@ -204,6 +204,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message:
               "Pass modelSelection: the project has no default model. orchestrator_capabilities lists providers and models.",
           });
+        // A retry's selection still reaches a new run, so replays are checked too.
+        if (input.modelSelection !== undefined)
+          yield* resolveCyberAccessProgram(caller?.modelSelection, input.modelSelection);
         let startedRuntimeMode =
           projectDefaults !== undefined && input.runtimeMode === undefined
             ? yield* resolveRuntimeMode(runtimeMode, projectDefaults.defaultRuntimeMode).pipe(
@@ -334,6 +337,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             ...(created.commitError === undefined ? {} : { commitError: created.commitError }),
           };
         }
+        if (input.defaultModelSelection)
+          yield* resolveCyberAccessProgram(undefined, input.defaultModelSelection);
         const commandId = yield* newCommandId();
         return yield* projects
           .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })
@@ -346,6 +351,14 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   t3_project_update: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const projects = yield* Project.ProjectService;
+      const requested = input.defaultModelSelection;
+      if (requested) {
+        const current = yield* projects.getById(input.projectId).pipe(Effect.mapError(unavailable));
+        yield* resolveCyberAccessProgram(
+          Option.getOrUndefined(current)?.defaultModelSelection ?? undefined,
+          requested,
+        );
+      }
       return yield* projects
         .update({ ...input, commandId: yield* newCommandId() })
         .pipe(Effect.mapError(projectFailure));

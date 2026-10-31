@@ -252,6 +252,31 @@ describe("CodexAdapterV2 runtime policy", () => {
       assert.isDefined(withT3.additionalContext?.["t3_code_runtime"]);
     }),
   );
+
+  it.effect("requests a cyber access program only when one is selected", () =>
+    Effect.gen(function* () {
+      const build = (cyberAccessProgram: string | undefined) =>
+        CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-cyber-access",
+          codexInput: [{ type: "text", text: "test" }],
+          runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-6-sol",
+            ...(cyberAccessProgram === undefined
+              ? {}
+              : { options: [{ id: "cyberAccessProgram", value: cyberAccessProgram }] }),
+          },
+        });
+
+      assert.notProperty(yield* build(undefined), "cyberAccessProgram");
+      assert.notProperty(yield* build("default"), "cyberAccessProgram");
+      assert.notProperty(yield* build("standard"), "cyberAccessProgram");
+      assert.notProperty(yield* build("daybreakPurple"), "cyberAccessProgram");
+      assert.equal((yield* build("daybreakBlue")).cyberAccessProgram, "daybreakBlue");
+      assert.equal((yield* build("daybreakRed")).cyberAccessProgram, "daybreakRed");
+    }),
+  );
 });
 
 describe("CodexAdapterV2 native protocol logging", () => {
