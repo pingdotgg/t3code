@@ -115,7 +115,6 @@ export class WorkspaceEntries extends Context.Service<
   }
 >()("t3/workspace/WorkspaceEntries") {}
 
-/** Ignored files offered for copying; more than this is a build folder, not config. */
 const IGNORED_FILES_LIMIT = 200;
 
 /** Paths sent to one `git check-ignore` call when labelling a folder's children. */
@@ -478,8 +477,7 @@ export const make = Effect.gen(function* () {
     "WorkspaceEntries.listIgnoredFiles",
   )(function* (input) {
     const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
-    // `--directory` reports a folder holding nothing but ignored files as one
-    // `name/` entry, which is how `node_modules` and build output drop out.
+    // Keep ignored folders collapsed so opening the picker never scans their contents.
     const result = yield* vcsProcess
       .run({
         operation: "WorkspaceEntries.listIgnoredFiles",
@@ -504,15 +502,18 @@ export const make = Effect.gen(function* () {
     if (!result || result.exitCode !== 0) return { files: [], truncated: false };
     const paths = result.stdout
       .split("\0")
-      .filter((entry) => entry.length > 0 && !entry.endsWith("/"))
+      .filter(
+        (entry) => entry.length > 0 && (input.includeDirectories === true || !entry.endsWith("/")),
+      )
       .toSorted();
     const files = yield* Effect.promise(() =>
       Promise.all(
         paths.slice(0, IGNORED_FILES_LIMIT).map(async (relativePath) => {
           // lstat: a symlink usually points outside the workspace, where reads refuse to go.
-          const stat = await NodeFSP.lstat(path.join(normalizedCwd, relativePath)).catch(
-            () => null,
-          );
+          const stat = await NodeFSP.lstat(
+            path.join(normalizedCwd, relativePath.replace(/\/$/, "")),
+          ).catch(() => null);
+          if (stat?.isDirectory()) return { path: relativePath, byteLength: 0 };
           return stat?.isFile() ? { path: relativePath, byteLength: stat.size } : null;
         }),
       ),
