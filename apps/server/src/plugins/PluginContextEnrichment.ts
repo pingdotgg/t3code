@@ -45,50 +45,50 @@ export const make = Effect.gen(function* () {
   const catalog = yield* PluginCatalog;
   const environmentId: EnvironmentId = yield* (yield* ServerEnvironment).getEnvironmentId;
 
-  const enrich: RunContextEnricherV2["Service"]["enrich"] = Effect.fn("PluginContextEnrichment.enrich")(
-(source, input) => {
-      const timeout = `${source.timeoutSeconds} seconds` as const;
-      return catalog
-        .invoke(
-          source.installationId as PluginInstallationId,
-          PLUGIN_ENRICH_HANDLER,
-          encodeInput({ ...input, environmentId }),
-          { timeout, generation: source.generation },
-        )
-        .pipe(
-          // Also bounds a cold start, which the call's own deadline does not cover.
-          Effect.timeoutOption(timeout),
-          Effect.map(
-            Option.match({
-              onNone: () =>
-                skipped(`${source.name} did not answer within ${source.timeoutSeconds} seconds.`),
-              onSome: (value): RunContextOutcome => {
-                if (jsonBytes(value) > PLUGIN_ENRICH_LIMITS.maxResultBytes)
-                  return skipped(
-                    `${source.name} answered with more than ${PLUGIN_ENRICH_LIMITS.maxResultBytes / 1024} KiB of context.`,
-                  );
-                const decoded = decodeResult(value);
-                if (decoded._tag === "Failure")
-                  return skipped(
-                    `${source.name} answered with context outside the allowed shape: ${errorMessage(decoded.cause)}`,
-                  );
-                return { _tag: "added", context: decoded.value?.context ?? [] };
-              },
-            }),
-          ),
-          Effect.catch((error) =>
-            Effect.succeed(
-              skipped(
-                error._tag === "PluginCatalogError" && error.reason === "unavailable"
-                  ? `${source.name} was disabled or replaced before it answered.`
-                  : error.message,
-              ),
+  const enrich: RunContextEnricherV2["Service"]["enrich"] = Effect.fn(
+    "PluginContextEnrichment.enrich",
+  )((source, input) => {
+    const timeout = `${source.timeoutSeconds} seconds` as const;
+    return catalog
+      .invoke(
+        source.installationId as PluginInstallationId,
+        PLUGIN_ENRICH_HANDLER,
+        encodeInput({ ...input, environmentId }),
+        { timeout, generation: source.generation },
+      )
+      .pipe(
+        // Also bounds a cold start, which the call's own deadline does not cover.
+        Effect.timeoutOption(timeout),
+        Effect.map(
+          Option.match({
+            onNone: () =>
+              skipped(`${source.name} did not answer within ${source.timeoutSeconds} seconds.`),
+            onSome: (value): RunContextOutcome => {
+              if (jsonBytes(value) > PLUGIN_ENRICH_LIMITS.maxResultBytes)
+                return skipped(
+                  `${source.name} answered with more than ${PLUGIN_ENRICH_LIMITS.maxResultBytes / 1024} KiB of context.`,
+                );
+              const decoded = decodeResult(value);
+              if (decoded._tag === "Failure")
+                return skipped(
+                  `${source.name} answered with context outside the allowed shape: ${errorMessage(decoded.cause)}`,
+                );
+              return { _tag: "added", context: decoded.value?.context ?? [] };
+            },
+          }),
+        ),
+        Effect.catch((error) =>
+          Effect.succeed(
+            skipped(
+              error._tag === "PluginCatalogError" && error.reason === "unavailable"
+                ? `${source.name} was disabled or replaced before it answered.`
+                : error.message,
             ),
           ),
-          Effect.catchDefect(() => Effect.succeed(skipped(`${source.name} failed unexpectedly.`))),
-        );
-    }
-  );
+        ),
+        Effect.catchDefect(() => Effect.succeed(skipped(`${source.name} failed unexpectedly.`))),
+      );
+  });
 
   return RunContextEnricherV2.of({
     sources: catalog.ready.pipe(

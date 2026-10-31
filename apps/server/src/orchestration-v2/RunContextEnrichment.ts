@@ -1,20 +1,6 @@
 /**
- * Context that plugins add to a run between the saved user message and the
- * provider turn (see `PluginTransforms` in contracts).
- *
- * The provider-turn start effect calls `prepareRunContext` before it opens the
- * provider session. Each plugin's call is recorded as a timeline item of the
- * run: first `running`, committed before the plugin is called, then its
- * outcome, committed before the provider starts. Every later start of the same
- * run reads those items instead of calling plugins, so a worker retry or a
- * replayed effect never runs plugin code twice; an item still `running` there
- * belonged to a cut-off call and is recorded as not added. The provider
- * receives exactly the context the saved items show.
- *
- * The items are `dynamic_tool` items with an integration source, which every
- * client already decodes and renders, so older clients show them too. A run
- * keeps at most `maxPluginsPerRun` plugin records plus one record counting
- * the plugins it did not call, and at most `maxRunContextBytes` of context.
+ * Persist plugin outcomes before provider startup; retries reuse them rather than invoke plugins twice.
+ * Interrupted calls add no context. The provider receives only the bounded, saved context.
  */
 import {
   isPluginContextTurnItem,
@@ -75,14 +61,7 @@ export class RunContextEnricherV2 extends Context.Service<
 
 type DynamicToolItem = Extract<OrchestrationV2TurnItem, { readonly type: "dynamic_tool" }>;
 
-/**
- * Whether plugins add context to a run whose current message has the timeline
- * row `item`. Exactly the turns the history pager counts
- * (`isThreadHistoryUserTurn`), less commands typed with `/`. Steering that
- * restarts a run, notifications and other wakes are never enriched, so the
- * pager's user-turn limit also bounds how many enriched runs a snapshot or an
- * older page carries.
- */
+/** User-turn history bounds enrichment; slash commands, steering and wakes are excluded. */
 export const enrichesRunTurn = (item: OrchestrationV2TurnItem | undefined) =>
   item !== undefined &&
   isThreadHistoryUserTurn(item) &&

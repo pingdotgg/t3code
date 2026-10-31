@@ -476,7 +476,7 @@ describe("plugin context and the history budget", () => {
     // Every record travels whole, both copies, and the snapshot stays in budget.
     expect(snapshot.projection.visibleTurnItems).toHaveLength(items.length);
     expect(pluginRecords(snapshot.projection.turnItems)).toHaveLength(50);
-    expect(snapshot.payloadBudgetExceeded).toBe(false);
+    expect(snapshot.hasMoreHistory).toBe(false);
     expect(Buffer.byteLength(JSON.stringify(snapshot.projection))).toBeLessThan(
       THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes / 3,
     );
@@ -502,15 +502,14 @@ describe("plugin context and the history budget", () => {
     expect(new Set(pluginRecords(snapshot.projection.turnItems).map((item) => item.runId))).toEqual(
       new Set([RunId.make("run-0")]),
     );
-    expect(snapshot.payloadBudgetExceeded).toBe(false);
+    expect(snapshot.hasMoreHistory).toBe(false);
     expect(Buffer.byteLength(JSON.stringify(snapshot.projection))).toBeLessThan(
       THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes / 3,
     );
     // Enriching every wake is what would pass the budget.
-    expect(
-      buildBoundedThreadStreamSnapshot({ snapshotSequence: 1, projection: history(() => true) })
-        .payloadBudgetExceeded,
-    ).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(history(() => true)))).toBeGreaterThan(
+      THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes,
+    );
   });
 
   it("keeps an older page of twenty human turns with their context in budget", () => {
