@@ -868,12 +868,8 @@ export const layerWithOptions = (
             })
             .pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
           const recordedFailure = executor.fail?.({ effect, workerId, error, cause: exit.cause });
-          // Prefer succeed for terminal interrupt races so the outbox does not
-          // keep a failed interrupt around; fail only when we must not retry.
-          // An effect that records its failure stays recoverable until that
-          // record commits, retried with backoff so a record that keeps failing
-          // does not rerun the effect at once; an interruption is replayed, not
-          // recorded.
+          // Terminal interrupt races succeed; recorded failures remain recoverable until their write commits.
+          // Backoff avoids repeating a failed recording immediately; interruption replays the effect.
           const updated = nonRetryable
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })
