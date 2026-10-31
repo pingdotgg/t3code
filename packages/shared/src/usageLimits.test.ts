@@ -566,6 +566,55 @@ describe("pools", () => {
     ]);
   });
 
+  it("merges a proxy-backed Codex probe without email only with an unambiguous account ID", () => {
+    const native = provider({
+      auth: { status: "unknown", workspaceId: "ws-proxy" },
+      usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent: 39 }] },
+    });
+    const hub = {
+      ...source,
+      accounts: [
+        {
+          id: "proxy.json",
+          driver: native.driver,
+          email: "same@example.com",
+          workspaceId: "ws-proxy",
+          usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent: 39 }] },
+        },
+      ],
+    };
+    const collect = (accounts: typeof hub.accounts) =>
+      collectLimitAccounts(
+        new Map([
+          [
+            EnvironmentId.make("env-a"),
+            {
+              ...laptop,
+              serverConfig: { providers: [native] },
+            },
+          ],
+          [
+            EnvironmentId.make("env-b"),
+            {
+              entry: { target: { label: "Hub host" } },
+              serverConfig: { providers: [], usageLimitSources: [{ ...hub, accounts }] },
+            },
+          ],
+        ]),
+      );
+    expect(collect(hub.accounts)).toHaveLength(1);
+    expect(collect(hub.accounts)[0]?.email).toBe("same@example.com");
+    expect(collect([{ ...hub.accounts[0]!, workspaceId: "ws-other" }])).toHaveLength(2);
+    expect(
+      collect([
+        ...hub.accounts,
+        { ...hub.accounts[0]!, id: "other.json", email: "other@example.com" },
+      ]),
+    ).toHaveLength(3);
+    const report = collectProviderUsageLimits(native.instanceId, [native], [hub], now);
+    expect(report?.accounts).toHaveLength(1);
+  });
+
   it("joins a report without a workspace to the only workspace signed in with its email", () => {
     const native = provider({
       driver: claude,

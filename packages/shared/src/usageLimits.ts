@@ -216,15 +216,26 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
 // Include every enabled login, even unreadable workspaces.
 function accountKeyResolver(reports: Iterable<AccountReport>) {
   const workspaces = new Map<string, Set<string>>();
+  const codexAccounts = new Map<string, Set<string>>();
   for (const report of reports) {
     const key = accountKey(report.driver, report.email, report.usageLimits);
     if (key && report.workspaceId) {
       workspaces.set(key, (workspaces.get(key) ?? new Set()).add(report.workspaceId));
+      if (report.driver === "codex") {
+        codexAccounts.set(
+          report.workspaceId,
+          (codexAccounts.get(report.workspaceId) ?? new Set()).add(key),
+        );
+      }
     }
   }
   return (report: AccountReport): string | null => {
     const key = accountKey(report.driver, report.email, report.usageLimits);
-    if (!key) return null;
+    if (!key) {
+      if (report.driver !== "codex" || !report.workspaceId) return null;
+      const known = codexAccounts.get(report.workspaceId);
+      return known?.size === 1 ? `${[...known][0]}:${report.workspaceId}` : null;
+    }
     if (report.workspaceId) return `${key}:${report.workspaceId}`;
     const known = workspaces.get(key);
     if (!known) return key;
@@ -291,6 +302,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     accounts.set(key, {
       ...previous,
       displayName: previous.displayName ?? next.displayName,
+      email: previous.email ?? next.email,
       plan: previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
       environments,
