@@ -627,12 +627,13 @@ describe("orchestrator MCP toolkit", () => {
             { ...invocation, thread: undefined },
           ).pipe(Effect.withTracer(tracer));
           expect(wait.isError).not.toBe(true);
-          expect(wait.structuredContent).toMatchObject({
+          const expectedWait = {
             threadId: delegated.childThreadId,
             runId: queuedFollowup.runId,
             status: "completed",
             timedOut: false,
-          });
+          };
+          expect(wait.structuredContent).toEqual(expectedWait);
           expect(messageReads).toEqual([]);
           expect(transferReads).toHaveLength(0);
           const settledWait = yield* invoke(
@@ -646,7 +647,7 @@ describe("orchestrator MCP toolkit", () => {
           ).pipe(Effect.withTracer(tracer));
           expect(settledWait.isError).not.toBe(true);
           expect(settledWait.structuredContent).toMatchObject({
-            ...wait.structuredContent,
+            ...expectedWait,
             resultRun: { runId: queuedFollowup.runId, status: "completed" },
           });
           expect(messageReads.length).toBeGreaterThan(0);
