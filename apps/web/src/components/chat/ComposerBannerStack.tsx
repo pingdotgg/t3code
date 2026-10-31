@@ -7,7 +7,7 @@ import { ComposerBanner, type ComposerBannerVariant } from "./ComposerBanner";
 import { observeResize } from "~/lib/observeResize";
 
 /**
- * Where a notice sits above the composer. The machine comes first, then what needs you; the
+ * Where a notice sits in the stack. The machine comes first, then what needs you; the
  * order is fixed so rows never trade places as notices come and go.
  */
 export type ComposerBannerGroup = "environment" | "attention";
@@ -27,27 +27,39 @@ export interface ComposerBannerStackItem {
 
 const GROUPS = ["environment", "attention"] as const;
 
+const FADE_IN =
+  "transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none";
+
 /**
  * Notices about sending from this composer, each its own attached card. Consecutive cards join
- * edge to edge, and the last joins the composer or the drawer below it.
+ * edge to edge, and the last joins the composer or the drawer below it. Detached cards stand
+ * apart instead, for layouts where the composer must not move when a notice appears.
  */
 export function ComposerBannerStack({
   items,
+  detached = false,
 }: {
   readonly items: ReadonlyArray<ComposerBannerStackItem>;
+  readonly detached?: boolean;
 }) {
-  return GROUPS.flatMap((group) =>
+  const ordered = GROUPS.flatMap((group) =>
     items.filter((item) => (item.group ?? "attention") === group),
-  ).map((item) => (
-    <ComposerBanner.Attachment
-      key={item.id}
-      data-composer-banner-stack="true"
-      className="transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none"
-    >
+  );
+  if (detached) {
+    return ordered.map((item) => (
+      <div key={item.id} data-composer-banner-stack="true" className={FADE_IN}>
+        <NoticeCard item={item} detached />
+      </div>
+    ));
+  }
+  return ordered.map((item) => (
+    <ComposerBanner.Attachment key={item.id} data-composer-banner-stack="true" className={FADE_IN}>
       <NoticeCard item={item} />
     </ComposerBanner.Attachment>
   ));
 }
+
+const SUBPIXEL_ROUNDING = 0.001;
 
 export function NoticeText({
   children,
@@ -66,6 +78,7 @@ export function NoticeText({
   useLayoutEffect(() => {
     const text = textRef.current;
     if (!text) return;
+    const range = document.createRange();
     const measure = () => {
       // Ignore the space taken by the details button itself so it cannot
       // sustain its own overflow after the text would otherwise fit.
@@ -73,9 +86,17 @@ export function NoticeText({
       const hidden = getComputedStyle(text).position === "absolute";
       setShowDetails(
         hidden ||
-          [text, ...text.querySelectorAll("*")].some(
-            (element) => element.scrollWidth > element.clientWidth + recoveredWidth,
-          ),
+          [text, ...text.querySelectorAll("*")].some((element) => {
+            // A range spans laid-out content only; scrollWidth also counts positioned layers
+            // such as a link's touch hit area, which overflow without cutting any text.
+            // The two rects can disagree by float rounding (~0.00001px on phones); real
+            // overflow is at least one layout unit, 1/64 of a device pixel.
+            range.selectNodeContents(element);
+            return (
+              range.getBoundingClientRect().width >
+              element.getBoundingClientRect().width + recoveredWidth + SUBPIXEL_ROUNDING
+            );
+          }),
       );
     };
     measure();
@@ -125,11 +146,18 @@ export function NoticeText({
   );
 }
 
-function NoticeCard({ item }: { readonly item: ComposerBannerStackItem }) {
+function NoticeCard({
+  item,
+  detached = false,
+}: {
+  readonly item: ComposerBannerStackItem;
+  readonly detached?: boolean;
+}) {
   return (
     <ComposerBanner.Root
       role={item.variant === "error" || item.variant === "warning" ? "alert" : undefined}
       variant={item.variant}
+      detached={detached}
       density="comfortable"
       data-chat-composer-collapsed-controls="true"
     >
