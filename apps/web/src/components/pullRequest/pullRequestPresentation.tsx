@@ -41,15 +41,18 @@ export function PullRequestLabelChip({
   size = "sm",
   className,
   children,
+  ...props
 }: {
   label: Pick<PullRequestLabel, "name" | "color">;
   size?: "sm" | "default";
   className?: string;
   children?: ReactNode;
+  "data-row-label"?: string;
 }) {
   const color = pullRequestLabelColor(label.color);
   return (
     <Badge
+      {...props}
       size={size}
       variant={color ? "label" : "secondary"}
       className={cn("min-w-0 max-w-40 shrink justify-start", className)}
@@ -493,18 +496,6 @@ export function PullRequestDiffStat({
       <span className="text-diff-addition-foreground">+{formatDiffCount(additions)}</span>
       <span className="text-diff-deletion-foreground">-{formatDiffCount(deletions)}</span>
     </span>
-  );
-}
-
-export function PullRequestMetaLine({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <span className={cn("flex min-w-0 flex-col items-start gap-1", className)}>{children}</span>
   );
 }
 

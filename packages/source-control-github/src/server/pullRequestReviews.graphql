@@ -67,6 +67,11 @@ fragment ReviewThreadPage on PullRequestReviewThreadConnection {
         ...ThreadComment
       }
     }
+    firstComment: comments(first: 1) {
+      nodes {
+        diffHunk
+      }
+    }
   }
 }
 
@@ -83,7 +88,13 @@ fragment ReviewThreadPage on PullRequestReviewThreadConnection {
 #
 # `viewerCanUpdate` and `viewerDidAuthor` belong to the pull request this query is already
 # standing on, so what the reader may do with it arrives with the conversation.
-query ReviewThreads($owner: String!, $name: String!, $number: Int!, $requestedReviewers: Int!) {
+query ReviewThreads(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $requestedReviewers: Int!
+  $requestEvents: Boolean!
+) {
   viewer {
     login
   }
@@ -172,6 +183,36 @@ query ReviewThreads($owner: String!, $name: String!, $number: Int!, $requestedRe
           }
         }
       }
+      reviewRequestEvents: timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], last: 100)
+        @include(if: $requestEvents) {
+        nodes {
+          ... on ReviewRequestedEvent {
+            createdAt
+            actor {
+              __typename
+              login
+              avatarUrl
+            }
+            requestedReviewer {
+              ... on User {
+                login
+                name
+                avatarUrl
+              }
+              ... on Bot {
+                __typename
+                login
+                avatarUrl
+              }
+              ... on Team {
+                combinedSlug
+                teamName: name
+                teamAvatarUrl: avatarUrl
+              }
+            }
+          }
+        }
+      }
       # `last` rather than `first`: a pull request with more than a hundred commits keeps the
       # newest ones, which is what a reader scoping a diff wants.
       commits(last: 100) {
@@ -180,6 +221,20 @@ query ReviewThreads($owner: String!, $name: String!, $number: Int!, $requestedRe
             oid
             messageHeadline
             committedDate
+            statusCheckRollup {
+              state
+              contexts(first: 1) {
+                totalCount
+                checkRunCountsByState {
+                  state
+                  count
+                }
+                statusContextCountsByState {
+                  state
+                  count
+                }
+              }
+            }
             authors(first: 3) {
               nodes {
                 name
