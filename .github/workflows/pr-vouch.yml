@@ -10,7 +10,6 @@ on:
       - main
     paths:
       - .github/VOUCHED.td
-      - .github/workflows/pr-vouch.yml
 
 permissions:
   contents: read
@@ -24,6 +23,12 @@ jobs:
     outputs:
       targets: ${{ steps.collect.outputs.targets }}
     steps:
+      - name: Checkout trusted target selection
+        if: github.event_name == 'push'
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/scripts
+
       - id: collect
         uses: actions/github-script@v8
         with:
@@ -49,17 +54,8 @@ jobs:
               return;
             }
 
-            const pulls = await github.paginate(github.rest.pulls.list, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: "open",
-              per_page: 100,
-            });
-
-            const targets = pulls.map((pull) => ({
-              number: pull.number,
-              user: pull.user.login,
-            }));
+            const { collectPushTargets } = require("./.github/scripts/pr-vouch-targets.cjs");
+            const targets = await collectPushTargets({ github, context, core });
             core.setOutput("targets", JSON.stringify(targets));
 
   label:
