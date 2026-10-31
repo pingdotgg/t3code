@@ -262,18 +262,20 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
         }
         const handle = ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(900_000_201),
-          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
-          isRunning: Effect.succeed(false),
+          exitCode: Effect.delay(Effect.succeed(ChildProcessSpawner.ExitCode(0)), row.versionDelay),
+          isRunning: Effect.succeed(true),
           kill: () => Effect.void,
           unref: Effect.succeed(Effect.void),
           stdin: Sink.drain,
-          stdout: Stream.encodeText(Stream.make("grok 1.0.52\n")),
+          stdout: Stream.encodeText(
+            Stream.fromEffect(Effect.delay(Effect.succeed("grok 1.0.52\n"), row.versionDelay)),
+          ),
           stderr: Stream.empty,
           all: Stream.empty,
           getInputFd: () => Sink.drain,
           getOutputFd: () => Stream.empty,
         });
-        return Effect.delay(Effect.succeed(handle), row.versionDelay);
+        return Effect.succeed(handle);
       });
       const fiber = yield* checkGrokProviderStatus(decodeGrokSettings({ enabled: true }), {}).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

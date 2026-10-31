@@ -23,19 +23,22 @@ function processHandle(input: {
   readonly stdout?: string;
   readonly stderr?: string;
   readonly exitCode?: number;
+  /** Holds stdout and the exit back until it completes, like a CLI slow to answer. */
+  readonly answered?: Effect.Effect<void>;
 }) {
+  const answered = input.answered ?? Effect.void;
   const bytes = (value: string | undefined) =>
     value === undefined || value.length === 0
       ? Stream.empty
       : Stream.succeed(encoder.encode(value));
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(900_000_001),
-    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(input.exitCode ?? 0)),
+    exitCode: Effect.as(answered, ChildProcessSpawner.ExitCode(input.exitCode ?? 0)),
     isRunning: Effect.succeed(false),
     kill: () => Effect.void,
     unref: Effect.succeed(Effect.void),
     stdin: Sink.drain,
-    stdout: bytes(input.stdout),
+    stdout: Stream.unwrap(Effect.as(answered, bytes(input.stdout))),
     stderr: bytes(input.stderr),
     all: Stream.empty,
     getInputFd: () => Sink.drain,
@@ -173,9 +176,11 @@ describe("PiProvider", () => {
       const spawner = ChildProcessSpawner.make((command) => {
         const args = ChildProcess.isStandardCommand(command) ? command.args : [];
         spawned.push(args.join(" "));
-        return args.includes("--version")
-          ? Effect.delay(Effect.succeed(processHandle({ stdout: "pi 0.84.3\n" })), row.versionDelay)
-          : Effect.succeed(processHandle({ stderr: "RPC startup failed", exitCode: 1 }));
+        return Effect.succeed(
+          args.includes("--version")
+            ? processHandle({ stdout: "pi 0.84.3\n", answered: Effect.sleep(row.versionDelay) })
+            : processHandle({ stderr: "RPC startup failed", exitCode: 1 }),
+        );
       });
       const fiber = yield* checkPiProviderStatus(settings).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

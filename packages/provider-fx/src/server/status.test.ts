@@ -16,15 +16,20 @@ import { checkFxProviderStatus } from "./status.ts";
 const encoder = new TextEncoder();
 const settings = Schema.decodeSync(FxSettings)({ enabled: true });
 
-function processHandle(stdout: string, code: number) {
+/** A `stalled` process has started but never writes output or exits. */
+function processHandle(stdout: string, code: number, stalled = false) {
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(900_000_101),
-    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(code)),
+    exitCode: stalled ? Effect.never : Effect.succeed(ChildProcessSpawner.ExitCode(code)),
     isRunning: Effect.succeed(false),
     kill: () => Effect.void,
     unref: Effect.succeed(Effect.void),
     stdin: Sink.drain,
-    stdout: stdout.length === 0 ? Stream.empty : Stream.succeed(encoder.encode(stdout)),
+    stdout: stalled
+      ? Stream.never
+      : stdout.length === 0
+        ? Stream.empty
+        : Stream.succeed(encoder.encode(stdout)),
     stderr: Stream.empty,
     all: Stream.empty,
     getInputFd: () => Sink.drain,
@@ -33,7 +38,7 @@ function processHandle(stdout: string, code: number) {
 }
 
 /** Answers `fx` invocations by their arguments and records which ran. */
-const check = (statusJson: string, versionDelay: Duration.Input = 0) =>
+const check = (statusJson: string, versionDelay: Duration.Input = 0, versionStalls = false) =>
   Effect.gen(function* () {
     const outputs: Record<string, string> = {
       "--version": "fx 0.0.13\n",
@@ -53,8 +58,13 @@ const check = (statusJson: string, versionDelay: Duration.Input = 0) =>
       const args = ChildProcess.isStandardCommand(command) ? command.args.join(" ") : "";
       invoked.push(args);
       const stdout = outputs[args];
-      const handle = Effect.succeed(processHandle(stdout ?? "", stdout === undefined ? 2 : 0));
-      return args === "--version" ? Effect.delay(handle, versionDelay) : handle;
+      if (args !== "--version") {
+        return Effect.succeed(processHandle(stdout ?? "", stdout === undefined ? 2 : 0));
+      }
+      return Effect.delay(
+        Effect.succeed(processHandle(stdout ?? "", 0, versionStalls)),
+        versionDelay,
+      );
     });
     const draft = yield* checkFxProviderStatus(settings, {}).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -67,6 +77,7 @@ describe("checkFxProviderStatus", () => {
     {
       label: "answers after 6 s",
       versionDelay: "6 seconds",
+      versionStalls: false,
       status: "ready",
       version: "0.0.13",
       message: undefined,
@@ -75,6 +86,16 @@ describe("checkFxProviderStatus", () => {
     {
       label: "never answers",
       versionDelay: "Infinity",
+      versionStalls: false,
+      status: "error",
+      version: null,
+      message: "Failed to run `fx --version`.",
+      invoked: ["--version"],
+    },
+    {
+      label: "starts but never answers",
+      versionDelay: 0,
+      versionStalls: true,
       status: "error",
       version: null,
       message: "Failed to run `fx --version`.",
@@ -85,6 +106,7 @@ describe("checkFxProviderStatus", () => {
       const fiber = yield* check(
         JSON.stringify({ kind: "status", model: "anthropic/claude-opus-5.5", auth: "fx login" }),
         row.versionDelay,
+        row.versionStalls,
       ).pipe(Effect.forkChild);
       yield* TestClock.adjust("10 seconds");
       const { draft, invoked } = yield* Fiber.join(fiber);
