@@ -21,6 +21,40 @@ const state = vi.hoisted(() => ({
   granted: new Set<string>(),
   effects: [] as string[],
   completed: deferred<void>(),
+  worktreePath: null as string | null,
+  projects: [
+    {
+      id: "project",
+      environmentId: "secondary",
+      title: "Current project",
+      workspaceRoot: "/project",
+    },
+    {
+      id: "same-root",
+      environmentId: "secondary",
+      title: "Same root",
+      workspaceRoot: "/project",
+    },
+    {
+      id: "other-root",
+      environmentId: "secondary",
+      title: "Other root",
+      workspaceRoot: "/other",
+    },
+    {
+      id: "other-environment",
+      environmentId: "primary",
+      title: "Other environment",
+      workspaceRoot: "/project",
+    },
+    {
+      id: "archived",
+      environmentId: "secondary",
+      title: "Archived",
+      workspaceRoot: "/project",
+      archivedAt: "2026-01-01T00:00:00.000Z",
+    },
+  ],
   show: vi.fn<
     (
       items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>>,
@@ -55,11 +89,11 @@ vi.mock("../state/entities", () => ({
     projectId: "project",
     title: "Thread",
     branch: "main",
-    worktreePath: null,
+    worktreePath: state.worktreePath,
     runtime: null,
     latestRun: null,
   }),
-  useProjects: () => [{ id: "project", environmentId: "secondary" }],
+  useProjects: () => state.projects,
 }));
 vi.mock("../state/environments", () => ({ usePrimaryEnvironmentId: () => "primary" }));
 vi.mock("../state/threads", () => ({ threadEnvironment: { updateMetadata: "metadata" } }));
@@ -162,6 +196,7 @@ beforeEach(() => {
   state.granted = new Set(["primary"]);
   state.effects = [];
   state.completed = deferred<void>();
+  state.worktreePath = null;
   state.show.mockReset().mockResolvedValue(null);
 });
 
@@ -192,5 +227,25 @@ describe("thread menu permissions", () => {
     expect(items[0]?.disabled).not.toBe(true);
     expect(state.effects).toEqual(["find"]);
     expect(onFind).toHaveBeenCalledExactlyOnceWith(target);
+  });
+});
+
+describe("thread project destinations", () => {
+  it("limits root-thread destinations to the current workspace root", () => {
+    createMenu().openMenu(position);
+
+    const moveOptions = state.show.mock.calls[0]![0].find((item) => item.id === "move-to-project");
+    expect(moveOptions?.children?.map((item) => item.id)).toEqual(["move-to-project:same-root"]);
+  });
+
+  it("keeps different-root destinations available for worktree threads", () => {
+    state.worktreePath = "/tmp/thread-worktree";
+    createMenu().openMenu(position);
+
+    const moveOptions = state.show.mock.calls[0]![0].find((item) => item.id === "move-to-project");
+    expect(moveOptions?.children?.map((item) => item.id)).toEqual([
+      "move-to-project:same-root",
+      "move-to-project:other-root",
+    ]);
   });
 });

@@ -125,6 +125,10 @@ export function useThreadActionMenu(input: {
       if (!api) return;
       const thread = readThreadShell(threadRef);
       if (!thread) return;
+      const currentProject = projects.find(
+        (project) =>
+          project.environmentId === thread.environmentId && project.id === thread.projectId,
+      );
       const now = new Date();
       const configLoaded = readEnvironmentServerConfigLoaded(threadRef.environmentId);
       const supports = {
@@ -157,7 +161,10 @@ export function useThreadActionMenu(input: {
             (project) =>
               project.environmentId === thread.environmentId &&
               project.id !== thread.projectId &&
-              !project.archivedAt,
+              !project.archivedAt &&
+              (thread.worktreePath !== null ||
+                (currentProject !== undefined &&
+                  project.workspaceRoot === currentProject.workspaceRoot)),
           )
           .map((project) => ({ id: project.id, title: project.title })),
       });
