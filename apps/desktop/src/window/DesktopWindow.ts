@@ -36,6 +36,7 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
+import { shouldVetoViewFrameNavigation } from "./pluginViewNavigation.ts";
 
 const TITLEBAR_HEIGHT = 40;
 // Match --workspace-topbar-height in apps/web/src/index.css; native macOS buttons stay 14 points at any zoom.
@@ -625,6 +626,30 @@ export const make = Effect.gen(function* () {
       if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
         void runPromise(electronShell.openExternal(url));
       }
+    });
+    // Plugin views may not navigate themselves; see pluginViewNavigation.ts.
+    window.webContents.on("will-frame-navigate", (event) => {
+      if (event.isMainFrame) return;
+      if (
+        !shouldVetoViewFrameNavigation({
+          url: event.url,
+          frame: event.frame,
+          initiator: event.initiator,
+          mainFrame: window.webContents.mainFrame,
+        })
+      )
+        return;
+      event.preventDefault();
+      // Only where it tried to go: a path or query can carry the view's data.
+      const target = URL.parse(event.url);
+      void runPromise(
+        logWindowInfo(
+          "refused a plugin view navigation",
+          target === null
+            ? { protocol: "invalid" }
+            : { protocol: target.protocol, host: target.host },
+        ),
+      );
     });
 
     const quitShortcutHandler = makeQuitShortcutHandler({
