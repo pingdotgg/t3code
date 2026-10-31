@@ -284,6 +284,99 @@ export function markdownWithHtml(markdown: string): string {
   return markdown;
 }
 
+export type MarkdownDetailsSegment =
+  | { readonly kind: "markdown"; readonly markdown: string; readonly sourceOffset: number }
+  | {
+      readonly kind: "details";
+      readonly summary: string;
+      readonly body: string;
+      readonly open: boolean;
+      readonly sourceOffset: number;
+    };
+
+const DETAILS_TAG = /<(\/?)details(?=[\s/>])/gi;
+const STICKY_HTML_TAG = new RegExp(HTML_TAG.source, "iy");
+const SUMMARY_PREFIX = /^\s*<summary\b[^>]*>([\s\S]*?)<\/summary\s*>/i;
+
+// `[^<>]` stops at the next tag start, so unclosed tags stay linear.
+function detailsSummary(content: string): string {
+  return (
+    decodeHtmlEntities(content.replace(/<\/?[a-z][^<>]*>/gi, ""))
+      .replace(/\s+/g, " ")
+      .trim() || "Details"
+  );
+}
+
+/**
+ * Splits top-level `<details>` blocks out as folds. Tags count only in top-level HTML nodes,
+ * so code and folds inside containers stay Markdown for `markdownWithHtml` to flatten.
+ */
+export function splitMarkdownDetails(markdown: string): ReadonlyArray<MarkdownDetailsSegment> {
+  const whole = [{ kind: "markdown" as const, markdown, sourceOffset: 0 }];
+  if (!/<details/i.test(markdown)) return whole;
+  const children = parser.parse(markdown).children;
+  const segments: MarkdownDetailsSegment[] = [];
+  let cursor = 0;
+  let fold: { start: number; bodyStart: number; tag: string; childIndex: number } | null = null;
+  let depth = 0;
+  for (let index = 0; index < children.length; index += 1) {
+    const child = children[index]!;
+    const nodeStart = child.position?.start.offset;
+    if (child.type !== "html" || nodeStart === undefined) continue;
+    const value = markdown.slice(nodeStart, child.position?.end.offset);
+    for (const match of value.matchAll(DETAILS_TAG)) {
+      const at = nodeStart + match.index;
+      if (match[1]) {
+        if (depth === 0 || --depth > 0 || !fold) continue;
+        const tagEnd = value.indexOf(">", match.index);
+        const body = markdown.slice(fold.bodyStart, at);
+        const summary = SUMMARY_PREFIX.exec(body);
+        // An indented `<summary>` after a blank line is a code block, not the fold's summary.
+        const summaryAt = fold.bodyStart + (summary?.[0].indexOf("<") ?? 0);
+        const next = children[fold.childIndex + 1];
+        const summaryInHtml =
+          summary !== null &&
+          (summaryAt < (children[fold.childIndex]!.position?.end.offset ?? 0) ||
+            (next?.type === "html" && (next.position?.start.offset ?? Infinity) <= summaryAt));
+        if (fold.start > cursor)
+          segments.push({
+            kind: "markdown",
+            markdown: markdown.slice(cursor, fold.start),
+            sourceOffset: cursor,
+          });
+        segments.push({
+          kind: "details",
+          summary: summaryInHtml ? detailsSummary(summary[1]!) : "Details",
+          body: summaryInHtml ? body.slice(summary[0].length) : body,
+          open: /\sopen(?=[\s=/>])/i.test(fold.tag.replace(/"[^"]*"|'[^']*'/g, "")),
+          sourceOffset: fold.start,
+        });
+        cursor = tagEnd === -1 ? at + match[0].length : nodeStart + tagEnd + 1;
+        fold = null;
+        continue;
+      }
+      if (depth > 0) {
+        depth += 1;
+        continue;
+      }
+      // A fold opens only at the start of a block or right after the previous fold.
+      const floor = Math.max(nodeStart, cursor);
+      let start = at;
+      while (start > floor && /\s/.test(markdown[start - 1]!)) start -= 1;
+      if (start > floor) continue;
+      STICKY_HTML_TAG.lastIndex = match.index;
+      const tag = STICKY_HTML_TAG.exec(value)?.[0];
+      if (!tag) continue;
+      fold = { start, bodyStart: at + tag.length, tag, childIndex: index };
+      depth = 1;
+    }
+  }
+  if (segments.length === 0) return whole;
+  if (cursor < markdown.length)
+    segments.push({ kind: "markdown", markdown: markdown.slice(cursor), sourceOffset: cursor });
+  return segments;
+}
+
 // Start only at the beginning of a backtick run to avoid retrying every suffix.
 const INLINE_CODE_SPAN = /(?<!`)`+([^`\r\n]+)`+/g;
 

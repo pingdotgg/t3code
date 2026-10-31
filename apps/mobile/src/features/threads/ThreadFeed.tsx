@@ -149,6 +149,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
+import { splitMarkdownDetails } from "../../lib/markdownDocument";
 import {
   SelectableMarkdownText,
   type MarkdownFileContextMenu,
@@ -1204,21 +1205,81 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
         />
       );
     }
-    if (segment.markdown.trim().length === 0) return null;
-
-    const markdown = renderCodexInlineDirectivesAsMarkdown(segment.markdown);
     return (
-      <SelectableMarkdownText
+      <AssistantMarkdownBlocks
         key={`markdown:${segment.sourceOffset}`}
-        markdown={markdown}
-        skills={props.skills}
-        textStyle={props.markdownStyles.nativeTextStyle}
-        {...linkHandlers}
+        markdown={segment.markdown}
+        markdownStyles={props.markdownStyles}
+        linkHandlers={linkHandlers}
         renderImage={props.renderImage}
+        skills={props.skills}
       />
     );
   });
 });
+
+function AssistantMarkdownBlocks(props: {
+  readonly markdown: string;
+  readonly markdownStyles: MarkdownStyleSet;
+  readonly linkHandlers: MarkdownLinkHandlers;
+  readonly renderImage: MarkdownImageRenderer;
+  readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
+}) {
+  const segments = useMemo(() => splitMarkdownDetails(props.markdown), [props.markdown]);
+  return segments.map((segment) => {
+    if (segment.kind === "details") {
+      return (
+        <MarkdownDetailsFold
+          key={`details:${segment.sourceOffset}`}
+          summary={segment.summary}
+          open={segment.open}
+        >
+          <AssistantMarkdownBlocks {...props} markdown={segment.body} />
+        </MarkdownDetailsFold>
+      );
+    }
+    if (segment.markdown.trim().length === 0) return null;
+
+    return (
+      <SelectableMarkdownText
+        key={`markdown:${segment.sourceOffset}`}
+        markdown={renderCodexInlineDirectivesAsMarkdown(segment.markdown)}
+        skills={props.skills}
+        textStyle={props.markdownStyles.nativeTextStyle}
+        {...props.linkHandlers}
+        renderImage={props.renderImage}
+      />
+    );
+  });
+}
+
+function MarkdownDetailsFold(props: {
+  readonly summary: string;
+  readonly open: boolean;
+  readonly children: ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(props.open);
+  return (
+    <View className="my-2 border-y border-border-subtle">
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        onPress={() => setExpanded(!expanded)}
+        className="min-h-11 flex-row items-center gap-2 py-2 active:opacity-70"
+      >
+        <SymbolView
+          name={expanded ? "chevron.down" : "chevron.right"}
+          size={12}
+          tintColorClassName="accent-foreground-muted"
+        />
+        <Text className="min-w-0 flex-1 font-t3-medium text-sm text-foreground">
+          {props.summary}
+        </Text>
+      </Pressable>
+      {expanded ? <View className="pb-3 pl-5">{props.children}</View> : null}
+    </View>
+  );
+}
 
 function useMarkdownStyles(): MarkdownStyleSets {
   const { appearance } = useAppearancePreferences();
