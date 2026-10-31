@@ -1,21 +1,31 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   invalidateLatestProviderVersion,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { resolveClaudeMaintenance } from "./ClaudeMaintenance.ts";
+import { makeClaudeMaintenanceResolution } from "./ClaudeMaintenance.ts";
 
 const snapshot: ServerProvider = {
   instanceId: ProviderInstanceId.make("claude"),
@@ -55,8 +65,13 @@ const fixture = Effect.fn("ClaudeMaintenance.test.fixture")(function* (
       : platform === "darwin"
         ? "/Library/Application Support/ClaudeCode"
         : "/etc/claude-code";
+  let installationReads = 0;
   const testFs = FileSystem.makeNoop({
     ...fs,
+    realPath: (file) => {
+      if (file === binaryPath) installationReads++;
+      return fs.realPath(file);
+    },
     readFileString: (file, ...args) =>
       file.replaceAll("\\", "/").startsWith(`${managedDirectory}/`)
         ? managed.has(file.replaceAll("\\", "/"))
@@ -73,11 +88,13 @@ const fixture = Effect.fn("ClaudeMaintenance.test.fixture")(function* (
         : fs.readDirectory(file),
   });
   return {
+    directory,
     fs,
     managed,
     managedDirectory,
     settingsPath,
-    resolve: resolveClaudeMaintenance({ binaryPath, env: { PATH: "" } }).pipe(
+    installationReads: () => installationReads,
+    makeResolution: makeClaudeMaintenanceResolution({ binaryPath, env: { PATH: "" } }).pipe(
       Effect.provideService(
         ChildProcessSpawner.ChildProcessSpawner,
         ChildProcessSpawner.make(() => Effect.die("version checks must not run a subprocess")),
@@ -191,9 +208,10 @@ it.layer(NodeServices.layer)("ClaudeMaintenance", (it) => {
           ),
         );
       });
-      const maintenance = yield* f.resolve.pipe(
+      const resolve = yield* f.makeResolution.pipe(
         Effect.provideService(HttpClient.HttpClient, client),
       );
+      const maintenance = yield* resolve();
       const versions = yield* ProviderLatestVersions.make();
       const enrich = enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenance).pipe(
         Effect.provideService(HttpClient.HttpClient, client),
@@ -233,8 +251,11 @@ it.layer(NodeServices.layer)("ClaudeMaintenance", (it) => {
           );
         });
         const versions = yield* ProviderLatestVersions.make();
+        const resolve = yield* f.makeResolution.pipe(
+          Effect.provideService(HttpClient.HttpClient, client),
+        );
         const check = Effect.gen(function* () {
-          const capabilities = yield* f.resolve;
+          const capabilities = yield* resolve();
           return yield* enrichProviderSnapshotWithVersionAdvisory(snapshot, capabilities);
         }).pipe(
           Effect.provideService(HttpClient.HttpClient, client),
@@ -258,15 +279,99 @@ it.layer(NodeServices.layer)("ClaudeMaintenance", (it) => {
         );
         expect((yield* check).versionAdvisory?.latestVersion).toBe("2.1.308");
         expect(requests).toHaveLength(2);
-        const capabilities = yield* f.resolve.pipe(
-          Effect.provideService(HttpClient.HttpClient, client),
-        );
+        const capabilities = yield* resolve();
         yield* invalidateLatestProviderVersion(capabilities).pipe(
           Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, versions),
         );
         yield* check;
         expect(requests).toHaveLength(3);
       }).pipe(Effect.scoped),
+  );
+
+  it.effect("automatic refresh rereads the native channel while preserving both caches", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture();
+      const requests: string[] = [];
+      const client = HttpClient.make((request) => {
+        requests.push(request.url);
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(request.url.endsWith("/stable") ? "2.1.308" : "2.1.315"),
+          ),
+        );
+      });
+      const resolveMaintenance = yield* f.makeResolution.pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+      );
+      const versions = yield* ProviderLatestVersions.make();
+      const publications = yield* Queue.unbounded<ServerProvider>();
+      yield* makeManagedServerProvider({
+        resolveMaintenance,
+        getSettings: Effect.succeed({ enabled: true }),
+        streamSettings: Stream.empty,
+        haveSettingsChanged: () => false,
+        initialSnapshot: () => Effect.succeed(snapshot),
+        checkProvider: Effect.succeed(snapshot),
+        refreshInterval: "1 minute",
+        enrichSnapshot: ({ snapshot, publishSnapshot }) =>
+          resolveMaintenance().pipe(
+            Effect.flatMap((maintenance) =>
+              enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenance),
+            ),
+            Effect.provideService(HttpClient.HttpClient, client),
+            Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, versions),
+            Effect.flatMap((enriched) =>
+              publishSnapshot(enriched).pipe(
+                Effect.andThen(Queue.offer(publications, enriched)),
+                Effect.asVoid,
+              ),
+            ),
+          ),
+      }).pipe(
+        Effect.provide(
+          Layer.mock(ProviderHost.ProviderHost)({
+            paths: {
+              cwd: f.directory,
+              baseDir: f.directory,
+              stateDir: f.directory,
+              providerStatusCacheDir: f.directory,
+              attachmentsDir: f.directory,
+            },
+            settings: {
+              get: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+              withSnapshot: (use) => use(DEFAULT_SERVER_SETTINGS),
+              changes: Stream.empty,
+              subscribe: Effect.succeed(Stream.empty),
+            },
+            shouldRunBackgroundWork: () => Effect.succeed(true),
+            resolveAttachmentPath: () => null,
+          }),
+        ),
+      );
+      expect((yield* Queue.take(publications)).versionAdvisory).toMatchObject({
+        latestVersion: "2.1.315",
+        status: "behind_latest",
+      });
+      expect(requests).toHaveLength(1);
+
+      for (const channel of ["stable", "stable", "latest"] as const) {
+        yield* f.fs.writeFileString(
+          f.settingsPath,
+          JSON.stringify({ autoUpdatesChannel: channel }),
+        );
+        yield* TestClock.adjust("1 minute");
+        expect((yield* Queue.take(publications)).versionAdvisory).toMatchObject({
+          latestVersion: channel === "stable" ? "2.1.308" : "2.1.315",
+          status: channel === "stable" ? "current" : "behind_latest",
+        });
+        expect(requests).toEqual([
+          "https://downloads.claude.ai/claude-code-releases/latest",
+          "https://downloads.claude.ai/claude-code-releases/stable",
+        ]);
+        expect(f.installationReads()).toBe(1);
+      }
+    }).pipe(Effect.scoped),
   );
 
   it.effect("bounds stalled feed bodies and skips disabled update checks", () =>
@@ -279,9 +384,10 @@ it.layer(NodeServices.layer)("ClaudeMaintenance", (it) => {
           HttpClientResponse.fromWeb(request, new Response(new ReadableStream())),
         );
       });
-      const capabilities = yield* f.resolve.pipe(
+      const resolve = yield* f.makeResolution.pipe(
         Effect.provideService(HttpClient.HttpClient, client),
       );
+      const capabilities = yield* resolve();
       const enrich = (enabled: boolean) =>
         enrichProviderSnapshotWithVersionAdvisory(snapshot, capabilities, {
           enableProviderUpdateChecks: enabled,
