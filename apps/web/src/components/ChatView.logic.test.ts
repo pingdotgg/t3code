@@ -1,6 +1,5 @@
 import {
   boundAttachmentIds,
-  findRecordedWorktreeSetup,
   mergeDirectPreviewAnnotation,
   planComposerTurn,
   snapshotComposerSend,
@@ -675,16 +674,6 @@ describe("worktree setup visibility", () => {
     const other = { ...base, threadId: ThreadId.make("another-thread") };
     expect(resolve(other, other)).toEqual({ snapshot: null, isPreparingWorktree: false });
   });
-
-  it("reads the settled snapshot back from the thread's activities", () => {
-    const activities = [
-      { kind: "setup-script.started", payload: {} },
-      { kind: "worktree-setup", payload: settledDone },
-      { kind: "worktree-setup", payload: { not: "a snapshot" } },
-    ];
-    expect(findRecordedWorktreeSetup(activities, threadId)).toEqual(settledDone);
-    expect(findRecordedWorktreeSetup(activities, ThreadId.make("other"))).toBeNull();
-  });
 });
 
 describe("waitForRevertedMessage", () => {
@@ -1094,22 +1083,12 @@ describe("withMessageContext", () => {
     Parameters<typeof withMessageContext>[0]["context"]
   >;
 
-  it("sends the context inline when the server supports it", () => {
-    expect(withMessageContext({ text: "hi", context, supportsInlineMessageContext: true })).toEqual(
-      { text: "hi", context },
-    );
-  });
-
-  it("folds the context into the text for older servers", () => {
-    const result = withMessageContext({ text: "hi", context, supportsInlineMessageContext: false });
-    expect(result.context).toBeUndefined();
-    expect(result.text).toContain("hi");
+  it("sends the context inline", () => {
+    expect(withMessageContext({ text: "hi", context })).toEqual({ text: "hi", context });
   });
 
   it("sends the text alone without context", () => {
-    expect(
-      withMessageContext({ text: "hi", context: undefined, supportsInlineMessageContext: false }),
-    ).toEqual({ text: "hi" });
+    expect(withMessageContext({ text: "hi", context: undefined })).toEqual({ text: "hi" });
   });
 });
 

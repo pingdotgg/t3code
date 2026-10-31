@@ -1,3 +1,4 @@
+import { normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -28,7 +29,7 @@ export const GH_PROCESS_CONCURRENCY = { key: "gh", limit: 4 } as const;
 const TOKEN_TTL = Duration.minutes(5);
 const MISSING_TTL = Duration.seconds(10);
 
-export const GitHubCredentialSource = Schema.Literals(["settings", "env", "gh"]);
+export const GitHubCredentialSource = Schema.Literals(["settings", "app", "env", "gh"]);
 export type GitHubCredentialSource = typeof GitHubCredentialSource.Type;
 
 export interface GitHubCredential {
@@ -88,13 +89,17 @@ export class GitHubCredentials extends Context.Service<
     readonly get: (
       host: string,
     ) => Effect.Effect<GitHubCredential, GitHubCredentialUnavailableError>;
+    /** The token saved in Settings for `host`, which outranks every other source. */
+    readonly saved: (
+      host: string,
+    ) => Effect.Effect<
+      Option.Option<GitHubCredential>,
+      GitHubHostDisabledError | GitHubNotSignedInError
+    >;
+    readonly fingerprint: (host: string, token: string) => Effect.Effect<string>;
     readonly invalidate: (host: string) => Effect.Effect<void>;
   }
 >()("@t3tools/source-control-github/server/GitHubCredentials") {}
-
-function normalizeHost(host: string): string {
-  return host.trim().toLowerCase();
-}
 
 const HOSTNAME =
   /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*(?::\d{1,5})?$/;
@@ -228,25 +233,31 @@ export const make = Effect.gen(function* () {
           : MISSING_TTL,
   });
 
+  const saved = Effect.fn("GitHubCredentials.saved")(function* (rawHost: string) {
+    const host = normalizeHost(rawHost);
+    if (!isGitHubHost(host)) return yield* new GitHubNotSignedInError({ host });
+    if ((yield* hostChoice(host))?.enabled === false) {
+      return yield* new GitHubHostDisabledError({ host });
+    }
+    const token = yield* savedToken(host);
+    if (token === null) return Option.none<GitHubCredential>();
+    return Option.some<GitHubCredential>({
+      host,
+      token: Redacted.make(token),
+      source: "settings",
+      fingerprint: yield* fingerprintOf(host, token),
+    });
+  });
+
   return GitHubCredentials.of({
     get: Effect.fn("GitHubCredentials.get")(function* (rawHost) {
       const host = normalizeHost(rawHost);
-      if (!isGitHubHost(host)) return yield* new GitHubNotSignedInError({ host });
-      const choice = yield* hostChoice(host);
-      if (choice?.enabled === false) {
-        return yield* new GitHubHostDisabledError({ host });
-      }
-      const saved = yield* savedToken(host);
-      if (saved !== null) {
-        return {
-          host,
-          token: Redacted.make(saved),
-          source: "settings",
-          fingerprint: yield* fingerprintOf(host, saved),
-        } satisfies GitHubCredential;
-      }
-      return yield* Cache.get(cache, cacheKey(host, choice?.account));
+      const fromSettings = yield* saved(host);
+      if (Option.isSome(fromSettings)) return fromSettings.value;
+      return yield* Cache.get(cache, cacheKey(host, (yield* hostChoice(host))?.account));
     }),
+    saved,
+    fingerprint: fingerprintOf,
     invalidate: Effect.fn("GitHubCredentials.invalidate")(function (rawHost) {
       const host = normalizeHost(rawHost);
       return hostChoice(host).pipe(

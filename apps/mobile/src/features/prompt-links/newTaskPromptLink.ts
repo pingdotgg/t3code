@@ -333,8 +333,7 @@ function cloneRepository(repository: PromptLinkRepository, request: LinkedDraftR
   }
   const prompt =
     request.pullRequest === null &&
-    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
-      .projectCloneTracking === true
+    appAtomRegistry.get(environmentServerConfigsAtom).has(environmentId)
       ? request.prompt
       : null;
   const name = promptLinkRepositoryName(repository);

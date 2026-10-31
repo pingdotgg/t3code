@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type ComponentProps } from "react";
+import { useRef, useState, type ComponentProps } from "react";
 import {
   useWindowDimensions,
   View,
@@ -45,12 +45,9 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
     FLOATING_TABS.bottom +
     FLOATING_TABS.edge +
     Math.max(floating.height, floating.fabOffset + fabSize);
-  const context = useMemo(
-    () => (floatingTabsEnabled && workspace ? { ...workspace, bottomClearance } : workspace),
-    [floatingTabsEnabled, workspace, bottomClearance],
-  );
+  const context = floatingTabsEnabled && workspace ? { ...workspace, bottomClearance } : workspace;
   const scrollState = useRef({ anchor: 0, expanded: true });
-  const onScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+  const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
     const next = updateFabScroll(
       scrollState.current,
@@ -59,7 +56,7 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
     );
     if (next.expanded !== scrollState.current.expanded) setExpanded(next.expanded);
     scrollState.current = next;
-  }, []);
+  };
 
   // Remount only the FAB when its font or pane changes to clear the cached expanded width.
   // Floating navigation shares this row; Material split views put New thread in the rail.
