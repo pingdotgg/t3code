@@ -2876,6 +2876,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ) => Effect.Effect<boolean, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
     readonly offer?: (
       message: SDKUserMessage,
+      onQueued?: () => void,
     ) => Effect.Effect<void, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
     readonly environment?: NodeJS.ProcessEnv;
     readonly subagentLaunchToolUseId?: string;
@@ -3007,12 +3008,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               processQueues.push(sdkMessages);
               return {
                 messages,
-                offer: (message) =>
+                offer: (message, onQueued) =>
                   Effect.sync(() => {
                     offeredMessages.push(message);
                   }).pipe(
                     Effect.andThen(changes.notify),
-                    Effect.andThen(options?.offer?.(message) ?? Effect.void),
+                    Effect.andThen(options?.offer?.(message, onQueued) ?? Effect.void),
                   ),
                 setModel: (model) =>
                   Effect.sync(() => {
@@ -5364,6 +5365,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const answers = new Map<string, Deferred.Deferred<void>>();
         const failOnce = new Set<string>();
         let rejectOffer = false;
+        let cancelOffer = false;
+        const accepted = yield* Deferred.make<void>();
         const harness = yield* makeWakeHarnessWithOptions({
           backgroundTasks: (id) =>
             Effect.gen(function* () {
@@ -5384,15 +5387,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               if (answer !== undefined) yield* Deferred.await(answer);
               return isRegistered;
             }),
-          offer: () =>
-            rejectOffer
-              ? Effect.fail(
-                  new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
-                    method: "offer",
-                    cause: new Error("Input rejected."),
-                  }),
+          offer: (_message, onQueued) =>
+            cancelOffer
+              ? Effect.sync(() => onQueued?.()).pipe(
+                  Effect.andThen(Deferred.succeed(accepted, undefined)),
+                  Effect.andThen(Effect.never),
                 )
-              : Effect.void,
+              : rejectOffer
+                ? Effect.fail(
+                    new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                      method: "offer",
+                      cause: new Error("Input rejected."),
+                    }),
+                  )
+                : Effect.void,
         });
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const attemptId = RunAttemptId.make("steer-command-cohorts");
@@ -5549,6 +5557,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           moves.filter((move) => move.id === "throws"),
           2,
         );
+        yield* command("cancelled");
+        registered.add("cancelled");
+        cancelOffer = true;
+        const cancelled = yield* steer("Skip the command despite cancelled logging.").pipe(
+          Effect.forkChild,
+        );
+        yield* Deferred.await(accepted);
+        yield* Fiber.interrupt(cancelled);
+        cancelOffer = false;
+        yield* through("cancelled");
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: uuid(), result: "", terminalReason: "aborted_tools" }),
+        );
+        yield* steer("Continue after the accepted steer.");
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

@@ -10954,7 +10954,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
             yield* backgroundForegroundSubagents(existing, backgroundDeadline);
             // Keep the successful offer and command eligibility ahead of SDK frames.
-            const running = yield* sdkMessageLock.withPermits(1)(
+            yield* sdkMessageLock.withPermits(1)(
               Effect.gen(function* () {
                 // The turn can end while the moves are answered or while this
                 // waits for the lock. A steer offered then would start a new
@@ -10969,42 +10969,38 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     detail: `Claude provider turn ${turnInput.providerTurnId} ended before the steer was sent.`,
                   });
                 }
+                let queued = false;
                 yield* Effect.uninterruptibleMask((restore) =>
                   restore(
                     existing.query.offer(userMessage, () => {
+                      queued = true;
                       pdfReservation.commit();
                     }),
                   ).pipe(
-                    Effect.tap(() =>
-                      Effect.sync(() => {
+                    // Queue acceptance survives cancellation during protocol logging.
+                    Effect.onExit((exit) =>
+                      Effect.gen(function* () {
+                        if (!queued && !Exit.isSuccess(exit)) return;
                         pdfReservation.commit();
-                      }),
-                    ),
-                    Effect.tap(() =>
-                      Ref.update(steeredTurns, (current) => {
-                        const next = new Set(current);
-                        next.add(turnInput.providerTurnId);
-                        return next;
-                      }),
-                    ),
-                    // Eligibility survives older abort results and overlapping steers.
-                    Effect.tap(() =>
-                      Effect.sync(() => {
+                        yield* Ref.update(steeredTurns, (current) => {
+                          const next = new Set(current);
+                          next.add(turnInput.providerTurnId);
+                          return next;
+                        });
                         for (const [toolUseId, state] of currentTurn.rootCommands) {
                           if (state === "foreground") {
                             currentTurn.rootCommands.set(toolUseId, "steered");
                           }
                         }
+                        for (const toolUseId of currentTurn.rootCommands.keys()) {
+                          yield* backgroundForSteer(currentTurn, existing.query, toolUseId);
+                        }
                       }),
                     ),
                   ),
                 );
-                return [...currentTurn.rootCommands.keys()];
               }),
             );
-            for (const toolUseId of running) {
-              yield* backgroundForSteer(currentTurn, existing.query, toolUseId);
-            }
           },
           (effect, turnInput) =>
             effect.pipe(
