@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import { autoUpdater } from "electron-updater";
+import type { NsisUpdater, VerifyUpdateCodeSignature } from "electron-updater";
 
 type AutoUpdater = typeof autoUpdater;
 
@@ -80,6 +81,59 @@ export class ElectronUpdater extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronUpdater") {}
 
+// Each timed-out check costs at least 20 s; five outlast the ~55 s first check seen behind on-access antivirus.
+const SIGNATURE_CHECK_ATTEMPTS = 5;
+
+const signatureChecksWithRetry = new WeakSet<VerifyUpdateCodeSignature>();
+
+const isTimedOut = (error: unknown) =>
+  typeof error === "object" && error !== null && "killed" in error && error.killed === true;
+
+const retrySignatureCheckOnTimeout = () => {
+  // Only the Windows NSIS updater has this hook; its PowerShell check is killed after 20 s.
+  const updater = autoUpdater as AutoUpdater &
+    Partial<Pick<NsisUpdater, "verifyUpdateCodeSignature">>;
+  const verify = updater.verifyUpdateCodeSignature;
+  if (verify === undefined || signatureChecksWithRetry.has(verify)) return;
+
+  const verifyDetectingSkip = async (publisherNames: Array<string>, path: string) => {
+    const logger = updater.logger;
+    let skipped = false;
+    updater.logger = {
+      info: (message) => logger?.info(message),
+      warn: (message) => {
+        // After a timeout, a failed capability probe makes electron-updater warn and resolve null unchecked.
+        skipped ||= String(message).includes("Ignoring signature validation");
+        logger?.warn(message);
+      },
+      error: (message) => logger?.error(message),
+      debug: (message) => logger?.debug?.(message),
+    };
+    try {
+      const result = await verify(publisherNames, path);
+      return { result, skipped };
+    } finally {
+      updater.logger = logger;
+    }
+  };
+
+  const verifyWithRetry: VerifyUpdateCodeSignature = async (publisherNames, path) => {
+    for (let attempt = 1; ; attempt++) {
+      const lastAttempt = attempt === SIGNATURE_CHECK_ATTEMPTS;
+      try {
+        if (attempt === 1) return await verify(publisherNames, path);
+        const { result, skipped } = await verifyDetectingSkip(publisherNames, path);
+        if (!skipped) return result;
+        if (lastAttempt) return "Signature validation was skipped after a timed-out check.";
+      } catch (error) {
+        if (!isTimedOut(error) || lastAttempt) throw error;
+      }
+    }
+  };
+  signatureChecksWithRetry.add(verifyWithRetry);
+  updater.verifyUpdateCodeSignature = verifyWithRetry;
+};
+
 /** @public */
 export const make = ElectronUpdater.of({
   setFeedURL: Effect.fn("ElectronUpdater.setFeedURL")(function (options) {
@@ -141,6 +195,7 @@ export const make = ElectronUpdater.of({
     }).pipe(Effect.asVoid);
   }),
   downloadUpdate: Effect.suspend(() => {
+    retrySignatureCheckOnTimeout();
     const channel = autoUpdater.channel;
     return Effect.tryPromise({
       try: () => autoUpdater.downloadUpdate(),
