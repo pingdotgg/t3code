@@ -102,17 +102,16 @@ describe("chat canvas layout", () => {
     });
     expect(result.frame).toEqual({ x: 1260, y: 351, width: 240, height: 365 });
     expect(result.overlapsDetailsCard).toBe(false);
-    expect(result.chat).toEqual({ left: 330, width: 736, insetStart: 0, insetEnd: 188 });
+    expect(result.chat).toEqual({ left: 424, width: 736, insetStart: 0, insetEnd: 0 });
   });
-  it("centers the chat beside a details card it would crowd", () => {
+  it("moves the chat left only as far as a details card it would crowd requires", () => {
     const { chat } = resolveChatCanvasLayout({
       container: { width: 1344, height: 988 },
       maxChatWidth: 736,
       detailsCard: { left: 1052, right: 1332, bottom: 339 },
       preview: null,
     });
-    // Equal space on both sides of the chat.
-    expect(chat).toMatchObject({ left: (1052 - 736) / 2, width: 736 });
+    expect(chat).toMatchObject({ left: 1052 - 32 - 736, width: 736 });
   });
   it("keeps the chat canvas-centered when it clears the details card", () => {
     const result = resolveChatCanvasLayout({
@@ -255,7 +254,7 @@ describe("chat canvas layout", () => {
       const compact = layout(460);
       expect(compact.frame!.x + compact.frame!.width).toBe(1572);
       expect(compact.frame!.width).toBe(460);
-      expect(compact.chat.left).toBe(330);
+      expect(compact.chat.left).toBe(364);
       expect(compact.overlapsDetailsCard).toBe(true);
       expect(density(compact)).toBe("compact");
       expectClear(compact);
@@ -295,6 +294,9 @@ describe("workspace card beside chat", () => {
       detailsCard: { left: width - 292, right: width - 12, bottom: 400 },
       preview: player,
     });
+  it("keeps chat centered while the card fits beside it", () => {
+    expect(withCard(1500).chat).toEqual({ left: 382, width: 736, insetStart: 0, insetEnd: 0 });
+  });
   it("narrows chat only after it reaches the left padding", () => {
     expect(withCard(1108).chat).toMatchObject({ left: 48, width: 736 });
     expect(withCard(1028).chat).toEqual({ left: 48, width: 656, insetStart: 0, insetEnd: 276 });
