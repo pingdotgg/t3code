@@ -339,7 +339,11 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
             <DialogPanel>
               <div className="flex flex-col gap-1.5">
                 <Label render={<span />}>Provider</Label>
-                <div className="grid grid-cols-3 gap-1.5" role="group" aria-label="Provider">
+                <div
+                  className="grid grid-cols-3 gap-1.5 min-[480px]:grid-cols-6"
+                  role="group"
+                  aria-label="Provider"
+                >
                   {offeredProviderOptions.map((option) => (
                     <PublishProviderTile
                       key={option.value}
