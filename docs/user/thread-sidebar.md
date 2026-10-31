@@ -134,8 +134,8 @@ Threads that are working or waiting on work they will resume from move into a co
 **Working** section below the active list.
 That includes subagents, watched pull requests, and background commands or monitors the agent
 says it is waiting on. A dev server or other process an agent leaves running does not keep a thread
-there. A thread returns to the top of the active list when it finishes, fails, or needs an approval or
-answer. The Working section lists the thread you last sent work to first. Pinned threads stay in
+there. A thread returns to the top of the active list, or the bottom with Oldest first, when it
+finishes, fails, or needs an approval or answer. The Working section lists the thread you last sent work to first. Pinned threads stay in
 the pinned section.
 
 This is on by default. Turn it off with **Settings → General → Working section** on web and desktop,
@@ -144,6 +144,10 @@ choice.
 
 While this is on, the active list is ordered by when each thread last came back to you, so you
 cannot drag or move threads within it. Your saved order returns when you turn it off.
+
+To work through the active list as a queue, turn on **Settings → General → Oldest first**. The
+thread that has waited longest stays at the top, and threads that come back later join at the
+bottom. Each device keeps its own choice.
 
 ### Group threads by project (beta)
 
