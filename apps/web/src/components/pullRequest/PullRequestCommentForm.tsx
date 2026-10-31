@@ -16,6 +16,7 @@ import {
 } from "./PullRequestMarkdownTextarea";
 import { pullRequestReviewKey } from "./pullRequestReviewStore";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
+import { PullRequestSubmitKeyHint } from "./PullRequestSubmitKeyHint";
 
 export function PullRequestCommentForm({
   environmentId,
@@ -177,12 +178,12 @@ export function PullRequestCommentForm({
         )}
         <Button
           size="xs"
-          variant="secondary"
           disabled={submitDisabled}
           onClick={() => submitAfterDictation("comment")}
         >
           <SendIcon className="size-3.5" />
           {submitting === "comment" ? "Posting..." : "Comment"}
+          <PullRequestSubmitKeyHint />
         </Button>
       </div>
     </div>
