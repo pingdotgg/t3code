@@ -92,6 +92,8 @@ const contentButtonVariants = cva("outline-none", {
     variant: {
       transport:
         "flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-row text-white hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/70",
+      "panel-row":
+        "flex h-8.5 w-full cursor-pointer items-center gap-2 px-3 text-left text-meta hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
       "selection-card":
         "cursor-pointer overflow-hidden rounded-card border border-transparent text-left transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-pressed:bg-settings-effective-fill not-aria-pressed:surface-card-settings-rim not-aria-pressed:hover:surface-ghost-hover aria-pressed:shadow-[inset_0_0_0_1px_var(--settings-active-rim)]",
       "drag-chip":

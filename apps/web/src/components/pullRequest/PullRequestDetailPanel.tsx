@@ -1481,8 +1481,7 @@ export function PullRequestDetailPanel({
               <span className="shrink-0">
                 <RelativeTime timestamp={detail.updatedAt} />
               </span>
-              <span aria-hidden className="h-3 w-px bg-border/70" />
-              <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-caption text-dim-foreground">
+              <span className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1.5 font-mono text-caption text-dim-foreground">
                 <PullRequestBaseBranch
                   compact
                   baseBranch={detail.baseBranch}

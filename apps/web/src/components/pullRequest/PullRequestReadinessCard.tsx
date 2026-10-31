@@ -20,7 +20,7 @@ import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
 import { RelativeTime } from "~/components/RelativeTime";
 
-import { Button } from "../ui/button";
+import { Button, ContentButton } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Group } from "../ui/group";
 import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -78,7 +78,7 @@ function ReadinessRow({
   const [open, setOpen] = useState(false);
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger render={<Button variant="ghost" size="sm" className="w-full" />}>
+      <CollapsibleTrigger render={<ContentButton variant="panel-row" />}>
         <span className="flex min-w-0 flex-1 items-center gap-2 text-meta">
           {icon}
           <span className="min-w-0 flex-1 truncate text-left text-foreground">{label}</span>
@@ -273,8 +273,8 @@ export function PullRequestReadinessCard({
   const conflictsMeta = commitCount;
 
   return (
-    <div className="surface-panel min-w-0 overflow-hidden rounded-xl p-1.5">
-      <div className="space-y-1">
+    <div className="surface-panel min-w-0 overflow-hidden rounded-xl">
+      <div>
         {/* A finished pull request leads with how it ended; the rows below are its record. */}
         {open ? null : (
           <div className="flex min-h-8 min-w-0 items-center gap-2 px-2 text-meta">
@@ -516,10 +516,10 @@ export function PullRequestReadinessCard({
         ) : null}
       </div>
       {primary ? (
-        <div className="px-2 pt-3 pb-2">
-          <div className="inline-flex min-w-0 items-stretch">
+        <div className="border-t border-border bg-foreground/[0.02] px-3 py-2.5">
+          <div className="flex min-w-0 items-stretch">
             {primaryMenu ? (
-              <Group>
+              <Group className="w-full">
                 {primary}
                 <Menu>
                   <MenuTrigger
