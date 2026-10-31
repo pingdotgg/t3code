@@ -88,15 +88,7 @@ function PopoverSurface(props: { readonly children: React.ReactNode; readonly st
     ...props.style,
   };
 
-  return (
-    <GlassSurface
-      glassEffectStyle="clear"
-      tintColorClassName="accent-glass-surface"
-      style={baseStyle}
-    >
-      {props.children}
-    </GlassSurface>
-  );
+  return <GlassSurface style={baseStyle}>{props.children}</GlassSurface>;
 }
 
 const SKILL_SOURCE_SYMBOL_BY_KIND: Record<ProviderSkillSourceKind, AppSymbolName> = {
