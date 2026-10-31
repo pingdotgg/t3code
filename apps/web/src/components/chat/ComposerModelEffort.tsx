@@ -263,7 +263,7 @@ function EffortLevels(props: { traits: TraitsSelectionInput }) {
             <ColumnRow
               key={String(value)}
               label={value ? "On" : "Off"}
-              selected={(control.descriptor.currentValue === true) === value}
+              selected={traits.booleanValue(control.descriptor) === value}
               level={isEffort}
               onPick={() => traits.changeBoolean(descriptor.id, value)}
             />
@@ -412,7 +412,7 @@ function SpeedControl(props: { traits: TraitsSelectionInput }) {
           ? ([false, true] as const).map((value) => (
               <SpeedSegment
                 key={String(value)}
-                checked={(fastToggle.currentValue === true) === value}
+                checked={traits.booleanValue(fastToggle) === value}
                 label={value ? "Fast" : "Standard"}
                 onPick={() => traits.changeBoolean(fastToggle.id, value)}
               />

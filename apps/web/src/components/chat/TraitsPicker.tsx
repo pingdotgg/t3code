@@ -18,6 +18,7 @@ import {
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionCurrentLabel,
+  getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
@@ -347,6 +348,8 @@ export function useTraitsSelection({
       selected.ultrathinkPromptControlled && descriptor.id === selected.primarySelectDescriptor?.id
         ? "ultrathink"
         : (getDescriptorStringValue(descriptor, modelSelection, reportedModelSelection) ?? ""),
+    booleanValue: (descriptor: Extract<ProviderOptionDescriptor, { type: "boolean" }>) =>
+      getProviderOptionCurrentValue(descriptor, modelSelection, reportedModelSelection) === true,
     currentLabel: (descriptor: ProviderOptionDescriptor) =>
       getProviderOptionCurrentLabel(descriptor, modelSelection, reportedModelSelection),
     changeSelect: (
@@ -463,7 +466,7 @@ const TraitsMenuContent = memo(function TraitsMenuContentImpl(props: TraitsSelec
               {descriptor.label}
             </div>
             <MenuRadioGroup
-              value={descriptor.currentValue === true ? "on" : "off"}
+              value={traits.booleanValue(descriptor) ? "on" : "off"}
               onValueChange={(value) => traits.changeBoolean(descriptor.id, value === "on")}
             >
               {(["on", "off"] as const).map((value) => (
