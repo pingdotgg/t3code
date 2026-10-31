@@ -430,6 +430,7 @@ describe("orchestration v2 provider switching", () => {
     "screenshot-reported-capacity-native",
     "screenshot-option-change-retry-native",
     "screenshot-exhausted-target-native",
+    "screenshot-exhausted-target-reused-native",
     "screenshot-exhausted-target-fallback",
     "screenshot-exhausted-target-estimate-native",
     "screenshot-exhausted-target-oversized-native",
@@ -441,6 +442,7 @@ describe("orchestration v2 provider switching", () => {
     "prior-images-telemetry-native",
     "prior-images-unsent-native",
     "prior-images-legacy-replacement-native",
+    "prior-images-replacement-reused-native",
     "delivery-write-failure",
   ] as const)("preserves handoffs through %s", (scenario) =>
     Effect.scoped(
@@ -459,6 +461,7 @@ describe("orchestration v2 provider switching", () => {
         const priorImages = scenario.includes("prior-images");
         const exhaustedTarget = scenario.includes("exhausted-target");
         const replaceNative = scenario.includes("replacement");
+        const reuseNative = scenario.includes("-reused-");
         const capacityScenario = modelScenario || scenario.includes("reported-capacity");
         const returning =
           scenario === "large-current-input" ||
@@ -494,8 +497,10 @@ describe("orchestration v2 provider switching", () => {
               : {},
             capturedTurns,
             ...(scenario.includes("retry") || scenario.includes("unsent") ? { failStartOnce } : {}),
-            ...(replaceNative ? { failResumeOnce, nativeThreadGeneration: generation } : {}),
-            ...(exhaustedTarget ? { nativeThreadGeneration: generation } : {}),
+            ...(replaceNative ? { failResumeOnce } : {}),
+            ...((replaceNative || exhaustedTarget) && !reuseNative
+              ? { nativeThreadGeneration: generation }
+              : {}),
             ...(scenario.includes("target-background") || scenario.includes("target-subagent")
               ? {
                   pendingBackgroundWork,
@@ -765,6 +770,27 @@ describe("orchestration v2 provider switching", () => {
             yield* Ref.set(pendingBackgroundWork, true);
           yield* dispatch(targetOrdinal, current, targetSelection);
           yield* wait(targetOrdinal);
+          if (reuseNative) {
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(projection.runs.at(-1)?.status, "failed");
+            const turns = (yield* Ref.get(capturedTurns)).filter(
+              (turn) => turn.driver === CLAUDE_DRIVER,
+            );
+            assert.lengthOf(turns, 1);
+            const target = projection.providerThreads.find(
+              (thread) => thread.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
+            )!;
+            assert.equal(target.nativeThreadRef?.nativeId, turns[0]!.nativeThreadId);
+            assert.isFalse(
+              projection.contextHandoffs.some(
+                (handoff) =>
+                  handoff.targetRunId === projection.runs.at(-1)?.id &&
+                  handoff.strategy === "full_thread_summary" &&
+                  handoff.fromProviderThreadIds.includes(target.id),
+              ),
+            );
+            return;
+          }
           if (scenario.includes("retry")) {
             const failed = yield* orchestrator.getThreadProjection(threadId);
             assert.equal(failed.runs.at(-1)?.status, "failed");

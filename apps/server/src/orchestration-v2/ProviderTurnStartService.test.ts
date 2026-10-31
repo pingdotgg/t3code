@@ -1473,6 +1473,7 @@ effectIt.effect("reads current startup state after waiting for the workspace lea
 effectIt.effect.each([
   { boundary: "policy resolution", loss: "replaced" },
   { boundary: "session opening", loss: "interrupted" },
+  { boundary: "native replacement", loss: "interrupted" },
 ])("does not continue startup when $loss during $boundary", ({ boundary, loss }) =>
   Effect.gen(function* () {
     const entered = yield* Deferred.make<void>();
@@ -1480,9 +1481,38 @@ effectIt.effect.each([
     const gate = Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)));
     const harness = makeLocalCommandHarness({ text: "Continue" });
     const projection = harness.projection();
-    const providerThread = projection.providerThreads[0]!;
-    const ensureThread = vi.fn(() => Effect.succeed(providerThread));
-    const resumeThread = vi.fn(() => Effect.succeed(providerThread));
+    const replacing = boundary === "native replacement";
+    const providerThread = replacing
+      ? {
+          ...projection.providerThreads[0]!,
+          nativeThreadRef: {
+            driver: projection.providerThreads[0]!.driver,
+            nativeId: "old",
+            strength: "strong" as const,
+          },
+        }
+      : projection.providerThreads[0]!;
+    if (replacing) harness.setProjection({ ...projection, providerThreads: [providerThread] });
+    const ensureThread = vi.fn(() =>
+      replacing
+        ? gate.pipe(
+            Effect.as({
+              ...providerThread,
+              nativeThreadRef: { ...providerThread.nativeThreadRef!, nativeId: "fresh" },
+            }),
+          )
+        : Effect.succeed(providerThread),
+    );
+    const resumeThread = vi.fn(() =>
+      replacing
+        ? Effect.fail(
+            new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: providerThread.driver,
+              detail: "resume failed",
+            }),
+          )
+        : Effect.succeed(providerThread),
+    );
     const forkThread = vi.fn(() => Effect.succeed(providerThread));
     harness.open.mockReturnValue(
       (boundary === "session opening" ? gate : Effect.void).pipe(
@@ -1520,9 +1550,9 @@ effectIt.effect.each([
     yield* Deferred.succeed(release, undefined);
     yield* Fiber.join(startup);
 
-    expect(harness.open).toHaveBeenCalledTimes(boundary === "session opening" ? 1 : 0);
-    expect(ensureThread).not.toHaveBeenCalled();
-    expect(resumeThread).not.toHaveBeenCalled();
+    expect(harness.open).toHaveBeenCalledTimes(boundary === "session opening" || replacing ? 1 : 0);
+    expect(ensureThread).toHaveBeenCalledTimes(replacing ? 1 : 0);
+    expect(resumeThread).toHaveBeenCalledTimes(replacing ? 1 : 0);
     expect(forkThread).not.toHaveBeenCalled();
     expect(harness.startRootRun).not.toHaveBeenCalled();
     expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();

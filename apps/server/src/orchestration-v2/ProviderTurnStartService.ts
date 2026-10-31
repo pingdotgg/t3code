@@ -1322,10 +1322,27 @@ export const layer: Layer.Layer<
           }),
         );
         if (replacement === undefined) return undefined;
+        if (!(yield* isCurrentAttemptInStatus("starting"))) return undefined;
+        if (
+          replacement.nativeThreadRef?.nativeId == null ||
+          replacement.nativeThreadRef.nativeId === providerThread.nativeThreadRef?.nativeId
+        ) {
+          yield* settleStartFailure({
+            signal: "provider-thread-load-failure",
+            title: "Provider turn failed to start",
+            error: new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: session.driver,
+              detail: "Provider did not create a fresh native thread for the context handoff",
+            }),
+          });
+          return undefined;
+        }
         const { handoff, transferId, createdAt } = yield* recoveryHandoff;
-        effectiveHandoffs = withRecoveryHandoff(handoff);
-        resumeFellBack = true;
-        yield* eventSink.write({
+        const replacementWrite = yield* eventSink.writeIfRunCurrent({
+          threadId: projection.thread.id,
+          runId: run.id,
+          activeAttemptId: attempt.id,
+          expectedStatus: "starting",
           events: [
             {
               id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
@@ -1364,6 +1381,9 @@ export const layer: Layer.Layer<
             },
           ],
         });
+        if (!replacementWrite.committed) return undefined;
+        effectiveHandoffs = withRecoveryHandoff(handoff);
+        resumeFellBack = true;
         return replacement;
       });
       if (loadedProviderThread === undefined) return;

@@ -399,6 +399,15 @@ describe("handoff budget", () => {
 });
 
 describe("handoff delivery", () => {
+  it.effect("does not evaluate the budget when no handoff needs delivery", () =>
+    deliverContextHandoffs({
+      handoffs: [],
+      providerThread,
+      budget: Effect.die("settled handoffs need no budget"),
+      alreadyDeliveredItemIds: new Set(),
+      persist: () => Effect.void,
+    }).pipe(Effect.asVoid),
+  );
   it.effect.each([
     { native: true, label: "injected" },
     { native: false, label: "inline" },
