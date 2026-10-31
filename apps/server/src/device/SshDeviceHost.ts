@@ -22,6 +22,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ServerConfig from "../config.ts";
+import { releaseAgentDeviceSession } from "./AgentDeviceTarget.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
 import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
@@ -262,8 +263,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
             ...identityArgs(config),
             "-o",
             "ExitOnForwardFailure=yes",
-            // A multiplexed client hands its -L forwards to the control master and exits,
-            // so the tunnel must own its own connection.
+            // Multiplexed clients exit after handing forwards to the master; own this connection.
             "-o",
             "ControlMaster=no",
             "-o",
@@ -352,7 +352,9 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       }).pipe(Effect.provideService(HttpClient.HttpClient, http));
     }
     if (next.agentDevice) yield* onReady({ ...next, agentDevice: next.agentDevice });
-    ready = next;
+    ready = next.agentDevice
+      ? { ...next, releaseAgentSession: releaseAgentDeviceSession(http, next.agentDevice) }
+      : next;
     yield* onStatus("ready");
     // Reconnect also repairs helpers that died while SSH itself stayed connected.
     const unhealthy = Effect.gen(function* () {

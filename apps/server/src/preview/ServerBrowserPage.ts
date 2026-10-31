@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off - Playwright callbacks run outside the Effect runtime.
 
 import {
+  type BrowserRecordingFrameRate,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   type PreviewAutomationClickInput,
   type PreviewAutomationConsoleEntry,
@@ -39,7 +40,10 @@ export class ServerBrowserOperationError extends Error {
   }
 }
 
-export const toOperationError = (cause: unknown): ServerBrowserOperationError => {
+export const toOperationError = (
+  cause: unknown,
+  timeoutMs?: number,
+): ServerBrowserOperationError => {
   if (cause instanceof BrowserControlInterrupted)
     return new ServerBrowserOperationError(
       "PreviewAutomationControlInterruptedError",
@@ -50,7 +54,11 @@ export const toOperationError = (cause: unknown): ServerBrowserOperationError =>
   const message = cause instanceof Error ? cause.message : String(cause);
   const firstLine = message.split("\n")[0] ?? message;
   if (cause instanceof Error && cause.name === "TimeoutError") {
-    return new ServerBrowserOperationError("PreviewAutomationTimeoutError", firstLine);
+    return new ServerBrowserOperationError(
+      "PreviewAutomationTimeoutError",
+      firstLine,
+      timeoutMs === undefined ? undefined : { timeoutMs },
+    );
   }
   if (
     /while parsing selector|Unknown engine|Unexpected token|strict mode violation/i.test(message)
@@ -97,7 +105,6 @@ const targetLocator = (
 ): Locator | null => {
   const selector = input.locator ?? input.selector;
   if (selector === undefined) return null;
-  // Ignore quoted/escaped CSS values when looking for a selector-engine boundary.
   const engines = selector.replace(
     /\\.|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g,
     " ",
@@ -167,7 +174,6 @@ export const withoutDataPayload = (url: string) => {
         : ({ t: "\t", n: "\n", r: "\r", '"': '"', "\\": "\\" }[code] ?? "\u0001"),
     )
     .replace(/[\t\n\r]/g, "")
-    // eslint-disable-next-line no-control-regex -- URL parsing ignores these controls.
     .replace(/^[\u0000-\u0020]+/, "");
   const parsed = /^data:([^,;]*)/i.exec(value);
   if (!parsed) return url;
@@ -199,11 +205,9 @@ const withoutTreeDataPayloads = (tree: string) =>
 
 // The broker waits 15s for the host; a snapshot, retry included, answers well before.
 const SNAPSHOT_TIMEOUT_MS = 10_000;
-// How long a frame in another process gets to answer; one that crashed never does.
 const FRAME_ANSWER_MS = 1_000;
 
-// Values the page draws as dots (password fields, and text fields whose CSS
-// draws dots), normalized like accessible text. Open shadow roots included.
+// Include password and CSS-masked text in open shadow roots, normalized like accessible text.
 const DOTTED_SCRIPT = `(() => {
   const values = [];
   const visit = (root) => {
@@ -236,10 +240,10 @@ const tooBusy = () =>
 
 const VALUE_TOO_LONG = "A password field holds a value too long to hide, so no snapshot was taken.";
 
-/** A frame in another process keeps one CDP session, so none pile up across snapshots. */
+/** Reuse one CDP session per out-of-process frame across snapshots. */
 const frameSessions = new WeakMap<Frame, Promise<CDPSession>>();
 
-/** The value, or undefined when it fails or takes longer than a frame may. */
+/** Returns undefined on failure or frame timeout. */
 const answered = <A>(promise: Promise<A>) => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<undefined>((resolve) => {
@@ -248,14 +252,7 @@ const answered = <A>(promise: Promise<A>) => {
   return Promise.race([promise.catch(() => undefined), late]).finally(() => clearTimeout(timer));
 };
 
-/**
- * Reads dotted values in isolated worlds, where page script can't change what `value`
- * returns, through the CDP session of the process each frame renders in. A frame in
- * another process that can't be attached, as in desktop tabs where only the page can,
- * is read in the page's own world, where its script can change `value`. `read` gives
- * each reader's values, or undefined for one that didn't answer, and fails when the
- * page's own frames don't or frames came or went.
- */
+/** Isolated worlds prevent spoofing; desktop out-of-process frames use page worlds. Missing own-frame reads or changed frames fail; other missing reads return undefined. */
 const openReaders = async (page: Page, cdp: CDPSession) => {
   const frames = page.frames();
   const owners = new Map<Frame, CDPSession | null | undefined>(
@@ -268,8 +265,7 @@ const openReaders = async (page: Page, cdp: CDPSession) => {
           return [frame, await session] as const;
         } catch (cause) {
           frameSessions.delete(frame);
-          // CdpRelay refuses all but the page. Any other refusal reads the frame through its
-          // parent's session, which fails the read if the frame isn't there.
+          // CdpRelay supports only the page; other refusals fall back to the parent session, failing if the frame is absent.
           const desktop = String(cause).includes("Only this preview tab's page can be attached");
           return [frame, desktop ? null : undefined] as const;
         }
@@ -341,10 +337,8 @@ const openReaders = async (page: Page, cdp: CDPSession) => {
   ];
   return {
     readers,
-    /** Readers that didn't answer `before` aren't asked again. */
     read: async (before?: ReadonlyArray<unknown>) => {
       const now = page.frames();
-      // A frame added since the readers opened has none.
       if (now.length !== frames.length || now.some((frame, i) => frame !== frames[i])) {
         throw pageChanged();
       }
@@ -358,12 +352,7 @@ const openReaders = async (page: Page, cdp: CDPSession) => {
   };
 };
 
-/**
- * Matches each value as the snapshot prints it: raw, as a JSON name, as a
- * quoted value, and with '' for each quote inside a quoted key. A value under
- * four characters only matches between non-word characters; inside other words
- * it would mask unrelated text.
- */
+/** Short values need word boundaries to avoid masking unrelated text. */
 const dottedPattern = (values: ReadonlyArray<string>) => {
   const sources = values
     .flatMap((value) => {
@@ -386,8 +375,7 @@ const dottedPattern = (values: ReadonlyArray<string>) => {
   if (sources.length === 0) return undefined;
   const pattern = new RegExp(sources.join("|"), "gu");
   try {
-    // Compiles it now, for one-byte and two-byte text: one too large fails only when it
-    // first runs on each, naming every value.
+    // Force regex compilation for one-byte and two-byte strings now; size errors name every value.
     pattern.test("");
     pattern.test("\u2022");
   } catch {
@@ -396,16 +384,11 @@ const dottedPattern = (values: ReadonlyArray<string>) => {
   return pattern;
 };
 
-// `- role "name" [attribute]...: value`, the key single-quoted when it holds ": ". A name
-// that starts and ends with "/" prints unquoted. Only Playwright's own attributes count, so
-// text around a value in a name can't pass for one.
+// Playwright single-quotes keys containing ': ' and leaves /.../ names unquoted. Recognize only its attributes so name text cannot spoof them.
 const TREE_LINE =
   /^(\s*- '?[^\s"':]+)( "(?:[^"\\]|\\.)*"| \/(?:.*?\/)?)?((?: \[(?:active|checked(?:=mixed)?|disabled|expanded|level=\d+|pressed(?:=mixed)?|selected|ref=(?:f\d+)?e\d+|cursor=pointer|box=-?\d+,-?\d+,\d+,\d+)\])*'?)(:.*)?$/;
 
-/**
- * Masks each value on a line, except one that only matches inside the role or attributes,
- * so refs keep working. A "/.../" name has no closing mark, so a value can seem to cross it.
- */
+/** Preserve roles and attributes so refs work; unquoted /.../ names can make matches cross boundaries. */
 const maskTree = (tree: string, dotted: RegExp) =>
   tree
     .split("\n")
@@ -426,8 +409,6 @@ const pngSize = (base64: string) => {
   const header = Buffer.from(base64.slice(0, 32), "base64");
   return { width: header.readUInt32BE(16), height: header.readUInt32BE(20) };
 };
-
-type Viewport = { readonly width: number; readonly height: number };
 
 /**
  * A page's display ratio and CSS viewport, read in an isolated world since page script can
@@ -455,13 +436,7 @@ const readPageMetrics = async (cdp: CDPSession) => {
         readonly width: number;
         readonly height: number;
       };
-      return {
-        ratio,
-        width,
-        height,
-        zoom,
-        offset: { x: cssVisualViewport.pageX * zoom, y: cssVisualViewport.pageY * zoom },
-      };
+      return { ratio, width, height, zoom };
     }
   }
   throw new Error(
@@ -469,39 +444,54 @@ const readPageMetrics = async (cdp: CDPSession) => {
   );
 };
 
-// Scaled captures repaint live screencasts, so callers pause them. Clips use document offsets.
+// Never pass a clip scale: Chromium mirrors the top-left of the page into a `backdrop-filter`
+// in any capture it shrinks.
 export const captureViewport = async (
-  page: Page,
   cdp: CDPSession,
-  options: {
-    readonly format: "png" | "jpeg";
-    readonly quality?: number;
-    readonly scale: number;
-    readonly viewport?: Viewport;
-    readonly offset?: { readonly x: number; readonly y: number } | undefined;
-  },
+  options: { readonly format: "png" | "jpeg"; readonly quality?: number },
 ) => {
-  let clip;
-  if (options.scale < 1) {
-    const viewport = options.viewport ?? page.viewportSize() ?? { width: 1280, height: 800 };
-    let offset = options.offset;
-    if (!offset) {
-      const { cssVisualViewport } = await cdp.send("Page.getLayoutMetrics");
-      const zoom = cssVisualViewport.zoom ?? 1;
-      offset = { x: cssVisualViewport.pageX * zoom, y: cssVisualViewport.pageY * zoom };
-    }
-    clip = {
-      ...offset,
-      ...viewport,
-      scale: options.scale,
-    };
-  }
   const { data } = await cdp.send("Page.captureScreenshot", {
     format: options.format,
     ...(options.quality === undefined ? {} : { quality: options.quality }),
-    ...(clip ? { clip } : {}),
   });
   return data;
+};
+
+/** Runs in the page's own isolated world, as the server has no image library. */
+const SHRINK_PNG = `async function (png, width, height) {
+  const bytes = Uint8Array.from(atob(png), (char) => char.charCodeAt(0));
+  const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+  // Namespaced, as an XML document's createElement makes a plain element with no getContext.
+  const canvas = document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  context.imageSmoothingQuality = "high";
+  context.drawImage(bitmap, 0, 0, width, height);
+  bitmap.close();
+  return canvas.toDataURL("image/png").slice("data:image/png;base64,".length);
+}`;
+
+const shrinkPng = async (cdp: CDPSession, png: string, scale: number) => {
+  const size = pngSize(png);
+  const { frameTree } = await cdp.send("Page.getFrameTree");
+  const { executionContextId } = await cdp.send("Page.createIsolatedWorld", {
+    frameId: frameTree.frame.id,
+    worldName: "t3-preview-screenshot",
+  });
+  const { result, exceptionDetails } = await cdp.send("Runtime.callFunctionOn", {
+    functionDeclaration: SHRINK_PNG,
+    executionContextId,
+    arguments: [
+      { value: png },
+      { value: Math.round(size.width * scale) },
+      { value: Math.round(size.height * scale) },
+    ],
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  if (exceptionDetails) throw new Error("The snapshot could not shrink its screenshot.");
+  return result.value as string;
 };
 
 type SnapshotInput = {
@@ -514,17 +504,16 @@ type SnapshotInput = {
   readonly actionTimeline: PreviewAutomationSnapshot["actionTimeline"];
 };
 
-/** The scale a page renders at and its viewport in device-independent pixels, a clip's units. */
+/** The scale a page renders at and its viewport in device-independent pixels. */
 const renderingOf = async (input: SnapshotInput) => {
   if (input.renderScale !== "display") {
     const viewport = input.page.viewportSize() ?? { width: 1280, height: 800 };
-    return { renderScale: input.renderScale, viewport, offset: undefined };
+    return { renderScale: input.renderScale, viewport };
   }
   // The display ratio a desktop page reports includes its page zoom, and its sizes are CSS pixels.
   const page = await readPageMetrics(input.cdp);
   return {
     renderScale: page.ratio / page.zoom,
-    offset: page.offset,
     viewport: {
       width: Math.round(page.width * page.zoom),
       height: Math.round(page.height * page.zoom),
@@ -536,7 +525,7 @@ const capture = async (
   input: SnapshotInput,
   deadline: number,
 ): Promise<PreviewAutomationSnapshot> => {
-  const { renderScale, viewport, offset } = await renderingOf(input);
+  const { renderScale, viewport } = await renderingOf(input);
   // A late metrics reply must not begin a capture after viewers have resumed.
   if (Date.now() >= deadline) throw tooBusy();
   const scale = Math.min(1, MAX_SCREENSHOT_WIDTH / (viewport.width * renderScale));
@@ -545,8 +534,7 @@ const capture = async (
   const generation = state.generation;
   const { readers, read } = await openReaders(input.page, input.cdp);
   const before = await read();
-  // Taken between the reads, so a value that changes during either fails the comparison.
-  // Awaited after the tree: a capture that fails has finished its tree before a retry starts.
+  // Bracket the tree with value reads to detect changes; await tree completion before retrying failed captures.
   const pageAndScreenshot = Promise.all([
     input.page.evaluate(SNAPSHOT_SCRIPT) as Promise<
       Pick<
@@ -554,7 +542,9 @@ const capture = async (
         "url" | "title" | "loading" | "visibleText" | "interactiveElements"
       >
     >,
-    captureViewport(input.page, input.cdp, { format: "png", scale, viewport, offset }),
+    captureViewport(input.cdp, { format: "png" }).then((png) =>
+      scale < 1 ? shrinkPng(input.cdp, png, scale) : png,
+    ),
   ]);
   void pageAndScreenshot.catch(constVoid);
   // Leaves time for the second read; a frame that never loads holds the tree until then.
@@ -568,8 +558,7 @@ const capture = async (
   if (after.some((values, i) => values && JSON.stringify(values) !== JSON.stringify(before[i])))
     throw pageChanged();
   const dotted = dottedPattern(after.flatMap((values) => values ?? []));
-  // A frame that didn't answer both times, such as one that crashed, can only hold values the
-  // tree shows if the tree shows its content.
+  // Unread frames can expose values only if their content appears in the tree.
   const unread = readers.flatMap((reader, i) => (after[i] ? [] : reader.frames));
   const filled = /^\s*- iframe (?:\[active\] )?\[ref=(\S+?)\].*:$/gm;
   for (const [, ref] of unread.length ? tree.matchAll(filled) : []) {
@@ -594,8 +583,7 @@ const capture = async (
     });
   return {
     ...page,
-    // Text that holds a value would otherwise show where the tree masked it. Masked before
-    // the cut, so a value crossing it can't leave its start showing.
+    // Mask text before truncating so a value crossing the cut cannot leak its prefix.
     visibleText: mask(page.visibleText).slice(0, MAX_VISIBLE_TEXT_LENGTH),
     accessibilityTree,
     consoleEntries: [...input.consoleEntries],
@@ -620,9 +608,7 @@ export const snapshot = async (input: SnapshotInput): Promise<PreviewAutomationS
   });
   const turn = (snapshotTurns.get(input.page) ?? 0) + 1;
   snapshotTurns.set(input.page, turn);
-  // A page that changed mid-capture, like one rotating ads, has usually settled by a second
-  // try. None starts late or after another snapshot began, since it would revoke the refs of
-  // whichever snapshot came next.
+  // Retry only before the deadline and the next snapshot, whose refs a later retry would revoke.
   const captured = capture(input, deadline).catch((cause: unknown) =>
     Date.now() < deadline &&
     snapshotTurns.get(input.page) === turn &&
@@ -639,10 +625,7 @@ export const snapshot = async (input: SnapshotInput): Promise<PreviewAutomationS
   }
 };
 
-/**
- * A click whose handler opens a dialog does not finish until the dialog is
- * resolved, so it returns as soon as the dialog opens; status then reports it.
- */
+/** Return when a dialog opens; waiting for the action to finish would block until dialog resolution. */
 export const click = async (
   page: Page,
   input: PreviewAutomationClickInput,
@@ -683,9 +666,7 @@ export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
     (locator !== null || (await target.count()) > 0) &&
     (await target.evaluate(
       (element) => {
-        // Like the desktop host: an enabled text control or contenteditable
-        // that actually takes focus. Anything else would swallow the text or
-        // send it to whichever field had focus before.
+        // Require an enabled, focused text target to avoid losing input or sending it to the previous field.
         const control = element as unknown as {
           readonly type?: string;
           readonly disabled?: boolean;
@@ -791,8 +772,7 @@ export const drag = async (
   const source = targetLocator(page, { locator: input.source })!;
   const target = targetLocator(page, { locator: input.target })!;
   await pointer(await targetPoint(page, source, {}, timeout), "move");
-  // Observe the drag's outcome as it starts: a rejection nobody handles while the cursor
-  // moves exits the server.
+  // Observe drag rejection immediately; an unhandled rejection during cursor movement exits the server.
   const dragFailure = source.dragTo(target, { timeout }).then(
     () => null,
     (error: unknown) => ({ error }),
@@ -825,11 +805,7 @@ export const scroll = async (page: Page, input: PreviewAutomationScrollInput) =>
   await locator.evaluate((element, [x, y]) => element.scrollBy(x, y), delta);
 };
 
-/**
- * Runs an agent's expression, bounded by its request's deadline. Past it, the
- * page's script is terminated and the call fails, so the tab's control queue
- * frees for the next request instead of waiting on the script.
- */
+/** Terminate expired page scripts so a hung expression cannot block the tab's control queue. */
 export const evaluate = async (
   cdp: CDPSession,
   input: PreviewAutomationEvaluateInput,
@@ -918,11 +894,12 @@ const NET_ERROR_CODES: Readonly<Record<string, number>> = {
 };
 
 export const parseNetError = (errorText: string) => {
-  const description = /ERR_[A-Z_]+/.exec(errorText)?.[0] ?? errorText;
+  // Names can hold digits, as in ERR_HTTP2_PROTOCOL_ERROR.
+  const description = /ERR_[A-Z\d_]+/.exec(errorText)?.[0] ?? errorText;
   return { description, code: NET_ERROR_CODES[description] ?? -2 };
 };
 
-export const RECORDING_ENCODER_SCRIPT = `(() => {
+export const recordingEncoderScript = (frameRate: BrowserRecordingFrameRate) => `(() => {
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d");
   const chunks = [];
@@ -991,8 +968,8 @@ export const RECORDING_ENCODER_SCRIPT = `(() => {
         canvas.width = bitmap.width;
         canvas.height = bitmap.height;
         const mimeType = ["video/mp4;codecs=avc1.640033", "video/webm;codecs=vp9", "video/webm"].find((type) => MediaRecorder.isTypeSupported(type));
-        const bitsPerSecond = Math.min(50e6, Math.max(2.5e6, bitmap.width * bitmap.height * 30 * 0.05));
-        recorder = new MediaRecorder(canvas.captureStream(30), { mimeType, videoBitsPerSecond: bitsPerSecond });
+        const bitsPerSecond = Math.min(50e6, Math.max(2.5e6, bitmap.width * bitmap.height * ${frameRate} * 0.05));
+        recorder = new MediaRecorder(canvas.captureStream(${frameRate}), { mimeType, videoBitsPerSecond: bitsPerSecond });
         started = new Promise((resolve, reject) => {
           recorder.onstart = resolve;
           recorder.onerror = (event) => reject(event.error);
