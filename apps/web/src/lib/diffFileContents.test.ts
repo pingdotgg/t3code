@@ -13,6 +13,14 @@ function toContents(lines: ReadonlyArray<string>) {
   return `${lines.join("\n")}\n`;
 }
 
+function parsePartialFileDiff(patch: string): FileDiffMetadata {
+  const renderable = getRenderablePatch(patch, "diff-panel:light", {
+    compactPartialHunkOffsets: true,
+  });
+  if (renderable?.kind !== "files") throw new Error("Expected a parsed patch.");
+  return renderable.files[0]!;
+}
+
 function partialFileDiff(): FileDiffMetadata {
   const patch = [
     "diff --git a/src/file01.ts b/src/file01.ts",
@@ -30,11 +38,7 @@ function partialFileDiff(): FileDiffMetadata {
     " line 33",
     "",
   ].join("\n");
-  const renderable = getRenderablePatch(patch, "diff-panel:light", {
-    compactPartialHunkOffsets: true,
-  });
-  if (renderable?.kind !== "files") throw new Error("Expected a parsed patch.");
-  return renderable.files[0]!;
+  return parsePartialFileDiff(patch);
 }
 
 function loaderReturning(oldContents: string, newContents: string) {
@@ -84,5 +88,29 @@ describe("createGitDiffFileContentsLoader", () => {
     );
 
     await expect(loadOutcome(loader, partialFileDiff())).resolves.toBe("rejected");
+  });
+
+  it("loads a whitespace-ignored patch whose context shows one side's whitespace", async () => {
+    const patch = [
+      "diff --git a/src/file01.ts b/src/file01.ts",
+      "index 1111111..2222222 100644",
+      "--- a/src/file01.ts",
+      "+++ b/src/file01.ts",
+      "@@ -2,4 +2,4 @@ a",
+      " b",
+      " c",
+      " d",
+      "-e",
+      "\\ No newline at end of file",
+      "+E",
+      "\\ No newline at end of file",
+      "",
+    ].join("\n");
+    const loaded = await loaderReturning(
+      "a\nb\n  c\nd\ne",
+      "a\nb\nc\nd\nE",
+    )(parsePartialFileDiff(patch));
+
+    expect(loaded.oldFile?.contents).toBe("a\nb\n  c\nd\ne");
   });
 });
