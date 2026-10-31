@@ -3693,7 +3693,9 @@ export default function ChatView(props: ChatViewProps) {
                         </div>
                       ) : null}
                       {hasQueuedTurns ? queuedRunsControl : null}
-                      {composerTasks?.type === "todo_list" ? (
+                      {composerTasks?.type === "todo_list" &&
+                      (isWorking ||
+                        composerTasks.steps.some((step) => step.status !== "completed")) ? (
                         <ComposerTaskStatus
                           key={composerTasks.planId}
                           steps={composerTasks.steps}
