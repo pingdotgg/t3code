@@ -1,4 +1,4 @@
-import { act, render as renderScreen, stubGlobal, type Screen } from "../../test/render";
+import { render as renderScreen, stubGlobal, type Screen } from "../../test/render";
 import {
   BUILT_IN_BROWSER_PROFILES,
   DEFAULT_BROWSER_PROFILE_ID,
@@ -6,6 +6,8 @@ import {
 } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
+vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "light" }) }));
 
 // The profile list normally comes from client settings; the built-ins are enough to choose from.
 vi.mock("~/browser/browserDefaults", () => ({
@@ -82,13 +84,7 @@ function menuItem(label: string): HTMLElement {
 }
 
 async function click(element: Element) {
-  await act(async () => {
-    element.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
-    element.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    element.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
-    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-    element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  });
+  await userEvent.click(element);
 }
 
 describe("opening Browser from the launcher", () => {

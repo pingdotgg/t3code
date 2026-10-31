@@ -4,6 +4,12 @@ import { videoMimeType } from "@t3tools/shared/video";
 
 import type { CONTEXT_CHIP_ICON_SOURCES } from "./contextChipIcons.generated";
 import { resolveMarkdownFileIcon, type MarkdownFileIcon } from "./markdownLinks";
+import {
+  flattenThemeColor,
+  isDarkThemeColor,
+  themeAccentWithContrast,
+  type MobileThemeVariables,
+} from "./mobileTheme";
 
 export type ContextChipIcon = keyof typeof CONTEXT_CHIP_ICON_SOURCES;
 
@@ -17,7 +23,7 @@ interface ContextChipPresentation {
  * surface. See `ContextChip.tsx`.
  */
 const CONTEXT_CHIP_PRESENTATIONS = {
-  image: { accent: "#d55665", icon: "image" },
+  image: { accent: "#0090cd", icon: "image" },
   video: { accent: "#d06217", icon: "film" },
   file: { accent: "#0090cd", icon: null },
   mention: { accent: "#0096af", icon: null },
@@ -37,7 +43,45 @@ const CONTEXT_CHIP_PRESENTATIONS = {
     accent: "#009c96",
     icon: "messages-square",
   },
+  // A machine: the record carries only its identity, so every machine wears one glyph.
+  environment: { accent: "#3f9a4f", icon: "server" },
 } as const satisfies Record<string, ContextChipPresentation>;
+
+const CHIP_CONTRAST = 5;
+
+const readableChipAccents = new Map<string, string>();
+
+/**
+ * A chip keeps one color per theme so it looks the same in a message, a reply and the composer,
+ * which means it must read on all of them; the user bubble is usually the hardest. A surface
+ * whose text is the opposite shade, like Material You's primary-colored light bubble, can't share
+ * a color with the canvas, so chips are matched only against surfaces like the one they sit on.
+ */
+export function contextChipAccent(
+  accent: string | undefined,
+  theme: MobileThemeVariables,
+  textColor: string,
+): string | undefined {
+  if (!accent) return undefined;
+  const screen = theme["--color-screen"];
+  const darkText = isDarkThemeColor(textColor);
+  const surfaces = (
+    [
+      ["--color-user-bubble", "--color-user-bubble-foreground"],
+      ["--color-thread-canvas", "--color-md-body"],
+      ["--color-composer-surface", "--color-foreground"],
+    ] as const
+  )
+    .filter(([, text]) => isDarkThemeColor(theme[text]) === darkText)
+    .map(([surface]) => flattenThemeColor(theme[surface], screen));
+  const key = [accent, ...surfaces].join();
+  let readable = readableChipAccents.get(key);
+  if (readable === undefined) {
+    readable = themeAccentWithContrast(accent, surfaces, CHIP_CONTRAST);
+    readableChipAccents.set(key, readable);
+  }
+  return readable;
+}
 
 export const UNAVAILABLE_CONTEXT_CHIP_PRESENTATION: ContextChipPresentation = {
   icon: "circle-dashed",
