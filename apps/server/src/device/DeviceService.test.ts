@@ -82,7 +82,7 @@ it.effect.each([
   {
     name: "reports simctl's own failure when it rejects screen IDs",
     status: 500,
-    help: XCODE_26_SIMCTL_IO_HELP,
+    help: XCODE_26_SIMCTL_IO_HELP.replaceAll('"', "'"),
     capture: { code: 1, stdout: "", stderr: "Error: Device is not booted" },
     expected: {
       failure: {

@@ -16,9 +16,10 @@ const SCREENSHOT_TIMEOUT = Duration.seconds(20);
 // Xcode 26 simctl rejects the numeric display ID expo-device-hub always passes; it
 // takes only internal/external aliases there. Base64 keeps the PNG intact as text.
 const LEGACY_SIMCTL_SCREENSHOT = `f=$(mktemp -t t3-screenshot) || exit 1
+trap 'rm -f "$f"' 0
+trap 'exit 1' HUP INT TERM
 xcrun simctl io "$1" screenshot --type=png "$f" >/dev/null && base64 -i "$f"
 status=$?
-rm -f "$f"
 exit $status`;
 
 const HubDevice = Schema.Struct({
@@ -264,7 +265,7 @@ export const makeDeviceHubOperations = (options: {
     if (
       help.code !== 0 ||
       helpText.includes("Screen ID") ||
-      !helpText.includes('"internal" or "external"')
+      !/\binternal\b.*\bexternal\b/.test(helpText)
     ) {
       return yield* hubError;
     }
