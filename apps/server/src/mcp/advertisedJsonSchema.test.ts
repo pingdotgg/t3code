@@ -43,3 +43,25 @@ it("drops JSON noise, merges tagged unions, and keeps null where it is required"
     required: ["beforeRunId", "every"],
   });
 });
+
+it("keeps a tagged union branch's description on its tag value", () => {
+  const tool = Tool.make("example", {
+    parameters: Schema.Struct({
+      schedule: Schema.Union([
+        Schema.Struct({ type: Schema.Literal("interval"), everyMs: Schema.Int }),
+        Schema.Struct({ type: Schema.Literal("webhook"), path: Schema.String }).annotate({
+          description: "Run per request.",
+        }),
+      ]),
+    }),
+  });
+
+  const schema = advertisedJsonSchema(tool) as {
+    properties: { schedule: { properties: { type: unknown } } };
+  };
+  expect(schema.properties.schedule.properties.type).toEqual({
+    type: "string",
+    enum: ["interval", "webhook"],
+    description: "webhook: Run per request.",
+  });
+});
