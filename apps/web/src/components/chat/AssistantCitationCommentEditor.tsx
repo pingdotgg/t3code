@@ -4,7 +4,7 @@ import {
   parseAssistantCitationHref,
   withAssistantCitationComment,
 } from "@t3tools/shared/assistantCitations";
-import { useState, type Ref } from "react";
+import { useId, useState, type Ref } from "react";
 
 import { Button } from "../ui/button";
 
@@ -24,6 +24,7 @@ export function AssistantCitationCommentEditor({
   onDraftChange?: (comment: string) => void;
 }) {
   const [comment, setComment] = useState(citation.comment ?? "");
+  const errorId = useId();
   const commentTooLong = comment.length > ASSISTANT_CITATION_MAX_COMMENT_LENGTH;
   const commentError = commentTooLong
     ? `Comments can contain up to ${ASSISTANT_CITATION_MAX_COMMENT_LENGTH.toLocaleString()} characters.`
@@ -61,6 +62,7 @@ export function AssistantCitationCommentEditor({
         aria-label="Comment on selected text"
         aria-description="Enter to save the citation comment; Command/Ctrl+Enter to save and send; Shift+Enter for a new line."
         aria-invalid={!!commentError || undefined}
+        aria-errormessage={commentError ? errorId : undefined}
         placeholder="Add an optional comment..."
         rows={2}
         className="field-sizing-content block max-h-40 min-h-16 w-full resize-none bg-transparent px-1 py-1.5 text-base outline-none placeholder:text-muted-foreground sm:text-sm"
@@ -86,7 +88,7 @@ export function AssistantCitationCommentEditor({
         }}
       />
       {commentError ? (
-        <p role="status" className="pt-1 text-xs text-destructive">
+        <p id={errorId} role="status" className="pt-1 text-xs text-destructive">
           {commentError}
         </p>
       ) : null}
