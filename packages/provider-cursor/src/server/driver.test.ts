@@ -3,6 +3,7 @@ import type { AgentOptions, SDKModel } from "@cursor/sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
+  DEFAULT_SERVER_SETTINGS,
   MessageId,
   NodeId,
   ProjectId,
@@ -21,6 +22,8 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { vi } from "vite-plus/test";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
   DEFAULT_HANDOFF_TOKEN_CAP,
@@ -102,12 +105,40 @@ it.layer(layerTest)("CursorDriver", (it) => {
           instanceId: ProviderInstanceId.make("cursor-browser-persisted"),
           displayName: "Personal Cursor",
           enabled: true,
-          environment: [{ name: "CURSOR_API_KEY", value: "", sensitive: true }],
+          // Clear inherited Cursor settings so the fixture always takes the mocked Keychain path.
+          environment: [
+            { name: "CURSOR_API_KEY", value: "", sensitive: true },
+            { name: "CURSOR_AUTH_TOKEN", value: "", sensitive: true },
+            { name: "CURSOR_API_ENDPOINT", value: "", sensitive: false },
+            { name: "AGENT_CLI_CREDENTIAL_STORE", value: "default", sensitive: false },
+          ],
           config: CursorDriver.defaultConfig(),
         };
+        const settingsControl = yield* TestProviderHost.TestProviderHostSettings;
+        yield* settingsControl.set({
+          ...DEFAULT_SERVER_SETTINGS,
+          cursorKeychainUsageEnabled: true,
+        });
+        yield* Effect.addFinalizer(() => settingsControl.set(DEFAULT_SERVER_SETTINGS));
         const openedKeys: Array<string | undefined> = [];
         let closed = 0;
         const instance = yield* CursorDriver.create(input).pipe(
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(CursorKeychain.CursorKeychain, {
+            accessToken: Effect.succeed("keychain-account-token"),
+          }),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => {
+              expect(request.headers.authorization).toBe("Bearer keychain-account-token");
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  Response.json({ planUsage: { totalPercentUsed: 42 } }),
+                ),
+              );
+            }),
+          ),
           Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
             assertComplete: Effect.void,
             open: (request) =>
@@ -132,6 +163,7 @@ it.layer(layerTest)("CursorDriver", (it) => {
           Effect.map(Option.getOrThrow),
         );
         expect(me).toHaveBeenCalledWith({ apiKey: "instance-browser-key" });
+        expect((yield* instance.snapshot.refresh).usageLimits?.windows[0]?.usedPercent).toBe(42);
         expect(yield* instance.snapshot.getSnapshot).toMatchObject({
           status: "ready",
           auth: {
@@ -158,8 +190,26 @@ it.layer(layerTest)("CursorDriver", (it) => {
         yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
         expect(openedKeys).toEqual(["instance-browser-key"]);
         expect(closed).toBe(0);
-        const recreated = yield* CursorDriver.create(input);
-        expect((yield* recreated.snapshot.refresh).auth.status).toBe("authenticated");
+        const recreated = yield* CursorDriver.create(input).pipe(
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(CursorKeychain.CursorKeychain, {
+            accessToken: Effect.succeed("keychain-account-token"),
+          }),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  Response.json({ planUsage: { totalPercentUsed: 42 } }),
+                ),
+              ),
+            ),
+          ),
+        );
+        const recreatedSnapshot = yield* recreated.snapshot.refresh;
+        expect(recreatedSnapshot.auth.status).toBe("authenticated");
+        expect(recreatedSnapshot.usageLimits?.windows[0]?.usedPercent).toBe(42);
         yield* instance.auth!.logout(Effect.void);
         expect(closed).toBe(1);
         expect((yield* instance.snapshot.getSnapshot).auth.status).toBe("unauthenticated");

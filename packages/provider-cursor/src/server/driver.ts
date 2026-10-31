@@ -236,7 +236,7 @@ export const CursorDriver: ProviderDriver<
                 Effect.flatMap((settings) =>
                   readCursorUsageLimits(
                     effectiveConfig,
-                    { ...processEnv, CURSOR_API_KEY: apiKey },
+                    { ...processEnv, CURSOR_API_KEY: auth.usesApiKey ? apiKey : undefined },
                     settings.cursorKeychainUsageEnabled,
                   ),
                 ),
