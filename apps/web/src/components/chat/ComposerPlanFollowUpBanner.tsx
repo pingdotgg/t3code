@@ -101,7 +101,7 @@ export const ComposerPlanFollowUpBanner = memo(function ComposerPlanFollowUpBann
       {planMarkdown && expanded ? (
         <ComposerBanner.Scroll>
           <ComposerRequestCard.Body>
-            <ChatMarkdown text={planMarkdown} />
+            <ChatMarkdown text={planMarkdown} cwd={undefined} />
           </ComposerRequestCard.Body>
         </ComposerBanner.Scroll>
       ) : null}

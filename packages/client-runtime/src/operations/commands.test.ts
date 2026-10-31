@@ -40,6 +40,7 @@ import {
   interruptThreadTurn,
   revertThreadCheckpoint,
   resumeThreadQueue,
+  reorderQueuedRun,
   startThreadTurn,
 } from "./commands.ts";
 
@@ -149,9 +150,31 @@ describe("V2 environment commands", () => {
         threadId,
       }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
+      for (const beforeRunId of [RunId.make("next"), null]) {
+        yield* reorderQueuedRun({
+          commandId: CommandId.make(beforeRunId ? "move-before" : "move-last"),
+          threadId,
+          runId: RunId.make("selected"),
+          beforeRunId,
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      }
       expect(commands).toEqual([
         { type: "queued-run.start", commandId: "send-selected", threadId, runId: "selected" },
         { type: "queue.resume", commandId: "resume-queue", threadId },
+        {
+          type: "queued-run.reorder",
+          commandId: "move-before",
+          threadId,
+          runId: "selected",
+          beforeRunId: "next",
+        },
+        {
+          type: "queued-run.reorder",
+          commandId: "move-last",
+          threadId,
+          runId: "selected",
+          beforeRunId: null,
+        },
       ]);
     }).pipe(Effect.provide(layerTestCrypto)),
   );
