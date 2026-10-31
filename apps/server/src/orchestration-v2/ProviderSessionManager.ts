@@ -1351,22 +1351,34 @@ export const layerWithOptions = (
               Effect.tap((runtime) => Effect.sync(() => (attachedTo = runtime))),
               Effect.uninterruptible,
             );
+            // A thread stays attached to the session it ran on before switching
+            // providers, and the other provider's attach took over the thread's
+            // credential slot. A run returning to this session must take it
+            // back, or the process calls T3 tools scoped to the other provider.
+            const reclaimsCredential =
+              attached === undefined &&
+              (yield* mcpSessions.read(input.threadId))?.providerInstanceId !==
+                input.providerInstanceId &&
+              (yield* Ref.get(sessions))
+                .get(sessionKey(input.providerSessionId))
+                ?.attachedThreadIds.has(input.threadId) === true;
+            if (attached === undefined && !reclaimsCredential) return;
+            const prepared = yield* prepareMcpSession(input.threadId, input.providerInstanceId);
+            preparedForCleanup = prepared;
+            if (prepared.mcpCredentialId !== undefined) {
+              const mcpCredentialId = prepared.mcpCredentialId;
+              yield* Ref.update(sessions, (current) => {
+                const key = sessionKey(input.providerSessionId);
+                const entry = current.get(key);
+                if (entry === undefined) return current;
+                const mcpCredentialIdByThread = new Map(entry.mcpCredentialIdByThread);
+                mcpCredentialIdByThread.set(input.threadId, mcpCredentialId);
+                const updated = new Map(current);
+                updated.set(key, { ...entry, mcpCredentialIdByThread });
+                return updated;
+              });
+            }
             if (attached !== undefined) {
-              const prepared = yield* prepareMcpSession(input.threadId, input.providerInstanceId);
-              preparedForCleanup = prepared;
-              if (prepared.mcpCredentialId !== undefined) {
-                const mcpCredentialId = prepared.mcpCredentialId;
-                yield* Ref.update(sessions, (current) => {
-                  const key = sessionKey(input.providerSessionId);
-                  const entry = current.get(key);
-                  if (entry === undefined) return current;
-                  const mcpCredentialIdByThread = new Map(entry.mcpCredentialIdByThread);
-                  mcpCredentialIdByThread.set(input.threadId, mcpCredentialId);
-                  const updated = new Map(current);
-                  updated.set(key, { ...entry, mcpCredentialIdByThread });
-                  return updated;
-                });
-              }
               const entry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
               if (entry !== undefined) {
                 yield* withActivityError(
@@ -1381,37 +1393,49 @@ export const layerWithOptions = (
               }
             }
           }).pipe(
-            Effect.onError(() =>
-              attachedTo === undefined
-                ? Effect.void
-                : removeThreadAttachment({ ...input, runtime: attachedTo }).pipe(
-                    Effect.andThen(
-                      Effect.suspend(() => {
-                        dropReservation();
-                        // Other live processes hold reused MCP credentials; revocation would break their clients.
-                        if (preparedForCleanup?.issued !== true) return Effect.void;
-                        const mcpCredentialId = preparedForCleanup.mcpCredentialId;
-                        const attachedRuntime = attachedTo;
-                        return Ref.get(sessions).pipe(
-                          Effect.flatMap((current) =>
-                            (mcpCredentialId !== undefined &&
-                              isMcpCredentialReserved(input.threadId, mcpCredentialId)) ||
-                            Array.from(current.values()).some(
-                              (other) =>
-                                other.runtime !== attachedRuntime &&
-                                (other.attachedThreadIds.has(input.threadId) ||
-                                  (mcpCredentialId !== undefined &&
-                                    other.mcpCredentialIdByThread.get(input.threadId) ===
-                                      mcpCredentialId)),
-                            )
-                              ? Effect.void
-                              : clearMcpSession(input.threadId, mcpCredentialId),
-                          ),
-                        );
+            Effect.onError(() => {
+              // A reclaim (thread already attached, credential rotated) has
+              // attachedTo === undefined but still issued a credential that must
+              // be cleaned up on failure. Only skip when nothing was prepared.
+              const isReclaim = attachedTo === undefined && preparedForCleanup !== undefined;
+              if (attachedTo === undefined && !isReclaim) return Effect.void;
+              const removeAttachment =
+                attachedTo === undefined
+                  ? Effect.void
+                  : removeThreadAttachment({ ...input, runtime: attachedTo });
+              return removeAttachment.pipe(
+                Effect.andThen(
+                  Effect.suspend(() => {
+                    dropReservation();
+                    // Other live processes hold reused MCP credentials; revocation would break their clients.
+                    if (preparedForCleanup?.issued !== true) return Effect.void;
+                    const mcpCredentialId = preparedForCleanup.mcpCredentialId;
+                    // For a reclaim, exclude the session being reused (not torn
+                    // down) from the holder check, mirroring new attachments.
+                    return Ref.get(sessions).pipe(
+                      Effect.flatMap((current) => {
+                        const attachedRuntime =
+                          attachedTo ?? current.get(sessionKey(input.providerSessionId))?.runtime;
+                        const held =
+                          (mcpCredentialId !== undefined &&
+                            isMcpCredentialReserved(input.threadId, mcpCredentialId)) ||
+                          Array.from(current.values()).some(
+                            (other) =>
+                              other.runtime !== attachedRuntime &&
+                              (other.attachedThreadIds.has(input.threadId) ||
+                                (mcpCredentialId !== undefined &&
+                                  other.mcpCredentialIdByThread.get(input.threadId) ===
+                                    mcpCredentialId)),
+                          );
+                        return held
+                          ? Effect.void
+                          : clearMcpSession(input.threadId, mcpCredentialId);
                       }),
-                    ),
-                  ),
-            ),
+                    );
+                  }),
+                ),
+              );
+            }),
           );
           return threadAttachment
             .withLock(threadAttachmentKey(input), attach)
