@@ -1,14 +1,5 @@
-import {
-  createContext,
-  use,
-  useLayoutEffect,
-  useRef,
-  type ComponentProps,
-  type ReactNode,
-} from "react";
+import { useLayoutEffect, useRef, type ComponentProps, type ReactNode } from "react";
 import { cn } from "../../lib/utils";
-
-const GroupedRows = createContext(false);
 
 /** Groups may span virtualized timeline items. Each part owns its trailing space. */
 export function WorkLogBlock({
@@ -36,11 +27,7 @@ export function WorkLogBlock({
 }
 
 export function WorkLogList({ children }: { children: ReactNode }) {
-  return (
-    <GroupedRows value>
-      <div className="flex min-w-0 flex-col">{children}</div>
-    </GroupedRows>
-  );
+  return <div className="flex min-w-0 flex-col gap-1">{children}</div>;
 }
 
 type RowContent = {
@@ -54,13 +41,13 @@ function WorkLogLine({ icon, label, trailing, wrapLabel }: RowContent) {
   return (
     <div
       className={cn(
-        "flex min-h-6 min-w-0 gap-1.5 text-sm leading-relaxed select-none [&_*]:select-none",
+        "timeline-work-row flex min-h-6 min-w-0 gap-1.25 text-body select-none [&_*]:select-none",
         wrapLabel ? "items-start" : "items-center",
       )}
     >
-      <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
+      <div className="flex min-w-0 flex-1 items-baseline gap-1.25">
         {icon ? (
-          <span className="relative w-6 shrink-0 ps-0.5 leading-0">
+          <span className="relative w-6 shrink-0 leading-0">
             <span className="inline-block size-6 overflow-hidden align-[calc(0.5cap_-_0.75rem)]">
               <span className="flex size-full items-center justify-center">{icon}</span>
             </span>
@@ -121,10 +108,8 @@ const interactionClassName =
   "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70";
 
 function useRowClassName(interactive: boolean) {
-  const grouped = use(GroupedRows);
   return cn(
-    "group/timeline-row relative w-full min-w-0 rounded-md px-0.5 text-left transition-colors",
-    grouped ? "py-0" : "py-0.5",
+    "group/timeline-row relative w-full min-w-0 rounded-md pe-1.5 text-left transition-colors",
     interactive && interactionClassName,
   );
 }

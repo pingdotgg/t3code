@@ -3,7 +3,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
-import { TerminalIcon, ChevronRightIcon } from "lucide-react";
+import { TerminalIcon } from "lucide-react";
 import { ContextChip, ContextChipLabel } from "../ContextChip";
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
@@ -61,7 +61,7 @@ export function TimelineRowTimestamp({
         render={
           <span
             className={cn(
-              "pointer-events-none absolute me-1 shrink-0 whitespace-nowrap rounded-md text-dim-foreground font-medium text-xs tabular-nums opacity-0 group-hover/timeline-row:pointer-events-auto group-hover/timeline-row:static group-hover/timeline-row:opacity-100 group-focus-within/timeline-row:pointer-events-auto group-focus-within/timeline-row:static group-focus-within/timeline-row:opacity-100",
+              "pointer-events-none absolute me-1 shrink-0 whitespace-nowrap rounded-md text-dim-foreground text-caption tabular-nums opacity-0 group-hover/timeline-row:pointer-events-auto group-hover/timeline-row:static group-hover/timeline-row:opacity-100 group-focus-within/timeline-row:pointer-events-auto group-focus-within/timeline-row:static group-focus-within/timeline-row:opacity-100",
               alwaysVisible && "pointer-events-auto static opacity-100",
               className,
             )}
@@ -85,19 +85,6 @@ export function ActivityShimmerOverlay({ children }: { children: ReactNode }) {
         <span className="live-activity-focus-aligned block text-foreground">{children}</span>
       </span>
     </span>
-  );
-}
-
-/** The fold toggle shared by the working bar and the finished turn's bar; it trails the label. */
-export function WorkFoldChevron({ expanded }: { expanded: boolean }) {
-  return (
-    <ChevronRightIcon
-      aria-hidden
-      className={cn(
-        "size-3 shrink-0 text-dim-foreground transition-transform",
-        expanded && "rotate-90",
-      )}
-    />
   );
 }
 
@@ -125,7 +112,7 @@ export function WorkingBarChip({
  * The label starts on the assistant text's edge, 4px into the lane.
  */
 export const WORKING_BAR_CLASS_NAME =
-  "group/timeline-row relative flex h-8 min-w-0 items-center gap-2.5 border-b border-(--timeline-working-rule,var(--border)) ps-1 pe-1";
+  "timeline-work-row group/timeline-row relative flex h-8 min-w-0 items-center gap-2.5 border-b border-(--timeline-working-rule,var(--border)) ps-1.25 pe-1";
 
 /** A provider command in the timeline: in a work row's trailing slot, or opening a prompt. */
 export function SlashCommandChip({ name }: { name: string }) {
