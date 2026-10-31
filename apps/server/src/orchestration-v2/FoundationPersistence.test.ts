@@ -2274,6 +2274,34 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }).pipe(Effect.provide(layerIsolatedOutbox)),
   );
 
+  it.effect.each(["queued", "preparing", "starting", "running", "waiting"])(
+    "keeps a %s continuation's crash budget past outbox retention",
+    (status) =>
+      Effect.gen(function* () {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const sql = yield* SqlClient.SqlClient;
+        const now = yield* DateTime.now;
+        const old = DateTime.formatIso(DateTime.subtractDuration(now, Duration.days(8)));
+        const timestamp = DateTime.formatIso(now);
+        yield* sql`
+        INSERT INTO orchestration_v2_effect_outbox
+          (effect_id, command_id, thread_id, effect_type, payload_json, status, available_at, created_at, updated_at, completed_at)
+        VALUES ('effect:retained-recovery', 'command:retained-recovery', 'thread:retained-recovery',
+          'provider-runtime.continue', '{"type":"provider-runtime.continue","sourceRunId":"run:retained-source","processLossCount":3}',
+          'succeeded', ${old}, ${old}, ${old}, ${old})
+      `;
+        yield* sql`
+        INSERT INTO orchestration_v2_projection_runs
+          (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+        VALUES ('run:retained-recovery', 'thread:retained-recovery', 1, 'codex', ${status}, ${timestamp},
+          '{"restartContinuationOfRunId":"run:retained-source"}')
+      `;
+        assert.equal(yield* outbox.pruneSettled, 0);
+        yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'completed' WHERE run_id = 'run:retained-recovery'`;
+        assert.equal(yield* outbox.pruneSettled, 1);
+      }).pipe(Effect.provide(layerIsolatedOutbox)),
+  );
+
   it.effect("wakes claimers when cancellation unblocks same-thread work", () =>
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
@@ -2730,6 +2758,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         assert.deepEqual(effects[0]?.request, {
           type: "provider-runtime.continue",
           sourceRunId: runId,
+          processLossCount: 0,
         });
         yield* outbox.cancelUnsettled({
           threadId,
