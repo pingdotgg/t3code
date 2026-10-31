@@ -4,6 +4,7 @@ import {
   type OrchestrationV2Notification,
   type PullRequestActivity,
   type PullRequestComment,
+  type PullRequestDetail,
   type PullRequestRef,
   type PullRequestThreadCommentsResult,
   type ThreadPullRequestLink,
@@ -43,6 +44,8 @@ const READ_FAILURE_LIMIT = 8;
 const QUIET_REREAD_MS = 10 * 60_000;
 /** Reread despite unchanged fingerprints; they miss review-thread comment edits. */
 const FINGERPRINT_REREAD_MS = 30 * 60_000;
+/** GitHub can list a notification minutes after the event it reports. */
+const NOTIFICATION_LAG_MS = 5 * 60_000;
 
 const isProviderError = Schema.is(PullRequestProviderError);
 
@@ -82,6 +85,7 @@ interface LastRead {
   readonly watches: ReadonlySet<string>;
   readonly status: string | null;
   readonly remarks: string | null;
+  readonly detail: PullRequestDetail;
 }
 
 interface ReadPlan {
@@ -135,6 +139,7 @@ function planRead(
   last: LastRead | undefined,
   fingerprint: ProviderChangeRequestWatchFingerprint | null,
   now: number,
+  moved?: boolean,
 ): ReadPlan {
   if (last === undefined || group.targets.some((target) => !last.watches.has(watchKey(target)))) {
     return { detail: true, activity: true };
@@ -147,12 +152,32 @@ function planRead(
       now - last.at >= QUIET_REREAD_MS;
     return { detail: read, activity: read };
   }
-  const activity =
-    last.remarks !== fingerprint.remarks ||
-    !last.remarksComplete ||
-    now - last.at >= FINGERPRINT_REREAD_MS;
-  return { detail: activity || last.status !== fingerprint.status || last.inFlight, activity };
+  const remarksMoved = last.remarks !== fingerprint.remarks || !last.remarksComplete;
+  const activity = remarksMoved || (now - last.at >= FINGERPRINT_REREAD_MS && moved !== false);
+  return {
+    detail:
+      last.status !== fingerprint.status ||
+      last.inFlight ||
+      remarksMoved ||
+      (activity && moved === undefined),
+    activity,
+  };
 }
+
+const gatesReread = (
+  group: WatchGroup,
+  last: LastRead | undefined,
+  fingerprint: ProviderChangeRequestWatchFingerprint | null,
+  now: number,
+): last is LastRead =>
+  fingerprint?.viewerSubscription === "SUBSCRIBED" &&
+  last !== undefined &&
+  group.targets.every((target) => last.watches.has(watchKey(target))) &&
+  last.remarks === fingerprint.remarks &&
+  last.remarksComplete &&
+  now - last.at >= FINGERPRINT_REREAD_MS &&
+  last.detail.viewer !== undefined &&
+  last.detail.viewer.toLowerCase() === last.detail.author?.login.toLowerCase();
 
 function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatch): boolean {
   return (
@@ -443,11 +468,15 @@ export const make = Effect.gen(function* () {
   const readGroup = Effect.fn("PullRequestWatchReactor.readGroup")(function* (
     group: WatchGroup,
     fingerprint: ProviderChangeRequestWatchFingerprint | null,
+    moved?: boolean,
   ) {
     const now = yield* Clock.currentTimeMillis;
     const last = lastReads.get(group.key);
-    const plan = planRead(group, last, fingerprint, now);
-    if (!plan.detail) return;
+    const plan = planRead(group, last, fingerprint, now, moved);
+    if (!plan.detail && !plan.activity) {
+      if (moved === false && last !== undefined) lastReads.set(group.key, { ...last, at: now });
+      return;
+    }
     if (
       last === undefined ||
       group.targets.some((target) => !last.watches.has(watchKey(target))) ||
@@ -462,7 +491,9 @@ export const make = Effect.gen(function* () {
     const read = yield* Effect.exit(
       Effect.all(
         [
-          pullRequests.detail({ ...reference, allowStale: false }),
+          plan.detail || last === undefined
+            ? pullRequests.detail({ ...reference, allowStale: false })
+            : Effect.succeed(last.detail),
           plan.activity
             ? pullRequests.activity(reference).pipe(Effect.asSome)
             : Effect.succeed(Option.none<PullRequestActivity>()),
@@ -519,7 +550,9 @@ export const make = Effect.gen(function* () {
       at:
         plan.activity || last === undefined
           ? (threadTails.get(group.key)?.fetchedAt ?? now)
-          : last.at,
+          : moved === false
+            ? now
+            : last.at,
       fingerprint: group.fingerprint,
       inFlight:
         detail.mergeability === "unknown" ||
@@ -528,6 +561,7 @@ export const make = Effect.gen(function* () {
       watches: new Set(group.targets.map(watchKey)),
       status: fingerprint?.status ?? null,
       remarks: fingerprint?.remarks ?? null,
+      detail,
     });
     yield* eachTarget(group, (target) => {
       const report = evaluatePullRequestWatch(target.watch, detail, remarks, now);
@@ -551,6 +585,67 @@ export const make = Effect.gen(function* () {
       }
       return watchesEqual(report.next, target.watch) ? Effect.void : record(target, report.next);
     });
+  });
+
+  const notificationsUnreadable = new Set<string>();
+
+  /**
+   * Answers due rereads from one notifications request per repository. It is sent only when a due
+   * PR would reread its detail, and a moved PR then reuses that detail, so it never adds cost.
+   */
+  const notifiedMoves = Effect.fn("PullRequestWatchReactor.notifiedMoves")(function* (
+    groups: ReadonlyArray<WatchGroup>,
+    fingerprints: ReadonlyArray<ProviderChangeRequestWatchFingerprint | null | "paused">,
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    const byRepository = new Map<
+      string,
+      Array<{ readonly group: WatchGroup; readonly last: LastRead; readonly paid: boolean }>
+    >();
+    groups.forEach((group, index) => {
+      const fingerprint = fingerprints[index]!;
+      const last = lastReads.get(group.key);
+      if (fingerprint === "paused" || !gatesReread(group, last, fingerprint, now)) return;
+      const { projectId, host, repository } = referenceOf(group);
+      const key = `${projectId} ${host} ${repository}`.toLowerCase();
+      if (notificationsUnreadable.has(key)) return;
+      const paid = last.status === fingerprint.status && !last.inFlight;
+      byRepository.set(key, [...(byRepository.get(key) ?? []), { group, last, paid }]);
+    });
+    const moved = new Map<string, boolean>();
+    yield* Effect.forEach(
+      [...byRepository].filter(([, due]) => due.some((entry) => entry.paid)),
+      ([key, due]) =>
+        pullRequests
+          .notifications({
+            ...referenceOf(due[0]!.group),
+            since: Math.min(...due.map((entry) => entry.last.at)) - NOTIFICATION_LAG_MS,
+          })
+          .pipe(
+            Effect.catchCause((cause) =>
+              logFailure("pull request watch notifications failed", { repository: key })(
+                cause,
+              ).pipe(Effect.as(undefined)),
+            ),
+            Effect.map((notifications) => {
+              if (notifications === null) notificationsUnreadable.add(key);
+              for (const { group, last } of due) {
+                const thread = notifications?.threads.find(
+                  (candidate) => candidate.number === group.targets[0]!.link.number,
+                );
+                moved.set(
+                  group.key,
+                  notifications == null ||
+                    (thread === undefined
+                      ? notifications.truncated
+                      : thread.updatedAt >= last.at - NOTIFICATION_LAG_MS),
+                );
+              }
+            }),
+          ),
+      { concurrency: 4, discard: true },
+    );
+    return moved;
   });
 
   const sweep = Effect.gen(function* () {
@@ -604,13 +699,14 @@ export const make = Effect.gen(function* () {
     const fingerprints = yield* Effect.forEach(groups, fingerprintOf, {
       concurrency: "unbounded",
     });
+    const moved = yield* notifiedMoves(groups, fingerprints);
     yield* Effect.forEach(
       groups,
       (group, index) => {
         const fingerprint = fingerprints[index]!;
         return fingerprint === "paused"
           ? Effect.void
-          : readGroup(group, fingerprint).pipe(
+          : readGroup(group, fingerprint, moved.get(group.key)).pipe(
               Effect.catchCause(
                 logFailure("pull request watch check failed", { pullRequest: group.key }),
               ),

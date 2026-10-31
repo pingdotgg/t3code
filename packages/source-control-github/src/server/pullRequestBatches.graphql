@@ -90,6 +90,7 @@ query PullRequestWatchFingerprint($owner: String!, $name: String!, $number: Int!
       state
       mergeable
       headRefOid
+      viewerSubscription
       comments(first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) {
         totalCount
         nodes {

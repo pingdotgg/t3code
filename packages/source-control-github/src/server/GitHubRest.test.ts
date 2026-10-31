@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
@@ -10,6 +11,7 @@ import { VcsProcessTimeoutError } from "@t3tools/contracts";
 import { HttpClient, HttpClientResponse, type HttpClientRequest } from "effect/http";
 
 import * as GitHubRest from "./GitHubRest.ts";
+import { makeListPullRequestNotifications } from "./gitHubNotifications.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
@@ -26,7 +28,10 @@ const appSignedOut = Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
 
 const NOW = Date.parse("2026-10-05T12:00:00.000Z");
 
-function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Response) {
+function harness(
+  respond: (request: HttpClientRequest.HttpClientRequest) => Response,
+  app = appSignedOut,
+) {
   const requests: Array<HttpClientRequest.HttpClientRequest> = [];
   let tokens = ["first", "second"];
   let invalidations = 0;
@@ -61,7 +66,7 @@ function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Resp
     }),
   );
   const layer = GitHubRest.layer.pipe(
-    Layer.provide(Layer.mergeAll(credentials, http, appSignedOut)),
+    Layer.provide(Layer.mergeAll(credentials, http, app)),
     Layer.provideMerge(GitHubQuota.layer),
     Layer.provideMerge(SourceControlRateLimit.layer),
   );
@@ -301,4 +306,62 @@ describe("GitHubCredentials", () => {
       ),
     ),
   );
+});
+
+describe("listPullRequestNotifications", () => {
+  it.effect("asks only for changes since the read, and reads a refusal as unavailable", () => {
+    const answers = [
+      new Response(null, { status: 304 }),
+      json([
+        {
+          updated_at: "2026-10-05T11:58:03Z",
+          subject: { type: "PullRequest", url: "https://api.github.com/repos/acme/web/pulls/7" },
+        },
+        {
+          updated_at: "2026-10-05T11:57:00Z",
+          subject: { type: "Issue", url: "https://api.github.com/repos/acme/web/issues/8" },
+        },
+      ]),
+      json({ message: "Resource not accessible by personal access token" }, { status: 403 }),
+    ];
+    let appSignedIn = true;
+    const { layer, requests } = harness(
+      () => answers.shift()!,
+      Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
+        enabled: true,
+        token: () => Effect.sync(() => (appSignedIn ? Option.some("app") : Option.none())),
+        invalidate: () => Effect.void,
+      }),
+    );
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const list = makeListPullRequestNotifications(yield* GitHubRest.GitHubRest);
+      const since = Date.parse("2026-10-05T11:55:00.400Z");
+      const input = { host: "github.com", repository: "acme/web", since };
+      expect(yield* list(input)).toBeNull();
+      expect(requests).toEqual([]);
+      appSignedIn = false;
+      expect(yield* list(input)).toEqual({ threads: [], truncated: false });
+      expect(yield* list(input)).toEqual({
+        threads: [{ number: 7, updatedAt: Date.parse("2026-10-05T11:58:03Z") }],
+        truncated: false,
+      });
+      expect(yield* list(input)).toBeNull();
+      expect(requests.map((request) => request.headers.authorization)).toEqual([
+        "Bearer first",
+        "Bearer first",
+        "Bearer first",
+      ]);
+      const [first] = requests;
+      expect(first?.method).toBe("GET");
+      const url = new URL(first!.url);
+      expect(url.pathname).toBe("/repos/acme/web/notifications");
+      expect(Object.fromEntries(url.searchParams)).toMatchObject({
+        all: "true",
+        participating: "true",
+        since: "2026-10-05T11:55:00Z",
+      });
+      expect(first?.headers["if-modified-since"]).toBe("Mon, 05 Oct 2026 11:55:00 GMT");
+    }).pipe(Effect.provide(layer));
+  });
 });

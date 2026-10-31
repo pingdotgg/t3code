@@ -193,6 +193,7 @@ export interface GitHubRequest {
   readonly allowReserve: boolean;
   /** Covers sending and reading the answer. Defaults to 30 seconds. */
   readonly timeout?: Duration.Input | undefined;
+  readonly personal?: boolean | undefined;
 }
 
 /** REST/GraphQL share credentials, slots, quota reserves and host-wide pauses. */
@@ -441,7 +442,7 @@ export const make = Effect.gen(function* () {
         );
 
     // Only an app credential is handed on, so this runs at most twice.
-    let held = yield* choose(host, false);
+    let held = yield* choose(host, input.personal === true);
     while (true) {
       const outcome = yield* attempt(held);
       if (outcome._tag === "Done") return outcome.value;

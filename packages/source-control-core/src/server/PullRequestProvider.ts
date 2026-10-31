@@ -69,6 +69,14 @@ export class PullRequestProviderError extends Schema.TaggedError<PullRequestProv
 export interface ProviderChangeRequestWatchFingerprint {
   readonly status: string;
   readonly remarks: string;
+  readonly viewerSubscription?: string;
+}
+
+/** The viewer's notification threads on change requests in one repository, newest first. */
+export interface ProviderChangeRequestNotifications {
+  readonly threads: ReadonlyArray<{ readonly number: number; readonly updatedAt: number }>;
+  /** More threads were updated since then than one page holds. */
+  readonly truncated: boolean;
 }
 
 export interface PullRequestProviderFailure {
@@ -389,6 +397,11 @@ export interface PullRequestProviderApi {
   readonly getChangeRequestWatchFingerprint?: (
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestWatchFingerprint | null, PullRequestProviderError>;
+
+  /** Threads updated after `since`. Null means this credential cannot read notifications. */
+  readonly listChangeRequestNotifications?: (
+    input: ProviderRepositoryRef & { readonly since: number },
+  ) => Effect.Effect<ProviderChangeRequestNotifications | null, PullRequestProviderError>;
 
   readonly getChangeRequestStack?: (
     input: ProviderRepositoryRef & { readonly includeDetails?: boolean; readonly number: number },
