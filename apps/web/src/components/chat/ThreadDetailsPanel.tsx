@@ -19,7 +19,6 @@ import ProjectScriptsControl, {
 import { memo, useState, type ComponentProps } from "react";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
-import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 import { ThreadServersPanel } from "./ThreadServersPanel";
@@ -79,6 +78,9 @@ interface ThreadDetailsPanelProps extends Pick<
   ) => Promise<ProjectScriptActionResult>;
   onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
   usage: ThreadDetailsUsageInput;
+  onCompactContext?: () => void;
+  compactDisabled?: boolean;
+  compactDisabledReason?: string | null;
 }
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
@@ -154,76 +156,99 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
         };
         return (
           <>
-            <div className="group/details-items">
-              {show.environment || show.branch ? (
-                <ThreadDetailsSection title="Workspace">
-                  {show.environment ? (
-                    <BranchToolbar
-                      layout="panel"
-                      panelSection="workspace"
-                      availableEnvironments={props.availableEnvironments}
-                      {...(props.onEnvironmentChange
-                        ? { onEnvironmentChange: props.onEnvironmentChange }
-                        : {})}
-                      autoEnvironmentLabel={props.autoEnvironmentLabel}
-                      onAutoEnvironment={props.onAutoEnvironment}
-                      {...branchToolbarProps}
+            <div className="group/details-items thread-details-stack flex flex-col gap-1">
+              {Object.values(show).some(Boolean) || visible.usage || visible.context ? (
+                <section aria-label="Workspace" className="surface-tray rounded-pane p-1">
+                  <div className="surface-composer rounded-lg p-0.5">
+                    {show.environment ? (
+                      <div className="flex min-w-0 items-center">
+                        <div className="min-w-0 flex-1">
+                          <BranchToolbar
+                            layout="panel"
+                            panelSection="workspace"
+                            availableEnvironments={props.availableEnvironments}
+                            {...(props.onEnvironmentChange
+                              ? { onEnvironmentChange: props.onEnvironmentChange }
+                              : {})}
+                            autoEnvironmentLabel={props.autoEnvironmentLabel}
+                            onAutoEnvironment={props.onAutoEnvironment}
+                            {...branchToolbarProps}
+                          />
+                        </div>
+                        {show.openIn ? (
+                          <OpenInPicker
+                            keybindings={props.keybindings}
+                            environmentId={props.environmentId}
+                            availableEditors={props.availableEditors}
+                            openInCwd={props.gitCwd}
+                            enableShortcut={props.openInShortcutEnabled}
+                            displayMode="panel"
+                          />
+                        ) : null}
+                      </div>
+                    ) : show.openIn ? (
+                      <OpenInPicker
+                        keybindings={props.keybindings}
+                        environmentId={props.environmentId}
+                        availableEditors={props.availableEditors}
+                        openInCwd={props.gitCwd}
+                        enableShortcut={props.openInShortcutEnabled}
+                        displayMode="panel"
+                      />
+                    ) : null}
+                    {show.branch || show.git ? (
+                      <div className="flex min-w-0 items-center">
+                        {show.branch ? (
+                          <div className="min-w-0 flex-1">
+                            <BranchToolbar
+                              layout="panel"
+                              panelSection="branch"
+                              panelPrRowsContainer={prRowsContainer}
+                              {...branchToolbarProps}
+                            />
+                          </div>
+                        ) : null}
+                        {show.git && props.gitCwd ? (
+                          <GitActionsControl
+                            keybindings={props.keybindings}
+                            compact
+                            displayMode="panel"
+                            showActions={visible.gitActions}
+                            showChanges={visible.changes}
+                            gitCwd={props.gitCwd}
+                            activeThreadRef={activeThreadRef}
+                            {...(props.draftId ? { draftId: props.draftId } : {})}
+                            {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
+                          />
+                        ) : null}
+                      </div>
+                    ) : null}
+                    <div ref={setPrRowsContainer} />
+                    {show.scripts && props.activeProjectScripts ? (
+                      <ProjectScriptsControl
+                        environmentId={props.environmentId}
+                        displayMode="panel"
+                        scripts={props.activeProjectScripts}
+                        fileScripts={fileScripts}
+                        preferredScriptId={props.preferredScriptId}
+                        threadId={props.threadId}
+                        onRunScript={props.onRunProjectScript}
+                        onAddScript={props.onAddProjectScript}
+                        onUpdateScript={props.onUpdateProjectScript}
+                        onDeleteScript={props.onDeleteProjectScript}
+                      />
+                    ) : null}
+                  </div>
+                  {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
+                  {visible.context ? (
+                    <ThreadDetailsContext
+                      usage={props.usage.contextWindow}
+                      onCompact={props.onCompactContext}
+                      compactDisabled={props.compactDisabled}
+                      compactDisabledReason={props.compactDisabledReason}
                     />
                   ) : null}
-                  {show.branch ? (
-                    <BranchToolbar
-                      layout="panel"
-                      panelSection="branch"
-                      panelPrRowsContainer={prRowsContainer}
-                      {...branchToolbarProps}
-                    />
-                  ) : null}
-                </ThreadDetailsSection>
-              ) : null}
-
-              {show.openIn || show.scripts ? (
-                <ThreadDetailsSection title="Project actions">
-                  {show.openIn ? (
-                    <OpenInPicker
-                      keybindings={props.keybindings}
-                      environmentId={props.environmentId}
-                      availableEditors={props.availableEditors}
-                      openInCwd={props.gitCwd}
-                      enableShortcut={props.openInShortcutEnabled}
-                      displayMode="panel"
-                    />
-                  ) : null}
-                  {show.scripts && props.activeProjectScripts ? (
-                    <ProjectScriptsControl
-                      environmentId={props.environmentId}
-                      displayMode="panel"
-                      scripts={props.activeProjectScripts}
-                      fileScripts={fileScripts}
-                      preferredScriptId={props.preferredScriptId}
-                      onRunScript={props.onRunProjectScript}
-                      onAddScript={props.onAddProjectScript}
-                      onUpdateScript={props.onUpdateProjectScript}
-                      onDeleteScript={props.onDeleteProjectScript}
-                    />
-                  ) : null}
-                </ThreadDetailsSection>
-              ) : null}
-
-              {props.gitCwd && (show.git || show.branch) ? (
-                <ThreadDetailsSection title="Version Control" contentRef={setPrRowsContainer}>
-                  {show.git ? (
-                    <GitActionsControl
-                      keybindings={props.keybindings}
-                      compact={density !== "full"}
-                      showActions={visible.gitActions}
-                      showChanges={visible.changes}
-                      gitCwd={props.gitCwd}
-                      activeThreadRef={activeThreadRef}
-                      {...(props.draftId ? { draftId: props.draftId } : {})}
-                      {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
-                    />
-                  ) : null}
-                </ThreadDetailsSection>
+                </section>
               ) : null}
 
               {density === "full" && !props.draftId && visible.servers ? (
@@ -244,14 +269,9 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                   showSideChats={visible.sideChats}
                 />
               ) : null}
-              {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
-
-              {visible.context && props.usage.contextWindow ? (
-                <ThreadDetailsContext usage={props.usage.contextWindow} />
-              ) : null}
 
               {/* Shown only when no section above has content, so an emptied card can be refilled. */}
-              <div className="p-1 group-has-[>section>div:last-child:not(:empty)]/details-items:hidden">
+              <div className="p-1 group-has-[section]/details-items:hidden">
                 <ThreadDetailsControl
                   onClick={(event) => {
                     const rect = event.currentTarget.getBoundingClientRect();
