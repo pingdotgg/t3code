@@ -3496,79 +3496,98 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.live("replaces an unexpectedly terminated ACP runtime before the next turn", () =>
-    Effect.gen(function* () {
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const path = yield* Path.Path;
-      const selfInvocation = yield* resolveSelfInvocation();
-      const mockAgentPath = yield* path.fromFileUrl(
-        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-      );
-      const runtimeInputs: AcpAdapterV2RuntimeInput[] = [];
-      let runtimeOrdinalSeen = 0;
-      const baseMakeRuntime = makeMockRuntime({
-        childProcessSpawner,
-        mockAgentPath,
-        environment: (runtimeOrdinal) => {
-          runtimeOrdinalSeen = runtimeOrdinal;
-          return {};
-        },
-      });
-      const instanceId = ProviderInstanceId.make("acp-test-unexpected-termination");
-      const adapter = yield* makeAcpAdapterV2({
-        instanceId,
-        flavor: {
-          driver: ACP_TEST_DRIVER,
-          capabilities: AcpProviderCapabilitiesV2,
-          makeRuntime: (runtimeInput) =>
-            Effect.sync(() => {
-              runtimeInputs.push(runtimeInput);
-            }).pipe(Effect.andThen(baseMakeRuntime(runtimeInput))),
-        },
-        selfInvocation,
-      });
-      const threadId = ThreadId.make("thread-acp-unexpected-termination");
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: process.cwd(),
-      });
-      const modelSelection = { instanceId, model: "default" } as const;
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("provider-session-acp-unexpected-termination"),
-        modelSelection,
-        runtimePolicy,
-      });
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-      assert.equal(runtimeOrdinalSeen, 1);
-      yield* runtimeInputs[0]!.onTermination!(
-        new EffectAcpErrors.AcpTransportError({
-          detail: "Injected unexpected writer termination",
-          cause: "test",
-        }),
-      );
-
-      yield* runtime.startTurn(
-        makeTurnInput({
-          threadId,
-          providerThread,
+  it.live.each([false, true])(
+    "replaces an unexpectedly terminated ACP runtime only after cleanup (failure=%s)",
+    (cleanupFails) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const path = yield* Path.Path;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const runtimeInputs: AcpAdapterV2RuntimeInput[] = [];
+        let runtimeOrdinalSeen = 0;
+        const baseMakeRuntime = makeMockRuntime({
+          childProcessSpawner,
+          mockAgentPath,
+          wrapRuntime: (runtime) => ({
+            ...runtime,
+            terminateProcessGroup: cleanupFails
+              ? Effect.fail(
+                  new AcpSessionRuntime.AcpProcessGroupTerminationError({
+                    detail: "Injected scope cleanup failure",
+                  }),
+                )
+              : Effect.void,
+          }),
+          environment: (runtimeOrdinal) => {
+            runtimeOrdinalSeen = runtimeOrdinal;
+            return {};
+          },
+        });
+        const instanceId = ProviderInstanceId.make("acp-test-unexpected-termination");
+        const adapter = yield* makeAcpAdapterV2({
           instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: (runtimeInput) =>
+              Effect.sync(() => {
+                runtimeInputs.push(runtimeInput);
+              }).pipe(Effect.andThen(baseMakeRuntime(runtimeInput))),
+          },
+          selfInvocation,
+        });
+        const threadId = ThreadId.make("thread-acp-unexpected-termination");
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-unexpected-termination"),
+          modelSelection,
           runtimePolicy,
-          now: yield* DateTime.now,
-        }),
-      );
-      yield* runtime.events.pipe(
-        Stream.filter((event) => event.type === "turn.terminal"),
-        Stream.runHead,
-      );
-      assert.equal(runtimeOrdinalSeen, 2);
-      assert.lengthOf(runtimeInputs, 2);
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal(runtimeOrdinalSeen, 1);
+        yield* runtimeInputs[0]!.onTermination!(
+          new EffectAcpErrors.AcpTransportError({
+            detail: "Injected unexpected writer termination",
+            cause: "test",
+          }),
+        );
+
+        const turn = runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        );
+        if (cleanupFails) {
+          assert.equal((yield* Effect.flip(turn))._tag, "ProviderAdapterTurnStartError");
+          assert.equal(runtimeOrdinalSeen, 1);
+          assert.lengthOf(runtimeInputs, 1);
+          return;
+        }
+        yield* turn;
+        yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runHead,
+        );
+        assert.equal(runtimeOrdinalSeen, 2);
+        assert.lengthOf(runtimeInputs, 2);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.live("does not poll the process ledger while a cgroup lease owns teardown", () =>

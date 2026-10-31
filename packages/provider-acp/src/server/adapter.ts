@@ -6464,6 +6464,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           resumeSessionId?: string,
         ) {
           if (runtimeScope !== undefined) {
+            yield* (
+              runtime?.terminateProcessGroup?.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new EffectAcpErrors.AcpTransportError({
+                      detail: "ACP runtime cleanup failed before replacement",
+                      cause,
+                    }),
+                ),
+              ) ?? Effect.void
+            );
             yield* Scope.close(runtimeScope, Exit.void);
           }
           runtimeScope = yield* Scope.make();
