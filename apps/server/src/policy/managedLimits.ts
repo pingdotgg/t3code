@@ -122,7 +122,8 @@ export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServ
   );
   const mounts = yield* readMounts;
   if (mounts.length === 0) return;
-  for (const mount of mounts) {
+  // A Service is shared across the tailnet, and a foreground route lives as long as its command.
+  for (const mount of mounts.filter(({ owner }) => owner === undefined)) {
     yield* disableTailscaleServe(mount).pipe(
       Effect.catch((cause) =>
         Effect.logWarning("Tailscale Serve route could not be turned off", { ...mount, cause }),
@@ -134,9 +135,10 @@ export const closeTailscaleServeTo = Effect.fn("managedLimits.closeTailscaleServ
     return yield* refuseRemoteClients(
       policy,
       `so the server does not start while Tailscale Serve forwards ${left
-        .map(
-          ({ servePort, mount }) =>
-            `port ${servePort} at ${mount} here; turn it off with "tailscale serve --https=${servePort} --set-path=${mount} off"`,
+        .map(({ servePort, mount, owner }) =>
+          owner === "foreground"
+            ? `port ${servePort} at ${mount} here; stop the "tailscale serve" command that runs it`
+            : `port ${servePort} at ${mount} here; turn it off with "tailscale serve ${owner === undefined ? "" : `--service=${owner} `}--https=${servePort} --set-path=${mount} off"`,
         )
         .join(", and ")}`,
     );
@@ -161,12 +163,16 @@ export const checkServerReachability = Effect.fn("managedLimits.checkServerReach
       readonly authPolicy: ServerAuthPolicy;
       readonly host: string | undefined;
       readonly tailscaleServeEnabled: boolean;
+      /** The background service chose `host` to reach private networks; the user did not. */
+      readonly privateNetworkOnly?: boolean | undefined;
     },
   ) {
     const cannotListen = () =>
       refuseRemoteClients(
         policy,
-        `so the server cannot listen on ${input.host === "" ? "every interface" : (input.host ?? "this host")}`,
+        input.privateNetworkOnly === true
+          ? "so the background service cannot listen on private networks; set T3CODE_HOST=127.0.0.1 in its service.env"
+          : `so the server cannot listen on ${input.host === "" ? "every interface" : (input.host ?? "this host")}`,
       );
     if (!allowsAuthPolicy(policy, input.authPolicy)) {
       return yield* input.authPolicy === "remote-reachable"

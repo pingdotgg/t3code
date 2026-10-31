@@ -21,7 +21,7 @@ export class ManagedPolicyFileError extends Schema.TaggedError<ManagedPolicyFile
   },
 ) {
   override get message(): string {
-    return `The managed policy at ${this.path} is invalid: ${this.reason}. T3 Code will not start until an administrator fixes or removes it.`;
+    return `T3 Code cannot use the managed policy at ${this.path}: ${this.reason}. It will not start until an administrator fixes this.`;
   }
 }
 
@@ -128,6 +128,8 @@ export class WindowsRegistry extends Context.Service<
 const HKEY_LOCAL_MACHINE = -0x7ffffffen;
 const RRF_RT_REG_SZ = 0x2;
 const RRF_SUBKEY_WOW6464KEY = 0x10000;
+// Without it a REG_EXPAND_SZ value passes as REG_SZ, with the user's variables filled in.
+const RRF_NOEXPAND = 0x10000000;
 const ERROR_FILE_NOT_FOUND = 2;
 const ERROR_MORE_DATA = 234;
 const ERROR_UNSUPPORTED_TYPE = 1630;
@@ -168,7 +170,7 @@ export const layerWindowsRegistry = (loadFfi: () => Promise<typeof import("ffi-r
                   HKEY_LOCAL_MACHINE,
                   subkey,
                   value,
-                  RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY,
+                  RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY | RRF_NOEXPAND,
                   0n,
                   data,
                   size,
@@ -291,7 +293,9 @@ const readPlatformPolicy = Effect.fnUntraced(function* (platform: NodeJS.Platfor
               reason:
                 cause.code === ERROR_UNSUPPORTED_TYPE
                   ? "its Policy value is not a string (REG_SZ)"
-                  : `the registry cannot be read (${cause.message})`,
+                  : cause.code === undefined
+                    ? "T3 Code cannot read the registry on this machine"
+                    : `the registry cannot be read (${cause.message})`,
               cause,
             }),
         ),

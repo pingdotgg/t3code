@@ -6,11 +6,14 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as HostProcess from "./HostProcess.ts";
+
 import {
   MACOS_MANAGED_PREFERENCES_PATH,
   managedPolicyPath,
   readManagedPolicy,
   WINDOWS_POLICY_KEY,
+  layerWindowsRegistry,
   WindowsRegistry,
   WindowsRegistryError,
 } from "./managedPolicyFile.ts";
@@ -154,15 +157,34 @@ describe("readManagedPolicy", () => {
             "the registry cannot be read (Windows error 5)",
           );
         }
-        assert.include(
-          yield* win32({}, {}),
-          "the registry cannot be read (the registry API cannot load)",
-        );
+        assert.include(yield* win32({}, {}), "T3 Code cannot read the registry on this machine");
         assert.include(
           yield* win32({}, { code: 1630 }),
           "its Policy value is not a string (REG_SZ)",
         );
         assert.include(yield* win32({}, "{ not json"), "does not match the policy schema");
       }),
+  );
+
+  it.effect.runIf(HostProcess.Platform.defaultValue() === "win32")(
+    "reads REG_SZ values through the Win32 API, and refuses other types",
+    () =>
+      Effect.gen(function* () {
+        const registry = yield* WindowsRegistry;
+        const version = "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion";
+        assert.match((yield* registry.readMachineString(version, "ProductName")) ?? "", /Windows/);
+        assert.isUndefined(yield* registry.readMachineString(version, "T3CodeNoSuchValue"));
+        assert.isUndefined(
+          yield* registry.readMachineString("SOFTWARE\\T3CodeNoSuchKey", "Policy"),
+        );
+        // REG_DWORD, and REG_EXPAND_SZ, which would otherwise expand the user's variables.
+        for (const [key, value] of [
+          [version, "CurrentMajorVersionNumber"],
+          ["SOFTWARE\\Microsoft\\Windows\\CurrentVersion", "ProgramFilesPath"],
+        ] as const) {
+          const error = yield* registry.readMachineString(key, value).pipe(Effect.flip);
+          assert.equal(error.code, 1630);
+        }
+      }).pipe(Effect.provide(layerWindowsRegistry(() => import("ffi-rs")))),
   );
 });

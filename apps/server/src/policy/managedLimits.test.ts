@@ -58,6 +58,13 @@ it.effect("binds only the loopback address it approved when remote clients are n
     ] as const) {
       assert.equal(yield* bind(host), address);
     }
+    const service = yield* ManagedLimits.checkServerReachability(desktopAndLocal, {
+      authPolicy: "remote-reachable",
+      host: "0.0.0.0",
+      tailscaleServeEnabled: false,
+      privateNetworkOnly: true,
+    }).pipe(Effect.flip);
+    assert.include(service.message, "set T3CODE_HOST=127.0.0.1 in its service.env");
     assert.equal(yield* bind("localhost", { document: undefined }), "localhost");
     assert.equal(yield* bind(undefined, { document: undefined }), "127.0.0.1");
   }),
@@ -222,6 +229,30 @@ it.effect(
           'Tailscale Serve forwards port 443 at / here; turn it off with "tailscale serve --https=443 --set-path=/ off"',
         );
       }
+      // Routes the server must not remove itself: a Service's, and a foreground command's.
+      const owners = {
+        stdout: JSON.stringify({
+          Foreground: {
+            session1: {
+              Web: { "box:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:3773" } } } },
+            },
+          },
+          Services: {
+            "svc:t3": {
+              Web: { "t3:443": { Handlers: { "/t3": { Proxy: "http://127.0.0.1:3773" } } } },
+            },
+          },
+        }),
+        exitCode: 0,
+      };
+      const ownedOffCalls: Array<ReadonlyArray<string>> = [];
+      const owned = yield* close({ status: owners }, ownedOffCalls).pipe(Effect.flip);
+      assert.deepEqual(ownedOffCalls, []);
+      assert.include(owned.message, 'stop the "tailscale serve" command that runs it');
+      assert.include(
+        owned.message,
+        '"tailscale serve --service=svc:t3 --https=443 --set-path=/t3 off"',
+      );
       // An answer that cannot be read might hide a mapping, so the server does not start.
       const dialFailure = (reason: string) =>
         `Failed to connect to local Tailscale daemon for /localapi/v0/serve-config; not running? Error: dial unix /var/run/tailscale/tailscaled.sock: connect: ${reason}`;

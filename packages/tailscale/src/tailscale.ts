@@ -464,16 +464,24 @@ export const disableTailscaleServe = Effect.fn("tailscale.disableTailscaleServe"
   );
 });
 
+const TailscaleServeWebJson = Schema.optional(
+  Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      Handlers: Schema.optional(
+        Schema.Record(Schema.String, Schema.Struct({ Proxy: Schema.optional(Schema.String) })),
+      ),
+    }),
+  ),
+);
 const TailscaleServeStatusJson = Schema.Struct({
-  Web: Schema.optional(
-    Schema.Record(
-      Schema.String,
-      Schema.Struct({
-        Handlers: Schema.optional(
-          Schema.Record(Schema.String, Schema.Struct({ Proxy: Schema.optional(Schema.String) })),
-        ),
-      }),
-    ),
+  Web: TailscaleServeWebJson,
+  // A Tailscale Service's routes, and those of each `tailscale serve` still running in the foreground.
+  Services: Schema.optional(
+    Schema.Record(Schema.String, Schema.Struct({ Web: TailscaleServeWebJson })),
+  ),
+  Foreground: Schema.optional(
+    Schema.Record(Schema.String, Schema.Struct({ Web: TailscaleServeWebJson })),
   ),
 });
 // A node without any Serve configuration prints `null`.
@@ -488,6 +496,8 @@ const forwardsToThisMachine = (hostname: string) =>
 export interface TailscaleServeMount {
   readonly servePort: number;
   readonly mount: string;
+  /** The Tailscale Service it belongs to, or `foreground` for a `tailscale serve` still running. */
+  readonly owner?: string;
 }
 
 /**
@@ -500,18 +510,31 @@ export const parseTailscaleServeMountsProxyingTo = (
 ): ReadonlyArray<TailscaleServeMount> | undefined => {
   const status = decodeTailscaleServeStatusJson(rawServeStatusJson);
   if (Option.isNone(status)) return undefined;
-  return Object.entries(status.value?.Web ?? {}).flatMap(([hostPort, site]) => {
-    const servePort = Number(hostPort.slice(hostPort.lastIndexOf(":") + 1));
-    if (!Number.isInteger(servePort)) return [];
-    return Object.entries(site.Handlers ?? {}).flatMap(([mount, handler]) => {
-      if (handler.Proxy === undefined || !URL.canParse(handler.Proxy)) return [];
-      const target = new URL(handler.Proxy);
-      const port = target.port || (target.protocol === "https:" ? "443" : "80");
-      return forwardsToThisMachine(target.hostname) && port === String(localPort)
-        ? [{ servePort, mount }]
-        : [];
+  const mountsIn = (
+    web: typeof TailscaleServeWebJson.Type,
+    owner?: string,
+  ): ReadonlyArray<TailscaleServeMount> =>
+    Object.entries(web ?? {}).flatMap(([hostPort, site]) => {
+      const servePort = Number(hostPort.slice(hostPort.lastIndexOf(":") + 1));
+      if (!Number.isInteger(servePort)) return [];
+      return Object.entries(site.Handlers ?? {}).flatMap(([mount, handler]) => {
+        if (handler.Proxy === undefined || !URL.canParse(handler.Proxy)) return [];
+        const target = new URL(handler.Proxy);
+        const port = target.port || (target.protocol === "https:" ? "443" : "80");
+        return forwardsToThisMachine(target.hostname) && port === String(localPort)
+          ? [{ servePort, mount, ...(owner === undefined ? {} : { owner }) }]
+          : [];
+      });
     });
-  });
+  return [
+    ...mountsIn(status.value?.Web),
+    ...Object.entries(status.value?.Services ?? {}).flatMap(([name, service]) =>
+      mountsIn(service.Web, name),
+    ),
+    ...Object.values(status.value?.Foreground ?? {}).flatMap((session) =>
+      mountsIn(session.Web, "foreground"),
+    ),
+  ];
 };
 
 /** The HTTPS Serve handlers that forward to `localPort` on this machine. */

@@ -115,12 +115,28 @@ describe("tailscale", () => {
           },
         },
       },
+      Services: {
+        "svc:t3": {
+          Web: {
+            "t3.tailnet.ts.net:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:3773" } } },
+          },
+        },
+      },
+      Foreground: {
+        session1: {
+          Web: {
+            "box.tailnet.ts.net:8443": { Handlers: { "/": { Proxy: "http://localhost:3773" } } },
+          },
+        },
+      },
     });
     assert.deepEqual(parseTailscaleServeMountsProxyingTo(status, 3773), [
       { servePort: 443, mount: "/t3" },
       { servePort: 9443, mount: "/" },
       { servePort: 10000, mount: "/a" },
       { servePort: 10000, mount: "/b" },
+      { servePort: 443, mount: "/", owner: "svc:t3" },
+      { servePort: 8443, mount: "/", owner: "foreground" },
     ]);
     assert.deepEqual(
       parseTailscaleServeMountsProxyingTo(
