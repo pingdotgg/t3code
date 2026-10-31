@@ -41,6 +41,8 @@ export function buildDraftLinearIssue(input: {
   return {
     issueId: issue.id,
     identifier: issue.identifier,
+    teamId: issue.team.id,
+    ...(issue.project ? { projectId: issue.project.id } : {}),
     branchName: issue.branchName,
     mappedProjectId: input.mapping?.projectRef ?? null,
     moveTo: moveTarget,

@@ -284,6 +284,8 @@ function PipelineDialogBody({
       environmentId,
       issueId: issue.id,
       identifier: issue.identifier,
+      teamId: issue.team.id,
+      projectId: issue.project?.id,
       target: {
         kind: "pipeline_run",
         targetId: run.id,

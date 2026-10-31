@@ -40,6 +40,7 @@ import * as Effect from "effect/Effect";
 import * as Hash from "effect/Hash";
 import { HttpClient } from "effect/http";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -395,25 +396,54 @@ export const layer = Layer.effect(
     const recordLaunch: LinearService["Service"]["recordLaunch"] = Effect.fn(
       "LinearService.recordLaunch",
     )(function* (input) {
-      const issue = (yield* cached(
+      // Linear unreachable: link from what the client knew and skip every write-back.
+      const unreadable: { error: LinearError | null } = { error: null };
+      const loaded = yield* cached(
         issueCache,
         input.issueId,
         ISSUE_TTL_MS,
         tracker.issue(input.issueId),
-      )).value;
+      ).pipe(
+        Effect.map((entry) => Option.some(entry.value)),
+        Effect.catchIf(
+          (error) =>
+            input.issue !== undefined &&
+            error.reason !== "not_found" &&
+            error.reason !== "invalid_input",
+          (error) =>
+            Effect.sync(() => {
+              unreadable.error = error;
+              return Option.none<LinearIssue>();
+            }),
+        ),
+      );
+      const issue = Option.getOrNull(loaded);
       const { target } = input;
-      const commentMode = !input.writeBack.comment
-        ? "none"
-        : target.kind === "pipeline_run"
-          ? "pipeline"
-          : "thread";
+      const commentMode =
+        issue === null || !input.writeBack.comment
+          ? "none"
+          : target.kind === "pipeline_run"
+            ? "pipeline"
+            : "thread";
+      const identity =
+        issue !== null
+          ? {
+              identifier: issue.identifier,
+              teamId: issue.team.id,
+              projectId: issue.project?.id ?? null,
+            }
+          : {
+              identifier: input.issue!.identifier,
+              teamId: input.issue!.teamId,
+              projectId: input.issue!.projectId ?? null,
+            };
       const stored = yield* store
         .upsert({
           linkId: yield* crypto.randomUUIDv4().pipe(Effect.orDie),
-          issueId: issue.id,
-          issueIdentifier: issue.identifier,
-          teamId: issue.team.id,
-          projectId: issue.project?.id ?? null,
+          issueId: input.issueId,
+          issueIdentifier: identity.identifier,
+          teamId: identity.teamId,
+          projectId: identity.projectId,
           targetKind: target.kind,
           targetId: target.targetId,
           threadId: target.threadId,
@@ -424,10 +454,22 @@ export const layer = Layer.effect(
         .pipe(Effect.mapError(unavailableStorage));
 
       const warnings: Array<{ step: "move_state" | "comment"; message: string }> = [];
+      // A missing or rejected key is a setup state; an outage or rate limit deserves a heads-up.
+      if (
+        unreadable.error !== null &&
+        (unreadable.error.reason === "unavailable" || unreadable.error.reason === "rate_limited")
+      ) {
+        const message = writeBackFailure(unreadable.error);
+        if (input.writeBack.moveToStateId !== undefined) {
+          warnings.push({ step: "move_state", message });
+        }
+        if (input.writeBack.comment) warnings.push({ step: "comment", message });
+      }
 
       // Write-backs are best effort and run once per link, so repeating the call is harmless.
       const moveToStateId = input.writeBack.moveToStateId;
       if (
+        issue !== null &&
         moveToStateId !== undefined &&
         stored.link.stateMovedTo === null &&
         isStateMoveEligible(issue.state.type)
@@ -451,7 +493,7 @@ export const layer = Layer.effect(
         );
       }
 
-      if (input.writeBack.comment && stored.link.commentId === null) {
+      if (issue !== null && input.writeBack.comment && stored.link.commentId === null) {
         const post =
           commentMode === "pipeline"
             ? syncPipelineComment(stored).pipe(Effect.asVoid)

@@ -19,6 +19,8 @@ const detail = (stateType: LinearWorkflowState["type"] = "unstarted") =>
       id: "issue-1",
       identifier: "ATT-612",
       branchName: "jan/att-612-rfid",
+      team: { id: "team-1" },
+      project: { id: "project-1" },
       state: { id: "s", name: "Todo", type: stateType, color: "#999" },
     },
   }) as never;
@@ -35,6 +37,8 @@ describe("buildDraftLinearIssue", () => {
     expect(draft).toEqual({
       issueId: "issue-1",
       identifier: "ATT-612",
+      teamId: "team-1",
+      projectId: "project-1",
       branchName: "jan/att-612-rfid",
       mappedProjectId: "proj",
       moveTo: { id: "prog", name: "In Progress" },

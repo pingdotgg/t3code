@@ -313,6 +313,9 @@ type LegacyPersistedComposerDraftStoreState = PersistedComposerDraftStoreState &
 export const DraftLinearIssue = Schema.Struct({
   issueId: Schema.String,
   identifier: Schema.String,
+  /** Lets the launch still be linked when Linear can't be read at send time. */
+  teamId: Schema.optionalKey(Schema.String),
+  projectId: Schema.optionalKey(Schema.String),
   /** The issue's Linear branch name; the new worktree takes it. */
   branchName: Schema.String,
   /** The T3 project the mapping chose, for the "from mapping" hint; null when unmapped. */

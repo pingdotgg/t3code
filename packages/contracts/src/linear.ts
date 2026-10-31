@@ -404,6 +404,17 @@ export const LinearRecordLaunchInput = Schema.Struct({
   }),
   /** `<origin>/<environmentId>/<threadId>` of the launching client. */
   threadUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)),
+  /**
+   * What the client already knows about the issue. When Linear can't be read (disconnected,
+   * invalid key, outage) the link is still recorded from this and write-backs are skipped.
+   */
+  issue: Schema.optional(
+    Schema.Struct({
+      identifier: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+      teamId: LinearId,
+      projectId: Schema.optional(LinearId),
+    }),
+  ),
 });
 export type LinearRecordLaunchInput = typeof LinearRecordLaunchInput.Type;
 

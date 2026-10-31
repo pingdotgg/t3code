@@ -423,6 +423,40 @@ describe("LinearService", () => {
       }).pipe(Effect.provide(makeLayer(harness)));
     });
 
+    it.effect("still links the launch, without write-back, when Linear cannot be read", () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const linear = yield* LinearService.LinearService;
+        const store = yield* LinearLinkStore.LinearLinkStore;
+        const result = yield* linear.recordLaunch(
+          launchInput({ issue: { identifier: "ATT-612", teamId: "team-1" } }),
+        );
+        assert.strictEqual(result.link.issueIdentifier, "ATT-612");
+        assert.strictEqual(result.link.commentId, null);
+        assert.strictEqual(result.link.stateMovedTo, null);
+        assert.deepStrictEqual(result.warnings, []);
+        assert.strictEqual((yield* store.list(10)).length, 1);
+        assert.strictEqual(harness.calls.length, 0);
+      }).pipe(Effect.provide(makeLayer(harness)));
+    });
+
+    it.effect("links the launch and warns when Linear is down", () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const linear = yield* LinearService.LinearService;
+        yield* linear.connect({ apiKey: KEY });
+        harness.handler = () => "network";
+        const result = yield* linear.recordLaunch(
+          launchInput({ issueId: "issue-2", issue: { identifier: "ATT-613", teamId: "team-1" } }),
+        );
+        assert.strictEqual(result.link.issueIdentifier, "ATT-613");
+        assert.deepStrictEqual(result.warnings.map((warning) => warning.step).toSorted(), [
+          "comment",
+          "move_state",
+        ]);
+      }).pipe(Effect.provide(makeLayer(harness)));
+    });
+
     it.effect("fails with not_connected rather than recording an unverifiable link", () => {
       const harness = makeHarness();
       return Effect.gen(function* () {

@@ -19,6 +19,9 @@ export async function recordLinearLaunch(input: {
   readonly environmentId: EnvironmentId;
   readonly issueId: string;
   readonly identifier: string;
+  /** Ids the client already holds, so the launch is linked even when Linear can't be read. */
+  readonly teamId: string | undefined;
+  readonly projectId: string | undefined;
   readonly target: LinearLaunchTarget;
   readonly writeBack: LinearRecordLaunchInput["writeBack"];
 }): Promise<void> {
@@ -40,6 +43,15 @@ export async function recordLinearLaunch(input: {
           issueId: input.issueId,
           target: input.target,
           writeBack: input.writeBack,
+          ...(input.teamId === undefined
+            ? {}
+            : {
+                issue: {
+                  identifier: input.identifier,
+                  teamId: input.teamId,
+                  ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
+                },
+              }),
           threadUrl: linearThreadUrl({
             origin: window.location.origin,
             environmentId: input.environmentId,
