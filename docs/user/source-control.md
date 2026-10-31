@@ -1,6 +1,7 @@
 # Source control
 
-T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, Azure DevOps, and GitCafe to clone
+T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, Azure DevOps, GitCafe, and Origin
+(Cursor) to clone
 and publish repositories, create pull requests, and review changes.
 
 ## Review turn changes
@@ -128,6 +129,24 @@ sent to `git.cafe`; `CAFE_TOKEN` follows `CAFE_HOST` if you set it. Repositories
 
 Line comments are not available for GitCafe pull requests yet.
 Merging a stack lands it through GitCafe, and updating a branch restacks the layers above it.
+
+### Origin (Cursor)
+
+Install the Origin CLI and sign in:
+
+```bash
+curl -fsSL https://downloads.cursor.com/origin/install.sh | sh
+origin auth login
+```
+
+Alternatively, open **Settings → Source control**, expand **Origin**, and enter a Cursor API key.
+It is kept in the server's secret store and minted through `origin auth token` (never sent as a
+Bearer token). Or set `CURSOR_AUTH_TOKEN` (used directly) or `CURSOR_API_KEY` (minted the same way)
+in the server's environment and restart it.
+
+Origin remotes use `origin.cursor.com`. Pull requests open at `cursor.com/codebase/...`.
+Repositories mirrored from GitHub must use the GitHub remote and provider for pull requests;
+Origin-native repositories use Origin's merge and squash methods (no rebase merge).
 
 ## Start, clone, or publish a project
 
