@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { derive } from "@t3tools/provider-core/server/IdAllocator";
 import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
@@ -20,6 +21,7 @@ import {
   ThreadId,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadProjection,
+  type ModelSelection,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
@@ -2180,6 +2182,184 @@ describe("OrchestratorMcpService provider resolution", () => {
           }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
         }
       }),
+  );
+
+  it.effect("uses a valid fallback only for implicit delegated targets", () =>
+    Effect.gen(function* () {
+      const fallbackInstanceId = ProviderInstanceId.make("claudeAgent");
+      const parentModelSelection = {
+        instanceId: codexInstanceId,
+        model: "gpt-5.4",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      } as const;
+      const fallbackModelSelection = {
+        instanceId: fallbackInstanceId,
+        model: "claude-sonnet-4-6",
+        options: [{ id: "effort", value: "max" }],
+      } as const;
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        runId: parentRunId,
+        parentNodeId,
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Summarize the diff.",
+        title: null,
+        model: "gpt-5.4",
+        status: "running",
+        result: null,
+        startedAt: null,
+        completedAt: null,
+      };
+      const dispatches = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      let accepted = false;
+      let projectedTask = task;
+      const exhaustedProvider: ServerProvider = {
+        ...providerSnapshot({
+          instanceId: codexInstanceId,
+          driver: ProviderDriverKind.make("codex"),
+          model: "gpt-5.4",
+        }),
+        models: [
+          { slug: "gpt-5.4", name: "gpt-5.4", isCustom: false, capabilities: null },
+          { slug: "gpt-5.5", name: "gpt-5.5", isCustom: false, capabilities: null },
+        ],
+        usageLimits: {
+          checkedAt: "2026-09-13T00:00:00.000Z",
+          windows: [
+            {
+              id: "five_hour",
+              kind: "session",
+              label: "Session",
+              usedPercent: 100,
+              windowDurationMins: 300,
+              resetsAt: "2099-09-13T00:00:00.000Z",
+            },
+          ],
+        },
+      };
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? parentProjection([projectedTask], parentModelSelection)
+                : childProjection,
+            ),
+          hasReceipt: () => Effect.sync(() => accepted),
+          getThreadShell: () =>
+            Effect.succeed({
+              ...liveThreadShell(childThreadId),
+              modelSelection: fallbackModelSelection,
+            }),
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+          assertProviderInstanceEnabled: () => Effect.void,
+          dispatch: (command) =>
+            Ref.update(dispatches, (commands) => [...commands, command]).pipe(
+              Effect.as({
+                sequence: 1,
+                storedEvents: [
+                  {
+                    sequence: 1,
+                    commandId: null,
+                    event: { type: "subagent.updated", payload: projectedTask },
+                  },
+                ],
+              } as never),
+            ),
+        }),
+        ServerSettings.layerTest({ fallbackModelSelection }),
+        providerRegistryLayer([
+          exhaustedProvider,
+          providerSnapshot({
+            instanceId: fallbackInstanceId,
+            driver: ProviderDriverKind.make("claudeAgent"),
+            model: fallbackModelSelection.model,
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId, fallbackInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const capabilities = yield* service.capabilities(scope);
+        assert.deepEqual(capabilities.fallbackModelSelection, {
+          providerInstanceId: fallbackInstanceId,
+          model: fallbackModelSelection.model,
+        });
+        assert.isTrue(capabilities.fallbackAppliesToInherited);
+        const implicit = yield* service.delegateTask(scope, {
+          task: "Summarize the diff.",
+          mode: "async",
+          clientRequestId: "delegate-implicit-fallback",
+        });
+        assert.equal(implicit.status, "running");
+        const explicitProvider = yield* service.delegateTask(scope, {
+          task: "Summarize the diff.",
+          target: { providerInstanceId: codexInstanceId },
+          mode: "async",
+          clientRequestId: "delegate-explicit-provider-over-fallback",
+        });
+        assert.equal(explicitProvider.status, "running");
+        const explicitOptions = yield* service.delegateTask(scope, {
+          task: "Summarize the diff.",
+          target: { options: [{ id: "effort", value: "high" }] },
+          mode: "async",
+          clientRequestId: "delegate-explicit-options-with-fallback",
+        });
+        assert.equal(explicitOptions.status, "running");
+        const explicitModel = yield* service.delegateTask(scope, {
+          task: "Summarize the diff.",
+          target: { model: "gpt-5.5" },
+          mode: "async",
+          clientRequestId: "delegate-explicit-model-over-fallback",
+        });
+        assert.equal(explicitModel.status, "running");
+
+        const commands = yield* Ref.get(dispatches);
+        const selections = commands.map(
+          (command) => (command as { readonly modelSelection: ModelSelection }).modelSelection,
+        );
+        assert.deepEqual(selections[0], fallbackModelSelection);
+        assert.deepEqual(selections[1], parentModelSelection);
+        assert.deepEqual(selections[2], {
+          ...fallbackModelSelection,
+          options: [{ id: "effort", value: "high" }],
+        });
+        assert.deepEqual(selections[3], { instanceId: codexInstanceId, model: "gpt-5.5" });
+
+        const original = commands[0] as { readonly commandId: CommandId };
+        accepted = true;
+        projectedTask = {
+          ...task,
+          id: derive.delegatedTaskNode({ commandId: original.commandId }),
+          providerInstanceId: fallbackInstanceId,
+          driver: ProviderDriverKind.make("claudeAgent"),
+          model: fallbackModelSelection.model,
+        };
+        yield* service.delegateTask(scope, {
+          task: "Summarize the diff.",
+          mode: "async",
+          clientRequestId: "delegate-implicit-fallback",
+        });
+        const retried = (yield* Ref.get(dispatches)).at(-1) as {
+          readonly modelSelection: ModelSelection;
+        };
+        assert.equal(retried.modelSelection.instanceId, fallbackInstanceId);
+        assert.equal(retried.modelSelection.model, fallbackModelSelection.model);
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+    }),
   );
 
   describe("scheduled tasks at modes above the caller's", () => {

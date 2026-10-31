@@ -52,6 +52,7 @@ import {
   type OrchestratorMcpThreadWaitInput,
   type OrchestratorMcpThreadWaitResult,
   type ProviderInteractionMode,
+  type ProviderInstanceId,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
   ProviderRequestKind,
@@ -59,6 +60,7 @@ import {
   type ScheduledTask,
   type ScheduledTaskUpsertInput,
   type ServerProvider,
+  type ServerSettings as ServerSettingsConfig,
   type ServerProviderModel,
   ThreadId,
   isOrchestrationV2WorkActive,
@@ -66,6 +68,7 @@ import {
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
+import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import {
   normalizeThreadPullRequestKey,
   visibleThreadPullRequests,
@@ -84,6 +87,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import { derive } from "@t3tools/provider-core/server/IdAllocator";
 import {
   subagentResultForRun,
   delegatedTaskProgress,
@@ -1257,6 +1261,40 @@ const make = Effect.gen(function* () {
   const loadOrchestrationCapableInstanceIds = () =>
     providerAdapters.list().pipe(Effect.map((instanceIds) => new Set(instanceIds)));
 
+  const resolveImplicitFallback = (input: {
+    readonly defaultSelection: ModelSelection | null;
+    readonly providers: ReadonlyArray<ServerProvider>;
+    readonly orchestrationCapableInstanceIds: ReadonlySet<ProviderInstanceId>;
+    readonly settings: ServerSettingsConfig;
+    readonly projectId: ProjectId | null;
+    readonly now: number;
+  }) => {
+    const fallback = input.settings.fallbackModelSelection;
+    const fallbackProvider = input.providers.find(
+      (provider) => provider.instanceId === fallback?.instanceId,
+    );
+    const fallbackModel = fallbackProvider?.models.find((model) => model.slug === fallback?.model);
+    const fallbackOptions = fallback?.options ?? [];
+    const usableFallback =
+      fallback !== null &&
+      fallbackProvider !== undefined &&
+      (fallbackProvider.models.length === 0 || fallbackModel !== undefined) &&
+      providerConstraints(
+        fallbackProvider,
+        input.orchestrationCapableInstanceIds.has(fallbackProvider.instanceId),
+      ).length === 0 &&
+      invalidOptionSelections(fallbackOptions, fallbackModel?.capabilities?.optionDescriptors)
+        .length === 0;
+    return resolveNewThreadModelSelection({
+      defaultSelection: input.defaultSelection,
+      fallbackSelection: usableFallback ? fallback : null,
+      providers: input.providers,
+      now: input.now,
+      settings: input.settings,
+      projectId: input.projectId,
+    });
+  };
+
   /** Background agents miss foreground-only health probes; re-probe once before refusing. */
   const assertTargetEnabledForProject = (
     parent: Pick<OrchestrationV2ThreadProjection, "thread">,
@@ -1300,6 +1338,27 @@ const make = Effect.gen(function* () {
     const requestedInstanceId = input.target?.providerInstanceId;
     const requestedDriver = input.target?.driverKind;
     const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
+    const inheritedSelection = input.parent.thread.modelSelection;
+    const implicitSelection =
+      requestedInstanceId === undefined &&
+      requestedDriver === undefined &&
+      input.target?.model === undefined;
+    let selectedImplicitly: ModelSelection = inheritedSelection;
+    if (implicitSelection && input.skipProjectEnablementFilter !== true) {
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+      );
+      const now = yield* Clock.currentTimeMillis;
+      selectedImplicitly =
+        resolveImplicitFallback({
+          defaultSelection: inheritedSelection,
+          providers: input.providers,
+          orchestrationCapableInstanceIds,
+          settings,
+          projectId: input.parent.thread.projectId,
+          now,
+        }).selection ?? inheritedSelection;
+    }
     let instanceId = requestedInstanceId;
 
     if (instanceId === undefined && requestedDriver !== undefined) {
@@ -1345,7 +1404,9 @@ const make = Effect.gen(function* () {
         );
       }
     }
-    instanceId ??= input.parent.thread.modelSelection.instanceId;
+    instanceId ??= implicitSelection
+      ? selectedImplicitly.instanceId
+      : inheritedSelection.instanceId;
 
     const provider = input.providers.find((candidate) => candidate.instanceId === instanceId);
     if (provider === undefined) {
@@ -1371,13 +1432,14 @@ const make = Effect.gen(function* () {
       );
     }
 
-    const inheritedSelection = input.parent.thread.modelSelection;
     const requestedModel = input.target?.model;
     const model =
       requestedModel ??
-      (instanceId === inheritedSelection.instanceId
-        ? inheritedSelection.model
-        : provider.models[0]?.slug);
+      (implicitSelection
+        ? selectedImplicitly.model
+        : instanceId === inheritedSelection.instanceId
+          ? inheritedSelection.model
+          : provider.models[0]?.slug);
     if (model === undefined) {
       return yield* failure(
         "model_unavailable",
@@ -1403,14 +1465,15 @@ const make = Effect.gen(function* () {
       if (invalid.length > 0) {
         return yield* failure(
           "invalid_request",
-          `Model ${model} on provider ${instanceId} rejected options: ${invalid.join(" ")}`,
+          `Model ${model} on provider ${instanceId}${implicitSelection && selectedImplicitly !== inheritedSelection ? " (configured fallback)" : ""} rejected options: ${invalid.join(" ")}`,
         );
       }
     }
 
+    const optionSelection = implicitSelection ? selectedImplicitly : inheritedSelection;
     const inheritsOptions =
-      instanceId === inheritedSelection.instanceId && model === inheritedSelection.model;
-    let options = inheritsOptions ? inheritedSelection.options : undefined;
+      instanceId === optionSelection.instanceId && model === optionSelection.model;
+    let options = inheritsOptions ? optionSelection.options : undefined;
     if (requestedOptions !== undefined) {
       const selections = new Map(
         (requestedOptions.length === 0 ? [] : (options ?? [])).map((selection) => [
@@ -2156,12 +2219,29 @@ const make = Effect.gen(function* () {
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
       );
       const inherited = parent?.thread.modelSelection;
+      const now = yield* Clock.currentTimeMillis;
+      const fallbackResolution = resolveImplicitFallback({
+        defaultSelection: inherited ?? null,
+        providers,
+        orchestrationCapableInstanceIds,
+        settings,
+        projectId: parent?.thread.projectId ?? null,
+        now,
+      });
       const searchTerms = input.search?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
       return {
         parentThreadId: parent?.thread.id ?? null,
         inheritedProviderInstanceId: inherited?.instanceId ?? null,
         inheritedModel: inherited?.model ?? null,
         inheritedOptions: inherited?.options ?? [],
+        fallbackModelSelection:
+          settings.fallbackModelSelection === null
+            ? null
+            : {
+                providerInstanceId: settings.fallbackModelSelection.instanceId,
+                model: settings.fallbackModelSelection.model,
+              },
+        fallbackAppliesToInherited: fallbackResolution.fallback !== null,
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
         providers: providers.map((provider) => {
@@ -2176,6 +2256,8 @@ const make = Effect.gen(function* () {
             isPinned: (model) =>
               model.isCustom ||
               (inherited?.instanceId === provider.instanceId && inherited.model === model.slug) ||
+              (settings.fallbackModelSelection?.instanceId === provider.instanceId &&
+                settings.fallbackModelSelection.model === model.slug) ||
               (settings.favorites ?? []).some(
                 (favorite) =>
                   favorite.provider === provider.instanceId && favorite.model === model.slug,
@@ -2265,9 +2347,28 @@ const make = Effect.gen(function* () {
         operation: "delegate-task",
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
+      const acceptedTaskId = derive.delegatedTaskNode({ commandId });
+      const acceptedTask = isRetryOfAcceptedDelegation
+        ? (yield* loadTaskParent(scope.thread.threadId, acceptedTaskId)).subagents.find(
+            (task) => task.id === acceptedTaskId,
+          )
+        : undefined;
+      const committedThread = acceptedTask?.childThreadId
+        ? yield* threadManagement
+            .getThreadShell(acceptedTask.childThreadId)
+            .pipe(Effect.mapError(threadManagementFailure))
+        : null;
       const target = yield* resolveTargetRechecking({
         parent,
-        target: input.target,
+        target:
+          committedThread === null
+            ? input.target
+            : {
+                providerInstanceId:
+                  acceptedTask?.providerInstanceId ?? committedThread.modelSelection.instanceId,
+                model: acceptedTask?.model ?? committedThread.modelSelection.model,
+                options: committedThread.modelSelection.options ?? [],
+              },
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
@@ -2682,6 +2783,8 @@ const make = Effect.gen(function* () {
                     : {
                         ...request.target,
                         providerInstanceId: committedThread.modelSelection.instanceId,
+                        model: committedThread.modelSelection.model,
+                        options: committedThread.modelSelection.options ?? [],
                       },
                 providers,
                 skipProjectEnablementFilter: isRetryOfAcceptedCreation,
