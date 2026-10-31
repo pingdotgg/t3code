@@ -149,18 +149,14 @@ describe("AttachmentClaims", () => {
       const mismatched = { ...staged, sizeBytes: 999 };
       const config = yield* ServerConfig.ServerConfig;
 
-      const result = yield* Effect.exit(
+      const failure = yield* Effect.flip(
         claimPendingAttachments({
           threadId: "thread-claims-4",
           attachments: [good, mismatched],
         }),
       );
-
-      expect(result._tag).toBe("Failure");
-      if (result._tag === "Failure") {
-        const error = result.cause;
-        expect(String(error)).toContain("stored size does not match");
-      }
+      expect(failure.message).toContain("stored size does not match");
+      expect(failure.attachmentId).toBe(mismatched.id);
       const claimedFiles = NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
         entry.startsWith("thread-claims-4-"),
       );

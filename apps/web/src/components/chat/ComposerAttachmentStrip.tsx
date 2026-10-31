@@ -230,6 +230,12 @@ export function ComposerAttachmentMediaRow({
                   {image.name}
                 </div>
               )}
+              {upload?.status === "failed" && (
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 rounded-lg border-2 border-destructive"
+                />
+              )}
               {source?.kind === "snap-shot" ? (
                 <SnapShotAttachmentDetails
                   source={source}
