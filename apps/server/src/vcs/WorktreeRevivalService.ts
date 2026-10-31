@@ -124,7 +124,7 @@ const make = Effect.gen(function* () {
       string,
       {
         readonly token: string;
-        readonly outcome: Deferred.Deferred<void, WorktreeMutationError>;
+        readonly outcome: Deferred.Deferred<ThreadId | undefined, WorktreeMutationError>;
       }
     >(),
   );
@@ -551,7 +551,7 @@ const make = Effect.gen(function* () {
     input: WorktreeRevivalForThreadInput,
     worktreePath: string,
     token: string,
-    outcome: Deferred.Deferred<void, WorktreeMutationError>,
+    outcome: Deferred.Deferred<ThreadId | undefined, WorktreeMutationError>,
   ) {
     const project = yield* loadProject(input);
     const setupFailed = (cause: unknown) =>
@@ -593,6 +593,7 @@ const make = Effect.gen(function* () {
         observeCompletion: {},
       })
       .pipe(Effect.mapError(setupFailed));
+    if (setup.status === "skipped-for-link") return input.threadId;
     if (setup.status !== "started" || setup.completion === undefined) {
       yield* permitStartup;
       return;
@@ -617,9 +618,9 @@ const make = Effect.gen(function* () {
     input: WorktreeRevivalForThreadInput,
     worktreePath: string,
     token: string,
-  ) {
+  ): Effect.fn.Return<void, WorktreeMutationError> {
     const key = setupKey(input.projectId, worktreePath);
-    const fresh = yield* Deferred.make<void, WorktreeMutationError>();
+    const fresh = yield* Deferred.make<ThreadId | undefined, WorktreeMutationError>();
     // Registering the run and forking it cannot be split by an interrupt: a
     // registered outcome nobody completes would hold every later turn. The
     // lease also prevents a delayed caller for an older token from replacing
@@ -647,7 +648,7 @@ const make = Effect.gen(function* () {
           yield* Effect.interruptible(runSetup(input, worktreePath, token, fresh)).pipe(
             Effect.onExit((exit) =>
               Effect.gen(function* () {
-                if (Exit.isFailure(exit)) {
+                if (Exit.isFailure(exit) || exit.value !== undefined) {
                   yield* Ref.update(setupRuns, (runs) => {
                     if (runs.get(key)?.outcome !== fresh) return runs;
                     const next = new Map(runs);
@@ -664,7 +665,10 @@ const make = Effect.gen(function* () {
         return registered;
       }),
     ).pipe(Effect.uninterruptible);
-    yield* Deferred.await(outcome);
+    const skippedForThread = yield* Deferred.await(outcome);
+    if (skippedForThread !== undefined && skippedForThread !== input.threadId) {
+      yield* ensureSetup(input, worktreePath, token);
+    }
   });
 
   // Setup runs outside the revival lease because its terminal acquires the same lease.

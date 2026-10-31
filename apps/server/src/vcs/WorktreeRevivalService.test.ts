@@ -542,26 +542,50 @@ it.effect("retries required setup after restart and remembers success on the nex
     const config = yield* ServerConfig.ServerConfig;
     const repositoryRoot = yield* initializeRepository();
     const worktreePath = path.join(config.worktreesDir, "setup", "restart");
+    const skipStarted = yield* Deferred.make<void>();
+    const releaseSkip = yield* Deferred.make<void>();
     let attempts = 0;
+    const linkedThreadId = ThreadId.make("link-origin-setup");
     const layer = makeRevivalLayer(
       makeProject(repositoryRoot),
-      () =>
-        Effect.sync(() =>
-          startedSetup(
-            worktreePath,
-            false,
-            Effect.succeed({
-              exitCode: ++attempts === 1 ? 1 : 0,
-              durationMs: 1,
-            }),
-          ),
-        ),
+      (input) =>
+        input.threadId === linkedThreadId
+          ? Deferred.succeed(skipStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseSkip)),
+              Effect.as({ status: "skipped-for-link" } as const),
+            )
+          : Effect.sync(() =>
+              startedSetup(
+                worktreePath,
+                false,
+                Effect.succeed({
+                  exitCode: ++attempts === 1 ? 1 : 0,
+                  durationMs: 1,
+                }),
+              ),
+            ),
       { config },
     );
     const start = Effect.flatMap(WorktreeRevivalService.WorktreeRevivalService, (service) =>
       service.reviveForThread({ threadId, projectId, worktreePath, branch: "feature/revival" }),
     );
-    const error = yield* start.pipe(Effect.flip, Effect.provide(layer));
+    const error = yield* Effect.gen(function* () {
+      const service = yield* WorktreeRevivalService.WorktreeRevivalService;
+      const linked = yield* service
+        .reviveForThread({
+          threadId: linkedThreadId,
+          projectId,
+          worktreePath,
+          branch: "feature/revival",
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(skipStarted);
+      const ordinary = yield* start.pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+      assert.equal(attempts, 0);
+      yield* Deferred.succeed(releaseSkip, undefined);
+      yield* Fiber.join(linked);
+      return yield* Fiber.join(ordinary);
+    }).pipe(Effect.provide(layer));
     assert.equal(error.stage, "setup_exit_nonzero");
     const retry = yield* start.pipe(Effect.provide(Layer.fresh(layer)));
     assert.deepEqual(retry, { revived: false, generation: 0 });
