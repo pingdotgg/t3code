@@ -29,7 +29,13 @@ it.effect(
                             { effort: "high", description: "Deep" },
                           ],
                         },
-                        { slug: "hidden", display_name: "Hidden", visibility: "hidden" },
+                        {
+                          slug: "hidden",
+                          display_name: "Hidden",
+                          visibility: "hidden",
+                          default_reasoning_level: null,
+                          supported_reasoning_levels: null,
+                        },
                         { slug: "first", display_name: "First from OpenAI", visibility: "list" },
                       ]
                     : [{ slug: "account-b-only", display_name: "B", visibility: "list" }],

@@ -15,13 +15,15 @@ const Catalog = Schema.Struct({
       slug: Schema.NonEmptyString,
       display_name: Schema.NonEmptyString,
       visibility: Schema.String,
-      default_reasoning_level: Schema.optionalKey(Schema.NonEmptyString),
+      default_reasoning_level: Schema.optionalKey(Schema.NullOr(Schema.NonEmptyString)),
       supported_reasoning_levels: Schema.optionalKey(
-        Schema.Array(
-          Schema.Struct({
-            effort: Schema.NonEmptyString,
-            description: Schema.optionalKey(Schema.String),
-          }),
+        Schema.NullOr(
+          Schema.Array(
+            Schema.Struct({
+              effort: Schema.NonEmptyString,
+              description: Schema.optionalKey(Schema.NullOr(Schema.String)),
+            }),
+          ),
         ),
       ),
     }),
