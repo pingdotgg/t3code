@@ -117,6 +117,8 @@ export function SettingsLegalDocumentRouteScreen({
       <WebView
         key={reloadKey}
         source={{ uri: documentUrl }}
+        // react-native-webview defaults to "never", which starts the page under the header.
+        contentInsetAdjustmentBehavior="automatic"
         originWhitelist={["http://*", "https://*", "mailto:*"]}
         cacheEnabled={false}
         cacheMode="LOAD_NO_CACHE"
