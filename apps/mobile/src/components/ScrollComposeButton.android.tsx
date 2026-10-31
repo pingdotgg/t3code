@@ -3,13 +3,12 @@ import { Box, ExtendedFloatingActionButton, Icon, Text } from "@expo/ui/jetpack-
 import {
   defaultMinSize,
   fillMaxWidth,
-  graphicsLayer,
   height,
   onSizeChanged,
   size,
 } from "@expo/ui/jetpack-compose/modifiers";
 import { useState } from "react";
-import { Pressable, View, type StyleProp, type ViewStyle } from "react-native";
+import { I18nManager, Pressable, View, type StyleProp, type ViewStyle } from "react-native";
 import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { resolveScaledTextRole } from "../lib/appearancePreferences";
@@ -37,7 +36,14 @@ export function ScrollComposeButton(props: {
       className={props.className}
       style={[props.style, { left: 20, height: fabSize }]}
     >
-      <View pointerEvents="none" importantForAccessibility="no-hide-descendants">
+      <View
+        pointerEvents="none"
+        importantForAccessibility="no-hide-descendants"
+        style={{
+          transform: [{ scale }],
+          transformOrigin: I18nManager.isRTL ? "top left" : "top right",
+        }}
+      >
         <NativeThemeHost
           matchContents={{ vertical: true }}
           ignoreSafeAreaKeyboardInsets
@@ -50,12 +56,6 @@ export function ScrollComposeButton(props: {
               modifiers={[
                 defaultMinSize({ minWidth: nativeSize }),
                 height(nativeSize),
-                graphicsLayer({
-                  scaleX: scale,
-                  scaleY: scale,
-                  transformOriginX: 1,
-                  transformOriginY: 0,
-                }),
                 onSizeChanged(rememberWidth),
               ]}
             >
