@@ -204,6 +204,20 @@ describe("details folds in chat Markdown", () => {
     );
   });
 
+  it.each([
+    ["on its own line", "\n\n"],
+    ["right after the summary", ""],
+  ])("does not count a <details> in an artifact template label %s", (_, gap) => {
+    const directive =
+      '::artifact-template{skill_name="artifact-template-x" skill_directory="/tmp/x" display_name="<details> demo" artifact_kind="document"}';
+    expect(
+      split(`<details>\n<summary>A</summary>${gap}${directive}\n\n</details>\n\nOutside.`),
+    ).toMatchObject([
+      { kind: "details", summary: "A", body: `${gap}${directive}\n\n` },
+      { kind: "markdown", markdown: "\n\nOutside." },
+    ]);
+  });
+
   it("finds definitions inside a compact HTML block and labels that wrap", () => {
     const markdown =
       "See [the\n  doc].\n\n<details><summary>A</summary>a</details>\n[The Doc]: https://example.com";

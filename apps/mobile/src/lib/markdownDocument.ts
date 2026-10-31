@@ -298,6 +298,8 @@ export type MarkdownDetailsSegment =
 const DETAILS_TAG = /^<(\/?)details(?=[\s/>])/i;
 const SUMMARY_TAG = /^<summary(?=[\s/>])/i;
 const SUMMARY_CLOSE_TAG = /^<\/summary\s*>$/i;
+// Matches the directive `splitCodexArtifactTemplateMarkdown` renders as a card.
+const ARTIFACT_TEMPLATE_DIRECTIVE = /::artifact-template\{[^\n]*/g;
 
 interface HtmlToken {
   readonly at: number;
@@ -386,7 +388,7 @@ export function splitMarkdownDetails(markdown: string): MarkdownDetailsSplit {
     definitions: [],
   };
   if (!/<details/i.test(markdown)) return whole;
-  const tokens: HtmlToken[] = [];
+  let tokens: HtmlToken[] = [];
   const collect = (node: MarkdownNode) => {
     if (!("children" in node)) return;
     for (const child of node.children) {
@@ -403,6 +405,22 @@ export function splitMarkdownDetails(markdown: string): MarkdownDetailsSplit {
     }
   };
   collect(parser.parse(markdown));
+  // An artifact template directive's attributes are literal text, so a `<details>` in its label
+  // is not a tag. Tokens arrive in source order, so one pass drops those inside a directive line.
+  const directives = [...markdown.matchAll(ARTIFACT_TEMPLATE_DIRECTIVE)];
+  if (directives.length > 0) {
+    let next = 0;
+    const literal = (at: number) => {
+      while (next < directives.length) {
+        const directive = directives[next]!;
+        if (at < directive.index) return false;
+        if (at < directive.index + directive[0].length) return true;
+        next += 1;
+      }
+      return false;
+    };
+    tokens = tokens.filter((token) => !literal(token.at));
+  }
   // Read definitions after flattening, which exposes ones a raw HTML block hides from this parse.
   const definitions: MarkdownReferenceDefinition[] = [];
   if (markdown.includes("]:")) {
