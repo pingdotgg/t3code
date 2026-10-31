@@ -266,6 +266,89 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
+  it.effect.each([
+    {
+      url: "https://VCS.example.com/review/123456?view=files#comments",
+      host: "vcs.example.com",
+    },
+    { url: "http://VCS.example.com:8080/review/123456", host: "vcs.example.com:8080" },
+  ])("preserves an unrecognised URL $url with an explicit repository and number", ({ url, host }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ project: makeProject(null) });
+      const result = yield* harness.call("link_pull_request", {
+        url,
+        repository: "Team/Project",
+        number: 123456,
+        host: "ignored.example.com",
+      });
+      expect(result).toEqual({
+        host,
+        repository: "team/project",
+        number: 123456,
+        url,
+        alreadyLinked: false,
+      });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.link", host, repository: "team/project", url },
+      ]);
+    }),
+  );
+
+  it.effect("keeps recognised URL fields authoritative over explicit target fields", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const result = yield* harness.call("link_pull_request", {
+        url: "https://github.com/T3Tools/T3Code/pull/123",
+        host: "vcs.example.com",
+        repository: "team/project",
+        number: 456,
+      });
+      expect(result).toMatchObject({
+        host: "github.com",
+        repository: "t3tools/t3code",
+        number: 123,
+      });
+    }),
+  );
+
+  it.effect("deduplicates and unlinks an unrecognised URL by its explicit key", () =>
+    Effect.gen(function* () {
+      const url = "https://vcs.example.com/review/123456";
+      const harness = yield* makeHarness({
+        thread: makeThread([
+          makeLink(123456, { host: "vcs.example.com", repository: "team/project", url }),
+        ]),
+      });
+      const input = { url, repository: "Team/Project", number: 123456 };
+      expect(yield* harness.call("link_pull_request", input)).toMatchObject({
+        alreadyLinked: true,
+      });
+      expect(yield* Ref.get(harness.commands)).toEqual([]);
+      expect(yield* harness.call("unlink_pull_request", input)).toMatchObject({
+        host: "vcs.example.com",
+        repository: "team/project",
+        number: 123456,
+        wasLinked: true,
+      });
+    }),
+  );
+
+  it.effect.each([
+    { url: "https://vcs.example.com/review/123456" },
+    { url: "https://vcs.example.com/review/123456", repository: "team/project" },
+    { url: "https://vcs.example.com/review/123456", number: 123456 },
+    { url: "not a URL", repository: "team/project", number: 123456 },
+    { url: "javascript:alert(1)", repository: "team/project", number: 123456 },
+    { url: "file:///review/123456", repository: "team/project", number: 123456 },
+  ])("rejects an invalid or incomplete URL target %j", (input) =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const error = yield* harness.call("link_pull_request", input).pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "PullRequestUrlInvalidError" });
+      expect(yield* Ref.get(harness.commands)).toEqual([]);
+    }),
+  );
+
   it.effect("watching an unlinked pull request links it first", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
