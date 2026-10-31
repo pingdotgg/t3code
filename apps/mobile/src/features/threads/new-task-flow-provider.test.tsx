@@ -17,7 +17,6 @@ import { act, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 import type { ComposerDraft } from "../../state/use-composer-drafts";
-import type { QueuedThreadMessage } from "../../state/thread-outbox";
 
 const mocks = vi.hoisted(() => ({
   projects: vi.fn(),
@@ -33,9 +32,6 @@ const mocks = vi.hoisted(() => ({
   retargetDraft: vi.fn(),
   writeSettings: vi.fn(),
   writeText: vi.fn(),
-  queuedMessages: vi.fn(),
-  outboxAtom: vi.fn(),
-  flushEdit: vi.fn(),
 }));
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
@@ -78,23 +74,6 @@ vi.mock("../../state/use-remote-environment-registry", () => ({
   useSavedRemoteConnections: () => ({ savedConnectionsById: {} }),
   useRemoteConnectionStatus: () => ({ connectedEnvironments: [] }),
   setPendingConnectionError: vi.fn(),
-}));
-vi.mock("../../state/thread-outbox", () => ({
-  flattenQueuedThreadMessages: mocks.queuedMessages,
-  threadOutboxManager: {
-    get queuedMessagesByThreadKeyAtom() {
-      return mocks.outboxAtom();
-    },
-  },
-}));
-vi.mock("../../state/use-thread-outbox", () => ({
-  holdEditingQueuedMessage: vi.fn(),
-  releaseEditingQueuedMessage: vi.fn(),
-  useThreadOutboxMessages: () => ({}),
-}));
-vi.mock("../../state/pending-task-editor-writes", () => ({
-  capturePendingTaskEditorWriteBaseline: () => Promise.resolve(0),
-  flushPendingTaskEditorWrite: mocks.flushEdit,
 }));
 vi.mock("../../state/use-model-option-memory", () => ({
   rememberModelOptions: vi.fn(),
@@ -159,10 +138,6 @@ function setup() {
     isReady: true,
     presentation: { connection: { phase: "connected", error: null } },
   });
-  const queued: QueuedThreadMessage[] = [];
-  mocks.queuedMessages.mockImplementation(() => queued);
-  mocks.outboxAtom.mockReturnValue(Atom.make({}));
-  mocks.flushEdit.mockResolvedValue(false);
   const events: string[] = [];
   let checkout = "main";
   let checkoutIsRepo = true;
@@ -244,7 +219,6 @@ function setup() {
   const root = createRoot(document.createElement("div"));
   return {
     projects,
-    queued,
     events,
     checkout(branch: string, isRepo = true) {
       checkout = branch;
