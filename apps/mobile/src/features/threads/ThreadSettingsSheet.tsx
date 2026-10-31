@@ -560,12 +560,10 @@ function ThreadSettingsSessionProvider(
           props.onPromptChange(change.prompt);
         }
       }
-      if (!("modelOptions" in change)) return;
     }
-    const next =
-      change && "modelOptions" in change
-        ? (change.modelOptions ?? [])
-        : applyProviderOptionSelection(displayedDescriptors, { id, value });
+    const next = change
+      ? (change.modelOptions ?? [])
+      : applyProviderOptionSelection(displayedDescriptors, { id, value });
     if (!next) {
       return;
     }

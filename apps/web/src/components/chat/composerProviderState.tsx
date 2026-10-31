@@ -152,7 +152,7 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
   };
 }
 
-/** Expanded caret positions stay on the same character across Ultrathink prefix changes. */
+/** The caret stays on the same character when stepping strips a typed Ultrathink prefix. */
 export function getComposerReasoningStep(input: {
   provider: ProviderDriverKind;
   instanceId: ProviderInstanceId;
@@ -167,7 +167,7 @@ export function getComposerReasoningStep(input: {
 }): {
   prompt: string;
   cursor: number;
-  modelOptions?: ReadonlyArray<ProviderOptionSelection>;
+  modelOptions: ReadonlyArray<ProviderOptionSelection>;
 } | null {
   const { prompt, cursor } = input;
   const { selections } = resolveComposerOptionSelections(
@@ -189,18 +189,10 @@ export function getComposerReasoningStep(input: {
     direction: input.direction,
   });
   if (!step) return null;
-  const modelOptions = "modelOptions" in step ? { modelOptions: step.modelOptions } : {};
-  if (step.prompt === prompt) return { prompt, cursor, ...modelOptions };
-  // Adding the prefix also trims the prompt.
-  const keptStart = "modelOptions" in step ? 0 : step.prompt.length - prompt.trim().length;
-  const offset =
-    "modelOptions" in step
-      ? step.prompt.length - prompt.length
-      : keptStart - (prompt.length - prompt.trimStart().length);
   return {
     prompt: step.prompt,
-    cursor: Math.min(step.prompt.length, Math.max(keptStart, cursor + offset)),
-    ...modelOptions,
+    cursor: Math.max(0, cursor + step.prompt.length - prompt.length),
+    modelOptions: step.modelOptions,
   };
 }
 
