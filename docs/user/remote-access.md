@@ -117,7 +117,7 @@ route** in the machine's route list, or next to it in the T3 Connect list.
 A pairing link for a saved machine is refused when it comes from an address
 that machine does not have yet; add that address with **Add route** instead.
 Pairing again over an address the machine already has still works. A new route
-is placed by speed, in that order, and you can reorder routes at any time.
+is placed by speed, in that order, with Tailscale HTTPS preferred over Tailscale HTTP. You can reorder routes at any time.
 
 While connected through T3 Connect or a paired address, T3 Code also learns the
 machine's current LAN and Tailscale addresses and adds them as routes, so
