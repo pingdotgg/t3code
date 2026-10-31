@@ -64,6 +64,19 @@ export function QuestionAttachments(props: {
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases keyboard ownership on unmount, since an unmounted native input never emits blur
   useEffect(() => () => releaseFocus(), []);
+  // The draft returns through the thread screen a render after the input counts the keystroke;
+  // iOS applies text paired with the current count, so that stale echo overwrote newer typing.
+  // Local text commits with the count. Only outside changes, like an option tap, are adopted.
+  const [text, setText] = useState(props.value);
+  const [previousValue, setPreviousValue] = useState(props.value);
+  if (props.value !== previousValue) {
+    setPreviousValue(props.value);
+    if (props.value !== text) setText(props.value);
+  }
+  const changeText = (value: string) => {
+    setText(value);
+    props.onChangeText(value);
+  };
   const append = (
     key: string,
     attachments: Parameters<typeof appendComposerDraftAttachments>[1],
@@ -195,11 +208,11 @@ export function QuestionAttachments(props: {
       <VideoPreviewModal source={previewVideo} onRequestClose={() => setPreviewVideo(null)} />
       <TextInputWrapper onPaste={paste}>
         <TextInput
-          value={props.value}
+          value={text}
           multiline={props.question.initialAnswer !== undefined}
           submitBehavior={props.question.initialAnswer !== undefined ? "newline" : undefined}
           editable={!props.disabled}
-          onChangeText={props.onChangeText}
+          onChangeText={changeText}
           onFocus={() => {
             focusedRef.current = true;
             onInputFocusChange?.(true);
