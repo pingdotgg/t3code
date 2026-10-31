@@ -45,21 +45,6 @@ export const MAX_DIFF_SPAWNS = 2 * DIFF_FILE_CONCURRENCY;
 
 export const LOCATION_CACHE_CAPACITY = 128;
 
-/**
- * The background sync asks for every due pull request at once, and each read reaches the resolver
- * after its own cache check, so a batch needs a moment longer than one scheduler tick to gather.
- */
-export const SUMMARY_BATCH_WINDOW = "10 millis";
-
-/** Active pull requests one shared listing reads, past which a pull request is read on its own. */
-const SUMMARY_LISTING_LIMIT = 100;
-
-class SummaryRead extends Request.Class<
-  { readonly cwd: string; readonly repository: string; readonly number: number },
-  AzureDevOpsPullRequest,
-  AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCliError
-> {}
-
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
   comment: false,
@@ -130,6 +115,18 @@ function toChangeRequest(pullRequest: AzureDevOpsPullRequest): ProviderChangeReq
   };
 }
 
+/** Cache checks stagger reads across scheduler ticks; allow time to batch. */
+export const SUMMARY_BATCH_WINDOW = "10 millis";
+
+/** Active pull requests one shared listing reads, past which a pull request is read on its own. */
+const SUMMARY_LISTING_LIMIT = 100;
+
+class SummaryRead extends Request.Class<
+  { readonly cwd: string; readonly repository: string; readonly number: number },
+  AzureDevOpsPullRequest,
+  AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCliError
+> {}
+
 export const make = Effect.gen(function* () {
   const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
   const diffSpawns = yield* Semaphore.make(MAX_DIFF_SPAWNS);
@@ -159,11 +156,10 @@ export const make = Effect.gen(function* () {
   const EMPTY_DIFF_SLICE: ProviderDiffSlice = { patch: "", truncated: false, nextCursor: null };
 
   /**
-   * Azure cannot be asked for several pull requests by number, and every read is an `az` process of
-   * its own, so summaries asked for together in one repository share a listing of its active pull
-   * requests. One the listing does not carry (completed, abandoned, or past its end) is read on its
-   * own. So is every one when the listing itself fails, unless `az` is refusing every read: no
-   * CLI, a signed-out one or a rate limit fails them all at once rather than once apiece.
+   * Azure cannot read several pull requests by number and each read is its own `az` process, so
+   * reads asked for together in one repository share one listing of its active pull requests.
+   * One the listing lacks is read on its own, as is every one when the listing fails, unless `az`
+   * refuses every read (missing, signed out or rate limited): then they all fail at once.
    */
   const summaryResolver = RequestResolver.makeGrouped<SummaryRead, string>({
     key: ({ request }) => `${request.cwd}\0${request.repository}`,
