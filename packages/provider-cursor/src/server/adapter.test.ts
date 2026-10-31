@@ -36,6 +36,162 @@ import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import { ConfigurationError } from "./sdk.ts";
 
 describe("CursorAdapterV2", () => {
+  it.effect.each([true, false])(
+    "keeps a completed Cursor plan actionable only when it succeeds (failed: %s)",
+    (failed) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "cursor-v2-plan-",
+        });
+        const instanceId = ProviderInstanceId.make("cursor");
+        const threadId = ThreadId.make("cursor-plan-thread");
+        const modelSelection = { instanceId, model: "composer-2.5" };
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const adapter = yield* makeCursorAdapterV2({
+          instanceId,
+          settings: yield* decodeCursorSettings({}),
+          environment: { HOME: workspace },
+        }).pipe(
+          Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+            assertComplete: Effect.void,
+            open: () =>
+              Effect.succeed({
+                agentId: "native-cursor-plan",
+                listMessages: Effect.succeed([]),
+                close: Effect.void,
+                send: (input) =>
+                  Effect.gen(function* () {
+                    const toolCall = {
+                      type: "createPlan" as const,
+                      args: { plan: "# Plan\n\nKeep the failed proposal for inspection." },
+                    };
+                    yield* input.onDelta!({
+                      type: "tool-call-started",
+                      modelCallId: "model-call",
+                      callId: "plan-call",
+                      toolCall,
+                    }).pipe(Effect.orDie);
+                    yield* input.onDelta!({
+                      type: "tool-call-completed",
+                      modelCallId: "model-call",
+                      callId: "plan-call",
+                      toolCall: {
+                        ...toolCall,
+                        result: failed
+                          ? { status: "error", error: "Plan could not be saved" }
+                          : { status: "success", value: {} },
+                      },
+                    }).pipe(Effect.orDie);
+                    return {
+                      agentId: "native-cursor-plan",
+                      runId: "native-cursor-run",
+                      wait: Effect.succeed({
+                        id: "native-cursor-run",
+                        requestId: "native-request",
+                        status: "finished" as const,
+                        model: { id: "composer-2.5" },
+                        durationMs: 1,
+                      }),
+                      cancel: Effect.void,
+                    };
+                  }),
+              }),
+          }),
+          Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+        );
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("cursor-plan-session"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* runtime.startTurn({
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("cursor-plan-run"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("cursor-plan-attempt"),
+          rootNodeId: NodeId.make("cursor-plan-root"),
+          appThread: {
+            id: threadId,
+            projectId: ProjectId.make("cursor-plan-project"),
+            createdBy: "user",
+            creationSource: "web",
+            title: "Cursor plan",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          message: {
+            messageId: MessageId.make("cursor-plan-message"),
+            createdBy: "user",
+            creationSource: "web",
+            text: "Propose a plan.",
+            attachments: [],
+          },
+        });
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        );
+        const plans = events.filter((event) => event.type === "plan.updated");
+        assert.equal(plans[0]?.plan.status, "draft");
+        assert.equal(plans.at(-1)?.plan.id, plans[0]?.plan.id);
+        assert.equal(plans.at(-1)?.plan.status, failed ? "superseded" : "active");
+        const plan = plans.at(-1)?.plan;
+        assert.equal(
+          plan?.kind === "proposed_plan" ? plan.markdown : null,
+          "# Plan\n\nKeep the failed proposal for inspection.",
+        );
+        const item = events.findLast(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "proposed_plan",
+        );
+        assert.equal(
+          item?.type === "turn_item.updated" ? item.turnItem.status : null,
+          failed ? "failed" : "completed",
+        );
+        const node = events.findLast(
+          (event) => event.type === "node.updated" && event.node.kind === "plan",
+        );
+        assert.equal(
+          node?.type === "node.updated" ? node.node.status : null,
+          failed ? "failed" : "completed",
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+        ),
+      ),
+  );
+
   it.effect.each([
     { status: "finished", model: undefined, lateModel: undefined },
     { status: "cancelled", model: "claude-opus-4-6", lateModel: undefined },
