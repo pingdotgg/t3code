@@ -1,21 +1,21 @@
 // Isolate native screenshot crashes and stalls in a Node-mode child.
 import type { RegionSnapShotRequest, RegionSnapShotResult } from "./RegionSnapShot.ts";
+import { loadWindowsRegionCapture } from "./WindowsRegionCapture.ts";
 
 process.once("disconnect", () => process.exit(0));
 
 async function capture() {
-  const imported = await import("@crowecawcaw/xa11y");
-  const xa11y = (imported as unknown as { readonly default?: typeof imported }).default ?? imported;
+  const captureRegion = await loadWindowsRegionCapture();
   process.send?.("ready");
   const request = await new Promise<RegionSnapShotRequest>((resolve) => {
     process.once("message", resolve);
   });
-  const shot = await xa11y.screenshot({ region: request.region });
+  const shot = captureRegion(request.region);
   const result: RegionSnapShotResult = {
     type: "result",
     width: shot.width,
     height: shot.height,
-    png: shot.toPng().toString("base64"),
+    png: shot.png.toString("base64"),
   };
   process.send?.(result);
 }

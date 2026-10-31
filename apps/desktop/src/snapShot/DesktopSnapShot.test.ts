@@ -1019,6 +1019,7 @@ it.effect("matches Windows accessibility windows on a scaled display", () => {
       const service = yield* DesktopSnapShot.make;
       yield* service.configure(enabledSettings());
       yield* service.capture;
+      assert.deepEqual(regionCaptureMock.mock.calls[0]?.[0], active.bounds);
       const saved = yield* decodePendingMetadata(metadata);
       assert.include(saved.source.accessibleText, "Scaled text");
       assert.deepEqual(
