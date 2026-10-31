@@ -1,5 +1,6 @@
 import type { ModelPreferences } from "@t3tools/contracts/settings";
 import {
+  DEFAULT_SPEECH_POST_PROCESSING_MODELS,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
@@ -125,6 +126,71 @@ export function resolveSourceControlWriterModelSelection(
     isProviderTextGenerationCapable(provider)
     ? selection
     : settings.textGenerationModelSelection;
+}
+
+/** Resolve voice cleanup without changing the user's persisted selection. */
+export function resolveSpeechPostProcessingModelSelection(
+  settings: ServerSettings,
+  providers?: ReadonlyArray<ServerProvider>,
+  isDriverAllowed: (driver: ProviderDriverKind) => boolean = () => true,
+): ModelSelection | null {
+  const canUse = (selection: ModelSelection) => {
+    if (!isModelSelectionProviderEnabled(settings, selection)) return false;
+    const provider = providers?.find((entry) => entry.instanceId === selection.instanceId);
+    const driver =
+      settings.providerInstances[selection.instanceId]?.driver ??
+      provider?.driver ??
+      ProviderDriverKind.make(selection.instanceId);
+    if (!isDriverAllowed(driver)) return false;
+    if (providers === undefined) return true;
+    return (
+      provider?.enabled === true &&
+      provider.installed &&
+      isProviderAvailable(provider) &&
+      provider.supportsTextGeneration !== false
+    );
+  };
+  let selection: ModelSelection | null = settings.speechPostProcessingModelSelection;
+  if (!canUse(selection)) {
+    selection = null;
+    for (const [driver, defaults] of Object.entries(DEFAULT_SPEECH_POST_PROCESSING_MODELS)) {
+      if (!defaults) continue;
+      const instanceIds = [
+        ProviderInstanceId.make(driver),
+        ...Object.entries(settings.providerInstances)
+          .filter(([id, instance]) => instance.driver === driver && id !== driver)
+          .map(([id]) => ProviderInstanceId.make(id)),
+      ];
+      const instanceId = instanceIds.find((id) =>
+        canUse({ instanceId: id, model: defaults.model }),
+      );
+      if (instanceId) {
+        selection = createModelSelection(instanceId, defaults.model, defaults.options);
+        break;
+      }
+    }
+  }
+  if (selection === null) return null;
+  if (providers === undefined || !selection.options?.length) return selection;
+  const provider = providers.find((entry) => entry.instanceId === selection.instanceId);
+  const model =
+    provider?.models.find(
+      (model) => model.slug === selection.model || model.aliases?.includes(selection.model),
+    ) ??
+    (provider?.driver === "grok" && selection.model === "grok-build"
+      ? provider.models.find((entry) => entry.isDefault)
+      : undefined);
+  const descriptors = model?.capabilities?.optionDescriptors ?? [];
+  const options = selection.options.filter((option) =>
+    descriptors.some(
+      (descriptor) =>
+        descriptor.id === option.id &&
+        (descriptor.type === "boolean"
+          ? typeof option.value === "boolean"
+          : descriptor.options.some((choice) => choice.id === option.value)),
+    ),
+  );
+  return createModelSelection(selection.instanceId, selection.model, options);
 }
 
 export function resolveReviewGuideModelSelection(
@@ -356,6 +422,7 @@ export function applyServerSettingsPatch(
 ): ServerSettings {
   const patch = translateLegacyProjectOverridePatch(current, rawPatch);
   const selectionPatch = patch.textGenerationModelSelection;
+  const speechSelectionPatch = patch.speechPostProcessingModelSelection;
   const {
     migrateModelPreferences,
     setModelFavorites,
@@ -604,6 +671,26 @@ export function applyServerSettingsPatch(
   const nextWithReplacements = {
     ...withIdleCompaction(nextWithReplacementsBase, patchedIdleCompaction(current, patch)),
     ...deriveLegacyProjectOverrides(nextWithReplacementsBase),
+    ...(speechSelectionPatch
+      ? {
+          speechPostProcessingModelSelection: createModelSelection(
+            speechSelectionPatch.instanceId ??
+              current.speechPostProcessingModelSelection.instanceId,
+            speechSelectionPatch.model ?? current.speechPostProcessingModelSelection.model,
+            shouldReplaceTextGenerationModelSelection(speechSelectionPatch)
+              ? speechSelectionPatch.options
+              : mergeModelSelectionOptionsById({
+                  current: current.speechPostProcessingModelSelection.options,
+                  patch: speechSelectionPatch.options,
+                }),
+          ),
+        }
+      : {}),
+    speechPostProcessingPrompt:
+      nextWithReplacementsBase.speechPostProcessingPrompt.mode === "custom" &&
+      !nextWithReplacementsBase.speechPostProcessingPrompt.customInstructions.trim()
+        ? { mode: "default" as const, customInstructions: "" }
+        : nextWithReplacementsBase.speechPostProcessingPrompt,
     backgroundActivity: normalizedBackgroundActivity,
     automaticGitFetchInterval: resolvedBackgroundActivity.automaticGitFetchInterval,
     providerHealthRefreshInterval: resolvedBackgroundActivity.providerHealthRefreshInterval,

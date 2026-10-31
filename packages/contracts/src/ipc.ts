@@ -1,3 +1,4 @@
+import { ResolvedKeybindingsConfig } from "./keybindings.ts";
 import * as Schema from "effect/Schema";
 import type { PreviewCaptureFailureEncoded } from "./previewCapture.ts";
 
@@ -1151,6 +1152,62 @@ export interface DesktopBridge {
 /** Renderer callback invoked by Electron with a fresh user gesture before display-media capture. */
 export const DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER = "__t3DesktopPreviewRecordingCapture";
 
+export const DesktopPreviewAnnotationVoiceConfigSchema = Schema.Struct({
+  sessionId: Schema.String,
+  keybindings: ResolvedKeybindingsConfig,
+});
+export type DesktopPreviewAnnotationVoiceConfig =
+  typeof DesktopPreviewAnnotationVoiceConfigSchema.Type;
+
+export const DesktopPreviewAnnotationVoiceEventSchema = Schema.Struct({
+  sessionId: Schema.String,
+  text: Schema.String,
+  cursor: Schema.Number,
+  action: Schema.Literals(["sync", "start", "stop", "cancel", "skip", "settings", "key", "blur"]),
+  keyboard: Schema.optional(
+    Schema.Struct({
+      type: Schema.Literals(["keydown", "keyup"]),
+      key: Schema.String,
+      code: Schema.String,
+      metaKey: Schema.Boolean,
+      ctrlKey: Schema.Boolean,
+      shiftKey: Schema.Boolean,
+      altKey: Schema.Boolean,
+      repeat: Schema.Boolean,
+    }),
+  ),
+});
+export type DesktopPreviewAnnotationVoiceEvent =
+  typeof DesktopPreviewAnnotationVoiceEventSchema.Type;
+
+export const DesktopPreviewAnnotationVoiceStateSchema = Schema.Struct({
+  tabId: Schema.String,
+  sessionId: Schema.String,
+  available: Schema.Boolean,
+  phase: Schema.Literals([
+    "idle",
+    "preparing",
+    "recording",
+    "transcribing",
+    "post-processing",
+    "error",
+  ]),
+  status: Schema.NullOr(Schema.String),
+  errorAction: Schema.NullOr(Schema.Literals(["retry", "settings"])),
+  preview: Schema.NullOr(Schema.String),
+  level: Schema.Number,
+  shortcutLabel: Schema.NullOr(Schema.String),
+  freezesEditor: Schema.Boolean,
+  blocksSubmission: Schema.Boolean,
+  draft: Schema.NullOr(Schema.Struct({ text: Schema.String, cursor: Schema.Number })),
+});
+export type DesktopPreviewAnnotationVoiceState =
+  typeof DesktopPreviewAnnotationVoiceStateSchema.Type;
+export const DesktopPreviewAnnotationVoiceInputSchema = Schema.Struct({
+  tabId: Schema.String,
+  voice: Schema.optional(DesktopPreviewAnnotationVoiceConfigSchema),
+});
+
 export interface DesktopPreviewBridge {
   setForwardedShortcuts: (shortcuts: ReadonlyArray<PreviewForwardedShortcut>) => Promise<void>;
   createTab: (tabId: string, defaults?: DesktopPreviewTabDefaults) => Promise<void>;
@@ -1183,8 +1240,17 @@ export interface DesktopPreviewBridge {
   }) => Promise<BrowserImportResult>;
   setAnnotationTheme: (theme: DesktopPreviewAnnotationTheme) => Promise<void>;
   setAnnotationSendEnabled: (tabId: string, enabled: boolean) => Promise<void>;
+  annotationVoice: {
+    onEvent(
+      listener: (tabId: string, event: DesktopPreviewAnnotationVoiceEvent) => void,
+    ): () => void;
+    update(state: DesktopPreviewAnnotationVoiceState): Promise<void>;
+  };
   /** Resolves with the annotation and attach/send intent, or null on cancellation. Rejects if activation fails. */
-  pickElement: (tabId: string) => Promise<PreviewAnnotationSubmissionResult | null>;
+  pickElement: (
+    tabId: string,
+    voice?: DesktopPreviewAnnotationVoiceConfig,
+  ) => Promise<PreviewAnnotationSubmissionResult | null>;
   cancelPickElement: (tabId: string) => Promise<void>;
   captureScreenshot: (
     tabId: string,

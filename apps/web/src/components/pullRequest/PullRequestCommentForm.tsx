@@ -2,7 +2,9 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { useAtomCommand } from "~/state/use-atom-command";
 import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3tools/contracts";
 import { SendIcon } from "lucide-react";
-import { useState, type RefObject } from "react";
+import { useEffect, useState, type RefObject } from "react";
+
+import { useTextFieldSpeech, TextFieldSpeechControls } from "~/speech/useTextFieldSpeech";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 
@@ -16,6 +18,7 @@ import { PullRequestSubmitKeyHint } from "./PullRequestSubmitKeyHint";
 
 export function PullRequestCommentForm({
   environmentId,
+  active,
   reference,
   detail,
   actionPending,
@@ -25,6 +28,7 @@ export function PullRequestCommentForm({
   onClose,
 }: {
   environmentId: EnvironmentId;
+  active: boolean;
   reference: PullRequestRef;
   detail: PullRequestDetailView;
   actionPending: boolean;
@@ -38,6 +42,23 @@ export function PullRequestCommentForm({
 }) {
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState<"comment" | "close" | "reopen" | null>(null);
+  const speech = useTextFieldSpeech({
+    environmentId,
+    ownerKey: JSON.stringify(["pr-comment", environmentId, reference]),
+    text: body,
+    textareaRef,
+    onTextChange: setBody,
+    disabled: !active || submitting !== null || actionPending,
+  });
+  const { cancel } = speech;
+  const closeSetup = speech.setup.setOpen;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Release microphone capture and its setup dialog when the comment form becomes inactive.
+  useEffect(() => {
+    if (!active) {
+      cancel();
+      closeSetup(false);
+    }
+  }, [active, cancel, closeSetup]);
   const postComment = useAtomCommand(pullRequestEnvironment.comment, {
     reportFailure: false,
   });
@@ -55,7 +76,8 @@ export function PullRequestCommentForm({
 
   const submit = async (action: "comment" | "close" | "reopen") => {
     const trimmed = body.trim();
-    if (trimmed.length === 0 || submitting !== null || actionPending) return;
+    if (trimmed.length === 0 || submitting !== null || actionPending || speech.blocksSubmission)
+      return;
     setSubmitting(action);
     if (action !== "comment") {
       const result = await onCommentAction(trimmed, action);
@@ -90,6 +112,7 @@ export function PullRequestCommentForm({
         ref={textareaRef}
         // Lock while posting because success clears the draft.
         disabled={submitting !== null || actionPending}
+        readOnly={speech.freezesEditor}
         value={body}
         rows={3}
         placeholder="Leave a comment"
@@ -109,12 +132,23 @@ export function PullRequestCommentForm({
           }
         }}
       />
-      <div className="flex flex-wrap justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="mr-auto flex min-w-0 flex-wrap items-center gap-1">
+          <TextFieldSpeechControls
+            speech={speech}
+            disabled={submitting !== null || actionPending}
+          />
+        </div>
         {followUpAction === null ? null : (
           <Button
             size="xs"
             variant={followUpAction === "close" ? "destructive-outline" : "secondary"}
-            disabled={body.trim().length === 0 || submitting !== null || actionPending}
+            disabled={
+              body.trim().length === 0 ||
+              submitting !== null ||
+              actionPending ||
+              speech.blocksSubmission
+            }
             {...(followUpAction === "close"
               ? inlineConfirm.props("close", () => void submit("close"))
               : { onClick: () => void submit("reopen") })}
@@ -147,7 +181,12 @@ export function PullRequestCommentForm({
         )}
         <Button
           size="xs"
-          disabled={body.trim().length === 0 || submitting !== null || actionPending}
+          disabled={
+            body.trim().length === 0 ||
+            submitting !== null ||
+            actionPending ||
+            speech.blocksSubmission
+          }
           onClick={() => void submit("comment")}
         >
           <SendIcon className="size-3.5" />

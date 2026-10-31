@@ -5278,3 +5278,9 @@ body {
 .chat-markdown table {
   font-size: 0.78125rem;
 }
+
+/* redesign: voice */
+/* The mic's listening state: a red glyph. The pill looks the same in every style. */
+[data-composer-send-pill] {
+  --pill-listening: var(--error-foreground);
+}
