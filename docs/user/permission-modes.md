@@ -20,9 +20,11 @@ and modes you choose in a draft keep their permissions.
 An administrator can cap the modes available on a machine with a
 [managed policy](./managed-policy.md#permission-modes); modes above the cap show who manages them.
 
-Approve or reject requests in the conversation to let the agent continue. Permission modes do
-not prevent the agent from asking questions about the task. Subagent approval requests appear in
-the parent conversation with the subagent's name, so you can respond without switching threads.
+Approval requests appear as a card above the message box. Choose **Approve** or **Decline** to let the
+agent continue. For an actionable approval, press Enter with an empty message box to approve, or
+send a nonempty message to decline it and redirect the agent. Permission modes do not prevent the agent from asking
+questions about the task. Subagent approval requests appear in the parent conversation with the
+subagent's name, so you can respond without switching threads.
 
 ## Provider differences
 

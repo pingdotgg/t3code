@@ -1,3 +1,9 @@
+import {
+  createHighlightCacheKey,
+  estimateHighlightedSize,
+  extractFenceLanguage,
+} from "./MarkdownCodeBlock.logic";
+import { reportMarkdownActionFailure } from "./markdownActionFailure";
 import { Check, Copy } from "lucide";
 import { PlayIcon, WrapTextIcon } from "lucide-react";
 import { toHtml } from "hast-util-to-html";
@@ -21,12 +27,6 @@ import { MorphIcon } from "../MorphIcon";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { HighlightedCodeLines } from "./HighlightedCodeLines";
-import {
-  createHighlightCacheKey,
-  estimateHighlightedSize,
-  extractFenceLanguage,
-} from "./MarkdownCodeBlock.logic";
-import { reportMarkdownActionFailure } from "./markdownActionFailure";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 
 const MAX_HIGHLIGHT_CACHE_ENTRIES = 500;
@@ -76,7 +76,7 @@ export function MarkdownCodeBlockFrame({
       <div
         {...headerProps}
         className={cn(
-          "chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none",
+          "chat-markdown-codeblock-header flex h-8 items-center justify-between gap-2 pr-1.5 pl-3.5 select-none",
           headerProps?.className,
         )}
       >
@@ -205,8 +205,9 @@ export function MarkdownCodeBlock({
 
   if (diagram) {
     return (
+      // The transparent border and fixed-height header match the code frame, so the
       <div className="my-[0.65rem] border border-transparent" data-language={language}>
-        <div className="flex items-center justify-end gap-0.5 pt-1.5 pr-1.5 select-none">
+        <div className="flex h-8 items-center justify-end gap-0.5 pr-1.5 select-none">
           {viewToggle}
           {copyButton}
         </div>
@@ -230,7 +231,7 @@ export function MarkdownCodeBlock({
                 render={
                   <Button
                     type="button"
-                    variant={wrapped ? "secondary" : "ghost-muted"}
+                    variant="ghost-muted"
                     size="icon-xs"
                     aria-pressed={wrapped}
                     onClick={() => setWrapped((value) => !value)}
@@ -238,7 +239,7 @@ export function MarkdownCodeBlock({
                   />
                 }
               >
-                <WrapTextIcon className="size-3" />
+                <WrapTextIcon className={cn("size-3", wrapped && "text-foreground")} />
               </TooltipTrigger>
               <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
             </Tooltip>

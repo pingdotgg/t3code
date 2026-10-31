@@ -3,19 +3,20 @@ import {
   type OrchestrationV2LimitRecoveryUpdate,
   type RunId,
 } from "@t3tools/contracts";
-import { type TimestampFormat } from "@t3tools/contracts/settings";
+import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { deadlineStore } from "@t3tools/client-runtime/clock";
 import { limitRecoveryOwnsSnooze } from "@t3tools/client-runtime/state/thread-execution";
 import {
   CHATGPT_USAGE_LIMIT_CODE,
   CHATGPT_WORKSPACE_USAGE_LIMIT_CODE,
 } from "@t3tools/shared/usageLimits";
-import { GaugeIcon } from "lucide-react";
+import { GaugeIcon, TimerIcon } from "lucide-react";
 import { useState } from "react";
 import { useDeadlinePassed } from "../../hooks/useDeadline";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import { OpenAI } from "../Icons";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
-import { Button, InlineButton } from "../ui/button";
+import { Button } from "../ui/button";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { toastManager } from "../ui/toast";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
@@ -32,7 +33,26 @@ type RecoveryProps = {
   recovery: OrchestrationV2LimitRecovery | null;
   timestampFormat: TimestampFormat;
   onChange: (recovery: OrchestrationV2LimitRecoveryUpdate) => Promise<void>;
+  onDismiss?: () => void;
 };
+
+function isAutoResumeScheduled({ runId, resetAt, recovery }: RecoveryProps): boolean {
+  return Boolean(recovery?.runId === runId && recovery.resetAt === resetAt && recovery.autoResume);
+}
+
+function formatTimeUntil(ms: number): string {
+  const minutes = Math.max(1, Math.ceil(ms / 60_000));
+  const hours = Math.floor(minutes / 60);
+  return hours > 0 ? `in ${hours}h ${minutes % 60}m` : `in ${minutes}m`;
+}
+
+/** Counts down to the reset. It re-renders once a minute, never per frame. */
+function ResetCountdown({ resetAt }: { resetAt: string }) {
+  const deadline = Date.parse(resetAt);
+  const passed = useDeadlinePassed(deadline);
+  const remainingMs = deadline - Date.parse(`${useNowMinute()}:00.000Z`);
+  return !passed && remainingMs > 0 ? formatTimeUntil(remainingMs) : "now";
+}
 
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
   const {
@@ -60,18 +80,30 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     resumes && resetAt && snoozedUntil && Date.parse(snoozedUntil) > Date.parse(resetAt)
       ? snoozedUntil
       : resetAt;
-  const resetDescription = displayAt
-    ? `${resumes ? "Resumes" : "Resets"} ${formatUpcomingTimestamp(displayAt, timestampFormat)}`
-    : "Reset time unavailable; retry manually";
+  const resetDescription =
+    resumes && displayAt ? (
+      <ResetCountdown resetAt={displayAt} />
+    ) : displayAt ? (
+      `Resets ${formatUpcomingTimestamp(displayAt, timestampFormat)}`
+    ) : (
+      "Reset time unavailable; retry manually"
+    );
+  const dismiss = props.onDismiss
+    ? { dismissLabel: "Dismiss usage limit notice", onDismiss: props.onDismiss }
+    : {};
   if (!chatGptLimit) {
     return {
       id: `usage-limit-recovery:${runId}`,
       variant: "warning",
       group: "environment",
-      icon: <GaugeIcon />,
-      title: "Usage limit reached",
+      icon: resumes ? <TimerIcon /> : <GaugeIcon />,
+      title:
+        resumes && displayAt
+          ? `Resumes ${formatUpcomingTimestamp(displayAt, timestampFormat)}`
+          : "Usage limit reached",
       description: resetDescription,
       actions: recoveryActions,
+      ...dismiss,
     };
   }
   // OpenAI's partner guidelines specify this ChatGPT notice and its actions.
@@ -96,14 +128,15 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
         )}
       </>
     ),
+    ...dismiss,
   };
 }
 
-function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: RecoveryProps) {
+function RecoveryActions(props: RecoveryProps) {
+  const { runId, resetAt, recovery, snoozedUntil, onChange } = props;
   const [pending, setPending] = useState(false);
 
-  const scheduled =
-    recovery?.runId === runId && recovery.resetAt === resetAt && recovery.autoResume;
+  const scheduled = isAutoResumeScheduled(props);
   // The server leaves snoozedUntil in place after the timer wakes the thread,
   // so a snooze whose reset has passed is no longer active.
   const resetPassed = useDeadlinePassed(resetAt === null ? null : Date.parse(resetAt));
@@ -139,17 +172,26 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
   }
   // Inline errors would widen the actions column and crush the title.
   return (
-    <span className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
-      <InlineButton touchTarget="padded" disabled={pending} onClick={() => void toggle("resume")}>
-        {pending ? "Saving..." : scheduled ? "Cancel auto-resume" : "Resume at reset"}
-      </InlineButton>
-      <InlineButton
-        touchTarget="padded"
-        disabled={pending || (!snoozed && resetPassed)}
-        onClick={() => void toggle("snooze")}
+    <div className="flex flex-wrap items-center gap-1.5">
+      {/* An active snooze must stay reversible while auto-resume is scheduled. */}
+      {snoozed || !scheduled ? (
+        <Button
+          size="xs"
+          variant="secondary"
+          disabled={pending || (!snoozed && resetPassed)}
+          onClick={() => void toggle("snooze")}
+        >
+          {pending ? "Saving..." : snoozed ? "Wake now" : "Snooze until reset"}
+        </Button>
+      ) : null}
+      <Button
+        size="xs"
+        variant={scheduled ? "secondary" : "default"}
+        disabled={pending}
+        onClick={() => void toggle("resume")}
       >
-        {pending ? "Saving..." : snoozed ? "Wake now" : "Snooze until reset"}
-      </InlineButton>
-    </span>
+        {pending ? "Saving..." : scheduled ? "Cancel auto-resume" : "Resume at reset"}
+      </Button>
+    </div>
   );
 }

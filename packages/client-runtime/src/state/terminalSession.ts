@@ -72,6 +72,17 @@ export function selectRunningSubprocessTerminalIds(
     .map((session) => session.target.terminalId);
 }
 
+/** What a terminal tab shows: a process running, the last command failed, or an idle shell. */
+export type TerminalActivityStatus = "running" | "failed" | "idle";
+
+export function resolveTerminalActivityStatus(
+  state: Pick<TerminalSessionState, "summary" | "hasRunningSubprocess">,
+): TerminalActivityStatus {
+  if (state.hasRunningSubprocess) return "running";
+  const exitCode = state.summary?.lastCommandExitCode;
+  return exitCode !== undefined && exitCode !== 0 ? "failed" : "idle";
+}
+
 export const EMPTY_TERMINAL_BUFFER_STATE = Object.freeze<TerminalBufferState>({
   output: EMPTY_TERMINAL_OUTPUT_STATE,
   grid: null,

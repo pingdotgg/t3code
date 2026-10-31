@@ -3,6 +3,7 @@ import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/c
 import {
   isJsonToolText,
   toolCallLines,
+  turnItemHasDetail,
   turnItemDetailRevision,
   turnItemNeedsDetailFetch,
   turnItemOutputImages,
@@ -92,6 +93,11 @@ function StructuredValue({
   );
 }
 
+/** Whether the inspector can show the item, including output fetched on demand. */
+export function v2ItemInspectorHasContent(item: OrchestrationV2ProjectedTurnItem["item"]): boolean {
+  return turnItemHasDetail(item);
+}
+
 function useFetchedTurnItem(
   projectedItem: OrchestrationV2ProjectedTurnItem,
   environmentId: EnvironmentId,
@@ -160,7 +166,7 @@ function ToolOutput(props: ToolOutputState) {
   ) : props.pending ? (
     <div className="text-muted-foreground italic">Loading output…</div>
   ) : props.error ? (
-    <div className="text-destructive">Couldn&apos;t load output: {props.error}</div>
+    <div className="text-error-foreground">Couldn&apos;t load output: {props.error}</div>
   ) : props.empty && props.images.length === 0 ? (
     <div className="text-muted-foreground italic">No output.</div>
   ) : null;
@@ -280,8 +286,12 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
             </span>
             {item.additions !== undefined || item.deletions !== undefined ? (
               <span>
-                <span className="text-diff-addition">+{formatDiffCount(item.additions ?? 0)}</span>{" "}
-                <span className="text-diff-deletion">-{formatDiffCount(item.deletions ?? 0)}</span>
+                <span className="text-diff-addition-foreground">
+                  +{formatDiffCount(item.additions ?? 0)}
+                </span>{" "}
+                <span className="text-diff-deletion-foreground">
+                  -{formatDiffCount(item.deletions ?? 0)}
+                </span>
               </span>
             ) : null}
             {props.onOpenToolDiff ? (
