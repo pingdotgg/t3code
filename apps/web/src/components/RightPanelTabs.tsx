@@ -214,16 +214,19 @@ export function rightPanelSurfaceActions(props: SurfaceActionInputs): SurfaceAct
     registered("pull-requests"),
     registered("device"),
     ...(props.onAddSideChat
-      ? [{
-          id: "side-chat",
-          label: "Side chat",
-          icon: MessagesSquare,
-          shortcut: "S",
-          available: props.sideChatAvailable === true && !props.sideChatDisabledReason,
-          unavailableHint: props.sideChatDisabledReason ?? "Available after the first message.",
-          unavailableReason: props.sideChatDisabledReason ?? "Side chats start after the first message.",
-          onClick: () => props.onAddSideChat?.(),
-        }]
+      ? [
+          {
+            id: "side-chat",
+            label: "Side chat",
+            icon: MessagesSquare,
+            shortcut: "S",
+            available: props.sideChatAvailable === true && !props.sideChatDisabledReason,
+            unavailableHint: props.sideChatDisabledReason ?? "Available after the first message.",
+            unavailableReason:
+              props.sideChatDisabledReason ?? "Side chats start after the first message.",
+            onClick: () => props.onAddSideChat?.(),
+          },
+        ]
       : []),
   ];
 }

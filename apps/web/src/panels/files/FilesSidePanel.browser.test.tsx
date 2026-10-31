@@ -27,6 +27,7 @@ vi.mock("~/state/server", async () => {
   return {
     environmentServerConfigsAtom: Atom.make(new Map()),
     primaryServerKeybindingsAtom: {},
+    primaryServerEnvironmentThemesAtom: Atom.make([]),
     serverEnvironment: { configValueAtom: () => null },
   };
 });
@@ -51,6 +52,7 @@ vi.mock("~/state/session", async () => {
 
     useEnvironmentScope: () => true,
     readEnvironmentScope: () => true,
+    sessionHasScope: () => true,
   };
 });
 // The desktop app hosts these browsers itself, so no environment's server browser is consulted.
@@ -88,36 +90,40 @@ vi.mock("~/hooks/useTheme", () => ({
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("~/state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
-vi.mock("~/components/files/projectFilesQueryState", () => ({
-  confirmProjectFileQueryData: vi.fn(),
-  getUnsavedProjectFileQueryData: () => null,
-  getOptimisticProjectFileQueryData: () => null,
-  getProjectFileContents: () => undefined,
-  setProjectFileQueryData: vi.fn(),
-  useProjectFileQuery: () => ({
-    data: null,
-    error: null,
-    isPending: true,
-    isNotFile: false,
-    refresh: vi.fn(),
-  }),
-  useProjectEntriesQuery: (environmentId: string, _cwd: string, directoryPath?: string) => ({
-    data:
-      directoryPath === "src"
-        ? {
-            entries: (siblingsByEnvironment.get(environmentId) ?? []).map((path) => ({
-              path,
-              kind: "file",
-              parentPath: "src",
-            })),
-            truncated: false,
-          }
-        : null,
-    error: null,
-    isPending: false,
-    refresh: vi.fn(),
-  }),
-}));
+vi.mock("~/components/files/projectFilesQueryState", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    confirmProjectFileQueryData: vi.fn(),
+    getUnsavedProjectFileQueryData: () => null,
+    getOptimisticProjectFileQueryData: () => null,
+    getProjectFileContents: () => undefined,
+    getProjectFileQueryAtom: () => Atom.make(null),
+    setProjectFileQueryData: vi.fn(),
+    useProjectFileQuery: () => ({
+      data: null,
+      error: null,
+      isPending: true,
+      isNotFile: false,
+      refresh: vi.fn(),
+    }),
+    useProjectEntriesQuery: (environmentId: string, _cwd: string, directoryPath?: string) => ({
+      data:
+        directoryPath === "src"
+          ? {
+              entries: (siblingsByEnvironment.get(environmentId) ?? []).map((path) => ({
+                path,
+                kind: "file",
+                parentPath: "src",
+              })),
+              truncated: false,
+            }
+          : null,
+      error: null,
+      isPending: false,
+      refresh: vi.fn(),
+    }),
+  };
+});
 vi.mock("~/components/DiffWorkerPoolProvider", () => ({ DiffWorkerPoolProvider: Wrapper }));
 // The tree is the Pierre file tree web component; the breadcrumbs are the entry point under test.
 vi.mock("~/components/files/FileBrowserPanel", () => ({ default: () => null }));
