@@ -1058,49 +1058,31 @@ const make = Effect.gen(function* () {
             );
         const original = yield* readRow(sessionId);
         if (Option.isNone(original)) return;
+        // Revoking any session the socket has used closes it. Events only wake this loop
+        // and the rows decide: revocations are written before they are published, and
+        // clientRemoved also reports an expired session losing its last socket.
+        const chain = [sessionId];
+        const nextRemoval = Effect.gen(function* () {
+          while (true) {
+            const change = yield* PubSub.take(subscription);
+            if (change.type === "clientRemoved" && chain.includes(change.sessionId)) return;
+          }
+        });
         let current = original.value;
-        // Revoking any session the socket has used closes it, including one revoked mid-handoff.
-        const chain = new Set([sessionId]);
-        while (current.revokedAt === null) {
+        while (true) {
+          const rows = yield* Effect.forEach(chain, readRow);
+          if (rows.some((row) => Option.isNone(row) || row.value.revokedAt !== null)) return;
           const now = yield* DateTime.now;
           const remaining = current.expiresAt.epochMilliseconds - now.epochMilliseconds;
           if (remaining > 0) {
-            const removed = yield* Effect.raceFirst(
-              Stream.fromSubscription(subscription).pipe(
-                Stream.filter(
-                  (change): change is Extract<SessionCredentialChange, { type: "clientRemoved" }> =>
-                    change.type === "clientRemoved" && chain.has(change.sessionId),
-                ),
-                Stream.runHead,
-              ),
-              Effect.sleep(Duration.millis(remaining)).pipe(Effect.as(Option.none())),
-            );
-            if (Option.isSome(removed)) {
-              // clientRemoved also reports an expired session losing its last socket.
-              const row = yield* readRow(removed.value.sessionId);
-              if (Option.isNone(row) || row.value.revokedAt !== null) return;
-              continue;
-            }
-          }
-          // The timer can win the race against a revocation published in the same instant.
-          const [originalNow, currentNow] = yield* Effect.all([
-            readRow(sessionId),
-            readRow(current.sessionId),
-          ]);
-          if (
-            Option.isNone(originalNow) ||
-            originalNow.value.revokedAt !== null ||
-            Option.isNone(currentNow) ||
-            currentNow.value.revokedAt !== null
-          ) {
-            return;
+            yield* Effect.raceFirst(nextRemoval, Effect.sleep(Duration.millis(remaining)));
+            continue;
           }
           const successorId =
             proofKeyThumbprint === undefined
               ? undefined
               : latestSessionByProofKey.get(proofKeyThumbprint);
           if (successorId === undefined || successorId === current.sessionId) return;
-          chain.add(successorId);
           const successor = yield* readRow(successorId);
           // The socket keeps its original scopes, so the renewal must still grant all of them.
           if (
@@ -1110,6 +1092,7 @@ const make = Effect.gen(function* () {
           ) {
             return;
           }
+          chain.push(successorId);
           current = successor.value;
         }
       }),
