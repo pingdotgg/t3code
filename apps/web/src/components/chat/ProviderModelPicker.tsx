@@ -186,8 +186,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       return;
     }
     // The column renders the new model's levels on commit; a model with none closes the popup.
+    // Levels an Ultrathink prompt locks still count, so the note explaining them stays visible.
     window.requestAnimationFrame(() => {
-      if (!focusEffort("levels")) setIsMenuOpen(false);
+      const hasLevels = popupRef.current?.querySelector("[data-effort-level]") != null;
+      if (hasLevels) focusEffort("levels");
+      else setIsMenuOpen(false);
     });
   };
 

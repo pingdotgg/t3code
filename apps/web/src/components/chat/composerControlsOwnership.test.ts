@@ -29,7 +29,7 @@ describe("resolveComposerControlsOwnership", () => {
     });
   });
 
-  it("moves an overflowed chip's Permissions into the overflow menu", () => {
+  it("gives an overflowed chip's Permissions to the overflow menu when it has no Plan toggle", () => {
     const result = resolveComposerControlsOwnership({
       ...base,
       matchesDefault: false,
@@ -48,6 +48,19 @@ describe("resolveComposerControlsOwnership", () => {
     });
     expect(result.showModeBlock).toBe(true);
     expect(result.hiddenBlockIds).toEqual(["mode"]);
+    expect(result.overflowShowsPermissions).toBe(false);
+    expect(result.pickerOwnsModeShortcut).toBe(true);
+  });
+
+  it("overflows only the chip when the Plan toggle gives the overflow menu content", () => {
+    const result = resolveComposerControlsOwnership({
+      ...base,
+      matchesDefault: false,
+      planModeUiEnabled: true,
+      measuredHiddenBlockCount: 1,
+    });
+    expect(result.hiddenBlockIds).toEqual(["mode"]);
+    // Permissions stay in the model picker, which now answers composer.mode.
     expect(result.overflowShowsPermissions).toBe(false);
     expect(result.pickerOwnsModeShortcut).toBe(true);
   });

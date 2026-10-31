@@ -403,6 +403,10 @@ function PermissionsMenu(props: {
   const CurrentIcon = current.icon;
   return (
     <Menu
+      // Any pick, even the current mode, ends the job; a change also hands focus to the prompt.
+      onOpenChange={(open, details) => {
+        if (!open && details.reason === "item-press") picker.close();
+      }}
       onOpenChangeComplete={(open) => {
         if (open) focusCheckedPermission(triggerRef.current);
       }}
@@ -426,11 +430,7 @@ function PermissionsMenu(props: {
         <ComposerPermissionsSection
           runtimeMode={props.runtimeMode}
           runtimeModeOptions={props.options}
-          // A mode change hands focus back to the prompt, so the whole picker closes with it.
-          onRuntimeModeChange={(mode) => {
-            props.onChange(mode);
-            picker.close();
-          }}
+          onRuntimeModeChange={props.onChange}
         />
       </MenuPopup>
     </Menu>

@@ -19,14 +19,17 @@ export function resolveComposerControlsOwnership(input: {
   const showModeBlock = accessDisplay !== "hidden" || input.planModeUiEnabled;
   const modeHidden = showModeBlock && input.measuredHiddenBlockCount > 0;
   const hiddenBlockIds = modeHidden ? (["mode"] as const) : ([] as const);
+  // An overflowed chip needs a home for Permissions only when the Plan toggle is not there to fill
+  // the overflow menu; otherwise Permissions stay in the model picker.
+  const overflowShowsPermissions =
+    modeHidden && accessDisplay !== "hidden" && !input.planModeUiEnabled;
   return {
     accessDisplay,
     showModeBlock,
     hiddenBlockCount: hiddenBlockIds.length,
     hiddenBlockIds,
-    /** An overflowed chip takes Permissions into the overflow menu, which then answers composer.mode. */
-    overflowShowsPermissions: modeHidden && accessDisplay !== "hidden",
-    /** With no chip, the model picker answers composer.mode and opens its Permissions menu. */
-    pickerOwnsModeShortcut: accessDisplay === "hidden",
+    overflowShowsPermissions,
+    /** Without a visible chip or an overflow menu holding it, the model picker answers composer.mode. */
+    pickerOwnsModeShortcut: !overflowShowsPermissions && (accessDisplay === "hidden" || modeHidden),
   };
 }
