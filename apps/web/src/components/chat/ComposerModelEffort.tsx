@@ -24,7 +24,13 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { ComposerControlSize } from "./ComposerControl";
 import { ComposerPermissionsSection, type RuntimeModeOption } from "./ComposerFooterControls";
 import { composerFloatingLayerProps, focusCheckedPermission } from "./composerEventScope";
-import { EffortGlyph, FastBolt, resolveEffortGlyph } from "./EffortGlyph";
+import {
+  EffortGlyph,
+  effortTone,
+  EffortSparkles,
+  FastBolt,
+  resolveEffortGlyph,
+} from "./EffortGlyph";
 import { DockedPickerContext } from "./ProviderModelPicker";
 import {
   getTraitsSectionVisibility,
@@ -107,18 +113,19 @@ export function describeComposerEffort(
     columnControls(traits.provider, visibility.selectDescriptors, visibility.booleanDescriptors)
       .effort?.descriptor ?? null;
   const ultrathink = visibility.ultrathinkPromptControlled && reasoning === primary;
-  const glyph =
-    reasoning?.type === "select"
-      ? resolveEffortGlyph(
-          reasoning,
-          ultrathink
-            ? "ultrathink"
-            : getDescriptorStringValue(reasoning, modelSelection, traits.reportedModelSelection),
-        )
-      : null;
-  // Workflow levels such as Ultracode always show their name; the setting names every level.
+  const level =
+    reasoning?.type !== "select"
+      ? null
+      : ultrathink
+        ? "ultrathink"
+        : getDescriptorStringValue(reasoning, modelSelection, traits.reportedModelSelection);
+  const glyph = reasoning?.type === "select" ? resolveEffortGlyph(reasoning, level) : null;
+  // Scales too long for bars still show their word in the level's color.
+  const tone = glyph?.tone ?? effortTone(level);
   const word = glyph
-    ? (glyph.special ?? (effortDisplay === "label" ? glyph.label : null))
+    ? effortDisplay === "label"
+      ? glyph.label
+      : null
     : !reasoning
       ? null
       : reasoning.type === "boolean"
@@ -141,17 +148,23 @@ export function describeComposerEffort(
     suffix: (
       <span
         className={cn(
-          "flex shrink-0 items-center gap-1.5 text-muted-foreground group-hover/model-trigger:text-foreground group-data-pressed/model-trigger:text-foreground group-data-popup-open/model-trigger:text-foreground",
+          "flex shrink-0 items-center gap-1.5",
+          "text-muted-foreground group-hover/model-trigger:text-foreground group-data-pressed/model-trigger:text-foreground group-data-popup-open/model-trigger:text-foreground",
           // A word space after the model name: the regular trigger's gap is wider than one.
           size === "sm" && "-ms-0.5",
         )}
       >
-        {word ? (
-          <span data-composer-control-label className="max-w-24 truncate">
-            {word}
+        {word || glyph ? (
+          <span className={cn("flex items-center gap-0.5", tone)}>
+            {word ? (
+              <span data-composer-control-label className="max-w-24 truncate">
+                {word}
+              </span>
+            ) : glyph ? (
+              <EffortGlyph count={glyph.count} filled={glyph.filled} size={size} />
+            ) : null}
+            {glyph ? <EffortSparkles count={glyph.sparkles} /> : null}
           </span>
-        ) : glyph ? (
-          <EffortGlyph count={glyph.count} filled={glyph.filled} size={size} />
         ) : null}
         {fast ? <FastBolt ultra={display.speedLabel === "Ultrafast"} /> : null}
         {contextWindow ? (

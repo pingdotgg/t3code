@@ -17,30 +17,45 @@ describe("resolveEffortGlyph", () => {
   );
 
   it("fills bars up to the current level and leaves max and workflow levels off the scale", () => {
-    expect(resolveEffortGlyph(claude, "xhigh")).toEqual({
+    expect(resolveEffortGlyph(claude, "xhigh")).toMatchObject({
       count: 4,
       filled: 4,
-      special: null,
       label: "Xhigh",
+      sparkles: 0,
     });
   });
 
-  it("names max instead of drawing it", () => {
-    expect(resolveEffortGlyph(claude, "max")?.special).toBe("Max");
+  it("draws max and workflow levels as full bars plus sparkles", () => {
+    expect(resolveEffortGlyph(claude, "max")).toMatchObject({ filled: 4, sparkles: 1 });
+    expect(resolveEffortGlyph(claude, "ultracode")).toMatchObject({ filled: 4, sparkles: 2 });
+    const codex = descriptor(["low", "medium", "high", "xhigh", "max", "ultra"]);
+    expect(resolveEffortGlyph(codex, "ultra")).toMatchObject({ count: 4, filled: 4, sparkles: 2 });
+    const short = descriptor(["high", "ultra"]);
+    expect(resolveEffortGlyph(short, "ultra")).toMatchObject({ count: 1, filled: 1, sparkles: 2 });
+    for (const named of [descriptor(["max", "ultra"]), descriptor(["off", "ultra"])]) {
+      expect(resolveEffortGlyph(named, "ultra")).toMatchObject({ count: 1, sparkles: 2 });
+    }
+    expect(resolveEffortGlyph(claude, "ultrathink")).toMatchObject({
+      filled: 4,
+      sparkles: 2,
+      label: "Ultrathink",
+    });
   });
 
-  it("names Ultracode and Ultrathink instead of drawing a level", () => {
-    expect(resolveEffortGlyph(claude, "ultracode")?.special).toBe("Ultracode");
-    expect(resolveEffortGlyph(claude, "ultrathink")?.special).toBe("Ultrathink");
+  it("colors only the levels that cost more than usual", () => {
+    expect(resolveEffortGlyph(claude, "low")?.tone).toBeNull();
+    expect(resolveEffortGlyph(claude, "medium")?.tone).toBeNull();
+    expect(resolveEffortGlyph(claude, "high")?.tone).toContain("amber");
+    expect(resolveEffortGlyph(claude, "xhigh")?.tone).toContain("red");
+    expect(resolveEffortGlyph(claude, "max")?.tone).toContain("purple");
   });
 
   it("draws the lowest level as one bar, and an off level as none", () => {
     expect(resolveEffortGlyph(claude, "low")).toMatchObject({ count: 4, filled: 1 });
     expect(resolveEffortGlyph(claude, "medium")).toMatchObject({ count: 4, filled: 2 });
-    expect(resolveEffortGlyph(descriptor(["off", "low", "high"]), "off")).toEqual({
+    expect(resolveEffortGlyph(descriptor(["off", "low", "high"]), "off")).toMatchObject({
       count: 2,
       filled: 0,
-      special: null,
       label: "Off",
     });
   });
