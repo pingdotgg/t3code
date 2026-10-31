@@ -6426,33 +6426,89 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           );
         });
 
-        yield* client.handleServerNotification("turn/completed", (payload) =>
+        const handleTerminalTurn = Effect.fn("CodexAdapterV2.handleTerminalTurn")(function* (
+          payload: CodexSchema.V2TurnCompletedNotification,
+        ) {
+          const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
+          if (context === undefined) {
+            return;
+          }
+          const nativeStatus = mapCodexTurnStatus(payload.turn.status);
+          const status =
+            nativeStatus === "completed" &&
+            (yield* Ref.get(interruptingNativeTurns)).has(payload.turn.id)
+              ? "interrupted"
+              : nativeStatus;
+          const terminal = {
+            context,
+            nativeTurnId: payload.turn.id,
+            status,
+            completedAt: codexTimestamp(payload.turn.completedAt),
+            ...(payload.turn.error?.message === undefined
+              ? {}
+              : {
+                  failureMessage: payload.turn.error.message,
+                  ...(payload.turn.error.codexErrorInfo == null
+                    ? {}
+                    : { failureErrorInfo: payload.turn.error.codexErrorInfo }),
+                }),
+          };
+          if (!(yield* retryCapacityFailure(terminal))) yield* finalizeCodexTurn(terminal);
+        });
+
+        yield* client.handleServerNotification("turn/completed", handleTerminalTurn);
+
+        yield* client.handleServerNotification("thread/status/changed", (payload) =>
           Effect.gen(function* () {
-            const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
-            if (context === undefined) {
-              return;
-            }
-            const nativeStatus = mapCodexTurnStatus(payload.turn.status);
-            const status =
-              nativeStatus === "completed" &&
-              (yield* Ref.get(interruptingNativeTurns)).has(payload.turn.id)
-                ? "interrupted"
-                : nativeStatus;
-            const terminal = {
-              context,
-              nativeTurnId: payload.turn.id,
-              status,
-              completedAt: codexTimestamp(payload.turn.completedAt),
-              ...(payload.turn.error?.message === undefined
-                ? {}
-                : {
-                    failureMessage: payload.turn.error.message,
-                    ...(payload.turn.error.codexErrorInfo == null
-                      ? {}
-                      : { failureErrorInfo: payload.turn.error.codexErrorInfo }),
+            if (payload.status.type !== "idle") return;
+            const contexts = Array.from((yield* Ref.get(activeTurns)).values()).filter(
+              (context) => context.providerThread.nativeThreadRef?.nativeId === payload.threadId,
+            );
+            for (const context of contexts) {
+              yield* Effect.gen(function* () {
+                // Idle normally precedes turn/completed; let that notification settle healthy turns.
+                yield* Effect.sleep("1 second");
+                if (
+                  context.capacityRetryPending !== undefined ||
+                  (yield* Ref.get(activeTurns)).get(context.nativeTurnId) !== context
+                )
+                  return;
+                const turn = yield* Effect.gen(function* () {
+                  let cursor: string | undefined;
+                  while (true) {
+                    if ((yield* Ref.get(activeTurns)).get(context.nativeTurnId) !== context) return;
+                    const page = yield* client.request("thread/turns/list", {
+                      threadId: payload.threadId,
+                      limit: 20,
+                      sortDirection: "desc",
+                      itemsView: "notLoaded",
+                      ...(cursor === undefined ? {} : { cursor }),
+                    });
+                    const matching = page.data.find((turn) => turn.id === context.nativeTurnId);
+                    if (matching !== undefined) return matching;
+                    cursor = page.nextCursor ?? undefined;
+                    if (cursor === undefined) return;
+                  }
+                }).pipe(Effect.timeout("10 seconds"));
+                if (
+                  turn === undefined ||
+                  turn.status === "inProgress" ||
+                  (yield* Ref.get(activeTurns)).get(context.nativeTurnId) !== context
+                )
+                  return;
+                yield* handleTerminalTurn({ threadId: payload.threadId, turn });
+              }).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("orchestration-v2.codex-idle-reconciliation-failed", {
+                    threadId: payload.threadId,
+                    turnId: context.nativeTurnId,
+                    cause,
                   }),
-            };
-            if (!(yield* retryCapacityFailure(terminal))) yield* finalizeCodexTurn(terminal);
+                ),
+                // Notification handlers share the reader that must receive this request's response.
+                Effect.forkIn(scope),
+              );
+            }
           }),
         );
 
