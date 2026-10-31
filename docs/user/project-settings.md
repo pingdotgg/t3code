@@ -214,6 +214,11 @@ Merge cleanup requires a merged pull request whose commits are included in the r
 branch. A squash or rebase merge on GitHub also counts when the pull request targeted the default
 branch and the worktree is still at the pull request's last commit.
 
+Each rule works on its own, so inactive, settled and deleted-thread cleanup can remove a clean
+worktree whose commits never reached the default branch. Turn on **Only delete landed worktrees**
+under Advanced to make every rule also require the branch to be in the remote default branch, or
+its pull request to be merged at the worktree's current commit.
+
 Enable **Delete worktrees with deleted threads** to remove safe worktrees after their last
 thread is deleted, including archived threads and worktrees left by earlier deletions. The
 server waits for sessions and terminals to stop and retries skipped worktrees after restart.

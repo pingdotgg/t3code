@@ -37,6 +37,7 @@ import { AdvancedSettings } from "./AdvancedSettings";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
 import { SettingsGroup } from "./SettingsGroup";
+import { WorktreeIntegrationRows } from "./WorktreeIntegrationRows";
 import type { ScopedSettingsTarget } from "./scopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { searchableSetting } from "./settingsSearch";
@@ -627,18 +628,11 @@ export function WorktreeCleanupSection() {
                     }
                   />
                 )}
-              <SettingsRow
-                title="Delete unchanged worktrees"
-                status={ruleStatus("worktreeUnchanged")}
-                description="Remove worktrees with no commits beyond the default branch."
+              <WorktreeIntegrationRows
+                settings={settings}
+                ruleStatus={ruleStatus}
                 serverScoped={!isProjectScope}
-                control={
-                  <Switch
-                    aria-label="Delete unchanged worktrees"
-                    checked={settings.worktreeUnchanged}
-                    onCheckedChange={(worktreeUnchanged) => updateWorktree({ worktreeUnchanged })}
-                  />
-                }
+                updateWorktree={updateWorktree}
               />
               {connectedEnvironments.every(
                 (environment) =>

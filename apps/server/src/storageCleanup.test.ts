@@ -455,6 +455,7 @@ const cleanupFixture = (
         )) as unknown as SqlClient.SqlClient),
       Effect.provideService(GitManager.GitManager, {
         invalidateStatus: () => Effect.void,
+        branchPullRequest: () => Effect.succeed(null),
       } as unknown as GitManager.GitManager["Service"]),
       Effect.provideService(TerminalManager.TerminalManager, {
         subscribeMetadata: (
@@ -2410,6 +2411,93 @@ describe("settled worktree rechecks", () => {
           expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
         }),
       ),
+  );
+});
+
+describe("worktree cleanup that requires landed work", () => {
+  it.effect("keeps a not-yet-eligible worktree without checking whether its work landed", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const fixture = yield* cleanupFixture({
+        ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+        worktreeAfterDays: 60,
+        worktreeSettledAfterDays: null,
+        worktreeRequireIntegrated: true,
+        worktreeUnchanged: false,
+        worktreeOnMerge: false,
+      });
+
+      const report = yield* fixture.service.runNow;
+      expect(report.entries.filter((entry) => entry.kind === "worktree")).toMatchObject([
+        {
+          outcome: "kept",
+          reason: "Inactive for 30 of 60 days",
+          path: fixture.worktree,
+        },
+      ]);
+      expect(report.entries.some((entry) => entry.outcome === "failed")).toBe(false);
+      expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+  );
+
+  const triggers = {
+    settled: {
+      settings: { worktreeSettledAfterDays: 0 },
+      thread: { settledAt: at(0) },
+      removed: "Settled for 0 days",
+    },
+    inactive: {
+      settings: { worktreeAfterDays: 8 },
+      thread: {},
+      removed: "Inactive for 30 days",
+    },
+    deleted: {
+      settings: { worktreeOnDelete: true },
+      thread: { deletedAt: at(-DAY_MS) },
+      removed: "Thread was deleted",
+    },
+  } as const;
+
+  it.effect.each(Object.keys(triggers) as (keyof typeof triggers)[])(
+    "keeps unlanded commits for the %s trigger until the head reaches the default branch",
+    (trigger) =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const { settings, thread: overrides, removed } = triggers[trigger];
+        const fixture = yield* cleanupFixture({
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeAfterDays: null,
+          worktreeOnDelete: false,
+          worktreeSettledAfterDays: null,
+          worktreeRequireIntegrated: true,
+          ...settings,
+        });
+        const { command, fs, repo, worktree } = fixture;
+        const remote = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-remote-" });
+        yield* command(remote, ["init", "--bare", "-b", "main"]);
+        yield* command(repo, ["remote", "add", "origin", remote]);
+        yield* command(repo, ["push", "origin", "main"]);
+        yield* fs.writeFileString(`${worktree}/tracked.txt`, "unlanded work\n");
+        yield* command(worktree, ["commit", "-am", "unlanded work"]);
+        const thread = shell({ branch: "feature", worktreePath: worktree, ...overrides });
+        if (trigger === "deleted") {
+          fixture.setDeletedThreads([thread]);
+          fixture.setThreads([]);
+        } else fixture.setThreads([thread]);
+
+        expect((yield* fixture.service.runNow).entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Has commits that are not on the default branch",
+        });
+        expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("unlanded work\n");
+
+        yield* command(repo, ["push", "origin", "feature:main"]);
+        expect((yield* fixture.service.runNow).entries[0]).toMatchObject({
+          outcome: "removed",
+          reason: removed,
+        });
+        expect(yield* fs.exists(worktree)).toBe(false);
+      }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
   );
 });
 
