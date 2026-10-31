@@ -21,7 +21,7 @@ We wanted something performant, remote-ready, and truly open. If we ever go the 
 > - Grok Build: install [Grok Build CLI](https://x.ai/cli) and run `grok login`
 > - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
 > - Antigravity: enable it in Settings, then use **Install Antigravity** and **Sign in with Google**. No CLI is required.
-> - fx: install [fx](https://fx.sh) and run `fx login` ([setup guide](./docs/user/providers-fx.md))
+> - fx: install [fx](https://fx.sh) and run `fx login` on the machine running the T3 Code server ([setup guide](./docs/user/providers-fx.md))
 
 ### Command line
 
