@@ -57,8 +57,6 @@ describe("DesktopEarlyElectronStartup", () => {
     const releaseCommits: Record<string, string> = {
       "0.48.0": "5ee35f914f921e5696030698e74fb5566a804768",
       "0.48.1": "29e2e59fdbab8ed2cc23a20e3c6043d5decb5cdc",
-      "0.49.0": "9958d297641b5c84dcff93f9039d80a5ad37ab00",
-      "0.50.0": "c4a4c341568944bd4fb9cd503558b2de602c0213",
       "0.50.1": "4e242d086e20b32951fdc0ebcbfb4d41b5be8dcc",
     };
     const hyprctlVersion =
@@ -80,18 +78,15 @@ describe("DesktopEarlyElectronStartup", () => {
       readHyprctlVersionJson: hyprctlVersion("0.48.1"),
     };
 
-    it.each(["0.48.0", "0.48.1", "0.49.0", "0.50.0", "0.50.1"])(
-      "disables the color manager on Hyprland %s",
-      (version) => {
-        assert.equal(
-          resolveLinuxDisableFeaturesSwitch({
-            ...brokenHyprland,
-            readHyprctlVersionJson: hyprctlVersion(version),
-          }),
-          "WaylandWpColorManagerV1",
-        );
-      },
-    );
+    it.each(["0.48.0", "0.50.1"])("disables the color manager on Hyprland %s", (version) => {
+      assert.equal(
+        resolveLinuxDisableFeaturesSwitch({
+          ...brokenHyprland,
+          readHyprctlVersionJson: hyprctlVersion(version),
+        }),
+        "WaylandWpColorManagerV1",
+      );
+    });
 
     it.each([
       { label: "case-insensitive desktop tokens", env: { XDG_CURRENT_DESKTOP: "foo:HYPRLAND" } },

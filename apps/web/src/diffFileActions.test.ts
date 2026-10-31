@@ -55,6 +55,7 @@ describe("openDiffFilePrimaryAction", () => {
     ).toBe("src/index.ts");
   });
 
+  // regression: #6174 opening diff files broke for repositories at a filesystem root
   it.each([
     { workspaceRoot: "/frontend", repositoryRoot: "/" },
     { workspaceRoot: "C:\\frontend", repositoryRoot: "C:\\" },

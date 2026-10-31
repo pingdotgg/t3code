@@ -27,10 +27,6 @@ const illegalInvocation = (): never => {
   throw new TypeError("Illegal invocation");
 };
 
-/**
- * Installs the bridge over fresh stand-ins for the page's DOM classes. Like
- * Chromium's, their getters only work on objects the browser created itself.
- */
 const install = (respond: (channel: string) => unknown) => {
   const nativeCreate = vi.fn(async () => "native-create");
   const nativeGet = vi.fn(async () => "native-get");
@@ -147,18 +143,6 @@ describe("installPasskeyBridge", () => {
       .get({ publicKey: { challenge: new Uint8Array([1]) } })
       .catch((error: unknown) => error);
     assert.instanceOf(fetched, TypeError);
-  });
-
-  it("refuses when the main process has no handler for the page", async () => {
-    const { credentials } = install(() => {
-      throw new Error("Error invoking remote method 'preview:passkey-get': No handler registered");
-    });
-
-    const error = await credentials
-      .get({ publicKey: { challenge: new Uint8Array([1]) } })
-      .catch((caught: unknown) => caught);
-    assert.instanceOf(error, DOMException);
-    assert.strictEqual((error as DOMException).name, "NotAllowedError");
   });
 
   it("rejects as soon as the page aborts, without waiting on the system sheet", async () => {

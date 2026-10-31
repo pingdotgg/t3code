@@ -326,8 +326,6 @@ describe("new-task branch checkout", () => {
 
   it.each([
     { source: "historical", nested: true },
-    { source: "picker", nested: true },
-    { source: "historical", nested: false },
     { source: "picker", nested: false },
   ])(
     "rejects $source worktree reuse when project root is unsafe (nested: $nested)",

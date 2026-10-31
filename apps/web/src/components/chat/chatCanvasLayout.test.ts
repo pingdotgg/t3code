@@ -104,6 +104,36 @@ describe("chat canvas layout", () => {
     expect(result.overlapsDetailsCard).toBe(false);
     expect(result.chat).toEqual({ left: 424, width: 736, insetStart: 0, insetEnd: 0 });
   });
+  it("moves the chat left only as far as a details card it would crowd requires", () => {
+    const { chat } = resolveChatCanvasLayout({
+      container: { width: 1344, height: 988 },
+      maxChatWidth: 736,
+      detailsCard: { left: 1052, right: 1332, bottom: 339 },
+      preview: null,
+    });
+    expect(chat).toMatchObject({ left: 1052 - 32 - 736, width: 736 });
+  });
+  it("keeps the chat canvas-centered when it clears the details card", () => {
+    const result = resolveChatCanvasLayout({
+      container: { width: 2200, height: 988 },
+      maxChatWidth: 736,
+      detailsCard: { left: 1876, right: 2188, bottom: 339 },
+      preview: null,
+    });
+    expect(result.chat.left).toBe((2200 - 736) / 2);
+  });
+  it("moves the chat smoothly as a window with a details card grows", () => {
+    const leftAt = (width: number) =>
+      resolveChatCanvasLayout({
+        container: { width, height: 988 },
+        maxChatWidth: 736,
+        detailsCard: { left: width - 292, right: width - 12, bottom: 339 },
+        preview: null,
+      }).chat.left;
+    for (let width = 1300; width < 1800; width += 1) {
+      expect(Math.abs(leftAt(width + 1) - leftAt(width))).toBeLessThanOrEqual(1);
+    }
+  });
   it("keeps a dragged or resized preview below the open find bar", () => {
     const findBar = { left: 1292, right: 1572, bottom: 48 };
     const layout = (lastInteraction: "drag" | "resize") =>
@@ -264,6 +294,9 @@ describe("workspace card beside chat", () => {
       detailsCard: { left: width - 292, right: width - 12, bottom: 400 },
       preview: player,
     });
+  it("keeps chat centered while the card fits beside it", () => {
+    expect(withCard(1500).chat).toEqual({ left: 382, width: 736, insetStart: 0, insetEnd: 0 });
+  });
   it("narrows chat only after it reaches the left padding", () => {
     expect(withCard(1108).chat).toMatchObject({ left: 48, width: 736 });
     expect(withCard(1028).chat).toEqual({ left: 48, width: 656, insetStart: 0, insetEnd: 276 });

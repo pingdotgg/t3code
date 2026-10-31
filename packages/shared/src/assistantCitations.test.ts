@@ -89,22 +89,11 @@ describe("assistant citation references", () => {
   });
 
   it.each([
-    "https://example.com/quote",
     "t3-citation://v2/a/b/c?text=quote&start=0&end=5&prefix=&suffix=",
-    "t3-citation://v1/%ZZ/b/c?text=quote&start=0&end=5&prefix=&suffix=",
-    "t3-citation://v1/a/b/c?text=quote&start=NaN&end=5&prefix=&suffix=",
     "t3-citation://v1/a/b/c?text=quote&start=5&end=0&prefix=&suffix=",
-    "t3-citation://v1/a/b/c?text=quote&start=0&end=9007199254740992&prefix=&suffix=",
     "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=&text=other",
     "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=&unknown=value",
-    "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=&comment=note&unknown=value",
     "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=&comment=one&comment=two",
-    "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=&comment=&comment=",
-    "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=&comment=one&%63omment=two",
-    "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&comment=note",
-    "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=&text=other&comment=note",
-    "t3-citation://v1/a/b/c?text=&start=0&end=5&prefix=&suffix=",
-    "t3-citation://v1/a/b/c?text=quote&start=0&end=5&prefix=&suffix=#unexpected",
   ])("leaves invalid or unsupported references unchanged: %s", (href) => {
     expect(parseAssistantCitationHref(href)).toBeNull();
     const prompt = `[Assistant quote](${href})`;

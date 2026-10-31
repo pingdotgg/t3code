@@ -113,35 +113,6 @@ const post = (
 ) => new Request(`http://env.local${path}`, { method: "POST", body, headers });
 
 describe("webhook route", () => {
-  it("passes the raw request to the service and answers 202 with the delivery id", async () => {
-    let received: WebhookTriggerRequest | undefined;
-    const { handler, dispose } = handlerFor((request) => {
-      received = request;
-      return Effect.succeed({
-        _tag: "accepted",
-        deliveryId: ScheduledTaskWebhookDeliveryId.make("delivery:1"),
-        outcome: "accepted",
-      });
-    });
-    try {
-      const response = await handler(
-        post("/api/hooks/scheduled-task%3Ahook/tok?x=1", '{"a":1}', {
-          "Content-Type": "application/json",
-          "X-GitHub-Event": "push",
-        }),
-      );
-      expect(response.status).toBe(202);
-      expect(await response.json()).toEqual({ deliveryId: "delivery:1" });
-      expect(received?.hookId).toBe("scheduled-task:hook");
-      expect(received?.token).toBe("tok");
-      expect(received?.query).toBe("x=1");
-      expect(received?.headers["x-github-event"]).toBe("push");
-      expect(received?.bodyText).toBe('{"a":1}');
-    } finally {
-      await dispose();
-    }
-  });
-
   it.live("trusts the relay's delivery id and receive time only with its signed proof", () =>
     Effect.gen(function* () {
       const received: Array<WebhookTriggerRequest> = [];
@@ -273,6 +244,32 @@ describe("webhook route", () => {
       );
       expect(streamed.status).toBe(413);
       expect(calls).toBe(0);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it("refuses HEAD probes without triggering the hook", async () => {
+    let calls = 0;
+    const { handler, dispose } = handlerFor(() => {
+      calls += 1;
+      return Effect.succeed({
+        _tag: "accepted",
+        deliveryId: ScheduledTaskWebhookDeliveryId.make("delivery:1"),
+        outcome: "accepted",
+      });
+    });
+    try {
+      const response = await handler(
+        new Request("http://env.local/api/hooks/id/tok", { method: "HEAD" }),
+      );
+      expect(response.status).toBe(405);
+      expect(response.headers.get("allow")).toBe("GET, POST, PUT, PATCH");
+      expect(response.headers.get("x-t3-hook-outcome")).toBe("method_not_allowed");
+      expect(calls).toBe(0);
+      const get = await handler(new Request("http://env.local/api/hooks/id/tok"));
+      expect(get.status).toBe(202);
+      expect(calls).toBe(1);
     } finally {
       await dispose();
     }

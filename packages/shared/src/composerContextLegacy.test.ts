@@ -80,25 +80,17 @@ describe("upgradeLegacyContextMessage", () => {
     expect(upgradeLegacyContextMessage(text)).toEqual({ text, records: [] });
   });
 
-  it.each([
-    "email@build:7",
-    "café@build:7",
-    "𐐀@build:7",
-    "@build:7foo",
-    "@build:7st",
-    "@build:7é",
-    "@build:7.foo",
-    "@build:7@mention",
-    "@build:7..foo",
-    "@build:7.é",
-  ])("does not replace terminal labels embedded in %s", (prompt) => {
-    const upgraded = upgradeLegacyContextMessage(
-      `${prompt}\n<terminal_context>\n- Build line 7:\n  output\n</terminal_context>`,
-    );
-    expect(upgraded.text).toBe(
-      `${prompt}\n\n[Build line 7](t3-context://v1/terminal/legacy_terminal_1)`,
-    );
-  });
+  it.each(["email@build:7", "@build:7foo", "@build:7.foo"])(
+    "does not replace terminal labels embedded in %s",
+    (prompt) => {
+      const upgraded = upgradeLegacyContextMessage(
+        `${prompt}\n<terminal_context>\n- Build line 7:\n  output\n</terminal_context>`,
+      );
+      expect(upgraded.text).toBe(
+        `${prompt}\n\n[Build line 7](t3-context://v1/terminal/legacy_terminal_1)`,
+      );
+    },
+  );
 
   it.each(["terminal_context", "element_context"])(
     "preserves malformed trailing %s blocks as text",

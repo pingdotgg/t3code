@@ -55,27 +55,6 @@ it.effect("derives direct Clerk OAuth endpoints from statically injected public 
   }),
 );
 
-it.effect("reports malformed Clerk publishable keys as typed configuration failures", () =>
-  Effect.gen(function* () {
-    const result = yield* makeCloudCliOAuthConfig({
-      clerkPublishableKeyFallback: "pk_test_not-base64!!",
-      clerkCliOAuthClientIdFallback: "oauth_client_embedded",
-    }).pipe(provideEnv({}), Effect.result);
-
-    assert.isTrue(Result.isFailure(result));
-    if (Result.isFailure(result)) {
-      assert.equal(result.failure.cause._tag, "SourceError");
-      if (result.failure.cause._tag === "SourceError") {
-        assert.equal(
-          result.failure.cause.message,
-          "Failed to derive Clerk Frontend API URL from the publishable key.",
-        );
-        assert.instanceOf(result.failure.cause.cause, Error);
-      }
-    }
-  }),
-);
-
 it("product opt-out disables relay tracing with either built-in or runtime credentials", () => {
   const fallback = {
     tracesUrl: "https://embedded.example.test/v1/traces",

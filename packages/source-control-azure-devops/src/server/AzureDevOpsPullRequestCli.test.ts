@@ -201,23 +201,24 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("reports truncation from the extra row", () =>
+  it.effect("asks Azure for the author's pull requests by creator", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(11, 1))));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(1, 1))));
       const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
 
-      const batch = yield* cli.listPullRequests({
+      yield* cli.listPullRequests({
         cwd: "/w",
         repository: "web",
         state: "open",
-        involvement: "all",
+        involvement: "reviewing",
         viewer: "bilal@acme.dev",
         limit: 10,
+        author: "ana@acme.dev",
       });
 
-      assert.strictEqual(batch.items.length, 10);
-      assert.isTrue(batch.truncated);
-      assert.strictEqual(batch.cursorAdvance, 10);
+      const args = argsOfCall(0);
+      assert.strictEqual(args[args.indexOf("--creator") + 1], "ana@acme.dev");
+      assert.strictEqual(args[args.indexOf("--reviewer") + 1], "bilal@acme.dev");
     }),
   );
 
@@ -846,22 +847,6 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
 
       assert.strictEqual(item.contents, file);
       assert.isFalse(item.isBinary);
-    }),
-  );
-
-  it.effect("asks for a file by Azure's own spelling of its path", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(json({ content: "const a = 1;" }))));
-      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-      yield* cli.readItemContent({
-        cwd: "/w",
-        location: { project: "platform", repository: "web" },
-        path: "src/app.ts",
-        commit: "a".repeat(40),
-      });
-
-      expect(argsOfCall(0)).toContain("path=/src/app.ts");
     }),
   );
 

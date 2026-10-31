@@ -18,6 +18,7 @@ import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope"
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
   scheduledTaskDefaultModel,
+  defaultScheduledTaskProjectId,
   matchesScheduledTaskScope,
   scheduleFromDraft,
   taskToDraft,
@@ -70,6 +71,8 @@ function group(
     allRemoteMembersAreDesktopLocal: false,
     allRemoteMembersAreWsl: false,
     remoteEnvironmentLabels: [],
+    pinned: false,
+    archived: false,
   };
 }
 
@@ -99,6 +102,22 @@ describe("scheduled task settings scope", () => {
         .filter((task) => matchesScheduledTaskScope(scope, task.environmentId, task.projectId))
         .map((task) => task.id),
     ).toEqual(expected);
+  });
+
+  it("defaults a new task to a pinned open project, and to an archived one only when scoped to it", () => {
+    const at = "2026-01-01T00:00:00.000Z";
+    const project = (id: string, pinnedAt: string | null, archivedAt: string | null) => ({
+      id: ProjectId.make(id),
+      pinnedAt,
+      archivedAt,
+    });
+    const all = resolveSettingsScope({}, groups, environments);
+    const scoped = resolveSettingsScope({ project: "t3code" }, groups, environments);
+    expect(
+      defaultScheduledTaskProjectId([project("a", null, null), project("b", at, null)], all),
+    ).toBe("b");
+    expect(defaultScheduledTaskProjectId([project("x", null, at)], all)).toBe("");
+    expect(defaultScheduledTaskProjectId([project("x", null, at)], scoped)).toBe("x");
   });
 
   it("keeps tasks with removed projects manageable at environment scope", () => {
@@ -214,18 +233,6 @@ describe("webhook scheduled tasks", () => {
     });
   });
 
-  it("drops the signature when it is switched off and offers GitHub's settings", () => {
-    const draft = taskToDraft({ ...webhookTask, schedule: { type: "webhook", signature: null } });
-    expect(draft.signatureEnabled).toBe(false);
-    expect(draft.signatureHeader).toBe("x-hub-signature-256");
-    expect(scheduleFromDraft(draft)).toEqual({
-      type: "webhook",
-      signature: null,
-      maxDeliveryAgeMinutes: null,
-      dedupe: {},
-    });
-  });
-
   it("round-trips the max age, treats blank as no limit, and rejects an invalid limit", () => {
     const draft = taskToDraft({
       ...webhookTask,
@@ -329,17 +336,6 @@ describe("scheduled task model defaults", () => {
         },
       }),
     ).toEqual(environmentSelection);
-  });
-  it("does not choose an implicit model on a disabled provider", () => {
-    expect(
-      resolve(
-        {
-          ...config,
-          providers: config.providers.map((provider) => ({ ...provider, enabled: false })),
-        },
-        null,
-      ),
-    ).toBeNull();
   });
 });
 

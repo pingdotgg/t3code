@@ -169,6 +169,24 @@ describe("mobile context clipboard imports", () => {
     expect(mocks.dispose).toHaveBeenCalledOnce();
   });
 
+  it("releases its files if cancelled after the last copy finishes", async () => {
+    const controller = new AbortController();
+    mocks.dispose.mockImplementationOnce(() => controller.abort());
+    const imageOnly = {
+      text: "![Checkout](t3-context://v1/image/image-source)",
+      fragment: encodeComposerContextFragment({
+        version: 1,
+        source: { environmentId: EnvironmentId.make("source") },
+        records: [image],
+      })!,
+      html: "",
+    };
+    await expect(importComposerContextClipboard(imageOnly, 0, controller.signal)).rejects.toThrow(
+      "cancelled",
+    );
+    expect(mocks.remove).toHaveBeenCalledWith("file:///owned.png");
+  });
+
   it("can copy an image before its source upload completes", async () => {
     mocks.local.mockReturnValue({
       id: "source-file",
@@ -244,6 +262,7 @@ describe("mobile context clipboard imports", () => {
     expect(mocks.download).not.toHaveBeenCalled();
   });
 
+  // regression: #18322 don't send or paste attached threads a machine can't read
   it("reports foreign threads and failed files together while keeping the rest of a paste", async () => {
     mocks.download.mockRejectedValueOnce(new Error("source disconnected"));
     const result = await importComposerContextClipboard(
@@ -274,6 +293,22 @@ describe("mobile context clipboard imports", () => {
         .map((reference) => reference.label),
     ).toEqual([foreignThread.label, image.label]);
     expect(result!.text).toMatch(/^Compare these findings: .* before changing anything\.$/);
+  });
+
+  it("keeps a thread from a machine the destination links to", async () => {
+    const result = await importComposerContextClipboard(
+      mixedClipboard,
+      0,
+      new AbortController().signal,
+      0,
+      EnvironmentId.make("destination"),
+      new Map([[foreignThread.environmentId, "Source"]]),
+    );
+    expect(result!.skippedThreads).toEqual([]);
+    expect(result!.context.records.filter((record) => record.kind === "thread")).toEqual([
+      { ...foreignThread, contextId: expect.any(String) },
+      { ...localThread, contextId: expect.any(String) },
+    ]);
   });
 
   it("preserves both machines' thread references when pasting without a destination", async () => {

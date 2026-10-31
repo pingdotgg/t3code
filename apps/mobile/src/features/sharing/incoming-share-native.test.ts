@@ -17,6 +17,7 @@ describe("createIncomingSharePayloadReader", () => {
     expect(readPayloads).toHaveBeenCalledTimes(1);
   });
 
+  // regression: #4943 stop shared content errors in Personal Team builds
   it("preserves other native errors", () => {
     const error = new Error("native failure");
     const read = createIncomingSharePayloadReader({

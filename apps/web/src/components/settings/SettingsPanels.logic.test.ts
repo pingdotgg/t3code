@@ -1,14 +1,8 @@
-import {
-  DEFAULT_UNIFIED_SETTINGS,
-  ProviderDriverKind,
-  ProviderInstanceId,
-  type ProviderInstanceConfig,
-} from "@t3tools/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import { describe, expect, it } from "vite-plus/test";
 import {
   backgroundActivitySharedPolicySettings,
-  buildProviderInstanceUpdatePatch,
   getChangedBrowserSettingLabels,
   hasChangedBackgroundActivitySettings,
 } from "./SettingsPanels.logic";
@@ -81,31 +75,6 @@ describe("background activity settings restore", () => {
         automaticGitFetchInterval,
       },
     });
-  });
-});
-
-describe("buildProviderInstanceUpdatePatch", () => {
-  it("replaces one instance and keeps the others", () => {
-    const instanceId = ProviderInstanceId.make("codex");
-    const otherId = ProviderInstanceId.make("codex_personal");
-    const other = {
-      driver: ProviderDriverKind.make("codex"),
-      config: { homePath: "/Users/example/.codex-personal" },
-    } satisfies ProviderInstanceConfig;
-    const nextInstance = {
-      driver: ProviderDriverKind.make("codex"),
-      enabled: true,
-      config: { binaryPath: "/opt/t3/codex" },
-    } satisfies ProviderInstanceConfig;
-
-    const patch = buildProviderInstanceUpdatePatch({
-      settings: { providerInstances: { [otherId]: other } },
-      instanceId,
-      instance: nextInstance,
-    });
-
-    expect(patch.providerInstances).toEqual({ [otherId]: other, [instanceId]: nextInstance });
-    expect(patch).not.toHaveProperty("textGenerationModelSelection");
   });
 });
 

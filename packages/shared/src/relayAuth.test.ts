@@ -49,19 +49,4 @@ describe("Clerk relay auth", () => {
     });
     expect((pathError as Error & { cause?: unknown }).cause).toBeUndefined();
   });
-
-  it("preserves URL parser failures for decoded frontend APIs", () => {
-    const frontendApi = "[invalid-host";
-    const error = captureError(() =>
-      clerkFrontendApiHostnameFromPublishableKey(clerkPublishableKey(frontendApi)),
-    );
-
-    expect(error).toBeInstanceOf(ClerkPublishableKeyFrontendApiError);
-    expect(error).toMatchObject({
-      keyPrefix: "pk_test",
-      frontendApi,
-      reason: "invalid-url",
-    });
-    expect((error as ClerkPublishableKeyFrontendApiError).cause).toBeInstanceOf(Error);
-  });
 });

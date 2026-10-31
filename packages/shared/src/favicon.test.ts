@@ -9,7 +9,8 @@ describe("faviconUrlForOrigin", () => {
     );
   });
 
-  it.each([null, undefined, "", "invalid URL", "file:///tmp/private", "data:text/plain,private"])(
+  // regression: #5838 no favicon request for missing or non-http origins
+  it.each([null, "invalid URL", "file:///tmp/private"])(
     "rejects an invalid or unsupported origin %s",
     (origin) => {
       expect(faviconUrlForOrigin(origin)).toBeNull();

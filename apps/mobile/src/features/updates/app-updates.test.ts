@@ -1,8 +1,9 @@
+import { AppState } from "react-native";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createAppUpdateDeferral,
-  createAppUpdateLaunchCheck,
+  installAppUpdateChecks,
   runAppUpdateCheck,
   type AppUpdateCheckState,
   type AppUpdateClient,
@@ -194,28 +195,6 @@ describe("runAppUpdateCheck", () => {
     expect(client.reloadAsync).toHaveBeenCalledOnce();
   });
 
-  it("reports manual failures without continuing the update", async () => {
-    const reportError = vi.spyOn(console, "error").mockImplementation(() => {});
-    const client = makeUpdateClient({
-      checkForUpdateAsync: vi.fn(async () => {
-        throw new Error("offline");
-      }),
-    });
-    const failures: string[] = [];
-    const states: AppUpdateCheckState[] = [];
-
-    await runAppUpdateCheck({
-      client,
-      onFailure: (message) => failures.push(message),
-      onStateChange: (state) => states.push(state),
-    });
-
-    expect(client.fetchUpdateAsync).not.toHaveBeenCalled();
-    expect(failures).toEqual(["offline"]);
-    expect(states).toEqual(["checking", "idle"]);
-    reportError.mockRestore();
-  });
-
   it.each(["ERR_NOT_AVAILABLE_IN_DEV_CLIENT", "ERR_UPDATES_DISABLED"])(
     "treats Expo's %s failure as an unavailable update check",
     async (code) => {
@@ -256,10 +235,9 @@ describe("runAppUpdateCheck", () => {
     const client = makeUpdateClient({
       checkForUpdateAsync: vi.fn(() => checkResult),
     });
-    const checkOnLaunch = createAppUpdateLaunchCheck(client);
     const manualStates: AppUpdateCheckState[] = [];
 
-    const launchCheck = checkOnLaunch();
+    const launchCheck = runAppUpdateCheck({ client });
     const manualCheck = runAppUpdateCheck({
       client,
       onStateChange: (state) => manualStates.push(state),
@@ -278,38 +256,6 @@ describe("runAppUpdateCheck", () => {
 
     await runAppUpdateCheck({ client });
     expect(client.checkForUpdateAsync).toHaveBeenCalledTimes(2);
-  });
-
-  it("forwards failures to a manual check coalesced with the launch check", async () => {
-    const reportError = vi.spyOn(console, "error").mockImplementation(() => {});
-    let rejectCheck!: (error: Error) => void;
-    const checkResult = new Promise<{
-      readonly isAvailable: boolean;
-      readonly isRollBackToEmbedded: boolean;
-    }>((_resolve, reject) => {
-      rejectCheck = reject;
-    });
-    const client = makeUpdateClient({
-      checkForUpdateAsync: vi.fn(() => checkResult),
-    });
-    const checkOnLaunch = createAppUpdateLaunchCheck(client);
-    const failures: string[] = [];
-    const manualStates: AppUpdateCheckState[] = [];
-
-    const launchCheck = checkOnLaunch();
-    const manualCheck = runAppUpdateCheck({
-      client,
-      onFailure: (message) => failures.push(message),
-      onStateChange: (state) => manualStates.push(state),
-    });
-
-    rejectCheck(new Error("offline"));
-    await Promise.all([launchCheck, manualCheck]);
-
-    expect(client.checkForUpdateAsync).toHaveBeenCalledOnce();
-    expect(failures).toEqual(["offline"]);
-    expect(manualStates).toEqual(["checking", "idle"]);
-    reportError.mockRestore();
   });
 
   it("publishes the in-flight check before a state callback can re-enter", async () => {
@@ -357,16 +303,16 @@ describe("runAppUpdateCheck", () => {
   });
 });
 
-describe("createAppUpdateLaunchCheck", () => {
-  it("checks at most once for each JavaScript launch", async () => {
+describe("installAppUpdateChecks", () => {
+  it("checks once at launch and stops listening for foregrounds when disposed", () => {
+    const remove = vi.fn();
+    vi.mocked(AppState.addEventListener).mockReturnValueOnce({ remove });
     const client = makeUpdateClient();
-    const checkOnLaunch = createAppUpdateLaunchCheck(client);
 
-    const first = checkOnLaunch();
-    const second = checkOnLaunch();
-    await first;
-
-    expect(second).toBeUndefined();
+    const dispose = installAppUpdateChecks(client);
     expect(client.checkForUpdateAsync).toHaveBeenCalledOnce();
+    dispose();
+
+    expect(remove).toHaveBeenCalledOnce();
   });
 });

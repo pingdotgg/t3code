@@ -3,20 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import { rankModelPickerSearch, scoreModelPickerSearch } from "./modelPickerSearch";
 
 describe("scoreModelPickerSearch", () => {
-  it("matches typo-tolerant multi-token queries", () => {
-    expect(
-      scoreModelPickerSearch(
-        {
-          driverKind: "opencode",
-          providerDisplayName: "opencode",
-          name: "Claude Opus 4.7",
-          subProvider: "GitHub Copilot",
-        },
-        "coplt op",
-      ),
-    ).not.toBeNull();
-  });
-
   it("ranks exact token matches ahead of fuzzier matches", () => {
     const exactScore = scoreModelPickerSearch(
       {

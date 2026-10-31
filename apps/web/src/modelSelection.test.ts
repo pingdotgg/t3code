@@ -10,9 +10,13 @@ import { describe, expect, it } from "vite-plus/test";
 import { createModelSelection } from "@t3tools/shared/model";
 import { deriveEffectiveComposerModelState } from "./composerDraftStore";
 import { getComposerProviderState } from "./components/chat/composerProviderState";
-import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "./providerInstances";
+import { resolveComposerProviderSelection } from "./components/ChatView.logic";
 import {
-  getCustomModelOptionsByInstance,
+  deriveProviderInstanceEntries,
+  NO_PROVIDER_MODEL_SELECTION,
+  providerInstanceEntriesFor,
+} from "./providerInstances";
+import {
   getAppModelOptionsForInstance,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
@@ -128,27 +132,6 @@ describe("instance-scoped model selection", () => {
         "opus",
       ),
     ).toBe("opus");
-  });
-
-  it("includes Grok custom models from the selected provider instance", () => {
-    const providers = [provider({ provider: ProviderDriverKind.make("grok"), instanceId: "grok" })];
-    const settings: UnifiedSettings = {
-      ...settingsWithProviderInstances(),
-      providerInstances: {
-        ...settingsWithProviderInstances().providerInstances,
-        [ProviderInstanceId.make("grok")]: {
-          driver: ProviderDriverKind.make("grok"),
-          config: { customModels: ["grok-test-custom-model"] },
-        },
-      },
-    };
-    const grok = deriveProviderInstanceEntries(providers).find(
-      (entry) => entry.instanceId === "grok",
-    )!;
-
-    expect(getAppModelOptionsForInstance(settings, grok).map((option) => option.slug)).toContain(
-      "grok-test-custom-model",
-    );
   });
 
   it("offers and resolves every saved custom model, past the first 32", () => {
@@ -325,27 +308,6 @@ describe("instance-scoped model selection", () => {
           isUnavailable: true,
         }),
       ]);
-    });
-
-    it("keeps a missing option scoped to the selected instance", () => {
-      const selectedInstanceId = ProviderInstanceId.make(`${driverName}_work`);
-      const otherInstanceId = ProviderInstanceId.make(`${driverName}_personal`);
-      const driver = ProviderDriverKind.make(driverName);
-      const providers = [
-        provider({ provider: driver, instanceId: selectedInstanceId, models: [] }),
-        provider({ provider: driver, instanceId: otherInstanceId, models: [] }),
-      ];
-      const options = getCustomModelOptionsByInstance(
-        settingsWithProviderInstances(),
-        providers,
-        selectedInstanceId,
-        missingModel,
-      );
-
-      expect(options.get(selectedInstanceId)).toEqual([
-        expect.objectContaining({ slug: missingModel, isUnavailable: true }),
-      ]);
-      expect(options.get(otherInstanceId)).toEqual([]);
     });
 
     it("does not resurrect a hidden model when the raw catalog omits it", () => {
@@ -822,4 +784,160 @@ describe("default model settings and new-thread composer parity", () => {
       expect(composerTraits.promptEffort).toBe(effort);
     },
   );
+});
+
+describe("composer fallback to another instance of the same driver", () => {
+  const claude = ProviderDriverKind.make("claudeAgent");
+  const codex = ProviderDriverKind.make("codex");
+  const disabled = ProviderInstanceId.make("claudeAgent");
+  const fallback = ProviderInstanceId.make("claude_team");
+  const effortModels: ServerProvider["models"] = [
+    {
+      slug: "claude-opus-5-5",
+      name: "Claude Opus 5.5",
+      isCustom: false,
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "effort",
+            label: "Effort",
+            type: "select",
+            options: ["medium", "high", "xhigh"].map((id) => ({
+              id,
+              label: id,
+              isDefault: id === "medium",
+            })),
+          },
+        ],
+      },
+    },
+  ];
+  const providers: ReadonlyArray<ServerProvider> = [
+    {
+      ...provider({ provider: claude, instanceId: disabled }),
+      enabled: false,
+      models: effortModels,
+    },
+    { ...provider({ provider: claude, instanceId: fallback }), models: effortModels },
+  ];
+  const picked = createModelSelection(disabled, "claude-opus-5-5", [
+    { id: "effort", value: "xhigh" },
+  ]);
+
+  // The same steps useComposerProviderModel takes, without the draft store.
+  function composerFor(input: {
+    readonly providers: ReadonlyArray<ServerProvider>;
+    readonly draft?: Parameters<typeof deriveEffectiveComposerModelState>[0]["draft"];
+    readonly threadModelSelection: ReturnType<typeof createModelSelection>;
+  }) {
+    const settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: Object.fromEntries(
+        input.providers.map((provider) => [
+          provider.instanceId,
+          {
+            driver: provider.driver,
+            enabled: provider.enabled,
+            config: {},
+          },
+        ]),
+      ),
+    };
+    const selection = resolveComposerProviderSelection({
+      entries: providerInstanceEntriesFor(input.providers, settings, null),
+      candidateInstanceIds: [input.threadModelSelection.instanceId],
+      lockedProvider: null,
+      lockedInstanceId: undefined,
+    });
+    const selectedInstanceId = selection.selectedProviderEntry!.instanceId;
+    const selectedProvider = selection.selectedProviderEntry!.driverKind;
+    const state = deriveEffectiveComposerModelState({
+      draft: input.draft ?? null,
+      providers: input.providers,
+      selectedProvider,
+      selectedInstanceId,
+      requestedInstanceId: selection.requestedInstanceId,
+      threadModelSelection: input.threadModelSelection,
+      projectModelSelection: null,
+      settings,
+    });
+    const traits = getComposerProviderState({
+      provider: selectedProvider,
+      model: state.selectedModel,
+      models: selection.selectedProviderEntry!.models,
+      modelOptions: state.modelOptions?.[selectedInstanceId],
+      planModeEnabled: false,
+    });
+    return { selectedInstanceId, state, traits };
+  }
+
+  it("keeps the requested instance's effort on the fallback instance", () => {
+    const { selectedInstanceId, state, traits } = composerFor({
+      providers,
+      threadModelSelection: picked,
+    });
+
+    expect(selectedInstanceId).toBe(fallback);
+    expect(state.selectedModel).toBe("claude-opus-5-5");
+    expect(traits.promptEffort).toBe("xhigh");
+    expect(
+      createModelSelection(fallback, state.selectedModel, traits.modelOptionsForDispatch),
+    ).toEqual(
+      createModelSelection(fallback, "claude-opus-5-5", [{ id: "effort", value: "xhigh" }]),
+    );
+  });
+
+  it("keeps options the fallback instance already has", () => {
+    const { traits } = composerFor({
+      providers,
+      threadModelSelection: picked,
+      draft: {
+        activeProvider: disabled,
+        modelSelectionByProvider: {
+          [disabled]: picked,
+          [fallback]: createModelSelection(fallback, "claude-opus-5-5", [
+            { id: "effort", value: "high" },
+          ]),
+        },
+      },
+    });
+
+    expect(traits.promptEffort).toBe("high");
+  });
+
+  it("does not carry options picked with another model", () => {
+    // An optionless draft pick takes its options from the thread, which holds another model.
+    const { state, traits } = composerFor({
+      providers,
+      threadModelSelection: createModelSelection(disabled, "claude-sonnet-4-6", [
+        { id: "effort", value: "high" },
+      ]),
+      draft: {
+        activeProvider: disabled,
+        modelSelectionByProvider: { [disabled]: createModelSelection(disabled, "claude-opus-5-5") },
+      },
+    });
+
+    expect(state.selectedModel).toBe("claude-opus-5-5");
+    expect(traits.promptEffort).toBe("medium");
+    expect(traits.modelOptionsForDispatch).toBeUndefined();
+  });
+
+  it("does not carry options to another driver", () => {
+    const codexOnly: ReadonlyArray<ServerProvider> = [
+      {
+        ...provider({ provider: claude, instanceId: disabled }),
+        enabled: false,
+        models: effortModels,
+      },
+      provider({ provider: codex, instanceId: "codex", models: ["gpt-6-astra"] }),
+    ];
+    const { selectedInstanceId, state } = composerFor({
+      providers: codexOnly,
+      threadModelSelection: picked,
+    });
+
+    expect(selectedInstanceId).toBe(ProviderInstanceId.make("codex"));
+    expect(state.modelOptions?.[selectedInstanceId]).toBeUndefined();
+  });
 });

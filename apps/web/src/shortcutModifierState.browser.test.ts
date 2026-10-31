@@ -25,15 +25,6 @@ function keyboardEventLike(type: "keydown" | "keyup", init: Partial<KeyboardEven
 }
 
 describe("shortcutModifierState", () => {
-  it("preserves the current object when modifier values do not change", () => {
-    const initialState = emptyState();
-    const nextState = shortcutModifierStateAfterKeyboardEvent(
-      initialState,
-      keyboardEventLike("keyup", { key: "Shift" }),
-    );
-    expect(nextState).toBe(initialState);
-  });
-
   it("tracks bare modifier keydown and keyup events explicitly", () => {
     let state = emptyState();
     state = shortcutModifierStateAfterKeyboardEvent(
@@ -96,8 +87,7 @@ describe("shortcutModifierState", () => {
   });
 
   it("ignores poisoned modifier flags on non-modifier keys", () => {
-    // A dictation paste (synthetic ⌘V) can leave the browser reporting
-    // metaKey=true on later real key events.
+    // Synthetic dictation paste can poison later real key events with metaKey=true.
     const state = shortcutModifierStateAfterKeyboardEvent(
       emptyState(),
       keyboardEventLike("keydown", { key: "Enter", metaKey: true }),

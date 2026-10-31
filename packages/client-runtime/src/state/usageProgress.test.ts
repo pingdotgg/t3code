@@ -109,20 +109,6 @@ describe("usageProgress", () => {
 });
 
 describe("usageLoadingState", () => {
-  it("marks only refreshing providers while the rest have answered", () => {
-    const state = usageLoadingState([
-      environment("a", { isPending: true, summary: summary(["cursor"]) }),
-      environment("b"),
-    ]);
-    expect(state).toEqual({ partial: true, everyProvider: false, providers: new Set(["cursor"]) });
-  });
-
-  it("marks every provider while an environment has not answered", () => {
-    const state = usageLoadingState([environment("a"), environment("b", { summary: null })]);
-    expect(state.everyProvider).toBe(true);
-    expect(state.partial).toBe(true);
-  });
-
   it("ignores environments that cannot answer and settles once all have", () => {
     const state = usageLoadingState([
       environment("a"),

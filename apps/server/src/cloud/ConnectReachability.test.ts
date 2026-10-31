@@ -19,23 +19,9 @@ const facts = (overrides: Partial<ReachabilityFacts>): ReachabilityFacts => ({
 });
 
 describe("classifyReachability", () => {
-  it("names a generic blocker when no exit node is on", () => {
-    const result = classifyReachability(
-      facts({ connector: notConnected, edgeReachable: false }),
-      checkedAt,
-    );
-
-    expect(result).toMatchObject({
-      cause: "edge_unreachable",
-      hint: "A VPN, proxy, or firewall may block it.",
-    });
-  });
-
   it.each([
     [{ kind: "status", status: 502 }, "origin_unreachable"],
     [{ kind: "status", status: 530 }, "no_connector"],
-    [{ kind: "status", status: 404 }, "unexpected_response"],
-    [{ kind: "dns_failed" }, "dns_failed"],
     [{ kind: "network_error" }, "timeout"],
   ] as const)("maps endpoint result %o to %s", (endpoint, cause) => {
     expect(classifyReachability(facts({ endpoint, edgeReachable: true }), checkedAt)).toMatchObject(

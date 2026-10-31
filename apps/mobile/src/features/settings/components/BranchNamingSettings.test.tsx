@@ -23,7 +23,7 @@ vi.mock("../../../components/ui/AppText", () => ({
     return null;
   },
 }));
-vi.mock("./SettingsChoiceRow", () => ({ SettingsChoiceRow: () => null }));
+vi.mock("../../../components/ui/ListChoiceRow", () => ({ ListChoiceRow: () => null }));
 vi.mock("./SettingsSection", () => ({
   SettingsSection: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
@@ -54,8 +54,7 @@ function render(
   );
 }
 
-// Android Back hides the keyboard but never ends editing, so leaving the
-// screen is just an unmount with the text still in the field.
+// Android Back hides the keyboard without ending editing; leaving then only unmounts.
 function leaveScreen() {
   act(() => root.unmount());
   root = createRoot(document.createElement("div"));
@@ -89,6 +88,7 @@ describe("BranchNamingSettings", () => {
     });
   });
 
+  // regression: #18381 branch naming text saves when you leave the screen
   it("saves both drafts in one patch when the screen closes", () => {
     render("static");
     act(() => input(PREFIX).onChangeText("feat/"));

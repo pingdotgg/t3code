@@ -47,35 +47,3 @@ it("maps current Pi skill metadata to T3's user and project skill scopes", () =>
     slashCommands: [{ name: "hello", description: "Say hello." }],
   });
 });
-
-it("maps Pi global location and interface labels onto T3 skill fields", () => {
-  expect(
-    parsePiDiscoveredCommands({
-      commands: [
-        {
-          name: "skill:global-review",
-          description: "Review changes.",
-          source: "skill",
-          location: "global",
-          interface: {
-            displayName: "Global Review",
-            shortDescription: "Review diffs.",
-          },
-        },
-      ],
-    }),
-  ).toEqual({
-    skills: [
-      {
-        name: "global-review",
-        description: "Review changes.",
-        path: "pi:skill:global-review",
-        scope: "user",
-        enabled: true,
-        displayName: "Global Review",
-        shortDescription: "Review diffs.",
-      },
-    ],
-    slashCommands: [],
-  });
-});

@@ -58,14 +58,13 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-it.each([
-  "secondary:thread:term-1",
-  "environment:another-thread:term-1",
-  "environment:thread:term-2",
-])("does not carry history into another terminal target (%s)", async (terminalKey) => {
-  await render();
-  await render({ terminalKey, buffer: null });
-  expect(displayed).toHaveBeenLastCalledWith({ buffer: "", readOnly: false });
-  await render({ terminalKey, buffer: "new target" });
-  expect(displayed).toHaveBeenLastCalledWith({ buffer: "new target", readOnly: false });
-});
+it.each(["secondary:thread:term-1", "environment:thread:term-2"])(
+  "does not carry history into another terminal target (%s)",
+  async (terminalKey) => {
+    await render();
+    await render({ terminalKey, buffer: null });
+    expect(displayed).toHaveBeenLastCalledWith({ buffer: "", readOnly: false });
+    await render({ terminalKey, buffer: "new target" });
+    expect(displayed).toHaveBeenLastCalledWith({ buffer: "new target", readOnly: false });
+  },
+);

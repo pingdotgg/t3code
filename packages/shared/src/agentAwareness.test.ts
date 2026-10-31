@@ -24,6 +24,7 @@ describe("projectThreadAwarenessV2", () => {
       Pick<
         OrchestrationV2ThreadShell,
         | "activityRunStatus"
+        | "latestRunStopRequested"
         | "status"
         | "pendingBackgroundTasks"
         | "pendingRuntimeRequest"
@@ -47,25 +48,44 @@ describe("projectThreadAwarenessV2", () => {
     ...overrides,
   });
 
-  it.each(["running", "completed", "failed"] as const)(
-    "does not publish %s subagent activity",
-    (status) => {
-      expect(
-        projectThreadAwarenessV2({
-          environmentId: "env-1" as EnvironmentId,
-          project,
-          thread: v2Thread({
-            status,
-            lineage: {
-              rootThreadId: "parent" as ThreadId,
-              parentThreadId: "parent" as ThreadId,
-              relationshipToParent: "subagent",
-            },
-          }),
+  it("does not announce completion after a manual stop", () => {
+    const input = {
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      thread: v2Thread({ status: "completed" }),
+    };
+    expect(projectThreadAwarenessV2(input)?.phase).toBe("completed");
+    expect(
+      projectThreadAwarenessV2({
+        ...input,
+        thread: { ...input.thread, latestRunStopRequested: true },
+      }),
+    ).toBeNull();
+  });
+
+  it.each([
+    ["running", "subagent"],
+    ["completed", "subagent"],
+    ["failed", "subagent"],
+    ["running", "side chat"],
+  ] as const)("does not publish %s %s activity", (status, kind) => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({
+          status,
+          lineage: {
+            rootThreadId: "parent" as ThreadId,
+            parentThreadId: "parent" as ThreadId,
+            ...(kind === "subagent"
+              ? { relationshipToParent: "subagent" }
+              : { relationshipToParent: "fork", sideChat: true }),
+          },
         }),
-      ).toBeNull();
-    },
-  );
+      }),
+    ).toBeNull();
+  });
 
   it("keeps an older activity run visible over a newer cancelled run", () => {
     expect(
@@ -123,7 +143,7 @@ describe("projectThreadAwarenessV2", () => {
     },
   );
 
-  it("keeps settled work held open by a monitor", () => {
+  it("keeps settled work held open by an awaited monitor", () => {
     expect(
       projectThreadAwarenessV2({
         environmentId: "env-1" as EnvironmentId,
@@ -131,7 +151,7 @@ describe("projectThreadAwarenessV2", () => {
         thread: v2Thread({
           status: "completed",
           settledOverride: "settled",
-          pendingBackgroundTasks: [{ taskId: "watch", kind: "monitor" }],
+          pendingBackgroundTasks: [{ taskId: "watch", kind: "monitor", awaited: true }],
         }),
       }),
     ).toMatchObject({ phase: "running" });
@@ -139,7 +159,12 @@ describe("projectThreadAwarenessV2", () => {
 
   it.each([
     ["only a dev server", "completed", [{ taskId: "dev", kind: "command" }]],
-    ["a monitor", "running", [{ taskId: "watch", kind: "monitor" }]],
+    ["a dev server's watchdog monitor", "completed", [{ taskId: "watch", kind: "monitor" }]],
+    [
+      "a command the agent waits on",
+      "running",
+      [{ taskId: "tests", kind: "command", awaited: true }],
+    ],
     [
       "a dev server and a subagent",
       "running",
@@ -156,22 +181,6 @@ describe("projectThreadAwarenessV2", () => {
         thread: v2Thread({ status: "completed", pendingBackgroundTasks: tasks }),
       }),
     ).toMatchObject({ phase });
-  });
-
-  it("prioritizes V2 user-input requests", () => {
-    expect(
-      projectThreadAwarenessV2({
-        environmentId: "env-1" as EnvironmentId,
-        project,
-        thread: v2Thread({
-          pendingRuntimeRequest: {
-            id: RuntimeRequestId.make("request-1"),
-            kind: "user_input",
-            createdAt: updatedAt,
-          },
-        }),
-      }),
-    ).toMatchObject({ phase: "waiting_for_input", headline: "Waiting for input" });
   });
 
   it("reports an async question as input only after the working run completes", () => {

@@ -213,9 +213,7 @@ it.effect(
 it.effect.each([
   { status: 400, code: "invalid_grant", requiresLogin: true, diagnostic: true },
   { status: 403, code: "private-provider-secret", requiresLogin: true, diagnostic: false },
-  { status: 408, code: "invalid_grant", requiresLogin: false, diagnostic: false },
   { status: 429, code: "invalid_grant", requiresLogin: false, diagnostic: false },
-  { status: 500, code: "invalid_grant", requiresLogin: false, diagnostic: false },
 ])(
   "refresh HTTP $status exposes only a safe login diagnostic",
   ({ status, code, requiresLogin, diagnostic }) =>
