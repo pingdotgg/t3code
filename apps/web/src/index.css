@@ -5250,6 +5250,13 @@ body {
 }
 
 /* redesign: timeline */
+@media (min-width: 640px) {
+  .timeline-work-row {
+    --type-body: 0.8125rem;
+    --type-label: 0.8125rem;
+  }
+}
+
 /* The board draws the working bar rule white, which vanishes on a light pane. */
 :root:not(.dark) {
   --timeline-working-rule: var(--border);
