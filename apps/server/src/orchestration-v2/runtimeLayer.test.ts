@@ -47,15 +47,22 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
+import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
@@ -8391,3 +8398,154 @@ it.layer(layerQueueResumeDisabledInstanceTest)(
     );
   },
 );
+
+const browserOverrideProjectId = ProjectId.make("project:browser-override");
+const browserInheritProjectId = ProjectId.make("project:browser-inherit");
+const browserOptOutProjectId = ProjectId.make("project:browser-opt-out");
+const browserGlobalOffOptInProjectId = ProjectId.make("project:browser-global-off-opt-in");
+const issuedMcpCapabilities = new Map<ThreadId, ReadonlySet<string>>();
+
+const layerProductionBrowserAccessTest = RuntimeLayer.layerProduction.pipe(
+  Layer.provideMerge(ProjectStore.layer),
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+      Layer.mock(ServerSecretStore.ServerSecretStore)({
+        getOrCreateRandom: (_name, bytes) => Effect.succeed(new Uint8Array(bytes)),
+      }),
+      Layer.mock(TextGeneration.TextGeneration)({}),
+      Layer.mock(WorktreeSetupTracker.WorktreeSetupTracker)({}),
+    ),
+  ),
+  Layer.provide(
+    Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({
+      peek: () =>
+        Effect.succeed({
+          repositoryIdentity: null,
+          faviconPath: null,
+          repositoryIdentityResolved: false,
+        }),
+      getAvailable: () =>
+        Effect.succeed({
+          repositoryIdentity: null,
+          faviconPath: null,
+          repositoryIdentityResolved: false,
+        }),
+      invalidate: () => Effect.void,
+    }),
+  ),
+  Layer.provide(
+    Layer.mock(WorkspacePaths.WorkspacePaths)({
+      normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot),
+    }),
+  ),
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.mock(PreviewManager.PreviewManager)({ close: () => Effect.void }),
+      Layer.mock(TerminalManager.TerminalManager)({ close: () => Effect.void }),
+    ),
+  ),
+  Layer.provide(
+    Layer.effect(
+      McpSessionRegistry.McpSessionRegistry,
+      Effect.gen(function* () {
+        const delegate = yield* McpSessionRegistry.McpSessionRegistry;
+        return McpSessionRegistry.McpSessionRegistry.of({
+          ...delegate,
+          issue: (request) =>
+            Effect.sync(() =>
+              issuedMcpCapabilities.set(request.threadId, request.capabilities ?? new Set()),
+            ).pipe(Effect.andThen(delegate.issue(request))),
+        });
+      }),
+    ).pipe(Layer.provide(McpSessionRegistryTestkit.layer)),
+  ),
+  Layer.provide(McpProviderSessions.layer),
+  Layer.provide(SqlitePersistence.layerMemory),
+  Layer.provide(layerCheckpointStoreTest),
+  Layer.provide(layerServerConfig),
+  Layer.provideMerge(
+    ServerSettings.layerTest({
+      enableAgentBrowserAccess: true,
+      projectSettingsOverrides: {
+        [browserOverrideProjectId]: { enableAgentBrowserAccess: true },
+        [browserOptOutProjectId]: { enableAgentBrowserAccess: false },
+        [browserGlobalOffOptInProjectId]: { enableAgentBrowserAccess: true },
+      },
+    }),
+  ),
+  Layer.provide(layerTestProviderInstanceRegistry),
+  Layer.provide(layerGitWorkflowTest),
+  Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+  Layer.provide(layerPlatformTest),
+);
+
+// regression: #23085 a project without an override lost browser tools once another project set one
+it.layer(layerProductionBrowserAccessTest)("production agent browser access", (it) => {
+  it.effect("grants preview per project policy when another project overrides it", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const openWithMcp = (projectId: ProjectId) =>
+        Effect.gen(function* () {
+          yield* seedProject({
+            projectId,
+            title: projectId,
+            workspaceRoot: `/workspace/${projectId}`,
+            defaultModelSelection: null,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          });
+          const threadId = ThreadId.make(`${projectId}:thread`);
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`${threadId}:create`),
+            threadId,
+            projectId,
+            title: "Browser access",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          // The test adapter cannot open a session; MCP access is issued first.
+          yield* sessions
+            .open({
+              threadId,
+              providerSessionId: ProviderSessionId.make(`${threadId}:session`),
+              modelSelection,
+              runtimePolicy: {
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                cwd: process.cwd(),
+              },
+            })
+            .pipe(Effect.exit);
+          return issuedMcpCapabilities.get(threadId)?.has("preview");
+        });
+
+      assert.isTrue(
+        yield* openWithMcp(browserInheritProjectId),
+        "a project without an override inherits the global opt-in",
+      );
+      assert.isTrue(
+        yield* openWithMcp(browserOverrideProjectId),
+        "an explicit project opt-in grants preview",
+      );
+      assert.isFalse(
+        yield* openWithMcp(browserOptOutProjectId),
+        "an explicit project opt-out still withholds preview",
+      );
+
+      const settings = yield* ServerSettings.ServerSettingsService;
+      yield* settings.updateSettings({ enableAgentBrowserAccess: false });
+      assert.isTrue(
+        yield* openWithMcp(browserGlobalOffOptInProjectId),
+        "an explicit project opt-in grants preview when the global setting is off",
+      );
+    }),
+  );
+});
