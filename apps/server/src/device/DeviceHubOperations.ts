@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
@@ -13,6 +14,11 @@ import type { DeviceHostReady, DeviceOperations, HostDevice } from "./DeviceHost
 
 const BOOT_TIMEOUT = Duration.minutes(3);
 const SCREENSHOT_TIMEOUT = Duration.seconds(20);
+// Let the hub's 30 s simctl timeout report its cause first.
+const LIST_TIMEOUT_SECONDS = 40;
+// simctl could not list simulators at all, so the hub's empty iOS list says nothing.
+const SIMULATOR_LIST_FAILED =
+  /^\[apple-utils\] (?:Failed to (?:run `xcrun simctl list devices|parse JSON output:|list devices:)|`xcrun simctl list devices --json` did not respond within )/;
 
 const HubDevice = Schema.Struct({
   id: Schema.String,
@@ -54,25 +60,30 @@ export const makeDeviceHubOperations = (options: {
   const { hostId, origin, run } = options;
   const httpClient = options.http.pipe(HttpClient.withScope);
 
+  const requestFailed = (operation: string) => (cause: unknown) =>
+    new DeviceOperationError({ operation, reason: "request_failed", cause });
+
+  const fetchJson = <A, I>(
+    request: HttpClientRequest.HttpClientRequest,
+    schema: Schema.Codec<A, I>,
+  ) =>
+    httpClient
+      .execute(request)
+      .pipe(
+        Effect.flatMap(HttpClientResponse.filterStatusOk),
+        Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
+        Effect.scoped,
+      );
+
   const hubJson = <A, I>(
     request: HttpClientRequest.HttpClientRequest,
     schema: Schema.Codec<A, I>,
     operation: string,
     timeout: Duration.Input = Duration.seconds(15),
   ) =>
-    httpClient.execute(request).pipe(
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
-      Effect.scoped,
+    fetchJson(request, schema).pipe(
       Effect.timeout(timeout),
-      Effect.mapError(
-        (cause) =>
-          new DeviceOperationError({
-            operation,
-            reason: "request_failed",
-            cause,
-          }),
-      ),
+      Effect.mapError(requestFailed(operation)),
     );
 
   const postJson = (path: string, body: Record<string, string>, operation: string) =>
@@ -91,11 +102,21 @@ export const makeDeviceHubOperations = (options: {
     );
 
   const list: DeviceOperations["list"] = Effect.gen(function* () {
-    const hubList = yield* hubJson(
+    const listed = yield* fetchJson(
       HttpClientRequest.get(`${origin}/api/devices`),
       HubDeviceList,
-      "list",
+    ).pipe(
+      Effect.mapError(requestFailed("list")),
+      Effect.timeoutOption(Duration.seconds(LIST_TIMEOUT_SECONDS)),
     );
+    if (Option.isNone(listed)) {
+      return {
+        devices: [],
+        detail: `The device hub did not answer within ${LIST_TIMEOUT_SECONDS} seconds.`,
+        incompletePlatforms: ["ios", "android"] as const,
+      };
+    }
+    const hubList = listed.value;
     const devices: Array<HostDevice> = [...hubList.simulators, ...hubList.emulators];
     const androidAvailable = yield* options.androidAvailable;
     const warnings = hubList.errors?.filter(
@@ -136,10 +157,14 @@ export const makeDeviceHubOperations = (options: {
         }
       }
     }
+    const simulatorsUnlisted =
+      hubList.simulators.length === 0 &&
+      (hubList.errors ?? []).some((error) => SIMULATOR_LIST_FAILED.test(error.message));
     return {
       devices,
       detail: details.join("\n") || undefined,
       androidDiscoveryIncomplete,
+      ...(simulatorsUnlisted ? { incompletePlatforms: ["ios"] as const } : {}),
     };
   }).pipe(Effect.withSpan("DeviceHubOperations.list"));
 
@@ -164,7 +189,7 @@ export const makeDeviceHubOperations = (options: {
           diagnostics,
         )
           ? "disk_space"
-          : /timed? out|timeout/i.test(diagnostics)
+          : /timed? out|timeout|did not respond within/i.test(diagnostics)
             ? "timeout"
             : "launch_failed",
         ...(diagnostics

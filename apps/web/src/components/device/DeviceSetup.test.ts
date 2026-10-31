@@ -43,6 +43,17 @@ describe("device setup guidance", () => {
     ).toContain("Device Manager");
   });
 
+  it.each([
+    ["[apple-utils] Failed to run `xcrun simctl list devices --json`:", true, false],
+    ["[android-utils] Failed to run `avdmanager list avd`:", false, true],
+    ["The device hub did not answer within 40 seconds.", true, true],
+  ])("blames discovery, not missing tools, after %s", (detail, ios, android) => {
+    const state = deviceState({ hostStatuses: { local: { status: "ready", detail } } });
+    const blamesDiscovery = (platform: "ios" | "android") =>
+      platformSetupStatus(state, platform).message.includes("discovery reported a problem");
+    expect([blamesDiscovery("ios"), blamesDiscovery("android")]).toEqual([ios, android]);
+  });
+
   it("counts a remote device host when this machine has no simulator tooling", () => {
     const state = deviceState({
       hostStatus: "idle",
