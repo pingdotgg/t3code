@@ -265,21 +265,7 @@ describe("thread execution presentation", () => {
 });
 
 describe("deriveSideChatTurnSupervised", () => {
-  it("supervises the turn that carries a side chat's context, then offers every mode again", () => {
-    const providerThreadId = ProviderThreadId.make("provider-thread-side");
-    const attempt = (runId: RunId) => ({
-      id: RunAttemptId.make(`attempt-${runId}`),
-      runId,
-      attemptOrdinal: 1,
-      rootNodeId: NodeId.make(`node-${runId}`),
-      providerInstanceId: v2Projection.thread.providerInstanceId,
-      providerThreadId,
-      providerTurnId: null,
-      reason: "initial" as const,
-      status: "running" as const,
-      startedAt: now,
-      completedAt: null,
-    });
+  it("supervises a side chat's turn until the server reports its context delivered", () => {
     const failed = run("run-failed", 1, "failed");
     const sideChat = {
       ...v2Projection,
@@ -292,10 +278,9 @@ describe("deriveSideChatTurnSupervised", () => {
         },
       },
     };
-    const carried = {
+    const withHandoff = (delivered: boolean | undefined) => ({
       ...sideChat,
       runs: [failed],
-      attempts: [attempt(failed.id)],
       contextHandoffs: [
         {
           id: ContextHandoffId.make("handoff-side"),
@@ -303,42 +288,28 @@ describe("deriveSideChatTurnSupervised", () => {
           threadId: v2Projection.thread.id,
           targetRunId: failed.id,
           fromProviderThreadIds: [],
-          toProviderThreadId: providerThreadId,
+          toProviderThreadId: ProviderThreadId.make("provider-thread-side"),
           coveredRunOrdinals: { from: 1, to: 1 },
           strategy: "manual_context" as const,
           status: "ready" as const,
           summaryMessageId: null,
           summaryText: "",
+          ...(delivered === undefined ? {} : { delivered }),
           createdByProviderInstanceId: null,
           createdAt: now,
           updatedAt: now,
         },
       ],
-    };
-    const accepted = run("run-accepted", 2, "completed");
-    const delivered = {
-      ...carried,
-      runs: [failed, accepted],
-      attempts: [...carried.attempts, attempt(accepted.id)],
-      providerTurns: [
-        {
-          id: ProviderTurnId.make("provider-turn-side"),
-          providerThreadId,
-          nodeId: NodeId.make(`node-${accepted.id}`),
-          runAttemptId: RunAttemptId.make(`attempt-${accepted.id}`),
-          nativeTurnRef: null,
-          ordinal: 1,
-          status: "completed" as const,
-          startedAt: now,
-          completedAt: now,
-        },
-      ],
-    };
+    });
 
     expect(deriveSideChatTurnSupervised(sideChat)).toBe(true);
-    expect(deriveSideChatTurnSupervised(carried)).toBe(true);
-    expect(deriveSideChatTurnSupervised(delivered)).toBe(false);
-    expect(deriveSideChatTurnSupervised(v2Projection)).toBe(false);
+    expect(deriveSideChatTurnSupervised(withHandoff(false))).toBe(true);
+    expect(deriveSideChatTurnSupervised(withHandoff(true))).toBe(false);
+    // Older servers do not report delivery; only the first turn is known to be supervised.
+    expect(deriveSideChatTurnSupervised(withHandoff(undefined))).toBe(false);
+    expect(
+      deriveSideChatTurnSupervised({ ...withHandoff(false), thread: v2Projection.thread }),
+    ).toBe(false);
   });
 });
 

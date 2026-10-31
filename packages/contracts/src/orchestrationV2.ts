@@ -1153,6 +1153,8 @@ export const OrchestrationV2ContextHandoff = Schema.Struct({
       omittedItemIds: Schema.optional(Schema.Array(TurnItemId)),
     }),
   ),
+  // Only the wire projection sets this, standing in for the `delivery` it strips.
+  delivered: Schema.optional(Schema.Boolean),
   detailInTurnItem: Schema.optional(Schema.Literal(true)),
   createdByProviderInstanceId: Schema.NullOr(ProviderInstanceId),
   createdAt: Schema.DateTimeUtc,

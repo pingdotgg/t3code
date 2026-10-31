@@ -5,7 +5,6 @@ import {
   usageLimitRunPresentedAsLatest,
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import {
-  isCompactionCommandMessage,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   isSideChatContextHandoff,
@@ -18,7 +17,6 @@ import {
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ThreadProjection,
   orchestrationV2RunWorkStartedAt,
-  parseGoalCommand,
   type ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -110,42 +108,20 @@ export function deriveThreadActivityRun(projection: ThreadStructure): ThreadRunS
 }
 
 /**
- * Mirrors the server, which runs a side chat's next turn supervised whatever mode is picked
- * while that turn would carry the parent's context: its first turn, or the next one after
- * every earlier run ended before a provider took the context.
+ * The server supervises a side chat's turn while it carries the parent's context: its first
+ * turn, or the next after a run whose ready context was never delivered. Older servers omit
+ * `delivered`, so only the first turn is known.
  */
 export function deriveSideChatTurnSupervised(projection: ThreadStructure): boolean {
   if (projection.thread.lineage.sideChat !== true) return false;
-  if (projection.runs.length === 0) return true;
-  // Compaction and /goal turns leave the context for the next turn.
-  const defersContext = (run: ThreadStructure["runs"][number]) =>
-    projection.messages.some(
-      (message) =>
-        message.id === run.userMessageId &&
-        (isCompactionCommandMessage(message) || parseGoalCommand(message) !== null),
-    );
-  const providerRunIds = new Set(
-    projection.attempts
-      .filter((attempt) =>
-        projection.providerTurns.some((turn) => turn.runAttemptId === attempt.id),
-      )
-      .map((attempt) => attempt.runId),
-  );
-  if (projection.runs.some((run) => providerRunIds.has(run.id) && !defersContext(run))) {
-    return false;
-  }
-  return projection.contextHandoffs.some(
-    (handoff) =>
-      isSideChatContextHandoff(handoff) &&
-      handoff.status === "ready" &&
-      projection.runs.some(
-        (run) =>
-          run.id === handoff.targetRunId &&
-          (run.status === "failed" ||
-            run.status === "interrupted" ||
-            run.status === "cancelled" ||
-            (run.status === "completed" && defersContext(run))),
-      ),
+  return (
+    projection.runs.length === 0 ||
+    projection.contextHandoffs.some(
+      (handoff) =>
+        isSideChatContextHandoff(handoff) &&
+        handoff.status === "ready" &&
+        handoff.delivered === false,
+    )
   );
 }
 
