@@ -145,6 +145,10 @@ type WhenToken =
   | { type: "rparen" };
 
 export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
+  // alt+cmd aliases for the hold menu: T terminal (cmd+J), W close (cmd+W).
+  // First, so the main keys (later rules win) are the ones labels show.
+  { key: "mod+alt+t", command: "terminal.toggle" },
+  { key: "mod+alt+w", command: "tab.close" },
   { key: "mod+b", command: "sidebar.toggle" },
   { key: "f6", command: "workspace.focusNext" },
   { key: "shift+f6", command: "workspace.focusPrevious" },
@@ -156,16 +160,65 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+j", command: "terminal.toggle" },
   { key: "mod+alt+b", command: "rightPanel.toggle" },
   { key: "mod+shift+b", command: "threadPanel.toggle", when: "!terminalFocus" },
-  { key: "mod+t", command: "rightPanel.new", when: "rightPanelOpen && !terminalFocus" },
   { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
   { key: "mod+shift+d", command: "terminal.splitVertical", when: "terminalFocus" },
   // cmd+shift+D splits a pane down; dictation is V for voice.
   { key: "mod+alt+v", command: "composer.dictation", when: "!terminalFocus" },
   { key: "mod+n", command: "terminal.new", when: "terminalFocus" },
   { key: "mod+w", command: "terminal.close", when: "terminalFocus" },
-  { key: "mod+w", command: "rightPanel.close", when: "!terminalFocus" },
+  // cmd+W closes the focused tab.
+  { key: "mod+w", command: "tab.close", when: "!terminalFocus" },
   { key: "mod+shift+t", command: "view.reopenClosed" },
-  { key: "mod+d", command: "diff.toggle", when: "!terminalFocus" },
+  // Layout panes: cmd+D opens a new pane to the right, cmd+shift+D below.
+  // Inside a terminal the same keys split the terminal (above). The diff
+  // toggle gave up cmd+D; alt+cmd+B and the palette still open it.
+  { key: "mod+d", command: "layout.splitRight", when: "!terminalFocus" },
+  { key: "mod+shift+d", command: "layout.splitDown", when: "!terminalFocus" },
+  { key: "mod+alt+f", command: "layout.fill" },
+  // alt+cmd looks, ctrl+alt+cmd moves (niri's map). Off macOS mod is ctrl,
+  // so arrows use alt+shift to focus and ctrl+alt+shift to move. H J K L
+  // repeat the arrows on the desktop app only: the web keeps alt+cmd+J and
+  // alt+cmd+I for the browser's devtools.
+  ...(
+    [
+      ["arrowleft", "h", "Left"],
+      ["arrowright", "l", "Right"],
+      ["arrowup", "k", "Up"],
+      ["arrowdown", "j", "Down"],
+    ] as const
+  ).flatMap(([arrow, letter, direction]): KeybindingRule[] => [
+    { key: `mod+alt+${arrow}`, command: `layout.focus${direction}` as const, when: "isMac" },
+    { key: `alt+shift+${arrow}`, command: `layout.focus${direction}` as const, when: "!isMac" },
+    { key: `mod+ctrl+alt+${arrow}`, command: `layout.move${direction}` as const, when: "isMac" },
+    { key: `mod+alt+shift+${arrow}`, command: `layout.move${direction}` as const, when: "!isMac" },
+    {
+      key: `mod+alt+${letter}`,
+      command: `layout.focus${direction}` as const,
+      when: "isMac && isDesktop",
+    },
+    {
+      key: `mod+ctrl+alt+${letter}`,
+      command: `layout.move${direction}` as const,
+      when: "isMac && isDesktop",
+    },
+  ]),
+  { key: "mod+alt+home", command: "layout.focusFirstColumn" },
+  { key: "mod+alt+end", command: "layout.focusLastColumn" },
+  { key: "mod+alt+r", command: "layout.cycleColumnWidth" },
+  { key: "mod+alt+c", command: "layout.centerColumn" },
+  { key: "mod+alt+[", command: "layout.pullLeft" },
+  { key: "mod+alt+]", command: "layout.pullRight" },
+  { key: "mod+/", command: "layout.shortcutSheet" },
+  // Workspaces stack vertically: U goes down to the next, I up (niri).
+  { key: "mod+alt+u", command: "layout.focusWorkspaceDown" },
+  { key: "mod+alt+i", command: "layout.focusWorkspaceUp" },
+  { key: "mod+ctrl+alt+u", command: "layout.moveToWorkspaceDown", when: "isMac" },
+  { key: "mod+ctrl+alt+i", command: "layout.moveToWorkspaceUp", when: "isMac" },
+  { key: "mod+alt+shift+u", command: "layout.moveToWorkspaceDown", when: "!isMac" },
+  { key: "mod+alt+shift+i", command: "layout.moveToWorkspaceUp", when: "!isMac" },
+  { key: "mod+alt+shift+u", command: "layout.moveWorkspaceDown", when: "isMac" },
+  { key: "mod+alt+shift+i", command: "layout.moveWorkspaceUp", when: "isMac" },
+  { key: "mod+alt+o", command: "layout.overview" },
   { key: "mod+shift+j", command: "preview.toggle" },
   { key: "mod+r", command: "preview.refresh", when: "previewFocus" },
   { key: "mod+l", command: "preview.focusUrl", when: "previewFocus" },
@@ -203,6 +256,9 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+shift+o", command: "chat.new", when: "!terminalFocus" },
   { key: "mod+shift+n", command: "chat.newLocal", when: "!terminalFocus" },
   { key: "mod+alt+n", command: "chat.newWithoutProject", when: "!terminalFocus" },
+  { key: "mod+t", command: "tab.new", when: "!terminalFocus" },
+  { key: "ctrl+tab", command: "tab.next" },
+  { key: "ctrl+shift+tab", command: "tab.previous" },
   { key: "mod+f", command: "chat.find", when: "!terminalFocus && !previewFocus" },
   { key: "mod+shift+m", command: "modelPicker.toggle", when: "!terminalFocus" },
   { key: "mod+shift+h", command: "composer.host", when: "!terminalFocus" },
@@ -485,6 +541,25 @@ export function compileResolvedKeybindingsConfig(
 }
 
 export const DEFAULT_RESOLVED_KEYBINDINGS = compileResolvedKeybindingsConfig(DEFAULT_KEYBINDINGS);
+
+/**
+ * Former defaults that a newer default took over. Startup backfill wrote
+ * them into keybindings.json, where they would outrank the new default, so
+ * the server drops an exact copy of one on startup (a rule the user changed
+ * in any way stays).
+ */
+export const RETIRED_DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
+  // Without !assistantSelection a saved copy outranks cite on a selected passage.
+  { key: "mod+shift+l", command: "composer.previousWorktree", when: "!terminalFocus" },
+  // cmd+D splits a pane right; the diff toggle has no key now.
+  { key: "mod+d", command: "diff.toggle", when: "!terminalFocus" },
+  // cmd+W closes the focused tab, the side pane's surface first.
+  { key: "mod+w", command: "rightPanel.close", when: "!terminalFocus" },
+  // cmd+shift+D splits a pane down; dictation moved to alt+cmd+V.
+  { key: "mod+shift+d", command: "composer.dictation", when: "!terminalFocus" },
+  // cmd+T opens a new tab in the focused pane; surfaces are ordinary tabs now.
+  { key: "mod+t", command: "rightPanel.new", when: "rightPanelOpen && !terminalFocus" },
+];
 
 export function mergeWithDefaultKeybindings(
   custom: ResolvedKeybindingsConfig,

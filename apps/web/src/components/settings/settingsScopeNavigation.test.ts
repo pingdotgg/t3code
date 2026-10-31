@@ -81,6 +81,31 @@ function createSettingsRouter(initialEntry = "/settings/general") {
 }
 
 describe("settings scope navigation", () => {
+  it("keeps an explicit page tab in its pane through category and scope navigation", async () => {
+    const router = createSettingsRouter();
+    await router.navigate({
+      to: "/settings/general",
+      search: { ...checkoutSearch, pane: 1 },
+    });
+    await router.navigate({ to: "/settings/integrations" });
+    expect(router.state.location.search).toEqual({ ...checkoutSearch, pane: 1 });
+    await router.navigate({ to: "/settings/projects", search: { project: "another-project" } });
+    expect(router.state.location.search).toEqual({ project: "another-project", pane: 1 });
+  });
+
+  it("opens default settings navigation fullscreen while retaining its selected scope", async () => {
+    const router = createSettingsRouter();
+    await router.navigate({
+      to: "/settings/general",
+      search: { ...checkoutSearch, pane: 1 },
+    });
+    await router.navigate({ to: "/settings", search: { pane: undefined } });
+    expect(router.state.redirect).not.toBeUndefined();
+    await router.navigate(router.state.redirect!.options);
+    expect(router.state.location.pathname).toBe("/settings/general");
+    expect(router.state.location.search).toEqual(checkoutSearch);
+  });
+
   it("clears a checkout when selecting all environments and all projects", async () => {
     const router = createSettingsRouter();
     await router.navigate({ to: "/settings/general", search: checkoutSearch, hash: "old-setting" });

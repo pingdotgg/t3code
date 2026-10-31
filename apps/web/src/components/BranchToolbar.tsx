@@ -3,6 +3,7 @@ import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-action
 import { readLocalApi } from "../localApi";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
@@ -27,7 +28,7 @@ import { flushSync } from "react-dom";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
-import { useProject, useThreadShellsForProjectRefs } from "../state/entities";
+import { useProject, useServerConfigs, useThreadShellsForProjectRefs } from "../state/entities";
 import {
   ADD_TO_MACHINE_LABEL_CLASS,
   type EnvMode,
@@ -85,6 +86,7 @@ import {
   resolveRestingComposerControlsMinimumWidth,
   resolveRestingComposerControlsNaturalWidth,
 } from "./composerFooterLayout";
+import { NoProjectChip } from "./chat/NoProjectChip";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import { cn } from "~/lib/utils";
 import { observeResize } from "~/lib/observeResize";
@@ -494,6 +496,8 @@ interface RunContextSelectorProps {
   onUsePreviousWorktree: () => void;
   addTargets: readonly AddProjectTarget[];
   onAddToMachine: (environmentId: EnvironmentId) => void;
+  /** A scratch thread with no project: the row names the folder as "No project". */
+  noProject?: boolean;
 }
 
 const RunContextSelector = memo(function RunContextSelector({
@@ -517,23 +521,27 @@ const RunContextSelector = memo(function RunContextSelector({
   onUsePreviousWorktree,
   addTargets,
   onAddToMachine,
+  noProject = false,
 }: RunContextSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const activeEnvironment =
     availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null;
-  const WorkspaceIcon =
-    effectiveEnvMode === "worktree"
+  const WorkspaceIcon = noProject
+    ? FolderIcon
+    : effectiveEnvMode === "worktree"
       ? FolderGit2Icon
       : activeWorktreePath
         ? FolderGitIcon
         : FolderIcon;
-  const workspaceLabel = forceNewWorktree
-    ? resolveEnvModeLabel("worktree")
-    : envModeLocked
-      ? resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode)
-      : effectiveEnvMode === "worktree"
-        ? resolveEnvModeLabel("worktree")
-        : resolveCurrentWorkspaceLabel(activeWorktreePath);
+  const workspaceLabel = noProject
+    ? "No project"
+    : forceNewWorktree
+      ? resolveEnvModeLabel("worktree")
+      : envModeLocked
+        ? resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode)
+        : effectiveEnvMode === "worktree"
+          ? resolveEnvModeLabel("worktree")
+          : resolveCurrentWorkspaceLabel(activeWorktreePath);
   const isPanel = displayMode === "panel";
   const isLocked = !isPanel && (envLocked || envModeLocked);
   const workspacePath =
@@ -552,7 +560,7 @@ const RunContextSelector = memo(function RunContextSelector({
       </TooltipTrigger>
       <TooltipPopup>
         {isPanel
-          ? forceNewWorktree
+          ? forceNewWorktree && !noProject
             ? "Each model starts in its own worktree."
             : (workspacePath ?? workspaceLabel)
           : workspaceLabel}
@@ -610,7 +618,7 @@ const RunContextSelector = memo(function RunContextSelector({
         className={cn(
           isPanel
             ? THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS
-            : "inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-1.75 text-dim-foreground text-caption sm:h-6",
+            : "inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-1.75 text-meta text-dim-foreground sm:h-6",
         )}
         onContextMenu={handleContextMenu}
         aria-label={
@@ -858,9 +866,12 @@ function useStripCompaction(): readonly [
 
   const attach = (current: HTMLDivElement | null) => {
     if (!current) return;
+    let measured = false;
     const labelAnimations = new Map<HTMLElement, Animation>();
 
     const measure = () => {
+      // Hidden tabs retain stage layout but must keep their last label mode.
+      if (!current.checkVisibility()) return;
       // The committed attribute, not render state, so a stale closure cannot misread it.
       const compact = readStripCompaction(current);
       const stripWidth = current.clientWidth;
@@ -919,6 +930,8 @@ function useStripCompaction(): readonly [
         availableWidth: available,
         labelsSavedWidth,
       });
+      const firstMeasure = !measured;
+      measured = true;
       if (nextCompaction === compact) return;
       const previousRects = new Map(
         Array.from(current.querySelectorAll<HTMLElement>(COMPOSER_CONTEXT_LABEL_SELECTOR)).map(
@@ -926,7 +939,7 @@ function useStripCompaction(): readonly [
         ),
       );
       flushSync(() => setCompaction(nextCompaction));
-      animateLabelWidths(previousRects, labelAnimations);
+      if (!firstMeasure) animateLabelWidths(previousRects, labelAnimations);
     };
 
     let stopResize = () => {};
@@ -1001,6 +1014,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   // The composer retains resolved thread details while bootstrap cleanup can remove its shell.
   const activeProjectRef = scopeProjectRef(environmentId, projectId);
   const activeProject = useProject(activeProjectRef);
+  const scratchWorkspaceRoot = useServerConfigs().get(environmentId)?.scratchWorkspaceRoot;
   const activeWorktreePath = forceNewWorktree ? null : worktreePath;
   const effectiveEnvMode = forceNewWorktree ? "worktree" : envMode;
   const envModeLocked = envLocked || (isServerThread && activeWorktreePath !== null);
@@ -1064,6 +1078,7 @@ export const BranchToolbar = memo(function BranchToolbar({
     return (
       <div className="flex w-full flex-col" data-thread-panel-run-context>
         {panelSection !== "branch" ? (
+          // Without Git there is no worktree to make, so the row only names the folder.
           <RunContextSelector
             displayMode="panel"
             workspaceRoot={activeProject.workspaceRoot}
@@ -1071,15 +1086,16 @@ export const BranchToolbar = memo(function BranchToolbar({
             autoEnvironmentLabel={autoEnvironmentLabel}
             onAutoEnvironment={onAutoEnvironment}
             envLocked={envLocked}
-            envModeLocked={envModeLocked}
+            envModeLocked={envModeLocked || !showGitControls}
             environmentId={environmentId}
             availableEnvironments={availableEnvironments}
             showEnvironmentPicker={showEnvironmentPicker}
             showEnvironmentIndicator={activeEnvironmentOption !== null}
             onEnvironmentChange={onEnvironmentChange}
-            effectiveEnvMode={effectiveEnvMode}
+            effectiveEnvMode={showGitControls ? effectiveEnvMode : "local"}
             activeWorktreePath={activeWorktreePath}
             onEnvModeChange={onEnvModeChange}
+            noProject={isScratchProject(activeProject, scratchWorkspaceRoot)}
             previousWorktreeLabel={
               previousWorktreeSeed ? resolvePreviousWorktreeLabel(previousWorktreeSeed) : null
             }
@@ -1157,7 +1173,14 @@ export const BranchToolbar = memo(function BranchToolbar({
           {...(addTargets.length > 0 ? { onAddToMachine: () => onAddToMachine(null) } : {})}
         />
       ) : null}
-      {!showGitControls && !showMachineChip ? workspaceMenu : null}
+      {isScratchProject(activeProject, scratchWorkspaceRoot) ? (
+        <NoProjectChip started={isServerThread} />
+      ) : null}
+      {!showGitControls &&
+      !showMachineChip &&
+      !isScratchProject(activeProject, scratchWorkspaceRoot)
+        ? workspaceMenu
+        : null}
       {showGitControls ? (
         <BranchToolbarBranchSelector
           forceNewWorktree={forceNewWorktree}

@@ -1,5 +1,7 @@
 import { stripInlineContextReferences } from "./lib/composerContextReferences";
 import { composerFileAttachmentMimeType } from "./components/chat/composerAttachmentFiles";
+import { layoutDraftIds } from "./layout/layoutModel";
+import { useLayoutStore } from "./layout/layoutStore";
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
 import {
   ElementContextDetails,
@@ -116,6 +118,12 @@ export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
 
 export const DraftId = Schema.String.pipe(Schema.brand("DraftId"));
 export type DraftId = typeof DraftId.Type;
+
+/**
+ * The composer on the no-projects home. It has no draft session; the first
+ * new thread opened once a project exists takes its prompt (useHandleNewThread).
+ */
+export const NO_PROJECTS_DRAFT_ID = DraftId.make("no-projects");
 
 const COMPOSER_PERSIST_DEBOUNCE_MS = 300;
 
@@ -2056,14 +2064,17 @@ function migratePersistedComposerDraftStoreState(
 export function partializeComposerDraftStoreState(
   state: ComposerDraftStoreState,
 ): PersistedComposerDraftStoreState {
+  // Open layout tabs keep their drafts alongside promoting or content-bearing sessions.
   const mappedDraftKeys = new Set(
     Object.values(state.logicalProjectDraftThreadKeyByLogicalProjectKey),
   );
+  const tabDraftKeys = layoutDraftIds(useLayoutStore.getState().layout);
   const keptSessionKeys = new Set(
     Object.entries(state.draftThreadsByThreadKey)
       .filter(
         ([threadKey, draftThread]) =>
           mappedDraftKeys.has(threadKey) ||
+          tabDraftKeys.has(threadKey) ||
           isDraftThreadPromoting(draftThread) ||
           composerDraftHasUserContent(state.draftsByThreadKey[threadKey]) ||
           draftThreadHasOpenPreview(draftThread),
@@ -2643,7 +2654,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               previousThreadKeyForLogicalProject === undefined
                 ? undefined
                 : nextDraftThreadsByThreadKey[previousThreadKeyForLogicalProject];
-            // Keep populated drafts unmapped: sidebar rows still expose them when a new draft is opened.
+            // Open tabs keep empty drafts alive; populated drafts remain available in the sidebar.
             if (
               previousThreadKeyForLogicalProject &&
               previousThreadKeyForLogicalProject !== draftId &&
@@ -2652,6 +2663,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 previousThreadKeyForLogicalProject,
               ) &&
               !isDraftThreadPromoting(previousDraftThread) &&
+              !layoutDraftIds(useLayoutStore.getState().layout).has(
+                previousThreadKeyForLogicalProject,
+              ) &&
               !composerDraftHasUserContent(
                 state.draftsByThreadKey[previousThreadKeyForLogicalProject],
               ) &&
@@ -2875,6 +2889,14 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             return removeDraftThreadReferences(state, threadKey);
           });
+          useLayoutStore
+            .getState()
+            .closeTabsWhere(
+              (tab) =>
+                tab.content.kind === "chat" &&
+                tab.content.target.kind === "draft" &&
+                tab.content.target.draftId === threadKey,
+            );
         },
         setStickyModelSelection: (modelSelection) => {
           const normalized = normalizeModelSelection(modelSelection);
@@ -4548,6 +4570,24 @@ export function subscribeDraftThreadPromotion(input: {
           if (disposed) return;
           const current = composerDraftStore.getState().draftThreadsByThreadKey[draftId];
           if (!current || !scopedThreadRefsEqual(current.promotedTo, ref)) return;
+          for (const workspace of useLayoutStore.getState().layout.workspaces) {
+            for (const column of workspace.columns) {
+              for (const pane of column.panes) {
+                for (const tab of pane.tabs) {
+                  if (
+                    tab.content.kind === "chat" &&
+                    tab.content.target.kind === "draft" &&
+                    tab.content.target.draftId === draftId
+                  ) {
+                    useLayoutStore.getState().replaceTabContent(tab.id, {
+                      kind: "chat",
+                      target: { kind: "server", threadRef: ref },
+                    });
+                  }
+                }
+              }
+            }
+          }
           finalizePromotedDraftThreadByRef(ref);
         });
       }

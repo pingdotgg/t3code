@@ -60,7 +60,7 @@ function shortcutKeyFromEvent(event: Pick<ShortcutEventLike, "key" | "code">): s
   return physicalKey ?? layoutKey;
 }
 
-function resolveEventKeys(event: ShortcutEventLike): Set<string> {
+export function resolveEventKeys(event: ShortcutEventLike): Set<string> {
   const layoutKey = normalizeEventKey(event.key);
   const keys = new Set([layoutKey]);
   // Use physical positions for non-Latin layouts and macOS Option symbols.
