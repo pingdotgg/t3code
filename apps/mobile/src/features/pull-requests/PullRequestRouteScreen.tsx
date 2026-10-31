@@ -51,17 +51,8 @@ import { PullRequestOverviewLoading } from "./PullRequestOverviewLoading";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestStatus } from "./pullRequestStatus";
 import { use, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import {
-  Linking,
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  type ScrollViewProps,
-  StyleSheet,
-  View,
-} from "react-native";
-import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeScrollViewMarker";
+import { Linking, Platform, Pressable, RefreshControl, StyleSheet, View } from "react-native";
+import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -132,14 +123,6 @@ import {
 } from "@t3tools/client-runtime/source-control-clients";
 
 const EMPTY_IDS: readonly string[] = [];
-
-function PullRequestTabScrollView(props: ScrollViewProps) {
-  return (
-    <ScrollViewMarker style={{ flex: 1 }}>
-      <ScrollView {...props} />
-    </ScrollViewMarker>
-  );
-}
 
 function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityFilter) {
   const navigation = useNavigation();
@@ -397,8 +380,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
     requestedSection.current = next;
     scrollOffsets.current[next] = offset;
     currentScrollOffset.current = { tab: next, offset };
-    // LegendList clamps to its measured rows, which leave out the short-tab minHeight below.
-    scrollViews.current[next]?.getNativeScrollRef().scrollTo({ y: offset, animated: false });
+    scrollViews.current[next]?.scrollToOffset({ offset, animated: false });
     setSection(next);
   };
   const tabContent = activityContent;
@@ -703,15 +685,11 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                       currentScrollOffset.current = { tab, offset };
                   }}
                   className="flex-1"
-                  renderScrollComponent={
-                    Platform.OS === "ios" ? PullRequestTabScrollView : undefined
+                  renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
+                  contentInsetAdjustmentBehavior="never"
+                  contentInset={
+                    Platform.OS === "ios" ? { top: insets.top, bottom: insets.bottom } : undefined
                   }
-                  // UIKit owns the bar's inset, so a minimizing bar and a resized column
-                  // move the list in the same frame as the bar.
-                  contentInsetAdjustmentBehavior="automatic"
-                  contentInsetStartAdjustment={barInsets.top}
-                  // RN scrollTo clamps against raw insets and ignores the automatic bar inset.
-                  scrollToOverflowEnabled
                   refreshControl={
                     <RefreshControl
                       refreshing={section === tab && pullRefresh.refreshing}
@@ -720,17 +698,19 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                   }
                   alwaysBounceVertical
                   scrollsToTop={section === tab}
-                  onContentSizeChange={() => {
+                  onItemSizeChanged={({ itemKey }) => {
                     if (
                       tab !== "overview" ||
                       section !== "overview" ||
+                      itemKey !== "overview:body" ||
                       !pendingDescriptionJump.current
                     )
                       return;
                     pendingDescriptionJump.current = false;
-                    // Collapse changes the scroll range; restore the heading after that layout commits.
-                    scrollViews.current.overview?.scrollToOffset({
-                      offset: bodyY.current + descriptionY.current - barInsets.top,
+                    scrollViews.current.overview?.scrollToKey({
+                      key: "overview:body",
+                      viewPosition: 0,
+                      viewOffset: barInsets.top - descriptionY.current,
                       animated: false,
                     });
                   }}

@@ -428,11 +428,11 @@ function ZipArchiveList(props: {
     <View className="flex-1 bg-sheet">
       <LegendList
         renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
-        contentInsetStartAdjustment={props.headerInset}
+        contentInset={Platform.OS === "ios" ? { top: props.headerInset } : undefined}
         className="flex-1"
         data={rows}
         keyExtractor={(row) => `${row.node.entry ? "f" : "d"}:${row.node.path}`}
-        contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+        contentInsetAdjustmentBehavior="never"
         automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
         estimatedItemSize={44}
         recycleItems
