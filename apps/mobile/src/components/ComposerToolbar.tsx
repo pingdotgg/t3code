@@ -1,6 +1,7 @@
 import type { ComponentProps, ReactNode } from "react";
 import { useState } from "react";
 import {
+  Platform,
   Pressable,
   ScrollView,
   View,
@@ -42,10 +43,10 @@ export function ComposerInlineControl(props: {
   readonly chevronDirection?: "down" | "right";
   readonly showChevron?: boolean;
 }) {
-  const { scale, smallIconSize } = useAndroidControlSizing();
+  const { scale, smallIconSize, composerControlSize } = useAndroidControlSizing();
   // Keep the picker anchored to its parent while the editor changes height.
   const animatesLabel = props.iconOnly !== undefined;
-  const iconSize = props.size === "large" ? 20 : smallIconSize;
+  const iconSize = props.size === "large" ? Math.round(20 * scale) : smallIconSize;
   return (
     <Animated.View
       style={{
@@ -63,7 +64,10 @@ export function ComposerInlineControl(props: {
         className="h-[44px] flex-row items-center gap-2 rounded-xl px-2 active:bg-subtle"
         disabled={props.disabled || props.static}
         onPress={props.onPress}
-        style={{ opacity: props.disabled ? 0.45 : 1 }}
+        style={{
+          height: props.size === "large" ? composerControlSize : 44,
+          opacity: props.disabled ? 0.45 : 1,
+        }}
       >
         {props.renderIcon ? (
           <View
@@ -252,15 +256,22 @@ export function ComposerActionButton(props: {
   readonly onLongPress?: PressableProps["onLongPress"];
   readonly onTouchStart?: PressableProps["onTouchStart"];
 }) {
-  const { scale, smallIconSize } = useAndroidControlSizing();
-  const circleSize = Math.round((props.size === "large" ? 44 : 30) * scale);
+  const { scale, smallIconSize, composerControlSize } = useAndroidControlSizing();
+  const circleSize = props.size === "large" ? composerControlSize : Math.round(30 * scale);
   return (
     <Pressable
       accessibilityLabel={props.accessibilityLabel}
       accessibilityRole="button"
       accessibilityState={{ disabled: props.disabled }}
       className="size-[44px] shrink-0 items-center justify-center active:opacity-70"
-      style={props.size === "large" ? { width: 62 } : undefined}
+      style={
+        props.size === "large"
+          ? {
+              width: Platform.OS === "android" ? composerControlSize : 62,
+              height: composerControlSize,
+            }
+          : undefined
+      }
       disabled={props.disabled}
       onPress={props.onPress}
       onLongPress={props.onLongPress}

@@ -12,6 +12,7 @@ export function resolveAndroidControlSizing(baseFontSize: number) {
     smallIconSize: Math.round(16 * scale),
     mediumIconSize: Math.round(18 * scale),
     buttonSize,
+    composerControlSize: Math.max(44, Math.round(44 * scale)),
     fabSize,
     largeFabSize: Math.round(96 * scale),
     menuWidth: Math.round(250 * scale),

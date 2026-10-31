@@ -17,13 +17,18 @@ export function ComposerAttachmentButton(props: {
   readonly onPickMedia: () => Promise<void>;
   readonly onPickFiles: () => Promise<void>;
 }) {
-  const { scale } = useAndroidControlSizing();
+  const { scale, composerControlSize } = useAndroidControlSizing();
   const button = (
     <Pressable
       accessibilityLabel="Add attachment"
       accessibilityRole="button"
       accessibilityState={{ disabled: props.disabled }}
       className="size-[44px] shrink-0 items-center justify-center rounded-full active:opacity-70 disabled:opacity-50"
+      style={
+        props.size === "large"
+          ? { width: composerControlSize, height: composerControlSize }
+          : undefined
+      }
       disabled={props.disabled}
       onPress={props.supportsFiles ? undefined : () => void props.onPickMedia()}
     >
