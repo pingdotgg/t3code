@@ -287,10 +287,8 @@ const FULL_CATALOG_DRIVERS: ReadonlySet<string> = new Set(["codex", "claudeAgent
 const LISTED_MODEL_LIMIT = 8;
 
 /**
- * Picks the models orchestrator_capabilities shows for one provider. Hidden models never
- * appear. Search words naming the provider are dropped; other words list matches. With no
- * words left, lists pinned models (custom, favorite, the caller's own) plus non-legacy
- * models, or only the first few in the user's model order for large catalogs.
+ * Lists visible models, keeping pinned models and limiting large catalogs by default.
+ * Whole provider words select the provider; partial words filter models when any match.
  */
 function listCapabilityModels(input: {
   readonly provider: ServerProvider;
@@ -306,10 +304,22 @@ function listCapabilityModels(input: {
     .toSorted((a, b) => (rank.get(a.slug) ?? rank.size) - (rank.get(b.slug) ?? rank.size));
   const { instanceId, driver, displayName } = input.provider;
   const providerText = `${instanceId} ${driver} ${displayName ?? ""}`.toLowerCase();
-  const modelTerms = input.searchTerms.filter((term) => !providerText.includes(term));
+  // Whole ids like "codex-work" and their parts both name the provider.
+  const providerWords = new Set([
+    ...providerText.split(/\s+/),
+    ...providerText.split(/[^\p{L}\p{N}]+/u),
+  ]);
+  const modelText = (model: ServerProviderModel) =>
+    `${model.slug} ${model.name} ${model.subProvider ?? ""}`.toLowerCase();
+  // Part of a provider word ("agent" in "claudeAgent") names the provider unless a model matches it.
+  const modelTerms = input.searchTerms.filter(
+    (term) =>
+      !providerWords.has(term) &&
+      (!providerText.includes(term) || visible.some((model) => modelText(model).includes(term))),
+  );
   if (modelTerms.length > 0) {
     const matches = visible.filter((model) => {
-      const text = `${model.slug} ${model.name} ${model.subProvider ?? ""}`.toLowerCase();
+      const text = modelText(model);
       return modelTerms.every((term) => text.includes(term));
     });
     const listed = matches.slice(0, LISTED_MODEL_LIMIT);
@@ -2138,7 +2148,7 @@ const make = Effect.gen(function* () {
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
       );
       const inherited = parent?.thread.modelSelection;
-      const searchTerms = input.search?.toLowerCase().split(/\s+/) ?? [];
+      const searchTerms = input.search?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
       return {
         parentThreadId: parent?.thread.id ?? null,
         inheritedProviderInstanceId: inherited?.instanceId ?? null,
