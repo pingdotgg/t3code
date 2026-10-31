@@ -35,7 +35,12 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
-import { EnvironmentId, ORCHESTRATOR_MCP_RUNNING_TASK_NEXT, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
+  PullRequestState,
+  ThreadId,
+} from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
@@ -164,6 +169,8 @@ const McpToolUseExpect = Schema.Struct({
   textMustNot: Schema.optional(Schema.Array(Schema.String)),
   /** Each entry matches a PR URL linked at the end, as `args` values match. */
   linked: Schema.optional(Schema.Array(Schema.String)),
+  /** The PR numbers linked at the end, exactly. */
+  linkedNumbers: Schema.optional(Schema.Array(Schema.Number)),
   /** Device manager checks: child briefs, simulator UI over the shell, failures, recordings. */
   device: Schema.optional(DeviceExpect),
 });
@@ -208,6 +215,12 @@ const McpToolUseWorld = Schema.StructWithRest(
     deviceInvalidCapture: Schema.optional(Schema.Boolean),
     /** Devices another thread's agent-device session holds, by device id: that thread's id. */
     deviceOwners: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+    /** PRs already linked to the thread, with the state T3 last saw. */
+    linkedPullRequests: Schema.optional(
+      Schema.Array(
+        Schema.Struct({ number: Schema.Number, state: PullRequestState, title: Schema.String }),
+      ),
+    ),
   }),
   Rest,
 );
@@ -725,11 +738,16 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
   const prior = testCase.setup.priorTurns ?? [];
   const priorCalls = prior.flatMap((turn) => turn.toolCalls ?? []);
   const repo = testCase.setup.world?.repo ?? "acme/app";
-  const urls = priorCalls.flatMap((call) =>
-    ["link_pull_request", "watch_pull_request"].includes(call.tool) && isRecord(call.input)
-      ? [pullRequest(repo, call.input).url]
-      : [],
-  );
+  const urls = [
+    ...(testCase.setup.world?.linkedPullRequests ?? []).map(
+      ({ number }) => pullRequest(repo, { number }).url,
+    ),
+    ...priorCalls.flatMap((call) =>
+      ["link_pull_request", "watch_pull_request"].includes(call.tool) && isRecord(call.input)
+        ? [pullRequest(repo, call.input).url]
+        : [],
+    ),
+  ];
   const taskNumbers = [...valueText(prior).matchAll(/task-(\d+)/g)].map((match) =>
     Number(match[1]),
   );
@@ -935,6 +953,15 @@ const pullRequest = (repo: string, input: Readonly<Record<string, unknown>>) => 
   };
 };
 
+/** A linked PR as `list_thread_pull_requests` shows it. Links made in the sample are open. */
+const linkedEntry = (sample: Sample, url: string) => {
+  const pr = pullRequest(sample.repo, { url });
+  const seeded = sample.testCase.setup.world?.linkedPullRequests?.find(
+    ({ number }) => number === pr.number && pr.repository === sample.repo,
+  );
+  return { ...pr, state: seeded?.state ?? "open", title: seeded?.title ?? null };
+};
+
 /** A believable T3 result for a tool the case does not mock. */
 const t3Default = (sample: Sample, name: string, input: Readonly<Record<string, unknown>>) => {
   const pr = () => pullRequest(sample.repo, input);
@@ -989,6 +1016,24 @@ const t3Default = (sample: Sample, name: string, input: Readonly<Record<string, 
     }
     case "unlink_pull_request":
       return { ...pr(), wasLinked: sample.linked.delete(pr().url) };
+    case "unlink_pull_requests": {
+      const states = Array.isArray(input.states) ? input.states : [];
+      const unlinked = [...sample.linked]
+        .map((url) => linkedEntry(sample, url))
+        .filter((entry) => states.includes(entry.state));
+      for (const { url } of unlinked) sample.linked.delete(url);
+      const groups = Map.groupBy(unlinked, (entry) => `${entry.repository}/${entry.state}`);
+      return {
+        unlinked: [...groups.values()].map((entries) => ({
+          host: "github.com",
+          repository: entries[0]!.repository,
+          state: entries[0]!.state,
+          numbers: entries.map((entry) => entry.number),
+        })),
+        unlinkedCount: unlinked.length,
+        remaining: sample.linked.size,
+      };
+    }
     case "watch_pull_request":
       sample.linked.add(pr().url);
       return { ...pr(), watching: true, wasWatching: false };
@@ -997,10 +1042,9 @@ const t3Default = (sample: Sample, name: string, input: Readonly<Record<string, 
     case "list_thread_pull_requests":
       return {
         pullRequests: [...sample.linked].map((url) => ({
-          ...pullRequest(sample.repo, { url }),
+          ...linkedEntry(sample, url),
           source: "agent",
           watching: false,
-          state: "open",
         })),
         chains: [],
       };
@@ -1386,6 +1430,11 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun) =>
   for (const p of expect.textMustNot ?? []) add(`textMustNot /${p}/`, !test(p, run.text));
   const isLinked = (url: string) => (run.linked ?? []).some((at) => matches(url, at));
   for (const url of expect.linked ?? []) add(`linked ${url}`, isLinked(url));
+  if (expect.linkedNumbers !== undefined) {
+    const numbers = (run.linked ?? []).map((url) => Number(/(\d+)\/?$/.exec(url)?.[1]));
+    const exact = valueText(numbers.toSorted((a, b) => a - b));
+    add("linkedNumbers", exact === valueText(expect.linkedNumbers.toSorted((a, b) => a - b)));
+  }
   checks.push(...gradeDevice(expect.device, run));
   return checks;
 };
