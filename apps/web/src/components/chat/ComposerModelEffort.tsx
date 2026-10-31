@@ -52,7 +52,7 @@ type ColumnControl =
 
 /**
  * The column lists the model's reasoning control first, under the header that names it, then
- * its other options. Picking a level of that control finishes the job and closes the popup.
+ * its other options.
  */
 function columnControls(
   provider: TraitsSelectionInput["provider"],
@@ -171,8 +171,14 @@ function ColumnRow(props: {
   const content = (
     <>
       <span className="min-w-0 flex-1 truncate">{props.label}</span>
-      {props.isDefault ? <span className="text-muted-foreground/70 text-xs">Default</span> : null}
-      <CheckIcon aria-hidden="true" className={cn("size-3.5", !props.selected && "invisible")} />
+      {props.selected ? (
+        <>
+          {props.isDefault ? <span className="sr-only">Default</span> : null}
+          <CheckIcon aria-hidden="true" className="size-3.5" />
+        </>
+      ) : props.isDefault ? (
+        <span className="text-muted-foreground/70 text-xs">Default</span>
+      ) : null}
     </>
   );
   if (!props.description) return <button {...rowProps}>{content}</button>;
@@ -201,7 +207,7 @@ function moveBetweenRows(event: KeyboardEvent<HTMLElement>) {
   next.scrollIntoView({ block: "nearest" });
 }
 
-function EffortLevels(props: { traits: TraitsSelectionInput; onLevelPick: () => void }) {
+function EffortLevels(props: { traits: TraitsSelectionInput }) {
   const traits = useTraitsSelection(props.traits);
   const { effort, others } = columnControls(
     props.traits.provider,
@@ -242,10 +248,7 @@ function EffortLevels(props: { traits: TraitsSelectionInput; onLevelPick: () => 
               label={value ? "On" : "Off"}
               selected={(control.descriptor.currentValue === true) === value}
               level={isEffort}
-              onPick={() => {
-                traits.changeBoolean(descriptor.id, value);
-                if (isEffort) props.onLevelPick();
-              }}
+              onPick={() => traits.changeBoolean(descriptor.id, value)}
             />
           ))}
         </div>
@@ -276,10 +279,7 @@ function EffortLevels(props: { traits: TraitsSelectionInput; onLevelPick: () => 
             isDefault={option.isDefault}
             disabled={locked}
             level={isEffort}
-            onPick={() => {
-              traits.changeSelect(control.descriptor, option.id);
-              if (isEffort) props.onLevelPick();
-            }}
+            onPick={() => traits.changeSelect(control.descriptor, option.id)}
           />
         ))}
       </div>
@@ -327,11 +327,7 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
         className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-2 pt-2.5 pb-1.5"
         onKeyDown={moveBetweenRows}
       >
-        {props.traits ? (
-          <EffortLevels traits={props.traits} onLevelPick={picker.close} />
-        ) : (
-          <NoEffortRow />
-        )}
+        {props.traits ? <EffortLevels traits={props.traits} /> : <NoEffortRow />}
       </div>
     </>
   );
@@ -415,17 +411,12 @@ function PermissionsMenu(props: {
   options: ReadonlyArray<RuntimeModeOption>;
   onChange: (mode: RuntimeMode) => void;
 }) {
-  const picker = use(DockedPickerContext);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const current = props.options.find((option) => option.mode === props.runtimeMode);
   if (!current) return null;
   const CurrentIcon = current.icon;
   return (
     <Menu
-      // Any pick, even the current mode, ends the job; a change also hands focus to the prompt.
-      onOpenChange={(open, details) => {
-        if (!open && details.reason === "item-press") picker.close();
-      }}
       onOpenChangeComplete={(open) => {
         if (open) focusCheckedPermission(triggerRef.current);
       }}
