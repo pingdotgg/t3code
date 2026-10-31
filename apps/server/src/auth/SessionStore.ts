@@ -1068,14 +1068,19 @@ const make = Effect.gen(function* () {
             const removed = yield* Effect.raceFirst(
               Stream.fromSubscription(subscription).pipe(
                 Stream.filter(
-                  (change) => change.type === "clientRemoved" && chain.has(change.sessionId),
+                  (change): change is Extract<SessionCredentialChange, { type: "clientRemoved" }> =>
+                    change.type === "clientRemoved" && chain.has(change.sessionId),
                 ),
                 Stream.runHead,
-                Effect.as(true),
               ),
-              Effect.sleep(Duration.millis(remaining)).pipe(Effect.as(false)),
+              Effect.sleep(Duration.millis(remaining)).pipe(Effect.as(Option.none())),
             );
-            if (removed) return;
+            if (Option.isSome(removed)) {
+              // clientRemoved also reports an expired session losing its last socket.
+              const row = yield* readRow(removed.value.sessionId);
+              if (Option.isNone(row) || row.value.revokedAt !== null) return;
+              continue;
+            }
           }
           // The timer can win the race against a revocation published in the same instant.
           const [originalNow, currentNow] = yield* Effect.all([

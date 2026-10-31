@@ -89,7 +89,7 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
     readonly renewDpopBeforeExpiry: (input: {
       readonly expectedEnvironmentId: EnvironmentId;
       readonly expiresAtEpochMs: number;
-    }) => Effect.Effect<void, ConnectionAttemptError>;
+    }) => Effect.Effect<void, ConnectionBlockedError>;
   }
 >()("@t3tools/client-runtime/authorization/service/RemoteEnvironmentAuthorization") {}
 

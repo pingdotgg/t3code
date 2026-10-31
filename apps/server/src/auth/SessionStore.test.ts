@@ -205,6 +205,30 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 
+  it.effect("keeps a renewed DPoP socket when another socket on its expired session closes", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const client = yield* sessions.issue(relaySessionInput);
+      yield* sessions.markConnected(client.sessionId);
+      const invalidated = yield* Deferred.make<void>();
+      const watcher = yield* sessions
+        .awaitInvalidation(client.sessionId, relaySessionInput.proofKeyThumbprint)
+        .pipe(
+          Effect.andThen(Deferred.succeed(invalidated, undefined)),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+      yield* TestClock.adjust(Duration.minutes(59));
+      yield* sessions.issue(relaySessionInput);
+      yield* TestClock.adjust(Duration.minutes(2));
+      // An expired session that loses its last socket is reported as removed, not revoked.
+      yield* sessions.markDisconnected(client.sessionId);
+      yield* TestClock.adjust(Duration.millis(58 * 60_000 - 1));
+      expect(yield* Deferred.isDone(invalidated)).toBe(false);
+      yield* TestClock.adjust(Duration.millis(1));
+      yield* Fiber.join(watcher);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
   it.effect("keys remote cookies by environment identity instead of state directory", () =>
     Effect.gen(function* () {
       const cookieName = (stateDir: string, environmentId: EnvironmentId) =>
