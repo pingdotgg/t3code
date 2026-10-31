@@ -427,6 +427,7 @@ interface SendLiveActivityDeliveryInputBase {
   readonly target: LiveActivityDeliveryTarget;
   readonly token: string;
   readonly sourceJobId: string;
+  readonly expiresAtEpochSeconds: number;
 }
 
 export type SendLiveActivityDeliveryInput =
@@ -449,6 +450,7 @@ function makeLiveActivityDeliveryRequest(
   const epochSeconds = Math.floor(now.epochMilliseconds / 1_000);
   const base = {
     token: input.token,
+    expiresAtEpochSeconds: input.expiresAtEpochSeconds,
     nowEpochSeconds: epochSeconds,
     nowIso: DateTime.formatIso(now),
   };
@@ -501,6 +503,7 @@ export class ApnsDeliveries extends Context.Service<
       readonly target: LiveActivityDeliveryTarget;
       readonly token: string;
       readonly sourceJobId: string;
+      readonly expiresAtEpochSeconds: number;
       readonly notification: ApnsNotificationPayload;
     }) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryError>;
   }
@@ -808,6 +811,7 @@ const make = Effect.gen(function* () {
     });
     const request = apns.makePushNotificationRequest({
       token: input.token,
+      expiresAtEpochSeconds: input.expiresAtEpochSeconds,
       notification,
     });
     const recoverTransportError = (cause: Apns.ApnsError) =>
@@ -942,6 +946,10 @@ const make = Effect.gen(function* () {
     if (isApnsDeliveryJobVerificationError(payload)) {
       return yield* payload;
     }
+    // APNs accepts whole seconds; rounding down cannot extend the signed job's lifetime.
+    const expiresAtEpochSeconds = Math.floor(
+      DateTime.toEpochMillis(DateTime.makeUnsafe(payload.expiresAt)) / 1_000,
+    );
     yield* Effect.annotateCurrentSpan({
       "relay.mobile.device_id": payload.target.deviceId,
       "relay.delivery.kind": payload.kind,
@@ -969,6 +977,7 @@ const make = Effect.gen(function* () {
             },
             token: payload.target.token,
             sourceJobId: payload.jobId,
+            expiresAtEpochSeconds,
             kind: payload.kind,
             aggregate: payload.aggregate,
             alert: payload.alert ?? null,
@@ -983,6 +992,7 @@ const make = Effect.gen(function* () {
             },
             token: payload.target.token,
             sourceJobId: payload.jobId,
+            expiresAtEpochSeconds,
             kind: payload.kind,
             aggregate: payload.aggregate,
             alert: payload.alert ?? null,
@@ -1006,6 +1016,7 @@ const make = Effect.gen(function* () {
             },
             token: payload.target.token,
             sourceJobId: payload.jobId,
+            expiresAtEpochSeconds,
             notification: payload.notification,
           });
       }

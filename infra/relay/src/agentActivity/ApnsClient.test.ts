@@ -54,6 +54,7 @@ describe("ApnsClient", () => {
       const request = apns.makeLiveActivityRequest({
         event: "update",
         token: "token",
+        expiresAtEpochSeconds: 600,
         state,
         alert: { title: "Thread", body: "Approval: Project" },
         nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
@@ -80,6 +81,7 @@ describe("ApnsClient", () => {
       const request = apns.makeLiveActivityRequest({
         event: "end",
         token: "token",
+        expiresAtEpochSeconds: 600,
         state,
         nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
         nowIso: DateTime.formatIso(now),
@@ -96,6 +98,7 @@ describe("ApnsClient", () => {
       const contentless = apns.makeLiveActivityRequest({
         event: "end",
         token: "token",
+        expiresAtEpochSeconds: 600,
         state: null,
         nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
         nowIso: DateTime.formatIso(now),
@@ -114,6 +117,7 @@ describe("ApnsClient", () => {
       const apns = yield* ApnsClient.ApnsClient;
       const request = apns.makePushNotificationRequest({
         token: "push-token",
+        expiresAtEpochSeconds: 600,
         notification: {
           title: "Thread",
           body: "Input: Project",
@@ -154,7 +158,11 @@ describe("ApnsClient", () => {
         threadId,
         deepLink: `/threads/${encodeURIComponent(environmentId)}/${threadId}`,
       });
-      const request = apns.makePushNotificationRequest({ token: "push-token", notification });
+      const request = apns.makePushNotificationRequest({
+        token: "push-token",
+        expiresAtEpochSeconds: 600,
+        notification,
+      });
 
       expect(
         new TextEncoder().encode(JSON.stringify(request.payload)).byteLength,
@@ -202,6 +210,7 @@ describe("ApnsClient", () => {
       const apns = yield* ApnsClient.ApnsClient;
       const request = apns.makePushNotificationRequest({
         token: "push-token",
+        expiresAtEpochSeconds: 600,
         notification: {
           title: "Thread",
           body: "Input: Project",
