@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type GitCommandError,
   type GitManagerServiceError,
   ProjectId,
   type ThreadId,
@@ -84,7 +85,22 @@ export class NamedProjectCreateError extends Schema.TaggedError<NamedProjectCrea
   }
 }
 
-export type NamedProjectError = NamedProjectFolderError | NamedProjectCreateError;
+export class NamedProjectGitMissingError extends Schema.TaggedError<NamedProjectGitMissingError>()(
+  "NamedProjectGitMissingError",
+  {
+    folder: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Git is not installed in this environment. Install Git to create a project.";
+  }
+}
+
+export type NamedProjectError =
+  | NamedProjectFolderError
+  | NamedProjectCreateError
+  | NamedProjectGitMissingError;
 
 export class ManagedProjectFolders extends Context.Service<
   ManagedProjectFolders,
@@ -200,6 +216,12 @@ const isGitMissing = (error: GitManagerServiceError) =>
   isVcsProcessSpawnError(error.cause) &&
   PlatformError.isPlatformError(error.cause.cause) &&
   error.cause.cause.reason._tag === "NotFound";
+
+const isGitNotInstalled = (error: GitCommandError | PlatformError.PlatformError) =>
+  error._tag === "GitCommandError" &&
+  PlatformError.isPlatformError(error.cause) &&
+  error.cause.reason._tag === "NotFound" &&
+  error.cause.reason.module === "ChildProcess";
 
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
@@ -425,7 +447,11 @@ const make = Effect.gen(function* () {
     const removeFolder = fileSystem.remove(workspaceRoot, { recursive: true }).pipe(Effect.ignore);
     const prepared = yield* Effect.all([
       scaffoldRepository(workspaceRoot, input.name).pipe(
-        Effect.mapError((cause) => new NamedProjectFolderError({ folder: workspaceRoot, cause })),
+        Effect.mapError((cause) =>
+          isGitNotInstalled(cause)
+            ? new NamedProjectGitMissingError({ folder: workspaceRoot, cause })
+            : new NamedProjectFolderError({ folder: workspaceRoot, cause }),
+        ),
       ),
       crypto
         .randomUUIDv4()

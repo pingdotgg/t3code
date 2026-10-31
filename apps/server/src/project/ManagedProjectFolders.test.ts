@@ -1,6 +1,12 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { CommandId, ProjectId, ThreadId, VcsProcessSpawnError } from "@t3tools/contracts";
+import {
+  CommandId,
+  GitCommandError,
+  ProjectId,
+  ThreadId,
+  VcsProcessSpawnError,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -430,6 +436,44 @@ it.effect("keeps a named project and reports why when Git cannot commit", () =>
         assert.isTrue(yield* fileSystem.exists(path.join(result.workspaceRoot, ".git")));
       }),
     ),
+  ),
+);
+
+it.effect("says Git is missing when a named project cannot start its repository", () =>
+  withScratch(
+    ({ baseDir }) =>
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const projects = yield* ProjectService.ProjectService;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+
+        const failure = yield* Effect.flip(folders.createNamedProject({ name: "No Git" }));
+
+        assert.equal(failure._tag, "NamedProjectGitMissingError");
+        assert.deepEqual(yield* fileSystem.readDirectory(path.resolve(baseDir, "projects")), []);
+        assert.deepEqual((yield* projects.snapshot).projects, []);
+      }),
+    {
+      git: Layer.mock(GitVcsDriver.GitVcsDriver)({
+        readConfigValue: () => Effect.succeed(null),
+        execute: (input) =>
+          Effect.fail(
+            new GitCommandError({
+              operation: input.operation,
+              command: "git",
+              cwd: input.cwd,
+              detail: "Failed to spawn Git process.",
+              cause: PlatformError.systemError({
+                _tag: "NotFound",
+                module: "ChildProcess",
+                method: "spawn",
+                syscall: "spawn git",
+              }),
+            }),
+          ),
+      }),
+    },
   ),
 );
 
