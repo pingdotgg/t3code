@@ -178,6 +178,15 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       yield* command.uninstall;
       expect(yield* fs.readFileString(theirs)).toBe("npm's t3\n");
       expect(yield* fs.readLink(path.join(home, "bin", "t3"))).toBe(path.join(home, "gone"));
+      // Another tool's link that leads on to this app's launcher is still that tool's.
+      yield* command.install.pipe(Effect.ignore);
+      const managed = path.join(home, "manager", "t3");
+      yield* fs.makeDirectory(path.dirname(managed));
+      yield* fs.symlink(path.join(home, ".t3", "bin", "t3"), managed);
+      yield* fs.remove(path.join(home, "bin", "t3"));
+      yield* fs.symlink(managed, path.join(home, "bin", "t3"));
+      yield* command.uninstall;
+      expect(yield* fs.readLink(path.join(home, "bin", "t3"))).toBe(managed);
 
       const launcher = path.join(home, ".t3", "bin", "t3");
       yield* fs.writeFileString(launcher, "npm's t3\n");
@@ -239,6 +248,41 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       );
       expect(yield* fs.exists(path.join(home, ".local", "bin", "t3"))).toBe(false);
       expect(yield* fs.readFileString(path.join(home, "bin", "t3.staging"))).toBe("mine");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps a t3 another program writes while it replaces its own link", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const before = yield* commandIn({ home, baseDir: path.join(home, "old-t3") });
+      const link = (yield* before.install).installedPath!;
+      const theirs = path.join(home, "theirs");
+      yield* fs.writeFileString(theirs, "#!/bin/sh\n", { mode: 0o755 });
+      // Right after the app finds its old link, another program puts its own t3 there.
+      let raced = false;
+      const racing = FileSystem.FileSystem.of({
+        ...fs,
+        access: (target, options) =>
+          (raced
+            ? Effect.void
+            : fs
+                .symlink(theirs, `${link}.new`)
+                .pipe(
+                  Effect.andThen(fs.rename(`${link}.new`, link)),
+                  Effect.andThen(Effect.sync(() => (raced = true))),
+                )
+          ).pipe(Effect.andThen(fs.access(target, options))),
+      });
+      const after = yield* commandIn({ home, baseDir: path.join(home, "new-t3") }).pipe(
+        Effect.provideService(FileSystem.FileSystem, racing),
+      );
+      const installed = yield* after.install;
+      expect(raced).toBe(true);
+      expect(yield* fs.readLink(link)).toBe(theirs);
+      expect(installed.installedPath).toBe(path.join(home, "bin", "t3"));
+      expect(yield* fs.readDirectory(path.dirname(link))).toEqual(["t3"]);
     }).pipe(Effect.scoped),
   );
 

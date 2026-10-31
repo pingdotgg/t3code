@@ -7,13 +7,14 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Random from "effect/Random";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { replaceOwnedLink } from "@t3tools/shared/ownedLink";
 import { pathSetup, readUserLoginShell } from "@t3tools/shared/shell";
 
 import * as DesktopCliShim from "./DesktopCliShim.ts";
@@ -98,15 +99,24 @@ export const make = Effect.gen(function* () {
 
   const isOurLink = Effect.fn("DesktopCliCommand.isOurLink")(
     function* (link: string) {
-      yield* fs.readLink(link);
+      // Only a direct link: a chain through another tool's link is that tool's.
+      const target = path.resolve(path.dirname(link), yield* fs.readLink(link));
+      if (Option.isSome(yield* fs.readLink(target).pipe(Effect.option))) return false;
       // The launcher is a few KB; never read a large binary another `t3` links to.
-      const info = yield* fs.stat(link);
+      const info = yield* fs.stat(target);
       if (info.type !== "File" || Number(info.size) > 16_384) return false;
-      const content = yield* fs.readFileString(link);
+      const content = yield* fs.readFileString(target);
       return content.includes(DesktopCliShim.MARKER);
     },
     Effect.orElseSucceed(() => false),
   );
+
+  /** Other programs write these folders too, so the link is checked again once moved aside. */
+  const replaceOurLink = (input: { readonly link: string; readonly target?: string }) =>
+    replaceOwnedLink({ ...input, owns: isOurLink }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
 
   // PATH can reach the regular launcher directly; removal still requires isOurLink.
   const runsOurLauncher = Effect.fn("DesktopCliCommand.runsOurLauncher")(
@@ -326,26 +336,14 @@ export const make = Effect.gen(function* () {
           );
       if (!created) continue;
       // Our own link is swapped in place; anything else there makes symlink fail and stays.
-      const staging = `${link}.${yield* Random.nextIntBetween(0, 0xffffff)}.tmp`;
       const linked = yield* (
         link === replaced
-          ? fs
-              .symlink(launcher, staging)
-              .pipe(
-                Effect.andThen(
-                  fs
-                    .rename(staging, link)
-                    .pipe(Effect.tapError(() => fs.remove(staging).pipe(Effect.ignore))),
-                ),
-              )
-          : fs.symlink(launcher, link)
-      ).pipe(
-        Effect.as(true),
-        Effect.orElseSucceed(() => false),
-      );
+          ? replaceOurLink({ link, target: launcher })
+          : fs.symlink(launcher, link).pipe(Effect.as(true))
+      ).pipe(Effect.orElseSucceed(() => false));
       if (!linked) continue;
       if (replaced !== undefined && replaced !== link) {
-        yield* fs.remove(replaced).pipe(Effect.ignore);
+        yield* replaceOurLink({ link: replaced }).pipe(Effect.ignore);
       }
       return yield* state;
     }
@@ -367,7 +365,9 @@ export const make = Effect.gen(function* () {
     for (const directory of knownLocations(environment.homeDirectory, environment.platform)) {
       const link = path.join(directory, "t3");
       if (yield* isOurLink(link)) {
-        yield* fs.remove(link).pipe(Effect.mapError(() => fail(`Could not remove ${link}.`)));
+        yield* replaceOurLink({ link }).pipe(
+          Effect.mapError(() => fail(`Could not remove ${link}.`)),
+        );
       }
     }
     return yield* state;

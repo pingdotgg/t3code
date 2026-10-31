@@ -1,4 +1,5 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { replaceOwnedLink } from "@t3tools/shared/ownedLink";
 import { pathSetupCommand } from "@t3tools/shared/shell";
 import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
@@ -12,7 +13,13 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import packageJson from "../../package.json" with { type: "json" };
-import { generatedWindowsShimTarget, isVersionExecutable } from "../cloud/pinnedRuntime.ts";
+import {
+  directLinkTargets,
+  generatedWindowsShimTarget,
+  isVersionExecutable,
+  pinnedRuntimeCommandLink,
+  pinnedRuntimeVersionsDir,
+} from "../cloud/pinnedRuntime.ts";
 import { detectCliRunner, resolveCliCommand, resolveEntryPath } from "./invocation.ts";
 
 export class CliInstallError extends Schema.TaggedError<CliInstallError>()("CliInstallError", {
@@ -37,7 +44,87 @@ const standaloneRuntime = Effect.gen(function* () {
   return Option.some({ executable, versionsDir, runtimeDir });
 });
 
-/** Links this runtime as the `t3` command the way the install scripts do, replacing only our own link. */
+/**
+ * What `link` is to this T3 home: missing, its command link, an older link of this home (straight
+ * to a version's t3, or the desktop app's launcher), or another program's.
+ */
+const classifyCommandLink = Effect.fn("cli.install.classify_command_link")(function* (
+  link: string,
+  baseDir: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  // A link through a symlinked T3 home names the alias, so compare real folders as well.
+  const real = (file: string) =>
+    fs.realPath(path.dirname(file)).pipe(
+      Effect.map((directory) => path.join(directory, path.basename(file))),
+      Effect.orElseSucceed(() => file),
+    );
+  const commandLink = pinnedRuntimeCommandLink(path, baseDir);
+  const realCommandLink = yield* real(commandLink);
+  if ((yield* real(link)) === realCommandLink) return "current";
+  // Only the direct target: a chain through another tool's link is that tool's.
+  const targets = yield* directLinkTargets(link);
+  if (targets.length === 0 && Option.isNone(yield* fs.readLink(link).pipe(Effect.option))) {
+    return (yield* fs.exists(link).pipe(Effect.orElseSucceed(() => true))) ? "foreign" : "missing";
+  }
+  if (targets.includes(commandLink) || targets.includes(realCommandLink)) return "current";
+  const versionsDir = pinnedRuntimeVersionsDir(path, baseDir);
+  const realVersionsDir = yield* fs
+    .realPath(versionsDir)
+    .pipe(Effect.orElseSucceed(() => versionsDir));
+  const desktopLauncher = path.join(baseDir, "bin", "t3");
+  const realDesktopLauncher = yield* real(desktopLauncher);
+  const older = targets.some(
+    (candidate) =>
+      isVersionExecutable(path, versionsDir, candidate) ||
+      isVersionExecutable(path, realVersionsDir, candidate) ||
+      candidate === desktopLauncher ||
+      candidate === realDesktopLauncher,
+  );
+  return older ? "older" : "foreign";
+});
+
+/**
+ * Points this home's command link at `executable`, then makes `link` lead to it. `link` is only
+ * created where nothing is, or moved over from an older link of this home. Returns false when it
+ * belongs to another program; nothing changes then.
+ */
+export const linkCommand = Effect.fn("cli.install.link_command")(function* (input: {
+  readonly link: string;
+  readonly baseDir: string;
+  readonly executable: string;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const kind = yield* classifyCommandLink(input.link, input.baseDir);
+  if (kind === "foreign") return false;
+  const commandLink = pinnedRuntimeCommandLink(path, input.baseDir);
+  // Inside the T3 home, so swapping it in place cannot replace another program's file.
+  const staging = `${commandLink}.${process.pid}.tmp`;
+  yield* fs
+    .remove(staging, { force: true })
+    .pipe(
+      Effect.andThen(fs.symlink(input.executable, staging)),
+      Effect.andThen(
+        fs
+          .rename(staging, commandLink)
+          .pipe(Effect.tapError(() => fs.remove(staging, { force: true }).pipe(Effect.ignore))),
+      ),
+    );
+  if (kind === "missing") yield* fs.symlink(commandLink, input.link);
+  if (kind !== "older") return true;
+  return yield* replaceOwnedLink({
+    link: input.link,
+    target: commandLink,
+    owns: (candidate) =>
+      classifyCommandLink(candidate, input.baseDir).pipe(
+        Effect.map((found) => found !== "foreign"),
+      ),
+  });
+});
+
+/** Links this runtime as the `t3` command the way the install scripts do, never over another t3. */
 export const installCli = Effect.fn("cli.install.install")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -69,64 +156,53 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
   const link = path.join(binDir, name);
   const failed = (reason: string) => (cause: unknown) => new CliInstallError({ reason, cause });
 
-  // Resolve fully so a link through a symlinked T3 home still counts as ours; a dangling one
-  // (a pruned version) falls back to its own text.
-  const realVersionsDir = yield* fs
-    .realPath(versionsDir)
-    .pipe(Effect.orElseSucceed(() => versionsDir));
-  const current = windows
-    ? yield* fs.readFileString(link).pipe(Effect.map(generatedWindowsShimTarget), Effect.option)
-    : yield* fs.readLink(link).pipe(
-        Effect.flatMap((target) =>
-          fs.realPath(link).pipe(Effect.orElseSucceed(() => path.resolve(binDir, target))),
-        ),
-        Effect.option,
-      );
-  // A dangling symlink is occupied too: writing the shim would follow it.
-  const occupied =
-    Option.isSome(current) ||
-    (yield* fs.exists(link)) ||
-    Option.isSome(yield* fs.readLink(link).pipe(Effect.option));
-  if (
-    occupied &&
-    !(
-      Option.isSome(current) &&
-      current.value !== undefined &&
-      (isVersionExecutable(path, versionsDir, current.value) ||
-        isVersionExecutable(path, realVersionsDir, current.value) ||
-        // This home's desktop launcher, which install.sh also replaces.
-        current.value === path.join(path.dirname(runtimeDir), "bin", name))
-    )
-  ) {
-    return yield* new CliInstallError({
-      reason: `Another t3 is already at ${link}. Remove it, then run this again.`,
-    });
-  }
-
-  yield* fs
-    .makeDirectory(binDir, { recursive: true })
-    .pipe(Effect.mapError(failed(`Could not create ${binDir}.`)));
-  // An empty spot is created exclusively, so a file that appears after the check above is kept.
   if (windows) {
+    // Resolve fully so a shim through a symlinked T3 home still counts as ours.
+    const realVersionsDir = yield* fs
+      .realPath(versionsDir)
+      .pipe(Effect.orElseSucceed(() => versionsDir));
+    const current = yield* fs
+      .readFileString(link)
+      .pipe(Effect.map(generatedWindowsShimTarget), Effect.option);
+    // A dangling symlink is occupied too: writing the shim would follow it.
+    const occupied =
+      Option.isSome(current) ||
+      (yield* fs.exists(link)) ||
+      Option.isSome(yield* fs.readLink(link).pipe(Effect.option));
+    if (
+      occupied &&
+      !(
+        Option.isSome(current) &&
+        current.value !== undefined &&
+        (isVersionExecutable(path, versionsDir, current.value) ||
+          isVersionExecutable(path, realVersionsDir, current.value) ||
+          // This home's desktop launcher, which install.sh also replaces.
+          current.value === path.join(path.dirname(runtimeDir), "bin", name))
+      )
+    ) {
+      return yield* new CliInstallError({
+        reason: `Another t3 is already at ${link}. Remove it, then run this again.`,
+      });
+    }
+    yield* fs
+      .makeDirectory(binDir, { recursive: true })
+      .pipe(Effect.mapError(failed(`Could not create ${binDir}.`)));
+    // An empty spot is created exclusively, so a file that appears after the check above is kept.
     yield* fs
       .writeFileString(link, `@echo off\r\n"${executable}" %*`, occupied ? {} : { flag: "wx" })
       .pipe(Effect.mapError(failed(`Could not write ${link}.`)));
-  } else if (!occupied) {
-    yield* fs.symlink(executable, link).pipe(Effect.mapError(failed(`Could not link ${link}.`)));
   } else {
-    // Swap a temporary link into place so a running `t3` never sees the command missing.
-    const staging = `${link}.${process.pid}.tmp`;
-    // Clean up only a staging link this call made, never a file that was already there.
     yield* fs
-      .symlink(executable, staging)
-      .pipe(
-        Effect.andThen(
-          fs
-            .rename(staging, link)
-            .pipe(Effect.tapError(() => fs.remove(staging, { force: true }).pipe(Effect.ignore))),
-        ),
-        Effect.mapError(failed(`Could not link ${link}.`)),
-      );
+      .makeDirectory(binDir, { recursive: true })
+      .pipe(Effect.mapError(failed(`Could not create ${binDir}.`)));
+    const linked = yield* linkCommand({ link, baseDir: path.dirname(runtimeDir), executable }).pipe(
+      Effect.mapError(failed(`Could not link ${link}.`)),
+    );
+    if (!linked) {
+      return yield* new CliInstallError({
+        reason: `Another t3 is already at ${link}. Remove it, then run this again.`,
+      });
+    }
   }
 
   // Pruning keeps what recorded launchers point at; a background service cannot see binDir otherwise.

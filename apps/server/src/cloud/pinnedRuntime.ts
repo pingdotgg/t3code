@@ -1,3 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's realPath is Node's JS realpath, which collapses `..` as text.
+import * as NodeFSP from "node:fs/promises";
+
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
@@ -47,6 +50,14 @@ export function pinnedRuntimeCommand(paths: PinnedRuntimePaths): {
 
 export function pinnedRuntimeVersionsDir(path: Path.Path, baseDir: string): string {
   return path.join(baseDir, PINNED_RUNTIME_DIR, "versions");
+}
+
+/**
+ * `<T3 home>/runtime/t3`, the link the public `t3` command points at. Upgrades switch only this
+ * link, so the public name, where other programs write too, is never replaced.
+ */
+export function pinnedRuntimeCommandLink(path: Path.Path, baseDir: string): string {
+  return path.join(baseDir, PINNED_RUNTIME_DIR, "t3");
 }
 
 export function pinnedRuntimePaths(
@@ -386,6 +397,31 @@ export function launcherOwnsVersionsDir(
   return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
+/**
+ * Where the symlink at `link` points, not following that target any further: the target with its
+ * folder resolved on disk, which sees through a symlinked T3 home, and, for a dangling link, its
+ * text when it has no `.` or `..`. Empty for a non-link.
+ */
+export const directLinkTargets = Effect.fn("cloud.pinned_runtime.direct_link_targets")(function* (
+  link: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const text = yield* fs.readLink(link).pipe(Effect.option);
+  // A target naming a folder (`t3/`, `t3/.`) never runs the file it would resolve to.
+  if (Option.isNone(text) || /(?:^|[\\/])\.{0,2}$/.test(text.value)) return [];
+  const raw = path.isAbsolute(text.value)
+    ? text.value
+    : `${path.dirname(link)}${path.sep}${text.value}`;
+  // Native and unnormalized, so `..` after a symlinked folder goes where the OS takes it.
+  const physical = yield* Effect.tryPromise(() => NodeFSP.realpath(path.dirname(raw))).pipe(
+    Effect.map((directory) => [path.join(directory, path.basename(raw))]),
+    Effect.orElseSucceed(() => []),
+  );
+  const plain = !text.value.split(/[\\/]/).some((part) => part === "." || part === "..");
+  return plain ? [path.resolve(raw), ...physical] : physical;
+});
+
 /** Whether `candidate` is a version's own executable, `<versionsDir>/<version>/t3[.exe]`. */
 export function isVersionExecutable(
   path: Path.Path,
@@ -430,6 +466,11 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
     .pipe(Effect.orElseSucceed(() => versionsDir));
   const unrecorded: Array<string> = [];
   const targets: Array<string> = [];
+  // The command link is always this home's, even when no public launcher was found.
+  const commandLink = yield* fs
+    .realPath(pinnedRuntimeCommandLink(path, baseDir))
+    .pipe(Effect.option);
+  if (Option.isSome(commandLink)) targets.push(commandLink.value);
   for (const launcher of [...recorded, ...found]) {
     const target =
       platform === "win32"

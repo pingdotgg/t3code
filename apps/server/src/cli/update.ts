@@ -35,6 +35,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import { createUpdateProgress } from "./updateProgress.ts";
+import { linkCommand } from "./install.ts";
 import * as CliService from "./service.ts";
 
 export class CliUpdateError extends Schema.TaggedError<CliUpdateError>()("CliUpdateError", {
@@ -92,8 +93,9 @@ export const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(funct
 });
 
 /**
- * Only a launcher that already points into this home's `runtime/versions` tree is touched; a
- * plain copy of the executable, or a launcher for some other install, is left alone.
+ * Only a launcher of this home is touched: on Windows a shim into its `runtime/versions`, elsewhere
+ * a link to its command link, which is switched, or an older link, which moves to it. A plain copy
+ * of the executable, or a launcher for some other install, is left alone.
  */
 export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function* (input: {
   readonly launchedAs: string | undefined;
@@ -124,19 +126,21 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     return Option.some(shimPath);
   }
 
-  const linkTarget = yield* fs.readLink(input.launchedAs).pipe(Effect.option);
-  if (Option.isNone(linkTarget)) return Option.none<string>();
-  const resolvedTarget = path.resolve(path.dirname(input.launchedAs), linkTarget.value);
-  if (!ownsTarget(resolvedTarget)) return Option.none<string>();
-  const tempLink = `${input.launchedAs}.${process.pid}.tmp`;
-  yield* fs.symlink(input.targetEntryPath, tempLink).pipe(
-    Effect.andThen(fs.rename(tempLink, input.launchedAs)),
+  // A plain copy of the executable is the user's own.
+  if (Option.isNone(yield* fs.readLink(input.launchedAs).pipe(Effect.option))) {
+    return Option.none<string>();
+  }
+  const linked = yield* linkCommand({
+    link: input.launchedAs,
+    baseDir: path.dirname(path.dirname(input.versionsDir)),
+    executable: input.targetEntryPath,
+  }).pipe(
     Effect.mapError(
       () =>
         new CliUpdateError({ reason: `Could not repoint the t3 launcher at ${input.launchedAs}.` }),
     ),
   );
-  return Option.some(input.launchedAs);
+  return linked ? Option.some(input.launchedAs) : Option.none<string>();
 });
 
 /** Node preserves argv0's spelling; resolve bare names on PATH to find the launcher symlink. */
