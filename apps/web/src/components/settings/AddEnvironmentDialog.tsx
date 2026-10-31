@@ -213,6 +213,7 @@ export function AddEnvironmentDialog({
       return;
     }
 
+    const session = savedBackendSessionRef.current;
     setIsAddingSavedBackend(true);
     onErrorChange(null);
     let remotePairingInput: ReturnType<typeof parseRemotePairingFields>;
@@ -245,7 +246,13 @@ export function AddEnvironmentDialog({
         });
         refreshDesktopGatewayHeadersState();
       } catch (error) {
-        onErrorChange(formatDesktopBridgeError(error, "Could not save the gateway headers."));
+        if (session === savedBackendSessionRef.current) {
+          onErrorChange(formatDesktopBridgeError(error, "Could not save the gateway headers."));
+        }
+        setIsAddingSavedBackend(false);
+        return;
+      }
+      if (session !== savedBackendSessionRef.current) {
         setIsAddingSavedBackend(false);
         return;
       }
