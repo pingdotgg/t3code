@@ -56,18 +56,22 @@ describe("applyServerConfigProjection settingsUpdated", () => {
 });
 
 describe("applyServerConfigProjection memoryPressureUpdated", () => {
-  it("keeps pressure across a reconnect snapshot from a server that sends it, and drops it once pressure ends", () => {
+  it("keeps pressure and quiet runs across a reconnect snapshot from a server that sends them, and drops them once they end", () => {
     const pressure = (level: "none" | "severe") =>
       ({
         type: "memoryPressureUpdated",
         version: 1,
         payload: { level, heaviestAgents: [] },
       }) as ServerConfigStreamEvent;
-    const snapshotFrom = (memoryPressure: boolean) =>
+    const snapshotFrom = (sendsEvents: boolean) =>
       ({
         type: "snapshot",
         version: 1,
-        config: { environment: { capabilities: { memoryPressure } } },
+        config: {
+          environment: {
+            capabilities: { memoryPressure: sendsEvents, quietRuns: sendsEvents },
+          },
+        },
       }) as ServerConfigStreamEvent;
     const snapshot = snapshotFrom(true);
     const calm = applyServerConfigProjection(
@@ -75,15 +79,30 @@ describe("applyServerConfigProjection memoryPressureUpdated", () => {
       pressure("none"),
     );
     expect(Option.isNone(calm)).toBe(true);
+    const quietRuns = (threadIds: ReadonlyArray<string>) =>
+      ({
+        type: "quietRunsUpdated",
+        version: 1,
+        payload: { runs: threadIds.map((threadId) => ({ threadId, quietSince: 0 })) },
+      }) as unknown as ServerConfigStreamEvent;
     const severe = applyServerConfigProjection(
-      applyServerConfigProjection(Option.none(), snapshot),
-      pressure("severe"),
+      applyServerConfigProjection(
+        applyServerConfigProjection(Option.none(), snapshot),
+        pressure("severe"),
+      ),
+      quietRuns(["thread-a"]),
     );
-    const reconnected = applyServerConfigProjection(severe, snapshot);
-    expect(Option.getOrThrow(reconnected).config.memoryPressure?.level).toBe("severe");
-    const olderServer = applyServerConfigProjection(severe, snapshotFrom(false));
-    expect(Option.getOrThrow(olderServer).config.memoryPressure).toBeUndefined();
-    const ended = applyServerConfigProjection(reconnected, pressure("none"));
+    const reconnected = Option.getOrThrow(applyServerConfigProjection(severe, snapshot));
+    expect(reconnected.config.memoryPressure?.level).toBe("severe");
+    expect(reconnected.config.quietRuns?.map((run) => run.threadId)).toEqual(["thread-a"]);
+    const olderServer = Option.getOrThrow(applyServerConfigProjection(severe, snapshotFrom(false)));
+    expect(olderServer.config.memoryPressure).toBeUndefined();
+    expect(olderServer.config.quietRuns).toBeUndefined();
+    const ended = applyServerConfigProjection(
+      applyServerConfigProjection(Option.some(reconnected), pressure("none")),
+      quietRuns([]),
+    );
     expect(Option.getOrThrow(ended).config.memoryPressure).toBeUndefined();
+    expect(Option.getOrThrow(ended).config.quietRuns).toBeUndefined();
   });
 });

@@ -3181,6 +3181,16 @@ export const layerWsRpc = (
                       })),
                     )
                   : Stream.empty;
+              const quietRunUpdates =
+                input.quietRuns === true
+                  ? providerSessionManager.quietRuns.pipe(
+                      Stream.map((runs) => ({
+                        version: 1 as const,
+                        type: "quietRunsUpdated" as const,
+                        payload: { runs },
+                      })),
+                    )
+                  : Stream.empty;
               const settingsUpdates = settingsChanges.pipe(
                 Stream.map((settings) => ServerSettings.redactServerSettingsForClient(settings)),
                 Stream.map((settings) => ({
@@ -3198,7 +3208,10 @@ export const layerWsRpc = (
                     settingsUpdates,
                     Stream.merge(
                       environmentThemeUpdates,
-                      Stream.merge(usageLimitSourceUpdates, memoryPressureUpdates),
+                      Stream.merge(
+                        usageLimitSourceUpdates,
+                        Stream.merge(memoryPressureUpdates, quietRunUpdates),
+                      ),
                     ),
                   ),
                 ),
