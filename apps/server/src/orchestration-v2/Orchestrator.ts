@@ -1129,7 +1129,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           "contextTransfers",
         ],
         {
-          turnItemTypes: ["user_message", "error"],
+          turnItemTypes: ["user_message", "error", "notification"],
           messageRoles: ["user"],
           omitSettledLeafNodes: true,
           // Commands here read only undelivered or active tasks; a dispatcher thread keeps
@@ -3292,7 +3292,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const projection = yield* loadProjectionForCommand(
         command,
         ["runs", "runtimeRequests", "turnItems"],
-        { turnItemTypes: ["error"] },
+        { turnItemTypes: ["user_message", "error", "notification"] },
       );
       const run = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
       const failure = latestRootProviderFailure(run, projection.turnItems);
@@ -5267,7 +5267,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         source === undefined ||
         (source.status !== "interrupted" &&
           !(source.status === "failed" && limited?.class === "usage_limit")) ||
-        latestExecutedRun(projection.runs)?.id !== source.id ||
+        (source.status === "failed"
+          ? usageLimitBlockedRun(projection.runs, projection.turnItems, null)
+          : latestExecutedRun(projection.runs)
+        )?.id !== source.id ||
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
         projection.runtimeRequests.some((request) => request.status === "pending")
@@ -10596,14 +10599,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const { runs, subagents } = input.projection;
     let { thread } = input.projection;
     let recovery = thread.limitRecovery;
-    const latest = latestExecutedRun(runs);
+    const { turnItems } = yield* projectionStore
+      .getThreadRecords(thread.id, ["turnItems"], {
+        turnItemTypes: ["user_message", "notification", "error"],
+      })
+      .pipe(mapDispatchError(input.command));
+    const latest = usageLimitBlockedRun(runs, turnItems, null) ?? latestExecutedRun(runs);
     if (latest?.status === "failed") {
-      const { turnItems } = yield* projectionStore
-        .getThreadRecords(thread.id, ["turnItems"], {
-          turnItemTypes: ["error"],
-          turnItemRunIds: [latest.id],
-        })
-        .pipe(mapDispatchError(input.command));
+      // Stop must also reach the limited source hidden behind completed wakes.
+      if (latest.id !== latestExecutedRun(runs)?.id) {
+        yield* markStoppedRun({ ...input, thread, run: latest });
+      }
       const failure = latestRootProviderFailure(latest, turnItems);
       if (
         failure?.class === "usage_limit" &&
@@ -13092,7 +13098,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const projection = yield* loadProjectionForCommand(
           command,
           ["runs", "turnItems", "providerSessions", "messages"],
-          { turnItemTypes: ["error"], messageRoles: ["user"] },
+          { turnItemTypes: ["user_message", "error", "notification"], messageRoles: ["user"] },
         );
         if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
           return yield* new OrchestratorDispatchError({

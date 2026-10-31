@@ -140,6 +140,7 @@ describe("thread execution presentation", () => {
       failure: {
         class: "usage_limit" as const,
         message: "Plan limit reached",
+        resetAt: DateTime.formatIso(DateTime.add(now, { minutes: 1 })),
         code: "usageLimitExceeded",
         retryable: null,
       },
@@ -170,6 +171,69 @@ describe("thread execution presentation", () => {
         turnItems: [{ ...item, failure: { ...item.failure, class: "provider_error" as const } }],
       }),
     ).toMatchObject({ status: "queued", lastErrorClass: null });
+
+    const wake = {
+      ...run("wake", 4, "completed"),
+      rootNodeId: NodeId.make("wake-root"),
+      completedAt: DateTime.add(now, { seconds: 1 }),
+    };
+    const notification = {
+      ...item,
+      id: TurnItemId.make("wake-notification"),
+      runId: wake.id,
+      nodeId: wake.rootNodeId,
+      type: "notification" as const,
+      status: "completed" as const,
+      source: { kind: "background_task" as const },
+      outcome: "completed" as const,
+      summary: "Background work finished",
+    };
+    const woke = { ...projection, runs: [failed, wake], turnItems: [item, notification] };
+    expect(
+      deriveThreadRuntime({
+        ...woke,
+        runs: [failed, { ...wake, completedAt: DateTime.add(now, { minutes: 2 }) }],
+      }),
+    ).toMatchObject({ status: "completed", lastErrorClass: null });
+    expect(
+      usageLimitBlockedRun(
+        [failed, { ...wake, completedAt: DateTime.add(now, { minutes: 1 }) }],
+        woke.turnItems,
+        null,
+      )?.id,
+    ).toBe(failed.id);
+    expect(deriveThreadRuntime(woke)).toMatchObject({
+      status: "failed",
+      lastErrorClass: "usage_limit",
+    });
+    expect(
+      deriveThreadRuntime({ ...woke, runs: [failed, { ...wake, status: "running" }] }),
+    ).toMatchObject({ status: "running", lastErrorClass: null });
+    expect(deriveThreadRuntime({ ...woke, turnItems: [item] })).toMatchObject({
+      status: "completed",
+      lastErrorClass: null,
+    });
+    expect(
+      deriveThreadRuntime({
+        ...woke,
+        turnItems: [item, { ...notification, nodeId: NodeId.make("child") }],
+      }),
+    ).toMatchObject({ status: "completed", lastErrorClass: null });
+    const userInput = {
+      ...notification,
+      id: TurnItemId.make("wake-user-input"),
+      ordinal: 0,
+      type: "user_message" as const,
+      messageId: wake.userMessageId,
+      inputIntent: "turn_start" as const,
+      text: "Continue",
+      attachments: [],
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+    };
+    expect(
+      deriveThreadRuntime({ ...woke, turnItems: [notification, item, userInput] }),
+    ).toMatchObject({ status: "completed", lastErrorClass: null });
   });
 
   it("keeps live activity attached to an executing run when a newer run is queued", () => {

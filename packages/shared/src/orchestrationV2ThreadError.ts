@@ -81,7 +81,32 @@ export function usageLimitBlockedRun(
   turnItems: ReadonlyArray<FailureScanTurnItem>,
   sessionError: string | null,
 ): OrchestrationV2Run | null {
-  const executed = latestExecutedRun(runs);
+  const failed = latestExecutedRun(runs.filter((run) => run.status === "failed"));
+  const failure = latestRootProviderFailure(failed, turnItems);
+  if (failure?.class !== "usage_limit") return null;
+  const resetAt = failure.resetAt == null ? NaN : Date.parse(failure.resetAt);
+  // Before reset, a completed notification wake cannot supersede the limited work.
+  // After reset, success is authoritative even when the input was a notification.
+  const firstInputs = new Map<
+    NonNullable<OrchestrationV2TurnItem["nodeId"]>,
+    Extract<OrchestrationV2TurnItem, { type: "user_message" | "notification" }>
+  >();
+  for (const item of turnItems) {
+    if (item.nodeId === null || (item.type !== "user_message" && item.type !== "notification"))
+      continue;
+    const first = firstInputs.get(item.nodeId);
+    if (first === undefined || item.ordinal < first.ordinal) firstInputs.set(item.nodeId, item);
+  }
+  const executed = latestExecutedRun(
+    runs.filter(
+      (run) =>
+        run.status !== "completed" ||
+        run.completedAt === null ||
+        !(DateTime.toEpochMillis(run.completedAt) <= resetAt) ||
+        run.rootNodeId === null ||
+        firstInputs.get(run.rootNodeId)?.type !== "notification",
+    ),
+  );
   if (executed?.status !== "failed") return null;
   const summary = threadErrorSummary(latestRootProviderFailure(executed, turnItems), sessionError);
   return summary.lastErrorClass === "usage_limit" ? executed : null;

@@ -50,6 +50,9 @@
         "scripts/fetch-expo-schema.ts",
         "scripts/probe-claude-fork-local-rollback-replay.ts",
         "scripts/update-test-shard-weights.ts",
+        "scripts/usage-limit-web-evidence-record.mjs",
+        "scripts/usage-limit-web-evidence-seed.ts",
+        "scripts/usage-limit-web-evidence-stills.mjs",
         "scripts/verify-background-live.ts",
         "src/provider/testFixtures/*.mjs",
         // graphqlgen reads its config.
