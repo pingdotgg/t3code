@@ -7,6 +7,7 @@ import {
   MessageId,
   NodeId,
   OrchestratorMcpFailure,
+  type PeerLinkCreateInput,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -125,74 +126,86 @@ const scope: McpInvocationContext.McpInvocationScope = {
   issuedAt: 1,
 };
 
-/** The laptop: a real orchestrator, its orchestrator toolkit, and its links. */
-const makeLaptop = Effect.gen(function* () {
-  const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
-  // The orchestrator's own database, apart from the one links are kept in.
-  const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
-  const layerDatabase = Layer.succeedContext(database);
-  const layerOrchestrator = Layer.mergeAll(
-    layerDatabase,
-    ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
-    ProviderReplayHarness.layerWithRegistry(
-      { name: "peer-link-requests" },
-      ProviderAdapterRegistry.layerFromAdapters([adapter]),
-      { databaseLayer: layerDatabase, runEffectWorker: false },
-    ),
-  ).pipe(
-    Layer.provide(
-      Layer.succeed(ProviderContinuationRequests.ProviderContinuationRequests, {
-        offer: () => Effect.void,
-        take: Effect.never,
-      }),
-    ),
-  );
-  const layerThreads = ThreadManagement.layer.pipe(
-    Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
-    Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
-  );
-  const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
-    Layer.provideMerge(McpServer.McpServer.layer),
-    Layer.provideMerge(PeerLinkRequests.layer),
-    Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
-    Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
-    Layer.provide(Layer.succeedContext(linking)),
-    Layer.provide(NodeCrypto.layer),
-    Layer.provideMerge(layerThreads),
-    Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
-    Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
-    Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
-    Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
-    Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
-    Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
-    Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
-    Layer.provide(
-      ServerConfig.layerTest(process.cwd(), { prefix: "t3-peer-link-requests-" }).pipe(
-        Layer.provide(NodeServices.layer),
+/** A real orchestrator and links; the wrapper can hold a link in progress. */
+const makeLaptopWith = (
+  wrapLinks?: (links: PeerLinks.PeerLinks["Service"]) => PeerLinks.PeerLinks["Service"],
+) =>
+  Effect.gen(function* () {
+    const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
+    const answering =
+      wrapLinks === undefined
+        ? linking
+        : Context.add(
+            linking,
+            PeerLinks.PeerLinks,
+            wrapLinks(Context.get(linking, PeerLinks.PeerLinks)),
+          );
+    // The orchestrator's own database, apart from the one links are kept in.
+    const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+    const layerDatabase = Layer.succeedContext(database);
+    const layerOrchestrator = Layer.mergeAll(
+      layerDatabase,
+      ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+      ProviderReplayHarness.layerWithRegistry(
+        { name: "peer-link-requests" },
+        ProviderAdapterRegistry.layerFromAdapters([adapter]),
+        { databaseLayer: layerDatabase, runEffectWorker: false },
       ),
-    ),
-    Layer.provide(NodeServices.layer),
-    Layer.fresh,
-  );
-  const here = yield* Layer.build(layerHere);
-  const server = Context.get(here, McpServer.McpServer);
-  return {
-    links: Context.get(linking, PeerLinks.PeerLinks),
-    linksSql: Context.get(linking, SqlClient.SqlClient),
-    requests: Context.get(here, PeerLinkRequests.PeerLinkRequests),
-    orchestrator: Context.get(here, Orchestrator.OrchestratorV2),
-    sink: Context.get(here, EventSink.EventSinkV2),
-    projections: Context.get(here, ProjectionStore.ProjectionStoreV2),
-    sql: Context.get(database, SqlClient.SqlClient),
-    call: (args: Record<string, unknown>, callScope = scope) =>
-      server
-        .callTool({ name: "t3_environment_link", arguments: args })
-        .pipe(
-          Effect.provideService(McpInvocationContext.McpInvocationContext, callScope),
-          Effect.provideService(McpSchema.McpServerClient, mcpClient),
+    ).pipe(
+      Layer.provide(
+        Layer.succeed(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: () => Effect.void,
+          take: Effect.never,
+        }),
+      ),
+    );
+    const layerThreads = ThreadManagement.layer.pipe(
+      Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+      Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
+    );
+    const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
+      Layer.provideMerge(McpServer.McpServer.layer),
+      Layer.provideMerge(PeerLinkRequests.layer),
+      Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+      Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+      Layer.provide(Layer.succeedContext(answering)),
+      Layer.provide(NodeCrypto.layer),
+      Layer.provideMerge(layerThreads),
+      Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
+      Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+      Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+      Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+      Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+      Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
+      Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+      Layer.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-peer-link-requests-" }).pipe(
+          Layer.provide(NodeServices.layer),
         ),
-  };
-});
+      ),
+      Layer.provide(NodeServices.layer),
+      Layer.fresh,
+    );
+    const here = yield* Layer.build(layerHere);
+    const server = Context.get(here, McpServer.McpServer);
+    return {
+      links: Context.get(linking, PeerLinks.PeerLinks),
+      linksSql: Context.get(linking, SqlClient.SqlClient),
+      requests: Context.get(here, PeerLinkRequests.PeerLinkRequests),
+      orchestrator: Context.get(here, Orchestrator.OrchestratorV2),
+      sink: Context.get(here, EventSink.EventSinkV2),
+      projections: Context.get(here, ProjectionStore.ProjectionStoreV2),
+      sql: Context.get(database, SqlClient.SqlClient),
+      call: (args: Record<string, unknown>, callScope = scope) =>
+        server
+          .callTool({ name: "t3_environment_link", arguments: args })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, callScope),
+            Effect.provideService(McpSchema.McpServerClient, mcpClient),
+          ),
+    };
+  });
+const makeLaptop = makeLaptopWith();
 type Laptop = Effect.Success<typeof makeLaptop>;
 
 /** The laptop's thread, mid-turn when its agent asks, in `runtimeMode`. */
@@ -976,4 +989,359 @@ it.live(
         expect((yield* b.linkedSessions).length).toBe(1);
       }),
     ),
+);
+
+const linkCards = (a: Laptop) =>
+  a.orchestrator
+    .getThreadProjection(threadId)
+    .pipe(
+      Effect.map((projection) =>
+        projection.turnItems.flatMap((item) => (item.type === "link_request" ? [item] : [])),
+      ),
+    );
+
+const ask = (a: Laptop, args: Record<string, unknown>) =>
+  Effect.gen(function* () {
+    const asked = yield* a.call(args);
+    const { turnItemId } = asked.structuredContent as { readonly turnItemId: TurnItemId };
+    return (yield* linkCards(a)).find((card) => card.id === turnItemId)!;
+  });
+
+const linkBox = (a: Laptop, b: ServedPeer, cardId: TurnItemId) =>
+  Effect.gen(function* () {
+    const pairing = yield* b.auth.issuePairingCredential();
+    yield* a.requests.answer({
+      threadId,
+      turnItemId: cardId,
+      answer: {
+        type: "link",
+        urls: [b.url],
+        access: "full-access",
+        pairingCode: pairing.credential,
+      },
+    });
+    return pairing.credential;
+  });
+
+it.live("linking the machine an older card asked for by hint ends that card too", () =>
+  withBoth((a, b) =>
+    Effect.gen(function* () {
+      yield* seedThread(a);
+      // The agent first asks by the user's word, then again by the box's address.
+      const older = yield* ask(a, {
+        reason: "Delegate to the box.",
+        hint: "Box",
+        requestedAccess: "full-access",
+        clientRequestId: "by-hint",
+      });
+      const newer = yield* ask(a, {
+        url: b.url,
+        reason: "Delegate to the box.",
+        hint: "Box",
+        requestedAccess: "full-access",
+        clientRequestId: "by-url",
+      });
+      const credential = yield* linkBox(a, b, newer.id);
+
+      const cards = yield* linkCards(a);
+      expect(cards.find((card) => card.id === newer.id)).toMatchObject({
+        status: "completed",
+        linkStatus: "linked",
+        linkedEnvironmentId: box.environmentId,
+      });
+      // The older card keeps what it asked and ends; it no longer asks the user.
+      expect(cards.find((card) => card.id === older.id)).toMatchObject({
+        status: "cancelled",
+        linkStatus: "cancelled",
+        hint: "Box",
+        reason: "Delegate to the box.",
+        requestedAccess: "full-access",
+      });
+      expect((yield* a.orchestrator.getThreadShell(threadId))?.pendingRuntimeRequest).toBeNull();
+      expect(
+        ProjectionStore.threadShellFromProjection(
+          yield* a.orchestrator.getThreadProjection(threadId),
+        ).pendingRuntimeRequest,
+      ).toBeNull();
+      // The agent hears of the one link it made, and nothing about the card that link ended.
+      expect((yield* outcomeMessages(a)).messages).toHaveLength(1);
+      expect(yield* storedText(a)).not.toContain(credential);
+    }),
+  ),
+);
+
+const recordCard = (
+  a: Laptop,
+  key: string,
+  fields: {
+    readonly url?: string;
+    readonly environmentId?: typeof box.environmentId;
+    readonly hint?: string;
+    readonly requestedAccess?: "read-only" | "full-access";
+  },
+) =>
+  Effect.gen(function* () {
+    const id = TurnItemId.make(`turn-item:link-request:${key}`);
+    yield* a.orchestrator.dispatch({
+      type: "link_request.record",
+      commandId: CommandId.make(`command:pending:${key}`),
+      threadId,
+      runId,
+      nodeId: rootNode,
+      turnItemId: id,
+      reason: "",
+      linkStatus: "pending",
+      ...fields,
+    });
+    return id;
+  });
+
+it.live("a link ends older cards for the same machine by id or address", () =>
+  withBoth((a, b) =>
+    Effect.gen(function* () {
+      yield* seedThread(a);
+      const byId = yield* ask(a, {
+        environmentId: box.environmentId,
+        requestedAccess: "full-access",
+      });
+      expect(byId.environmentId).toBe(box.environmentId);
+      const byAddress = yield* recordCard(a, "by-address", {
+        url: b.url,
+        requestedAccess: "full-access",
+      });
+      const newer = yield* ask(a, { url: b.url, requestedAccess: "full-access" });
+      yield* linkBox(a, b, newer.id);
+
+      const cards = yield* linkCards(a);
+      expect(cards.find((card) => card.id === byId.id)).toMatchObject({ linkStatus: "cancelled" });
+      expect(cards.find((card) => card.id === byAddress)).toMatchObject({
+        linkStatus: "cancelled",
+      });
+      expect((yield* outcomeMessages(a)).messages).toHaveLength(1);
+    }),
+  ),
+);
+
+it.live("a link leaves open the cards that asked for something else, or asked later", () =>
+  withBoth((a, b) =>
+    Effect.gen(function* () {
+      yield* seedThread(a);
+      const other = descriptorOf("environment-other", "Other");
+      const left = [
+        // Another machine, and a word that names neither.
+        yield* recordCard(a, "other-hint", { hint: "vps", requestedAccess: "full-access" }),
+        yield* recordCard(a, "no-hint", { requestedAccess: "full-access" }),
+        // The same word, but for less access than the link was asked with.
+        yield* recordCard(a, "less-access", { hint: "Box", requestedAccess: "read-only" }),
+        // The same word, on a card that named another machine.
+        yield* recordCard(a, "other-id", {
+          environmentId: other.environmentId,
+          hint: "Box",
+          requestedAccess: "full-access",
+        }),
+        yield* recordCard(a, "other-address", {
+          url: "http://127.0.0.1:9",
+          hint: "Box",
+          requestedAccess: "full-access",
+        }),
+        // A word the label only contains.
+        yield* recordCard(a, "partial-hint", { hint: "Bo", requestedAccess: "full-access" }),
+      ];
+      const linked = yield* ask(a, { url: b.url, hint: "Box", requestedAccess: "full-access" });
+      const later = yield* recordCard(a, "later", { hint: "Box", requestedAccess: "full-access" });
+      yield* linkBox(a, b, linked.id);
+
+      const cards = yield* linkCards(a);
+      expect(cards.find((card) => card.id === linked.id)).toMatchObject({ linkStatus: "linked" });
+      for (const id of [...left, later]) {
+        expect(cards.find((card) => card.id === id)).toMatchObject({
+          status: "waiting",
+          linkStatus: "pending",
+        });
+      }
+    }),
+  ),
+);
+
+it.live("a later card's failed link leaves the older card open", () =>
+  withBoth((a, b) =>
+    Effect.gen(function* () {
+      yield* seedThread(a);
+      const older = yield* ask(a, { hint: "Box", requestedAccess: "full-access" });
+      const byAddress = yield* recordCard(a, "by-address", {
+        url: b.url,
+        requestedAccess: "full-access",
+      });
+      const newer = yield* ask(a, { url: b.url, hint: "Box", requestedAccess: "full-access" });
+      yield* a.requests.answer({
+        threadId,
+        turnItemId: newer.id,
+        answer: { type: "link", urls: [b.url], access: "full-access", pairingCode: "not-a-code" },
+      });
+
+      const cards = yield* linkCards(a);
+      expect(cards.find((card) => card.id === newer.id)).toMatchObject({ linkStatus: "failed" });
+      for (const id of [older.id, byAddress]) {
+        expect(cards.find((card) => card.id === id)).toMatchObject({
+          status: "waiting",
+          linkStatus: "pending",
+        });
+      }
+      expect((yield* a.orchestrator.getThreadShell(threadId))?.pendingRuntimeRequest).toMatchObject(
+        { kind: "user_input" },
+      );
+
+      // The older card still takes its answer, and the failed one stays as it ended.
+      yield* linkBox(a, b, older.id);
+      const after = yield* linkCards(a);
+      expect(after.find((card) => card.id === older.id)).toMatchObject({ linkStatus: "linked" });
+      expect(after.find((card) => card.id === newer.id)).toMatchObject({ linkStatus: "failed" });
+    }),
+  ),
+);
+
+const withHeldLinks = <A, E, R>(
+  hold: (access: PeerLinkCreateInput["access"]) => Effect.Effect<void> | undefined,
+  body: (a: Laptop, b: ServedPeer) => Effect.Effect<A, E, R>,
+) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveBox;
+      const a = yield* makeLaptopWith((links) => ({
+        ...links,
+        link: (input) =>
+          (hold(input.access) ?? Effect.void).pipe(Effect.andThen(links.link(input))),
+      }));
+      return yield* body(a, b);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest));
+
+it.live("an older card answered while a newer one links the same machine keeps its own link", () =>
+  Effect.gen(function* () {
+    const reached = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const fullAccessHeld = Deferred.succeed(reached, undefined).pipe(
+      Effect.andThen(Deferred.await(release)),
+    );
+    yield* withHeldLinks(
+      (access) => (access === "full-access" ? fullAccessHeld : undefined),
+      (a, b) =>
+        Effect.gen(function* () {
+          yield* seedThread(a);
+          // Both cards suggest the same machine and access.
+          const older = yield* ask(a, {
+            url: b.url,
+            requestedAccess: "full-access",
+            clientRequestId: "older",
+          });
+          const newer = yield* ask(a, {
+            url: b.url,
+            requestedAccess: "full-access",
+            clientRequestId: "newer",
+          });
+          const olderCode = yield* b.auth.issuePairingCredential();
+          const newerCode = yield* b.auth.issuePairingCredential();
+
+          // The user grants full access on the older card, which stalls while linking.
+          const olderAnswer = yield* a.requests
+            .answer({
+              threadId,
+              turnItemId: older.id,
+              answer: {
+                type: "link",
+                urls: [b.url],
+                access: "full-access",
+                pairingCode: olderCode.credential,
+              },
+            })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(reached);
+
+          // Meanwhile the newer card links with read-only access and finishes.
+          yield* a.requests.answer({
+            threadId,
+            turnItemId: newer.id,
+            answer: {
+              type: "link",
+              urls: [b.url],
+              access: "read-only",
+              pairingCode: newerCode.credential,
+            },
+          });
+          // The older card is still being answered, so the newer link leaves it open.
+          expect((yield* linkCards(a)).find((card) => card.id === older.id)).toMatchObject({
+            status: "waiting",
+            linkStatus: "pending",
+          });
+
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(olderAnswer);
+
+          const cards = yield* linkCards(a);
+          const stored = Option.getOrThrow(yield* a.links.get(box.environmentId));
+          expect(cards.find((card) => card.id === newer.id)).toMatchObject({
+            status: "completed",
+            linkStatus: "linked",
+            linkedAccess: "read-only",
+          });
+          // The older card says what the link the box now has grants, and the agent hears it.
+          expect(stored.access).toBe("full-access");
+          expect(cards.find((card) => card.id === older.id)).toMatchObject({
+            status: "completed",
+            linkStatus: "linked",
+            linkedEnvironmentId: stored.environmentId,
+            linkedAccess: stored.access,
+          });
+          const { messages } = yield* outcomeMessages(a);
+          expect(messages.map((message) => message.notification?.outcome)).toEqual([
+            "completed",
+            "completed",
+          ]);
+        }),
+    );
+  }),
+);
+
+it.live("a card a newer link ended links nothing when answered after", () =>
+  Effect.gen(function* () {
+    let links = 0;
+    yield* withHeldLinks(
+      () => Effect.sync(() => void links++),
+      (a, b) =>
+        Effect.gen(function* () {
+          yield* seedThread(a);
+          const older = yield* ask(a, {
+            url: b.url,
+            requestedAccess: "full-access",
+            clientRequestId: "older",
+          });
+          const newer = yield* ask(a, {
+            url: b.url,
+            requestedAccess: "full-access",
+            clientRequestId: "newer",
+          });
+          yield* linkBox(a, b, newer.id);
+          expect(links).toBe(1);
+
+          const pairing = yield* b.auth.issuePairingCredential();
+          const late = yield* a.requests
+            .answer({
+              threadId,
+              turnItemId: older.id,
+              answer: {
+                type: "link",
+                urls: [b.url],
+                access: "read-only",
+                pairingCode: pairing.credential,
+              },
+            })
+            .pipe(Effect.flip);
+          expect(late.reason).toBe("already_answered");
+          expect(links).toBe(1);
+          expect(Option.getOrThrow(yield* a.links.get(box.environmentId)).access).toBe(
+            "full-access",
+          );
+        }),
+    );
+  }),
 );
