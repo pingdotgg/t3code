@@ -50,7 +50,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ExternalLauncher from "../process/externalLauncher.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
-import { resolveCliCommand } from "./invocation.ts";
+import { resolveHostCliCommand } from "./invocation.ts";
 import * as CliService from "./service.ts";
 
 const jsonFlag = Flag.Boolean("json").pipe(
@@ -623,7 +623,7 @@ const connectLinkCommand = Command.make("link", {
         yield* Console.log("T3 Connect\n");
         const linked = yield* linkEnvironmentForConnect(flags);
         if (linked) {
-          const serveCommand = yield* resolveCliCommand("serve");
+          const serveCommand = (yield* resolveHostCliCommand("serve")).command;
           yield* Console.log(
             flags.publishOnly
               ? `✓ Authorized${connectedAs(linked.identity)}\n\nNext\n  Start T3 to publish agent activity (no managed tunnel).`
@@ -794,7 +794,7 @@ const reportServiceOnboarding = Effect.fn("cli.connect.report_service_onboarding
     );
     return;
   }
-  const serveCommand = yield* resolveCliCommand("serve");
+  const serveCommand = (yield* resolveHostCliCommand("serve")).command;
   yield* Console.log(
     `\nNext\n  Start the server with \`${serveCommand}\` to make this machine reachable.\n  It checks that other devices can reach this machine when it starts.`,
   );
