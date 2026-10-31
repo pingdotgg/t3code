@@ -2,14 +2,29 @@ import {
   FileFinder,
   type FileItem,
   type GrepCursor,
-  type GrepOptions,
+  type MultiGrepOptions,
   type GrepResult,
 } from "@ff-labs/fff-node";
 import { afterEach, expect, it } from "@effect/vitest";
+import { VcsProcessSpawnError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
+
+const gitUnavailable = Layer.succeed(VcsProcess.VcsProcess, {
+  run: (input) =>
+    Effect.fail(
+      new VcsProcessSpawnError({
+        operation: input.operation,
+        command: input.command,
+        cwd: input.cwd,
+        cause: new Error("git is unavailable in unit tests"),
+      }),
+    ),
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -51,14 +66,16 @@ it.effect("filters image searches before applying the result limit", () =>
       } as unknown as FileFinder;
       vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
 
-      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project");
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project").pipe(
+        Effect.provide(gitUnavailable),
+      );
       const resultWithoutKind = yield* searchIndex.search("", 200, undefined, true);
       const resultWithDirectoryKind = yield* searchIndex.search("", 200, "directory", true);
 
       expect(resultWithoutKind.entries).toEqual([{ kind: "file", path: "public/icon.svg" }]);
       expect(resultWithDirectoryKind.entries).toEqual([{ kind: "file", path: "public/icon.svg" }]);
       expect(fileSearch).toHaveBeenCalledTimes(2);
-      expect(fileSearch).toHaveBeenCalledWith("", { pageSize: 25_002 });
+      expect(fileSearch).toHaveBeenCalledWith("!**/.git", { pageSize: 25_002 });
     }),
   ),
 );
@@ -99,8 +116,9 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
         filteredFileCount: 1,
         nextCursor: cursor,
       });
-      const grep = vi.fn((_query: string, options?: GrepOptions) =>
-        options?.cursor
+      // A single plain token runs through multiGrep so exclusions stay out of the pattern.
+      const multiGrep = vi.fn((options: MultiGrepOptions) =>
+        options.cursor
           ? { ok: true as const, value: grepResult("needle", [[0, 6]], null) }
           : {
               ok: true as const,
@@ -110,11 +128,13 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
       const finder = {
         destroy: vi.fn(),
         waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-        grep,
+        multiGrep,
       } as unknown as FileFinder;
       vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
 
-      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content");
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content").pipe(
+        Effect.provide(gitUnavailable),
+      );
       const result = yield* searchIndex.searchContents({
         query: "needle",
         limit: 1,
@@ -134,8 +154,12 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
         ],
         truncated: false,
       });
-      expect(grep).toHaveBeenCalledTimes(2);
-      expect(grep.mock.calls[1]?.[1]?.cursor).toBe(nextCursor);
+      expect(multiGrep).toHaveBeenCalledTimes(2);
+      expect(multiGrep.mock.calls[0]?.[0]).toMatchObject({
+        patterns: ["needle"],
+        constraints: "!**/.git",
+      });
+      expect(multiGrep.mock.calls[1]?.[0]?.cursor).toBe(nextCursor);
     }),
   ),
 );
