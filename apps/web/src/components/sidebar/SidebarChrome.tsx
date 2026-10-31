@@ -137,7 +137,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigateToMainApp = useNavigateToMainApp();
   const { isMobile, setOpenMobile } = useSidebar();
   const isOnUtilityPage = useLocation({
-    select: (location) => isSidebarUtilityPage(location.pathname),
+    select: (location) => isSidebarUtilityPage(location.pathname) && location.search.pane !== 1,
   });
   const pullRequestsSupported = usePullRequestsSupported();
   const closeMobileSidebar = () => {
@@ -154,7 +154,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   };
   const handleSettingsClick = () => {
     closeMobileSidebar();
-    void navigate({ to: "/settings" });
+    void navigate({ to: "/settings", search: { pane: undefined } });
   };
 
   const handleUsageClick = () => {
