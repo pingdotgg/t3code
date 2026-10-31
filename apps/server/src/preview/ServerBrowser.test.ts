@@ -374,6 +374,7 @@ const dependencies = Layer.mergeAll(
       Effect.acquireRelease(Effect.succeed(`ws://desktop/${key.tabId}`), () =>
         Effect.sync(() => {
           releasedDesktopTabs.push(key.tabId);
+          desktopDetaches.emit("release", key.tabId);
           desktopReleased.resolve();
         }),
       ),
@@ -2110,6 +2111,69 @@ it.live("failed session and browser launches release capacity, as does closing a
         input: {},
       });
       expect(status.tabs).toHaveLength(8);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a full server takes back the slot of the longest idle agent tab, even a desktop one", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      yield* ServerBrowser.ServerBrowser;
+      yield* Effect.yieldNow;
+      const now = vi.spyOn(Date, "now").mockReturnValue(0);
+      yield* Effect.addFinalizer(() => Effect.sync(() => now.mockRestore()));
+      const open = (providerSessionId: string) => {
+        desktopRendersNext = true;
+        return broker.invoke<PreviewAutomationStatus>({
+          scope: asSession(providerSessionId),
+          operation: "open",
+          input: { reuseExistingTab: false, open: false },
+        });
+      };
+      const opened: Array<string> = [];
+      for (let index = 0; index < 32; index++) {
+        now.mockReturnValue(index);
+        opened.push((yield* open(`agent-${Math.floor(index / 8)}`)).tabId!);
+      }
+
+      now.mockReturnValue(100);
+      yield* broker.invoke<PreviewAutomationStatus>({
+        scope: asSession("agent-observer"),
+        operation: "status",
+        tabId: PreviewTabId.make(opened[0]!),
+        input: {},
+      });
+
+      // Inside the idle window every desktop tab keeps its slot.
+      now.mockReturnValue(29 * 60 * 1000);
+      expect(yield* open("agent-new").pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
+      expect(releasedDesktopTabs).toEqual([]);
+
+      now.mockReturnValue(31 * 60 * 1000);
+      // A session at its own limit couldn't use a freed slot, so nothing closes for it.
+      expect(yield* open("agent-3").pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
+      expect(releasedDesktopTabs).toEqual([]);
+      const events = yield* manager.subscribeEvents;
+      const releases = yield* Queue.unbounded<string>();
+      const recordRelease = (tabId: string) => Queue.offerUnsafe(releases, tabId);
+      desktopDetaches.on("release", recordRelease);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => desktopDetaches.off("release", recordRelease)),
+      );
+      const fresh = yield* open("agent-new");
+      expect(fresh.tabId).toBeDefined();
+      expect(yield* Queue.take(releases)).toBe(opened[1]);
+      yield* Stream.fromSubscription(events).pipe(
+        Stream.filter((event) => event.type === "closed" && event.tabId === opened[1]),
+        Stream.runHead,
+      );
+      expect(releasedDesktopTabs).toEqual([opened[1]]);
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      expect(sessions.map((session) => session.tabId).toSorted()).toEqual(
+        [...opened.filter((tabId) => tabId !== opened[1]), fresh.tabId!].toSorted(),
+      );
     }),
   ).pipe(Effect.provide(layer)),
 );
