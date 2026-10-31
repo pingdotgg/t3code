@@ -1172,6 +1172,11 @@ export function createServerEnvironmentAtoms<R, E>(
     scheduler: configScheduler,
     concurrency: configConcurrency,
   });
+  const sandboxesProviders = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:sandboxes:providers",
+    tag: WS_METHODS.sandboxesProviders,
+    idleTtlMs: 0,
+  });
 
   return {
     configValueAtom,
@@ -1193,6 +1198,16 @@ export function createServerEnvironmentAtoms<R, E>(
       idleTtlMs: 0,
     }),
     updateStateAtom,
+    sandboxesProviders,
+    sandboxesCreate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:sandboxes:create",
+      tag: WS_METHODS.sandboxesCreate,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
+    sandboxesDelete: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:sandboxes:delete",
+      tag: WS_METHODS.sandboxesDelete,
+    }),
     settingsValueAtom,
     providersValueAtom,
     providerAuthState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
