@@ -297,7 +297,9 @@ function sameSchedule(a: ScheduledTaskUpsertSchedule, b: ScheduledTaskUpsertSche
         : JSON.stringify([signature.header.toLowerCase(), signature.encoding, signature.prefix]);
     return (
       signatureKey(a.signature) === signatureKey(b.signature) &&
-      (a.maxDeliveryAgeMinutes ?? null) === (b.maxDeliveryAgeMinutes ?? null)
+      (a.maxDeliveryAgeMinutes ?? null) === (b.maxDeliveryAgeMinutes ?? null) &&
+      JSON.stringify(a.dedupe ?? {}) === JSON.stringify(b.dedupe ?? {}) &&
+      JSON.stringify(a.filters) === JSON.stringify(b.filters)
     );
   }
   if (b.type !== "fixed_time") return false;
@@ -364,7 +366,10 @@ export function buildScheduledTaskUpdateInput(
       (liveTask.schedule.type === "interval" &&
         liveTask.schedule.everyMs < MIN_SCHEDULED_TASK_INTERVAL_MS))
   ) {
-    patch.schedule = schedule;
+    patch.schedule =
+      schedule.type === "webhook" && liveTask.schedule.type === "webhook"
+        ? { ...schedule, signature: liveTask.schedule.signature }
+        : schedule;
   }
   if (draft.runtimeMode !== baseline.runtimeMode) patch.runtimeMode = draft.runtimeMode;
   if (

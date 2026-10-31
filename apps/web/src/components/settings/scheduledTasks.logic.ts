@@ -74,7 +74,9 @@ function sameSchedule(a: ScheduledTaskUpsertSchedule, b: ScheduledTaskUpsertSche
           ]);
     return (
       signatureKey(a.signature) === signatureKey(b.signature) &&
-      (a.maxDeliveryAgeMinutes ?? null) === (b.maxDeliveryAgeMinutes ?? null)
+      (a.maxDeliveryAgeMinutes ?? null) === (b.maxDeliveryAgeMinutes ?? null) &&
+      JSON.stringify(a.dedupe ?? {}) === JSON.stringify(b.dedupe ?? {}) &&
+      JSON.stringify(a.filters) === JSON.stringify(b.filters)
     );
   }
   return (

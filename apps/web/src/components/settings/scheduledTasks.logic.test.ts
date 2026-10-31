@@ -97,6 +97,15 @@ describe("buildScheduledTaskUpdateInput", () => {
         dedupe: {},
       },
     });
+    for (const change of [
+      { replayKey: "{{headers.delivery-id}}" },
+      { coalesceKey: "{{body.id}}" },
+      { coalesceWindowSeconds: "60" },
+      { filters: [{ id: "filter", path: "body.action", op: "equals" as const, value: "opened" }] },
+    ]) {
+      const edited = { ...taskToDraft(webhookTask), ...change };
+      expect(buildPatch(edited, webhookTask)?.schedule).toEqual(scheduleFromDraft(edited));
+    }
   });
 
   it("keeps disjoint edits disjoint so concurrent saves merge", () => {

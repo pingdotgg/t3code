@@ -26,11 +26,8 @@ A bound task needs a thread that can accept a run:
   archived thread.
 - Unarchiving the thread does not restart the task. Re-enable it explicitly in
   Scheduled tasks or the thread's Automations section to resume it.
-- Deleting the bound thread pauses the task the same way. To keep the task in
-  its current project, ask an agent in another active thread in that project
-  to detach it or bind it to that agent’s thread with `update_scheduled_task`, then
-  re-enable it. In Settings, moving the task to another project detaches it;
-  you can then re-enable it there. You can also delete the paused task.
+- Deleting the bound thread deletes its bound tasks. To keep a task, detach it
+  or bind it to another thread before deleting the original thread.
 - Enabling a task while its bound thread is archived is rejected until the
   thread is unarchived.
 

@@ -269,6 +269,27 @@ describe("buildScheduledTaskUpdateInput", () => {
       projectId: webhookTask.projectId,
       title: "Renamed",
     });
+    for (const change of [
+      { replayKey: "{{headers.delivery-id}}" },
+      { coalesceKey: "{{body.id}}" },
+      { coalesceWindowSeconds: "60" },
+      { filters: [{ id: "filter", path: "body.action", op: "equals" as const, value: "opened" }] },
+    ]) {
+      const edited = { ...editDraft(webhookTask), schedule: { ...draft.schedule, ...change } };
+      expect(buildScheduledTaskUpdateInput(edited, webhookTask)?.schedule).toEqual(
+        scheduleFromDraft(edited.schedule),
+      );
+    }
+    const unsigned: ScheduledTask = {
+      ...webhookTask,
+      schedule: { type: "webhook", signature: null, maxDeliveryAgeMinutes: 30 },
+    };
+    const opening = editDraft(unsigned);
+    const ageEdit = { ...opening, schedule: { ...opening.schedule, maxDeliveryAgeMinutes: "60" } };
+    expect(buildScheduledTaskUpdateInput(ageEdit, webhookTask)?.schedule).toMatchObject({
+      signature: webhookTask.schedule.type === "webhook" ? webhookTask.schedule.signature : null,
+      maxDeliveryAgeMinutes: 60,
+    });
   });
 
   it("patches the editable runtime mode", () => {
