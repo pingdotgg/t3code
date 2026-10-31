@@ -1,22 +1,6 @@
-/**
- * The document a host mounts for a plugin view, shared by every client.
- *
- * The host sets the result as the `srcdoc` of a frame with
- * `PLUGIN_VIEW_FRAME_ATTRIBUTES`. That frame is a script-free policy wrapper
- * whose CSP (`default-src 'none'`, so `frame-src 'none'`) refuses every
- * network or `data:` navigation of the view inside it: a document's own CSP
- * cannot stop its frame navigating, only the embedding document's can. The
- * view document inside has its own CSP first, listing exactly two scripts by
- * SHA-256: the host bootstrap below and the view's script. The engine checks
- * those hashes against the text it parses, so a script whose bytes differ
- * from the bundle's `sha256` never runs; the host needs no hashing of its own
- * and therefore no secure context.
- *
- * Both frames are sandboxed without `allow-same-origin`: opaque origin, no
- * app cookies, storage, or IPC. The wrapper and view inherit the app
- * document's policy too, so a host page whose own CSP forbids inline script
- * or srcdoc frames cannot show views (fail closed, never widen the app CSP).
- */
+// An embedding policy wrapper blocks navigation; a view's own CSP cannot stop its frame navigating.
+// Both frames have opaque sandbox origins; CSP pins the parsed bytes of bootstrap and view scripts by SHA-256.
+// They inherit app CSP and fail closed if it forbids scripts or srcdoc; never widen app policy.
 import {
   PLUGIN_VIEW_CONNECT_MESSAGE,
   PLUGIN_VIEW_HANDLER_MAX_LENGTH,
@@ -36,16 +20,8 @@ export const PLUGIN_VIEW_FRAME_ATTRIBUTES = {
   allow: "",
 } as const;
 
-/**
- * Runs first in the view document. It takes exactly one port, only from the
- * host window (the wrapper's parent), answers pings, and gives the view
- * script `t3View.ready` (resolves with `{ pluginId, viewId, title }`) and
- * `t3View.call(handler, input, { signal })`, which settles with the plugin's
- * answer or rejects with an Error carrying `code`. A call the host would
- * refuse for its shape, size or depth is rejected here without being sent;
- * an abort rejects at once. The host answers every call it receives, so no
- * call stays pending while the mount lives.
- */
+// Accept one port only from the host (wrapper parent); reject malformed/oversized calls locally.
+// Abort rejects immediately; the host answers every received call so promises settle while the mount lives.
 export const PLUGIN_VIEW_BOOTSTRAP_SOURCE = `(() => {
   const host = window.parent.parent;
   const encoder = new TextEncoder();

@@ -9,12 +9,7 @@ import { pluginActionEnvironment } from "../../state/pluginActions";
 import { usePluginViews } from "../../state/pluginViews";
 import { useEnvironmentQuery } from "../../state/query";
 
-/**
- * What a plugin adds to T3 Code, from its manifest summary. For the enabled
- * installation, the environment's action and view snapshots say what is offered
- * now; listing them never starts the plugin. Pass `installation` as null for a
- * manifest that is not installed yet, such as a downloaded update.
- */
+// Snapshot availability is authoritative for installed plugins; inspecting a manifest never starts one.
 export function PluginContributionsList({
   environment,
   manifest,

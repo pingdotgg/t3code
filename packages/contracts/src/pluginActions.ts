@@ -1,20 +1,5 @@
-/**
- * PluginActions - Commands that trusted local plugins add to the command
- * palette, the thread menu, and the composer's slash menu.
- *
- * A plugin declares its actions in `t3-plugin.json`, so they are covered by
- * the digest the user consented to and listing them never starts the plugin.
- * The server lists the actions of every enabled installation under opaque,
- * server-issued ids that name the installation's current registration. A
- * click runs the plugin's `action:<name>` handler against one target: the
- * environment, a project, or a thread. A stale id (the plugin was disabled,
- * removed, changed, or enabled again since the list was sent) is refused; it
- * never reaches a newer registration.
- *
- * Gated by `ExecutionEnvironmentCapabilities.pluginActions`.
- *
- * @module PluginActions
- */
+// Opaque action ids pin registration generations; stale clicks never reach a newer registration.
+// Declarations belong to consented manifests; listing them never starts a plugin.
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
@@ -99,14 +84,8 @@ const PluginAction = Schema.Struct({
 });
 export type PluginAction = typeof PluginAction.Type;
 
-/**
- * Every action the environment offers now. Each frame replaces the previous one.
- *
- * Plugins are offered whole, in catalogue order, until the next one would pass
- * `PLUGIN_ACTIONS_MAX_PER_ENVIRONMENT` or `PLUGIN_ACTIONS_SNAPSHOT_MAX_BYTES`.
- * That plugin and every later one are left out and counted in `omitted`, and
- * their actions cannot be run.
- */
+// Snapshots replace earlier frames and include whole plugins until the first limit is reached.
+// Omitted plugins cannot run actions; later plugins are omitted with them.
 export const PluginActionsSnapshot = Schema.Struct({
   actions: ForwardCompatibleArray(PluginAction),
   /** Present only when plugins were left out. */

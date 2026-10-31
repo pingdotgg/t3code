@@ -50,6 +50,7 @@ const DRIVER_KIND = ProviderDriverKind.make("grok");
 // npm latest matches the stable channel installed by grok update.
 const GROK_NPM_PACKAGE = "@xai-official/grok";
 // `grok update` installs under `GROK_HOME`; use the resolved executable and instance environment.
+// npm 12 blocks the postinstall that moves the new binary in, yet exits 0, so allow it by env.
 // Homebrew casks need brew upgrades; `grok update` would install a second copy.
 // Keep casks manual when their brew cannot vouch for them.
 const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
@@ -83,7 +84,7 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
       updateArgs: ["update"],
       updateLockKey: "grok",
       platform: context.platform,
-      env: context.env,
+      env: { ...context.env, npm_config_allow_scripts: GROK_NPM_PACKAGE },
     });
   }),
 };

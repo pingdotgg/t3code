@@ -73,7 +73,6 @@ import {
   type PluginActionContext,
   pluginActionsAt,
 } from "@t3tools/client-runtime/state/pluginActions";
-import { useAtomCommand } from "../../state/use-atom-command";
 import type { ComposerCommandItem } from "./ComposerCommandPopover";
 import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
 
@@ -557,6 +556,7 @@ export function useComposerCommandMenu({
     projectId,
   };
   const liveSelectionRef = useRef(liveSelection);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed composer ownership to asynchronous native menu callbacks
   useLayoutEffect(() => {
     liveSelectionRef.current = liveSelection;
   });

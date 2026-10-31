@@ -19,7 +19,6 @@ import {
   buildThreadActionItems,
   buildLinkedThreadActionItems,
   buildPluginActionItems,
-  enumerateCommandPaletteItems,
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
   reduceCommandPaletteUiState,

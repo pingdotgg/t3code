@@ -101,12 +101,7 @@ function plural(count: number, one: string, many: string): string {
   return count === 1 ? `1 ${one}` : `${count} ${many}`;
 }
 
-/**
- * Whether the server offers this installation's actions at all, before its
- * environment-wide limit: enabled with matching consent, declaring `actions`,
- * and not waiting on a Resume (quarantined or incompatible). Only eligible
- * installations count towards the limit's `omitted`.
- */
+// Only enabled, consented actions outside quarantine/incompatibility count toward the environment limit.
 function pluginActionsEligible(installation: PluginInstallation): boolean {
   const state = installation.hostState?._tag;
   return (
@@ -118,12 +113,7 @@ function pluginActionsEligible(installation: PluginInstallation): boolean {
   );
 }
 
-/**
- * What a plugin adds to T3 Code, read from its manifest summary; nothing here
- * starts the plugin. Only kinds it declares are listed. `installation` is null
- * for a manifest that is not installed, such as a downloaded update. Pass a
- * snapshot as null when its server lacks the capability or it has not arrived.
- */
+// Absent capabilities or snapshots withhold live contributions; manifest inspection never starts a plugin.
 export function describePluginContributions(input: {
   readonly manifest: PluginInstallationManifest;
   readonly installation: PluginInstallation | null;
