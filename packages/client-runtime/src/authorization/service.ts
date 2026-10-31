@@ -545,14 +545,20 @@ export const make = Effect.gen(function* () {
       // Past expiry the server has closed the socket.
       while (now < expiresAtEpochMs) {
         // getDpopToken reuses a cached token until it is within the skew of expiry.
-        // The floor keeps a wall-clock jump from turning this into a tight loop.
+        // The floor spaces out retries and keeps a wall-clock jump from spinning.
         yield* Effect.sleep(
-          Math.max(1_000, expiresAtEpochMs - DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS - now),
+          Math.max(5_000, expiresAtEpochMs - DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS - now),
         );
-        const { token } = yield* getDpopToken({
+        const renewed = yield* getDpopToken({
           expectedEnvironmentId: input.expectedEnvironmentId,
-        }).pipe(Effect.withSpan("environment.authorization.renewSocket"), withRelayClientTracing);
-        expiresAtEpochMs = Math.max(expiresAtEpochMs, token.expiresAtEpochMs);
+        }).pipe(
+          Effect.map(({ token }) => token.expiresAtEpochMs),
+          Effect.withSpan("environment.authorization.renewSocket"),
+          withRelayClientTracing,
+          // A relay blip retries until expiry; a blocked credential ends the loop.
+          Effect.catchTags({ ConnectionTransientError: () => Effect.succeed(expiresAtEpochMs) }),
+        );
+        expiresAtEpochMs = Math.max(expiresAtEpochMs, renewed);
         now = yield* Clock.currentTimeMillis;
       }
     }),
