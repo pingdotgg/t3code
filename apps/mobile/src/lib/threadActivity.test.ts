@@ -888,6 +888,43 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  it("keeps the agent's reply to a steer visible after the settled run folds", () => {
+    const assistant = (id: string, at: string, ordinal: number) => ({
+      ...assistantMessage(at),
+      ...base(`item-${id}`, at, ordinal),
+      messageId: MessageId.make(`message-${id}`),
+      text: id,
+    });
+    const steer = {
+      ...userMessage("2026-06-20T00:00:04.000Z"),
+      ...base("item-steer", "2026-06-20T00:00:04.000Z", 4),
+      messageId: MessageId.make("message-steer"),
+      inputIntent: "steer" as const,
+      text: "Why did the build fail?",
+    };
+    const feed = buildThreadFeed([
+      projected(userMessage(), 0),
+      projected(assistant("progress-note", "2026-06-20T00:00:02.000Z", 1), 1),
+      projected({ ...command(), ...base("item-command-before", "2026-06-20T00:00:03.000Z", 2) }, 2),
+      projected(steer, 3),
+      projected(assistant("steer-reply", "2026-06-20T00:00:05.000Z", 5), 4),
+      projected({ ...command(), ...base("item-command-after", "2026-06-20T00:00:06.000Z", 6) }, 5),
+      projected(assistant("final", "2026-06-20T00:00:07.000Z", 7), 6),
+    ]);
+    const latestRun = {
+      runId,
+      status: "completed" as const,
+      startedAt: "2026-06-20T00:00:01.000Z",
+      completedAt: "2026-06-20T00:00:07.000Z",
+    };
+
+    const collapsed = deriveThreadFeedPresentation(feed, latestRun, new Set());
+    const messageIds = collapsed.filter((row) => row.type === "message").map((row) => row.id);
+    expect(messageIds).toEqual(expect.arrayContaining(["message-steer-reply", "message-final"]));
+    expect(messageIds).not.toContain("message-progress-note");
+    expect(collapsed.filter((row) => row.type === "activity-group")).toEqual([]);
+  });
+
   // regression: #21393 show plans and fold settled progress notes
   it("folds progress even when a response has no tool calls", () => {
     const feed = buildThreadFeed([
