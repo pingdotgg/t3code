@@ -431,7 +431,7 @@ export function UsagePage() {
     );
 
   const topbarContent = (
-    <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 @4xl/usage-header:flex">
+    <div className="grid w-full min-w-0 grid-cols-1 items-center gap-x-3 gap-y-2 py-2 @lg/usage-header:grid-cols-[minmax(0,1fr)_auto] @4xl/usage-header:flex">
       <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0">
         <WorkspaceBreadcrumbItem>
           <h1>Usage</h1>
@@ -468,6 +468,15 @@ export function UsagePage() {
         </span>
       ) : null}
       <div className="ms-auto hidden shrink-0 items-center justify-end gap-2 @4xl/usage-header:flex">
+        {!showingLimits ? (
+          <span className="@7xl/usage-header:hidden">
+            <UsageRangePicker
+              compact
+              window={window}
+              onChange={(sinceDay, untilDay) => setRange({ kind: "days", sinceDay, untilDay })}
+            />
+          </span>
+        ) : null}
         {/* Limits are always current, so they have no period. The period sits before the metric
             tabs so dropping it never moves them. */}
         {showingLimits ? null : (
