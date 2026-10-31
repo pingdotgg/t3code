@@ -444,9 +444,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const acknowledge = (next: SupervisorSignal, replaces: boolean) => {
     const ack = ackOf(next);
     if (ack === undefined) return Effect.void;
-    return (
-      replaces ? SubscriptionRef.get(state).pipe(Effect.map(Option.some)) : Effect.succeedNone
-    ).pipe(Effect.flatMap((replaced) => Deferred.succeed(ack, replaced)));
+    return (replaces ? SubscriptionRef.get(state).pipe(Effect.asSome) : Effect.succeedNone).pipe(
+      Effect.flatMap((replaced) => Deferred.succeed(ack, replaced)),
+    );
   };
 
   // Waiting stays interruptible; once taken, a control must be answered before a race can discard it.
