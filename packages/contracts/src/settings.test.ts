@@ -303,6 +303,16 @@ describe("ClientSettings quit confirmation", () => {
   });
 });
 
+describe("ClientSettings right panel layout", () => {
+  it("keeps tabs unless columns are chosen", () => {
+    expect(decodeClientSettings({}).rightPanelLayout).toBe("tabs");
+    expect(decodeClientSettingsPatch({ rightPanelLayout: "columns" })).toEqual({
+      rightPanelLayout: "columns",
+    });
+    expect(() => decodeClientSettingsPatch({ rightPanelLayout: "grid" })).toThrow();
+  });
+});
+
 describe("provider enabled defaults", () => {
   it("resolves instance enabled state with explicit false winning", () => {
     const grok = ProviderDriverKind.make("grok");

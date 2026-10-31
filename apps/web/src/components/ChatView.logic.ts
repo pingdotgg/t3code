@@ -136,21 +136,46 @@ export function agentControlledBrowserCloseConfirmation(
   ].join("\n");
 }
 
+/** Whether a right panel surface shows the same browser tab or device as the floating player. */
+export function surfaceShowsPreviewSource(
+  source: PreviewMiniPlayerSource,
+  surface: RightPanelSurface | null,
+): boolean {
+  if (source.kind === "browser") {
+    return surface?.kind === "preview" && surface.resourceId === source.tabId;
+  }
+  return (
+    surface?.kind === "device" &&
+    surface.target?.hostId === source.hostId &&
+    surface.target.deviceId === source.deviceId
+  );
+}
+
+/** The floating player hides only while the same source is rendered in the panel. */
 export function shouldRenderPreviewMiniPlayer(
   source: PreviewMiniPlayerSource | null,
   renderedRightPanelSurface: RightPanelSurface | null,
 ): boolean {
-  if (source === null) return false;
-  if (source.kind === "browser") {
-    return !(
-      renderedRightPanelSurface?.kind === "preview" &&
-      renderedRightPanelSurface.resourceId === source.tabId
-    );
-  }
-  return !(
-    renderedRightPanelSurface?.kind === "device" &&
-    renderedRightPanelSurface.target?.hostId === source.hostId &&
-    renderedRightPanelSurface.target.deviceId === source.deviceId
+  return source !== null && !surfaceShowsPreviewSource(source, renderedRightPanelSurface);
+}
+
+/**
+ * In the scrolling columns layout the floating player floats over the chat, so
+ * it shows only while the chat column is wholly in view, and hides only while a
+ * column that is wholly in view shows the same source. A selected source column
+ * scrolled out of view does not count: its native view is hidden there too.
+ */
+export function shouldRenderPreviewMiniPlayerInColumns(input: {
+  source: PreviewMiniPlayerSource | null;
+  chatUnclipped: boolean;
+  surfaces: readonly RightPanelSurface[];
+  unclippedSurfaceIds: ReadonlySet<string>;
+}): boolean {
+  const { source } = input;
+  if (source === null || !input.chatUnclipped) return false;
+  return !input.surfaces.some(
+    (surface) =>
+      input.unclippedSurfaceIds.has(surface.id) && surfaceShowsPreviewSource(source, surface),
   );
 }
 

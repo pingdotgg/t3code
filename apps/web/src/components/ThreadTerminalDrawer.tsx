@@ -478,6 +478,8 @@ interface TerminalViewportProps {
   /** Focuses the viewport when it mounts; otherwise focus arrives through `focusTerminal`. */
   autoFocus?: boolean;
   visible: boolean;
+  /** Offscreen columns pause painting while keeping the terminal mounted. */
+  offscreen?: boolean;
   keybindings: ResolvedKeybindingsConfig;
 }
 
@@ -513,12 +515,15 @@ function TerminalSessionViewport({
   onAddTerminalContext,
   autoFocus = false,
   visible,
+  offscreen = false,
   keybindings,
 }: TerminalViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const autoFocusedRef = useRef(false);
   const terminalRef = useRef<GhosttyTerminalSurface | null>(null);
-  const visibleRef = useRef(visible);
+  const painting = visible && !offscreen;
+  const visibleRef = useRef(painting);
+  const logicallyVisibleRef = useRef(visible);
   const environmentId = threadRef.environmentId;
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const hasTerminalWriteAccess = useEffectEvent(() =>
@@ -647,11 +652,12 @@ function TerminalSessionViewport({
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes visibility into the terminal surface before paint and consumes focus requests made while hidden
   useLayoutEffect(() => {
-    visibleRef.current = visible;
-    terminalRef.current?.setVisible(visible);
+    logicallyVisibleRef.current = visible;
+    visibleRef.current = painting;
+    terminalRef.current?.setVisible(painting);
     // A request made while this viewport was hidden could not focus it.
-    if (visible) consumePendingTerminalFocus(threadRef, terminalId);
-  }, [terminalId, threadRef, visible]);
+    if (painting) consumePendingTerminalFocus(threadRef, terminalId);
+  }, [terminalId, threadRef, painting, visible]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies font family and size changes to the live Ghostty terminal surface
   useEffect(() => {
@@ -1138,13 +1144,23 @@ function TerminalSessionViewport({
 
   const attachContainer = (mount: HTMLDivElement) => {
     containerRef.current = mount;
-    const focus = () =>
-      focusTerminalViewport({
+    const focus = () => {
+      if (
+        logicallyVisibleRef.current &&
+        !visibleRef.current &&
+        readEnvironmentScope(environmentId, AuthTerminalOperateScope)
+      ) {
+        mount
+          .closest<HTMLElement>("[data-right-panel-column]")
+          ?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
+      }
+      return focusTerminalViewport({
         mount,
         surface: terminalRef.current,
         canOperate: readEnvironmentScope(environmentId, AuthTerminalOperateScope),
         visible: visibleRef.current,
       });
+    };
     // Once per viewport: a re-attached ref (a fresh callback identity) must not
     // pull focus back on every render of a chatty terminal. As a request, it
     // waits for the grant or for the viewport to show when it cannot focus yet.
@@ -1186,6 +1202,7 @@ interface ThreadTerminalDrawerProps {
   activeTerminalId: string;
   terminalGroups: ThreadTerminalGroup[];
   activeTerminalGroupId: string;
+  offscreen?: boolean;
   onSplitTerminal: () => void;
   onSplitTerminalVertical: () => void;
   onNewTerminal: () => void;
@@ -1259,6 +1276,7 @@ function TerminalSplitPanes({
   threadId,
   onAddTerminalContext,
   visible,
+  offscreen,
   keybindings,
 }: {
   terminalIds: readonly string[];
@@ -1273,6 +1291,7 @@ function TerminalSplitPanes({
   threadId: ThreadId;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   visible: boolean;
+  offscreen: boolean;
   keybindings: ResolvedKeybindingsConfig;
 }) {
   return (
@@ -1320,6 +1339,7 @@ function TerminalSplitPanes({
                   : {})}
                 onSessionExited={() => onCloseTerminal(terminalId, threadRef)}
                 onAddTerminalContext={onAddTerminalContext}
+                offscreen={offscreen}
                 visible={visible}
                 keybindings={keybindings}
               />
@@ -1442,6 +1462,7 @@ export default function ThreadTerminalDrawer({
   activeTerminalId,
   terminalGroups,
   activeTerminalGroupId,
+  offscreen = false,
   onSplitTerminal,
   onSplitTerminalVertical,
   onNewTerminal,
@@ -1871,6 +1892,7 @@ export default function ThreadTerminalDrawer({
               threadId={threadId}
               onAddTerminalContext={onAddTerminalContext}
               visible={visible}
+              offscreen={offscreen}
               keybindings={keybindings}
             />
           </div>
