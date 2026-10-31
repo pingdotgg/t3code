@@ -32,6 +32,7 @@ import { MobileAppSettingsRow } from "./MobileAppSettingsRow";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
+  getDesktopUpdateActionError,
   getDesktopUpdateDisabledReason,
   getDesktopUpdateInstallConfirmationMessage,
   isDesktopUpdateButtonDisabled,
@@ -222,6 +223,18 @@ function AboutVersionSection() {
       }
       void bridge
         .installUpdate()
+        .then((result) => {
+          const actionError = getDesktopUpdateActionError(result);
+          if (actionError) {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Could not install update",
+                description: actionError,
+              }),
+            );
+          }
+        })
         .catch((error: unknown) => {
           toastManager.add(
             stackedThreadToast({

@@ -34,6 +34,7 @@ import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopDiskSpace from "./DesktopDiskSpace.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
 import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -71,6 +72,7 @@ const UpdateInfo = Schema.Struct({
   // Malformed notes must not block update-state decoding; normalizeDesktopUpdateReleaseNotes validates separately.
   releaseNotes: Schema.optional(Schema.Unknown),
   releaseDate: Schema.optional(Schema.String),
+  downloadedFile: Schema.optional(Schema.String),
 });
 
 const DownloadProgressInfo = Schema.Struct({
@@ -338,6 +340,10 @@ function getAutoUpdateDisabledReason(args: {
   return null;
 }
 
+const MEGABYTE = 1024 * 1024;
+// Covers cluster rounding and a release that grows; refusing is recoverable, a partial install is not.
+const INSTALL_SPACE_MARGIN_BYTES = 128 * MEGABYTE;
+
 function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean {
   return runtimeInfo.hostArch === "arm64" && runtimeInfo.appArch === "x64";
 }
@@ -352,6 +358,7 @@ export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const diskSpace = yield* DesktopDiskSpace.DesktopDiskSpace;
 
   const appUpdateYmlConfigRef = yield* Ref.make<Option.Option<AppUpdateYmlConfig>>(Option.none());
   const activeUpdateActionRef = yield* Ref.make<Option.Option<UpdateAction>>(Option.none());
@@ -362,6 +369,7 @@ export const make = Effect.gen(function* () {
   const updaterConfiguredRef = yield* Ref.make(false);
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
   const notAppliedVersionRef = yield* Ref.make(Option.none<string>());
+  const downloadedFileRef = yield* Ref.make(Option.none<string>());
   // The release a track switch's database check cleared. A build crosses to another track only
   // through such a switch, and never below that release: version order alone cannot tell whether
   // a Stable knows a Nightly's migrations.
@@ -711,6 +719,56 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  // NSIS deletes the old install before staging its package in %TEMP% and copying it in, so the
+  // %TEMP% volume peaks near installer + install folder; a separate install volume needs the growth.
+  const findInstallSpaceShortfall = Effect.fn("desktop.updates.findInstallSpaceShortfall")(
+    function* () {
+      if (environment.platform !== "win32") return Option.none<string>();
+      const installer = yield* Ref.get(downloadedFileRef);
+      if (Option.isNone(installer)) {
+        yield* logUpdaterWarning("skipping the install disk space check without an installer path");
+        return Option.none<string>();
+      }
+      const installDirectory = environment.path.dirname(environment.resourcesPath);
+      return yield* Effect.all({
+        tempFreeBytes: diskSpace.freeBytes(diskSpace.tempDirectory),
+        installFreeBytes: diskSpace.freeBytes(installDirectory),
+        installerBytes: fileSystem
+          .stat(installer.value)
+          .pipe(Effect.map((info) => Number(info.size))),
+        installDirectoryBytes: diskSpace.directoryBytes(installDirectory),
+      }).pipe(
+        Effect.flatMap(
+          ({ tempFreeBytes, installFreeBytes, installerBytes, installDirectoryBytes }) => {
+            const tempRequiredBytes =
+              installerBytes + installDirectoryBytes + INSTALL_SPACE_MARGIN_BYTES;
+            const [freeBytes, requiredBytes] =
+              tempFreeBytes < tempRequiredBytes
+                ? [tempFreeBytes, tempRequiredBytes]
+                : [installFreeBytes, INSTALL_SPACE_MARGIN_BYTES];
+            if (freeBytes >= requiredBytes) return Effect.succeed(Option.none<string>());
+            return logUpdaterWarning("not enough disk space to install the update", {
+              freeBytes,
+              requiredBytes,
+            }).pipe(
+              Effect.as(
+                Option.some(
+                  `Not enough disk space to install the update: needs about ${Math.ceil(requiredBytes / MEGABYTE)} MB free, ${Math.floor(freeBytes / MEGABYTE)} MB available.`,
+                ),
+              ),
+            );
+          },
+        ),
+        Effect.catch((error) =>
+          logUpdaterWarning("could not check disk space before installing the update", {
+            errorTag: error._tag,
+            cause: describeUpdateErrorCause(error),
+          }).pipe(Effect.as(Option.none<string>())),
+        ),
+      );
+    },
+  );
+
   const installDownloadedUpdate = (expectedVersion?: string) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -758,6 +816,23 @@ export const make = Effect.gen(function* () {
         if (admission === "refused") {
           return { accepted: false, completed: false, failed: false };
         }
+
+        const spaceShortfall = yield* findInstallSpaceShortfall().pipe(
+          Effect.onInterrupt(() => finishUpdateAction("install")),
+        );
+        if (Option.isSome(spaceShortfall)) {
+          yield* updateState((current) =>
+            reduceDesktopUpdateStateOnInstallFailure(current, spaceShortfall.value),
+          );
+          yield* finishUpdateAction("install");
+          return { accepted: true, completed: false, failed: true };
+        }
+        // A refusal's message would otherwise read as this attempt's failure.
+        yield* updateState((current) =>
+          current.errorContext === "install"
+            ? { ...current, message: null, errorContext: null }
+            : current,
+        );
 
         yield* Ref.set(desktopState.quitting, true);
         yield* Ref.set(installRunningBackendsRef, []);
@@ -1032,6 +1107,7 @@ export const make = Effect.gen(function* () {
             }
             return;
           }
+          yield* Ref.set(downloadedFileRef, Option.fromNullishOr(info.downloadedFile));
           yield* setState(reduceDesktopUpdateStateOnDownloadComplete(state, info.version));
           yield* logUpdaterInfo("update downloaded", { version: info.version });
         }),

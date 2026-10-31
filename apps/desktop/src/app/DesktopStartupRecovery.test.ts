@@ -46,6 +46,24 @@ describe("resolveStartupRecoveryOffer", () => {
     });
   });
 
+  it("explains why the offered update did not install", () => {
+    expect(
+      resolveStartupRecoveryOffer(
+        updateState({
+          status: "downloaded",
+          downloadedVersion: "0.1.4",
+          errorContext: "install",
+          message: "Not enough disk space to install the update.",
+        }),
+        "0.1.2",
+      ),
+    ).toEqual({
+      _tag: "Update",
+      version: "0.1.4",
+      installError: "Not enough disk space to install the update.",
+    });
+  });
+
   it("does not offer an update that already failed to apply here", () => {
     expect(
       resolveStartupRecoveryOffer(
