@@ -75,7 +75,7 @@ export class PluginNotifications extends Context.Service<
   }
 >()("t3/plugins/PluginNotifications") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.fn("PluginNotifications.make")(function* () {
   const supervisor = yield* PluginSupervisor.PluginSupervisor;
   const crypto = yield* Crypto.Crypto;
