@@ -310,21 +310,31 @@ describe("device setup consent", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect("boots a stopped Android AVD and uses its emulator serial without duplicating it", () =>
-    Effect.gen(function* () {
-      const { service, requests } = yield* fixture();
-      yield* service.configure({ enabled: true });
-      const session = yield* service.open({
-        threadId: ThreadId.make("thread-1"),
-        deviceId: "Pixel_API_35",
-        platform: "android",
-      });
-      expect(session.deviceId).toBe("emulator-5554");
-      expect(requests.filter((url) => url.endsWith("/boot"))).toHaveLength(1);
-      const state = yield* service.state;
-      expect(state.devices.map((device) => device.id)).toEqual(["emulator-5554"]);
-      expect(state.bootingDevices).toEqual([]);
-    }).pipe(Effect.scoped),
+  it.effect.each([1, 2])(
+    "opens a stopped Android AVD from %s threads using its emulator serial",
+    (count) =>
+      Effect.gen(function* () {
+        const { service, requests } = yield* fixture();
+        yield* service.configure({ enabled: true });
+        const sessions = yield* Effect.all(
+          Array.from({ length: count }, (_, index) =>
+            service.open({
+              threadId: ThreadId.make(`thread-${index}`),
+              deviceId: "Pixel_API_35",
+              platform: "android",
+            }),
+          ),
+          { concurrency: "unbounded" },
+        );
+        expect(sessions.map((session) => session.deviceId)).toEqual(
+          Array(count).fill("emulator-5554"),
+        );
+        expect(requests.filter((url) => url.endsWith("/boot"))).toHaveLength(count);
+        const state = yield* service.state;
+        expect(state.sessions).toHaveLength(count);
+        expect(state.devices.map((device) => device.id)).toEqual(["emulator-5554"]);
+        expect(state.bootingDevices).toEqual([]);
+      }).pipe(Effect.scoped),
   );
 
   it.effect("blocks only emulator video until ffmpeg is usable, then allows retry", () =>

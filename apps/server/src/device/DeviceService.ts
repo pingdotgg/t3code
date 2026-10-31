@@ -714,7 +714,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     }
   });
 
-  // The hub fails stream setup that overlaps another on the same device, so its opens take turns.
+  // serve-sim rejects overlapping iOS stream setup on the same device.
   const openLocks = new Map<string, Semaphore.Semaphore>();
   const withOpenLock = (hostId: DeviceHostId, deviceId: DeviceId) => {
     const key = `${hostId}\u0000${deviceId}`;
@@ -833,7 +833,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       );
       return session;
     },
-    (effect, input) => withOpenLock(input.hostId ?? LOCAL_DEVICE_HOST_ID, input.deviceId)(effect),
+    (effect, input) =>
+      input.platform === "ios"
+        ? withOpenLock(input.hostId ?? LOCAL_DEVICE_HOST_ID, input.deviceId)(effect)
+        : effect,
   );
 
   const shutdownDevice = Effect.fn("DeviceService.shutdownDevice")(function* (
