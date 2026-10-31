@@ -3,7 +3,7 @@ import { WORKING_EXIT_GRACE_MS } from "@t3tools/client-runtime/state/thread-inbo
 export type ThreadNotificationKind = "input" | "completion";
 
 export interface ThreadNotificationObservation {
-  /** Run and status key while the thread needs attention, otherwise null. */
+  /** Attention status, keyed by run where a run can raise it again, otherwise null. */
   readonly attention: string | null;
   /** The thread is idle and its latest run completed. */
   readonly settled: boolean;

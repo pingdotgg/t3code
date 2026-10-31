@@ -199,14 +199,14 @@ export function startThreadNotifications(
       const thread = presentThreadShell(environmentId, rawThread, subagentRequest);
       let status = resolveSidebarThreadStatus(thread);
       if (status === "ready" && thread.latestRun?.status === "failed") status = "failed";
+      // Runs queue behind a pending request and the shell shows only the newest of several,
+      // so neither the run nor the request id may re-announce one that is still waiting.
       const attention =
-        status === "input" ||
-        status === "request" ||
-        status === "approval" ||
-        status === "failed" ||
-        status === "limited"
-          ? `${thread.latestRun?.runId ?? ""}:${status}`
-          : null;
+        status === "input" || status === "approval"
+          ? status
+          : status === "request" || status === "failed" || status === "limited"
+            ? `${thread.latestRun?.runId ?? ""}:${status}`
+            : null;
       const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
       const settled = status === "ready" && thread.latestRun?.status === "completed";
       const state = {
