@@ -3,10 +3,9 @@ import {
   type ProviderApprovalOption,
   type RuntimeRequestId,
 } from "@t3tools/contracts";
-import { useId, type ReactElement } from "react";
-import { TriangleAlertIcon } from "lucide-react";
+import type { ReactElement } from "react";
+import { ShieldIcon, TriangleAlertIcon } from "lucide-react";
 import { Button } from "../ui/button";
-import { Checkbox } from "../ui/checkbox";
 import { Kbd } from "../ui/kbd";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -20,7 +19,7 @@ interface ComposerPendingApprovalActionsProps {
   canRespond: boolean;
   disabled?: boolean;
   options?: ReadonlyArray<ProviderApprovalOption> | undefined;
-  /** Checked state of "Always allow this session". */
+  /** Selected state of "Always allow this session". */
   alwaysAllow?: boolean;
   onAlwaysAllowChange?: (checked: boolean) => void;
   onRespondToApproval: (
@@ -38,7 +37,7 @@ export const DEFAULT_APPROVAL_OPTIONS = [
 
 /**
  * Allow sends accept, or accept for the session when
- * the checkbox is on. Providers that only advertise a broader accept get that.
+ * the session toggle is on. Providers that only advertise a broader accept get that.
  */
 export function resolveApprovalPrimaryDecision(
   options: ReadonlyArray<ProviderApprovalOption>,
@@ -67,24 +66,23 @@ export function ComposerPendingApprovalActions({
   onAlwaysAllowChange,
   onRespondToApproval,
 }: ComposerPendingApprovalActionsProps) {
-  const checkboxId = useId();
   const accept = options.find((option) => option.decision === "accept");
   const acceptForSession = options.find((option) => option.decision === "acceptForSession");
-  // The session checkbox only exists when it changes what Allow sends.
-  const sessionCheckbox = accept && acceptForSession ? acceptForSession : null;
+  // Offer the session toggle only when it changes what Allow sends.
+  const sessionOption = accept && acceptForSession ? acceptForSession : null;
   const primary = resolveApprovalPrimaryDecision(options, false);
   const decline = options.find((option) => option.decision === "decline");
   const moreOptions = options.filter(
     (option) =>
       option !== decline &&
       option !== primary &&
-      option !== sessionCheckbox &&
+      option !== sessionOption &&
       option.decision !== primary?.decision,
   );
   const disabled = permissionDisabled || isResponding || !canRespond;
   const allowDecision =
-    sessionCheckbox && alwaysAllow ? sessionCheckbox.decision : (primary?.decision ?? null);
-  const allowWarning = sessionCheckbox && alwaysAllow ? sessionCheckbox.warning : primary?.warning;
+    sessionOption && alwaysAllow ? sessionOption.decision : (primary?.decision ?? null);
+  const allowWarning = sessionOption && alwaysAllow ? sessionOption.warning : primary?.warning;
 
   const withWarning = (warning: string | undefined, node: ReactElement) =>
     warning ? (
@@ -97,26 +95,24 @@ export function ComposerPendingApprovalActions({
     );
 
   return (
-    <div className="flex min-w-0 grow basis-72 items-center gap-2">
-      {sessionCheckbox ? (
-        <label
-          htmlFor={checkboxId}
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-muted-foreground has-disabled:cursor-default"
+    <div className="flex min-w-0 grow basis-72 flex-wrap items-center gap-2">
+      {sessionOption ? (
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={disabled}
+          aria-pressed={alwaysAllow}
+          aria-description={sessionOption.warning}
+          onClick={() => onAlwaysAllowChange?.(!alwaysAllow)}
         >
-          <Checkbox
-            id={checkboxId}
-            checked={alwaysAllow}
-            disabled={disabled}
-            onCheckedChange={(checked) => onAlwaysAllowChange?.(checked === true)}
-            aria-description={sessionCheckbox.warning}
-          />
-          <span className="min-w-0 truncate">{sessionCheckbox.label}</span>
-          {sessionCheckbox.warning ? (
+          <ShieldIcon aria-hidden />
+          {sessionOption.label}
+          {sessionOption.warning ? (
             <TriangleAlertIcon aria-hidden className="size-3 shrink-0 text-warning-foreground" />
           ) : null}
-        </label>
+        </Button>
       ) : null}
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="ms-auto flex shrink-0 items-center gap-2">
         {moreOptions.length > 0 ? (
           <Menu>
             <MenuTrigger

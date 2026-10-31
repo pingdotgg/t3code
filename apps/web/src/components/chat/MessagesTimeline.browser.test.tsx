@@ -8,6 +8,7 @@ import {
   NodeId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   RunAttemptId,
   RunId,
   RuntimeRequestId,
@@ -23,6 +24,7 @@ import {
   Profiler,
   StrictMode,
   useState,
+  useRef,
   type ComponentProps,
   type ReactElement,
 } from "react";
@@ -36,7 +38,9 @@ import { environmentThreadDetails } from "../../state/threads";
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
-import { makeStreamingTimelineFixture } from "../../test-fixtures";
+import { ComposerApprovalPanel } from "./ComposerApprovalPanel";
+import { usePendingThreadRequests } from "./usePendingThreadRequests";
+import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "../../test-fixtures";
 import {
   type PendingApproval,
   deriveTimelineEntriesFromVisibleTurnItems,
@@ -1492,18 +1496,85 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
     });
   const props = baseProps();
   const onRespondToApproval = vi.fn(async () => {});
-  const ui = (overrides: Partial<TimelineProps> = {}) => (
-    <MessagesTimeline
-      {...props}
-      timelineEntries={entries()}
-      pendingApprovals={approvals}
-      canOperateThread
-      onRespondToApproval={onRespondToApproval}
-      isWorking
-      runningRunId={fixture.runId}
-      {...overrides}
-    />
-  );
+  const projection = makeThreadProjectionFixture();
+  function ApprovalTimeline({ overrides }: { overrides: Partial<TimelineProps> }) {
+    const timelineProps = {
+      ...props,
+      timelineEntries: entries(),
+      pendingApprovals: approvals,
+      canOperateThread: true,
+      onRespondToApproval,
+      isWorking: true,
+      runningRunId: fixture.runId,
+      ...overrides,
+    };
+    const promptRef = useRef("");
+    const composerRef = useRef(null);
+    const requests = usePendingThreadRequests({
+      environmentId: ENVIRONMENT_ID,
+      activeThreadId: projection.thread.id,
+      serverProjection: {
+        ...projection,
+        runtimeRequests: timelineProps.pendingApprovals.map((approval) => ({
+          id: approval.requestId,
+          nodeId: NodeId.make(approval.requestId),
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: approval.requestKind,
+          status: "pending",
+          responseCapability:
+            approval.responseCapability === "live"
+              ? { type: "live", providerSessionId: ProviderSessionId.make("approval-session") }
+              : { type: "not_resumable", reason: "Provider process is gone" },
+          createdAt: DateTime.makeUnsafe(approval.createdAt),
+          resolvedAt: null,
+        })),
+        turnItems: timelineProps.pendingApprovals.map((approval) => ({
+          ...sourceItem,
+          type: "approval_request",
+          id: TurnItemId.make(approval.requestId),
+          requestId: approval.requestId,
+          requestKind: approval.requestKind,
+          prompt: approval.detail ?? "",
+          reason: approval.reason,
+          fullAccessOverride: approval.fullAccessOverride,
+          appName: approval.appName,
+          options: approval.options,
+        })),
+      },
+      supportsQuestionAttachments: false,
+      composerDraftTarget: { environmentId: ENVIRONMENT_ID, threadId: projection.thread.id },
+      setComposerDraftPrompt: () => {},
+      promptRef,
+      composerRef,
+      setThreadError: () => {},
+    });
+    const active = requests.activePendingApproval;
+    return (
+      <>
+        <MessagesTimeline {...timelineProps} pendingApprovals={requests.pendingApprovals} />
+        <a href="#approval-test">Approval test link</a>
+        <span role="link" tabIndex={0}>
+          Approval role link
+        </span>
+        <details>
+          <summary>Approval summary</summary>Details
+        </details>
+        <div contentEditable="plaintext-only" aria-label="Approval editable" />
+        {active && !timelineProps.heldApprovalRequestIds?.has(active.requestId) ? (
+          <ComposerApprovalPanel
+            key={active.requestId}
+            approval={active}
+            count={requests.pendingApprovals.length}
+            disabled={!timelineProps.canOperateThread}
+            isResponding={timelineProps.respondingRequestIds?.includes(active.requestId) ?? false}
+            onRespond={onRespondToApproval}
+          />
+        ) : null}
+      </>
+    );
+  }
+  const ui = (overrides: Partial<TimelineProps> = {}) => <ApprovalTimeline overrides={overrides} />;
   await using screen = await renderElement(ui());
   for (const target of [
     screen.getByRole("link", { name: "Approval test link" }),
@@ -1520,14 +1591,15 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
   await expect
     .element(screen.getByRole("group", { name: "App permission approval" }))
     .toBeVisible();
-  await expect.element(screen.getByText(approvals[0]!.detail!, { exact: true })).toBeVisible();
-  await expect.element(screen.getByText("Needs permission to run the command")).toBeVisible();
+  const commandRow = screen.getByRole("group", { name: "Command approval" });
+  await expect.element(commandRow.getByText(approvals[0]!.detail!, { exact: true })).toBeVisible();
+  await expect.element(commandRow.getByText("Needs permission to run the command")).toBeVisible();
   await vi.waitFor(() => {
     expect(
       getComputedStyle(screen.getByLabelText("Command", { exact: true }).element()).userSelect,
     ).toBe("text");
     expect(
-      getComputedStyle(screen.getByText("Needs permission to run the command").element())
+      getComputedStyle(commandRow.getByText("Needs permission to run the command").element())
         .userSelect,
     ).toBe("text");
   });
@@ -1535,27 +1607,19 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
   await click(screen.button("Why am I being asked this?"));
   await expect.element(page.getByText(/an ask rule in the agent's own settings/)).toBeVisible();
   await click(screen.button("Why am I being asked this?"));
-  await click(screen.buttons("More approval options")[1]!);
-  await expect.element(page.getByRole("menuitem", { name: "Always allow Safari" })).toBeVisible();
-  await page.getByRole("menuitem", { name: "Always allow Safari" }).click();
-  expect(onRespondToApproval).toHaveBeenLastCalledWith(appRequest, "acceptAlways");
-  await click(screen.buttons("More approval options")[0]!);
+  await expect.element(screen.getByText("1/2", { exact: true })).toBeVisible();
+  await click(screen.button("More approval options"));
   await expect.element(page.getByRole("menuitem", { name: "Cancel", exact: true })).toBeVisible();
   await userEvent.keyboard("{Escape}");
-  await screen.getByRole("checkbox", { name: "Always allow this session" }).click();
-  await screen
-    .getByRole("group", { name: "Command approval" })
-    .getByRole("button", { name: "Allow", exact: true })
-    .click();
+  const sessionToggle = screen.getByRole("button", { name: "Always allow this session" });
+  await sessionToggle.click();
+  await expect.element(sessionToggle).toHaveAttribute("aria-pressed", "true");
+  await screen.getByRole("button", { name: "Approve", exact: true }).click();
   expect(onRespondToApproval).toHaveBeenLastCalledWith(commandRequest, "acceptForSession");
-  await screen.getByRole("checkbox", { name: "Always allow this session" }).click();
-  await screen
-    .getByRole("group", { name: "Command approval" })
-    .getByRole("button", { name: "Deny", exact: true })
-    .click();
+  await sessionToggle.click();
+  await expect.element(sessionToggle).toHaveAttribute("aria-pressed", "false");
+  await screen.getByRole("button", { name: "Decline", exact: true }).click();
   expect(onRespondToApproval).toHaveBeenLastCalledWith(commandRequest, "decline");
-  await click(screen.button("Allow once"));
-  expect(onRespondToApproval).toHaveBeenLastCalledWith(appRequest, "accept");
   for (const timelineEntries of [entries(), []]) {
     await screen.rerender(
       ui({ timelineEntries, heldApprovalRequestIds: new Set([commandRequest]) }),
@@ -1563,22 +1627,32 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
     await expect
       .element(screen.getByRole("group", { name: "Command approval" }))
       .not.toBeInTheDocument();
-    await vi.waitFor(() => expect(screen.buttons("Allow")).toHaveLength(0));
     await expect
-      .element(screen.getByRole("button", { name: "Allow once", exact: true }))
+      .element(screen.getByRole("button", { name: "Approve", exact: true }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("group", { name: "App permission approval" }))
       .toBeVisible();
     await screen.rerender(ui({ timelineEntries }));
     await expect.element(screen.getByRole("group", { name: "Command approval" })).toBeVisible();
-    await vi.waitFor(() => expect(screen.buttons("Allow")).toHaveLength(1));
+    await expect
+      .element(screen.getByRole("button", { name: "Approve", exact: true }))
+      .toBeVisible();
   }
   await screen.rerender(ui({ timelineEntries: [], isWorking: false }));
   await expect.element(screen.getByRole("group", { name: "Command approval" })).toBeVisible();
-  await click(screen.button("Allow"));
+  await screen.getByRole("button", { name: "Approve", exact: true }).click();
   expect(onRespondToApproval).toHaveBeenLastCalledWith(commandRequest, "accept");
-  await screen
-    .getByRole("group", { name: "App permission approval" })
-    .getByRole("button", { name: "Deny", exact: true })
-    .click();
+  // The resolved request leaves the projection, so the real tray queue advances.
+  await screen.rerender(ui({ pendingApprovals: [approvals[1]!] }));
+  await expect.element(screen.getByRole("button", { name: "Allow once" })).toBeVisible();
+  await click(screen.button("More approval options"));
+  await expect.element(page.getByRole("menuitem", { name: "Always allow Safari" })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Always allow Safari" }).click();
+  expect(onRespondToApproval).toHaveBeenLastCalledWith(appRequest, "acceptAlways");
+  await screen.getByRole("button", { name: "Allow once", exact: true }).click();
+  expect(onRespondToApproval).toHaveBeenLastCalledWith(appRequest, "accept");
+  await screen.getByRole("button", { name: "Decline", exact: true }).click();
   expect(onRespondToApproval).toHaveBeenLastCalledWith(appRequest, "decline");
   await screen.rerender(
     ui({
@@ -1591,14 +1665,17 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
     .element(screen.getByLabelText("Command", { exact: true }))
     .toHaveTextContent("Command approval");
   await screen.rerender(ui({ canOperateThread: false }));
-  await expect.element(screen.getByRole("button", { name: "Allow", exact: true })).toBeDisabled();
+  await expect.element(screen.getByRole("button", { name: "Approve", exact: true })).toBeDisabled();
   await vi.waitFor(() =>
     expect(
       screen.buttons("More approval options").every((button) => button.hasAttribute("disabled")),
     ).toBe(true),
   );
   await screen.rerender(ui({ respondingRequestIds: [commandRequest] }));
-  await expect.element(screen.getByRole("button", { name: "Allow", exact: true })).toBeDisabled();
+  await expect.element(screen.getByRole("button", { name: "Approve", exact: true })).toBeDisabled();
+  await screen.rerender(
+    ui({ pendingApprovals: [approvals[1]!], respondingRequestIds: [commandRequest] }),
+  );
   await expect
     .element(screen.getByRole("button", { name: "Allow once", exact: true }))
     .toBeEnabled();
@@ -1608,7 +1685,7 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
   await expect
     .element(screen.getByText("Provider process is gone. Interrupt or restart the run to respond."))
     .toBeVisible();
-  await vi.waitFor(() => expect(screen.buttons("Allow")).toHaveLength(0));
+  await expect.element(screen.getByRole("button", { name: "Approve", exact: true })).toBeDisabled();
   await screen.rerender(
     ui({ pendingApprovals: [], timelineEntries: entries(true), isWorking: false }),
   );

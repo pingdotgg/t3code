@@ -447,7 +447,7 @@ function QuestionOptionRow({
 }) {
   const className = cn(
     textAlign,
-    "group flex w-full items-start gap-2.5 rounded-row p-2 text-foreground outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+    "group flex w-full items-center gap-2.5 rounded-row px-2.5 py-2 text-foreground outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
     selected ? "bg-selection-neutral" : "bg-transparent hover:surface-ghost-hover",
     disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer",
   );
@@ -460,22 +460,11 @@ function QuestionOptionRow({
       onClick={onSelect}
       className={className}
     >
-      <span
-        aria-hidden
-        className={cn(
-          "relative mt-0.5 flex size-4 shrink-0 items-center justify-center",
-          multiSelect ? "rounded-kbd" : "rounded-full",
-          selected ? "surface-gloss-on text-primary-foreground" : "surface-well",
-        )}
-      >
-        {selected ? (
-          multiSelect ? (
-            <CheckIcon className="size-3" />
-          ) : (
-            <span className="size-1.5 rounded-full bg-primary-foreground" />
-          )
-        ) : null}
-      </span>
+      {shortcutKey !== null ? (
+        <kbd className="flex size-5 shrink-0 items-center justify-center rounded-kbd surface-raised text-micro text-muted-foreground tabular-nums">
+          {shortcutKey}
+        </kbd>
+      ) : null}
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="text-body" dir={textDirection(label)}>
           {label}
@@ -489,11 +478,21 @@ function QuestionOptionRow({
           </span>
         ) : null}
       </span>
-      {shortcutKey !== null ? (
-        <kbd className="flex h-5 shrink-0 items-center font-mono text-micro text-dim-foreground tabular-nums">
-          {shortcutKey}
-        </kbd>
-      ) : null}
+      {multiSelect ? (
+        <span
+          aria-hidden
+          className={cn(
+            "flex size-4 shrink-0 items-center justify-center rounded-kbd",
+            selected ? "surface-gloss-on text-primary-foreground" : "surface-well",
+          )}
+        >
+          {selected ? <CheckIcon className="size-3" /> : null}
+        </span>
+      ) : (
+        <span aria-hidden className="flex size-4 shrink-0 items-center justify-center">
+          {selected ? <CheckIcon className="size-3.5" /> : null}
+        </span>
+      )}
     </button>
   );
 }
