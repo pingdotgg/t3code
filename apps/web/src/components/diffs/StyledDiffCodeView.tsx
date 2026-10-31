@@ -7,7 +7,7 @@ import {
   type UncontrolledCodeViewProps,
 } from "@pierre/diffs/react";
 /* oxlint-enable eslint/no-restricted-imports */
-import type { Ref } from "react";
+import { type Ref } from "react";
 
 import { DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
@@ -85,7 +85,8 @@ export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 
 [data-diffs-header] {
   position: sticky !important;
-  top: 0;
+  /* Below a pane header the viewer scrolls under (--surface-top-inset). */
+  top: var(--surface-top-inset, 0px);
   z-index: 4;
   background-color: var(--code-background) !important;
   border-bottom-color: transparent !important;
@@ -369,6 +370,39 @@ const FILE_CARDS_UNSAFE_CSS = `
 
 const FILE_CARDS_GAP = 8;
 
+// Under a pane header the viewer scrolls under, its first file starts at the header's foot.
+const renderTopInset = () => <div aria-hidden className="h-[var(--surface-top-inset,0px)]" />;
+
+/**
+ * The viewer's handle, with start-aligned scroll targets landing at the foot of that header:
+ * index.css gives the viewer its height as scroll-padding-top, which Pierre's own scrolling
+ * does not read.
+ */
+function withTopInsetScroll<LAnnotation>(
+  handle: CodeViewHandle<LAnnotation, undefined>,
+): CodeViewHandle<LAnnotation, undefined> {
+  return {
+    ...handle,
+    scrollTo: (target) => {
+      const root = handle.getInstance()?.getContainerElement();
+      const inset = root ? Number.parseFloat(getComputedStyle(root).scrollPaddingTop) || 0 : 0;
+      handle.scrollTo(
+        inset > 0 &&
+          target.type !== "position" &&
+          target.align !== "center" &&
+          target.align !== "end"
+          ? { ...target, offset: (target.offset ?? 0) + inset }
+          : target,
+      );
+    },
+  };
+}
+
+function assignViewerRef<T>(ref: Ref<T> | undefined, value: T | null) {
+  if (typeof ref === "function") ref(value);
+  else if (ref) ref.current = value;
+}
+
 export type StyledDiffCodeViewOptions<LAnnotation> = Omit<
   NonNullable<CodeViewProps<LAnnotation, undefined>["options"]>,
   "unsafeCSS" | "itemMetrics" | "layout"
@@ -394,6 +428,8 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
   ...props
 }: StyledDiffCodeViewProps<LAnnotation>) {
   const cards = surface === "cards";
+  const handleRef = (handle: CodeViewHandle<LAnnotation, undefined> | null) =>
+    assignViewerRef(viewerRef, handle && withTopInsetScroll(handle));
   const unsafeCSS = [DIFF_VIEW_UNSAFE_CSS, cards ? FILE_CARDS_UNSAFE_CSS : null, unsafeCSSExtra]
     .filter(Boolean)
     .join("\n");
@@ -401,7 +437,8 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
     <DiffWorkerPoolProvider>
       <CodeView<LAnnotation>
         {...props}
-        {...(viewerRef ? { ref: viewerRef } : {})}
+        renderCodeViewHeader={props.renderCodeViewHeader ?? renderTopInset}
+        {...(viewerRef ? { ref: handleRef } : {})}
         className={
           className
             ? `diff-render-surface [--code-background:var(--code-surface)] outline-none ${className}`
