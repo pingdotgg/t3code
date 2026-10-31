@@ -317,6 +317,58 @@ describe("ChatMarkdown workspace file opens", () => {
     expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/elsewhere/b.md", 9);
     expect(workspaceSearch).toHaveBeenCalledOnce();
   });
+
+  // regression: #18358 a missing slashed path opens the one indexed file ending with it
+  it("opens a missing slashed path at its unique indexed suffix", async () => {
+    setup();
+    workspaceSearch.mockResolvedValue(
+      AsyncResult.success({
+        entries: [
+          { path: "other/GROUPS_PLAN.md", kind: "file" },
+          { path: "BudgetLens/mydocs/GROUPS_PLAN.md", kind: "file" },
+          { path: "BudgetLens/docs/GROUPS_PLAN.md", kind: "file" },
+        ],
+        truncated: true,
+      }),
+    );
+    using openFile = vi
+      .spyOn(useRightPanelStore.getState(), "openFile")
+      .mockImplementation(() => {});
+    await using screen = await renderText("[Plan](docs/GROUPS_PLAN.md:12)", {
+      cwd: "/work",
+      threadRef,
+    });
+    await act(async () => screen.container.querySelector("a")!.click());
+
+    expect(filesystemMetadata).toHaveBeenCalledExactlyOnceWith({
+      environmentId: threadRef.environmentId,
+      input: { paths: ["/work/docs/GROUPS_PLAN.md"] },
+    });
+    expect(openFile).toHaveBeenCalledExactlyOnceWith(
+      threadRef,
+      "BudgetLens/docs/GROUPS_PLAN.md",
+      12,
+    );
+  });
+
+  it.each(["file", "directory"] as const)(
+    "opens an existing slashed %s path without searching the workspace",
+    async (kind) => {
+      setup();
+      filesystemMetadata.mockResolvedValue(AsyncResult.success({ entries: [{ kind }] }));
+      using openFile = vi
+        .spyOn(useRightPanelStore.getState(), "openFile")
+        .mockImplementation(() => {});
+      await using screen = await renderText("[Plan](docs/GROUPS_PLAN.md:12)", {
+        cwd: "/work",
+        threadRef,
+      });
+      await act(async () => screen.container.querySelector("a")!.click());
+
+      expect(workspaceSearch).not.toHaveBeenCalled();
+      expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "docs/GROUPS_PLAN.md", 12);
+    },
+  );
 });
 
 describe("ChatMarkdown skill chips", () => {
