@@ -602,6 +602,59 @@ describe("RemoteEnvironmentAuthorization", () => {
       }),
   );
 
+  it.effect("renews a live socket's token in the minute before each expiry", () =>
+    Effect.gen(function* () {
+      const puts = yield* Queue.unbounded<void>();
+      const relayBlips = yield* Ref.make(1);
+      const harness = yield* makeHarness({
+        beforeBootstrap: Ref.getAndUpdate(relayBlips, (count) => count - 1).pipe(
+          Effect.flatMap((count) =>
+            count > 0
+              ? Effect.fail(
+                  new ManagedRelay.ManagedRelayRequestTimeoutError({
+                    activity: "Relay environment connection",
+                    timeoutMs: 30_000,
+                    traceId: null,
+                  }),
+                )
+              : Effect.void,
+          ),
+        ),
+        initialToken: persistedToken({ expiresAtEpochMs: 3_600_000 }),
+        responses: [
+          Response.json(DESCRIPTOR),
+          accessToken("renewed-1"),
+          Response.json(DESCRIPTOR),
+          accessToken("renewed-2"),
+        ],
+        beforePut: Queue.offer(puts, undefined).pipe(Effect.asVoid),
+      });
+
+      yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        yield* remote
+          .renewDpopBeforeExpiry({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+            expiresAtEpochMs: 3_600_000,
+          })
+          .pipe(Effect.forkScoped);
+        yield* TestClock.adjust(3_540_000 - 1);
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
+        // The first try hits a relay blip, and the retry 5 s later succeeds.
+        yield* TestClock.adjust(1);
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
+        yield* TestClock.adjust(5_000);
+        yield* Queue.take(puts);
+        // Renewed at 0:59:05, so the next renewal is at 1:58:05.
+        yield* TestClock.adjust(7_085_000 - 3_545_000 - 1);
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(2);
+        yield* TestClock.adjust(1);
+        yield* Queue.take(puts);
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(3);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+    }),
+  );
+
   it.effect("evicts an auth-invalid cached token and obtains a fresh bootstrap", () =>
     Effect.gen(function* () {
       const cached = new TokenStore.RemoteDpopAccessToken({
