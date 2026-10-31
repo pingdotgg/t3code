@@ -6,11 +6,12 @@ import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import type * as React from "react";
 
 import { cn } from "~/lib/utils";
+import { MENU_ROW_TEXT_CLASS } from "./menu-row-text";
 
 const Select = SelectPrimitive.Root;
 
 const selectTriggerVariants = cva(
-  "relative inline-flex cursor-pointer select-none items-center justify-between gap-2 border rounded-[var(--control-radius)] text-left text-label outline-none transition-[color,box-shadow,background-color] data-disabled:pointer-events-none data-disabled:opacity-64 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4",
+  "relative pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 inline-flex cursor-pointer select-none items-center justify-between gap-2 border rounded-[var(--control-radius)] text-left text-label outline-none transition-[color,box-shadow,background-color] data-disabled:pointer-events-none data-disabled:opacity-64 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4",
   {
     defaultVariants: {
       size: "default",
@@ -20,7 +21,7 @@ const selectTriggerVariants = cva(
       variant: {
         // The raised recipe; open and focused trade the rim for the ring stroke.
         default:
-          "w-full min-w-36 surface-raised text-foreground pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 [:hover,[data-pressed]]:not-data-popup-open:surface-raised-hover focus-visible:not-data-disabled:surface-focus data-popup-open:not-data-disabled:surface-focus aria-invalid:not-data-disabled:surface-invalid focus-visible:aria-invalid:not-data-disabled:surface-invalid-focus data-popup-open:aria-invalid:not-data-disabled:surface-invalid [&_svg:not([class*='text-'])]:text-muted-foreground",
+          "w-full min-w-36 surface-raised text-foreground [:hover,[data-pressed]]:not-data-popup-open:surface-raised-hover focus-visible:not-data-disabled:surface-focus data-popup-open:not-data-disabled:surface-focus aria-invalid:not-data-disabled:surface-invalid focus-visible:aria-invalid:not-data-disabled:surface-invalid-focus data-popup-open:aria-invalid:not-data-disabled:surface-invalid [&_svg:not([class*='text-'])]:text-muted-foreground",
         ghost:
           "border-transparent text-secondary-label focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring [:hover,[data-pressed],[data-popup-open]]:surface-ghost-hover [:hover,[data-pressed],[data-popup-open]]:text-foreground [&_svg:not([class*='text-'])]:text-muted-foreground",
       },
@@ -102,10 +103,10 @@ function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
   );
 }
 
-// Items put their text 17px into the popup (1px border, p-1.5, px-2.5); a field trigger puts
+// Items put their text 13px into the popup (1px border, p-1, px-2); a field trigger puts
 // its text 10px in. The popup overhangs the trigger by the difference on both sides, so
 // the item text continues the trigger's text line and the edges stay symmetric.
-const SELECT_POPUP_OVERHANG = 7;
+const SELECT_POPUP_OVERHANG = 3;
 
 function SelectPopup({
   className,
@@ -165,7 +166,7 @@ function SelectPopup({
             }
           >
             <SelectPrimitive.List
-              className={cn("max-h-(--available-height) overflow-y-auto p-1.5", className)}
+              className={cn("max-h-(--available-height) overflow-y-auto p-1", className)}
               data-slot="select-list"
             >
               {children}
@@ -194,7 +195,7 @@ function SelectItem({
   return (
     <SelectPrimitive.Item
       className={cn(
-        "flex min-h-8 cursor-pointer items-center rounded-[8px] px-2.5 py-1 text-label text-foreground outline-none data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-highlighted:surface-selected-soft data-highlighted:text-strong-foreground data-selected:surface-selected-soft data-selected:text-strong-foreground data-disabled:opacity-45 sm:min-h-8 [&_svg:not([class*='size-'])]:size-[15px] [&_svg]:pointer-events-none [&_svg]:shrink-0",
+        `flex min-h-8 cursor-pointer items-center rounded-[8px] px-2 py-1 ${MENU_ROW_TEXT_CLASS} text-foreground outline-none data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-highlighted:surface-selected-soft data-highlighted:text-strong-foreground data-selected:surface-selected-soft data-selected:text-strong-foreground data-disabled:opacity-45 sm:min-h-7 [&_svg:not([class*='size-'])]:size-[15px] [&_svg]:pointer-events-none [&_svg]:shrink-0`,
         className,
       )}
       data-slot="select-item"

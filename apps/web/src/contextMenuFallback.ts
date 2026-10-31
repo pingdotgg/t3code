@@ -414,16 +414,16 @@ export function showContextMenuFallback<T extends string>(
       // keeps the same viewport clearance on each edge.
       const inner = document.createElement("div");
       inner.className =
-        "max-h-[calc(100vh-0.5rem)] min-w-0 max-w-sm overflow-y-auto overflow-x-hidden p-1.5";
+        "max-h-[calc(100vh-0.5rem)] min-w-0 max-w-sm overflow-y-auto overflow-x-hidden p-1";
       inner.style.cssText =
-        "max-height:calc(100vh - 0.5rem);min-width:0;max-width:24rem;overflow-x:hidden;overflow-y:auto;padding:0.375rem;display:flex;flex-direction:column;gap:1px;";
+        "max-height:calc(100vh - 0.5rem);min-width:0;max-width:24rem;overflow-x:hidden;overflow-y:auto;padding:0.25rem;display:flex;flex-direction:column;";
 
       for (const item of entries) {
         if (item.separatorBefore === true && inner.children.length > 0) {
           const separator = document.createElement("div");
-          separator.className = "mx-2.5 my-1 h-px shrink-0 bg-hairline";
+          separator.className = "mx-2 my-1 h-px shrink-0 bg-hairline";
           separator.style.cssText =
-            "height:1px;flex-shrink:0;margin:0.25rem 0.625rem;background:var(--hairline);";
+            "height:1px;flex-shrink:0;margin:0.25rem 0.5rem;background:var(--hairline);";
           separator.dataset.contextMenuSeparator = "true";
           separator.setAttribute("role", "separator");
           inner.appendChild(separator);
@@ -431,7 +431,7 @@ export function showContextMenuFallback<T extends string>(
 
         if (item.header === true) {
           const header = document.createElement("div");
-          header.className = "px-2.5 py-1.5 text-meta text-dim-foreground";
+          header.className = "px-2 py-1.5 text-meta text-dim-foreground";
           header.textContent = item.label;
           inner.appendChild(header);
           continue;
@@ -448,12 +448,12 @@ export function showContextMenuFallback<T extends string>(
         button.tabIndex = -1;
         button.setAttribute("role", "menuitem");
         button.setAttribute("aria-disabled", String(isDisabled));
-        const rowBase = `${hasChildren ? MENU_SUB_TRIGGER_ROW_CLASS : MENU_ITEM_ROW_CLASS} w-full text-left`;
+        const rowBase = `${hasChildren ? MENU_SUB_TRIGGER_ROW_CLASS : MENU_ITEM_ROW_CLASS} [&>svg:not(:last-child)]:-mx-0.5 w-full text-left`;
         button.dataset.variant = isLeafDestructive ? "destructive" : "default";
         button.className = rowBase;
         if (isDisabled) button.dataset.disabled = "";
         button.style.cssText =
-          "display:flex;width:100%;min-height:2rem;align-items:center;gap:0.625rem;border:0;border-radius:8px;background:transparent;padding:0.25rem 0.625rem;color:var(--contrast-foreground);font-family:var(--font-sans,system-ui,sans-serif);font-size:0.8125rem;font-weight:500;line-height:1.125rem;text-align:left;cursor:default;";
+          "display:flex;width:100%;min-height:1.75rem;align-items:center;gap:0.5rem;border:0;border-radius:8px;background:transparent;padding:0.25rem 0.5rem;color:var(--contrast-foreground);font-family:var(--font-sans,system-ui,sans-serif);font-weight:500;line-height:1.25rem;text-align:left;cursor:default;";
         if (isLeafDestructive) {
           button.style.color = "var(--destructive-foreground)";
         }
