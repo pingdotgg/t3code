@@ -283,7 +283,7 @@ function VoiceActionButton(props: {
   const variant = props.variant ?? "plain";
   const loading = props.loading === true;
   const large = props.size === "large";
-  const circleSize = Math.round((large ? 44 : 30) * scale);
+  const circleSize = large ? composerControlSize : Math.round(30 * scale);
   const iconSize = Math.round(
     (variant === "primary" ? (large ? 20 : 16) : large ? 24 : 20) * scale,
   );
