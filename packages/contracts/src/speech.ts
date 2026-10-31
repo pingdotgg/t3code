@@ -1,0 +1,180 @@
+import * as Schema from "effect/Schema";
+
+export const SpeechModelId = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(160));
+export type SpeechModelId = typeof SpeechModelId.Type;
+
+export const SpeechCustomWord = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(50));
+export const SpeechCustomWords = Schema.Array(
+  Schema.Struct({
+    term: SpeechCustomWord,
+    aliases: Schema.Array(SpeechCustomWord).check(Schema.isMaxLength(8)),
+  }),
+).check(
+  Schema.isMaxLength(100),
+  Schema.makeFilter((entries) => {
+    const spellings = entries.flatMap(({ term, aliases }) => [term, ...aliases]);
+    const keys = spellings.map((spelling) => spelling.trim().normalize("NFC").toLocaleLowerCase());
+    return keys.every(Boolean) && new Set(keys).size === keys.length
+      ? true
+      : "Dictionary terms and aliases must be unique and nonempty.";
+  }),
+);
+export type SpeechCustomWords = typeof SpeechCustomWords.Type;
+export const SpeechAcceleration = Schema.Union([
+  Schema.Literal("auto"),
+  Schema.Literal("cpu"),
+  Schema.String.check(Schema.isPattern(/^gpu:.+/), Schema.isMaxLength(500)),
+]);
+export type SpeechAcceleration = typeof SpeechAcceleration.Type;
+export const SpeechModelUnloadTimeout = Schema.Literals([
+  "never",
+  "immediately",
+  "min_2",
+  "min_5",
+  "min_10",
+  "min_15",
+  "hour_1",
+]);
+export type SpeechModelUnloadTimeout = typeof SpeechModelUnloadTimeout.Type;
+export const SpeechLanguage = Schema.String.check(Schema.isMinLength(2), Schema.isMaxLength(16));
+export type SpeechLanguage = typeof SpeechLanguage.Type;
+export const SpeechGpuDevice = Schema.Struct({ id: Schema.String, name: Schema.String });
+
+export const EnvironmentSpeechModelState = Schema.Literals([
+  "downloadable",
+  "downloading",
+  "verifying",
+  "installed",
+]);
+export type EnvironmentSpeechModelState = typeof EnvironmentSpeechModelState.Type;
+
+export const EnvironmentSpeechModel = Schema.Struct({
+  id: SpeechModelId,
+  name: Schema.String,
+  description: Schema.String,
+  size: Schema.Finite,
+  languages: Schema.Array(Schema.String),
+  accuracy: Schema.Finite,
+  speed: Schema.Finite,
+  recommended: Schema.Boolean,
+  supportsStreaming: Schema.Boolean,
+  supportsLanguageDetection: Schema.Boolean,
+  supportsTranslation: Schema.Boolean,
+  active: Schema.Boolean,
+  state: EnvironmentSpeechModelState,
+  downloaded: Schema.optionalKey(Schema.Finite),
+});
+export type EnvironmentSpeechModel = typeof EnvironmentSpeechModel.Type;
+
+export const EnvironmentSpeechModels = Schema.Struct({
+  models: Schema.Array(EnvironmentSpeechModel),
+});
+export type EnvironmentSpeechModels = typeof EnvironmentSpeechModels.Type;
+
+export const EnvironmentSpeechModelRequest = Schema.Struct({ modelId: SpeechModelId });
+export type EnvironmentSpeechModelRequest = typeof EnvironmentSpeechModelRequest.Type;
+
+export const EnvironmentSpeechState = Schema.Literals(["missing-model", "ready", "transcribing"]);
+export type EnvironmentSpeechState = typeof EnvironmentSpeechState.Type;
+
+export const EnvironmentSpeechStatus = Schema.Union([
+  Schema.Struct({
+    supported: Schema.Literal(false),
+    reason: Schema.String,
+  }),
+  Schema.Struct({
+    supported: Schema.Literal(true),
+    state: EnvironmentSpeechState,
+    modelId: SpeechModelId,
+    model: Schema.String,
+    size: Schema.Finite,
+    supportsStreaming: Schema.Boolean,
+    supportsTranslation: Schema.Boolean,
+    translateToEnglish: Schema.Boolean,
+    language: SpeechLanguage,
+    effectiveLanguage: SpeechLanguage,
+    acceleration: SpeechAcceleration,
+    modelUnloadTimeout: SpeechModelUnloadTimeout,
+    gpuDevices: Schema.Array(SpeechGpuDevice),
+    customWords: SpeechCustomWords,
+    removeFillerWords: Schema.Boolean,
+  }),
+]);
+export type EnvironmentSpeechStatus = typeof EnvironmentSpeechStatus.Type;
+
+export const EnvironmentSpeechTranscriptionResult = Schema.Struct({
+  text: Schema.String,
+});
+
+export const EnvironmentSpeechCustomWordsRequest = Schema.Struct({ words: SpeechCustomWords });
+export const EnvironmentSpeechFillerWordsRequest = Schema.Struct({ enabled: Schema.Boolean });
+export const EnvironmentSpeechAccelerationRequest = Schema.Struct({
+  acceleration: SpeechAcceleration,
+});
+export const EnvironmentSpeechModelUnloadTimeoutRequest = Schema.Struct({
+  timeout: SpeechModelUnloadTimeout,
+});
+export const EnvironmentSpeechLanguageRequest = Schema.Struct({ language: SpeechLanguage });
+export const EnvironmentSpeechTranslationRequest = Schema.Struct({ enabled: Schema.Boolean });
+export const EnvironmentSpeechPostProcessingRequest = Schema.Struct({
+  transcript: Schema.String.check(Schema.isMaxLength(100_000)),
+  draft: Schema.Struct({
+    text: Schema.String.check(Schema.isMaxLength(100_000)),
+    selection: Schema.Struct({ start: Schema.Number, end: Schema.Number }),
+  }),
+});
+export const EnvironmentSpeechPostProcessingResult = Schema.Struct({ text: Schema.String });
+export type EnvironmentSpeechTranscriptionResult = typeof EnvironmentSpeechTranscriptionResult.Type;
+
+export const SPEECH_STREAM_PATH = "/ws/voice";
+
+const SPEECH_PROJECT_NAME_HEADER_MAX = 200;
+const HEADER_SAFE_CHARACTER = /^[\x20-\x24\x26-\x7e]$/;
+
+/**
+ * The project name for the `x-t3-project-name` header of a batch
+ * transcription. Header values must be Latin-1, so every other character
+ * (and "%") is percent-encoded, cut to fit the header limit; the server reads
+ * it back with decodeSpeechProjectNameHeader.
+ */
+export function encodeSpeechProjectNameHeader(name: string): string {
+  let encoded = "";
+  for (const character of name) {
+    const next = HEADER_SAFE_CHARACTER.test(character) ? character : encodeURIComponent(character);
+    if (encoded.length + next.length > SPEECH_PROJECT_NAME_HEADER_MAX) break;
+    encoded += next;
+  }
+  return encoded;
+}
+
+/** Reads an encoded name, or an older client's raw one, as sent. */
+export function decodeSpeechProjectNameHeader(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+const SPEECH_SAMPLE_RATE = 16_000;
+export const SPEECH_STREAM_MAX_CHUNK_BYTES = SPEECH_SAMPLE_RATE * 4;
+export const SPEECH_STREAM_MAX_QUEUED_BYTES = SPEECH_SAMPLE_RATE * 4 * 5 * 60;
+
+export const SpeechStreamCommand = Schema.Struct({ type: Schema.Literal("finish") });
+
+export const SpeechStreamText = Schema.Struct({
+  committed: Schema.String,
+  tentative: Schema.String,
+});
+export type SpeechStreamText = typeof SpeechStreamText.Type;
+
+export const SpeechStreamEvent = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("ready") }),
+  Schema.Struct({
+    type: Schema.Literal("update"),
+    revision: Schema.Int,
+    text: Schema.NullOr(SpeechStreamText),
+  }),
+  Schema.Struct({ type: Schema.Literal("finished"), text: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("error"), message: Schema.String }),
+]);
+export type SpeechStreamEvent = typeof SpeechStreamEvent.Type;

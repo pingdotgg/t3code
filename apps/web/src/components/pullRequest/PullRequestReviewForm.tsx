@@ -6,7 +6,9 @@ import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
  */
 import type { EnvironmentId, PullRequestRef, PullRequestReviewVerdict } from "@t3tools/contracts";
 import { MessageSquareIcon, XIcon } from "lucide-react";
-import type { RefObject } from "react";
+import { useEffect, type RefObject } from "react";
+
+import { useTextFieldSpeech, TextFieldSpeechControls } from "~/speech/useTextFieldSpeech";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -30,6 +32,7 @@ const sent = (term: string): Record<PullRequestReviewVerdict, string> => ({
 
 export function PullRequestReviewForm({
   environmentId,
+  active,
   reference,
   verdict,
   term,
@@ -40,6 +43,7 @@ export function PullRequestReviewForm({
   onSubmitted,
 }: {
   environmentId: EnvironmentId;
+  active: boolean;
   reference: PullRequestRef;
   verdict: PullRequestReviewVerdict;
   term: string;
@@ -54,6 +58,23 @@ export function PullRequestReviewForm({
   const body = usePullRequestReviewStore((store) => store.summaries[reviewKey] ?? "");
   const removeComments = usePullRequestReviewStore((store) => store.removeComments);
   const setSummary = usePullRequestReviewStore((store) => store.setSummary);
+  const speech = useTextFieldSpeech({
+    environmentId,
+    ownerKey: JSON.stringify(["pr-review", environmentId, reviewKey]),
+    text: body,
+    textareaRef,
+    onTextChange: (text) => setSummary(reviewKey, text),
+    disabled: !active || pending,
+  });
+  const { cancel } = speech;
+  const closeSetup = speech.setup.setOpen;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Release microphone capture and its setup dialog when the review form becomes inactive.
+  useEffect(() => {
+    if (!active) {
+      cancel();
+      closeSetup(false);
+    }
+  }, [active, cancel, closeSetup]);
   const clearSummary = usePullRequestReviewStore((store) => store.clearSummary);
   const clearComments = usePullRequestReviewStore((store) => store.clear);
   const submitReview = useAtomCommand(pullRequestEnvironment.submitReview, {
@@ -61,7 +82,7 @@ export function PullRequestReviewForm({
   });
 
   const submit = async () => {
-    if (pending || !canSubmit) return;
+    if (pending || !canSubmit || speech.blocksSubmission) return;
     const submittedBody = body;
     const submittedComments = comments;
     onPendingChange(true);
@@ -113,6 +134,7 @@ export function PullRequestReviewForm({
       <Textarea
         ref={textareaRef}
         rows={3}
+        readOnly={speech.freezesEditor}
         value={body}
         placeholder={placeholder}
         aria-label="Review summary"
@@ -127,7 +149,7 @@ export function PullRequestReviewForm({
           }
         }}
       />
-      <div className="mt-2 flex items-center justify-between gap-2">
+      <div className="mt-2 flex flex-wrap items-center gap-2">
         {comments.length > 0 ? (
           <span className="inline-flex min-w-0 items-center gap-1.5 rounded-row border border-border py-0.5 pr-0.5 pl-2 text-meta text-muted-foreground">
             <MessageSquareIcon aria-hidden className="size-3.5 shrink-0" />
@@ -144,10 +166,14 @@ export function PullRequestReviewForm({
               <XIcon className="size-3" />
             </Button>
           </span>
-        ) : (
-          <span />
-        )}
-        <Button size="xs" disabled={pending || !canSubmit} onClick={() => void submit()}>
+        ) : null}
+        <TextFieldSpeechControls speech={speech} disabled={pending} />
+        <Button
+          size="xs"
+          className="ml-auto"
+          disabled={pending || speech.blocksSubmission || !canSubmit}
+          onClick={() => void submit()}
+        >
           {pending ? "Submitting..." : "Submit review"}
           <PullRequestSubmitKeyHint />
         </Button>

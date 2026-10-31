@@ -1,8 +1,13 @@
 // @effect-diagnostics globalDate:off globalTimers:off - This isolated Electron preload does not run inside an Effect runtime.
 import { ipcRenderer } from "electron";
 import { getElementContext } from "react-grab/primitives";
+import { resolveKeybindingCommand } from "@t3tools/shared/keybindingMatching";
+
 import type {
   DesktopPreviewAnnotationTheme,
+  DesktopPreviewAnnotationVoiceConfig,
+  DesktopPreviewAnnotationVoiceState,
+  DesktopPreviewAnnotationVoiceEvent,
   PickedElementPayload,
   PickedElementStackFrame,
   PreviewAnnotationPayload,
@@ -22,6 +27,8 @@ import { DEFAULT_RECORDING_INPUT_OPTIONS } from "./RecordingInput.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
   ANNOTATION_SEND_ENABLED_CHANNEL,
+  ANNOTATION_VOICE_EVENT_CHANNEL,
+  ANNOTATION_VOICE_STATE_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
@@ -34,6 +41,7 @@ import {
   RECORDING_CONTROLLER_CHANNEL,
   START_PICK_CHANNEL,
 } from "./GuestProtocol.ts";
+
 const OVERLAY_ATTRIBUTE = "data-t3code-annotation-ui";
 const INPUT_LAYER_ATTRIBUTE = "data-t3code-annotation-input";
 const Z_INDEX_OVERLAY = 2147483646;
@@ -524,7 +532,7 @@ function strokeBounds(
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
-function startAnnotation(sendEnabled: boolean): void {
+function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationVoiceConfig): void {
   activeSession?.teardown(false);
   let finished = false;
   const host = document.createElement("div");
@@ -595,6 +603,161 @@ function startAnnotation(sendEnabled: boolean): void {
     "min-h-8 max-h-24 min-w-0 flex-1 resize-none overflow-y-hidden border-0 border-b border-b-transparent bg-transparent px-0 py-1.5 font-sans text-sm leading-5 text-foreground outline-none ring-0 placeholder:text-muted-foreground focus:border-b-primary focus:outline-none focus:ring-0";
   composerRow.appendChild(comment);
 
+  let voicePhase = "idle";
+  let voiceSettings = false;
+  let voiceBusy = false;
+  let voiceAvailable = false;
+  let voiceKeyCode: string | null = null;
+  const microphoneIcon =
+    '<svg class="size-4.5 shrink-0 text-muted-foreground sm:size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/></svg>';
+  const voiceButton = createButton("", "Start voice input");
+  voiceButton.className += " size-8 shrink-0 p-0 sm:size-7";
+  voiceButton.hidden = true;
+  voiceButton.setAttribute("aria-label", "Start voice input");
+  // The mic, the level bars and the spinner share one cell and cross-fade in place.
+  const voiceGlyphs = document.createElement("span");
+  voiceGlyphs.className = "grid size-4 place-items-center";
+  voiceGlyphs.setAttribute("aria-hidden", "true");
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const glyphLayer = (content: Element | string) => {
+    const layer = document.createElement("span");
+    layer.className = "flex items-center justify-center";
+    layer.style.gridArea = "1 / 1";
+    layer.style.transition = reducedMotion ? "none" : "opacity 150ms, transform 150ms";
+    if (typeof content === "string") layer.innerHTML = content;
+    else layer.appendChild(content);
+    voiceGlyphs.appendChild(layer);
+    return layer;
+  };
+  const showGlyph = (layer: HTMLElement, visible: boolean) => {
+    layer.style.opacity = visible ? "1" : "0";
+    layer.style.transform = visible ? "scale(1)" : "scale(0.75)";
+  };
+  const voiceMic = glyphLayer(microphoneIcon);
+  const voiceBars = document.createElement("span");
+  voiceBars.className = "flex h-4 items-center justify-center gap-0.5 text-muted-foreground";
+  const voiceBarOffsets = [1, 0, 2];
+  const voiceBarEls = voiceBarOffsets.map(() => {
+    const bar = document.createElement("span");
+    bar.className = "h-full w-[3px] origin-center rounded-full bg-current";
+    bar.style.transition = reducedMotion ? "none" : "transform 100ms ease-out";
+    bar.style.transform = "scaleY(0.4)";
+    voiceBars.appendChild(bar);
+    return bar;
+  });
+  const voiceBarsLayer = glyphLayer(voiceBars);
+  const voiceSpinner = glyphLayer(
+    '<svg class="motion-safe:animate-spin text-muted-foreground" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 2a10 10 0 1 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  );
+  showGlyph(voiceMic, true);
+  showGlyph(voiceBarsLayer, false);
+  showGlyph(voiceSpinner, false);
+  voiceButton.appendChild(voiceGlyphs);
+  composerRow.appendChild(voiceButton);
+  const voiceLevels = [0, 0, 0];
+  const sendVoice = (
+    action: DesktopPreviewAnnotationVoiceEvent["action"],
+    keyboard?: KeyboardEvent,
+  ) => {
+    if (!voice) return;
+    ipcRenderer.send(ANNOTATION_VOICE_EVENT_CHANNEL, {
+      sessionId: voice.sessionId,
+      text: comment.value,
+      cursor: comment.selectionStart,
+      action,
+      ...(keyboard
+        ? {
+            keyboard: {
+              type: keyboard.type,
+              key: keyboard.key,
+              code: keyboard.code,
+              metaKey: keyboard.metaKey,
+              ctrlKey: keyboard.ctrlKey,
+              shiftKey: keyboard.shiftKey,
+              altKey: keyboard.altKey,
+              repeat: keyboard.repeat,
+            },
+          }
+        : {}),
+    });
+  };
+  voiceButton.addEventListener("pointerdown", (event) => event.preventDefault());
+  voiceButton.addEventListener("click", () => {
+    if (voiceSettings) {
+      sendVoice("settings");
+    } else if (voicePhase === "recording") {
+      sendVoice("stop");
+    } else if (voicePhase === "preparing") {
+      sendVoice("cancel");
+    } else if (voicePhase === "post-processing") {
+      sendVoice("skip");
+    } else if (voiceAvailable && (voicePhase === "idle" || voicePhase === "error")) {
+      voiceBusy = true;
+      comment.readOnly = true;
+      submit.disabled = true;
+      sendVoice("start");
+    }
+  });
+  const onVoiceState = (
+    _event: Electron.IpcRendererEvent,
+    state: DesktopPreviewAnnotationVoiceState,
+  ) => {
+    if (state.sessionId !== voice?.sessionId || finished) return;
+    const phaseChanged = voicePhase !== state.phase;
+    const submissionChanged = voiceBusy !== state.blocksSubmission;
+    voicePhase = state.phase;
+    voiceSettings = state.errorAction === "settings";
+    voiceBusy = state.blocksSubmission;
+    voiceAvailable = state.available;
+    comment.readOnly = state.freezesEditor;
+    if (state.draft) {
+      comment.value = state.draft.text;
+      comment.setSelectionRange(state.draft.cursor, state.draft.cursor);
+      resizeComment();
+    }
+    const recording = state.phase === "recording";
+    const busy =
+      state.phase === "preparing" ||
+      state.phase === "transcribing" ||
+      state.phase === "post-processing";
+    voiceButton.hidden = !state.available;
+    voiceButton.disabled = state.phase === "transcribing";
+    voiceButton.setAttribute("aria-pressed", String(recording));
+    const label = voiceSettings
+      ? "Open voice settings"
+      : recording
+        ? "Finish voice input"
+        : state.phase === "preparing"
+          ? "Cancel voice input"
+          : state.phase === "post-processing"
+            ? "Skip post-processing"
+            : busy
+              ? "Transcribing"
+              : "Start voice input";
+    const showShortcut =
+      (state.phase === "idle" || state.phase === "error" || recording) && !voiceSettings;
+    voiceButton.title =
+      showShortcut && state.shortcutLabel ? `${label} (${state.shortcutLabel})` : label;
+    voiceButton.setAttribute("aria-label", label);
+    showGlyph(voiceMic, !recording && !busy);
+    showGlyph(voiceBarsLayer, recording);
+    showGlyph(voiceSpinner, busy);
+    if (recording && !reducedMotion) {
+      voiceLevels.copyWithin(0, 1);
+      voiceLevels[2] = state.level;
+      voiceBarEls.forEach((bar, index) => {
+        const level = voiceLevels[2 - voiceBarOffsets[index]!] ?? 0;
+        bar.style.transform = `scaleY(${0.4 + 0.6 * Math.min(1, level)})`;
+      });
+    } else {
+      voiceLevels.fill(0);
+      voiceBarEls.forEach((bar) => {
+        bar.style.transform = `scaleY(${recording ? 0.7 : 0.4})`;
+      });
+    }
+    if (phaseChanged || submissionChanged || state.draft) updateStatus();
+  };
+
   const dragHandle = document.createElement("button");
   dragHandle.type = "button";
   dragHandle.textContent = "⠿";
@@ -654,12 +817,16 @@ function startAnnotation(sendEnabled: boolean): void {
     comment.style.overflowY = comment.scrollHeight > maxHeight ? "auto" : "hidden";
     queueEditorLayout();
   };
-  comment.addEventListener("input", resizeComment);
+  comment.addEventListener("input", () => {
+    resizeComment();
+    sendVoice("sync");
+  });
 
   const updateStatus = (): void => {
     const hasTargets = selected.size > 0 || regions.length > 0 || strokes.length > 0;
+    if (!hasTargets && voiceBusy) sendVoice("cancel");
     editor.style.display = hasTargets ? "flex" : "none";
-    submit.disabled = !hasTargets;
+    submit.disabled = !hasTargets || voiceBusy || pendingCapture;
     submit.style.opacity = hasTargets ? "1" : "0.45";
     adjust.disabled = !hasTargets;
     stylePanel.style.display = editorExpanded && selected.size > 0 ? "grid" : "none";
@@ -1319,6 +1486,7 @@ function startAnnotation(sendEnabled: boolean): void {
   };
 
   const onWindowBlur = (): void => {
+    sendVoice("blur");
     clearHoverOutline();
   };
 
@@ -1354,6 +1522,8 @@ function startAnnotation(sendEnabled: boolean): void {
     if (editorLayoutFrame !== null) window.cancelAnimationFrame(editorLayoutFrame);
     ipcRenderer.off(CANCEL_PICK_CHANNEL, onCancel);
     ipcRenderer.off(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
+    ipcRenderer.off(ANNOTATION_VOICE_STATE_CHANNEL, onVoiceState);
+    window.removeEventListener("keyup", onVoiceKeyUp, true);
     document.documentElement.removeAttribute("data-t3code-annotation-tool");
     cursorStyle.remove();
     inputLayer?.remove();
@@ -1364,7 +1534,45 @@ function startAnnotation(sendEnabled: boolean): void {
 
   const onCancel = (): void => teardown(false);
   const onCaptured = (): void => teardown(false);
+  const onVoiceKeyUp = (event: KeyboardEvent) => {
+    if ((event.code || event.key) !== voiceKeyCode) return;
+    voiceKeyCode = null;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    sendVoice("key", event);
+  };
   const onKeyDown = (event: KeyboardEvent): void => {
+    if (voice && !event.isComposing && event.keyCode !== 229) {
+      if (event.key === "Escape" && (voiceBusy || voicePhase === "error")) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        voiceKeyCode = null;
+        sendVoice("cancel");
+        return;
+      }
+      if (
+        voiceAvailable &&
+        editor.style.display !== "none" &&
+        resolveKeybindingCommand(event, voice.keybindings, navigator.platform, {
+          previewFocus: true,
+          previewOpen: true,
+          isDesktop: true,
+          isWeb: false,
+          editableFocus: true,
+        }) === "composer.dictation"
+      ) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        voiceKeyCode = event.code || event.key;
+        if (!event.repeat && !voiceBusy) {
+          voiceBusy = true;
+          comment.readOnly = true;
+          submit.disabled = true;
+        }
+        sendVoice("key", event);
+        return;
+      }
+    }
     if (isAnnotationNode(event.target as Element) && event.key !== "Escape") return;
     if (event.key === "Escape") {
       event.preventDefault();
@@ -1382,7 +1590,11 @@ function startAnnotation(sendEnabled: boolean): void {
 
   const submitAnnotation = (submission: PreviewAnnotationSubmission): void => {
     if (submission === "send" && !sendEnabled) return;
-    if (pendingCapture || (selected.size === 0 && regions.length === 0 && strokes.length === 0))
+    if (
+      voiceBusy ||
+      pendingCapture ||
+      (selected.size === 0 && regions.length === 0 && strokes.length === 0)
+    )
       return;
     pendingCapture = true;
     submit.disabled = true;
@@ -1465,6 +1677,9 @@ function startAnnotation(sendEnabled: boolean): void {
   window.addEventListener("resize", repaint, { passive: true });
   ipcRenderer.on(CANCEL_PICK_CHANNEL, onCancel);
   ipcRenderer.on(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
+  ipcRenderer.on(ANNOTATION_VOICE_STATE_CHANNEL, onVoiceState);
+  window.addEventListener("keyup", onVoiceKeyUp, true);
+  sendVoice("sync");
   if (inputLayer) {
     document.documentElement.appendChild(inputLayer);
     inputLayer.focus({ preventScroll: true });
@@ -1485,9 +1700,14 @@ function startAnnotation(sendEnabled: boolean): void {
 
 ipcRenderer.on(
   START_PICK_CHANNEL,
-  (_event, theme: DesktopPreviewAnnotationTheme | undefined, sendEnabled?: boolean) => {
+  (
+    _event,
+    theme: DesktopPreviewAnnotationTheme | undefined,
+    sendEnabled: boolean | undefined,
+    voice: DesktopPreviewAnnotationVoiceConfig | undefined,
+  ) => {
     if (theme) annotationTheme = theme;
-    startAnnotation(sendEnabled === true);
+    startAnnotation(sendEnabled === true, voice);
   },
 );
 ipcRenderer.on(ANNOTATION_SEND_ENABLED_CHANNEL, (_event, enabled: boolean) => {
