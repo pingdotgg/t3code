@@ -42,14 +42,14 @@ export function useActiveRowReveal(reveal: SidebarRouteReveal, routeKey: string 
       !mountRevealOwed.current &&
       !row.ownerDocument.defaultView?.matchMedia("(prefers-reduced-motion: reduce)").matches;
     mountRevealOwed.current = false;
+    // A hovered row is already visible; avoid forcing layout during its click commit.
+    if (row.matches(":hover")) return;
     const previous = glideRef.current;
     const carried = previous
       ? previous.offset * (1 - (previous.animation.effect?.getComputedTiming().progress ?? 1))
       : 0;
     previous?.animation.cancel();
     glideRef.current = null;
-    // A hovered row is already visible; avoid forcing layout during its click commit.
-    if (row.matches(":hover")) return;
     const scroller = glide ? row.closest<HTMLElement>('[data-slot="scroll-area-viewport"]') : null;
     const from = scroller?.scrollTop ?? 0;
     row.scrollIntoView({ block: "nearest", behavior: "instant" });
