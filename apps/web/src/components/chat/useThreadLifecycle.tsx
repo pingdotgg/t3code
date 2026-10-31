@@ -13,6 +13,7 @@ import {
 } from "../ChatView.logic";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useDeadlinePassed, useNowAfter } from "../../hooks/useDeadline";
+import { useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
 import type { usePendingThreadRequests } from "./usePendingThreadRequests";
 import {
   AuthOrchestrationOperateScope,
@@ -139,6 +140,7 @@ interface ThreadLifecycleInput {
  * banners, opening related threads, and standalone slash commands.
  */
 export function useThreadLifecycle(input: ThreadLifecycleInput) {
+  const paneFocusedRef = useLayoutPaneFocusedRef();
   const {
     environmentId,
     routeThreadKey,
@@ -399,7 +401,9 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     finishRestore();
     if (currentRouteThreadKeyRef.current === routeThreadKey) {
       window.requestAnimationFrame(() => {
-        if (currentRouteThreadKeyRef.current === routeThreadKey) composerRef.current?.focusAtEnd();
+        if (paneFocusedRef.current && currentRouteThreadKeyRef.current === routeThreadKey) {
+          composerRef.current?.focusAtEnd();
+        }
       });
     }
   };
