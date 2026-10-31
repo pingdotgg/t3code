@@ -53,12 +53,32 @@ const makeSignIn = Effect.gen(function* () {
   } satisfies SourceControlSignIn;
 });
 
+// Only 204 means starred. Tokens without star access, a missing login, and 404 all read as false.
+export const makeIsRepositoryStarred = Effect.gen(function* () {
+  const api = yield* GitHubRest.GitHubRest;
+  return Effect.fn("GitHubDriver.isRepositoryStarred")(
+    function* (host: string, repository: string) {
+      const segments = repository.split("/");
+      if (segments.length !== 2) return false;
+      const response = yield* api.rest({
+        host,
+        operation: "isRepositoryStarred",
+        path: `user/starred/${segments.map(encodeURIComponent).join("/")}`,
+        allowReserve: false,
+      });
+      return response.status === 204;
+    },
+    Effect.orElseSucceed(() => false),
+  );
+});
+
 const makeInstance = Effect.all({
   sourceControl: GitHubSourceControlProvider.make,
   discovery: GitHubSourceControlProvider.makeDiscovery,
   pullRequests: GitHubPullRequestProvider.make,
   fetchMedia: GitHubMediaFetch.make,
   signIn: makeSignIn,
+  isRepositoryStarred: makeIsRepositoryStarred,
 });
 
 export const driver = defineSourceControlDriver({
