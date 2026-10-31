@@ -73,7 +73,8 @@ vi.mock(import("./projectFilesQueryState"), async (original) => ({
   confirmProjectFileQueryData: () => true,
 }));
 
-import FilePreviewPanel from "./FilePreviewPanel";
+import FilePreviewPanel from "~/panels/files/FilesSidePanel";
+import { PanelHostContext } from "~/panels/panelHost";
 
 const environmentId = EnvironmentId.make("markdown-preview-test");
 const threadRef = { environmentId, threadId: ThreadId.make("thread") };
@@ -103,25 +104,21 @@ function markdownPreview(truncated: boolean) {
     truncated,
   };
   return (
+    <PanelHostContext value={{threadRef, visible:true, composerDraftTarget:threadRef, workspaceMutationId:null, sendAnnotation: () => undefined}}>
     <FilePreviewPanel
-      environmentId={environmentId}
       cwd="/workspace"
       projectName="Project"
       relativePath="tasks.md"
-      threadRef={threadRef}
-      composerDraftTarget={threadRef}
-      keybindings={[]}
       availableEditors={[]}
       openInShortcutEnabled={false}
       revealLine={null}
       revealRequestId={0}
-      onOpenFile={vi.fn()}
       onNavigateFolder={vi.fn()}
       folderTrail={undefined}
       onPendingChange={vi.fn()}
       selectedFilePending={false}
-      workspaceMutationId={null}
     />
+    </PanelHostContext>
   );
 }
 
