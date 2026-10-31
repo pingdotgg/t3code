@@ -433,6 +433,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
               resumeCount: current.resumeCount + 1,
             })).pipe(Effect.as(threadInput.providerThread)),
           startTurn: () => options.startTurn ?? Effect.void,
+          compactThread: () => Effect.void,
           steerTurn: () => Effect.void,
           interruptTurn: () =>
             Ref.update(state, (current) => ({
@@ -1122,6 +1123,80 @@ it.effect(
               Effect.andThen(Deferred.await(continueProbe)),
               Effect.as(false),
             ),
+            replacementAdapter: { state: replacementState, active: replaced },
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps a session rebuilt settings made stale while a compaction runs on it",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const replacementState = yield* Ref.make(emptyState);
+      const replaced = yield* Ref.make(false);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const compacting = ThreadId.make("thread-provider-session-manager-settings-compacting");
+        const next = ThreadId.make("thread-provider-session-manager-settings-after-compact");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const open = (threadId: ThreadId) =>
+          manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: compacting, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: next, now }),
+          ],
+        });
+        const runtime = yield* open(compacting);
+        const runId = idAllocator.derive.run({ threadId: compacting, ordinal: 1 });
+        yield* runtime.compactThread!({
+          appThread: (yield* projectionStore.getThreadProjection(compacting)).thread,
+          threadId: compacting,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread: makeProviderThread({
+            idAllocator,
+            threadId: compacting,
+            providerSessionId,
+            now,
+            nativeThreadId: `native-${compacting}`,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({ threadId: compacting, ordinal: 1 }),
+            text: "/compact",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* Ref.set(replaced, true);
+
+        assert.strictEqual(yield* open(next), runtime);
+        assert.equal(
+          (yield* Ref.get(state)).closeCount,
+          0,
+          "an unfinished compaction keeps its process",
+        );
+        assert.equal((yield* Ref.get(replacementState)).openCount, 0);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
             replacementAdapter: { state: replacementState, active: replaced },
           }),
         ),
