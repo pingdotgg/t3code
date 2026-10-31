@@ -8,11 +8,13 @@ import { type AnyRouter, useRouter } from "@tanstack/react-router";
 import {
   composerDraftHasUserContent,
   markPromotedDraftThreadByRef,
+  NO_PROJECTS_DRAFT_ID,
   type DraftId,
   type DraftThreadEnvMode,
   type DraftThreadState,
   useComposerDraftStore,
 } from "../composerDraftStore";
+import { useDraftSendOnOpenStore } from "../draftSendOnOpenStore";
 import { newDraftId, newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import {
@@ -39,6 +41,8 @@ import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentSummaries } from "../state/presentation";
 import { environmentServerConfigsAtom } from "../state/server";
+import { layoutDraftIds } from "../layout/layoutModel";
+import { useLayoutStore } from "../layout/layoutStore";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { getClientSettings } from "./useSettings";
@@ -75,7 +79,7 @@ export function createNewThreadHandler(router: AnyRouter) {
     return resolveThreadRouteTarget(currentRouteParams);
   };
 
-  return (
+  const openNewThread = (
     projectRef: ScopedProjectRef,
     options?: {
       branch?: string | null;
@@ -229,8 +233,11 @@ export function createNewThreadHandler(router: AnyRouter) {
     if (storedDraftThreadRef && reusableStoredDraftThread === null) {
       markPromotedDraftThreadByRef(storedDraftThreadRef);
     }
+    // An empty draft already open in a tab must keep its own identity.
+    const draftIdsInTabs = layoutDraftIds(useLayoutStore.getState().layout);
     const emptyStoredDraftThread =
       reusableStoredDraftThread &&
+      !draftIdsInTabs.has(reusableStoredDraftThread.draftId) &&
       !composerDraftHasUserContent(getComposerDraft(reusableStoredDraftThread.draftId))
         ? reusableStoredDraftThread
         : null;
@@ -338,6 +345,7 @@ export function createNewThreadHandler(router: AnyRouter) {
       currentRouteTarget?.kind === "draft" &&
       latestActiveDraftThread.logicalProjectKey === logicalProjectKey &&
       latestActiveDraftThread.promotedTo == null &&
+      !draftIdsInTabs.has(currentRouteTarget.draftId) &&
       !composerDraftHasUserContent(getComposerDraft(currentRouteTarget.draftId))
     ) {
       if (
@@ -421,6 +429,30 @@ export function createNewThreadHandler(router: AnyRouter) {
       return { draftId, threadId };
     })();
   };
+  return async (...args: Parameters<typeof openNewThread>) => {
+    const opened = await openNewThread(...args);
+    if (opened) takeNoProjectsDraft(opened.draftId);
+    return opened;
+  };
+}
+
+/**
+ * What was typed on the no-projects home moves into the first thread opened
+ * once a project exists, unless that thread already holds its own text.
+ */
+function takeNoProjectsDraft(draftId: DraftId) {
+  const { getComposerDraft, moveComposerPromptAndImages } = useComposerDraftStore.getState();
+  const sendOnMove = useDraftSendOnOpenStore.getState().armed;
+  if (
+    !composerDraftHasUserContent(getComposerDraft(NO_PROJECTS_DRAFT_ID)) ||
+    composerDraftHasUserContent(getComposerDraft(draftId))
+  ) {
+    if (sendOnMove) useDraftSendOnOpenStore.setState({ armed: false });
+    return;
+  }
+  moveComposerPromptAndImages(NO_PROJECTS_DRAFT_ID, draftId);
+  // Send on the no-projects home: this draft sends what just moved in.
+  if (sendOnMove) useDraftSendOnOpenStore.setState({ armed: false, draftId });
 }
 
 export function resolveDefaultProjectRef(
