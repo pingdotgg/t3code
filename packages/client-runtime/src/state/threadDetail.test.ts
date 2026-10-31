@@ -1,9 +1,16 @@
 import {
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   EnvironmentId,
   EventId,
   MessageId,
+  NodeId,
   RunId,
   TurnItemId,
+  type OrchestrationV2Checkpoint,
+  type OrchestrationV2ConversationMessage,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
@@ -272,6 +279,139 @@ it("only compares replaced entries in a streamed reducer delta", () => {
 
   expect(sameThreadStructure(before, next!)).toBe(true);
   expect(slotReads).toBeLessThanOrEqual(2);
+});
+
+describe("derived thread state through a streamed message", () => {
+  const ref = { environmentId: EnvironmentId.make("environment-1"), threadId: v2ThreadId };
+  const runId = RunId.make("run-1");
+  const streamed: OrchestrationV2ConversationMessage = {
+    id: MessageId.make("message-assistant"),
+    threadId: v2ThreadId,
+    runId,
+    nodeId: null,
+    role: "assistant",
+    text: "Hel",
+    attachments: [],
+    streaming: true,
+    createdBy: "agent",
+    creationSource: "provider",
+    createdAt: v2Now,
+    updatedAt: v2Now,
+  };
+  const queuedMessage: OrchestrationV2ConversationMessage = {
+    ...streamed,
+    id: MessageId.make("message-queued"),
+    runId: RunId.make("run-2"),
+    role: "user",
+    text: "Then run the tests",
+    streaming: false,
+    createdBy: "user",
+    creationSource: "mobile",
+  };
+  const queuedRun: OrchestrationV2Run = {
+    id: RunId.make("run-2"),
+    threadId: v2ThreadId,
+    ordinal: 2,
+    providerInstanceId: v2Projection.thread.providerInstanceId,
+    modelSelection: v2Projection.thread.modelSelection,
+    providerThreadId: null,
+    userMessageId: queuedMessage.id,
+    rootNodeId: null,
+    activeAttemptId: null,
+    status: "queued",
+    requestedAt: v2Now,
+    startedAt: null,
+    completedAt: null,
+    checkpointId: null,
+    contextHandoffId: null,
+  };
+  const checkpoint = (ordinal: number): OrchestrationV2Checkpoint => ({
+    id: CheckpointId.make(`checkpoint-${ordinal}`),
+    threadId: v2ThreadId,
+    scopeId: CheckpointScopeId.make("scope"),
+    runId,
+    nodeId: NodeId.make("node"),
+    parentCheckpointId: null,
+    ordinalWithinScope: ordinal,
+    appRunOrdinal: ordinal,
+    ref: CheckpointRef.make(`refs/t3/checkpoint-${ordinal}`),
+    status: "ready",
+    files: [],
+    capturedAt: v2Now,
+  });
+  const initial: OrchestrationV2ThreadProjection = {
+    ...v2Projection,
+    runs: [queuedRun],
+    messages: [streamed, queuedMessage],
+    checkpoints: [checkpoint(1)],
+  };
+
+  function setup() {
+    const stateAtom = Atom.make(
+      AsyncResult.success({ ...EMPTY_ENVIRONMENT_THREAD_STATE, data: Option.some(initial) }),
+    );
+    const details = createEnvironmentThreadDetailAtoms(() => stateAtom);
+    const queue = details.queueWorkflowAtom(ref);
+    const checkpoints = details.checkpointSummariesAtom(ref);
+    const registry = AtomRegistry.make();
+    registry.mount(queue);
+    registry.mount(checkpoints);
+    let projection = initial;
+    return {
+      queue: () => registry.get(queue),
+      checkpoints: () => registry.get(checkpoints),
+      apply: (event: Parameters<typeof applyOrchestrationV2ProjectionEvent>[1]) => {
+        projection = applyOrchestrationV2ProjectionEvent(projection, event)!;
+        registry.set(
+          stateAtom,
+          AsyncResult.success({ ...EMPTY_ENVIRONMENT_THREAD_STATE, data: Option.some(projection) }),
+        );
+      },
+      [Symbol.dispose]: () => registry.dispose(),
+    };
+  }
+
+  const messageUpdated = (message: OrchestrationV2ConversationMessage) => ({
+    id: EventId.make(`event-${message.id}-${message.text.length}`),
+    type: "message.updated" as const,
+    threadId: v2ThreadId,
+    occurredAt: later,
+    payload: message,
+  });
+
+  it("keeps the queue workflow through streamed text and follows a queued message edit", () => {
+    using thread = setup();
+    const first = thread.queue();
+    thread.apply(messageUpdated({ ...streamed, text: "Hello", updatedAt: later }));
+    thread.apply(messageUpdated({ ...streamed, text: "Hello there", updatedAt: later }));
+    expect(thread.queue()).toBe(first);
+
+    thread.apply(messageUpdated({ ...queuedMessage, text: "Then run lint", updatedAt: later }));
+    expect(thread.queue()?.queuedRuns.map((queued) => queued.text)).toEqual(["Then run lint"]);
+  });
+
+  it("keeps checkpoint summaries through streamed text and follows new assistant messages and checkpoints", () => {
+    using thread = setup();
+    const first = thread.checkpoints();
+    thread.apply(messageUpdated({ ...streamed, text: "Hello", updatedAt: later }));
+    thread.apply(messageUpdated({ ...streamed, text: "Hello there", updatedAt: later }));
+    expect(thread.checkpoints()).toBe(first);
+
+    const followUp = { ...streamed, id: MessageId.make("message-follow-up"), text: "Done" };
+    thread.apply(messageUpdated(followUp));
+    expect(thread.checkpoints().map((summary) => summary.assistantMessageId)).toEqual([
+      followUp.id,
+    ]);
+
+    thread.apply({
+      id: EventId.make("checkpoint-2"),
+      type: "checkpoint.captured",
+      threadId: v2ThreadId,
+      occurredAt: later,
+      payload: checkpoint(2),
+    });
+    expect(thread.checkpoints().map((summary) => summary.checkpointTurnCount)).toEqual([1, 2]);
+  });
 });
 
 function replaceItem(projection: OrchestrationV2ThreadProjection, item: OrchestrationV2TurnItem) {
