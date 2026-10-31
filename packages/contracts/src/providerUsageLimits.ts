@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import {
+  EnvironmentId,
   ForwardCompatibleArray,
   IsoDateTime,
   NonNegativeInt,
@@ -127,6 +128,8 @@ export const UsageLimitsReport = Schema.Struct({
       sourceLabel: Schema.optional(TrimmedNonEmptyString),
       instanceId: Schema.optional(ProviderInstanceId),
       resetCreditInput: Schema.optional(ProviderConsumeResetCreditInput),
+      /** Where `resetCreditInput` is redeemed when a hub on another environment reported it. */
+      resetCreditEnvironmentId: Schema.optional(EnvironmentId),
       displayName: Schema.optional(Schema.String),
       accentColor: Schema.optional(Schema.String),
       limits: ServerProviderUsageLimits,

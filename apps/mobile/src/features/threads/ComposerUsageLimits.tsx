@@ -1,11 +1,29 @@
-import type { EnvironmentId, UsageLimitsReport } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import type {
+  EnvironmentId,
+  UsageLimitSourceSnapshots,
+  UsageLimitsReport,
+} from "@t3tools/contracts";
+import { composerUsageLimitSources } from "@t3tools/shared/usageLimits";
 import { Pressable, ScrollView, View } from "react-native";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
+import { environmentPresentations } from "../../state/presentation";
 import { AccountLimits, ResetCredits } from "../usage/UsageLimitsSection";
 
 const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
+
+/** The composer environment's own hubs followed by every other environment's. */
+export function useComposerUsageLimitSources(
+  environmentId: EnvironmentId | null,
+  local: UsageLimitSourceSnapshots | undefined,
+) {
+  const byEnvironment = useAtomValue(environmentPresentations.usageLimitSourcesByEnvironmentAtom);
+  return environmentId === null
+    ? (local ?? [])
+    : composerUsageLimitSources(environmentId, local ?? [], byEnvironment);
+}
 
 export function ComposerUsageLimits({
   report,
@@ -61,7 +79,7 @@ export function ComposerUsageLimits({
                 resetCreditInput && account.limits.resetCredits ? (
                   <ResetCredits
                     dense
-                    environmentId={environmentId}
+                    environmentId={account.resetCreditEnvironmentId ?? environmentId}
                     input={resetCreditInput}
                     credits={account.limits.resetCredits}
                     now={now}
