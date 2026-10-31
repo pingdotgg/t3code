@@ -152,6 +152,7 @@ interface ThreadResumeSnapshot {
   readonly sequence: number;
   readonly persisted: boolean;
   readonly acceptsBoundedSnapshots?: boolean;
+  readonly deletionConfirmed?: boolean;
 }
 
 interface ThreadResumeCache {
@@ -245,11 +246,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const canLoadHistory = Option.isSome(httpClient) && Option.isSome(historyController);
   const acceptsBoundedSocketSnapshots = yield* Ref.make(canLoadHistory);
   const lastSequence = yield* SubscriptionRef.make(initialSequence);
+  // Only a delete event proves deletion. A snapshot miss can precede a new thread's creation.
+  let deletionConfirmed = retained?.deletionConfirmed === true;
   let committed: ThreadResumeSnapshot = {
     state: initialState,
     sequence: initialSequence,
     persisted: retained?.persisted ?? Option.isSome(cached),
     acceptsBoundedSnapshots: canLoadHistory,
+    deletionConfirmed,
   };
   if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
   const awaitingCompletion = yield* Ref.make(false);
@@ -271,6 +275,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       state: current,
       sequence,
       acceptsBoundedSnapshots: yield* Ref.get(acceptsBoundedSocketSnapshots),
+      deletionConfirmed,
       persisted:
         committed.persisted &&
         matchesThreadSnapshot(committed, Option.getOrNull(current.data), sequence, current.history),
@@ -581,6 +586,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     );
 
     if (result._tag === "delete") {
+      deletionConfirmed = true;
       yield* setDeleted();
       return;
     }
@@ -938,10 +944,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       ORCHESTRATION_V2_WS_METHODS.subscribeThread,
       Effect.fn("EnvironmentThreadState.makeSubscribeInput")(function* (session) {
         let current = yield* SubscriptionRef.get(state);
-        // A prior definitive miss (or delete event) already cleared this thread.
-        // Park the subscription attempt without opening the socket so we do not
-        // retry forever against a known-missing id.
-        if (current.status === "deleted") {
+        // Park without opening the socket so we do not retry forever against a deleted id.
+        if (current.status === "deleted" && deletionConfirmed) {
           return yield* Effect.never;
         }
 
@@ -965,8 +969,17 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               }),
             ),
           );
-          const httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =
+          let httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =
             yield* snapshotLoader.load(prepared, threadId);
+          for (let attempt = 0; httpResult._tag === "missing"; attempt++) {
+            if (current.status !== "deleted") {
+              yield* setDeleted();
+              yield* Ref.set(awaitingCompletion, true);
+              current = yield* SubscriptionRef.get(state);
+            }
+            yield* Effect.sleep(Math.min(250 * 2 ** attempt, 5_000));
+            httpResult = yield* snapshotLoader.load(prepared, threadId);
+          }
           switch (httpResult._tag) {
             case "present": {
               if (canLoadHistory && httpResult.history !== undefined) {
@@ -995,10 +1008,6 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               );
               current = yield* SubscriptionRef.get(state);
               break;
-            }
-            case "missing": {
-              yield* setDeleted();
-              return yield* Effect.never;
             }
             case "unavailable": {
               break;
