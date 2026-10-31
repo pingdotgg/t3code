@@ -4241,11 +4241,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return yield* reject(`cannot move to missing or archived project ${command.projectId}.`);
       }
       const current = yield* projects.get(thread.projectId).pipe(mapDispatchError(command));
-      if (
-        thread.worktreePath === null &&
-        (Option.isNone(current) || current.value.workspaceRoot !== target.value.workspaceRoot)
-      ) {
-        return yield* reject(`uses a different workspace root from project ${command.projectId}.`);
+      if (Option.isNone(current)) {
+        return yield* reject(`cannot move from missing project ${thread.projectId}.`);
       }
       const now = yield* DateTime.now;
       yield* emit(
@@ -4256,7 +4253,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         threadId: command.threadId,
         providerInstanceId: thread.providerInstanceId,
         occurredAt: now,
-        payload: { ...thread, projectId: command.projectId, updatedAt: now },
+        payload: {
+          ...thread,
+          projectId: command.projectId,
+          worktreePath: thread.worktreePath ?? current.value.workspaceRoot,
+          updatedAt: now,
+        },
       });
     },
   );
