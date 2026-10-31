@@ -1520,6 +1520,55 @@ it.effect("lists only active subagent IDs without loading shell data", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("lists threads whose latest run completed after the cutoff", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const recent = "2026-01-05T12:30:00.000Z";
+    const old = "2026-01-05T11:00:00.000Z";
+    for (const [id, archivedAt, runs] of [
+      ["recent", null, [["completed", recent]]],
+      ["old", null, [["completed", old]]],
+      [
+        "running-after-completed",
+        null,
+        [
+          ["completed", recent],
+          ["running", null],
+        ],
+      ],
+      ["archived", recent, [["completed", recent]]],
+    ] as const) {
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_threads (
+          thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+          created_at, updated_at, archived_at, deleted_at, payload_json
+        ) VALUES (
+          ${id}, 'project:test', ${id}, 'codex', 'full-access', 'default',
+          ${old}, ${old}, ${archivedAt}, NULL, '{}'
+        )
+      `;
+      for (const [index, [status, completedAt]] of runs.entries()) {
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_runs (
+            run_id, thread_id, ordinal, provider, status, requested_at, completed_at, payload_json
+          ) VALUES (
+            ${`${id}:run-${index + 1}`}, ${id}, ${index + 1}, 'claudeAgent', ${status},
+            ${old}, ${completedAt}, '{}'
+          )
+        `;
+      }
+    }
+
+    assert.deepEqual(
+      yield* store.listIdleCompactionCandidates({
+        completedAfter: DateTime.makeUnsafe("2026-01-05T12:00:00.000Z"),
+      }),
+      [{ threadId: ThreadId.make("recent"), runId: RunId.make("recent:run-1") }],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
 // regression: #25621 SQLite rejects statements binding more than 32,766 variables
 it.effect("lists every thread in the shell snapshot past SQLite's bound variable limit", () =>
   Effect.gen(function* () {

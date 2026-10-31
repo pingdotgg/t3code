@@ -267,6 +267,7 @@ describe("IdleCompactionService", () => {
                   historyReads++;
                   return data;
                 }),
+              listIdleCompactionCandidates: () => Effect.succeed([]),
             }),
             Layer.mock(ServerSettings.ServerSettingsService)({
               getSettings: Effect.succeed({
@@ -324,12 +325,6 @@ describe("IdleCompactionService", () => {
         };
         const dispatched = yield* Deferred.make<ReadonlyArray<string>>();
         const commandIds: Array<string> = [];
-        // Not object-literal arguments, so the mock can name a method main does not have yet.
-        const projectionStore = {
-          getThread: () => Effect.succeed(data.thread),
-          getThreadRecords: () => Effect.succeed(data),
-          listIdleCompactionCandidates: () => Effect.succeed([{ threadId, runId }]),
-        };
         const dependencies = Layer.mergeAll(
           Layer.mock(Orchestrator.OrchestratorV2)({
             // The run completed before the restart, so no run.updated event arrives.
@@ -341,7 +336,11 @@ describe("IdleCompactionService", () => {
                 return { sequence: 1, storedEvents: [] };
               }),
           }),
-          Layer.mock(ProjectionStore.ProjectionStoreV2)(projectionStore),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getThread: () => Effect.succeed(data.thread),
+            getThreadRecords: () => Effect.succeed(data),
+            listIdleCompactionCandidates: () => Effect.succeed([{ threadId, runId }]),
+          }),
           Layer.mock(ServerSettings.ServerSettingsService)({
             getSettings: Effect.succeed({
               ...DEFAULT_SERVER_SETTINGS,

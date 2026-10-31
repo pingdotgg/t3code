@@ -468,6 +468,13 @@ export interface ProjectionStoreV2Shape {
     ReadonlyArray<ThreadId>,
     ProjectionStoreV2Error
   >;
+  /** Active threads whose latest run completed at or after the cutoff. */
+  readonly listIdleCompactionCandidates: (query: {
+    readonly completedAfter: DateTime.Utc;
+  }) => Effect.Effect<
+    ReadonlyArray<{ readonly threadId: ThreadId; readonly runId: RunId }>,
+    ProjectionStoreV2Error
+  >;
   /** Threads that are not deleted, archived ones included. */
   readonly countThreads: () => Effect.Effect<number, ProjectionStoreV2Error>;
   /** Every active thread, in shell order. */
@@ -6735,6 +6742,29 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       Effect.mapError(shellSnapshotReadError),
     );
 
+    const listIdleCompactionCandidates = Effect.fn("ProjectionStore.listIdleCompactionCandidates")(
+      function* ({ completedAfter }: { readonly completedAfter: DateTime.Utc }) {
+        const rows = yield* sql<{ readonly thread_id: string; readonly run_id: string }>`
+        SELECT run.thread_id, run.run_id
+        FROM orchestration_v2_projection_runs run
+        JOIN orchestration_v2_projection_threads thread ON thread.thread_id = run.thread_id
+        WHERE run.status = 'completed'
+          AND run.completed_at >= ${DateTime.formatIso(completedAfter)}
+          AND thread.deleted_at IS NULL
+          AND thread.archived_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM orchestration_v2_projection_runs later
+            WHERE later.thread_id = run.thread_id AND later.ordinal > run.ordinal
+          )
+      `;
+        return rows.map((row) => ({
+          threadId: ThreadId.make(row.thread_id),
+          runId: RunId.make(row.run_id),
+        }));
+      },
+      Effect.mapError(shellSnapshotReadError),
+    );
+
     const countThreads = Effect.fn("ProjectionStore.countThreads")(function* () {
       const rows = yield* sql<{ readonly count: number }>`
         SELECT COUNT(*) AS count FROM orchestration_v2_projection_threads WHERE deleted_at IS NULL
@@ -6981,6 +7011,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       apply,
       getShellSnapshot: readOnReader(getShellSnapshot),
       listActiveSubagentThreadIds: readOnReader(listActiveSubagentThreadIds),
+      listIdleCompactionCandidates: readOnReader(listIdleCompactionCandidates),
       countThreads: readOnReader(countThreads),
       listActiveShellIndex: readOnReader(listActiveShellIndex),
       readShellSnapshot: readOnReader(readShellSnapshot),

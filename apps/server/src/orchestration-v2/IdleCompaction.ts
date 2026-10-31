@@ -2,6 +2,7 @@ import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import { COMPACTION_SUGGESTION_MIN_TOKENS } from "@t3tools/shared/claudeCompaction";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 
 // Claude Code's idleCompaction defaults to 200K and won't go below 100K. Below
 // that a cold re-read is cheap, so compacting mostly loses context for little
@@ -10,6 +11,8 @@ const MIN_CONTEXT_TOKENS = COMPACTION_SUGGESTION_MIN_TOKENS;
 // Start this long before the cache expires: enough for the session to resume
 // and send the compaction while the cache is still warm.
 const LEAD_MS = 2 * 60_000;
+// Claude's longest prompt cache TTL: a run that completed earlier has no warm cache to keep.
+export const MAX_PROMPT_CACHE_TTL = Duration.hours(1);
 
 export type IdleCompactionRecords = Pick<
   OrchestrationV2ThreadProjection,
