@@ -223,9 +223,10 @@ names and values it expects. To add headers for an environment you already
 added, or to replace or remove them, use **Settings → Environments → Access
 proxy headers**.
 
-The desktop app sends those headers with every request to that host, including
-the WebSocket, and keeps them encrypted on the device. The web and mobile apps
-cannot send access proxy headers yet.
+The desktop app sends those headers with its own requests to that host,
+including the WebSocket, and keeps them encrypted on the device. Pages you open
+in the in-app browser do not get them. The web and mobile apps cannot send
+access proxy headers yet.
 
 ## Desktop-managed SSH
 
