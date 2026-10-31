@@ -11,7 +11,8 @@ creates the machine, installs T3 Code, exposes it on a public HTTPS URL, and pai
 environment reconnects like any other remote environment.
 
 For Vercel, create an access token at vercel.com/account/settings/tokens; T3 Code uses your only
-team and a `t3-sandboxes` project unless you fill in **Team** or **Project**, and a sandbox on the
+team and a `t3-sandboxes` project unless you fill in **Team** or **Project** (a change applies to
+new sandboxes; existing ones stay where they were created), and a sandbox on the
 Hobby plan stops after 45 minutes, so resume it from the Sandboxes list to keep working.
 
 The key is saved on the T3 Code server that provisions the sandbox, not on the client. Creating a

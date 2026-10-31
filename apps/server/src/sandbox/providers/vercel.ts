@@ -422,6 +422,10 @@ export const vercelDriver: SandboxProviderDriver = {
       id: created.sandbox.name,
       name: input.name,
       ...(url === undefined ? {} : { publicUrl: url }),
+      settings: {
+        ...(scope.teamId === undefined ? {} : { teamId: scope.teamId }),
+        projectId: scope.project,
+      },
     } satisfies CreatedSandbox;
   }),
   execute: Effect.fn("Vercel.execute")(function* (input) {

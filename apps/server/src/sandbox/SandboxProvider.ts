@@ -25,6 +25,8 @@ export interface CreatedSandbox {
   readonly name: string;
   /** A public URL for `port`, when the provider can route it at creation time. */
   readonly publicUrl?: string;
+  /** Settings the driver resolved (a detected team), kept so later calls reach this sandbox. */
+  readonly settings?: Readonly<Record<string, string>>;
 }
 
 export interface SandboxExecResult {

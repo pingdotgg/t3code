@@ -46,12 +46,32 @@ const provisionerLayer = (
   repository: Layer.Layer<SandboxRecords.SandboxRecordRepository> = recordRepository,
 ) =>
   SandboxProvisioner.layer.pipe(
-    Layer.provide(ServerSettings.layerTest(settings)),
+    Layer.provideMerge(ServerSettings.layerTest(settings)),
     Layer.provide(repository),
     Layer.provide(NodeCrypto.layer),
   );
 
 const testLayer = provisionerLayer();
+
+const memoryRepository = (initial: ReadonlyArray<SandboxRecord> = []) => {
+  const records = new Map(initial.map((record) => [record.environmentId, record]));
+  const layer = Layer.succeed(
+    SandboxRecords.SandboxRecordRepository,
+    SandboxRecords.SandboxRecordRepository.of({
+      list: Effect.sync(() => [...records.values()]),
+      get: (environmentId) => Effect.sync(() => Option.fromUndefinedOr(records.get(environmentId))),
+      put: (record) =>
+        Effect.sync(() => {
+          records.set(record.environmentId, record);
+        }),
+      remove: (environmentId) =>
+        Effect.sync(() => {
+          records.delete(environmentId);
+        }),
+    }),
+  );
+  return { layer, records };
+};
 
 // Shaped like a live `GET /limits` response, with invented numbers and no account ids.
 const boatLimitsFixture = (overrides: Record<string, unknown> = {}) => ({
@@ -450,11 +470,13 @@ describe("vercelDriver", () => {
         idempotencyKey: "0f1e2d3c-aaaa-bbbb",
       });
 
-      // The sandbox name is the record's id, since sessions change on every resume.
+      // The sandbox name is the record's id, since sessions change on every resume, and the
+      // detected team is reported so the record keeps it.
       expect(created).toEqual({
         id: "box-attempt1",
         name: "My Box!",
         publicUrl: "https://sb-t3.vercel.run",
+        settings: { teamId: "team_1", projectId: "t3-sandboxes" },
       });
       expect(requests.map((request) => `${request.method} ${request.url}`)).toEqual([
         "GET https://api.vercel.com/v2/teams?limit=20",
@@ -1363,27 +1385,6 @@ describe("provider limits", () => {
 });
 
 describe("SandboxProvisioner lifecycle", () => {
-  const memoryRepository = (initial: ReadonlyArray<SandboxRecord> = []) => {
-    const records = new Map(initial.map((record) => [record.environmentId, record]));
-    const layer = Layer.succeed(
-      SandboxRecords.SandboxRecordRepository,
-      SandboxRecords.SandboxRecordRepository.of({
-        list: Effect.sync(() => [...records.values()]),
-        get: (environmentId) =>
-          Effect.sync(() => Option.fromUndefinedOr(records.get(environmentId))),
-        put: (record) =>
-          Effect.sync(() => {
-            records.set(record.environmentId, record);
-          }),
-        remove: (environmentId) =>
-          Effect.sync(() => {
-            records.delete(environmentId);
-          }),
-      }),
-    );
-    return { layer, records };
-  };
-
   const lifecycleClient = (
     requests: Array<string>,
     options: {
@@ -2403,9 +2404,15 @@ describe("SandboxProvisioner", () => {
       authorization?: string | undefined;
     }> = [];
     let commands = 0;
+    const repository = memoryRepository();
     const client = recording(requests, (request) => {
       const url = new URL(request.url);
-      if (url.pathname === "/v2/teams/acme") return Response.json(vercelTeam("pro"));
+      if (url.pathname === "/v2/teams/acme" || url.pathname === "/v2/teams/team_1") {
+        return Response.json(vercelTeam("pro"));
+      }
+      if (url.pathname === "/v2/teams/beta") {
+        return Response.json({ ...vercelTeam("pro"), id: "team_2", slug: "beta" });
+      }
       if (url.pathname === "/v2/teams") return Response.json({ teams: [vercelTeam("pro")] });
       if (url.pathname === "/.well-known/t3/environment") return Response.json(descriptor);
       if (url.pathname.endsWith("/cmd")) {
@@ -2451,11 +2458,34 @@ describe("SandboxProvisioner", () => {
         settings: { teamId: "", projectId: "mine" },
       });
       expect(vercel?.settingsFields?.map((field) => field.id)).toEqual(["teamId", "projectId"]);
+
+      // The record keeps the team the driver detected, so a later Team change cannot strand it.
+      // A record from before records kept settings follows the current ones.
+      const record = repository.records.get(testEnvironmentId)!;
+      expect(record.providerSettings).toEqual({ teamId: "team_1", projectId: "mine" });
+      const { providerSettings: _, ...legacy } = record;
+      const legacyId = EnvironmentId.make("22222222-2222-4222-8222-222222222222");
+      repository.records.set(legacyId, { ...legacy, environmentId: legacyId, sandboxId: "legacy" });
+      yield* (yield* ServerSettings.ServerSettingsService).updateSettings({
+        sandboxProviders: {
+          vercel: { apiKey: "vcp_saved", settings: { teamId: "beta", projectId: "other" } },
+        },
+      });
+      requests.length = 0;
+      yield* provisioner.sweep;
+      expect(requests.map((request) => request.url)).toEqual(
+        expect.arrayContaining([
+          "https://api.vercel.com/v2/sandboxes/box-attempt1?teamId=team_1&projectId=mine",
+          "https://api.vercel.com/v2/sandboxes/legacy?teamId=team_2&projectId=other",
+        ]),
+      );
+      expect(repository.records.get(testEnvironmentId)?.state).toBe("running");
     }).pipe(
       Effect.provide(
-        provisionerLayer({
-          sandboxProviders: { vercel: { apiKey: "vcp_saved", settings: { teamId: "acme" } } },
-        }),
+        provisionerLayer(
+          { sandboxProviders: { vercel: { apiKey: "vcp_saved", settings: { teamId: "acme" } } } },
+          repository.layer,
+        ),
       ),
       Effect.provideService(HttpClient.HttpClient, client),
     );

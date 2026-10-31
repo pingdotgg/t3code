@@ -50,6 +50,9 @@ entry, its kind in contracts, and its logo; nothing else branches on the provide
    and the driver reads it from `config.settings`. These values are not secret and are sent to
    clients, so a credential never goes in one. When an optional one is empty, the driver picks a
    default or fails at the `config` stage with a short message naming the values that would work.
+   Each record keeps the settings its sandbox was created with, plus any `settings` that `create`
+   returns for defaults it resolved, and every later call for that sandbox uses them, so a
+   setting that decides where a sandbox lives must be returned once resolved.
 3. **Declare the provider kind and its mark.** Add it to `SandboxProviderKind` in
    `packages/contracts/src/sandbox.ts`. This is what persists on records and settings, so changing
    it later needs a migration. Add the brand mark to `SandboxProviderLogo.tsx`.

@@ -205,6 +205,8 @@ export const SandboxRecord = Schema.Struct({
   credentialEnvironment: Schema.optionalKey(TrimmedString),
   /** The template the sandbox started from, for display. */
   template: Schema.optionalKey(TrimmedString),
+  /** Provider settings the sandbox was created with; they win over the current ones for it. */
+  providerSettings: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   /** Machine cost this calendar month at list price, when the provider reports it. */
   costDollars: Schema.optionalKey(Schema.Number),
   costSince: Schema.optionalKey(TrimmedString),
