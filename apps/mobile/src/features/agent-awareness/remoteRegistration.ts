@@ -84,6 +84,7 @@ const LIVE_ACTIVITY_STALE_AFTER_MS = 10 * 60_000;
 const liveActivityStaleDate = () => new Date(Date.now() + LIVE_ACTIVITY_STALE_AFTER_MS);
 const registeredActivityPushTokens = new Map<string, number>();
 let androidDeviceReplayedAt: number | null = null;
+let lastNativePushToken: string | null = null;
 let pushTokenSubscription: { remove: () => void } | null = null;
 let appStateSubscription: { remove: () => void } | null = null;
 
@@ -260,6 +261,7 @@ const nativePushTokenRegistration = Effect.fn("remoteRegistration.nativePushToke
       return { notificationsEnabled: false, pushToken: null };
     }
     if (observedPushToken) {
+      lastNativePushToken = observedPushToken;
       return { notificationsEnabled: true, pushToken: observedPushToken };
     }
     const token = yield* Effect.tryPromise({
@@ -280,8 +282,10 @@ const nativePushTokenRegistration = Effect.fn("remoteRegistration.nativePushToke
     const pushToken =
       token?.type === Platform.OS && typeof token.data === "string" && token.data.trim().length > 0
         ? token.data.trim()
-        : null;
-    return { notificationsEnabled: pushToken !== null, pushToken };
+        : lastNativePushToken;
+    lastNativePushToken = pushToken;
+    // Permission is granted: a missing token must not disable notifications the relay accepted.
+    return { notificationsEnabled: true, pushToken };
   },
 );
 
@@ -316,6 +320,13 @@ function registrationSignature(body: RelayDeviceRegistrationRequest): string {
     body.preferences.notifyOnCompletion,
     body.preferences.notifyOnFailure,
   ].join("|");
+}
+
+// Notifications are not set up until the relay holds a token for them.
+function acceptedRegistrationStatus(
+  body: RelayDeviceRegistrationRequest,
+): AgentAwarenessRegistrationStatus {
+  return body.preferences.notificationsEnabled && !body.pushToken ? "failed" : "registered";
 }
 
 const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWithRelay")(function* (
@@ -364,7 +375,7 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
     persisted.signature === signature &&
     !needsAndroidReplay
   ) {
-    setRegistrationStatus("registered");
+    setRegistrationStatus(acceptedRegistrationStatus(payload));
     return;
   }
 
@@ -380,7 +391,7 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
     return;
   }
   if (body.platform === "android") androidDeviceReplayedAt = Date.now();
-  setRegistrationStatus("registered");
+  setRegistrationStatus(acceptedRegistrationStatus(payload));
   yield* Effect.promise(() =>
     saveAgentAwarenessRegistrationRecord({
       identity,
@@ -802,6 +813,7 @@ export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   pendingDeviceRegistration = null;
   registrationStatus = "unknown";
   androidDeviceReplayedAt = null;
+  lastNativePushToken = null;
   registrationStatusListeners.clear();
   registeredActivityPushTokens.clear();
   activityPushTokenLocks.clear();
