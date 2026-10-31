@@ -32,7 +32,6 @@ import {
 
 import { isCompatibleUsageContractVersion, type MergedUsage } from "@t3tools/shared/usageMerge";
 
-import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { resolveHour12 } from "../../timestampFormat";
@@ -63,7 +62,7 @@ import {
 } from "../ui/menu";
 import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { SidebarInset } from "../ui/sidebar";
+import { AppRouteModal, AppRouteModalClose } from "../AppRouteModal";
 import { Skeleton } from "../ui/skeleton";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -75,7 +74,6 @@ import {
   WorkspaceBreadcrumbText,
 } from "../WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
-import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageExplorer } from "./UsageExplorer";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
@@ -133,6 +131,7 @@ function UsageModelDialogHost({
   readonly onSetPrice: (model: string) => void;
 }) {
   const selectedKey = useAtomValue(selectedUsageModelKeyAtom);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the shared selected-model atom on unmount
   useEffect(() => () => selectUsageModel(null), []);
   const model =
     selectedKey === null
@@ -371,6 +370,7 @@ export function UsagePage() {
     if (periodOption && !showingLimits) selectWindow(periodOption.days);
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window capture keydown listener for usage metric and period shortcuts
   useEffect(() => {
     globalThis.window.addEventListener("keydown", onUsageKeyDown, true);
     return () => globalThis.window.removeEventListener("keydown", onUsageKeyDown, true);
@@ -422,6 +422,7 @@ export function UsagePage() {
   const autoRefreshLimits = useEffectEvent(() => {
     void refreshLimits(true);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes provider limits from the server when the connected environment set changes
   useEffect(() => {
     if (showingLimits && connectedLimitsEnvironments) autoRefreshLimits();
   }, [showingLimits, connectedLimitsEnvironments]);
@@ -435,7 +436,7 @@ export function UsagePage() {
     );
 
   const topbarContent = (
-    <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 xl:flex">
+    <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 @4xl/usage-header:flex">
       <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0">
         <WorkspaceBreadcrumbItem>
           <h1>Usage</h1>
@@ -464,14 +465,33 @@ export function UsagePage() {
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
       {!showingLimits ? (
-        <span className="hidden min-w-0 truncate text-xs xl:inline">
+        <span className="hidden min-w-0 truncate text-xs @7xl/usage-header:block">
           <UsageRangePicker
             window={window}
             onChange={(sinceDay, untilDay) => setRange({ kind: "days", sinceDay, untilDay })}
           />
         </span>
       ) : null}
-      <div className="ms-auto hidden min-w-0 items-center justify-end gap-2 xl:flex">
+      <div className="ms-auto hidden shrink-0 items-center justify-end gap-2 @4xl/usage-header:flex">
+        {/* Limits are always current, so they have no period. The period sits before the metric
+            tabs so dropping it never moves them. */}
+        {showingLimits ? null : (
+          <ToggleGroup
+            aria-label="Usage period"
+            variant="segmented"
+            value={periodDays === null ? [] : [String(periodDays)]}
+            onValueChange={(next) => {
+              const value = next[0];
+              if (value) selectWindow(Number(value));
+            }}
+          >
+            {WINDOW_OPTIONS.map((option) => (
+              <Toggle key={option.days} value={String(option.days)} title={shortcutTitle(option)}>
+                {option.label}
+              </Toggle>
+            ))}
+          </ToggleGroup>
+        )}
         <ToggleGroup
           aria-label="Usage metric"
           variant="segmented"
@@ -487,22 +507,6 @@ export function UsagePage() {
             </Toggle>
           ))}
         </ToggleGroup>
-        <ToggleGroup
-          aria-label="Usage period"
-          variant="segmented"
-          value={periodDays === null ? [] : [String(periodDays)]}
-          disabled={showingLimits}
-          onValueChange={(next) => {
-            const value = next[0];
-            if (value) selectWindow(Number(value));
-          }}
-        >
-          {WINDOW_OPTIONS.map((option) => (
-            <Toggle key={option.days} value={String(option.days)} title={shortcutTitle(option)}>
-              {option.label}
-            </Toggle>
-          ))}
-        </ToggleGroup>
         <Button
           onClick={refreshWindow}
           aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
@@ -514,7 +518,7 @@ export function UsagePage() {
           <RefreshIcon size="sm" refreshing={isRefreshing} />
         </Button>
       </div>
-      <div className="ms-auto flex min-w-0 items-center justify-end gap-1 xl:hidden">
+      <div className="ms-auto flex shrink-0 items-center justify-end gap-1 @4xl/usage-header:hidden">
         {!showingLimits ? (
           <UsageRangePicker
             compact
@@ -522,33 +526,9 @@ export function UsagePage() {
             onChange={(sinceDay, untilDay) => setRange({ kind: "days", sinceDay, untilDay })}
           />
         ) : null}
-        <Select
-          value={metric}
-          onValueChange={(value) => {
-            if (isUsageMetric(value)) selectMetric(value);
-          }}
-        >
-          <SelectTrigger
-            aria-label="Usage metric"
-            size="compact"
-            variant="ghost"
-            className="w-auto min-w-0"
-          >
-            <SelectValue>
-              {METRIC_OPTIONS.find((option) => option.value === metric)?.label}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="end" alignItemWithTrigger={false}>
-            {METRIC_OPTIONS.map((option) => (
-              <SelectItem key={option.value} value={option.value} title={shortcutTitle(option)}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
+        {showingLimits ? null : (
         <Select
           value={periodDays === null ? "" : String(periodDays)}
-          disabled={showingLimits}
           onValueChange={(value) => selectWindow(Number(value))}
         >
           <SelectTrigger
@@ -569,6 +549,31 @@ export function UsagePage() {
                 value={String(option.days)}
                 title={shortcutTitle(option)}
               >
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+        )}
+        <Select
+          value={metric}
+          onValueChange={(value) => {
+            if (isUsageMetric(value)) selectMetric(value);
+          }}
+        >
+          <SelectTrigger
+            aria-label="Usage metric"
+            size="compact"
+            variant="ghost"
+            className="w-auto min-w-0"
+          >
+            <SelectValue>
+              {METRIC_OPTIONS.find((option) => option.value === metric)?.label}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {METRIC_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value} title={shortcutTitle(option)}>
                 {option.label}
               </SelectItem>
             ))}
@@ -612,9 +617,12 @@ export function UsagePage() {
   );
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
-        <WorkspacePageHeader electron={isElectron}>{topbarContent}</WorkspacePageHeader>
+    <AppRouteModal label="Usage">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="@container/usage-header flex min-h-12 shrink-0 items-center gap-1 border-b ps-5 pe-2">
+          {topbarContent}
+          <AppRouteModalClose />
+        </header>
 
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">
@@ -732,7 +740,7 @@ export function UsagePage() {
           }}
         />
       ) : null}
-    </SidebarInset>
+    </AppRouteModal>
   );
 }
 
@@ -1067,7 +1075,7 @@ function UsageEnvironmentFilter({
             />
           ) : (
             <ChevronDownIcon
-              className="size-3.5 opacity-0 transition-opacity group-hover/usage-environment:opacity-100 group-focus-visible/usage-environment:opacity-100 group-data-popup-open/usage-environment:opacity-100"
+              className="size-3.5 opacity-60 transition-opacity group-hover/usage-environment:opacity-100 group-focus-visible/usage-environment:opacity-100 group-data-popup-open/usage-environment:opacity-100"
               aria-hidden
             />
           )}
@@ -1183,7 +1191,7 @@ function UsageProviderFilter({
       <MenuTrigger render={<InlineButton />} className="group/usage-provider min-w-0 max-w-full">
         <span className="min-w-0 truncate">{label}</span>
         <ChevronDownIcon
-          className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/usage-provider:opacity-100 group-focus-visible/usage-provider:opacity-100 group-data-popup-open/usage-provider:opacity-100"
+          className="size-3.5 shrink-0 text-muted-foreground opacity-60 transition-opacity group-hover/usage-provider:opacity-100 group-focus-visible/usage-provider:opacity-100 group-data-popup-open/usage-provider:opacity-100"
           aria-hidden
         />
       </MenuTrigger>

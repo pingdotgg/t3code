@@ -35,11 +35,7 @@ export interface CachedFile {
   readonly mtimeMs: number;
   readonly provider: UsageProviderKind;
   readonly records: readonly UsageRecord[];
-  /**
-   * Records from a trailing segment the writer had not newline-terminated at
-   * parse time. Kept apart from `records` because an incremental parse
-   * re-reads that segment and would otherwise double count it.
-   */
+  /** Unterminated tail records stay separate because incremental parsing rereads them. */
   readonly tailRecords: readonly UsageRecord[];
   /** Whole-file count, including diagnostics from the tentative tail. */
   readonly malformedRecords: number;
@@ -147,23 +143,7 @@ function serializeFile(entry: CachedFile, tables: InternTables): SerializedFile 
   };
 }
 
-export function encodeScanCache(cache: ScanCache): SerializedCache {
-  const tables = makeInternTables();
-  const files: Record<string, SerializedFile> = {};
-  for (const [path, entry] of cache) files[path] = serializeFile(entry, tables);
-  return {
-    version: USAGE_SCAN_CACHE_VERSION,
-    models: tables.models,
-    sessions: tables.sessions,
-    files,
-  };
-}
-
-/**
- * Entries are replaced, never mutated, when their file changes, so an entry's JSON is memoised by
- * identity. The intern tables only grow, so a memoised entry's indexes stay valid; a pruned entry
- * can leave an unused string behind until the next process start.
- */
+/** Memoizes immutable entries by identity; growing intern tables preserve indexes, retaining unused strings until restart. */
 export function makeScanCacheWriter(): (
   cache: ScanCache,
   extra: Readonly<Record<string, unknown>>,
@@ -220,9 +200,7 @@ export function decodeScanCache(
   const models = root.models as readonly string[];
   const sessions = root.sessions as readonly string[];
 
-  // Any corrupt row disqualifies the whole entry. Keeping the survivors
-  // under the original (size, mtime) would read as a valid warm hit and the
-  // file would never be re-parsed, silently losing the dropped rows' usage.
+  // Reject entire corrupt entries; partial survivors would appear warm and hide usage until the file changes.
   const decodeRecords = (
     rows: readonly unknown[],
     provider: UsageProviderKind,
@@ -326,10 +304,11 @@ export function decodeScanCache(
     // for deleted transcripts while re-reading live folder-aware formats from either
     // earlier writer. Formats without folders keep compatible reducer positions.
     const legacy =
+      (format.workingDirectory !== undefined && version < 10) ||
+      (entry.p === "claude" && version < 10) ||
       (format.state !== undefined &&
         (version < 6 ||
-          (entry.p === "codex" && (version < 8 || (version < 9 && malformedRecords > 0))))) ||
-      (format.workingDirectory !== undefined && version < 10);
+          (entry.p === "codex" && (version < 8 || (version < 9 && malformedRecords > 0)))));
     // A corrupt state disqualifies the entry: resuming with it would attach
     // appended usage to the wrong model or replay fork-copied history.
     if (!legacy && !isValidState.get(entry.p)?.(entry.cs)) continue;
@@ -387,10 +366,7 @@ export function pruneScanCache(cache: ScanCache, retentionCutoffMs: number): num
   return removed;
 }
 
-/**
- * Callers stitching an incremental parse together pass one `seen` set across the line and tail
- * record batches so the whole file stays deduplicated as a unit; the set is mutated in place.
- */
+/** Mutates seen; share it across incremental line/tail batches to deduplicate the whole file. */
 export function dedupeWithinFile(
   records: readonly UsageRecord[],
   seen: Set<string> = new Set(),

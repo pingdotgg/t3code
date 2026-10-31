@@ -51,7 +51,7 @@ const decodeTranscript = Schema.decodeUnknownEffect(
 const now = DateTime.makeUnsafe("2026-09-29T00:00:00.000Z");
 const environmentId = EnvironmentId.make("source-بيئة");
 const output = "Full tool output. ".repeat(4_000);
-const thread = Schema.decodeUnknownSync(OrchestrationV2AppThread)({
+const thread = Schema.decodeSync(OrchestrationV2AppThread)({
   id: "source-thread",
   projectId: "source-project",
   title: "Source 界\nconversation",
@@ -96,9 +96,9 @@ const items = Schema.decodeUnknownSync(Schema.Array(OrchestrationV2TurnItem))(
   })),
 );
 
-it.effect("exports full history with size, scope, and missing-thread checks", () =>
+// Serves the orchestration HTTP routes over real stores; `allowed` gates the read scope.
+const serveOrchestrationHttp = (allowed: () => boolean) =>
   Effect.gen(function* () {
-    let allowed = true;
     const runtime = ProviderReplayHarness.layerWithRegistry(
       { name: "thread-transcript" },
       ProviderAdapterRegistry.layerFromAdapters([]),
@@ -143,7 +143,7 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
                 sessionId: AuthSessionId.make("test-session"),
                 subject: "test",
                 method: "bearer-access-token",
-                scopes: new Set<AuthEnvironmentScope>(allowed ? ["orchestration:read"] : []),
+                scopes: new Set<AuthEnvironmentScope>(allowed() ? ["orchestration:read"] : []),
               }),
             ),
           ),
@@ -157,6 +157,13 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
     );
     const { handler, dispose } = HttpRouter.toWebHandler(routes, { disableLogger: true });
     yield* Effect.addFinalizer(() => Effect.promise(dispose));
+    return { services, eventSink, handler };
+  });
+
+it.effect("exports full history with size, scope, and missing-thread checks", () =>
+  Effect.gen(function* () {
+    let allowed = true;
+    const { services, eventSink, handler } = yield* serveOrchestrationHttp(() => allowed);
     const read = (threadId: ThreadId) =>
       Effect.promise(() =>
         handler(
@@ -240,5 +247,50 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
     expect((yield* read(ThreadId.make("missing"))).status).toBe(404);
     allowed = false;
     expect((yield* read(thread.id)).status).toBe(403);
+  }),
+);
+
+it.effect("leaves older settled threads out of the HTTP shell only when asked", () =>
+  Effect.gen(function* () {
+    const { eventSink, handler } = yield* serveOrchestrationHttp(() => true);
+    yield* eventSink.write({
+      events: Array.from({ length: 26 }, (_, index) => {
+        const id = ThreadId.make(`settled-${index}`);
+        return {
+          id: EventId.make(`create-${id}`),
+          type: "thread.created" as const,
+          threadId: id,
+          occurredAt: now,
+          payload: {
+            ...thread,
+            id,
+            lineage: { ...thread.lineage, rootThreadId: id },
+            settledOverride: "settled" as const,
+            settledAt: DateTime.makeUnsafe(Date.UTC(2026, 8, 1 + index)),
+          },
+        };
+      }),
+    });
+    const shell = (query: string) =>
+      Effect.promise(async () => {
+        const response = await handler(
+          new Request(`http://localhost/api/orchestration/shell${query}`, {
+            headers: { [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT },
+          }),
+        );
+        return (await response.json()) as {
+          readonly threads: ReadonlyArray<{ readonly id: string }>;
+          readonly olderSettled?: { readonly counts: ReadonlyArray<unknown> };
+        };
+      });
+
+    const full = yield* shell("");
+    expect(full.threads).toHaveLength(27);
+    expect(full.olderSettled).toBeUndefined();
+    const cut = yield* shell("?omitOlderSettled=1");
+    expect(cut.threads.map((row) => row.id).toSorted()).toEqual(
+      [thread.id, ...Array.from({ length: 25 }, (_, index) => `settled-${index + 1}`)].toSorted(),
+    );
+    expect(cut.olderSettled?.counts).toEqual([{ projectId: thread.projectId, count: 1 }]);
   }),
 );

@@ -153,7 +153,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
       const offline = UNREACHABLE.has(presentation.connection.phase);
       const isConnected = presentation.connection.phase === "connected";
       const sessionResult = get(environmentSession.sessionStateAtom(environmentId));
-      const session = Option.getOrNull(AsyncResult.value(sessionResult));
+      const session = AsyncResult.getOrElse(sessionResult, () => null);
       const access = resolveUsageAccess({
         connectionPhase: presentation.connection.phase,
         session,
@@ -187,7 +187,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         result = get(serverEnvironment.usageSummary({ environmentId, input: fallbackInput }));
         readByDay = true;
       }
-      let summary = Option.getOrNull(AsyncResult.value(result));
+      let summary = AsyncResult.getOrElse(result, () => null);
       // Offline, the page keeps what this session read last, or else what
       // this browser saved the last time the environment answered.
       if (summary === null && offline) {
@@ -389,8 +389,7 @@ export function useUsage(
         });
   const atom = usageByWindowAtom(windowKey);
   const environments = useAtomValue(atom);
-  // The render-time sync below compares merged by identity, so the derivation is
-  // held in state keyed on its inputs rather than rebuilt every render.
+  // Identity-based render sync needs a derivation retained by inputs across renders.
   const [derived, setDerived] = useState(() =>
     deriveSelection(environments, selectedEnvironmentIds, hiddenProviders),
   );
