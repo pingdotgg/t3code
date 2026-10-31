@@ -7,6 +7,7 @@ import {
   cursorUsageWindowDetails,
   displayLimitWindows,
   formatResetsIn,
+  formatSpend,
   type LimitAccount,
   type LimitPool,
   type LimitPoolMember,
@@ -149,6 +150,7 @@ function SegmentPopover({
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
+  const spent = formatSpend(window);
   const timeLeft = paceRemainingPercent(window, now);
   const resetsIn = formatResetsIn(window, now);
   const where =
@@ -184,6 +186,7 @@ function SegmentPopover({
       </div>
       <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
         <Row label="Left">{remaining}%</Row>
+        {spent ? <Row label="Spent">{spent}</Row> : null}
         {window.resetsAt ? (
           <Row label="Resets">
             {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
@@ -541,6 +544,8 @@ function PoolWindowCard({
   readonly description?: string | undefined;
 }) {
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
+  // With several accounts, each segment's popover carries its own amounts.
+  const spent = pool.columns.length === 1 ? formatSpend(pool.members[0]!.window) : null;
   return (
     <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
       <div className="flex flex-col gap-1">
@@ -560,7 +565,14 @@ function PoolWindowCard({
           </span>
         ) : null}
       </div>
-      <PoolBar pool={pool} color={color} now={now} />
+      {spent ? (
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <PoolBar pool={pool} color={color} now={now} />
+          <span className="text-xs text-muted-foreground tabular-nums">{spent} spent</span>
+        </div>
+      ) : (
+        <PoolBar pool={pool} color={color} now={now} />
+      )}
       {description ? (
         <p className="text-xs text-muted-foreground md:col-span-2">{description}</p>
       ) : null}
