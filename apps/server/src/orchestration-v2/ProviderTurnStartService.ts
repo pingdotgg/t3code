@@ -675,9 +675,10 @@ export const layer: Layer.Layer<
           runs: current.runs,
           turnItems: current.turnItems,
         });
-      const inheritedBackgroundTurnItems = yield* projectionStore
-        .getRuntimeRecoveryProjection(projection.thread.id)
-        .pipe(Effect.map(selectInheritedBackgroundItems));
+      const runtimeProjection = yield* projectionStore.getRuntimeRecoveryProjection(
+        projection.thread.id,
+      );
+      const inheritedBackgroundTurnItems = selectInheritedBackgroundItems(runtimeProjection);
       const providerSessionId = providerThread.providerSessionId;
       const runControls = makeRunControls({
         threadId: projection.thread.id,
@@ -1631,6 +1632,11 @@ export const layer: Layer.Layer<
         !noteContinuation
           ? session
           : makeDeliverySession(session, startWithHandoffs);
+      const providerTurnIds = new Set(
+        projection.providerTurns
+          .filter((turn) => turn.providerThreadId === runningProviderThread.id)
+          .map((turn) => turn.id),
+      );
       return runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
@@ -1640,6 +1646,14 @@ export const layer: Layer.Layer<
         rootNode: runningRootNode,
         checkpointScope,
         providerThread: runningProviderThread,
+        pendingUserInputRequests: runtimeProjection.runtimeRequests.filter(
+          (request) =>
+            request.kind === "user_input" &&
+            request.status === "pending" &&
+            request.responseCapability.type === "message" &&
+            request.providerTurnId !== null &&
+            providerTurnIds.has(request.providerTurnId),
+        ),
         attempt: runningAttempt,
         attemptId: attempt.id,
         loadInheritedBackgroundTurnItems: runControls.loadInheritedBackgroundTurnItems,

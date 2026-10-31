@@ -15,12 +15,14 @@ import {
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type ProviderSessionId,
   type ProviderThreadId,
   type ProviderTurnId,
   type RunAttemptId,
+  type RuntimeRequestId,
   type ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
@@ -64,6 +66,7 @@ export interface ProviderEventRoutingState {
   readonly ownedProviderThreadIds: ReadonlySet<ProviderThreadId>;
   readonly ownedProviderTurns: ReadonlyMap<ProviderTurnId, ProviderThreadId>;
   readonly inheritedBackgroundTurnItems: ReadonlyMap<TurnItemId, OrchestrationV2Run["id"]>;
+  readonly inheritedUserInputRequestIds: ReadonlySet<RuntimeRequestId>;
   readonly rootProviderTurnId: ProviderTurnId | null;
 }
 
@@ -329,6 +332,7 @@ function finalProviderThreadStatus(
 export function makeProviderEventRoutingState(input: {
   readonly identity: ProviderEventRouteIdentity;
   readonly inheritedBackgroundTurnItems?: ReadonlyArray<InheritedBackgroundTurnItemRoute>;
+  readonly inheritedUserInputRequestIds?: ReadonlyArray<RuntimeRequestId>;
   readonly providerTurnId: ProviderTurnId | null;
   readonly relatedThreadIds?: ReadonlyArray<ThreadId>;
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
@@ -348,6 +352,7 @@ export function makeProviderEventRoutingState(input: {
     inheritedBackgroundTurnItems: new Map(
       (input.inheritedBackgroundTurnItems ?? []).map((item) => [item.id, item.runId]),
     ),
+    inheritedUserInputRequestIds: new Set(input.inheritedUserInputRequestIds),
     rootProviderTurnId: input.providerTurnId,
   };
 }
@@ -505,6 +510,8 @@ export function routeProviderEvent(
     case "runtime_request.updated":
       return [
         (event.threadId !== undefined && ownsChildThread(event.threadId)) ||
+          (event.threadId === input.threadId &&
+            state.inheritedUserInputRequestIds.has(event.runtimeRequest.id)) ||
           (event.runtimeRequest.providerTurnId !== null &&
             state.ownedProviderTurns.has(event.runtimeRequest.providerTurnId)),
         state,
@@ -565,6 +572,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly attemptId: RunAttemptId;
   readonly providerTurnOrdinal: number;
   readonly nativeThreadHasTurns?: boolean;
+  readonly pendingUserInputRequests?: ReadonlyArray<OrchestrationV2RuntimeRequest>;
   readonly loadInheritedBackgroundTurnItems?: () => Effect.Effect<
     ReadonlyArray<InheritedBackgroundTurnItemRoute>,
     unknown
@@ -1025,6 +1033,9 @@ export const layer: Layer.Layer<
           makeProviderEventRoutingState({
             identity: routeIdentity,
             inheritedBackgroundTurnItems,
+            inheritedUserInputRequestIds: (input.pendingUserInputRequests ?? []).map(
+              (request) => request.id,
+            ),
             providerTurnId: input.attempt.providerTurnId,
             ...(input.relatedThreadIds === undefined
               ? {}
@@ -1659,6 +1670,7 @@ export const layer: Layer.Layer<
           runId: input.run.id,
           runOrdinal: input.run.ordinal,
           providerTurnOrdinal: input.providerTurnOrdinal,
+          pendingUserInputRequests: input.pendingUserInputRequests ?? [],
           ...(input.nativeThreadHasTurns === undefined
             ? {}
             : { nativeThreadHasTurns: input.nativeThreadHasTurns }),

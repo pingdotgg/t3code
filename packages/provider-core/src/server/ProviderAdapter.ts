@@ -444,6 +444,7 @@ export interface ProviderAdapterV2TurnInput {
   readonly runId: RunId;
   readonly runOrdinal: number;
   readonly nativeThreadHasTurns?: boolean;
+  readonly pendingUserInputRequests?: ReadonlyArray<OrchestrationV2RuntimeRequest>;
   readonly providerTurnOrdinal: number;
   readonly restartContinuationOfRunId?: RunId;
   readonly attemptId: RunAttemptId;

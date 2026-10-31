@@ -3925,10 +3925,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const requestId = RuntimeRequestId.make("request:projection-shell-question");
       for (const [responseCapability, blocking] of [
         [{ type: "message" }, false],
+        [{ type: "message", agentWaiting: true }, true],
         [{ type: "live", providerSessionId: ProviderSessionId.make("session:question") }, true],
       ] as const) {
         yield* projectionStore.apply({
-          id: EventId.make(`event:projection-shell-question:${responseCapability.type}`),
+          id: EventId.make(
+            `event:projection-shell-question:${responseCapability.type}:${blocking}`,
+          ),
           type: "runtime-request.updated",
           threadId,
           nodeId: rootNodeId,

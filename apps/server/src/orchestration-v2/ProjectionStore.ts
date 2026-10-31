@@ -1399,7 +1399,9 @@ function pendingRuntimeRequestSummary(
     id: request.id,
     kind: request.kind,
     createdAt: request.createdAt,
-    blocking: request.responseCapability.type !== "message",
+    blocking:
+      request.responseCapability.type !== "message" ||
+      request.responseCapability.agentWaiting === true,
   };
 }
 

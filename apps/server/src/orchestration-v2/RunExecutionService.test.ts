@@ -23,6 +23,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   ServerSettingsError,
   ThreadId,
   TurnItemId,
@@ -500,6 +501,57 @@ it("does not route a superseded attempt through a reused provider thread", () =>
     providerTurnId: null,
   });
   assert.isFalse(RunExecutionService.routeProviderEvent(oldTurnEvent, newAttempt, newState)[0]);
+
+  const requestId = RuntimeRequestId.make("request:shared-runtime:restart");
+  const restoredState = RunExecutionService.makeProviderEventRoutingState({
+    identity: newAttempt,
+    providerTurnId: null,
+    inheritedUserInputRequestIds: [requestId],
+  });
+  const requestEvent: Extract<
+    ProviderAdapter.ProviderAdapterV2Event,
+    { type: "runtime_request.updated" }
+  > = {
+    type: "runtime_request.updated",
+    driver,
+    threadId,
+    runtimeRequest: {
+      id: requestId,
+      nodeId: NodeId.make("node:shared-runtime:question"),
+      providerTurnId: oldTurnEvent.providerTurn.id,
+      nativeRequestRef: null,
+      kind: "user_input",
+      status: "pending",
+      responseCapability: { type: "message", agentWaiting: true },
+      createdAt: DateTime.makeUnsafe("2026-10-30T00:00:00Z"),
+      resolvedAt: null,
+    },
+  };
+  assert.isFalse(RunExecutionService.routeProviderEvent(requestEvent, newAttempt, newState)[0]);
+  assert.isTrue(RunExecutionService.routeProviderEvent(requestEvent, newAttempt, restoredState)[0]);
+  assert.isFalse(
+    RunExecutionService.routeProviderEvent(
+      {
+        ...requestEvent,
+        threadId: ThreadId.make("thread:other"),
+      },
+      newAttempt,
+      restoredState,
+    )[0],
+  );
+  assert.isFalse(
+    RunExecutionService.routeProviderEvent(
+      {
+        ...requestEvent,
+        runtimeRequest: {
+          ...requestEvent.runtimeRequest,
+          id: RuntimeRequestId.make("request:other"),
+        },
+      },
+      newAttempt,
+      restoredState,
+    )[0],
+  );
 });
 
 it("routes only exact same-thread background items inherited from settled runs", () => {

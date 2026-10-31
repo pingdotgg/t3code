@@ -1664,6 +1664,32 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         .pipe(Effect.result);
       assert.equal(duplicate._tag, "Failure");
       assert.equal((yield* orchestrator.getThreadProjection(threadId)).messages.length, 1);
+
+      // Codex repeats the question as pending when the sleep the answer interrupted ends.
+      const answeredRequest = answered.runtimeRequests[0]!;
+      yield* eventSink.write({
+        guardPendingUserInputCancellations: true,
+        commandId: CommandId.make("runtime-async-question-repeat"),
+        events: [
+          {
+            id: EventId.make("runtime-async-question-repeat"),
+            type: "runtime-request.updated",
+            threadId,
+            nodeId,
+            occurredAt: yield* DateTime.now,
+            payload: {
+              ...answeredRequest,
+              status: "pending",
+              resolvedAt: null,
+              responseCapability: { type: "message" },
+            },
+          },
+        ],
+      });
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).runtimeRequests,
+        answered.runtimeRequests,
+      );
     }),
   );
 
