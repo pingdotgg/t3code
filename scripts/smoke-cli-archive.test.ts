@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -17,6 +18,7 @@ const archiveLayer = Layer.mergeAll(
     makeTempDirectory: () => Effect.succeed("/cli-smoke"),
     readDirectory: () => Effect.succeed(["t3-test"]),
     exists: () => Effect.succeed(true),
+    realPath: (path) => Effect.succeed(path),
     remove: () => Effect.void,
   }),
   Layer.succeed(NetService.NetService, {
@@ -38,11 +40,15 @@ const runArchive = (stdout: string, expectVersion: string) =>
   smokeCliArchive({ archive: "t3-test.tar.gz", expectVersion }).pipe(
     Effect.scoped,
     Effect.provide(archiveLayer),
+    Effect.provideService(HostProcess.Platform, "linux"),
     Effect.provideService(
       ChildProcessSpawner.ChildProcessSpawner,
       ChildProcessSpawner.make((command) => {
         assert.ok(ChildProcess.isStandardCommand(command));
-        const isVersion = command.args[0] === "--version";
+        const output =
+          command.command === "ldd"
+            ? `\tlibatomic.so.1 => ${command.args[0]?.replace(/t3$/, "lib/libatomic.so.1")} (0x7f0000000000)\n`
+            : stdout;
         return Effect.succeed(
           ChildProcessSpawner.makeHandle({
             pid: ChildProcessSpawner.ProcessId(1),
@@ -51,7 +57,7 @@ const runArchive = (stdout: string, expectVersion: string) =>
             kill: () => Effect.void,
             unref: Effect.succeed(Effect.void),
             stdin: Sink.drain,
-            stdout: isVersion ? Stream.make(new TextEncoder().encode(stdout)) : Stream.empty,
+            stdout: Stream.make(new TextEncoder().encode(output)),
             stderr: Stream.empty,
             all: Stream.empty,
             getInputFd: () => Sink.drain,
