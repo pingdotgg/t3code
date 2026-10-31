@@ -31,6 +31,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -350,7 +351,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         Schema.decodeUnknownEffect(schema)(data).pipe(
           Effect.mapError((cause) => protocolError("Invalid Muse protocol response", cause)),
         );
-      const request = (
+      const send = (
         method: string,
         params: Record<string, unknown>,
         command = true,
@@ -378,7 +379,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 : `Muse ${method} failed`,
               cause,
             ),
-        }).pipe(
+        });
+      const request = (
+        method: string,
+        params: Record<string, unknown>,
+        command = true,
+        commandId?: string,
+      ) =>
+        send(method, params, command, commandId).pipe(
           Effect.timeout(options.requestTimeoutMs ?? 30_000),
           Effect.catchTags({
             // The enclosing operation owns the span for this inline handler.
@@ -2208,10 +2216,24 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             )
               return yield* protocolError("This Muse turn cannot be steered");
             const parts = yield* prompt(args.message);
-            const result = yield* request("turn/steer", {
+            // Muse can apply a steer after its durable-write acknowledgement times out.
+            // Retrying can duplicate it; only other command timeouts close the host.
+            const ack = yield* send("turn/steer", {
               expectedTurnId: turn.nativeId,
               input: parts,
-            }).pipe(Effect.flatMap((value) => decode(MuseTurnStartResult, value)));
+            }).pipe(
+              Effect.timeoutOption(options.requestTimeoutMs ?? 30_000),
+              Effect.catchIf(
+                (error) =>
+                  error.payload instanceof MspError &&
+                  error.payload.code === -32603 &&
+                  error.payload.kind === "internal" &&
+                  error.payload.message.includes("runtime command acknowledgement timed out"),
+                () => Effect.succeedNone,
+              ),
+            );
+            if (Option.isNone(ack)) return;
+            const result = yield* decode(MuseTurnStartResult, ack.value);
             if (result.turnId !== turn.nativeId)
               return yield* protocolError("Muse steering targeted a different turn");
           },
