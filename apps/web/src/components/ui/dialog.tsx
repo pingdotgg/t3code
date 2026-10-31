@@ -15,6 +15,7 @@ import { useNativeTitlebarHeight } from "~/lib/windowControlsOverlay";
 import { Button, type ButtonVariant } from "~/components/ui/button";
 import {
   DIALOG_APP_POPUP_CLASS,
+  DIALOG_APP_PANEL_POPUP_CLASS,
   DIALOG_BACKDROP_CLASS,
   DIALOG_MEDIA_BACKDROP_CLASS,
   DIALOG_MEDIA_POPUP_CLASS,
@@ -126,7 +127,7 @@ function DialogPopup({
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean;
   bottomStickOnMobile?: boolean;
-  variant?: "default" | "media" | "app";
+  variant?: "default" | "media" | "app" | "app-panel";
   mediaControlsPlacement?: "inside" | "outside";
   viewportProps?: Omit<DialogPrimitive.Viewport.Props, "className">;
 }) {
@@ -135,17 +136,24 @@ function DialogPopup({
     ref: popupRef,
     render: (
       <DialogPrimitive.Popup
-        className={cn(
-          variant === "media"
-            ? DIALOG_MEDIA_POPUP_CLASS
-            : variant === "app"
-              ? DIALOG_APP_POPUP_CLASS
-              : DIALOG_POPUP_CLASS,
-          variant === "app" ? "text-foreground" : "row-start-2 text-popover-foreground",
-          variant === "default" && "max-h-full max-w-lg",
-          bottomStickOnMobile && variant !== "app" && DIALOG_MOBILE_SHEET_CLASS,
-          className,
-        )}
+          className={cn(
+            variant === "media"
+              ? DIALOG_MEDIA_POPUP_CLASS
+              : variant === "app-panel"
+                ? DIALOG_APP_PANEL_POPUP_CLASS
+                : variant === "app"
+                  ? DIALOG_APP_POPUP_CLASS
+                  : DIALOG_POPUP_CLASS,
+            variant === "app" || variant === "app-panel"
+              ? "text-foreground"
+              : "row-start-2 text-popover-foreground",
+            variant === "default" && "max-h-full max-w-lg",
+            bottomStickOnMobile &&
+              variant !== "app" &&
+              variant !== "app-panel" &&
+              DIALOG_MOBILE_SHEET_CLASS,
+            className,
+          )}
         data-slot="dialog-popup"
         initialFocus={initialFocus}
         render={renderRetainedPopup}
@@ -174,9 +182,10 @@ function DialogPopup({
         variant={variant === "media" ? "media" : "default"}
       />
       <DialogViewport
-        variant={variant === "app" ? "app" : "default"}
+        variant={variant === "app" || variant === "app-panel" ? "app" : "default"}
         {...viewportProps}
         className={cn(
+          variant === "app-panel" && "max-sm:p-2",
           bottomStickOnMobile && "max-sm:grid-rows-[1fr_auto] max-sm:p-0 max-sm:pt-12",
           variant === "media" &&
             "z-[60] grid-rows-1 place-items-center px-4 max-[8rem]:px-0 pb-6 pt-[calc(var(--media-dialog-titlebar-height,0px)+1.5rem)] [-webkit-app-region:no-drag]",
