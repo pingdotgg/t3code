@@ -66,8 +66,9 @@ function decodeHtmlEntities(value: string): string {
 
 const HTML_TAG = /<!--[\s\S]*?-->|<\/?[a-z](?:[^>"']|"[^"]*"|'[^']*')*>/gi;
 
+/** A valueless (boolean) attribute such as `open` reads as "". */
 function attribute(tag: string, name: string): string | null {
-  const attributes = /([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g;
+  const attributes = /([\w:-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
   for (const match of tag.matchAll(attributes)) {
     if (match[1]?.toLowerCase() === name) {
       return decodeHtmlEntities(match[2] ?? match[3] ?? match[4] ?? "");
@@ -294,86 +295,155 @@ export type MarkdownDetailsSegment =
       readonly sourceOffset: number;
     };
 
-const DETAILS_TAG = /<(\/?)details(?=[\s/>])/gi;
-const STICKY_HTML_TAG = new RegExp(HTML_TAG.source, "iy");
-const SUMMARY_PREFIX = /^\s*<summary\b[^>]*>([\s\S]*?)<\/summary\s*>/i;
+const DETAILS_TAG = /^<(\/?)details(?=[\s/>])/i;
+const SUMMARY_TAG = /^<summary(?=[\s/>])/i;
+const SUMMARY_CLOSE_TAG = /^<\/summary\s*>$/i;
 
-// `[^<>]` stops at the next tag start, so unclosed tags stay linear.
-function detailsSummary(content: string): string {
-  return (
-    decodeHtmlEntities(content.replace(/<\/?[a-z][^<>]*>/gi, ""))
-      .replace(/\s+/g, " ")
-      .trim() || "Details"
-  );
+interface HtmlToken {
+  readonly at: number;
+  readonly tag: string;
+  readonly nodeStart: number;
+}
+
+interface DetailsFold {
+  readonly start: number;
+  readonly bodyStart: number;
+  readonly summary: string;
+  readonly open: boolean;
+}
+
+function definitionLabel(label: string): string {
+  return label.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+interface Definition {
+  readonly start: number;
+  readonly source: string;
+}
+
+// Each segment renders as its own document, so it carries the definitions its labels name.
+function withDefinitions(
+  markdown: string,
+  start: number,
+  definitions: ReadonlyMap<string, Definition>,
+): string {
+  if (definitions.size === 0) return markdown;
+  const needed = new Set<string>();
+  for (const match of markdown.matchAll(/\[([^[\]]+)\]/g)) {
+    const definition = definitions.get(definitionLabel(match[1]!));
+    if (!definition) continue;
+    if (definition.start < start || definition.start >= start + markdown.length)
+      needed.add(definition.source);
+  }
+  return needed.size === 0 ? markdown : `${[...needed].join("\n")}\n\n${markdown}`;
+}
+
+/** The summary only counts once its closing tag arrives, as the fold's first child. */
+function detailsSummary(
+  markdown: string,
+  tokens: readonly HtmlToken[],
+  index: number,
+): { readonly text: string; readonly end: number } | null {
+  const opening = tokens[index]!;
+  const summary = tokens[index + 1];
+  if (!summary || !SUMMARY_TAG.test(summary.tag)) return null;
+  if (markdown.slice(opening.at + opening.tag.length, summary.at).trim()) return null;
+  let text = "";
+  let end = summary.at + summary.tag.length;
+  for (let next = index + 2; next < tokens.length; next += 1) {
+    const token = tokens[next]!;
+    if (DETAILS_TAG.test(token.tag)) return null;
+    text += markdown.slice(end, token.at);
+    end = token.at + token.tag.length;
+    if (SUMMARY_CLOSE_TAG.test(token.tag)) {
+      return { text: decodeHtmlEntities(text).replace(/\s+/g, " ").trim() || "Details", end };
+    }
+  }
+  return null;
 }
 
 /**
  * Splits top-level `<details>` blocks out as folds. Tags count only in top-level HTML nodes,
  * so code and folds inside containers stay Markdown for `markdownWithHtml` to flatten.
+ * An unclosed fold runs to the end, as an HTML parser closes it while a reply streams.
  */
 export function splitMarkdownDetails(markdown: string): ReadonlyArray<MarkdownDetailsSegment> {
   const whole = [{ kind: "markdown" as const, markdown, sourceOffset: 0 }];
   if (!/<details/i.test(markdown)) return whole;
-  const children = parser.parse(markdown).children;
+  const tokens: HtmlToken[] = [];
+  const definitions = new Map<string, Definition>();
+  for (const child of parser.parse(markdown).children) {
+    const start = child.position?.start.offset;
+    const end = child.position?.end.offset;
+    if (start === undefined || end === undefined) continue;
+    if (child.type === "definition") {
+      const label = definitionLabel(child.label ?? child.identifier);
+      if (!definitions.has(label))
+        definitions.set(label, { start, source: markdown.slice(start, end) });
+    } else if (child.type === "html") {
+      for (const tag of markdownHtmlTags(markdown.slice(start, end)))
+        tokens.push({ at: start + tag.index, tag: tag[0], nodeStart: start });
+    }
+  }
   const segments: MarkdownDetailsSegment[] = [];
   let cursor = 0;
-  let fold: { start: number; bodyStart: number; tag: string; childIndex: number } | null = null;
+  const pushFold = (fold: DetailsFold, end: number) => {
+    if (fold.start > cursor)
+      segments.push({
+        kind: "markdown",
+        markdown: withDefinitions(markdown.slice(cursor, fold.start), cursor, definitions),
+        sourceOffset: cursor,
+      });
+    segments.push({
+      kind: "details",
+      summary: fold.summary,
+      body: withDefinitions(markdown.slice(fold.bodyStart, end), fold.bodyStart, definitions),
+      open: fold.open,
+      sourceOffset: fold.start,
+    });
+  };
+  let fold: DetailsFold | null = null;
   let depth = 0;
-  for (let index = 0; index < children.length; index += 1) {
-    const child = children[index]!;
-    const nodeStart = child.position?.start.offset;
-    if (child.type !== "html" || nodeStart === undefined) continue;
-    const value = markdown.slice(nodeStart, child.position?.end.offset);
-    for (const match of value.matchAll(DETAILS_TAG)) {
-      const at = nodeStart + match.index;
-      if (match[1]) {
-        if (depth === 0 || --depth > 0 || !fold) continue;
-        const tagEnd = value.indexOf(">", match.index);
-        const body = markdown.slice(fold.bodyStart, at);
-        const summary = SUMMARY_PREFIX.exec(body);
-        // An indented `<summary>` after a blank line is a code block, not the fold's summary.
-        const summaryAt = fold.bodyStart + (summary?.[0].indexOf("<") ?? 0);
-        const next = children[fold.childIndex + 1];
-        const summaryInHtml =
-          summary !== null &&
-          (summaryAt < (children[fold.childIndex]!.position?.end.offset ?? 0) ||
-            (next?.type === "html" && (next.position?.start.offset ?? Infinity) <= summaryAt));
-        if (fold.start > cursor)
-          segments.push({
-            kind: "markdown",
-            markdown: markdown.slice(cursor, fold.start),
-            sourceOffset: cursor,
-          });
-        segments.push({
-          kind: "details",
-          summary: summaryInHtml ? detailsSummary(summary[1]!) : "Details",
-          body: summaryInHtml ? body.slice(summary[0].length) : body,
-          open: /\sopen(?=[\s=/>])/i.test(fold.tag.replace(/"[^"]*"|'[^']*'/g, "")),
-          sourceOffset: fold.start,
-        });
-        cursor = tagEnd === -1 ? at + match[0].length : nodeStart + tagEnd + 1;
-        fold = null;
-        continue;
-      }
-      if (depth > 0) {
-        depth += 1;
-        continue;
-      }
-      // A fold opens only at the start of a block or right after the previous fold.
-      const floor = Math.max(nodeStart, cursor);
-      let start = at;
-      while (start > floor && /\s/.test(markdown[start - 1]!)) start -= 1;
-      if (start > floor) continue;
-      STICKY_HTML_TAG.lastIndex = match.index;
-      const tag = STICKY_HTML_TAG.exec(value)?.[0];
-      if (!tag) continue;
-      fold = { start, bodyStart: at + tag.length, tag, childIndex: index };
-      depth = 1;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const { at, tag, nodeStart } = tokens[index]!;
+    const details = DETAILS_TAG.exec(tag);
+    if (!details) continue;
+    if (details[1]) {
+      if (depth === 0 || --depth > 0 || !fold) continue;
+      pushFold(fold, at);
+      cursor = at + tag.length;
+      fold = null;
+      continue;
     }
+    if (depth > 0) {
+      depth += 1;
+      continue;
+    }
+    // A fold opens only at the start of a block or right after the previous fold.
+    const floor = Math.max(nodeStart, cursor);
+    let start = at;
+    while (start > floor && /\s/.test(markdown[start - 1]!)) start -= 1;
+    if (start > floor) continue;
+    const summary = detailsSummary(markdown, tokens, index);
+    fold = {
+      start,
+      bodyStart: summary?.end ?? at + tag.length,
+      summary: summary?.text ?? "Details",
+      open: attribute(tag, "open") !== null,
+    };
+    depth = 1;
+  }
+  if (fold) {
+    pushFold(fold, markdown.length);
+    cursor = markdown.length;
   }
   if (segments.length === 0) return whole;
   if (cursor < markdown.length)
-    segments.push({ kind: "markdown", markdown: markdown.slice(cursor), sourceOffset: cursor });
+    segments.push({
+      kind: "markdown",
+      markdown: withDefinitions(markdown.slice(cursor), cursor, definitions),
+      sourceOffset: cursor,
+    });
   return segments;
 }
 

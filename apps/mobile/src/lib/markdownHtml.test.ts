@@ -151,17 +151,63 @@ describe("details folds in chat Markdown", () => {
   });
 
   it("keeps a nested fold in the outer fold's body", () => {
-    const inner = "<details><summary>B</summary>\n\nb\n\n</details>";
+    const inner = "<details open><summary>B</summary>\n\nb\n\n</details>";
     expect(
-      splitMarkdownDetails(`<details><summary>A</summary>\n\n${inner}\n\n</details>`),
-    ).toMatchObject([{ kind: "details", summary: "A", body: `\n\n${inner}\n\n` }]);
+      splitMarkdownDetails(`<details><summary>A</summary>\n\n${inner}\n\n</details>\n\nAfter`),
+    ).toMatchObject([
+      { kind: "details", summary: "A", body: `\n\n${inner}\n\n`, open: false },
+      { kind: "markdown", markdown: "\n\nAfter" },
+    ]);
+  });
+
+  it("takes fold boundaries and the summary only from real tags", () => {
+    expect(
+      splitMarkdownDetails(
+        '<details><summary title="a > b">Logs</summary>\n<!-- </details> -->\nBody\n</details>',
+      ),
+    ).toMatchObject([{ kind: "details", summary: "Logs", body: "\n<!-- </details> -->\nBody\n" }]);
+  });
+
+  it("reads open only as a boolean attribute", () => {
+    expect(splitMarkdownDetails("<details title= open>\nBody\n</details>")).toMatchObject([
+      { kind: "details", open: false },
+    ]);
+    expect(splitMarkdownDetails("<details title=x open>\nBody\n</details>")).toMatchObject([
+      { kind: "details", open: true },
+    ]);
+  });
+
+  it("gives every segment the reference definitions it uses", () => {
+    const definition = "[docs]: https://example.com/docs";
+    const segments = splitMarkdownDetails(
+      `See [Docs][docs].\n\n<details>\n<summary>A</summary>\n\n![Before][DOCS]\n\n</details>\n\n${definition}`,
+    );
+    expect(segments).toMatchObject([
+      { kind: "markdown", markdown: expect.stringContaining(definition) },
+      { kind: "details", body: expect.stringContaining(definition) },
+      { kind: "markdown", markdown: `\n\n${definition}` },
+    ]);
+  });
+
+  it("folds an unclosed fold to the end while the reply streams", () => {
+    const markdown = "Answer\n\n<details>\n<summary>Still streaming</summary>\n\nPartial";
+    expect(splitMarkdownDetails(markdown)).toEqual([
+      { kind: "markdown", markdown: "Answer\n\n", sourceOffset: 0 },
+      {
+        kind: "details",
+        summary: "Still streaming",
+        body: "\n\nPartial",
+        open: false,
+        sourceOffset: 8,
+      },
+    ]);
+    expect(splitMarkdownDetails("Answer\n\n<details>\n<summary>Still")).toMatchObject([
+      { kind: "markdown", sourceOffset: 0 },
+      { kind: "details", summary: "Details", body: "\n<summary>Still", sourceOffset: 8 },
+    ]);
   });
 
   it.each([
-    [
-      "an unmatched opening tag",
-      "Answer\n\n<details>\n<summary>Still streaming</summary>\n\nPartial",
-    ],
     ["a fold inside a list item", "- <details><summary>A</summary>\n\n  body\n\n  </details>"],
     [
       "a fold inside a fenced code block",

@@ -1185,6 +1185,9 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
+  /** The feed row a fold toggle anchors to; null leaves the feed's default anchor. */
+  readonly disclosureAnchorKey?: string | undefined;
+  readonly onToggleDisclosure: (anchorKey: string | null) => void;
 }) {
   const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
   const segments = useMemo(() => splitCodexArtifactTemplateMarkdown(liveMarkdown), [liveMarkdown]);
@@ -1213,19 +1216,32 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
         linkHandlers={linkHandlers}
         renderImage={props.renderImage}
         skills={props.skills}
+        onToggleDisclosure={() => props.onToggleDisclosure(props.disclosureAnchorKey ?? null)}
       />
     );
   });
 });
 
+// Nested folds stay flattened inside their outer fold's body.
 function AssistantMarkdownBlocks(props: {
   readonly markdown: string;
   readonly markdownStyles: MarkdownStyleSet;
   readonly linkHandlers: MarkdownLinkHandlers;
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
+  readonly onToggleDisclosure: () => void;
 }) {
   const segments = useMemo(() => splitMarkdownDetails(props.markdown), [props.markdown]);
+  const renderMarkdown = (key: string, markdown: string) => (
+    <SelectableMarkdownText
+      key={key}
+      markdown={renderCodexInlineDirectivesAsMarkdown(markdown)}
+      skills={props.skills}
+      textStyle={props.markdownStyles.nativeTextStyle}
+      {...props.linkHandlers}
+      renderImage={props.renderImage}
+    />
+  );
   return segments.map((segment) => {
     if (segment.kind === "details") {
       return (
@@ -1233,29 +1249,21 @@ function AssistantMarkdownBlocks(props: {
           key={`details:${segment.sourceOffset}`}
           summary={segment.summary}
           open={segment.open}
+          onToggle={props.onToggleDisclosure}
         >
-          <AssistantMarkdownBlocks {...props} markdown={segment.body} />
+          {segment.body.trim().length > 0 ? renderMarkdown("body", segment.body) : null}
         </MarkdownDetailsFold>
       );
     }
     if (segment.markdown.trim().length === 0) return null;
-
-    return (
-      <SelectableMarkdownText
-        key={`markdown:${segment.sourceOffset}`}
-        markdown={renderCodexInlineDirectivesAsMarkdown(segment.markdown)}
-        skills={props.skills}
-        textStyle={props.markdownStyles.nativeTextStyle}
-        {...props.linkHandlers}
-        renderImage={props.renderImage}
-      />
-    );
+    return renderMarkdown(`markdown:${segment.sourceOffset}`, segment.markdown);
   });
 }
 
 function MarkdownDetailsFold(props: {
   readonly summary: string;
   readonly open: boolean;
+  readonly onToggle: () => void;
   readonly children: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(props.open);
@@ -1264,7 +1272,10 @@ function MarkdownDetailsFold(props: {
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded }}
-        onPress={() => setExpanded(!expanded)}
+        onPress={() => {
+          props.onToggle();
+          setExpanded(!expanded);
+        }}
         className="min-h-11 flex-row items-center gap-2 py-2 active:opacity-70"
       >
         <SymbolView
@@ -1658,6 +1669,7 @@ function renderFeedEntry(
     readonly onToggleWorkGroup: (groupId: string, anchorKey?: string) => void;
     readonly onToggleWorkRow: (rowId: string, anchorKey?: string, groupId?: string) => void;
     readonly onToggleTurnFold: (runId: RunId) => void;
+    readonly onToggleMarkdownDetails: (anchorKey: string | null) => void;
     readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
     readonly onPressPreview: (source: FilePreviewSource) => void;
     readonly onPlaybackStart: () => void;
@@ -2244,6 +2256,8 @@ function renderFeedEntry(
               onUseArtifactTemplate={props.onUseArtifactTemplate}
               renderImage={props.renderMarkdownImage}
               skills={props.skills}
+              disclosureAnchorKey={entry.id}
+              onToggleDisclosure={props.onToggleMarkdownDetails}
             />
           </MarkdownImageAvailableWidthContext>
         ) : null}
@@ -3112,6 +3126,7 @@ export const ThreadFeed = memo(function ThreadFeed({
       linkHandlers={markdownLinkHandlers}
       renderImage={renderMarkdownImage}
       skills={props.skills}
+      onToggleDisclosure={suspendEndScrollMaintenanceForDisclosure}
     />
   );
   const reviewCommentColors = useReviewCommentColors();
@@ -3593,6 +3608,7 @@ export const ThreadFeed = memo(function ThreadFeed({
             onToggleWorkGroup,
             onToggleWorkRow,
             onToggleTurnFold,
+            onToggleMarkdownDetails: suspendEndScrollMaintenanceForDisclosure,
             onOpenTurnDiff,
             onPressPreview,
             onPlaybackStart: onInlinePlaybackStart,
