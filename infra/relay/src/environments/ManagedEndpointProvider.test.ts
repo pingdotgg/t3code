@@ -223,6 +223,7 @@ function makeAllocations(calls: AllocationCall[] = []) {
           updatedAt: `generation-${++generation}`,
           generation: 0,
           tunnelReleasedAt: null,
+          recoveryEnabledAt: null,
         };
         allocations.set(allocationKey(input), allocation);
         return allocation;
@@ -275,6 +276,10 @@ function makeAllocations(calls: AllocationCall[] = []) {
           return false;
         }
         recoveryEnabled.add(allocationKey(input));
+        mutate(allocationKey(input), (current) => ({
+          ...current,
+          recoveryEnabledAt: "2026-06-02T00:00:00.000Z",
+        }));
         return true;
       }),
     listByTunnelNames: (tunnelNames) =>
@@ -1275,6 +1280,75 @@ describe("ManagedEndpointProvider", () => {
       expect(tunnelCalls.map((call) => call.operation)).not.toContain("delete");
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect.each<{
+    readonly when: string;
+    readonly inactiveBefore: string;
+    readonly listed?: {
+      readonly recoveryEnabled: boolean;
+      readonly at: "before-registration" | "after-registration";
+    };
+    readonly released: boolean;
+  }>([
+    { when: "after", inactiveBefore: "2026-06-01T00:05:00.000Z", released: false },
+    { when: "before", inactiveBefore: "2026-06-02T00:05:00.000Z", released: true },
+    {
+      when: "after, with a replaced environment key",
+      inactiveBefore: "2026-06-01T00:05:00.000Z",
+      listed: { recoveryEnabled: false, at: "after-registration" },
+      released: true,
+    },
+    {
+      when: "after, registered again since a replaced-key listing",
+      inactiveBefore: "2026-06-01T00:05:00.000Z",
+      listed: { recoveryEnabled: false, at: "before-registration" },
+      released: false,
+    },
+  ])(
+    "releases a down tunnel unless a usable recovery registration came after the cutoff ($when)",
+    ({ inactiveBefore, listed, released }) => {
+      const tunnelCalls: TunnelCall[] = [];
+      const allocations = makeAllocations();
+      const layer = layerProvider(
+        makePersistentTunnelClient(tunnelCalls),
+        makeDnsClient(),
+        allocations,
+      );
+
+      return Effect.gen(function* () {
+        const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+        const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
+        const origin = { localHttpHost: "127.0.0.1", localHttpPort: 3773 } as const;
+        yield* provider.provision({ ...key, origin });
+        const beforeRegistration = yield* allocations.get(key);
+        yield* allocations.enableRecovery({
+          ...key,
+          tunnelId: "tunnel-id",
+          environmentPublicKey: "environment-public-key",
+          origin,
+        });
+        const listing =
+          listed?.at === "before-registration" ? beforeRegistration : yield* allocations.get(key);
+        expect(listing).not.toBeNull();
+
+        expect(
+          yield* provider.release({
+            ...key,
+            expectedTunnelId: "tunnel-id",
+            expectedStatus: "down",
+            expectedInactiveBefore: inactiveBefore,
+            ...(listed === undefined || listing === null
+              ? {}
+              : {
+                  expectedRecoveryEnabled: listed.recoveryEnabled,
+                  expectedGeneration: listing.generation,
+                }),
+          }),
+        ).toBe(released);
+        expect(tunnelCalls.some((call) => call.operation === "delete")).toBe(released);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect.each([
     { name: "the tunnel is gone", tunnelRemoved: true, released: true },

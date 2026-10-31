@@ -55,6 +55,7 @@ function allocation(input: {
     updatedAt: "2026-08-25T11:00:00.000Z",
     generation: 1,
     tunnelReleasedAt: null,
+    recoveryEnabledAt: null,
     recoveryEnabled: input.recoveryEnabled,
   };
 }
@@ -486,6 +487,8 @@ describe("ManagedEndpointReaper", () => {
         expect(state.releases.every((release) => release.markReleased === true)).toBe(true);
         for (const release of state.releases) {
           expect(release.expectedInactiveBefore).toBe("2026-08-18T12:00:00.000Z");
+          expect(release.expectedRecoveryEnabled).toBe(false);
+          expect(release.expectedGeneration).toBe(1);
         }
       }).pipe(Effect.provide(state.layer));
     });
