@@ -3,6 +3,7 @@ import { type PointerEvent as ReactPointerEvent, useLayoutEffect, useState } fro
 
 import { getLocalStorageItem, setLocalStorageItem } from "./useLocalStorage";
 import { useResizeDrag } from "./useResizeDrag";
+import { useStableCallback } from "./useStableCallback";
 
 const WidthSchema = Schema.Finite;
 
@@ -55,6 +56,9 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
   }
 
   const clampedWidth = clamp(widthState.width ?? defaultWidth);
+  const restoreWidth = useStableCallback((host: HTMLElement | null) => {
+    host?.style.setProperty(RESIZABLE_WIDTH_PROPERTY, `${clampedWidth}px`);
+  });
 
   const commitWidth = (nextStorageKey: string, nextWidth: number) => {
     // Resizing remains usable for this session when browser storage is unavailable.
@@ -82,8 +86,9 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
         host?.style.setProperty(RESIZABLE_WIDTH_PROPERTY, `${nextWidth}px`);
         return nextWidth;
       },
-      finish(finalWidth) {
-        commitWidth(startStorageKey, finalWidth);
+      finish(finalWidth, moved) {
+        if (moved) commitWidth(startStorageKey, finalWidth);
+        else restoreWidth(host);
       },
       cleanup(committed) {
         host?.style.removeProperty("transition-property");

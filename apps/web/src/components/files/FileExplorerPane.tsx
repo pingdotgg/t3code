@@ -18,7 +18,7 @@ export function FileExplorerPane({
   children,
   storageKey = "t3code.fileExplorerWidth",
   defaultWidth = 256,
-  defaultWidthFraction = 1,
+  defaultWidthFraction,
   minWidth = MIN_WIDTH,
   resizeLabel = "Resize file explorer",
 }: {
@@ -46,12 +46,17 @@ export function FileExplorerPane({
         const row = host?.parentElement;
         if (!row || !resizable) return;
         const measure = () => {
-          setMaxWidth(
-            Math.max(minWidth, Math.min(MAX_WIDTH, row.clientWidth - FILE_CONTENT_MIN_WIDTH)),
+          const initialWidth = Math.max(
+            minWidth,
+            Math.min(defaultWidth, row.clientWidth * (defaultWidthFraction ?? 1)),
           );
-          setResponsiveDefaultWidth(
-            Math.max(minWidth, Math.min(defaultWidth, row.clientWidth * defaultWidthFraction)),
+          // A responsive default must not shrink to make room for the content reserve.
+          const availableWidth = Math.max(
+            row.clientWidth - FILE_CONTENT_MIN_WIDTH,
+            defaultWidthFraction === undefined ? minWidth : initialWidth,
           );
+          setMaxWidth(Math.max(minWidth, Math.min(MAX_WIDTH, availableWidth)));
+          setResponsiveDefaultWidth(initialWidth);
         };
         measure();
         return observeResize(row, measure);
