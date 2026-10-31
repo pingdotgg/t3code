@@ -2615,6 +2615,196 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
+  it.effect(
+    "uses the configured fallback only for targets that leave provider and model to inheritance",
+    () =>
+      Effect.gen(function* () {
+        const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+        const inherited = {
+          instanceId: codexInstanceId,
+          model: "gpt-5.4",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        } as const;
+        const fallback = {
+          instanceId: claudeInstanceId,
+          model: "claude-sonnet-4-6",
+          options: [{ id: "effort", value: "high" }],
+        } as const;
+        const exhausted = {
+          checkedAt: "1970-01-01T00:00:00.000Z",
+          windows: [{ id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 100 }],
+        } as const;
+        const healthyClaude = providerSnapshot({
+          instanceId: claudeInstanceId,
+          driver: ProviderDriverKind.make("claudeAgent"),
+          model: fallback.model,
+        });
+        const cases = [
+          { name: "implicit, inherited exhausted", target: undefined, expected: fallback },
+          {
+            name: "implicit, inherited has usage",
+            target: undefined,
+            codexUsage: false,
+            expected: inherited,
+          },
+          {
+            name: "options only",
+            target: { options: { effort: "max" } },
+            expected: { ...fallback, options: [{ id: "effort", value: "max" }] },
+          },
+          {
+            name: "explicit instance",
+            target: { providerInstanceId: codexInstanceId },
+            expected: inherited,
+          },
+          {
+            name: "explicit driver",
+            target: { driverKind: ProviderDriverKind.make("codex") },
+            expected: inherited,
+          },
+          { name: "explicit model", target: { model: "gpt-5.4" }, expected: inherited },
+          {
+            name: "fallback exhausted",
+            target: undefined,
+            claude: { ...healthyClaude, usageLimits: exhausted },
+            expected: inherited,
+          },
+          {
+            name: "fallback unauthenticated",
+            target: undefined,
+            claude: { ...healthyClaude, auth: { status: "unauthenticated" } },
+            expected: inherited,
+          },
+          {
+            name: "fallback in error",
+            target: undefined,
+            claude: { ...healthyClaude, status: "error", message: "Probe failed." },
+            expected: inherited,
+          },
+          {
+            name: "fallback model not advertised",
+            target: undefined,
+            claude: { ...healthyClaude, models: [{ ...healthyClaude.models[0]!, slug: "other" }] },
+            expected: inherited,
+          },
+          {
+            name: "fallback without adapter",
+            target: undefined,
+            adapters: [codexInstanceId],
+            expected: inherited,
+          },
+          {
+            name: "fallback disabled for project",
+            target: undefined,
+            projectDisablesFallback: true,
+            expected: inherited,
+          },
+          { name: "receipt replay", target: undefined, replay: true, expected: inherited },
+        ] as const satisfies ReadonlyArray<{
+          name: string;
+          target: unknown;
+          expected: unknown;
+          codexUsage?: boolean;
+          claude?: unknown;
+          adapters?: ReadonlyArray<ProviderInstanceId>;
+          projectDisablesFallback?: boolean;
+          replay?: boolean;
+        }>;
+        for (const testCase of cases) {
+          const commands: Array<unknown> = [];
+          const task = {
+            id: taskId,
+            threadId: parentThreadId,
+            origin: "app_owned",
+            childThreadId,
+            providerInstanceId: testCase.expected.instanceId,
+            model: testCase.expected.model,
+            status: "running",
+            result: null,
+          };
+          const codex = providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: inherited.model,
+          });
+          const dependencies = Layer.mergeAll(
+            NodeServices.layer,
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              hasReceipt: () => Effect.succeed("replay" in testCase),
+              assertProviderInstanceEnabled: () => Effect.void,
+              isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+              getThreadRecords: (threadId) =>
+                Effect.succeed(
+                  threadId === parentThreadId
+                    ? parentProjection(commands.length > 0 ? [task] : [], inherited)
+                    : childProjection,
+                ),
+              dispatch: (command) =>
+                Effect.sync(() => {
+                  commands.push(command);
+                  return {
+                    sequence: 1,
+                    storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+                  } as never;
+                }),
+            }),
+            ServerSettings.layerTest({
+              fallbackModelSelection: fallback,
+              ...("projectDisablesFallback" in testCase
+                ? {
+                    projectSettingsOverrides: {
+                      [projectId]: {
+                        providerInstances: { [claudeInstanceId]: { enabled: false } },
+                      },
+                    },
+                  }
+                : {}),
+            }),
+            providerRegistryLayer([
+              "codexUsage" in testCase ? codex : { ...codex, usageLimits: exhausted },
+              ("claude" in testCase ? testCase.claude : healthyClaude) as ServerProvider,
+            ]),
+            adapterRegistryLayer(
+              "adapters" in testCase ? testCase.adapters : [codexInstanceId, claudeInstanceId],
+            ),
+            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          );
+          yield* Effect.gen(function* () {
+            const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+            const capabilities = yield* service.capabilities(scope);
+            assert.deepEqual(
+              capabilities.fallback,
+              {
+                providerInstanceId: fallback.instanceId,
+                model: fallback.model,
+                options: fallback.options,
+                active: !["codexUsage", "claude", "adapters", "projectDisablesFallback"].some(
+                  (key) => key in testCase,
+                ),
+              },
+              testCase.name,
+            );
+            yield* service.delegateTask(scope, {
+              task: "Review the change.",
+              ...(testCase.target === undefined
+                ? {}
+                : { target: yield* decodeTarget(testCase.target) }),
+              mode: "async",
+              clientRequestId: testCase.name,
+            });
+            assert.deepEqual(
+              (commands[0] as { modelSelection: unknown }).modelSelection,
+              testCase.expected,
+              testCase.name,
+            );
+          }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+        }
+      }),
+  );
+
   describe("resolveRuntimeMode", () => {
     const muse = {
       modelSelection: { instanceId: ProviderInstanceId.make("muse"), model: "muse-model" },

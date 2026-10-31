@@ -59,11 +59,13 @@ import {
   type ScheduledTask,
   type ScheduledTaskUpsertInput,
   type ServerProvider,
+  type ServerSettings as ServerSettingsValue,
   type ServerProviderModel,
   ThreadId,
   isOrchestrationV2WorkActive,
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
+import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import {
@@ -371,6 +373,33 @@ function providerConstraints(
     constraints.push("Provider is not authenticated.");
   }
   return constraints;
+}
+
+/** The fallback a target without provider, driver, or model takes while the inherited model is out of usage. */
+function activeFallback(input: {
+  readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly orchestrationCapableInstanceIds: ReadonlySet<string>;
+  readonly settings: ServerSettingsValue;
+  readonly now: number;
+}): ModelSelection | undefined {
+  const { selection, fallback } = resolveNewThreadModelSelection({
+    defaultSelection: input.parent.thread.modelSelection,
+    fallbackSelection: input.settings.fallbackModelSelection,
+    providers: input.providers,
+    now: input.now,
+    settings: input.settings,
+    projectId: input.parent.thread.projectId,
+  });
+  if (fallback === null || selection === null) return undefined;
+  const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
+  return provider !== undefined &&
+    providerConstraints(provider, input.orchestrationCapableInstanceIds.has(provider.instanceId))
+      .length === 0 &&
+    (provider.models.length === 0 ||
+      provider.models.some((model) => model.slug === selection.model))
+    ? selection
+    : undefined;
 }
 
 /** Skip checks without descriptors; reject duplicate IDs because consumers disagree on precedence. */
@@ -1294,12 +1323,30 @@ const make = Effect.gen(function* () {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
-    /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
+    /** Receipt replays bypass current settings, including the fallback, because they start no work. Dispatch must reuse the checked command ID. */
     readonly skipProjectEnablementFilter?: boolean;
   }): Effect.fn.Return<ResolvedTarget, OrchestratorMcpFailure> {
     const requestedInstanceId = input.target?.providerInstanceId;
     const requestedDriver = input.target?.driverKind;
+    const requestedModel = input.target?.model;
     const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
+    const inheritedSelection =
+      (requestedInstanceId === undefined &&
+      requestedDriver === undefined &&
+      requestedModel === undefined &&
+      input.skipProjectEnablementFilter !== true
+        ? activeFallback({
+            parent: input.parent,
+            providers: input.providers,
+            orchestrationCapableInstanceIds,
+            settings: yield* serverSettings.getSettings.pipe(
+              Effect.mapError(() =>
+                failure("orchestration_error", "Unable to read server settings."),
+              ),
+            ),
+            now: yield* Clock.currentTimeMillis,
+          })
+        : undefined) ?? input.parent.thread.modelSelection;
     let instanceId = requestedInstanceId;
 
     if (instanceId === undefined && requestedDriver !== undefined) {
@@ -1345,7 +1392,7 @@ const make = Effect.gen(function* () {
         );
       }
     }
-    instanceId ??= input.parent.thread.modelSelection.instanceId;
+    instanceId ??= inheritedSelection.instanceId;
 
     const provider = input.providers.find((candidate) => candidate.instanceId === instanceId);
     if (provider === undefined) {
@@ -1371,8 +1418,6 @@ const make = Effect.gen(function* () {
       );
     }
 
-    const inheritedSelection = input.parent.thread.modelSelection;
-    const requestedModel = input.target?.model;
     const model =
       requestedModel ??
       (instanceId === inheritedSelection.instanceId
@@ -2156,12 +2201,34 @@ const make = Effect.gen(function* () {
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
       );
       const inherited = parent?.thread.modelSelection;
+      const configuredFallback = settings.fallbackModelSelection;
+      const now = yield* Clock.currentTimeMillis;
       const searchTerms = input.search?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
       return {
         parentThreadId: parent?.thread.id ?? null,
         inheritedProviderInstanceId: inherited?.instanceId ?? null,
         inheritedModel: inherited?.model ?? null,
         inheritedOptions: inherited?.options ?? [],
+        ...(configuredFallback === null
+          ? {}
+          : {
+              fallback: {
+                providerInstanceId: configuredFallback.instanceId,
+                model: configuredFallback.model,
+                ...(configuredFallback.options === undefined
+                  ? {}
+                  : { options: configuredFallback.options }),
+                active:
+                  parent !== undefined &&
+                  activeFallback({
+                    parent,
+                    providers,
+                    orchestrationCapableInstanceIds,
+                    settings,
+                    now,
+                  }) !== undefined,
+              },
+            }),
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
         providers: providers.map((provider) => {

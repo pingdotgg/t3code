@@ -633,6 +633,16 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   inheritedProviderInstanceId: Schema.NullOr(ProviderInstanceId),
   inheritedModel: Schema.NullOr(Schema.String),
   inheritedOptions: Schema.optional(Schema.Array(ProviderOptionSelection)),
+  /** The configured fallback model; omitted when none is set. */
+  fallback: Schema.optional(
+    Schema.Struct({
+      providerInstanceId: ProviderInstanceId,
+      model: Schema.String,
+      options: Schema.optional(Schema.Array(ProviderOptionSelection)),
+      /** The inherited model is out of usage and this one can run, so a target without provider, driver, or model uses it. */
+      active: Schema.Boolean,
+    }),
+  ),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   providers: Schema.Array(OrchestratorMcpProviderCapability),
