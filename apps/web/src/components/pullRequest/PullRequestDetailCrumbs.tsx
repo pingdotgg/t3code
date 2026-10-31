@@ -129,7 +129,7 @@ export function PullRequestDetailCrumbs({
           {detail.state !== "open" || detail.isDraft ? (
             <span
               className={cn(
-                "inline-flex h-5 shrink-0 items-center gap-1 rounded-md border px-[7px] text-caption",
+                "inline-flex h-5 shrink-0 items-center gap-1 rounded-md border px-1.75 text-caption",
                 detail.state === "merged"
                   ? "border-merged-foreground/25 bg-merged-tint text-merged-foreground"
                   : detail.state === "closed"
