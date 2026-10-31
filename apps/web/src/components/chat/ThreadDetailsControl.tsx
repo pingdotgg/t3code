@@ -55,16 +55,14 @@ export function ThreadDetailsControl({
           multiline && "h-auto min-h-8 py-0.75 disabled:opacity-100 sm:h-auto",
           tone === "muted" && "text-muted-foreground hover:text-foreground/80",
           tone === "primary" &&
-            // The row surface forces a faint hover fill with !important; the solid pill keeps its own.
-            "bg-primary text-primary-foreground hover:text-primary-foreground hover:!bg-primary/85 data-pressed:!bg-primary/85 dark:hover:!bg-primary/85 dark:data-pressed:!bg-primary/85",
+            // The row surface forces a faint hover fill with !important; the pill keeps its own.
+            "bg-black/[0.035] text-foreground/80 hover:text-foreground hover:!bg-black/[0.06] data-pressed:!bg-black/[0.06] dark:bg-white/[0.08] dark:hover:!bg-white/[0.12] dark:data-pressed:!bg-white/[0.12]",
           tone === "destructive" &&
             "text-destructive hover:text-destructive data-pressed:text-destructive",
-          // PR row actions share one 20px pill with a 1px inset focus ring that stays clear of the
-          // label. The solid pill draws it in the canvas color so it shows against the fill.
+          // Keep the inset focus ring clear of the 20px PR action label.
           part === "meta" &&
             (tone === "primary" || tone === "destructive") &&
             "h-5 focus-visible:ring-1 focus-visible:ring-offset-0",
-          part === "meta" && tone === "primary" && "focus-visible:ring-background",
           part === "meta" &&
             tone === "destructive" &&
             "bg-destructive/10 hover:!bg-destructive/16 data-pressed:!bg-destructive/16 dark:hover:!bg-destructive/16 dark:data-pressed:!bg-destructive/16",
