@@ -451,6 +451,12 @@ describe("workspace area focus", () => {
     expect(document.activeElement).toBe(panel.button);
     expect(fixture.controller.move(-1, "panel")).toBe(true);
     expect(document.activeElement).toBe(firstPanel.button);
+    panel.button.focus();
+    panel.element.hidden = true;
+    expect(fixture.controller.focus("content")).toBe(false);
+    const mountedComposer = fixture.area("composer", 2, second);
+    expect(fixture.controller.focus("content")).toBe(true);
+    expect(document.activeElement).toBe(mountedComposer.button);
   });
 
   it("changes keyboard ownership only when explicitly moving focus to a pane", () => {
