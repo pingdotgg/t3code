@@ -198,10 +198,10 @@ function PoolWindowCard({
     });
   const summary = (
     <>
-      <View className={wide ? "gap-1" : "flex-row items-start justify-between gap-3"}>
-        <View className="gap-1">
+      <View className={wide ? "gap-1" : "flex-row flex-wrap items-start justify-between gap-3"}>
+        <View className="min-w-0 max-w-full gap-1">
           <Text className="text-sm font-t3-medium text-foreground">{label ?? pool.label}</Text>
-          <View className="flex-row items-baseline gap-1.5">
+          <View className="flex-row flex-wrap items-baseline gap-1.5">
             <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
               {pool.remainingPercent}%
             </Text>

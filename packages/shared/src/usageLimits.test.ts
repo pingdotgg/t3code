@@ -793,7 +793,7 @@ describe("pools", () => {
       ),
       now,
     );
-    expect(untimed[0]?.windows[0]?.paceHeadroomPercent).toBe(0);
+    expect(untimed[0]?.windows[0]?.paceHeadroomPercent).toBeNull();
     expect(session).toMatchObject({
       id: "five_hour",
       remainingPercent: 40,

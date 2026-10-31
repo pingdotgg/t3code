@@ -419,7 +419,7 @@ export interface LimitPoolWindow {
   /**
    * Points between what is left and what even spending would leave by now:
    * positive is quota to spare, negative is spending faster than the clock.
-   * Null when no member reports a window length and reset.
+   * Null unless every member reports a window length and reset.
    */
   readonly paceHeadroomPercent: number | null;
   readonly resets: ReadonlyArray<{
@@ -568,14 +568,15 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
     const first = members[0]!.window;
     const id = members[0]!.account.driver === "codex" ? key : first.id;
     const usedPercent = members.reduce((sum, m) => sum + m.window.usedPercent, 0) / members.length;
-    // Judge pace only for windows with reset clocks; others add spend without elapsed time.
     const timed = members.flatMap((m) => {
       const share = elapsedShare(m.window, now);
       return share === null ? [] : [{ used: m.window.usedPercent, elapsed: share }];
     });
     const timedUsed = timed.reduce((sum, t) => sum + t.used, 0) / timed.length;
     const meanElapsed =
-      timed.length > 0 ? timed.reduce((sum, t) => sum + t.elapsed, 0) / timed.length : null;
+      timed.length === members.length
+        ? timed.reduce((sum, t) => sum + t.elapsed, 0) / timed.length
+        : null;
     // Headroom is taken between rounded figures so it agrees with the bar's pace marks.
     const paceRemaining = meanElapsed === null ? null : Math.round(100 - meanElapsed * 100);
     const resets = members
