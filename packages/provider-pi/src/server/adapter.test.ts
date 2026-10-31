@@ -3345,13 +3345,13 @@ describe("PiAdapterV2", () => {
   it.effect.each([
     {
       placeholder: undefined,
-      title: "Enter <branch> & [name] *exact*",
-      question: String.raw`Enter &lt;branch&gt; &amp; \[name\] \*exact\*`,
+      title: "Enter <branch> & [name] *exact* $PATH$",
+      question: "Enter &lt;branch&gt; &amp; &#91;name&#93; &#42;exact&#42; &#36;PATH&#36;",
     },
     {
       placeholder: "",
       title: "Where should this run?\n1. Current branch\n2. New worktree",
-      question: "Where should this run?\n1\\. Current branch\n2\\. New worktree",
+      question: "Where should this run?\n1&#46; Current branch\n2&#46; New worktree",
     },
     { placeholder: "1,3; custom answer", title: "Enter a value", question: "Enter a value" },
   ])(
@@ -3427,7 +3427,7 @@ describe("PiAdapterV2", () => {
       }
       assert.equal(
         decodeUserInputQuestions(event.turnItem.questions)[0]?.question,
-        "Which database?\n1\\. Postgres\n2\\. Type something\\.\nType your answer:",
+        "Which database?\n1&#46; Postgres\n2&#46; Type something&#46;\nType your answer:",
       );
       yield* runtime.respondToRuntimeRequest({
         requestId: event.turnItem.requestId,

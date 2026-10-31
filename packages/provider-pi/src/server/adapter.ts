@@ -3335,7 +3335,7 @@ function piQuestion(
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
-        .replace(/[\\`*_[\]{}()#+.!|~-]/g, "\\$&") ||
+        .replace(/[\\`*_[\]{}()#+.!|~$-]/g, (character) => `&#${character.charCodeAt(0)};`) ||
       (method === "select"
         ? "Choose an option"
         : method === "editor"
