@@ -2,7 +2,7 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { Spinner } from "~/components/ui/spinner";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ArrowLeftIcon, ChevronRightIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 
 import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
 import {
@@ -17,9 +17,8 @@ import {
 } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useTheme } from "~/hooks/useTheme";
-import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { cn } from "~/lib/utils";
-import { isAbsolutePath } from "@t3tools/shared/path";
+import { isHostPath } from "@t3tools/shared/path";
 
 import {
   breadcrumbPathOf,
@@ -34,13 +33,13 @@ import { useProjectEntriesQuery } from "./projectFilesQueryState";
 interface FileBreadcrumbsProps {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
-  /** Moves the browser to a folder crumb; `""` is the workspace root. */
+  /** Navigates to a folder; an empty path is the workspace root. */
   readonly onNavigateFolder: (relativePath: string) => void;
   readonly onOpenFile: (relativePath: string) => void;
   readonly projectName: string;
-  /** The current path; `""` is the workspace root. */
+  /** Current path; an empty path is the workspace root. */
   readonly relativePath: string;
-  /** The deepest path to show: `relativePath`, or a path inside it the browser came up from. */
+  /** Deepest visible path, including descendants retained after navigating up. */
   readonly trail: string;
   readonly workspaceMutationId: string | null;
 }
@@ -85,19 +84,16 @@ function BreadcrumbMenuContent(props: {
   readonly rootPath: string;
   readonly workspaceMutationId: string | null;
 }) {
-  const entriesQuery = useProjectEntriesQuery(props.environmentId, props.cwd, props.directoryPath);
-  useWorkspaceMutationRefresh({
-    mutationId: props.workspaceMutationId,
-    refresh: entriesQuery.refresh,
-    resourceKey: `files:${props.environmentId}:${props.cwd}`,
-  });
+  const entriesQuery = useProjectEntriesQuery(
+    props.environmentId,
+    props.cwd,
+    props.directoryPath,
+    props.workspaceMutationId,
+  );
   const { resolvedTheme } = useTheme();
   const entries = entriesQuery.data?.entries ?? [];
   const entriesTruncated = entriesQuery.data?.truncated ?? false;
-  const children = useMemo(
-    () => fileBreadcrumbChildren(entries, props.directoryPath),
-    [entries, props.directoryPath],
-  );
+  const children = fileBreadcrumbChildren(entries, props.directoryPath);
   const directoryAvailable = entriesQuery.data !== null;
   const parentPath = fileBreadcrumbParent(props.directoryPath);
   const canGoBack =
@@ -204,7 +200,7 @@ function BreadcrumbMenuContent(props: {
           <MenuSeparator />
           <MenuItem closeOnClick={false} onClick={entriesQuery.refresh}>
             <RefreshIcon refreshing={entriesQuery.isPending} />
-            Refresh failed — retry
+            Refresh failed. Retry
           </MenuItem>
         </>
       ) : null}
@@ -218,15 +214,18 @@ function BreadcrumbMenuContent(props: {
   );
 }
 
-/** The chevron after a folder crumb lists that folder's entries. */
 function FolderContentsMenu(props: FileBreadcrumbsProps & { readonly crumb: FileBreadcrumb }) {
   const [open, setOpen] = useState(false);
   const [directoryPath, setDirectoryPath] = useState(props.crumb.path);
-
-  useEffect(() => {
+  const [shownFor, setShownFor] = useState({
+    crumbPath: props.crumb.path,
+    relativePath: props.relativePath,
+  });
+  if (shownFor.crumbPath !== props.crumb.path || shownFor.relativePath !== props.relativePath) {
+    setShownFor({ crumbPath: props.crumb.path, relativePath: props.relativePath });
     setOpen(false);
     setDirectoryPath(props.crumb.path);
-  }, [props.crumb.path, props.relativePath]);
+  }
 
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen);
@@ -266,7 +265,7 @@ function FolderContentsMenu(props: FileBreadcrumbsProps & { readonly crumb: File
 
 function FolderBreadcrumb(props: {
   readonly crumb: FileBreadcrumb;
-  /** Below the current folder, kept from where the browser came from. */
+  /** Whether this crumb is below the current folder. */
   readonly descendant: boolean;
   readonly onNavigate: (path: string) => void;
   readonly projectName: string;
@@ -292,17 +291,10 @@ function FolderBreadcrumb(props: {
   );
 }
 
-/**
- * Each folder crumb moves the browser to that folder, and the chevron after it
- * lists the folder's entries. A host path outside the workspace has no contents
- * menu: the browser below already lists the folder it moves to.
- */
+/** Host paths outside the workspace omit contents menus; the browser already lists their destination. */
 export function FileBreadcrumbs(props: FileBreadcrumbsProps) {
-  const hostPath = isAbsolutePath(props.relativePath);
-  const breadcrumbs = useMemo(
-    () => fileBreadcrumbs(props.projectName, props.trail),
-    [props.projectName, props.trail],
-  );
+  const hostPath = isHostPath(props.relativePath);
+  const breadcrumbs = fileBreadcrumbs(props.projectName, props.trail);
   const currentPath = breadcrumbPathOf(props.relativePath);
   const currentIndex = breadcrumbs.findIndex((crumb) => crumb.path === currentPath);
 

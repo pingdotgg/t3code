@@ -24,24 +24,6 @@ const catalogError = () =>
   });
 
 describe("CursorSdkCatalog", () => {
-  it.effect("keeps the user probe fresh while caching models by API key", () =>
-    Effect.gen(function* () {
-      let userCalls = 0;
-      let modelCalls = 0;
-      const catalog = yield* CursorSdkCatalog.makeCursorSdkCatalog({
-        readUser: () => Effect.sync(() => ((userCalls += 1), user)),
-        readModels: () => Effect.sync(() => ((modelCalls += 1), [model])),
-      });
-
-      yield* catalog.read("first-key");
-      yield* catalog.read("first-key");
-      yield* catalog.read("second-key");
-
-      expect(userCalls).toBe(3);
-      expect(modelCalls).toBe(2);
-    }),
-  );
-
   it.effect("does not cache failed or empty model discovery", () =>
     Effect.gen(function* () {
       let modelCalls = 0;

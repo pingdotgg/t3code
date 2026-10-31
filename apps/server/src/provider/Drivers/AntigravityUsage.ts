@@ -32,12 +32,13 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const host = yield* ProviderHost.ProviderHost;
-  const hostEnvironment = yield* HostProcess.Environment;
   const cache = makeAntigravityUsageCache();
 
-  const dataRoots = Effect.gen(function* () {
+  const dataRoots = Effect.fn("AntigravityUsage.dataRoots")(function* (
+    environment: NodeJS.ProcessEnv,
+  ) {
     const home = yield* HostProcess.HomeDirectory;
-    const configured = hostEnvironment["ANTIGRAVITY_DATA_DIR"]
+    const configured = environment["ANTIGRAVITY_DATA_DIR"]
       ?.split(",")
       .map((value) => value.trim())
       .filter(Boolean);
@@ -61,7 +62,8 @@ const make = Effect.gen(function* () {
     instances,
     windowStartMs,
   }) {
-    const roots = yield* dataRoots;
+    const roots: Array<string> = [];
+    for (const instance of instances) roots.push(...(yield* dataRoots(instance.environment)));
     for (const { instanceId } of instances.filter((instance) => instance.configured)) {
       const directories = yield* resolveAntigravityInstanceDirectories(
         host.paths.stateDir,

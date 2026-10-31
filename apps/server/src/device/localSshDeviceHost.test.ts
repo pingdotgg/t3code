@@ -11,6 +11,7 @@ import {
 } from "./localSshDeviceHost.ts";
 
 const host = (target: string, port?: number) => ({
+  kind: "ssh" as const,
   id: target,
   label: target,
   target,
@@ -78,9 +79,18 @@ it.effect("keeps remote, forwarded, proxied, and unresolved destinations", () =>
 it.effect("removes only self targets from a fanned-out host list", () =>
   provide(
     Effect.gen(function* () {
+      const eas = {
+        kind: "eas" as const,
+        id: "eas",
+        label: "EAS Simulator",
+        accessToken: "",
+        maxSessionMinutes: 30,
+        idleMinutes: 10,
+        maxConcurrentSessions: 2,
+      };
       expect(
-        yield* remoteSshDeviceHosts([host("mac-mini"), host("remote"), host("forwarded")]),
-      ).toEqual([host("remote"), host("forwarded")]);
+        yield* remoteSshDeviceHosts([host("mac-mini"), eas, host("remote"), host("forwarded")]),
+      ).toEqual([eas, host("remote"), host("forwarded")]);
     }),
   ),
 );

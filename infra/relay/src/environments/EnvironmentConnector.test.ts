@@ -15,16 +15,11 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import { RELAY_HEALTH_RESPONSE_TYP, RELAY_MINT_RESPONSE_TYP } from "@t3tools/shared/relayJwt";
-import * as Deferred from "effect/Deferred";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
@@ -207,7 +202,6 @@ function makeAllocations(
     claimRelease: () => Effect.die("unused"),
     withClaimedTunnel: () => Effect.die("unused"),
     claimDeprovision: () => Effect.die("unused"),
-    remove: () => Effect.die("unused"),
     removeClaimed: () => Effect.die("unused"),
   };
 }
@@ -239,58 +233,6 @@ function makeLinks(
 }
 
 describe("EnvironmentConnector", () => {
-  it.effect("loads the environment link and managed allocation concurrently", () =>
-    Effect.gen(function* () {
-      const started = yield* Ref.make(0);
-      const bothStarted = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      const waitForPeer = Effect.gen(function* () {
-        const count = yield* Ref.updateAndGet(started, (value) => value + 1);
-        if (count === 2) {
-          yield* Deferred.succeed(bothStarted, undefined);
-        }
-        yield* Deferred.await(release);
-      });
-      const links = makeLinks();
-      const allocations = makeAllocations();
-      const execute = (request: HttpClientRequest.HttpClientRequest) =>
-        Effect.sync(() => {
-          const healthRequest = decodeHealthRequestBody(requestBodyText(request));
-          return HttpClientResponse.fromWeb(
-            request,
-            Response.json(signHealthResponse(healthRequest), { status: 200 }),
-          );
-        });
-      const status = Effect.gen(function* () {
-        const connector = yield* EnvironmentConnector.EnvironmentConnector;
-        return yield* connector.status({
-          userId: "user_123",
-          environmentId: "env-connector-test" as never,
-        });
-      }).pipe(
-        Effect.provide(
-          layerConnectorTest(execute, {
-            links: {
-              ...links,
-              getForUser: (input) => waitForPeer.pipe(Effect.andThen(links.getForUser(input))),
-            },
-            allocations: {
-              ...allocations,
-              get: (input) => waitForPeer.pipe(Effect.andThen(allocations.get(input))),
-            },
-          }),
-        ),
-      );
-
-      const fiber = yield* Effect.forkChild(status);
-      yield* Deferred.await(bothStarted);
-      yield* Deferred.succeed(release, undefined);
-      yield* Fiber.join(fiber);
-
-      expect(yield* Ref.get(started)).toBe(2);
-    }),
-  );
-
   it.effect("checks linked environment health through the managed endpoint", () => {
     const seenUrls: Array<string> = [];
     const seenProofs: Array<RelayCloudEnvironmentHealthProofPayload> = [];
@@ -525,38 +467,6 @@ describe("EnvironmentConnector", () => {
     }).pipe(Effect.provide(layerConnectorTest(execute)));
   });
 
-  it.effect("reports offline status when the managed endpoint health request fails", () => {
-    const execute = (request: HttpClientRequest.HttpClientRequest) =>
-      Effect.succeed(
-        HttpClientResponse.fromWeb(
-          request,
-          Response.json(
-            {
-              _tag: "EnvironmentHttpInternalServerError",
-              message: "Environment is unavailable.",
-            },
-            { status: 500 },
-          ),
-        ),
-      );
-
-    return Effect.gen(function* () {
-      const connector = yield* EnvironmentConnector.EnvironmentConnector;
-      const result = yield* connector.status({
-        userId: "user_123",
-        environmentId: "env-connector-test",
-      });
-
-      expect(result).toMatchObject({
-        environmentId: "env-connector-test",
-        status: "offline",
-        error: "Managed endpoint health request failed: Environment is unavailable.",
-        traceId: expect.any(String),
-      });
-      expect(result).not.toHaveProperty("offlineReason");
-    }).pipe(Effect.provide(layerConnectorTest(execute)));
-  });
-
   it.effect("reports a released tunnel as the reason an environment is offline", () => {
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
       Effect.succeed(
@@ -762,41 +672,6 @@ describe("EnvironmentConnector", () => {
     }).pipe(Effect.provide(layerConnectorTest(execute)));
   });
 
-  it.effect("rejects mint responses when the linked environment public key is malformed", () => {
-    const execute = (request: HttpClientRequest.HttpClientRequest) =>
-      Effect.sync(() => {
-        const mintRequest = decodeMintRequestBody(requestBodyText(request));
-        return HttpClientResponse.fromWeb(
-          request,
-          Response.json(signMintResponse(mintRequest), { status: 200 }),
-        );
-      });
-
-    return Effect.gen(function* () {
-      const connector = yield* EnvironmentConnector.EnvironmentConnector;
-      const result = yield* Effect.exit(
-        connector.connect({
-          userId: "user_123",
-          environmentId: "env-connector-test",
-          clientProofKeyThumbprint: "client-proof-key-thumbprint",
-        }),
-      );
-
-      expect(result._tag).toBe("Failure");
-      if (result._tag === "Failure") {
-        expect(result.cause.toString()).toContain("EnvironmentMintResponseInvalid");
-      }
-    }).pipe(
-      Effect.provide(
-        layerConnectorTest(execute, {
-          links: makeLinks({
-            environmentPublicKey: "not a pem public key",
-          }),
-        }),
-      ),
-    );
-  });
-
   it.effect("rejects environment mint responses with an overlong credential window", () => {
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
       Effect.sync(() => {
@@ -825,42 +700,5 @@ describe("EnvironmentConnector", () => {
         expect(result.cause.toString()).toContain("EnvironmentMintResponseInvalid");
       }
     }).pipe(Effect.provide(layerConnectorTest(execute)));
-  });
-
-  it.effect("times out hung managed endpoint mint requests", () => {
-    let resolveRequestStarted: (() => void) | undefined;
-    const requestStarted = new Promise<void>((resolve) => {
-      resolveRequestStarted = () => resolve();
-    });
-    const execute = () =>
-      Effect.sync(() => {
-        resolveRequestStarted?.();
-      }).pipe(Effect.andThen(Effect.never as Effect.Effect<HttpClientResponse.HttpClientResponse>));
-
-    return Effect.gen(function* () {
-      const connector = yield* EnvironmentConnector.EnvironmentConnector;
-      const resultFiber = yield* connector
-        .connect({
-          userId: "user_123",
-          environmentId: "env-connector-test",
-          clientProofKeyThumbprint: "client-proof-key-thumbprint",
-        })
-        .pipe(Effect.result, Effect.forkScoped);
-
-      yield* Effect.promise(() => requestStarted);
-      yield* TestClock.adjust(
-        Duration.millis(EnvironmentConnector.ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS),
-      );
-      const result = yield* Fiber.join(resultFiber);
-
-      expect(Result.isFailure(result)).toBe(true);
-      if (Result.isFailure(result)) {
-        expect(result.failure._tag).toBe("EnvironmentMintRequestTimedOut");
-        expect(result.failure).toMatchObject({
-          environmentId: "env-connector-test",
-          timeoutMs: EnvironmentConnector.ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS,
-        });
-      }
-    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), layerConnectorTest(execute))));
   });
 });

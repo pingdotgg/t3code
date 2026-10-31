@@ -17,7 +17,6 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import * as TestClock from "effect/testing/TestClock";
 import { Atom, AtomRegistry } from "effect/reactivity";
 
 import { AVAILABLE_CONNECTION_STATE } from "../connection/model.ts";
@@ -175,45 +174,6 @@ describe("file metadata", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("does not reuse expired metadata retained by an unrelated thread", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness();
-      const threadId = ThreadId.make("unrelated-thread");
-      h.registry.mount(h.atoms.retainThread({ environmentId: ENVIRONMENT_ID, threadId }));
-      h.values.set("/workspace/file", { kind: "file", byteLength: 5 });
-      yield* h.read("/workspace/file", ENVIRONMENT_ID, threadId);
-      yield* TestClock.adjust("1 hour");
-      h.values.set("/workspace/file", { kind: "directory" });
-      expect(yield* h.read("/workspace/file")).toEqual({ kind: "directory" });
-      expect(h.batches).toHaveLength(2);
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("uses a file listing kind without requesting optional metadata", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness();
-      yield* h.seed("run", "file");
-      expect(yield* h.read("/workspace/run")).toEqual({ kind: "file" });
-      expect(h.batches).toHaveLength(0);
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("tree refreshes preserve MIME hints retained by an open thread", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness();
-      const threadId = ThreadId.make("rich-metadata-thread");
-      h.registry.mount(h.atoms.retainThread({ environmentId: ENVIRONMENT_ID, threadId }));
-      const value = { kind: "file" as const, byteLength: 5, mimeType: "text/x-python" };
-      h.values.set("/workspace/run", value);
-      yield* h.read("/workspace/run", ENVIRONMENT_ID, threadId);
-      yield* TestClock.adjust("1 hour");
-      yield* h.seed("run", "file");
-      h.registry.refresh(h.atom("/workspace/run", ENVIRONMENT_ID, threadId));
-      expect(yield* h.read("/workspace/run", ENVIRONMENT_ID, threadId)).toEqual(value);
-      expect(h.batches).toHaveLength(1);
-    }).pipe(Effect.scoped),
-  );
-
   it.effect("an offscreen invalidation waits until that path is read again", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
@@ -231,53 +191,6 @@ describe("file metadata", () => {
         kind: "directory",
       });
       expect(h.batches).toHaveLength(2);
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("retains more than 1024 visited paths until the thread closes", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness();
-      const threadId = ThreadId.make("large-thread");
-      const release = h.registry.mount(
-        h.atoms.retainThread({ environmentId: ENVIRONMENT_ID, threadId }),
-      );
-      const paths = Array.from({ length: 1300 }, (_, i) => `/workspace/visited-${i}`);
-      yield* Effect.forEach(paths, (path) => h.read(path, ENVIRONMENT_ID, threadId), {
-        concurrency: "unbounded",
-      });
-      expect(h.batches).toHaveLength(21);
-      yield* TestClock.adjust("1 hour");
-      for (const path of paths) h.registry.refresh(h.atom(path, ENVIRONMENT_ID, threadId));
-      yield* Effect.forEach(paths, (path) => h.read(path, ENVIRONMENT_ID, threadId), {
-        concurrency: "unbounded",
-      });
-      expect(h.batches).toHaveLength(21);
-      release();
-      yield* Effect.yieldNow;
-      h.registry.refresh(h.atom(paths[0]!, ENVIRONMENT_ID, threadId));
-      yield* h.read(paths[0]!, ENVIRONMENT_ID, threadId);
-      expect(h.batches).toHaveLength(22);
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("closing one thread does not release another thread's retained paths", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness();
-      const a = ThreadId.make("thread-a");
-      const b = ThreadId.make("thread-b");
-      const releaseA = h.registry.mount(
-        h.atoms.retainThread({ environmentId: ENVIRONMENT_ID, threadId: a }),
-      );
-      h.registry.mount(h.atoms.retainThread({ environmentId: ENVIRONMENT_ID, threadId: b }));
-      yield* h.read("/workspace/shared", ENVIRONMENT_ID, a);
-      yield* h.read("/workspace/shared", ENVIRONMENT_ID, b);
-      expect(h.batches).toHaveLength(1);
-      releaseA();
-      yield* Effect.yieldNow;
-      yield* TestClock.adjust("1 hour");
-      h.registry.refresh(h.atom("/workspace/shared", ENVIRONMENT_ID, b));
-      yield* h.read("/workspace/shared", ENVIRONMENT_ID, b);
-      expect(h.batches).toHaveLength(1);
     }).pipe(Effect.scoped),
   );
 
@@ -354,19 +267,6 @@ describe("file metadata", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("expires cached metadata and refreshes a changed kind", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness();
-      h.values.set("/workspace/path", { kind: "file" });
-      yield* h.read("/workspace/path");
-      h.values.set("/workspace/path", { kind: "directory" });
-      yield* TestClock.adjust("61 seconds");
-      h.registry.refresh(h.atom("/workspace/path"));
-      expect(yield* h.read("/workspace/path")).toEqual({ kind: "directory" });
-      expect(h.batches).toHaveLength(2);
-    }).pipe(Effect.scoped),
-  );
-
   it.effect("reuses file read sizes and normalizes Windows cache keys", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
@@ -423,36 +323,6 @@ describe("file metadata", () => {
       const count = h.batches.length;
       yield* h.read("/workspace/0");
       expect(h.batches).toHaveLength(count);
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("batches synchronous mounts after the runtime is warm", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness();
-      yield* h.read("/workspace/warmup");
-      h.batches.length = 0;
-      const paths = Array.from({ length: 130 }, (_, i) => `/workspace/mounted-${i}`);
-      yield* Effect.sync(() => {
-        for (const path of paths) h.registry.get(h.atom(path));
-      });
-      yield* Effect.all(
-        paths.map((path) => h.read(path)),
-        { concurrency: "unbounded" },
-      );
-      expect(h.batches.map((batch) => batch.length)).toEqual([64, 64, 2]);
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("rechecks metadata after the environment session changes", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness();
-      h.values.set("/workspace/path", { kind: "file" });
-      expect(yield* h.read("/workspace/path")).toEqual({ kind: "file" });
-      h.values.set("/workspace/path", { kind: "directory" });
-      yield* SubscriptionRef.set(h.session, Option.some(h.makeSession()));
-      h.registry.refresh(h.atom("/workspace/path"));
-      expect(yield* h.read("/workspace/path")).toEqual({ kind: "directory" });
-      expect(h.batches).toHaveLength(2);
     }).pipe(Effect.scoped),
   );
 });

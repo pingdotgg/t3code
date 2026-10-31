@@ -1,8 +1,10 @@
 package expo.modules.t3composereditor
 
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
+import android.net.Uri
 import android.view.KeyEvent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -89,6 +91,53 @@ class ComposerPasteTest {
     assertTrue(editor.onTextContextMenuItem(android.R.id.paste))
     assertEquals(pasted, intercepted)
     assertEquals("old", editor.text.toString())
+  }
+
+  @Test
+  fun regularPasteMeasuresAndInterceptsEveryTextItemJoinedWithNewlines() {
+    // Only the complete UTF-8 payload, including both newlines, reaches 32 KiB.
+    val first = "é".repeat(8191)
+    val last = "x".repeat(16 * 1024)
+    val clip = ClipData.newPlainText("test", first).apply {
+      addItem(ClipData.Item(""))
+      addItem(ClipData.Item(last))
+    }
+    clipboard.setPrimaryClip(clip)
+    editor.setText("before old after")
+    editor.setSelection(10, 7)
+    val intercepted = mutableListOf<Triple<String, Int, Int>>()
+    editor.pasteTextListener = { text, start, end -> intercepted.add(Triple(text, start, end)) }
+
+    assertTrue(editor.onTextContextMenuItem(android.R.id.paste))
+    assertEquals(listOf(Triple("$first\n\n$last", 7, 10)), intercepted)
+    assertEquals("before old after", editor.text.toString())
+    assertEquals(10, editor.selectionStart)
+    assertEquals(7, editor.selectionEnd)
+  }
+
+  @Test
+  fun regularPasteKeepsClipsWithAnyUriItemNative() {
+    editor.textPasteThresholdBytes = 1
+    editor.pasteTextListener = { _, _, _ -> error("URI-backed clips must stay native") }
+    for (uriIndex in 0..2) {
+      val items = (0..2).map { index ->
+        if (index == uriIndex) {
+          ClipData.Item("ITEM_$index", null, Uri.parse("content://test/item/$index"))
+        } else {
+          ClipData.Item("ITEM_$index")
+        }
+      }
+      val clip = ClipData("test", arrayOf(ClipDescription.MIMETYPE_TEXT_PLAIN), items[0]).apply {
+        addItem(items[1])
+        addItem(items[2])
+      }
+      clipboard.setPrimaryClip(clip)
+      editor.setText("before old after")
+      editor.setSelection(10, 7)
+
+      assertTrue(editor.onTextContextMenuItem(android.R.id.paste))
+      assertEquals("before ITEM_0\nITEM_1\nITEM_2 after", editor.text.toString())
+    }
   }
 
   @Test

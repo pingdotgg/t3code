@@ -8,7 +8,7 @@ interface Entry {
   newPath: string | null;
   deleted: boolean;
   revision: string | null;
-  /** Past the first hunk header every line is content, and content can start like a header. */
+  /** After the first hunk, content can resemble file headers. */
   inBody: boolean;
 }
 
@@ -24,11 +24,7 @@ function quotedEnd(rest: string): number {
   return -1;
 }
 
-/**
- * Git ends the name with a tab when it holds a space, and a name with a tab of its own
- * arrives quoted with that tab escaped, so the first literal tab is never part of what the
- * file is called.
- */
+/** Git terminates names with a literal tab and escapes tabs within names. */
 function sidePath(rest: string, prefix: string): string | null {
   const tab = rest.indexOf("\t");
   const token = tab === -1 ? rest : rest.slice(0, tab);
@@ -42,11 +38,7 @@ function headerSide(token: string, prefix: string): string | null {
   return path.startsWith(prefix) ? path.slice(prefix.length) : null;
 }
 
-/**
- * `a/one two b/one two` can split in more than one place, so the split leaving both sides
- * equal wins; a rename (the only case where sides differ) states its names on separate lines
- * instead.
- */
+/** Match equal sides for ambiguous unquoted paths; renames state paths separately. */
 function headerPaths(rest: string): readonly [string | null, string | null] {
   if (rest.startsWith(QUOTE)) {
     const end = quotedEnd(rest);
@@ -76,16 +68,14 @@ function headRevision(rest: string): string | null {
   return head.length === 0 ? null : head;
 }
 
-export function parseDiffFileRevisions(patch: string): ReadonlyMap<string, string> {
-  const revisions = new Map<string, string>();
+function parseEntries(patch: string): ReadonlyArray<Omit<Entry, "inBody">> {
+  const entries: Array<Omit<Entry, "inBody">> = [];
   let entry: Entry | null = null;
 
   const close = () => {
     if (entry === null) return;
-    const path = entry.deleted ? entry.oldPath : (entry.newPath ?? entry.oldPath);
-    if (path !== null && path.length > 0 && entry.revision !== null) {
-      revisions.set(path, entry.revision);
-    }
+    const { inBody: _inBody, ...closed } = entry;
+    entries.push(closed);
     entry = null;
   };
 
@@ -116,5 +106,25 @@ export function parseDiffFileRevisions(patch: string): ReadonlyMap<string, strin
     }
   }
   close();
+  return entries;
+}
+
+/** Head blob IDs by head path (old path for deletions); omit files without index lines. */
+export function parseDiffFileRevisions(patch: string): ReadonlyMap<string, string> {
+  const revisions = new Map<string, string>();
+  for (const entry of parseEntries(patch)) {
+    const path = entry.deleted ? entry.oldPath : (entry.newPath ?? entry.oldPath);
+    if (path !== null && path.length > 0 && entry.revision !== null) {
+      revisions.set(path, entry.revision);
+    }
+  }
   return revisions;
+}
+
+export function parseDiffFilePaths(
+  patch: string,
+): ReadonlyArray<{ readonly oldPath: string | null; readonly newPath: string | null }> {
+  return parseEntries(patch).flatMap(({ oldPath, newPath }) =>
+    (oldPath ?? newPath) === null ? [] : [{ oldPath, newPath }],
+  );
 }

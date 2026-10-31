@@ -79,7 +79,11 @@ Thread relationship describes why a target thread or run exists relative to anot
 
 ```ts
 type ThreadRelationshipKind =
-  "fork" | "provider_handoff" | "merge_back" | "subagent_spawn" | "subagent_result";
+  | "fork"
+  | "provider_handoff"
+  | "merge_back"
+  | "subagent_spawn"
+  | "subagent_result";
 ```
 
 Relationships are product-level and provider-neutral. A fork is not the same thing as a provider-native fork. A provider-native fork is one possible resolution strategy for a fork relationship.
@@ -116,7 +120,12 @@ type ContextTransfer = {
   sourceProvider?: ProviderKind;
   targetProvider?: ProviderKind;
   status:
-    "pending" | "resolved_native" | "resolved_portable" | "failed" | "consumed" | "superseded";
+    | "pending"
+    | "resolved_native"
+    | "resolved_portable"
+    | "failed"
+    | "consumed"
+    | "superseded";
   resolution?: ContextTransferResolution;
   createdBy: "user" | "agent" | "system";
   createdAt: string;
@@ -231,6 +240,8 @@ type AppThreadLineage = {
   parentThreadId: ThreadId | null;
   relationshipToParent: "fork" | "subagent" | null;
   rootThreadId: ThreadId;
+  // A side chat: a fork shown only inside its parent. The fork planner sets it from `thread.fork`.
+  sideChat?: boolean;
 };
 ```
 

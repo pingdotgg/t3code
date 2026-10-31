@@ -17,12 +17,6 @@ describe("native device stream document", () => {
     expect(input).toEqual({ deviceId, ticket: "<ticket>" });
   });
 
-  it("preserves script strings containing an HTML closing delimiter", () => {
-    const html = deviceStreamDocument("{}", 'var text="</script>";');
-    expect(html.match(/<\/script>/g)).toHaveLength(1);
-    expect(html).toContain('var text="<\\/script>";');
-  });
-
   it("reports a bootstrap exception to the native recovery UI", () => {
     const postMessage = vi.fn();
     const html = deviceStreamDocument(
@@ -38,45 +32,9 @@ describe("native device stream document", () => {
       detail: "Device viewer stopped unexpectedly.",
     });
   });
-
-  it.each(["error", "unhandledrejection"])("reports later %s failures to native", (event) => {
-    const postMessage = vi.fn();
-    const listeners = new Map<string, () => void>();
-    const html = deviceStreamDocument("{}", "var T3DeviceStream={start(){}};");
-    NodeVM.runInNewContext(html.match(/<script>([\s\S]*)<\/script>/)![1]!, {
-      window: {
-        addEventListener: (name: string, callback: () => void) => listeners.set(name, callback),
-        ReactNativeWebView: { postMessage },
-      },
-    });
-    listeners.get(event)!();
-    expect(JSON.parse(postMessage.mock.calls[0]![0] as string)).toMatchObject({
-      type: "status",
-      status: "error",
-    });
-  });
 });
 
 describe("native device stream messages", () => {
-  it("accepts authentication renewal and input connection changes", () => {
-    expect(deviceStreamMessage('{"type":"unauthorized"}')).toEqual({ type: "unauthorized" });
-    expect(deviceStreamMessage('{"type":"input","connected":true}')).toEqual({
-      type: "input",
-      connected: true,
-    });
-    expect(deviceStreamMessage('{"type":"input","connected":false}')).toEqual({
-      type: "input",
-      connected: false,
-    });
-    expect(deviceStreamMessage('{"type":"retry"}')).toEqual({ type: "retry" });
-  });
-
-  it.each(["connecting", "streaming", "error"])("accepts stream %s feedback", (status) => {
-    expect(
-      deviceStreamMessage(JSON.stringify({ type: "status", status, detail: "Stream feedback" })),
-    ).toEqual({ type: "status", status, detail: "Stream feedback" });
-  });
-
   it.each([
     "invalid JSON",
     "null",

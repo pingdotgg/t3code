@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-09T23:31:10Z",
+  "updatedAt": "2026-10-28T08:10:39Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -75,8 +75,12 @@
     {
       "driver": "antigravity",
       "t3CodeRange": ">=0.0.42",
-      "recommendedRange": "=1.1.1",
-      "ranges": [{ "range": "=1.1.1", "status": "supported" }]
+      "recommendedRange": "=1.4.1",
+      "ranges": [
+        { "range": "=1.4.1", "status": "supported" },
+        { "range": "=1.3.0", "status": "supported" },
+        { "range": "=1.1.1", "status": "supported" }
+      ]
     },
     {
       "driver": "pi",
@@ -94,6 +98,15 @@
       "ranges": [
         { "range": ">=1.4.2", "status": "supported" },
         { "range": "<1.4.2", "status": "unknown" }
+      ]
+    },
+    {
+      "driver": "fx",
+      "t3CodeRange": ">=0.0.46",
+      "recommendedRange": ">=0.0.13",
+      "ranges": [
+        { "range": ">=0.0.13", "status": "supported" },
+        { "range": "<0.0.13", "status": "unsupported" }
       ]
     }
   ],
@@ -134,12 +147,14 @@
         { "slug": "gpt-5.6-sol", "name": "GPT-5.6 Sol", "status": "legacy" },
         { "slug": "gpt-5.6-terra", "name": "GPT-5.6 Terra", "status": "legacy" },
         { "slug": "gpt-5.6-luna", "name": "GPT-5.6 Luna", "status": "legacy" },
-        { "slug": "gpt-5.5", "name": "GPT-5.5", "status": "legacy" }
+        { "slug": "gpt-5.5", "name": "GPT-5.5", "status": "legacy" },
+        { "slug": "gpt-5.4-mini", "name": "GPT-5.4 Mini", "status": "legacy" },
+        { "slug": "gpt-5.3-codex-spark", "name": "GPT-5.3 Codex Spark", "status": "legacy" }
       ]
     },
     "claudeAgent": {
       "defaults": {
-        "chat": "claude-fable-5-1"
+        "chat": "claude-opus-5-5"
       },
       "profiles": {
         "fable-5": {
@@ -653,7 +668,8 @@
               {
                 "id": "thinking",
                 "label": "Thinking",
-                "type": "boolean"
+                "type": "boolean",
+                "currentValue": true
               }
             ]
           },
@@ -770,7 +786,7 @@
           "name": "Claude Haiku 5.5",
           "aliases": ["haiku", "haiku-5.5", "claude-haiku-5.5"],
           "status": "current",
-          "badge": "new",
+          "releasedAt": "2026-10-07",
           "profile": "haiku-5-5",
           "adapter": { "claudeCode": { "minVersion": "2.1.293" } }
         },

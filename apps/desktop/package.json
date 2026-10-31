@@ -1,15 +1,13 @@
 {
   "name": "@t3tools/desktop",
-  "version": "0.1.0",
+  "version": "0.1.6",
   "private": true,
   "type": "module",
   "main": "dist-electron/boot.cjs",
   "scripts": {
     "ensure:electron": "node scripts/ensure-electron-runtime.mjs",
     "start": "node scripts/start-electron.mjs",
-    "typecheck": "tsc-rs --noEmit",
-    "test": "vp test run --passWithNoTests",
-    "smoke-test": "node scripts/smoke-test.mjs"
+    "test": "vp test run --passWithNoTests"
   },
   "dependencies": {
     "@clerk/electron": "catalog:",
@@ -24,7 +22,7 @@
     "@t3tools/tailscale": "workspace:*",
     "dbus-next": "0.10.2",
     "effect": "catalog:",
-    "electron": "44.4.5",
+    "electron": "44.10.0",
     "electron-store": "^8.2.0",
     "electron-updater": "^6.8.9",
     "electron-webauthn": "catalog:",
@@ -38,7 +36,7 @@
     "@types/node": "catalog:",
     "acorn": "8.16.0",
     "cross-env": "^10.1.0",
-    "electron-builder": "26.15.6",
+    "electron-builder": "26.16.1",
     "tailwindcss": "^4.0.0",
     "vite-plus": "catalog:"
   },

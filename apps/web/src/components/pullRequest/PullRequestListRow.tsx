@@ -6,7 +6,7 @@ import type {
 import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
-import { formatRelativeTimeLabel } from "~/timestampFormat";
+import { RelativeTime } from "~/components/RelativeTime";
 
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -41,8 +41,7 @@ export function PullRequestRowGlyph({
     <span className={cn("flex w-4 shrink-0 flex-col items-center gap-0.5", className)}>
       <span className="relative inline-flex">
         <PullRequestStateGlyph state={state} isDraft={isDraft} />
-        {/* The wrapper takes the offset, not the icon, so the tooltip trigger inside keeps the
-            badge's size and anchors the popup to it. */}
+        {/* Offset the wrapper to keep the badge-sized tooltip trigger anchored. */}
         <span className="absolute -right-1 -bottom-1 inline-flex">
           <PullRequestConflictGlyph
             state={state}
@@ -96,7 +95,7 @@ export function PullRequestRowLines({
         {meta}
         {updatedAt ? (
           <span className="ml-auto shrink-0 whitespace-nowrap tabular-nums">
-            {formatRelativeTimeLabel(updatedAt)}
+            <RelativeTime timestamp={updatedAt} />
           </span>
         ) : null}
       </span>

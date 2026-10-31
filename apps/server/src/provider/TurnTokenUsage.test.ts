@@ -130,4 +130,93 @@ describe("billable native turn usage", () => {
       ),
     ).toMatchObject({ usageStatus: "partial", inputTokens: 4, outputTokens: 2 });
   });
+
+  it.each(["failed", "interrupted", "completed"] as const)(
+    "retains measured Claude steering usage as partial after %s without final usage",
+    (status) => {
+      expect(
+        normalizeClaudeTurnTokenUsage(
+          status === "completed" ? { subtype: "success" } : undefined,
+          true,
+          status,
+          [
+            { input_tokens: 100, cache_read_input_tokens: 40, output_tokens: 20 },
+            { input_tokens: 5, cache_read_input_tokens: 2, output_tokens: 3 },
+          ],
+        ),
+      ).toEqual({
+        usageStatus: "partial",
+        usageScope: "main_agent",
+        hasSubagents: true,
+        inputTokens: 147,
+        cachedInputTokens: 42,
+        outputTokens: 23,
+      });
+    },
+  );
+
+  it.each([undefined, null, {}])(
+    "keeps unavailable Claude usage unavailable without measured segments (%s)",
+    (usage) => {
+      expect(
+        normalizeClaudeTurnTokenUsage({ subtype: "success", usage }, false, "completed")
+          .usageStatus,
+      ).toBe("unavailable");
+    },
+  );
+
+  it("retains measured thinking tokens without a final result", () => {
+    expect(
+      normalizeClaudeTurnTokenUsage(undefined, false, "failed", [
+        { input_tokens: 4, output_tokens: 3, output_tokens_details: { thinking_tokens: 2 } },
+      ]),
+    ).toMatchObject({
+      usageStatus: "partial",
+      inputTokens: 4,
+      outputTokens: 3,
+      reasoningTokens: 2,
+    });
+  });
+
+  it.each([undefined, null])(
+    "retains earlier cache counts when a steering segment reports %s",
+    (cache) => {
+      expect(
+        normalizeClaudeTurnTokenUsage(undefined, false, "failed", [
+          { input_tokens: 100, cache_read_input_tokens: 40, output_tokens: 20 },
+          { input_tokens: 5, cache_read_input_tokens: cache, output_tokens: 3 },
+        ]),
+      ).toMatchObject({
+        usageStatus: "partial",
+        inputTokens: 145,
+        cachedInputTokens: 40,
+        outputTokens: 23,
+      });
+    },
+  );
+
+  it.each(["cache_read_input_tokens", "cache_creation_input_tokens"])(
+    "keeps Claude usage partial when the final %s is invalid",
+    (field) => {
+      expect(
+        normalizeClaudeTurnTokenUsage(
+          { subtype: "success", usage: { input_tokens: 5, output_tokens: 3, [field]: -1 } },
+          false,
+          "completed",
+          [{ input_tokens: 100, output_tokens: 20, [field]: 40 }],
+        ),
+      ).toMatchObject({ usageStatus: "partial", inputTokens: 145, outputTokens: 23 });
+    },
+  );
+
+  it("adds Claude steering segments to the final measured result once", () => {
+    expect(
+      normalizeClaudeTurnTokenUsage(
+        { subtype: "success", usage: { input_tokens: 5, output_tokens: 3 } },
+        false,
+        "completed",
+        [{ input_tokens: 4, output_tokens: 2 }],
+      ),
+    ).toMatchObject({ usageStatus: "complete", inputTokens: 9, outputTokens: 5 });
+  });
 });

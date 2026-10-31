@@ -10,10 +10,10 @@ import {
   buildCursorCapabilitiesFromSdkModel,
   buildCursorDiscoveredModelsFromSdk,
   buildCursorProviderSnapshot,
-  buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
 } from "./status.ts";
 import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
+import { CursorSdkError } from "./sdk.ts";
 
 const decodeCursorSettings = Schema.decodeSync(CursorSettingsSchema);
 
@@ -91,19 +91,6 @@ const sdkParameterizedModel = {
     },
   ],
 } satisfies SDKModel;
-
-describe("buildInitialCursorProviderSnapshot", () => {
-  it.effect("uses SDK-specific pending status copy", () =>
-    Effect.gen(function* () {
-      const provider = yield* buildInitialCursorProviderSnapshot(baseCursorSettings);
-
-      expect(provider).toMatchObject({
-        status: "warning",
-        message: "Checking Cursor SDK availability...",
-      });
-    }),
-  );
-});
 
 describe("buildCursorProviderSnapshot", () => {
   it("downgrades ready status to warning when SDK model discovery returns no models", () => {
@@ -228,6 +215,137 @@ describe("checkCursorProviderStatus", () => {
         auth: { status: "unauthenticated" },
         message: "Cursor SDK authentication failed. Check CURSOR_API_KEY.",
       });
+    }),
+  );
+
+  it.effect.each([
+    {
+      authenticationType: "browser" as const,
+      message:
+        "Cursor needs a paid plan to run in T3 Code. Upgrade this account or sign in with a different one.",
+    },
+    {
+      authenticationType: "api-key" as const,
+      message:
+        "Cursor needs a paid plan to run in T3 Code. Upgrade the account that owns CURSOR_API_KEY or use a key from a paid account.",
+    },
+  ])(
+    "explains a rejected plan for $authenticationType authentication",
+    ({ authenticationType, message }) =>
+      Effect.gen(function* () {
+        const provider = yield* checkCursorProviderStatus(
+          baseCursorSettings,
+          { CURSOR_API_KEY: "free-plan-key" },
+          authenticationType,
+        ).pipe(
+          Effect.provide(
+            CursorSdkCatalog.layerTest(() =>
+              Effect.fail(
+                new CursorSdkCatalog.CursorSdkCatalogError({
+                  authenticationFailure: false,
+                  cause: new CursorSdkError(
+                    "[plan_required] Cloud Agent is not available for free users. Please upgrade to Pro.",
+                    { code: "plan_required", status: 403 },
+                  ),
+                }),
+              ),
+            ),
+          ),
+        );
+
+        expect(provider).toMatchObject({
+          status: "error",
+          auth: { status: "unknown" },
+          message,
+        });
+      }),
+  );
+
+  it.effect.each([
+    {
+      name: "keeps models when /v1/me is blocked",
+      meFailure: new CursorSdkError("[feature_unavailable] Not available for this team.", {
+        code: "feature_unavailable",
+        status: 403,
+      }),
+      expected: {
+        status: "ready",
+        auth: { status: "authenticated", type: "api-key", label: "Cursor API key" },
+        models: [{ slug: "claude-opus-4-8", isCustom: false }],
+      },
+    },
+    {
+      name: "keeps models when /v1/me returns a 403 without a code",
+      meFailure: new CursorSdkError("[unknown] Forbidden", { code: "unknown", status: 403 }),
+      expected: {
+        status: "ready",
+        auth: { status: "authenticated", type: "api-key", label: "Cursor API key" },
+        models: [{ slug: "claude-opus-4-8", isCustom: false }],
+      },
+    },
+    {
+      name: "keeps the paid-plan message when /v1/me returns plan_required",
+      meFailure: new CursorSdkError("[plan_required] Not available for free users.", {
+        code: "plan_required",
+        status: 403,
+      }),
+      expected: {
+        status: "error",
+        auth: { status: "unknown" },
+        message:
+          "Cursor needs a paid plan to run in T3 Code. Upgrade the account that owns CURSOR_API_KEY or use a key from a paid account.",
+      },
+    },
+    {
+      name: "fails when /v1/me has a server error",
+      meFailure: new CursorSdkError("[unknown] Service unavailable", {
+        code: "unknown",
+        status: 503,
+      }),
+      expected: {
+        status: "error",
+        auth: { status: "unknown" },
+        message: "Cursor SDK catalog request failed. Check server logs for details.",
+      },
+    },
+    {
+      name: "rejects a 401 even when its code is feature_unavailable",
+      meFailure: new CursorSdkError("Unauthorized", {
+        code: "feature_unavailable",
+        status: 401,
+      }),
+      expected: {
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: "Cursor SDK authentication failed. Check CURSOR_API_KEY.",
+      },
+    },
+    {
+      name: "fails a key that /v1/me rejects",
+      meFailure: new CursorSdkError("Unauthorized", { status: 401 }),
+      expected: {
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: "Cursor SDK authentication failed. Check CURSOR_API_KEY.",
+      },
+    },
+  ])("$name", ({ meFailure, expected }) =>
+    Effect.gen(function* () {
+      const catalog = yield* CursorSdkCatalog.makeCursorSdkCatalog({
+        readUser: () =>
+          Effect.fail(
+            new CursorSdkCatalog.CursorSdkCatalogError({
+              authenticationFailure: meFailure.status === 401,
+              cause: meFailure,
+            }),
+          ),
+        readModels: () => Effect.succeed([sdkParameterizedModel]),
+      });
+      const provider = yield* checkCursorProviderStatus(baseCursorSettings, {
+        CURSOR_API_KEY: "enterprise-key",
+      }).pipe(Effect.provideService(CursorSdkCatalog.CursorSdkCatalog, catalog));
+
+      expect(provider).toMatchObject(expected);
     }),
   );
 

@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Measures real local HTTP/WebSocket sockets.
 import * as NodeHttp from "node:http";
+import * as NodeUtil from "node:util";
 import { assert, it } from "@effect/vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
@@ -15,7 +16,9 @@ import {
   EnvironmentAuthenticatedPrincipal,
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationV2RpcSchemas,
+  OrchestrationV2ThreadBoundedSnapshot,
   OrchestrationV2ThreadDetailSnapshot,
+  OrchestrationV2ThreadHistoryPage,
   OrchestrationV2ShellSnapshot,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2GetShellSnapshotError,
@@ -52,6 +55,7 @@ import { subscribeOrchestrationV2Thread, subscribeOrchestrationV2Shell } from ".
 import {
   measureHttpGet,
   openMeasuredWsClient,
+  type HttpTransferMeasurement,
   type MeasuredWsClient,
 } from "./NetworkTransferMeasurement.integration.ts";
 import { makeSqlStatementCounter } from "./SqlStatementCounter.integration.ts";
@@ -62,10 +66,31 @@ import {
   type TransferBudgetRun,
 } from "./TransferBudgetReport.integration.ts";
 import { TRANSFER_HISTORY_TURN_COUNT } from "./fixtures/transferBudget.ts";
-import { THREAD_ID, threadCreated, turnEvents } from "./TransferBudgetV2Fixture.integration.ts";
+import {
+  LONG_TURN_THREAD_ID,
+  longTurnThreadBatches,
+  SHELL_IDLE_SUBAGENTS,
+  SHELL_SETTLED_THREADS,
+  shellFleetEvents,
+  THREAD_ID,
+  threadCreated,
+  turnEvents,
+} from "./TransferBudgetV2Fixture.integration.ts";
+
+// The opt-ins current web and mobile clients send; keep in sync with client-runtime's
+// boundedThreadSnapshotHttp.ts, threadHistoryHttp.ts, shellSnapshotHttp.ts, threads.ts and shell.ts.
+const CLIENT_BOUNDED_QUERY = "compactTurnItems=1&dedupeBodies=1&compactIds=1";
+const CLIENT_HISTORY_QUERY = "compactIds=1";
+const CLIENT_SHELL_QUERY = "omitIdleSubagents=1&omitOlderSettled=1";
 
 const decodeThreadSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadDetailSnapshot)),
+);
+const decodeBoundedSnapshot = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadBoundedSnapshot)),
+);
+const decodeHistoryPage = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadHistoryPage)),
 );
 const decodeShellSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ShellSnapshot)),
@@ -86,8 +111,15 @@ const layerManagement = Layer.unwrap(
       getThreadSnapshot: (id) => projections.getThreadSnapshot(id).pipe(Effect.orDie),
       getThreadSnapshotWindow: (id, options) =>
         projections.getThreadSnapshotWindow(id, options).pipe(Effect.orDie),
+      getThreadHistoryPage: (id, cursor, throughEntryId, conversationOnly) =>
+        projections
+          .getThreadHistoryPage(id, cursor, throughEntryId, conversationOnly)
+          .pipe(Effect.orDie),
       getThreadShell: (id) => projections.getThreadShell(id).pipe(Effect.orDie),
       getShellSnapshot: (options) => projections.getShellSnapshot(options).pipe(Effect.orDie),
+      listActiveShellIndex: () => projections.listActiveShellIndex().pipe(Effect.orDie),
+      listActiveSubagentThreadIds: () =>
+        projections.listActiveSubagentThreadIds().pipe(Effect.orDie),
       readShellSnapshot: (options) =>
         projections.readShellSnapshot(options).pipe(Effect.map(Effect.orDie), Effect.orDie),
       streamStoredEventsFrom: (input) =>
@@ -199,10 +231,15 @@ const subscribe = Effect.fn("transfer.subscribe")(function* (
           afterSequence,
           requestCompletionMarker: true,
           acceptBoundedSnapshot: true,
+          acceptCompactTurnItems: true,
+          acceptCompactIds: true,
+          acceptDedupedBodies: true,
         })
       : client.client[ORCHESTRATION_V2_WS_METHODS.subscribeShell]({
           afterSequence,
           requestCompletionMarker: true,
+          omitIdleSubagents: true,
+          omitOlderSettled: true,
         });
   yield* stream.pipe(
     Stream.runForEach((item) => Queue.offer(queue, item)),
@@ -218,143 +255,210 @@ const synchronized = (queue: Queue.Queue<StreamItem>) =>
     ),
   );
 
-it.live(
-  "reports V2 thread HTTP and WebSocket transfer budgets",
-  () =>
-    Effect.gen(function* () {
-      const runs: TransferBudgetRun[] = [];
-      for (const provider of [
-        ProviderDriverKind.make("codex"),
-        ProviderDriverKind.make("claudeAgent"),
-      ]) {
-        const counter = makeSqlStatementCounter();
-        const run = yield* Effect.scoped(
-          Effect.gen(function* () {
-            const sink = yield* EventSink.EventSinkV2;
-            const projection = yield* ProjectionStore.ProjectionStoreV2;
-            yield* sink.write({ events: [threadCreated(provider)] });
-            for (let index = 0; index < TRANSFER_HISTORY_TURN_COUNT; index++)
-              yield* sink.write({ events: turnEvents(provider, index, false) });
-            const context = yield* Effect.context<Layer.Success<typeof layerServices>>();
-            const server = yield* Layer.build(
-              HttpRouter.serve(layerRoutes, { disableListenLog: true }).pipe(
-                Layer.provide(Layer.succeedContext(context)),
-                Layer.provideMerge(
-                  NodeHttpServer.layer(NodeHttp.createServer, {
-                    host: "127.0.0.1",
-                    port: 0,
-                    websocket: { perMessageDeflate: true },
-                  }),
-                ),
+it.live("reports V2 thread HTTP and WebSocket transfer budgets", () =>
+  Effect.gen(function* () {
+    const runs: TransferBudgetRun[] = [];
+    for (const provider of [
+      ProviderDriverKind.make("codex"),
+      ProviderDriverKind.make("claudeAgent"),
+    ]) {
+      const counter = makeSqlStatementCounter();
+      const run = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const sink = yield* EventSink.EventSinkV2;
+          const projection = yield* ProjectionStore.ProjectionStoreV2;
+          yield* sink.write({ events: [threadCreated(provider)] });
+          for (let index = 0; index < TRANSFER_HISTORY_TURN_COUNT; index++)
+            yield* sink.write({ events: turnEvents(provider, index, false) });
+          const context = yield* Effect.context<Layer.Success<typeof layerServices>>();
+          const server = yield* Layer.build(
+            HttpRouter.serve(layerRoutes, { disableListenLog: true }).pipe(
+              Layer.provide(Layer.succeedContext(context)),
+              Layer.provideMerge(
+                NodeHttpServer.layer(NodeHttp.createServer, {
+                  host: "127.0.0.1",
+                  port: 0,
+                  websocket: { perMessageDeflate: true },
+                }),
               ),
-            );
-            const address = Context.get(server, HttpServer.HttpServer).address;
-            if (!("port" in address)) return yield* Effect.die("Expected TCP server");
-            const base = `http://127.0.0.1:${address.port}`;
-            const threadSnapshot = yield* measureHttpGet({
-              url: `${base}/api/orchestration/threads/${THREAD_ID}`,
+            ),
+          );
+          const address = Context.get(server, HttpServer.HttpServer).address;
+          if (!("port" in address)) return yield* Effect.die("Expected TCP server");
+          const base = `http://127.0.0.1:${address.port}`;
+          const threadSnapshot = yield* measureHttpGet({
+            url: `${base}/api/orchestration/threads/${THREAD_ID}`,
+            headers: { [ORCHESTRATION_PROTOCOL_HEADER]: String(ORCHESTRATION_PROTOCOL_VERSION) },
+          });
+          assert.equal(
+            threadSnapshot.status,
+            200,
+            Buffer.from(threadSnapshot.decodedBody).toString(),
+          );
+          assert.equal(threadSnapshot.contentEncoding, "gzip");
+          const decodedThread = yield* decodeThreadSnapshot(
+            Buffer.from(threadSnapshot.decodedBody).toString(),
+          );
+          assert.equal(decodedThread.projection.messages.length, TRANSFER_HISTORY_TURN_COUNT * 2);
+          assert.equal(decodedThread.projection.turnItems.length, TRANSFER_HISTORY_TURN_COUNT * 6);
+          assert.notInclude(Buffer.from(threadSnapshot.decodedBody).toString(), "digest=");
+          const shellSnapshot = yield* measureHttpGet({
+            url: `${base}/api/orchestration/shell`,
+            headers: { [ORCHESTRATION_PROTOCOL_HEADER]: String(ORCHESTRATION_PROTOCOL_VERSION) },
+          });
+          assert.equal(shellSnapshot.status, 200);
+          const decodedShell = yield* decodeShellSnapshot(
+            Buffer.from(shellSnapshot.decodedBody).toString(),
+          );
+          assert.equal(decodedShell.threads.length, 1);
+          const sequence = decodedThread.snapshotSequence;
+          assert.equal(decodedShell.snapshotSequence, sequence);
+          const url = `${base.replace("http:", "ws:")}/ws`;
+          const thread = yield* openMeasuredWsClient({ url, cookie: "" });
+          const shell = yield* openMeasuredWsClient({ url, cookie: "" });
+          const second = yield* openMeasuredWsClient({ url, cookie: "" });
+          assert.include(thread.recorder.negotiatedExtensions(), "permessage-deflate");
+          const tq = yield* subscribe(thread, "thread", sequence);
+          const sq = yield* subscribe(shell, "shell", sequence);
+          const ttq = yield* subscribe(second, "thread", sequence);
+          const ssq = yield* subscribe(second, "shell", sequence);
+          for (const queue of [tq, sq, ttq, ssq])
+            assert.equal(yield* synchronized(queue), "replay");
+          const threadBefore = thread.recorder.totals();
+          const shellBefore = shell.recorder.totals();
+          const secondBefore = second.recorder.totals();
+          const sqlBefore = counter.count();
+          const events = turnEvents(provider, TRANSFER_HISTORY_TURN_COUNT, true);
+          const stored = yield* sink.write({ events });
+          const last = stored.at(-1)!;
+          const threadTerminal = (item: StreamItem) =>
+            "sequence" in item && item.sequence >= last.sequence;
+          // Shell items carry the shell read when their batch is projected, and unchanged
+          // shells are skipped, so a turn split across batches may never yield an item at
+          // the last sequence. Wait for the final shell instead.
+          const finalShell = yield* projection.getThreadShell(THREAD_ID);
+          const shellTerminal = (item: StreamItem) =>
+            item.kind === "thread.updated" && NodeUtil.isDeepStrictEqual(item.thread, finalShell);
+          const liveTurn = yield* collectUntil(tq, threadTerminal);
+          yield* collectUntil(ttq, threadTerminal);
+          // A direct check, so live dedupe stays guarded however small the turn gets.
+          const liveAnswer = liveTurn.flatMap((item) =>
+            item.kind === "event" &&
+            item.event.type === "turn-item.updated" &&
+            item.event.payload.type === "assistant_message"
+              ? [item.event.payload]
+              : [],
+          );
+          assert.equal(liveAnswer.length, 1);
+          assert.equal(liveAnswer[0]!.textOmitted, true);
+          for (const queue of [sq, ssq]) yield* collectUntil(queue, shellTerminal);
+          const measuredTurnWebSocket = difference(thread.recorder.totals(), threadBefore);
+          const measuredTurnShellWebSocket = difference(shell.recorder.totals(), shellBefore);
+          const measuredTurnSecondClientWebSocket = difference(
+            second.recorder.totals(),
+            secondBefore,
+          );
+          const measuredTurnSqlStatements = counter.count() - sqlBefore;
+          const durable = yield* projection.getThreadProjection(THREAD_ID);
+          assert.isTrue(
+            durable.turnItems.some(
+              (item) =>
+                item.type === "dynamic_tool" && JSON.stringify(item.output).length > 1_000_000,
+            ),
+          );
+          yield* second.close;
+          const reconnectSqlStart = counter.count();
+          const resumedThread = yield* openMeasuredWsClient({ url, cookie: "" });
+          const resumedShell = yield* openMeasuredWsClient({ url, cookie: "" });
+          const rq = yield* subscribe(resumedThread, "thread", sequence);
+          const rsq = yield* subscribe(resumedShell, "shell", sequence);
+          const threadMode = yield* synchronized(rq);
+          const shellMode = yield* synchronized(rsq);
+          const reconnectThread = { ...resumedThread.recorder.totals(), mode: threadMode };
+          const reconnectShell = { ...resumedShell.recorder.totals(), mode: shellMode };
+          const reconnectSqlStatements = counter.count() - reconnectSqlStart;
+          assert.equal(threadMode, "snapshot");
+
+          for (const events of longTurnThreadBatches(provider)) yield* sink.write({ events });
+          const get = (path: string) =>
+            measureHttpGet({
+              url: `${base}${path}`,
               headers: { [ORCHESTRATION_PROTOCOL_HEADER]: String(ORCHESTRATION_PROTOCOL_VERSION) },
+            }).pipe(Effect.tap((http) => Effect.sync(() => assert.equal(http.status, 200))));
+          const decoded = (http: HttpTransferMeasurement) =>
+            Buffer.from(http.decodedBody).toString();
+          const longTurnPath = `/api/orchestration/threads/${LONG_TURN_THREAD_ID}`;
+          const readColdOpen = (query: string) =>
+            Effect.gen(function* () {
+              const http = yield* get(`${longTurnPath}/bounded?${query}`);
+              const snapshot = yield* decodeBoundedSnapshot(decoded(http));
+              const rows = snapshot.projection.visibleTurnItems.length;
+              return { http, rows, cursor: snapshot.historyCursor };
             });
-            assert.equal(
-              threadSnapshot.status,
-              200,
-              Buffer.from(threadSnapshot.decodedBody).toString(),
-            );
-            assert.equal(threadSnapshot.contentEncoding, "gzip");
-            const decodedThread = yield* decodeThreadSnapshot(
-              Buffer.from(threadSnapshot.decodedBody).toString(),
-            );
-            assert.equal(decodedThread.projection.messages.length, TRANSFER_HISTORY_TURN_COUNT * 2);
-            assert.equal(
-              decodedThread.projection.turnItems.length,
-              TRANSFER_HISTORY_TURN_COUNT * 6,
-            );
-            assert.notInclude(Buffer.from(threadSnapshot.decodedBody).toString(), "digest=");
-            const shellSnapshot = yield* measureHttpGet({
-              url: `${base}/api/orchestration/shell`,
-              headers: { [ORCHESTRATION_PROTOCOL_HEADER]: String(ORCHESTRATION_PROTOCOL_VERSION) },
+          const readHistoryPage = (cursor: string, query: string) =>
+            Effect.gen(function* () {
+              const http = yield* get(
+                `${longTurnPath}/history?cursor=${encodeURIComponent(cursor)}&${query}`,
+              );
+              const page = yield* decodeHistoryPage(decoded(http));
+              assert.isTrue(page.hasMoreHistory);
+              return { http, rows: page.items.length };
             });
-            assert.equal(shellSnapshot.status, 200);
-            const decodedShell = yield* decodeShellSnapshot(
-              Buffer.from(shellSnapshot.decodedBody).toString(),
-            );
-            assert.equal(decodedShell.threads.length, 1);
-            const sequence = decodedThread.snapshotSequence;
-            assert.equal(decodedShell.snapshotSequence, sequence);
-            const url = `${base.replace("http:", "ws:")}/ws`;
-            const thread = yield* openMeasuredWsClient({ url, cookie: "" });
-            const shell = yield* openMeasuredWsClient({ url, cookie: "" });
-            const second = yield* openMeasuredWsClient({ url, cookie: "" });
-            assert.include(thread.recorder.negotiatedExtensions(), "permessage-deflate");
-            const tq = yield* subscribe(thread, "thread", sequence);
-            const sq = yield* subscribe(shell, "shell", sequence);
-            const ttq = yield* subscribe(second, "thread", sequence);
-            const ssq = yield* subscribe(second, "shell", sequence);
-            for (const queue of [tq, sq, ttq, ssq])
-              assert.equal(yield* synchronized(queue), "replay");
-            const threadBefore = thread.recorder.totals();
-            const shellBefore = shell.recorder.totals();
-            const secondBefore = second.recorder.totals();
-            const sqlBefore = counter.count();
-            const events = turnEvents(provider, TRANSFER_HISTORY_TURN_COUNT, true);
-            const stored = yield* sink.write({ events });
-            const last = stored.at(-1)!;
-            const terminal = (item: StreamItem) =>
-              "sequence" in item && item.sequence >= last.sequence;
-            for (const queue of [tq, sq, ttq, ssq]) yield* collectUntil(queue, terminal);
-            const measuredTurnWebSocket = difference(thread.recorder.totals(), threadBefore);
-            const measuredTurnShellWebSocket = difference(shell.recorder.totals(), shellBefore);
-            const measuredTurnSecondClientWebSocket = difference(
-              second.recorder.totals(),
-              secondBefore,
-            );
-            const measuredTurnSqlStatements = counter.count() - sqlBefore;
-            const durable = yield* projection.getThreadProjection(THREAD_ID);
-            assert.isTrue(
-              durable.turnItems.some(
-                (item) =>
-                  item.type === "dynamic_tool" && JSON.stringify(item.output).length > 1_000_000,
-              ),
-            );
-            yield* second.close;
-            const reconnectSqlStart = counter.count();
-            const resumedThread = yield* openMeasuredWsClient({ url, cookie: "" });
-            const resumedShell = yield* openMeasuredWsClient({ url, cookie: "" });
-            const rq = yield* subscribe(resumedThread, "thread", sequence);
-            const rsq = yield* subscribe(resumedShell, "shell", sequence);
-            const threadMode = yield* synchronized(rq);
-            const shellMode = yield* synchronized(rsq);
-            const reconnectThread = { ...resumedThread.recorder.totals(), mode: threadMode };
-            const reconnectShell = { ...resumedShell.recorder.totals(), mode: shellMode };
-            assert.equal(threadMode, "snapshot");
-            return {
-              provider,
-              threadSnapshot,
-              shellSnapshot,
-              measuredTurnWebSocket,
-              measuredTurnShellWebSocket,
-              measuredTurnSecondClientWebSocket,
-              measuredTurnSqlStatements,
-              reconnectThread,
-              reconnectShell,
-              reconnectSqlStatements: counter.count() - reconnectSqlStart,
-            } satisfies TransferBudgetRun;
-          }).pipe(
-            Effect.provide(Layer.fresh(layerServices).pipe(Layer.provideMerge(NodeServices.layer))),
-            Effect.withTracer(counter.tracer),
-          ),
-        );
-        runs.push(run);
-      }
-      const fs = yield* FileSystem.FileSystem;
-      const report = formatTransferBudgetReport(runs);
-      for (const [path, contents] of [
-        [process.env.T3CODE_TRANSFER_BUDGET_REPORT_PATH, report],
-        [process.env.T3CODE_TRANSFER_BUDGET_RESULT_PATH, formatTransferBudgetResult(runs)],
-      ])
-        if (path && contents) yield* fs.writeFileString(path, contents);
-      yield* Effect.log(report);
-      assert.deepEqual(transferBudgetViolations(runs), []);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  30_000,
+          const readShell = (query: string) =>
+            Effect.gen(function* () {
+              const http = yield* get(`/api/orchestration/shell?${query}`);
+              return { http, rows: (yield* decodeShellSnapshot(decoded(http))).threads.length };
+            });
+
+          const { cursor: _, ...longTurnColdOpenLegacy } =
+            yield* readColdOpen("compactTurnItems=1");
+          const { cursor, ...longTurnColdOpen } = yield* readColdOpen(CLIENT_BOUNDED_QUERY);
+          if (cursor === null) return yield* Effect.die("Expected older long-turn history");
+          const longTurnHistoryPageLegacy = yield* readHistoryPage(cursor, "");
+          const longTurnHistoryPage = yield* readHistoryPage(cursor, CLIENT_HISTORY_QUERY);
+
+          // The transfer thread plus the long-turn thread.
+          const earlierThreads = decodedShell.threads.length + 1;
+          yield* sink.write({ events: shellFleetEvents(provider) });
+          const fleetShellLegacy = yield* readShell("");
+          const fleetShell = yield* readShell(CLIENT_SHELL_QUERY);
+          assert.equal(
+            fleetShellLegacy.rows,
+            earlierThreads + SHELL_SETTLED_THREADS + SHELL_IDLE_SUBAGENTS,
+          );
+          return {
+            provider,
+            threadSnapshot,
+            shellSnapshot,
+            measuredTurnWebSocket,
+            measuredTurnShellWebSocket,
+            measuredTurnSecondClientWebSocket,
+            measuredTurnSqlStatements,
+            reconnectThread,
+            reconnectShell,
+            reconnectSqlStatements,
+            longTurnColdOpenLegacy,
+            longTurnColdOpen,
+            longTurnHistoryPageLegacy,
+            longTurnHistoryPage,
+            fleetShellLegacy,
+            fleetShell,
+          } satisfies TransferBudgetRun;
+        }).pipe(
+          Effect.provide(Layer.fresh(layerServices).pipe(Layer.provideMerge(NodeServices.layer))),
+          Effect.withTracer(counter.tracer),
+        ),
+      );
+      runs.push(run);
+    }
+    const fs = yield* FileSystem.FileSystem;
+    const report = formatTransferBudgetReport(runs);
+    for (const [path, contents] of [
+      [process.env.T3CODE_TRANSFER_BUDGET_REPORT_PATH, report],
+      [process.env.T3CODE_TRANSFER_BUDGET_RESULT_PATH, formatTransferBudgetResult(runs)],
+    ])
+      if (path && contents) yield* fs.writeFileString(path, contents);
+    yield* Effect.log(report);
+    assert.deepEqual(transferBudgetViolations(runs), []);
+  }).pipe(Effect.provide(NodeServices.layer)),
 );

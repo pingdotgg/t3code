@@ -1,10 +1,13 @@
+import { Button } from "../../components/ui/Button";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { AsyncResult } from "effect/reactivity";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { useState } from "react";
-import { Pressable, View } from "react-native";
+import { View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
+import { useDeadlinePassed } from "../../lib/clock";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -22,6 +25,7 @@ export function UsageLimitRecoveryCard({
   const canSchedule =
     resetAt !== null &&
     Date.parse(resetAt) > Date.parse(thread.latestRun?.completedAt ?? thread.updatedAt);
+  const resetPassed = useDeadlinePassed(resetAt === null ? null : Date.parse(resetAt));
   const runId = thread.latestRun?.runId;
   const recovery = thread.limitRecovery;
   const scheduled =
@@ -47,23 +51,21 @@ export function UsageLimitRecoveryCard({
     }
     setPending(true);
     setError(null);
-    try {
-      const result = await updateMetadata({
-        environmentId,
-        input: {
-          threadId: thread.id,
-          limitRecovery: {
-            runId,
-            resetAt,
-            ...(action === "resume" ? { autoResume: !scheduled } : { snooze: !snoozed }),
-          },
+    const result = await updateMetadata({
+      environmentId,
+      input: {
+        threadId: thread.id,
+        limitRecovery: {
+          runId,
+          resetAt,
+          ...(action === "resume" ? { autoResume: !scheduled } : { snooze: !snoozed }),
         },
-      });
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-    } catch (cause) {
+      },
+    });
+    setPending(false);
+    if (AsyncResult.isFailure(result)) {
+      const cause = squashAtomCommandFailure(result);
       setError(cause instanceof Error ? cause.message : "Could not change limit recovery.");
-    } finally {
-      setPending(false);
     }
   }
   return (
@@ -75,26 +77,18 @@ export function UsageLimitRecoveryCard({
       </Text>
       {canSchedule ? (
         <View className="flex-row flex-wrap gap-2">
-          <Pressable
-            accessibilityRole="button"
+          <Button
+            label={scheduled ? "Cancel auto-resume" : "Resume at reset"}
+            tone="secondary"
             disabled={pending}
             onPress={() => void toggle("resume")}
-            className="self-start rounded-lg bg-subtle px-3 py-2 active:opacity-70"
-          >
-            <Text className="text-sm text-foreground">
-              {scheduled ? "Cancel auto-resume" : "Resume at reset"}
-            </Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            disabled={pending || (!snoozed && Date.parse(resetAt!) <= Date.now())}
+          />
+          <Button
+            label={snoozed ? "Wake now" : "Snooze until reset"}
+            tone="secondary"
+            disabled={pending || (!snoozed && resetPassed)}
             onPress={() => void toggle("snooze")}
-            className="self-start rounded-lg bg-subtle px-3 py-2 active:opacity-70"
-          >
-            <Text className="text-sm text-foreground">
-              {snoozed ? "Wake now" : "Snooze until reset"}
-            </Text>
-          </Pressable>
+          />
         </View>
       ) : null}
       {error ? (

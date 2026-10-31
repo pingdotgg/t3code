@@ -1,11 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -37,10 +36,6 @@ const storageLayer = <E>(
 
 const testConfig = ServerConfig.layerTest(process.cwd(), { prefix: "database-storage-" });
 
-const currentStatus = Effect.flatMap(DatabaseStorage.DatabaseStorage, (storage) =>
-  storage.status.pipe(Stream.take(1), Stream.runHead),
-);
-
 it.effect("a new database returns freed pages online without losing data", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -58,53 +53,64 @@ it.effect("a new database returns freed pages online without losing data", () =>
   }).pipe(Effect.provide(storageLayer(testConfig))),
 );
 
-it.effect("publishes file accounting and the doctor command after each pass", () =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const config = yield* ServerConfig.ServerConfig;
-    yield* sql`CREATE TABLE discarded (value BLOB)`;
-    yield* sql`INSERT INTO discarded VALUES (zeroblob(1048576))`;
-    yield* TestClock.adjust("1 minute");
-    const before = (yield* currentStatus).pipe(Option.getOrThrow);
-    assert.isNotNull(before);
-    assert.isAbove(before!.databaseBytes, 1048576);
-    assert.isTrue(before!.incrementalVacuumEnabled);
-    // Quoting follows the host shell, so check each word on its own.
-    assert.include(before!.compactCommand, "doctor");
-    assert.include(before!.compactCommand, "--base-dir");
-    assert.include(before!.compactCommand, config.baseDir);
-
-    // The next reclaim pass frees the dropped table and republishes.
-    yield* sql`DROP TABLE discarded`;
-    yield* TestClock.adjust("1 minute");
-    const storage = yield* DatabaseStorage.DatabaseStorage;
-    const after = yield* storage.status.pipe(
-      Stream.filter((status) => status !== null && status.databaseBytes < before!.databaseBytes),
-      Stream.runHead,
-      Effect.map(Option.getOrThrow),
-    );
-    assert.isAtMost(after!.databaseBytes, before!.databaseBytes - 1048576);
-    assert.equal(after!.reclaimableBytes, 0);
-  }).pipe(Effect.provide(storageLayer(testConfig))),
-);
-
-it.effect("publishes nothing when doctor would repair a different database", () =>
-  Effect.gen(function* () {
-    yield* TestClock.adjust("1 minute");
-    assert.deepEqual(yield* currentStatus, Option.some(null));
-  }).pipe(
-    Effect.provide(
-      storageLayer(
-        // A dev server without an explicit home keeps state in <baseDir>/dev,
-        // while `doctor --base-dir` targets <baseDir>/userdata.
-        Layer.effect(
-          ServerConfig.ServerConfig,
-          Effect.gen(function* () {
-            const config = yield* ServerConfig.ServerConfig;
-            return { ...config, dbPath: `${config.baseDir}/dev/statev2.sqlite` };
-          }),
-        ).pipe(Layer.provide(testConfig)),
-      ),
+const compactionLayer = (
+  compactEventStore: ProjectionMaintenance.ProjectionMaintenanceV2["Service"]["compactEventStore"],
+) =>
+  DatabaseStorage.layer.pipe(
+    Layer.provide(
+      Layer.succeed(ProjectionMaintenance.ProjectionMaintenanceV2, {
+        compactEventStore,
+        verify: Effect.die("unexpected verification"),
+        rebuild: Effect.die("unexpected rebuild"),
+      }),
     ),
-  ),
+    Layer.provide(Sqlite.layerMemory),
+  );
+
+const minute = 60_000;
+const startupTime = Date.UTC(2026, 9, 19);
+const emptyCompaction = { deletedEventCount: 0, deletedReceiptCount: 0, reclaimableBytes: 0 };
+
+it.effect("remembers completion only after the paced pass finishes", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(startupTime);
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const config = yield* ServerConfig.ServerConfig;
+    const timestampPath = path.join(path.dirname(config.dbPath), "compacted-at");
+    const betweenPagesReached = yield* Deferred.make<void>();
+    const completed = yield* Deferred.make<void>();
+    const timestampWritten = yield* Deferred.make<void>();
+    const compact = (betweenPages: Effect.Effect<void> = Effect.void) =>
+      Effect.gen(function* () {
+        yield* Effect.sleep(30);
+        yield* Deferred.succeed(betweenPagesReached, undefined);
+        yield* betweenPages;
+        yield* Deferred.succeed(completed, undefined);
+        return emptyCompaction;
+      });
+    yield* Effect.gen(function* () {
+      yield* TestClock.adjust(minute);
+      yield* TestClock.adjust(30);
+      yield* Deferred.await(betweenPagesReached);
+      assert.isFalse(yield* Deferred.isDone(completed));
+      assert.isFalse(yield* fs.exists(timestampPath));
+      yield* TestClock.adjust(269);
+      assert.isFalse(yield* Deferred.isDone(completed));
+      assert.isFalse(yield* fs.exists(timestampPath));
+      yield* TestClock.adjust(1);
+      yield* Deferred.await(timestampWritten);
+      assert.isTrue(yield* Deferred.isDone(completed));
+      assert.equal(Number(yield* fs.readFileString(timestampPath)), startupTime + minute + 300);
+    }).pipe(
+      Effect.provide(compactionLayer(compact)),
+      Effect.provideService(FileSystem.FileSystem, {
+        ...fs,
+        writeFileString: (file, content, options) =>
+          fs
+            .writeFileString(file, content, options)
+            .pipe(Effect.ensuring(Deferred.succeed(timestampWritten, undefined))),
+      }),
+    );
+  }).pipe(Effect.provide(testConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
 );

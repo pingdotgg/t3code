@@ -1,6 +1,5 @@
 import { Chart, Host, type ChartDataPoint } from "@expo/ui/swift-ui";
 import { frame } from "@expo/ui/swift-ui/modifiers";
-import { useMemo } from "react";
 
 import type { DailyTotals } from "@t3tools/shared/usageMerge";
 
@@ -17,15 +16,13 @@ export interface UsageDailyChartProps {
 export function UsageDailyChart({ days, daily, metric, height }: UsageDailyChartProps) {
   const colors = useProviderColors();
 
-  const data = useMemo((): ChartDataPoint[] => {
-    return buildChartDays(days, daily, metric).flatMap((day) =>
-      day.values.map((entry) => ({
-        x: day.day,
-        y: entry.value,
-        color: colors[entry.provider],
-      })),
-    );
-  }, [days, daily, metric, colors]);
+  const data: ChartDataPoint[] = buildChartDays(days, daily, metric).flatMap((day) =>
+    day.values.map((entry) => ({
+      x: day.day,
+      y: entry.value,
+      color: colors[entry.provider],
+    })),
+  );
 
   return (
     <Host style={{ height, width: "100%" }}>

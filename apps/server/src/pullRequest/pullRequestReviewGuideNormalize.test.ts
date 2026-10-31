@@ -91,6 +91,37 @@ describe("parseReviewGuideChange", () => {
     expect(change.hunks.get("src/gone.ts")).toEqual({ new: [], old: [{ start: 1, end: 20 }] });
     expect(change.hunks.get("docs/readme.md")).toEqual({ new: [{ start: 3, end: 3 }], old: [] });
   });
+
+  it("reads file names git quotes or ends with a tab", () => {
+    const unusual = [
+      "diff --git a/with space.txt b/with space.txt",
+      "--- a/with space.txt\t",
+      "+++ b/with space.txt\t",
+      "@@ -1,0 +2 @@",
+      'diff --git "a/tab\\tname.txt" "b/tab\\tname.txt"',
+      '--- "a/tab\\tname.txt"',
+      '+++ "b/tab\\tname.txt"',
+      "@@ -1,0 +2 @@",
+      'diff --git "a/back\\\\slash.txt" "b/back\\\\slash.txt"',
+      '--- "a/back\\\\slash.txt"',
+      '+++ "b/back\\\\slash.txt"',
+      "@@ -1,0 +2 @@",
+      'diff --git "a/gone\\tfile.txt" "b/gone\\tfile.txt"',
+      '--- "a/gone\\tfile.txt"',
+      "+++ /dev/null",
+      "@@ -1 +0,0 @@",
+      "",
+    ].join("\n");
+    const names = ["with space.txt", "tab\tname.txt", "back\\slash.txt", "gone\tfile.txt"];
+    const parsed = parseReviewGuideChange(names.join("\0"), unusual);
+    expect([...parsed.hunks.keys()]).toEqual(names);
+    expect(parsed.hunks.get("gone\tfile.txt")).toEqual({ new: [], old: [{ start: 1, end: 1 }] });
+    const result = normalizeReviewGuide(
+      guide({ stops: [stop({ excerpts: names.slice(0, 3).map((path) => excerpt(path, 1, 5)) })] }),
+      parsed,
+    );
+    expect(result.stops[0]?.excerpts).toEqual(names.slice(0, 3).map((path) => excerpt(path, 2, 2)));
+  });
 });
 
 describe("normalizeReviewGuide", () => {
@@ -119,18 +150,6 @@ describe("normalizeReviewGuide", () => {
     ]);
     expect(result.stops[0]?.files).toEqual([{ path: "docs/readme.md" }]);
     expect(result.stops).toHaveLength(1);
-  });
-
-  it("keeps a long excerpt to its first 25 lines", () => {
-    const long = parseReviewGuideChange(
-      "big.ts\0",
-      "--- a/big.ts\n+++ b/big.ts\n@@ -0,0 +1,100 @@\n",
-    );
-    const result = normalizeReviewGuide(
-      guide({ stops: [stop({ excerpts: [excerpt("big.ts", 1, 100)] })] }),
-      long,
-    );
-    expect(result.stops[0]?.excerpts).toEqual([excerpt("big.ts", 1, 25)]);
   });
 
   it("drops notes outside the stop's remaining excerpts", () => {

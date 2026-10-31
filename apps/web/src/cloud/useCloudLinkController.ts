@@ -7,18 +7,22 @@ import {
   AuthRelayWriteScope,
   type EnvironmentCloudLinkStateResult,
 } from "@t3tools/contracts";
+import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import type { RelayManagedEndpointProviderKind } from "@t3tools/contracts/relay";
 import {
   isAtomCommandInterrupted,
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import * as Schema from "effect/Schema";
 import { useState } from "react";
 
 import { toastManager } from "../components/ui/toast";
 import { relayEnvironmentDiscovery } from "../state/relay";
 import { readEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
+import { CloudEnvironmentLinkError } from "./linkEnvironment";
+import { refreshManagedTunnelUsage } from "./managedRelayState";
 import {
   linkPrimaryEnvironment as linkPrimaryEnvironmentAtom,
   unlinkPrimaryEnvironment as unlinkPrimaryEnvironmentAtom,
@@ -33,11 +37,7 @@ export interface CloudLinkDesiredState {
   readonly holdWebhooksWhileOffline?: boolean;
 }
 
-/**
- * The local tunnel config can outlive a relay link that drifted to
- * publish-only, and clients then get `endpoint_provider_not_managed`. So when
- * relay discovery has this environment's record, it must also say managed.
- */
+// Require managed discovery: stale tunnel config after a publish-only switch causes endpoint_provider_not_managed.
 function isManagedTunnelActive(
   linkState: EnvironmentCloudLinkStateResult,
   relayProviderKind: RelayManagedEndpointProviderKind | undefined,
@@ -48,6 +48,18 @@ function isManagedTunnelActive(
     localManagedTunnel &&
     (relayProviderKind === undefined || relayProviderKind === "cloudflare_tunnel")
   );
+}
+
+const isManagedRelayRequestFailedError = Schema.is(ManagedRelay.ManagedRelayRequestFailedError);
+
+/** The account's tunnel cap when the relay refused a new tunnel for being at it. */
+function tunnelLimitFromLinkFailure(cause: unknown): number | null {
+  if (!(cause instanceof CloudEnvironmentLinkError)) return null;
+  const relayCause = cause.cause;
+  if (!isManagedRelayRequestFailedError(relayCause)) return null;
+  return relayCause.relayError?._tag === "RelayEnvironmentLinkLimitExceededError"
+    ? relayCause.relayError.maxTunnels
+    : null;
 }
 
 export function useCloudLinkController() {
@@ -72,6 +84,7 @@ export function useCloudLinkController() {
     ? relayEnvironments.get(primaryEnvironmentId)?.environment.endpoint.providerKind
     : undefined;
   const [operationError, setOperationError] = useState<string | null>(null);
+  const [tunnelLimit, setTunnelLimit] = useState<number | null>(null);
 
   const reportUpdateFailure = (cause: unknown) => {
     const message = cause instanceof Error ? cause.message : "Could not update T3 Connect access.";
@@ -104,6 +117,7 @@ export function useCloudLinkController() {
 
   const reconcileCloudState = async (desired: CloudLinkDesiredState): Promise<boolean> => {
     setOperationError(null);
+    setTunnelLimit(null);
     const target = primaryCloudLinkState.target;
     if (!target) {
       reportUpdateFailure(new Error("Local environment is not ready yet."));
@@ -135,17 +149,14 @@ export function useCloudLinkController() {
     const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
     if (!canManageLink()) return false;
 
-    // A failure after this point may follow a partially applied mutation (e.g.
-    // the link succeeded but the preference update did not), so every exit —
-    // success or failure — refreshes the rendered state to whatever the server
-    // actually holds now.
+    // A failed mutation may have partially applied, so refresh server state on every exit.
     if (!wantsLink) {
-      // Unlink works without a relay token — a failed token read must not
-      // leave the user unable to turn T3 Connect off.
+      // Unlink needs no relay token; failed token reads must still allow it.
       const unlinkResult = await unlinkPrimaryEnvironment({
         target,
         clerkToken: tokenResult._tag === "Success" ? (tokenResult.value ?? null) : null,
       });
+      refreshManagedTunnelUsage();
       if (unlinkResult._tag === "Failure") {
         if (!isAtomCommandInterrupted(unlinkResult)) {
           reportUpdateFailure(squashAtomCommandFailure(unlinkResult));
@@ -176,9 +187,15 @@ export function useCloudLinkController() {
           clerkToken,
           mode: desired.managedTunnel ? "managed" : "publish_only",
         });
+        // Any link attempt can change the account's tunnel count.
+        refreshManagedTunnelUsage();
         if (linkResult._tag === "Failure") {
           if (!isAtomCommandInterrupted(linkResult)) {
-            reportUpdateFailure(squashAtomCommandFailure(linkResult));
+            const cause = squashAtomCommandFailure(linkResult);
+            // The caller shows an upgrade prompt instead of an error.
+            const limit = tunnelLimitFromLinkFailure(cause);
+            if (limit === null) reportUpdateFailure(cause);
+            else setTunnelLimit(limit);
           }
           primaryCloudLinkState.refresh();
           return false;
@@ -223,6 +240,7 @@ export function useCloudLinkController() {
     publishAgentActivity,
     holdWebhooksWhileOffline,
     operationError,
+    tunnelLimit,
     reconcileCloudState,
   };
 }

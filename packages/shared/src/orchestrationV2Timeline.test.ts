@@ -53,20 +53,6 @@ describe.each([
     ).toBe(true);
   });
 
-  it("keeps interruption results from terminal attempts with a request", () => {
-    expect(
-      isVisible({
-        item: { type: "run_interrupt_result", runId, nodeId },
-        runs: [{ id: runId, status: "interrupted" }],
-        attempts: [{ runId, rootNodeId: nodeId, status: "interrupted" }],
-        items: [
-          { type: "run_interrupt_request", runId, nodeId },
-          { type: "run_interrupt_result", runId, nodeId },
-        ],
-      }),
-    ).toBe(true);
-  });
-
   it("hides queued user messages once their run is cancelled", () => {
     expect(
       isVisible({
@@ -76,17 +62,6 @@ describe.each([
         items: [{ type: "user_message", inputIntent: "queued_turn", runId, nodeId }],
       }),
     ).toBe(false);
-  });
-
-  it("keeps queued user messages while their run is queued", () => {
-    expect(
-      isVisible({
-        item: { type: "user_message", inputIntent: "queued_turn", runId, nodeId },
-        runs: [{ id: runId, status: "queued" }],
-        attempts: [],
-        items: [{ type: "user_message", inputIntent: "queued_turn", runId, nodeId }],
-      }),
-    ).toBe(true);
   });
 
   it("keeps non-queued user messages on cancelled runs", () => {

@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - setup-script bootstrap, runs before any Effect runtime exists.
+// @effect-diagnostics nodeBuiltinImport:off - plain Node script that dev-runner spawns on a cold cache.
 /**
  * The cache cannot be shared between worktrees: Vite's config hash includes
  * the absolute project root, so each worktree must warm its own.

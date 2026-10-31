@@ -1,78 +1,73 @@
-import type { DeviceSummary, EnvironmentId } from "@t3tools/contracts";
-import { useEffect, useRef, useState } from "react";
+import type { DeviceHostSummary, DeviceSummary, EnvironmentId } from "@t3tools/contracts";
+import { useRef, useState } from "react";
 import {
   captureDeviceScreenshot,
   DeviceScreenshotError,
 } from "@t3tools/client-runtime/device/screenshot";
 import { refreshDeviceHubAccess, useDeviceHubAccess } from "~/state/device";
 import { DeviceControlsRail } from "./DeviceControlsRail";
-import { DeviceStreamView, type DeviceStreamHandle } from "./DeviceStreamView";
+import { DeviceStreamView } from "./DeviceStreamView";
 import { DeviceToolsPanel } from "./DeviceToolsPanel";
 import { useDeviceControls } from "./useDeviceControls";
+
+const DOWNLOAD_URL_LIFETIME_MS = 60_000;
 
 export function DeviceWorkspace(props: {
   environmentId: EnvironmentId;
   device: DeviceSummary;
   hostLabel: string;
+  hostKind: DeviceHostSummary["kind"] | undefined;
   hostDiagnostics: string | undefined;
   visible: boolean;
   onFloat: () => void;
   onClose: () => void;
   onPowerOff: () => void;
 }) {
-  const [handle, setHandle] = useState<DeviceStreamHandle | null>(null);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [axOverlay, setAxOverlay] = useState(false);
   const [screenshotPending, setScreenshotPending] = useState(false);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
-  const captureRef = useRef<AbortController | null>(null);
-  const downloadRef = useRef<string | null>(null);
+  // A capture always finishes, even if the panel hides or closes meanwhile; the user asked for it.
+  const capturing = useRef(false);
   const access = useDeviceHubAccess(props.environmentId, props.device.hostId);
-  const controls = useDeviceControls({ ...props, access });
-  useEffect(() => {
-    if (!access || !props.visible) captureRef.current?.abort();
-    return () => {
-      captureRef.current?.abort();
-      if (downloadRef.current) URL.revokeObjectURL(downloadRef.current);
-      downloadRef.current = null;
-    };
-  }, [access, props.visible]);
+  // Settings and tools run commands on the device's own machine, which EAS and Simlock do not expose.
+  const runsHostCommands = props.hostKind === "local" || props.hostKind === "ssh";
+  const controls = useDeviceControls({
+    ...props,
+    access,
+    visible: props.visible && runsHostCommands,
+  });
   const saveScreenshot = () => {
-    if (!access || captureRef.current || !props.visible) return;
-    const controller = new AbortController();
-    captureRef.current = controller;
+    if (!access || capturing.current || !props.visible) return;
+    capturing.current = true;
     setScreenshotPending(true);
     setScreenshotError(null);
     return captureDeviceScreenshot(
       { access, platform: props.device.platform, deviceId: props.device.id },
-      controller.signal,
+      // Never aborted: see `capturing` above.
+      new AbortController().signal,
     )
       .then((image) => {
-        if (controller.signal.aborted) return;
-        if (downloadRef.current) URL.revokeObjectURL(downloadRef.current);
         const url = URL.createObjectURL(image);
-        downloadRef.current = url;
         const link = document.createElement("a");
         link.href = url;
         link.download = `${props.device.name.replace(/[^a-z0-9-]/gi, "-")}-${Date.now()}.png`;
         document.body.append(link);
         link.click();
         link.remove();
+        // The browser reads the blob after the click returns.
+        window.setTimeout(() => URL.revokeObjectURL(url), DOWNLOAD_URL_LIFETIME_MS);
       })
       .catch((cause: unknown) => {
-        if (!controller.signal.aborted) {
-          if (cause instanceof DeviceScreenshotError && cause.status === 401)
-            refreshDeviceHubAccess(props.environmentId);
-          setScreenshotError(
-            cause instanceof Error ? cause.message : "Screenshot capture failed. Try again.",
-          );
-        }
+        if (cause instanceof DeviceScreenshotError && cause.status === 401)
+          refreshDeviceHubAccess(props.environmentId);
+        setScreenshotError(
+          cause instanceof Error ? cause.message : "Screenshot capture failed. Try again.",
+        );
       })
       .finally(() => {
-        if (captureRef.current === controller) {
-          captureRef.current = null;
-          setScreenshotPending(false);
-        }
+        capturing.current = false;
+        setScreenshotPending(false);
       });
   };
   return (
@@ -92,13 +87,14 @@ export function DeviceWorkspace(props: {
             deviceId={props.device.id}
             hostId={props.device.hostId}
             visible={props.visible}
+            serveSimOnly={props.hostKind === "simlock"}
             axOverlay={axOverlay}
             allowPhoneView
-            onHandle={setHandle}
             renderControls={(view) => (
               <DeviceControlsRail
                 platform={props.device.platform}
-                handle={handle}
+                hostKind={props.hostKind}
+                handle={view.handle}
                 view={view}
                 controls={controls}
                 screenshotPending={screenshotPending}

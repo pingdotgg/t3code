@@ -1,96 +1,72 @@
 import type { DeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAccess";
-import { useEffect, useRef, useState } from "react";
+import { useAtomMount, useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useRef, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import {
-  readAndroidFold,
-  setAndroidFold,
-  type AndroidFoldPosture,
-  type AndroidFoldState,
-} from "./deviceFold";
+import { AndroidFoldError, setAndroidFold, type AndroidFoldPosture } from "./deviceFold";
+import { androidFoldReadAtom, androidFoldViewAtom, foldAngle, NOOP_ATOM } from "./deviceHubAtoms";
 import { DeviceDuoGlyph } from "./DeviceDuoGlyph";
 
 export function DeviceAndroidFoldControls(props: {
   readonly access: DeviceHubAccess;
+  readonly deviceKey: string;
   readonly deviceId: string;
   readonly visible: boolean;
   readonly enabled: boolean;
   readonly screenWidth: number | undefined;
   readonly screenHeight: number | undefined;
-  readonly onFoldAngle: (angle: number | null) => void;
+  readonly renewAccess: () => Promise<DeviceHubAccess | null>;
 }) {
-  const [fold, setFold] = useState<AndroidFoldState | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const busy = useRef(false);
-  const mounted = useRef(true);
-  const { access, deviceId, visible, enabled, screenWidth, screenHeight, onFoldAngle } = props;
-
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!visible || !enabled || pending || !screenWidth || !screenHeight) return;
-    const controller = new AbortController();
-    let retry: number | undefined;
-    const read = () => {
-      void readAndroidFold(access, deviceId, controller.signal)
-        .then((next) => {
-          if (!controller.signal.aborted) {
-            setFold(next);
-            onFoldAngle(
-              next.supported ? (next.hingeAngle ?? (next.posture === "closed" ? 0 : 180)) : null,
-            );
-          }
-        })
-        .catch(() => {
-          if (!controller.signal.aborted) retry = window.setTimeout(read, 3_000);
-        });
-    };
-    read();
-    return () => {
-      controller.abort();
-      window.clearTimeout(retry);
-    };
-  }, [access, deviceId, visible, enabled, screenWidth, screenHeight, pending, onFoldAngle]);
+  const { access, deviceKey, deviceId, visible, enabled, screenWidth, screenHeight } = props;
+  const viewAtom = androidFoldViewAtom(deviceKey);
+  const { fold } = useAtomValue(viewAtom);
+  const setView = useAtomSet(viewAtom);
+  // A change in flight owns the posture; reading meanwhile could show the old one.
+  useAtomMount(
+    visible && enabled && !pending && screenWidth && screenHeight
+      ? androidFoldReadAtom({ deviceKey, access, deviceId, screenWidth, screenHeight })
+      : NOOP_ATOM,
+  );
 
   if (!fold?.supported || !props.visible) return null;
 
+  const setAngle = (angle: number) => setView((current) => ({ ...current, angle }));
   const change = (posture: AndroidFoldPosture) => {
     if (busy.current || !props.enabled) return;
     busy.current = true;
     setPending(true);
     setError(null);
-    props.onFoldAngle(posture === "closed" ? 0 : 180);
+    setAngle(posture === "closed" ? 0 : 180);
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 12_000);
-    void setAndroidFold(props.access, props.deviceId, posture, controller.signal)
-      .then((next) => {
-        if (mounted.current) {
-          setFold(next);
-          props.onFoldAngle(next.hingeAngle ?? (next.posture === "closed" ? 0 : 180));
-        }
+    const send = (access: DeviceHubAccess) =>
+      setAndroidFold(access, props.deviceId, posture, controller.signal);
+    void send(props.access)
+      .catch(async (cause: unknown) => {
+        // Hub tickets expire after a few minutes, while the panel stays open much longer.
+        if (!(cause instanceof AndroidFoldError && cause.status === 401)) throw cause;
+        const renewed = await props.renewAccess();
+        if (!renewed || controller.signal.aborted) throw cause;
+        return send(renewed);
       })
+      .then((next) => setView({ fold: next, angle: foldAngle(next) }))
       .catch((cause: unknown) => {
-        if (mounted.current) {
-          props.onFoldAngle(fold.hingeAngle ?? (fold.posture === "closed" ? 0 : 180));
-          setError(
-            controller.signal.aborted
-              ? "Fold command timed out."
-              : cause instanceof Error
-                ? cause.message
-                : "Could not change fold posture.",
-          );
-        }
+        setAngle(foldAngle(fold));
+        setError(
+          controller.signal.aborted
+            ? "Fold command timed out."
+            : cause instanceof Error
+              ? cause.message
+              : "Could not change fold posture.",
+        );
       })
       .finally(() => {
         window.clearTimeout(timeout);
         busy.current = false;
-        if (mounted.current) setPending(false);
+        setPending(false);
       });
   };
 

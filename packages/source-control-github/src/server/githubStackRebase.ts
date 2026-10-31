@@ -4,7 +4,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Base64 from "effect/encoding/Base64";
 
-import * as GitHubRest from "./GitHubRest.ts";
+import * as GitHubAppAccess from "./GitHubAppAccess.ts";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
 export interface CascadeLayer {
@@ -42,10 +42,11 @@ export const cascadeRebaseStack = Effect.fn("cascadeRebaseStack")(function* (inp
   readonly layers: ReadonlyArray<CascadeLayer>;
   readonly remote?: string;
 }) {
-  const api = yield* GitHubRest.GitHubRest;
+  const appAccess = yield* GitHubAppAccess.GitHubAppAccess;
   const { process } = yield* SourceControlHost.SourceControlHost;
   const fileSystem = yield* FileSystem.FileSystem;
-  const { token } = yield* api.credential(input.host);
+  // A push takes one credential up front, so it must be one that reaches the repository.
+  const { token } = yield* appAccess.credentialFor(input.host, input.repository);
   const first = input.layers[0];
   if (first === undefined) return 0;
   const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-stack-rebase-" }).pipe(
@@ -59,7 +60,7 @@ export const cascadeRebaseStack = Effect.fn("cascadeRebaseStack")(function* (inp
         }),
     ),
   );
-  // The token rides in a header for this process only: never in the URL, argv, or git config.
+  // Keep the token in this process's header, outside URLs, argv and git config.
   const remote = input.remote ?? remoteUrl(input.host, input.repository);
   const authorization = `AUTHORIZATION: basic ${Base64.encode(`x-access-token:${Redacted.value(token)}`)}`;
   const env = {
@@ -103,8 +104,7 @@ export const cascadeRebaseStack = Effect.fn("cascadeRebaseStack")(function* (inp
   let parentOld = `origin/${input.base}`;
   let parentNew = `origin/${input.base}`;
   for (const [index, layer] of input.layers.entries()) {
-    // The bottom layer's old parent is where it forked from the base; above that it is the
-    // reviewed head of the layer below, which is exactly the commits this layer must not replay.
+    // Exclude old parents: the base fork point for the bottom, the reviewed lower head above it.
     const upstream =
       index === 0
         ? (yield* git(["merge-base", parentOld, layer.headSha]).pipe(

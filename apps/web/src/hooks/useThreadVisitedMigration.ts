@@ -1,20 +1,21 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { useEffect } from "react";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import type { AtomRegistry } from "effect/reactivity";
 
-import { useThreadShells } from "../state/entities";
-import { threadEnvironment } from "../state/threads";
-import { useAtomCommand } from "../state/use-atom-command";
+import { environmentThreadShells, threadEnvironment } from "../state/threads";
 import { useUiStateStore } from "../uiStateStore";
 
-const migratedThreadKeys = new Set<string>();
-
-export function useThreadVisitedMigration(): void {
-  const threads = useThreadShells();
-  const visitThreadMutation = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
-  useEffect(() => {
+/**
+ * Hands visit times recorded locally (before servers tracked visits) to each
+ * server once. Subscribed outside render: it only acts on threads it has not
+ * seen, so a shell update must not re-render anything.
+ */
+export function startThreadVisitedMigration(registry: AtomRegistry.AtomRegistry): () => void {
+  const migratedThreadKeys = new Set<string>();
+  const migrate = (threads: ReadonlyArray<EnvironmentThreadShell>) => {
     for (const thread of threads) {
-      // Field absent → the environment's server has no visited tracking; keep
-      // the local value in play and reconsider if the server upgrades.
+      // Missing means unsupported; retain the local value until the server upgrades.
       if (thread.lastVisitedAt === undefined) continue;
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
       if (migratedThreadKeys.has(threadKey)) continue;
@@ -25,10 +26,15 @@ export function useThreadVisitedMigration(): void {
       if (!Number.isFinite(localMs)) continue;
       const serverMs = thread.lastVisitedAt === null ? null : Date.parse(thread.lastVisitedAt);
       if (serverMs !== null && Number.isFinite(serverMs) && serverMs >= localMs) continue;
-      void visitThreadMutation({
-        environmentId: thread.environmentId,
-        input: { threadId: thread.id, visitedAt: local },
-      });
+      void runAtomCommand(
+        registry,
+        threadEnvironment.visit,
+        { environmentId: thread.environmentId, input: { threadId: thread.id, visitedAt: local } },
+        { reportFailure: false },
+      );
     }
-  }, [threads, visitThreadMutation]);
+  };
+  return registry.subscribe(environmentThreadShells.threadShellsAtom, migrate, {
+    immediate: true,
+  });
 }

@@ -5,12 +5,13 @@ import {
   type UsageLimitSourceAccount,
   type UsageLimitSourceConfig,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import { codexPlanLabel } from "../provider/CodexProvider.ts";
 import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
@@ -27,6 +28,7 @@ const AuthFile = Schema.Struct({
     Schema.Struct({
       chatgpt_account_id: Schema.optional(Schema.String),
       chatgpt_plan_type: Schema.optional(Schema.String),
+      plan_type: Schema.optional(Schema.String),
     }),
   ),
 });
@@ -88,6 +90,41 @@ const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(Credit
 const decodeClaudeUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeUsage));
 const decodeCodexUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexUsage));
 const isUsageLimitSourceError = Schema.is(UsageLimitSourceError);
+
+// Extra CAs can fix untrusted chains; expiry/hostname failures report codes only.
+const UNTRUSTED_CERTIFICATE_CODES = new Set([
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+]);
+
+// fetch wraps Node error codes in generic TypeErrors.
+const nodeErrorCode = (cause: unknown) => {
+  for (let error = cause, depth = 0; error instanceof Error && depth < 3; depth += 1) {
+    const code = (error as { readonly code?: unknown }).code;
+    if (typeof code === "string" && /^[A-Z0-9_]{1,64}$/.test(code)) return code;
+    error = error.cause;
+  }
+  return undefined;
+};
+
+// Hub responses can contain credentials; expose only failure kind, HTTP status or Node code.
+const describeManagementFailure = (error: unknown) => {
+  if (Cause.isTimeoutError(error)) return "The hub did not answer within 15 seconds.";
+  if (HttpClientError.isHttpClientError(error)) {
+    const reason = error.reason;
+    if (reason._tag === "StatusCodeError") {
+      return `The hub answered with HTTP ${reason.response.status}.`;
+    }
+    const code = reason._tag === "TransportError" ? nodeErrorCode(reason.cause) : undefined;
+    if (code !== undefined && UNTRUSTED_CERTIFICATE_CODES.has(code)) {
+      return `The hub's TLS certificate is not trusted (${code}). If it comes from a private CA, add that CA to NODE_EXTRA_CA_CERTS.`;
+    }
+    if (code !== undefined) return `The hub request failed (${code}).`;
+  }
+  return "The hub management request failed.";
+};
 const decodeConsumeResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     Schema.Struct({
@@ -130,7 +167,11 @@ export const makeCliproxyApi = Effect.gen(function* () {
     body?: unknown,
   ) {
     const url = yield* Effect.try({
-      try: () => new URL(`/v0/management/${path}`, config.url).toString(),
+      try: () =>
+        new URL(
+          `v0/management/${path}`,
+          config.url.endsWith("/") ? config.url : `${config.url}/`,
+        ).toString(),
       catch: () => new UsageLimitSourceError({ detail: "The hub URL is not valid." }),
     });
     const request = (
@@ -143,7 +184,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
         Effect.flatMap((response) => response.json),
         Effect.timeout("15 seconds"),
         Effect.mapError(
-          () => new UsageLimitSourceError({ detail: "The hub management request failed." }),
+          (error) => new UsageLimitSourceError({ detail: describeManagementFailure(error) }),
         ),
       );
     return response;
@@ -171,7 +212,12 @@ export const makeCliproxyApi = Effect.gen(function* () {
               ? { "Chatgpt-Account-Id": account.id_token.chatgpt_account_id }
               : {}),
           }
-        : { Authorization: "Bearer $TOKEN$", "anthropic-beta": "oauth-2025-04-20" };
+        : {
+            Authorization: "Bearer $TOKEN$",
+            "anthropic-beta": "oauth-2025-04-20",
+            // The OAuth usage endpoint can return 429 without a Claude Code user agent.
+            "User-Agent": "claude-code/2.1.273",
+          };
     const raw = yield* management(config, "api-call", {
       auth_index: account.auth_index,
       method: data === undefined ? "GET" : "POST",
@@ -263,14 +309,16 @@ export const makeCliproxyApi = Effect.gen(function* () {
           : null;
       const available = yield* credits(config, account).pipe(Effect.orElseSucceed(() => undefined));
       const next = available?.[0];
+      const planType =
+        usage.plan_type ?? account.id_token?.plan_type ?? account.id_token?.chatgpt_plan_type;
       return {
         ...base,
-        plan: codexPlanLabel(usage.plan_type ?? account.id_token?.chatgpt_plan_type),
+        plan: codexPlanLabel(planType),
         usageLimits: {
           ...codexRateLimitsToLimits({
             checkedAt,
             snapshot: {
-              planType: usage.plan_type ?? null,
+              planType: planType ?? null,
               primary: toWindow(usage.rate_limit?.primary_window),
               secondary: toWindow(usage.rate_limit?.secondary_window),
             },
@@ -307,8 +355,10 @@ export const makeCliproxyApi = Effect.gen(function* () {
     config: UsageLimitSourceConfig,
   ): Effect.fn.Return<ReadonlyArray<UsageLimitSourceAccount>, UsageLimitSourceError> {
     const accounts = yield* authFiles(config).pipe(
-      Effect.mapError(
-        () => new UsageLimitSourceError({ detail: "The hub could not list accounts." }),
+      Effect.mapError((error) =>
+        isUsageLimitSourceError(error)
+          ? error
+          : new UsageLimitSourceError({ detail: "The hub could not list accounts." }),
       ),
     );
     return yield* Effect.forEach(

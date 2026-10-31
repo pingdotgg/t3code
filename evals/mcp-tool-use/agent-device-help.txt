@@ -1,0 +1,262 @@
+agent-device 0.21.31 prints this help; apps/server/src/device/deviceToolVersions.json pins that version. Regenerate from
+the repo root with: node scripts/node_modules/agent-device/bin/agent-device.mjs help [commands|record|screenshot|open|settings]
+
+$ agent-device help
+agent-device <command> [args] [--json]
+
+Automates iOS, Android, macOS, TV, and web apps for AI agents.
+All 75 commands: agent-device help commands
+
+Start:
+  When starting a task with a known app, first run:
+    agent-device open <app> --foreground
+  It starts the session and returns the initial interactive snapshot with @refs.
+  Do not probe first with devices, apps, appstate, snapshot, or screenshot.
+  Unknown app id: devices, then apps, then open <discovered-id>. Never invent ids.
+  Resuming an existing session: continue from its current state; do not reopen it.
+
+Loop:
+  press|click|fill|longpress <target> ... --settle
+  hover <target> --settle (web only; reveals hover-gated UI)
+  scroll <direction|top|bottom> [amount] --settle; back --settle
+    acts, waits for quiet, and prints the UI diff. Continue from that diff.
+    Run snapshot -i only when the diff lacks the next target or did not settle.
+  Verify a named expectation with the diff, wait text "...", wait <selector>, wait absent <selector>,
+    is, get, or find. A bare screenshot is not verification.
+  End with: agent-device close
+
+Targets:
+  Copy refs exactly: @e12, @e12~s4. Keep @ and any ~sN pin; refs go stale
+    after mutations. A literal @handle is label="@handle", not a bare ref.
+  Prefer refs, then id/label/role selectors. Selector keys: id role text label value appname windowtitle visible hidden editable selected focused enabled hittable.
+  Coordinates are last resort: after snapshot -i shows no semantic target, or a
+    sparse/AX-unavailable warning says its refs and selectors are invalid.
+    Then screenshot, press <x> <y>, and re-snapshot on the changed screen.
+
+Rules:
+  --settle is only for press/click/fill/longpress/hover/scroll/back; never open,
+    snapshot, or close. type never accepts --settle.
+  fill <target> <text> --settle replaces; type <text> appends after focus.
+  Late network/debounce result: wait text "Expected", not snapshot polling.
+  Output full agent-device commands; no pipes, grep, jq, or pseudo-commands.
+  Stop when the requested end state is visible. Mutations run serially.
+
+More commands (exact shapes: agent-device help <command>):
+  open install devices apps boot close       app and device lifecycle
+  screenshot record logs network perf trace  evidence and diagnostics
+  replay test batch session                   scripted flows
+  alert keyboard clipboard settings gesture  system and input
+
+Guides (agent-device help <topic>):
+  workflow    full refs, selectors, waits, recovery, and platform limits
+  manual-qa / dogfood / validate / debugging / scripting / gestures
+  react-native / react-devtools / cdp / tv / web / macos / remote
+  physical-device / ios-system-ui / maestro
+  foldable    iPhone Duo panels, the fold command, and why refs die on a pose change
+
+
+$ agent-device help commands
+agent-device 0.21.31 — commands
+
+Full command catalog. Use agent-device help <command> for exact flags and behavior.
+
+Commands:
+  action-button               Press the iPhone or iPad Action Button
+  alert [action] [timeout]    Inspect, accept, or dismiss a platform alert
+  app-switcher                Open the device app switcher
+  apps                        List installed apps or deferred provider app assets
+  appstate                    Show the foreground app and activity
+  artifacts [provider-session-id]  List daemon or cloud provider session artifacts
+  audio                       Probe audio levels
+  auth                        Manage cloud login state
+  back                        Navigate back in the app or system
+  batch --steps <json> | --steps-file <path>  Run multiple commands
+  boot                        Boot target device/simulator
+  capabilities                List supported commands for the selected device
+  cdp                         Inspect CDP targets, JS heap, and leaks
+  click <target>              Click or tap a UI target
+  clipboard read | clipboard write <text>  Read or write device clipboard text
+  close [app]                 Close an app or end the session
+  connect                     Configure remote or provider state
+  connection                  Inspect the saved remote connection
+  daemon stop|status          Stop a local daemon or show the providers it registered
+  debug                       Symbolicate Apple crash artifacts
+  device status               Inspect and recover enforced local device ownership without a daemon
+  devices                     List available devices and simulators
+  diff <kind> [current]       Diff snapshot or screenshot
+  disconnect                  Clear remote connection state and release leases
+  doctor                      Diagnose device, app, dev-server, and RN/Expo readiness
+  events                      Read session event timeline
+  fill <targetOrX> <yOrText> [text]  Replace text in a UI input
+  find <query> <action> [value]  Find an element and act
+  focus <x> <y>               Focus input at screen coordinates
+  fold [pose]                 Fold or unfold a foldable iPhone simulator or Android emulator
+  gesture <pan|fling|swipe|pinch|rotate|transform|tap|drag> ...  Run pan, fling, swipe, pinch, rotate, transform, tap, or drag gestures
+  get <subcommand> <target>   Read element text or attributes
+  hardware-button <button>    Press a phone hardware button once
+  home                        Go to the device home screen
+  hover <targetOrX> [y]       Hover the pointer over a UI target (web only)
+  install <path>              Install an app binary from a path
+  install-from-source         Install app builds from URLs or CI artifacts
+  is <predicate> <selector> [value]  Check a UI predicate on a selector
+  keyboard [action]           Inspect, press, or dismiss the device keyboard
+  logs path|start|stop|clear|doctor|mark [message]  Manage session app logs
+  longpress <targetOrX> [yOrDurationMs] [durationMs]  Hold a UI target to open a context menu
+  mcp                         Start MCP server
+  metro                       Prepare the dev server or reload apps
+  network                     Inspect HTTP(S) traffic from session logs
+  open [appOrUrl] [url]       Open an app, deep link or URL, save replays
+  orientation <orientation>   Set device orientation
+  perf                        Check frames, memory, or native profiles
+  plugins                     Manage installed provider plugins
+  prepare                     Pre-warm platform helpers before automation
+  press <targetOrX> [y]       Short-press a UI target
+  proxy                       Expose a local daemon through an HTTP tunnel
+  push                        Deliver a push notification payload
+  react-devtools              React Native components, props/state/hooks, and render profiling
+  react-native dismiss-overlay  Run React Native automation helpers
+  record start [path] | record stop | record contact-sheet <video>  Start or stop screen recording
+  reinstall <app> <path>      Replace an installed app with a new build
+  replay <path>               Replay a recorded session or Maestro flow
+  screenshot [path]           Capture a screenshot
+  scroll <directionOrEdge> [amount]  Scroll in a direction or to an edge
+  session                     List sessions, show the state dir, or publish a script
+  settings [area] [options]   Change OS settings and app permissions
+  shutdown                    Shutdown target simulator/emulator
+  snapshot                    Capture or diff the accessibility tree
+  swipe <x1> <y1> <x2> <y2>   Fling between coordinates
+  takeover [status|release]   Pause agent interactions while a person controls a device
+  telephony call|accept|cancel|sms <number> [text]  Simulate an incoming call or SMS on an Android emulator over adb
+  test <path-or-glob>...      Run replay test suites
+  trace start [path] | trace stop [path]  Start or stop trace capture
+  trigger-app-event           Invoke an app-defined automation event
+  tv-remote press|longpress <button> [--duration-ms <ms>]  Press a TV remote navigation, media, or hardware button
+  type <text>                 Append text to the focused input
+  uninstall <app>             Remove an installed app
+  viewport <width> <height>   Resize the active web viewport for the current session
+  wait <durationOrSelector> [timeoutMs]  Wait for a duration, text, selector, strict absence, or stable UI
+  web setup|doctor            Manage web automation backend
+
+Device Selection (shared by device commands; help <command> lists each command's flags):
+  --platform apple|android|harmonyos|vega|linux|web|ios|macos  Platform to target (`apple` aliases the Apple automation backend)
+  --device <name>             Device name to target (a UDID belongs in --udid, a serial in --serial)
+  --udid <udid>               Apple device or simulator UDID; the only selector that pins one device when several share a --device name
+  --serial <serial>           Android, HarmonyOS, or Vega VVD serial
+  --session <name>            Named session (implicit default is scoped to this workspace + platform)
+
+Global Flags:
+  --config <path>             Load CLI defaults from a specific config file (required for connection/provider defaults outside user config)
+  --debug, --verbose, -v      Enable debug diagnostics; test --verbose prints per-test step timings without debug logs
+  --cost                      Include per-command wall-clock latency (cost.wallClockMs) in the response
+  --level digest|default|full  Response detail level: digest (token-cheap), default (today), or full. Default keeps the wire shape unchanged.
+  --json                      JSON output
+  --help, -h                  Print help and exit
+  --version, -V               Print version and exit
+
+Configuration:
+  Default config files: ~/.agent-device/config.json (or <AGENT_DEVICE_HOME>/config.json), ./agent-device.json (project-safe defaults only).
+  Use --config <path> or AGENT_DEVICE_CONFIG for explicit connection/provider defaults; project config cannot select endpoints or credentials.
+
+Environment:
+  AGENT_DEVICE_SESSION        Explicit session name
+  AGENT_DEVICE_PLATFORM       Default platform binding
+  AGENT_DEVICE_SCREENSHOT_SCALE  Default screenshot scale factor
+  AGENT_DEVICE_SESSION_LOCK   Bound-session conflict mode
+  AGENT_DEVICE_DAEMON_BASE_URL  Connect to remote daemon
+  AGENT_DEVICE_DAEMON_AUTH_TOKEN  Remote daemon service/API token
+  AGENT_DEVICE_DAEMON_STARTUP_TIMEOUT_MS  Local daemon startup ceiling (default 120000)
+  AGENT_DEVICE_CLOUD_BASE_URL  Bridge/control-plane API origin for cloud auth and /api-keys
+
+Examples:
+  agent-device open Settings --platform ios
+  agent-device open https://example.com --platform web
+  agent-device snapshot -i
+  agent-device fill @e3 "test@example.com"
+  agent-device replay ./session.ad
+  agent-device wait absent 'label="Loading..."' 3000
+  agent-device test ./suite --platform android
+
+
+Related:
+  agent-device help <command>   command-specific flags
+  agent-device help manual-qa   routine QA loop
+  agent-device help workflow    full automation reference
+
+$ agent-device help record
+Usage:
+  agent-device record start [path] [--scope <app|device|system>] [--fps <n>] [--quality <medium|high>] [--hide-touches] | record stop | record contact-sheet <video.mp4> [--out <sheet.png>]
+
+Start or stop a screen recording for the active app session or, where supported, the selected device, or build a contact-sheet PNG from a recording already exported. Long Android recordings can return multiple video artifacts; HarmonyOS supports whole-screen recording on physical devices. The default --scope app requires an active app session from open <app>; use --scope device/system to explicitly request whole-screen recording where the selected backend supports it. Android record start publishes a durable device manifest, recordings longer than the 180s adb screenrecord limit are returned as multiple MP4 chunks while the daemon stays alive, and daemon-restart recovery uses only manifest-owned chunks. Android screenrecord encodes a frame only when the screen changes, so a clip can end at the last frame the recorder encoded instead of at record stop; durationMs is host wall clock from record start until the export finished, and capturedDurationMs reports the video timeline when it can be measured, with a warning naming how much of the window that video covers. An Android manifest left by an unreachable recording is retired on the next start once its recorders are proven gone; one still owned refuses with non-retriable DEVICE_IN_USE and reason native_recovery_evidence_open naming the session to run record stop for, and a recorder that is still writing an artifact refuses with DEVICE_IN_USE and reason native_recording_artifact_claimed, which clears itself once that recorder ends at the 180s limit. HarmonyOS supports whole-screen recording on physical devices only: use --scope device/system; --fps, --quality, and --hide-touches are unsupported. Use --quality to choose medium or high export quality on supported backends. The touch overlay renders at most 30 frames a second, or at --fps when lower; a lower --fps makes record stop faster on a long recording, and an overlay export that runs past its budget returns the raw video with an overlayWarning. An iOS simulator host recording lock returns non-retriable DEVICE_IN_USE with reason apple_simulator_recording_busy. Stop the recording in its owning session; if a dead recorder left the host locked, ask the host operator to restart the CoreSimulator stream service. A record stop that cannot produce its export keeps what a retry reads back — on Android the device-side artifact and the native manifest — leaves the recording manifest of that session open, and returns its own error, so retry record stop in that session; only closing the session disposes them. Every stopped recording also reports what became of its recorder and of the file that recorder writes to: recorder is confirmed, or lost when the session holding it died, and nativePathDisposition is retirable while that file still owes a removal or retired once its removal was verified. Both are optional disclosures, not failures; ADR 0024 declares further states (unconfirmed, pending) for the steps that gain those probes, and no stop reports them yet. record contact-sheet <video.mp4> [--out <sheet.png>] is a local report over a file you already exported: it decodes frames out of that MP4 and writes one PNG holding the cells where the screen visibly changed, each labeled with its elapsed time on the clip timeline. It needs no session and no device, rebuilds any past recording, and works for every backend that exports MP4; a WebM recording is refused with reason contact_sheet_container_unsupported. The sample grid is bounded and spread across the whole clip, so it reports coverage rather than a review: a flash that opens and closes entirely between two sample times is not in the sheet, which is why the result also reports how many times it sampled and how many frames came back. Frame decoding is Apple AVFoundation tooling, so the command runs only on macOS hosts and refuses elsewhere with reason contact_sheet_unsupported_host.
+
+Command flags:
+  --fps <n>                   Record: target frames per second (iOS physical device runner); also lowers the touch-overlay rate, which never exceeds 30
+  --quality <medium|high>     Record: output quality preset; Android maps this to screenrecord bitrate, Limrun sessions map medium to recorder quality 5 and high to 8; Apple export always preserves the captured resolution, so it has no effect there. Legacy numeric values 5-7 map to medium; 8-10 map to high
+  --hide-touches              Record: skip touch-overlay post-processing for faster raw benchmark videos
+  --scope <app|device|system>  Record: app requires an active app session; device/system records the whole screen
+  --out <path>                Output path
+
+$ agent-device help screenshot
+Usage:
+  agent-device screenshot [path] [--out <path>] [--overlay-refs] [--crop-on <selector-expression>] [--pixel-density <n>] [--fullscreen, --full, -f] [--scale <0.01-1>] [--no-stabilize] [--normalize-status-bar]
+
+Capture a screenshot of the active app or web session. Choose the capture scope, density, size, or annotations through the corresponding input fields when needed. Web defaults to the viewport; use --fullscreen, --full, or -f for the entire page. iOS simulators default to 1x logical-point output; use --pixel-density to request a different screenshot density. macOS app sessions default to the app window; use --fullscreen for full desktop, --scale to downscale, --crop-on <selector> to crop the capture to the frame the selector resolves on the same screen (currently iOS simulators, Android emulators, and CoreDevice physical iPhones), --overlay-refs to annotate current refs, --normalize-status-bar for deterministic iOS simulator or Android chrome. Physical iPhone crop verification covers portrait CoreDevice/devicectl captures only. XCTest, runner fallback, and physical iPad crops are refused; landscape iPhone crop is unverified. Android captures immediately by default; --normalize-status-bar also waits for transient UI to fade, and --no-stabilize keeps capture immediate. With the native macOS backend, the front window is the app's frontmost visible, nonempty normal-level (layer-0) window on the current Space: floating palettes and app-modal alerts at window level 8 are skipped, and a sheet is captured as its own window. On macOS, any --surface other than app (desktop, menubar, frontmost-app) always captures the main display and refuses an explicit --fullscreen. On single-display iOS simulators and Android devices, the result reports displayRotation, the rotation the display rendered the capture in, when the device returns a reading in time; otherwise the field is absent.
+
+Command flags:
+  --out <path>                Output path
+  --overlay-refs              Screenshot: draw current snapshot refs and target rectangles onto the saved PNG; diff screenshot: also write a separate current-screen overlay guide
+  --crop-on <selector-expression>  Screenshot: crop the capture to the frame of the selector resolved on the same screen
+  --pixel-density <n>         Screenshot: output PNG pixel density in pixels per logical point (currently supported on iOS simulators)
+  --fullscreen, --full, -f    Screenshot: on web capture the full page; on macOS app sessions capture the full desktop instead of the app window
+  --scale <0.01-1>            Screenshot: resize both dimensions by this factor (or use AGENT_DEVICE_SCREENSHOT_SCALE)
+  --no-stabilize              Screenshot: capture immediately without Android status-bar stabilization (the default)
+  --normalize-status-bar      Screenshot: temporarily normalize iOS simulator or ADB-backed Android status-bar chrome for deterministic screenshot diffs; ADB-backed Android waits for transient UI to fade
+
+$ agent-device help open
+Usage:
+  agent-device open [appOrUrl] [url] [--activity <component>] [--launch-console <path>] [--launch-args <arg>] [--test-ime] [--no-test-ime] [--save-script [path]] [--force, --overwrite] [--no-record] [--relaunch] [--foreground] [--timeout <ms>] [--wait <ms>] [--surface app|frontmost-app|desktop|menubar] [--metro-host <host>] [--metro-port <port>] [--bundle-url <url>] [--launch-url <url>]
+
+Boot the selected device when needed, then open an app, deep link, or URL in a session. Use the app or URL inputs to choose what becomes the foreground automation target. Use --platform to bind URL/deep-link opens to the target platform. For iOS simulator initial stdout/stderr, put --launch-console <path> on this open command, for example agent-device open "Agent Device Tester" --platform ios --launch-console artifacts/launch-console.log. Expo Go/dev-client shells accept host + URL, for example agent-device open "Expo Go" exp://127.0.0.1:8081 --platform ios. macOS also supports --surface app|frontmost-app|desktop|menubar. --metro-host/--metro-port/--bundle-url choose the app's Metro server and save that address for later metro reload calls in the same session. A fresh open without Metro hints clears an older same-name binding; close also clears it. --launch-url supplies the app's launch URL; it does not select the reload server. On an iOS simulator without --launch-url, open connects a detected Expo development client through its expo-development-client URL. The app must declare a single exp+<slug> scheme that no other installed app owns. If detection is inconclusive, the app opens normally. Bare React Native apps receive their server settings before launch. On an iOS simulator, when --launch-url raises an "Open in <App>?" prompt that keeps open from seeing the app, open accepts it if the URL scheme belongs to the session app (data.launchConfirmation: "accepted"); if the scheme belongs to another installed app, the prompt stays on screen and open fails with details.reason launch_confirmation_foreign_app; if the scheme owner cannot be resolved because no single installed app owns it or the lookup failed, the prompt stays on screen and open returns with data.launchConfirmation: "unanswered", launchConfirmationReason url-owner-unresolved, and a warning; a prompt that is seen but not recognized is reported the same way with launchConfirmationReason alert-unrecognized and its own warning; in both cases inspect the warning and answer with alert get then alert accept; when agent-device cannot read whether a prompt is up at all (the alert read, the accept, or the runner itself failed, including after a re-hand of the URL), open stays green, reports no launchConfirmation plus data.launchConfirmationProbeFailure naming the failed step (alert-read, alert-accept, or runner), and appends a warning that says to check with alert get. The prompt is read whenever open cannot see the app afterwards, including on a slow host where the app's target discovery fails on its own deadline. When an accept leaves the app provably not running, open hands the same URL over once more and reads again; still not running, it fails with details.reason launch_confirmation_unanswered. A recognized prompt still visible after a failed accept also fails with this reason, even if the app is running behind it; answer it with alert accept or alert dismiss. A simulator openurl that CoreSimulator never answers fails within 20s with details.reason ios-simulator-openurl-timeout. Only the English prompt title with Cancel and Open buttons is recognized, so on a Simulator set to another language the prompt stays on screen. A prompt that appears after open has already seen the app is not answered; use alert accept. A device another session is holding refuses at once; add --wait <ms> to block up to that budget for it and only then fail with DEVICE_IN_USE naming the owning session.
+
+Command flags:
+  --force, --overwrite        Force replacement of existing state (connect: replace an active connection; --save-script: overwrite an existing target instead of refusing)
+  --surface app|frontmost-app|desktop|menubar  macOS session surface for open (defaults to app)
+  --metro-host <host>         Session-scoped Metro/debug host hint
+  --metro-port <port>         Session-scoped Metro/debug port hint; on an emulator/simulator the host defaults to the loopback alias, physical devices still need --metro-host
+  --bundle-url <url>          Session-scoped bundle URL hint
+  --launch-url <url>          Session-scoped deep link / launch URL hint
+  --test-ime                  open/test/replay: activate the headless Android test IME for deterministic Unicode text entry (default on for emulators; opt-in on real devices; on test/replay it applies to the sessions the flow opens)
+  --no-test-ime               open/test/replay: keep the real Android keyboard even on emulators (opt out of the headless test IME; on test/replay it applies to the sessions the flow opens)
+  --activity <component>      Android launch activity (package/Class, .Class, or Class) or HarmonyOS ability name; not for URL opens
+  --launch-console <path>     open: capture the initial iOS simulator launch console window to a file
+  --launch-args <arg>         open: repeatable launch argument forwarded verbatim to the platform launch command (iOS app process args; Android adb shell am start args). Linux and macOS reject the flag.
+  --save-script [path]        Arm evidence capture on open, publish the armed recording on close; close --save-script alone (without an armed open) is rejected — start with open --save-script, or use session save-script mid-session. Optional custom output path.
+  --relaunch                  open: terminate app process before launching it
+  --foreground                open: keep normal app/device selection and return an initial snapshot; without an app, resolve the sole running app on the sole booted iOS simulator
+  --no-record                 Do not record this action
+  --timeout <ms>              Boot/Open/Prepare: startup budget covering the device boot (and runner preparation for prepare). Replay/Snapshot/Test: maximum wall-clock time for the command or attempt. With --settle: the settle-wait deadline (default 10s)
+  --wait <ms>                 Open: wait up to n ms for a device another session is holding before failing with DEVICE_IN_USE
+
+$ agent-device help settings
+Usage:
+  agent-device settings <wifi|bluetooth|airplane|mobile-data|location|animations> <on|off> | settings location set <lat> <lon> | settings appearance <light|dark|toggle> | settings text-size [extra-small|small|medium|large|extra-large|extra-extra-large|extra-extra-extra-large|accessibility-medium|accessibility-large|accessibility-extra-large|accessibility-extra-extra-large|accessibility-extra-extra-extra-large] | settings <faceid|touchid> <match|nonmatch|enroll|unenroll> | settings fingerprint <match|nonmatch> | settings clear-app-state [app-id] | settings reset-keychain clear | settings permission <grant|deny|reset> <all|camera|microphone|photos|contacts|contacts-limited|notifications|calendar|location|location-always|media-library|motion|reminders|siri> [full|limited] | settings permission <grant|reset> <accessibility|screen-recording|input-monitoring> [--app <id-or-name>]
+
+Read or change supported operating-system settings, animation scales, appearance, or app permissions on the selected target. Platform support varies by setting and action. A bare readable setting reads the value the target holds. A target that does not serve a setting refuses it with UNSUPPORTED_OPERATION before anything changes.
+
+Settings:
+  wifi: Android switches Wi-Fi with svc wifi; an Apple simulator overrides only its status bar.
+  bluetooth: Android over adb turns its Bluetooth adapter on or off with svc bluetooth, from Android 8.1. It reports the bluetooth state the device holds afterwards, or fails with bluetooth-not-applied or bluetooth-unreadable. A device without an adapter refuses with android_bluetooth_adapter_missing, and an adapter on a build older than 8.1 with android_bluetooth_command_unavailable, before anything changes. --app is refused.
+  airplane: Android applies it through the connectivity service (Android 11+) and reports the airplaneMode that service holds; older builds fail without changing anything. An Apple simulator overrides only its status bar.
+  mobile-data: Android only. Runs svc data and reports the stored mobileData state, or fails with mobile-data-not-applied or mobile-data-unreadable. Multi-SIM read-back is not covered yet, and --app is refused.
+  location: on|off writes Android's device-wide location_mode, and on an Apple simulator grants or revokes the app's location permission. set <lat> <lon> moves the device's own coordinates on Apple simulators and Android emulators.
+  animations: Android sets its window, transition, and animator duration scales to 1 or 0.
+  appearance: Switches to light or dark mode, or toggles it, on Android, Apple simulators, and the macOS host.
+  text-size: Reads the preferred text size without a category and applies one with it, on iPhone and iPad simulators (simctl content size) and Android (system font_scale). Android has no ladder of its own: a read names the nearest rung and reports the multiplier as platformValue. A running app adopts a new size at its next configuration change, so relaunch it.
+  faceid: Simulates Face ID on iPhone and iPad simulators.
+  touchid: Simulates Touch ID on iPhone and iPad simulators.
+  fingerprint: Simulates a fingerprint touch on Android emulators, and on devices that expose cmd fingerprint.
+  clear-app-state: Clears the data of the positional app, the --app app, or the session app, and refuses two different apps. It leaves the keychain alone. An app with no data container, such as a simulator system app, refuses with app-no-data-container.
+  reset-keychain: Resets the whole iOS simulator keychain, for every app on it: simctl has no per-app reset. A fresh-install reset needs this and clear-app-state; relaunch the app afterwards to see it signed out.
+  permission: Changes a permission of the --app app or the session app. An iOS simulator resolves --app to an installed bundle id or display name, Android to an installed package, and a Limrun iOS session only through the settings alias. On Android, deny|reset of a held permission kills a running app; the response reports priorGrantState and warns, and open <app> --relaunch restores it. Android needs a resolvable foreground user and changes nothing without one. On the macOS host, grant|reset change the host TCC grants for the three desktop targets and take no --app.
+
+Command flags:
+  --app <id-or-name>  Target an app without opening it: doctor verifies an installed app by id or name; settings applies an app-scoped change (permission, iOS location) to a bundle id or package

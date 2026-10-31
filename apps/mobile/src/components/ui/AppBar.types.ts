@@ -68,6 +68,8 @@ export interface AppBarProps {
     readonly onPress?: () => void;
   };
   readonly hideBottomBorder?: boolean;
+  /** Android: one title row with the subtitle inline. iOS ignores it. */
+  readonly compact?: boolean;
   readonly trailing?: ReactNode;
   readonly matchSearchSurface?: boolean;
   readonly options?: AppNativeStackNavigationOptions;

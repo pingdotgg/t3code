@@ -11,9 +11,9 @@ import * as DateTime from "effect/DateTime";
 import {
   cancelledRosterTaskWork,
   cancelledTurnItemWork,
+  isAwaitedWork,
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
-  restartCancelledBackgroundWorkNote,
   restartContinuationNote,
   mergeRestartCancelledBackgroundWork,
 } from "./RestartBackgroundNote.ts";
@@ -85,32 +85,52 @@ it("delivers a resumed queued run's note even after a higher-ordinal run", () =>
   );
 });
 
-it("bounds the note so it cannot crowd out the turn's context", () => {
-  const work = Array.from({ length: 25 }, (_, index) => ({
-    kind: "shell" as const,
-    label: `sleep ${index}`,
-  }));
-  const note = restartCancelledBackgroundWorkNote(work);
-  assert.lengthOf(note.split("\n"), 12);
-  assert.isTrue(note.endsWith("- and 15 more"));
-  const command = cancelledTurnItemWork({
-    type: "command_execution",
-    input: "x".repeat(10_000),
-    title: null,
-  } as never);
-  assert.isAtMost(command?.label.length ?? 0, 160);
-});
-
-it("bounds roster task labels including a long task id", () => {
-  const work = cancelledRosterTaskWork({
+// regression: #19750 wake threads whose subagents' background work a restart cut
+it("names a lost subagent by the id the agent resumes it with", () => {
+  const ownShell = cancelledRosterTaskWork({
     kind: "command",
-    taskId: "t".repeat(400),
-    description: "d".repeat(400),
+    taskId: "shell-1",
+    description: "sleep 150",
+    parentTaskId: "agent-1",
   });
-  assert.equal(work.kind, "shell");
-  assert.lengthOf(work.label, 160);
-  const idOnly = cancelledRosterTaskWork({ kind: "background_task", taskId: "t".repeat(400) });
-  assert.lengthOf(idOnly.label, 160);
+  assert.deepEqual(ownShell, {
+    kind: "subagent",
+    label: "sleep 150 (subagent agent-1)",
+    id: "agent-1",
+  });
+  assert.isTrue(isAwaitedWork(ownShell));
+  const long = cancelledRosterTaskWork({
+    kind: "command",
+    taskId: "shell-1",
+    description: "d".repeat(400),
+    parentTaskId: "agent-1",
+  }).label;
+  assert.lengthOf(long, 160);
+  assert.isTrue(long.endsWith("(subagent agent-1)"));
+  const longId = cancelledRosterTaskWork({
+    kind: "command",
+    taskId: "shell-1",
+    parentTaskId: "a".repeat(400),
+  }).label;
+  assert.lengthOf(longId, 160);
+  assert.isFalse(isAwaitedWork(cancelledRosterTaskWork({ kind: "command", taskId: "shell-2" })));
+  assert.isTrue(
+    isAwaitedWork(cancelledRosterTaskWork({ kind: "command", taskId: "tests", awaited: true })),
+  );
+  assert.isFalse(isAwaitedWork(cancelledRosterTaskWork({ kind: "monitor", taskId: "watchdog" })));
+  assert.isTrue(
+    isAwaitedWork(cancelledRosterTaskWork({ kind: "monitor", taskId: "ci", awaited: true })),
+  );
+  assert.equal(
+    cancelledTurnItemWork({
+      id: "item-1",
+      type: "subagent",
+      origin: "provider_native",
+      title: "Review",
+      nativeItemRef: { driver: "claudeAgent", nativeId: "agent-1", strength: "strong" },
+    } as never)?.label,
+    "Review (id agent-1)",
+  );
 });
 
 it("keeps separate cancelled tasks that share a kind and label", () => {

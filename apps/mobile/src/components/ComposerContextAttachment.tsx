@@ -1,11 +1,17 @@
+import { Button } from "./ui/Button";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { AsyncResult } from "effect/reactivity";
 import * as Dialog from "./ui/Dialog";
 import type { ComposerContextRecord, EnvironmentId } from "@t3tools/contracts";
 import { Pressable, View } from "react-native";
 import { Image } from "expo-image";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useId, useState } from "react";
 import type { DraftComposerAttachment } from "../lib/composerImages";
 import { composerAttachmentInlineUri, isFileBackedComposerAttachment } from "../lib/composerImages";
-import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
+import {
+  loadLocalAttachmentPreview,
+  useLocalAttachmentPreview,
+} from "../lib/localAttachmentPreview";
 import { downloadAndShareAttachment } from "../lib/attachmentDownload";
 import { assetImageSource } from "../lib/assetImageSource";
 import { useAssetUrlState, useRefreshAssetUrl } from "../state/assets";
@@ -20,14 +26,11 @@ export function ComposerContextAttachment(props: {
 }) {
   const { record, attachment } = props;
   const shareSourceIdentifier = useId();
-  const resource = useMemo(
-    () => ({
-      _tag: "attachment" as const,
-      attachmentId: record.attachmentId,
-      fileName: record.name,
-    }),
-    [record.attachmentId, record.name],
-  );
+  const resource = {
+    _tag: "attachment" as const,
+    attachmentId: record.attachmentId,
+    fileName: record.name,
+  };
   const local = attachment?.fileUri
     ? (attachment as DraftComposerAttachment & { fileUri: string })
     : undefined;
@@ -35,60 +38,44 @@ export function ComposerContextAttachment(props: {
   const remoteEnvironmentId = local || inlineUri ? null : (props.environmentId ?? null);
   const asset = useAssetUrlState(remoteEnvironmentId, resource);
   const refresh = useRefreshAssetUrl(remoteEnvironmentId, resource);
-  const [localUri, setLocalUri] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const localPreview = useLocalAttachmentPreview(local ?? null);
+  const error = localPreview.error ? "The local file is unavailable. Attach it again." : null;
   const [sharing, setSharing] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
-  useEffect(() => {
-    if (!local) return;
-    const controller = new AbortController();
-    let dispose: (() => void) | undefined;
-    void loadLocalAttachmentPreview(local, controller.signal)
-      .then((preview) => {
-        if (!preview) return;
-        if (controller.signal.aborted) return preview.dispose();
-        dispose = preview.dispose;
-        setLocalUri(preview.uri);
-        setError(null);
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setError("The local file is unavailable. Attach it again.");
-      });
-    return () => {
-      controller.abort();
-      dispose?.();
-    };
-  }, [local]);
-  const uri = local ? localUri : (inlineUri ?? (asset._tag === "Success" ? asset.url : null));
+  const uri = local
+    ? localPreview.uri
+    : (inlineUri ?? (asset._tag === "Success" ? asset.url : null));
   const share = async () => {
     if (sharing) return;
     setSharing(true);
     const controller = new AbortController();
-    try {
+    const result = await settlePromise(async () => {
       if (local) {
         const preview = await loadLocalAttachmentPreview(local, controller.signal);
-        try {
-          await preview?.share(controller.signal, shareSourceIdentifier);
-        } finally {
-          preview?.dispose();
-        }
-      } else {
-        const url = await refresh();
-        if (!url) throw new Error("Reconnect to the environment and try again.");
-        await downloadAndShareAttachment({
-          url,
-          attachment: record,
-          signal: controller.signal,
-          sourceIdentifier: shareSourceIdentifier,
-        });
+        if (!preview) return;
+        const shared = await settlePromise(() =>
+          preview.share(controller.signal, shareSourceIdentifier),
+        );
+        preview.dispose();
+        if (AsyncResult.isFailure(shared)) throw squashAtomCommandFailure(shared);
+        return;
       }
-    } catch (cause) {
+      const url = await refresh();
+      if (!url) throw new Error("Reconnect to the environment and try again.");
+      await downloadAndShareAttachment({
+        url,
+        attachment: record,
+        signal: controller.signal,
+        sourceIdentifier: shareSourceIdentifier,
+      });
+    });
+    setSharing(false);
+    if (AsyncResult.isFailure(result)) {
+      const cause = squashAtomCommandFailure(result);
       Dialog.alert(
         "Could not open attachment",
         cause instanceof Error ? cause.message : "Try again.",
       );
-    } finally {
-      setSharing(false);
     }
   };
   return (
@@ -117,16 +104,14 @@ export function ComposerContextAttachment(props: {
         </Text>
       ) : null}
       <PresentationSource identifier={shareSourceIdentifier}>
-        <Pressable
-          accessibilityRole="button"
+        <Button
+          label={sharing ? "Opening attachment…" : "Open or share attachment"}
+          tone="secondary"
           disabled={sharing}
           onPress={() => void share()}
-          className="rounded-xl bg-subtle p-4"
-        >
-          <Text className="text-foreground">
-            {sharing ? "Opening attachment…" : "Open or share attachment"}
-          </Text>
-        </Pressable>
+          fullWidth
+          loading={sharing}
+        />
       </PresentationSource>
       {previewOpen && record.kind === "image" && uri ? (
         <FilePreviewModal

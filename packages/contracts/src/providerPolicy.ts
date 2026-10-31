@@ -44,9 +44,6 @@ export const ProviderRequestKind = Schema.Literals([
 ]);
 export type ProviderRequestKind = typeof ProviderRequestKind.Type;
 
-export const AssistantDeliveryMode = Schema.Literals(["buffered", "streaming"]);
-export type AssistantDeliveryMode = typeof AssistantDeliveryMode.Type;
-
 export const ProviderApprovalDecision = Schema.Literals([
   "accept",
   "acceptForSession",
@@ -55,6 +52,11 @@ export const ProviderApprovalDecision = Schema.Literals([
   "cancel",
 ]);
 export type ProviderApprovalDecision = typeof ProviderApprovalDecision.Type;
+
+// Why an approval reached the user although the thread runs with full access:
+// the user's own ask rule, or a check the provider enforces even when bypassed.
+export const ProviderApprovalFullAccessOverride = Schema.Literals(["ask_rule", "provider_check"]);
+export type ProviderApprovalFullAccessOverride = typeof ProviderApprovalFullAccessOverride.Type;
 
 export const ProviderApprovalOption = Schema.Struct({
   decision: ProviderApprovalDecision,

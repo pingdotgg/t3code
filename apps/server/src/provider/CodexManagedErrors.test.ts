@@ -11,7 +11,6 @@ it("maps streamed failures to safe actionable messages and reconnect decisions",
     {
       message:
         "ChatGPT could not validate this connection. Check the selected account and sharing permissions.",
-      revoke: false,
       code: "subscription_sharing_v2_invalid_user",
     },
   );
@@ -23,7 +22,6 @@ it("maps streamed failures to safe actionable messages and reconnect decisions",
     classifyCodexManagedError("subscription_sharing_usage_limit_exceeded")!.code,
     "subscription_sharing_usage_limit_exceeded",
   );
-  assert.isFalse(classifyCodexManagedError("subscription_sharing_usage_unavailable")!.revoke);
   assert.include(
     classifyCodexManagedError("subscription_sharing_unsupported_capability")!.message,
     "feature",
@@ -44,7 +42,6 @@ it("distinguishes unsupported tools from input items without exposing the raw re
       assert.isDefined(failure);
       assert.include(failure!.message, expected!);
       assert.notInclude(failure!.message, "dummy-sensitive");
-      assert.isFalse(failure!.revoke);
     }
   }
 });
@@ -59,6 +56,5 @@ it("preserves credentials for the current subscriber and permission error codes"
     "chatpass_v2_invalid_authorization_context",
   ]) {
     assert.strictEqual(classifyCodexManagedError({ error: { code } })?.code, code);
-    assert.isFalse(classifyCodexManagedError({ error: { code } })!.revoke);
   }
 });

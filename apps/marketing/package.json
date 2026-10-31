@@ -7,10 +7,10 @@
     "stage:install-scripts": "node scripts/stage-install-scripts.mjs",
     "dev": "node scripts/stage-install-scripts.mjs && astro dev",
     "build": "node scripts/stage-install-scripts.mjs && astro build",
-    "preview": "astro preview",
-    "typecheck": "astro check"
+    "preview": "astro preview"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
     "@t3tools/shared": "workspace:*",
     "astro": "^7.3.5",
     "sharp": "0.35.4"

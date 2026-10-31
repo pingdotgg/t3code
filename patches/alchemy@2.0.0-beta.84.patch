@@ -1,0 +1,13 @@
+diff --git a/lib/Test/Vitest.js b/lib/Test/Vitest.js
+index 48cce71..ae67044 100644
+--- a/lib/Test/Vitest.js
++++ b/lib/Test/Vitest.js
+@@ -3,7 +3,7 @@ import { it } from "@effect/vitest";
+ import * as Effect from "effect/Effect";
+ import * as Exit from "effect/Exit";
+ import * as Scope from "effect/Scope";
+-import { afterAll as vitestAfterAll, afterEach as vitestAfterEach, beforeAll as vitestBeforeAll, beforeEach as vitestBeforeEach, } from "vitest";
++import { afterAll as vitestAfterAll, afterEach as vitestAfterEach, beforeAll as vitestBeforeAll, beforeEach as vitestBeforeEach, } from "vite-plus/test";
+ import * as Core from "./Core.js";
+ export { executeWhenReady, getWhenReady, guardContentType, guardedFetchLayer, rpcClientLayer, WorkerNotReady, } from "./Http.js";
+ export const defaultStage = Core.defaultStage;

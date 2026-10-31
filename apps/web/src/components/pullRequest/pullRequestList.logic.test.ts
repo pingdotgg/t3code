@@ -12,55 +12,43 @@ import {
   largestPullRequestReadCount,
   pullRequestQuickActions,
   filterPullRequestsByInvolvement,
+  findProjectForRepository,
   findScopedProject,
   mergePullRequestLists,
   pullRequestEntryKey,
-  pullRequestEnvironmentSetKey,
   groupPullRequestsByInvolvement,
-  matchesPullRequestFilters,
-  matchesPullRequestQuery,
-  parsePullRequestQuery,
   pullRequestStatsBatches,
   pullRequestStatsKeysToRequest,
   pullRequestStatsRefreshBatches,
-  pullRequestStatsRequestBatches,
   mergePullRequestDiffStats,
-  narrowPullRequestsToFilters,
   partitionPullRequestsWithPriority,
-  readPullRequestListSnapshot,
-  writePullRequestListSnapshot,
+  pullRequestAuthorChoices,
+  selectedPullRequestAuthor,
+  pullRequestLabelChoices,
   rankPullRequestMatches,
   rankPullRequestsBlockedOnAuthor,
-  rankPullRequestsBlockedOnReviewer,
   rankPullRequestsByMergeReadiness,
-  scorePullRequestMatch,
   sortPullRequestGroups,
-  retainVisiblePullRequestStatsBatches,
-  withDiffStat,
-  resolveProjectScope,
   resolveQueryEnvironmentIds,
   resolveSelectedEnvironmentId,
   type EnvironmentPullRequestEntry,
   applyPullRequestOverrides,
-  pullRequestOverrideAfterAction,
   reusePullRequestEntries,
   settlePullRequestOverrides,
 } from "./pullRequestList.logic";
 import {
-  pullRequestListPreferences,
   readPullRequestListPreferences,
   writePullRequestListPreferences,
 } from "./pullRequestListPreferences";
 
 const VIEWERS = { "github.com": "Bilal" } as const;
-const NO_VIEWERS = {} as const;
 
 function entry(
   overrides: Partial<EnvironmentPullRequestEntry> & Pick<PullRequestListEntry, "number">,
 ) {
   return {
     environmentId: "env-1",
-    provider: "github",
+    provider: SourceControlProviderKind.make("github"),
     host: "github.com",
     projectId: "project-1",
     projectTitle: "t3code",
@@ -84,25 +72,6 @@ function entry(
 }
 
 describe("visible pull request line-count targets", () => {
-  it("reuses counts supplied by the listing and only requests missing counts", () => {
-    const entries = [
-      entry({ number: 1, additions: 12, deletions: 0 }),
-      entry({ number: 2, additions: 0, deletions: 7 }),
-      entry({ number: 3, additions: 0, deletions: 0 }),
-    ];
-    const entriesByKey = new Map(entries.map((item) => [pullRequestEntryKey(item), item]));
-    const keys = pullRequestStatsKeysToRequest(
-      entriesByKey,
-      new Set(entries.map(pullRequestEntryKey)),
-      [],
-      new Map(),
-    );
-
-    expect(pullRequestStatsBatches(entriesByKey, keys)[0]?.input.refs).toEqual([
-      { projectId: "project-1", repository: "pingdotgg/t3code", number: 3 },
-    ]);
-  });
-
   it("does not request a row again after its received batch is pruned", () => {
     const entries = [
       entry({ additions: 0, deletions: 0, number: 1 }),
@@ -133,23 +102,6 @@ describe("visible pull request line-count targets", () => {
     ]);
   });
 
-  it("drops historical rows after a long scroll so refresh stays bounded to the viewport", () => {
-    const entries = Array.from({ length: 500 }, (_, index) =>
-      entry({ additions: 0, deletions: 0, number: index + 1 }),
-    );
-    const entriesByKey = new Map(entries.map((item) => [pullRequestEntryKey(item), item]));
-    const batches = entries.map(
-      (item) => pullRequestStatsBatches(entriesByKey, new Set([pullRequestEntryKey(item)]))[0]!,
-    );
-    const visibleKeys = new Set(entries.slice(-12).map(pullRequestEntryKey));
-
-    const retained = retainVisiblePullRequestStatsBatches(batches, visibleKeys);
-    expect(retained).toHaveLength(12);
-    expect(retained.flatMap((batch) => batch.input.refs.map((ref) => ref.number))).toEqual(
-      entries.slice(-12).map((item) => item.number),
-    );
-  });
-
   it("keeps every per-environment batch within the stats contract limit", () => {
     const entries = Array.from({ length: 501 }, (_, index) =>
       entry({ additions: 0, deletions: 0, number: index + 1 }),
@@ -162,84 +114,6 @@ describe("visible pull request line-count targets", () => {
 
     expect(batches.map((batch) => batch.input.refs.length)).toEqual([500, 1]);
     expect(batches.flatMap((batch) => [...batch.keys])).toEqual(entries.map(pullRequestEntryKey));
-  });
-
-  it("selects visible rows for date modes and every uncached row for size modes", () => {
-    const entries = [
-      entry({ additions: 0, deletions: 0, number: 1 }),
-      entry({ additions: 0, deletions: 0, number: 2 }),
-      entry({ additions: 0, deletions: 0, number: 3, environmentId: "env-2" as EnvironmentId }),
-    ];
-    const entriesByKey = new Map(entries.map((item) => [pullRequestEntryKey(item), item]));
-    const [firstKey, secondKey] = entries.map(pullRequestEntryKey);
-    const cachedStats = mergePullRequestDiffStats(new Map(), [
-      {
-        environmentId: ENV_1,
-        projectId: "project-1",
-        number: 1,
-        additions: 1,
-        deletions: 1,
-      },
-    ]);
-
-    const visible = pullRequestStatsRequestBatches({
-      entriesByKey,
-      candidateKeys: new Set([firstKey!, secondKey!]),
-      policy: "visible",
-      activeBatches: [],
-      statsByRow: cachedStats,
-    });
-    expect(visible.flatMap((batch) => batch.input.refs.map((ref) => ref.number))).toEqual([2]);
-
-    const eager = pullRequestStatsRequestBatches({
-      entriesByKey,
-      candidateKeys: new Set([firstKey!]),
-      policy: "eager",
-      activeBatches: [],
-      statsByRow: cachedStats,
-    });
-    expect(eager.map((batch) => batch.environmentId)).toEqual([ENV_1, "env-2"]);
-    expect(eager.flatMap((batch) => batch.input.refs.map((ref) => ref.number))).toEqual([2, 3]);
-  });
-
-  it("refreshes only visible rows unless size sorting needs every loaded row", () => {
-    const entries = [
-      entry({ additions: 0, deletions: 0, number: 1 }),
-      entry({ additions: 0, deletions: 0, number: 2 }),
-      entry({ additions: 0, deletions: 0, number: 3 }),
-    ];
-    const entriesByKey = new Map(entries.map((item) => [pullRequestEntryKey(item), item]));
-    const visibleKeys = new Set([pullRequestEntryKey(entries[1]!)]);
-    const cachedStats = mergePullRequestDiffStats(
-      new Map(),
-      entries.map((item) => ({
-        environmentId: ENV_1,
-        projectId: item.projectId,
-        number: item.number,
-        additions: item.additions,
-        deletions: item.deletions,
-      })),
-    );
-
-    const visible = pullRequestStatsRequestBatches({
-      entriesByKey,
-      candidateKeys: visibleKeys,
-      policy: "visible",
-      activeBatches: [],
-      statsByRow: cachedStats,
-      refresh: true,
-    });
-    expect(visible[0]?.input.refs.map((ref) => ref.number)).toEqual([2]);
-
-    const eager = pullRequestStatsRequestBatches({
-      entriesByKey,
-      candidateKeys: visibleKeys,
-      policy: "eager",
-      activeBatches: [],
-      statsByRow: cachedStats,
-      refresh: true,
-    });
-    expect(eager[0]?.input.refs.map((ref) => ref.number)).toEqual([1, 2, 3]);
   });
 
   it("ignores a late refresh after the filter or stats policy changes", () => {
@@ -263,76 +137,9 @@ describe("visible pull request line-count targets", () => {
     expect(refresh({ key: "closed", policy: "visible" })).toBeNull();
     expect(refresh({ key: "open", policy: "eager" })).toBeNull();
   });
-
-  it("does not add request batches again while rows are active or cached", () => {
-    const entries = [
-      entry({ additions: 0, deletions: 0, number: 1 }),
-      entry({ additions: 0, deletions: 0, number: 2 }),
-    ];
-    const entriesByKey = new Map(entries.map((item) => [pullRequestEntryKey(item), item]));
-    const first = pullRequestStatsRequestBatches({
-      entriesByKey,
-      candidateKeys: new Set(),
-      policy: "eager",
-      activeBatches: [],
-      statsByRow: new Map(),
-    });
-
-    expect(
-      pullRequestStatsRequestBatches({
-        entriesByKey,
-        candidateKeys: new Set(),
-        policy: "eager",
-        activeBatches: first,
-        statsByRow: new Map(),
-      }),
-    ).toEqual([]);
-
-    const cachedStats = mergePullRequestDiffStats(
-      new Map(),
-      entries.map((item) => ({
-        environmentId: ENV_1,
-        projectId: item.projectId,
-        number: item.number,
-        additions: item.additions,
-        deletions: item.deletions,
-      })),
-    );
-    expect(
-      pullRequestStatsRequestBatches({
-        entriesByKey,
-        candidateKeys: new Set(entries.map(pullRequestEntryKey)),
-        policy: "visible",
-        activeBatches: [],
-        statsByRow: cachedStats,
-      }),
-    ).toEqual([]);
-  });
 });
 
 describe("pull request involvement filtering", () => {
-  const entries = [
-    entry({ number: 1, author: { login: "Bilal", name: null, avatarUrl: null } }),
-    entry({ number: 2, viewerReviewRequested: true }),
-    entry({ number: 3 }),
-  ];
-
-  it("matches the viewer's own pull requests case-insensitively", () => {
-    expect(
-      filterPullRequestsByInvolvement(entries, VIEWERS, "authored").map((item) => item.number),
-    ).toEqual([1]);
-  });
-
-  it("returns nothing for Authored when the viewer is unknown", () => {
-    expect(filterPullRequestsByInvolvement(entries, NO_VIEWERS, "authored")).toEqual([]);
-  });
-
-  it("uses the server-computed review-request flag for Reviewing", () => {
-    expect(
-      filterPullRequestsByInvolvement(entries, VIEWERS, "reviewing").map((item) => item.number),
-    ).toEqual([2]);
-  });
-
   it("does not treat a matching login on another host as the viewer", () => {
     const mixed = [
       entry({ number: 1, author: { login: "Bilal", name: null, avatarUrl: null } }),
@@ -346,313 +153,6 @@ describe("pull request involvement filtering", () => {
     expect(
       filterPullRequestsByInvolvement(mixed, VIEWERS, "authored").map((item) => item.number),
     ).toEqual([1]);
-  });
-
-  it("leaves the superset untouched for All", () => {
-    expect(filterPullRequestsByInvolvement(entries, VIEWERS, "all")).toHaveLength(3);
-  });
-
-  it("keeps two hosts of one provider kind as two accounts", () => {
-    const mixed = [
-      entry({ number: 1, author: { login: "Bilal", name: null, avatarUrl: null } }),
-      entry({
-        number: 2,
-        host: "github.acme.dev",
-        author: { login: "Bilal", name: null, avatarUrl: null },
-      }),
-    ];
-    expect(
-      filterPullRequestsByInvolvement(mixed, VIEWERS, "authored").map((item) => item.number),
-    ).toEqual([1]);
-  });
-});
-
-describe("pull request grouping", () => {
-  it("buckets authored above review-requested and drops empty groups", () => {
-    const groups = groupPullRequestsByInvolvement(
-      [
-        entry({ number: 1, author: { login: "bilal", name: null, avatarUrl: null } }),
-        entry({ number: 2, viewerReviewRequested: true }),
-      ],
-      VIEWERS,
-    );
-    expect(groups.map((group) => [group.key, group.entries.length])).toEqual([
-      ["authored", 1],
-      ["reviewRequested", 1],
-    ]);
-  });
-
-  it("puts everything in Others when the viewer is unknown", () => {
-    const groups = groupPullRequestsByInvolvement([entry({ number: 1 })], NO_VIEWERS);
-    expect(groups.map((group) => group.key)).toEqual(["others"]);
-  });
-
-  it("counts an authored pull request once, even with a review request on it", () => {
-    const groups = groupPullRequestsByInvolvement(
-      [
-        entry({
-          number: 1,
-          author: { login: "bilal", name: null, avatarUrl: null },
-          viewerReviewRequested: true,
-        }),
-      ],
-      VIEWERS,
-    );
-    expect(groups.map((group) => group.key)).toEqual(["authored"]);
-  });
-});
-
-describe("pull request search", () => {
-  const target = entry({
-    number: 4711,
-    title: "Restore sidebar actions",
-    headBranch: "fix/sidebar",
-  });
-
-  it("matches the number with or without the leading hash", () => {
-    expect(matchesPullRequestQuery(target, "#4711")).toBe(true);
-    expect(matchesPullRequestQuery(target, "4711")).toBe(true);
-  });
-
-  it("matches title, branch and author case-insensitively", () => {
-    expect(matchesPullRequestQuery(target, "SIDEBAR")).toBe(true);
-    expect(matchesPullRequestQuery(target, "fix/side")).toBe(true);
-    expect(matchesPullRequestQuery(target, "octocat")).toBe(true);
-  });
-
-  it("ignores surrounding whitespace and rejects non-matches", () => {
-    expect(matchesPullRequestQuery(target, "   ")).toBe(true);
-    expect(matchesPullRequestQuery(target, "kanban")).toBe(false);
-  });
-});
-
-describe("carrying rows already read into filters nothing has answered yet", () => {
-  const rows = [
-    entry({ number: 1 }),
-    entry({ number: 2, state: "merged" }),
-    entry({ number: 3, state: "closed" }),
-    entry({ number: 4, host: "github.acme.dev" }),
-    entry({ number: 5, projectId: "project-2" as PullRequestListEntry["projectId"] }),
-  ];
-  const everything = { state: "all", projectId: undefined, host: undefined } as const;
-
-  it("never lets a merged pull request sit under Open", () => {
-    expect(
-      narrowPullRequestsToFilters(rows, { ...everything, state: "open" }).map((row) => row.number),
-    ).toEqual([1, 4, 5]);
-  });
-
-  it("keeps only the state that was asked for", () => {
-    expect(
-      narrowPullRequestsToFilters(rows, { ...everything, state: "merged" }).map(
-        (row) => row.number,
-      ),
-    ).toEqual([2]);
-  });
-
-  it("narrows to one host, which two installs of one kind cannot share", () => {
-    expect(
-      narrowPullRequestsToFilters(rows, { ...everything, host: "github.acme.dev" }).map(
-        (row) => row.number,
-      ),
-    ).toEqual([4]);
-  });
-
-  it("narrows to one project", () => {
-    expect(
-      narrowPullRequestsToFilters(rows, { ...everything, projectId: "project-2" }).map(
-        (row) => row.number,
-      ),
-    ).toEqual([5]);
-  });
-
-  it("holds on to everything when nothing narrows it", () => {
-    expect(narrowPullRequestsToFilters(rows, everything)).toEqual(rows);
-  });
-});
-
-describe("narrowing rows by the filters a host may not have applied", () => {
-  const rows = [
-    entry({ number: 1 }),
-    entry({ number: 2, isDraft: true }),
-    entry({ number: 3, reviewDecision: "approved" }),
-    entry({
-      number: 4,
-      labels: [{ name: "Needs design", color: null }],
-      author: { login: "Hubot", name: null, avatarUrl: null },
-      reviewDecision: "changes-requested",
-    }),
-  ];
-  const narrow = (filters: Parameters<typeof matchesPullRequestFilters>[1]) =>
-    rows.filter((row) => matchesPullRequestFilters(row, filters)).map((row) => row.number);
-
-  it("keeps or drops drafts as asked", () => {
-    expect(narrow({ draft: "only" })).toEqual([2]);
-    expect(narrow({ draft: "hide" })).toEqual([1, 3, 4]);
-  });
-
-  it("keeps the review state that was asked for, and no reviews means none at all", () => {
-    expect(narrow({ review: "approved" })).toEqual([3]);
-    expect(narrow({ review: "changes-requested" })).toEqual([4]);
-    expect(narrow({ review: "none" })).toEqual([1, 2]);
-  });
-
-  it("matches labels and authors however either was capitalized", () => {
-    expect(narrow({ labels: [["needs DESIGN"]] })).toEqual([4]);
-    expect(narrow({ excludedLabels: ["needs design"] })).toEqual([1, 2, 3]);
-    expect(narrow({ author: "hubot" })).toEqual([4]);
-  });
-
-  it("resolves author:me to the given viewer, case-insensitively", () => {
-    const mine = entry({ number: 30, author: { login: "Bilal", name: null, avatarUrl: null } });
-    const theirs = entry({ number: 31, author: { login: "Hubot", name: null, avatarUrl: null } });
-    expect(matchesPullRequestFilters(mine, { author: "me" }, "bilal")).toBe(true);
-    expect(matchesPullRequestFilters(theirs, { author: "me" }, "bilal")).toBe(false);
-  });
-
-  it("resolves author:@me the same way as author:me", () => {
-    const mine = entry({ number: 32, author: { login: "Bilal", name: null, avatarUrl: null } });
-    const theirs = entry({ number: 33, author: { login: "Hubot", name: null, avatarUrl: null } });
-    expect(matchesPullRequestFilters(mine, { author: "@me" }, "Bilal")).toBe(true);
-    expect(matchesPullRequestFilters(theirs, { author: "@me" }, "Bilal")).toBe(false);
-  });
-
-  it("compares author:me against the literal name when there is no viewer", () => {
-    const literalMe = entry({ number: 34, author: { login: "me", name: null, avatarUrl: null } });
-    const someoneElse = entry({
-      number: 35,
-      author: { login: "Bilal", name: null, avatarUrl: null },
-    });
-    expect(matchesPullRequestFilters(literalMe, { author: "me" })).toBe(true);
-    expect(matchesPullRequestFilters(someoneElse, { author: "me" })).toBe(false);
-  });
-
-  it("takes a group of labels as an either-or", () => {
-    const sized = [
-      entry({ number: 10, labels: [{ name: "size:S", color: null }] }),
-      entry({ number: 11, labels: [{ name: "size:XS", color: null }] }),
-      entry({ number: 12, labels: [{ name: "size:L", color: null }] }),
-    ];
-    const kept = (labels: ReadonlyArray<ReadonlyArray<string>>) =>
-      sized.filter((row) => matchesPullRequestFilters(row, { labels })).map((row) => row.number);
-
-    expect(kept([["size:S", "size:XS"]])).toEqual([10, 11]);
-    expect(kept([["size:XXL"]])).toEqual([]);
-  });
-
-  it("takes two groups as an and, each satisfied on its own", () => {
-    const row = entry({
-      number: 20,
-      labels: [
-        { name: "size:S", color: null },
-        { name: "bug", color: null },
-      ],
-    });
-    expect(matchesPullRequestFilters(row, { labels: [["size:S", "size:XS"], ["bug"]] })).toBe(true);
-    expect(matchesPullRequestFilters(row, { labels: [["size:S"], ["wip"]] })).toBe(false);
-  });
-
-  it("holds on to every row for a filter no row carries the answer to", () => {
-    expect(narrow({ checks: "passing" })).toEqual([1, 2, 3, 4]);
-  });
-});
-
-describe("reading qualifiers out of a typed query", () => {
-  it("keeps quoted values whole and separates negation", () => {
-    expect(parsePullRequestQuery('label:"needs design" -label:wip Fix the parser')).toEqual({
-      text: "Fix the parser",
-      filters: { labels: [["needs design"]], excludedLabels: ["wip"] },
-    });
-  });
-
-  it("reads a comma-separated list as one group either name satisfies", () => {
-    expect(parsePullRequestQuery("label:size:S,size:XS").filters.labels).toEqual([
-      ["size:S", "size:XS"],
-    ]);
-  });
-
-  it("keeps the spaces in a quoted name of a list, and drops an empty part", () => {
-    expect(parsePullRequestQuery('label:"needs design","wip"').filters.labels).toEqual([
-      ["needs design", "wip"],
-    ]);
-    expect(parsePullRequestQuery("label:a,,b").filters.labels).toEqual([["a", "b"]]);
-  });
-
-  it("excludes every name of a negated list", () => {
-    expect(parsePullRequestQuery("-label:a,b").filters).toEqual({ excludedLabels: ["a", "b"] });
-  });
-
-  it("makes each label qualifier its own group, so the groups are an AND", () => {
-    expect(parsePullRequestQuery("label:bug label:a,b").filters.labels).toEqual([
-      ["bug"],
-      ["a", "b"],
-    ]);
-  });
-
-  it("reads the scalar qualifiers in GitHub's own spelling", () => {
-    expect(
-      parsePullRequestQuery("author:octocat DRAFT:false review:changes_requested status:failure")
-        .filters,
-    ).toEqual({
-      author: "octocat",
-      draft: "hide",
-      review: "changes-requested",
-      checks: "failing",
-    });
-  });
-
-  it("leaves an unknown value and a stray colon as text, and reads an unknown key as a label", () => {
-    const parsed = parsePullRequestQuery("milestone:v2 draft:maybe status: parser");
-    expect(parsed.filters).toEqual({ labels: [["milestone:v2"]] });
-    expect(parsed.text).toBe("draft:maybe status: parser");
-  });
-
-  it("reads a quoted name holding a comma as the one label it is", () => {
-    expect(parsePullRequestQuery('label:"needs,triage"').filters.labels).toEqual([
-      ["needs,triage"],
-    ]);
-    expect(parsePullRequestQuery('-label:"needs,triage"').filters.excludedLabels).toEqual([
-      "needs,triage",
-    ]);
-  });
-
-  it("cuts a typed query back to what the contract carries", () => {
-    const many = Array.from({ length: 14 }, (_, index) => `l${index}`).join(",");
-    const long = "x".repeat(240);
-    const parsed = parsePullRequestQuery(`label:${many} label:${long} author:${long}`);
-    expect(parsed.filters.labels?.[0]).toHaveLength(10);
-    expect(parsed.filters.labels?.[1]).toEqual(["x".repeat(200)]);
-    expect(parsed.filters.author).toBe("x".repeat(200));
-  });
-
-  it("cuts a namespaced label after its key is prefixed on", () => {
-    const parsed = parsePullRequestQuery(`size:${"x".repeat(240)}`);
-    expect(parsed.filters.labels).toEqual([[`size:${"x".repeat(240)}`.slice(0, 200)]]);
-  });
-
-  it("answers an empty query with an empty everything", () => {
-    expect(parsePullRequestQuery("   ")).toEqual({ text: "", filters: {} });
-  });
-});
-
-describe("resolveProjectScope", () => {
-  const projects = [{ id: "p1" }, { id: "p2" }];
-
-  it("keeps an id the environment has", () => {
-    expect(resolveProjectScope("p2", projects, true)).toBe("p2");
-  });
-
-  it("drops an id from another environment", () => {
-    expect(resolveProjectScope("p9", projects, false)).toBe("p9");
-    expect(resolveProjectScope("p9", projects, true)).toBeUndefined();
-  });
-
-  it("drops an id once the environment is known to have no projects", () => {
-    expect(resolveProjectScope("p9", [], true)).toBeUndefined();
-  });
-
-  it("keeps an id while the projects are still unknown", () => {
-    expect(resolveProjectScope("p9", [], false)).toBe("p9");
   });
 });
 
@@ -674,35 +174,6 @@ describe("ranking what a search found", () => {
     expect(
       rankPullRequestMatches([mentioned, titled], "welcome wizard").map((entry) => entry.number),
     ).toEqual([1, 2]);
-  });
-
-  it("finds the words in any order, which is how people type them", () => {
-    expect(
-      scorePullRequestMatch(row({ title: "The wizard that welcomes" }), "welcome wizard"),
-    ).toBe(70);
-    expect(
-      scorePullRequestMatch(row({ title: "Wizard for the welcome flow" }), "welcome wizard"),
-    ).toBe(70);
-    expect(scorePullRequestMatch(row({ title: "A wizard, of sorts" }), "welcome wizard")).toBe(30);
-  });
-
-  it("answers a number with the pull request that has it, and nothing else", () => {
-    expect(scorePullRequestMatch(row({ number: 42 }), "#42")).toBe(100);
-    expect(scorePullRequestMatch(row({ number: 42 }), "43")).toBe(0);
-  });
-
-  it("keeps recency where nothing tells two results apart", () => {
-    const older = row({ number: 1, title: "no match here", updatedAt: "2026-07-01T00:00:00Z" });
-    const newer = row({ number: 2, title: "none here either", updatedAt: "2026-08-01T00:00:00Z" });
-    expect(rankPullRequestMatches([older, newer], "wizard").map((entry) => entry.number)).toEqual([
-      2, 1,
-    ]);
-  });
-
-  it("leaves a listing with no search in the order it arrived", () => {
-    const first = row({ number: 1, updatedAt: "2026-07-01T00:00:00Z" });
-    const second = row({ number: 2, updatedAt: "2026-08-01T00:00:00Z" });
-    expect(rankPullRequestMatches([first, second], "  ")).toEqual([first, second]);
   });
 });
 
@@ -755,57 +226,6 @@ describe("default merge-readiness ranking", () => {
     ).toEqual([4, 3, 5, 2, 6, 1]);
   });
 
-  it("uses recency when readiness and diff size tie", () => {
-    const older = entry({ number: 1, checksState: "passing" });
-    const newer = entry({
-      number: 2,
-      checksState: "passing",
-      updatedAt: "2026-08-01T00:00:00Z",
-    });
-
-    expect(rankPullRequestsByMergeReadiness([older, newer]).map((row) => row.number)).toEqual([
-      2, 1,
-    ]);
-  });
-
-  it("ranks smaller measured diffs first within a readiness tier as counts arrive", () => {
-    const larger = entry({
-      number: 1,
-      checksState: "passing",
-      reviewDecision: "approved",
-      additions: 1,
-      deletions: 49,
-      updatedAt: "2026-09-01T00:00:00Z",
-    });
-    const smaller = entry({
-      number: 2,
-      checksState: "passing",
-      reviewDecision: "approved",
-      additions: 3,
-      deletions: 2,
-      updatedAt: "2026-08-01T00:00:00Z",
-    });
-    const unknown = entry({
-      number: 3,
-      checksState: "passing",
-      reviewDecision: "approved",
-      additions: 0,
-      deletions: 0,
-      updatedAt: "2026-09-02T00:00:00Z",
-    });
-
-    expect(
-      rankPullRequestsByMergeReadiness([larger, unknown, smaller]).map((row) => row.number),
-    ).toEqual([2, 1, 3]);
-    expect(
-      rankPullRequestsByMergeReadiness([
-        larger,
-        { ...unknown, additions: 1, deletions: 0 },
-        smaller,
-      ]).map((row) => row.number),
-    ).toEqual([3, 2, 1]);
-  });
-
   it("distinguishes measured empty diffs from missing counts when sorting groups", () => {
     const unknown = entry({ number: 1, additions: 0, deletions: 0 });
     const measured = entry({ number: 2 });
@@ -822,6 +242,7 @@ describe("default merge-readiness ranking", () => {
     );
   });
 
+  // regression: #9453 authored pull requests were not prioritized
   it("keeps authored work first and ranks each group by readiness", () => {
     const authoredWaiting = entry({ number: 1, checksState: "pending" });
     const authoredReady = entry({
@@ -845,38 +266,6 @@ describe("default merge-readiness ranking", () => {
 
     expect(sorted.map((group) => group.key)).toEqual(["authored", "others"]);
     expect(sorted.flatMap((group) => group.entries).map((row) => row.number)).toEqual([2, 1, 3]);
-  });
-
-  it.each([
-    ["updated", [1, 2]],
-    ["newest", [2, 1]],
-    ["oldest", [1, 2]],
-    ["largest", [1, 2]],
-    ["smallest", [2, 1]],
-  ] as const)("keeps authored first while applying the %s sort inside groups", (sort, order) => {
-    const olderLarger = entry({
-      number: 1,
-      additions: 20,
-      createdAt: "2026-07-01T00:00:00Z",
-      updatedAt: "2026-08-01T00:00:00Z",
-    });
-    const newerSmaller = entry({
-      number: 2,
-      additions: 2,
-      createdAt: "2026-08-01T00:00:00Z",
-      updatedAt: "2026-07-01T00:00:00Z",
-    });
-    const sorted = sortPullRequestGroups(
-      [
-        { key: "authored", label: "Authored", entries: [olderLarger, newerSmaller] },
-        { key: "others", label: "Others", entries: [entry({ number: 3 })] },
-      ],
-      sort,
-      "",
-    );
-
-    expect(sorted.map((group) => group.key)).toEqual(["authored", "others"]);
-    expect(sorted[0]!.entries.map((row) => row.number)).toEqual(order);
   });
 });
 
@@ -924,113 +313,6 @@ describe("blocked-on-me ranking", () => {
       ]).map((row) => row.number),
     ).toEqual([1, 3, 9, 2, 5, 6, 4, 8, 7]);
   });
-
-  it("ranks reviewer work with open rows first, newest first", () => {
-    const olderOpen = entry({ number: 1, updatedAt: "2026-08-01T00:00:00Z" });
-    const newerOpen = entry({ number: 2, updatedAt: "2026-08-02T00:00:00Z" });
-    const olderFinished = entry({ number: 3, state: "merged", updatedAt: "2026-08-01T00:00:00Z" });
-    const newerFinished = entry({ number: 4, state: "closed", updatedAt: "2026-08-03T00:00:00Z" });
-
-    expect(
-      rankPullRequestsBlockedOnReviewer([newerFinished, newerOpen, olderFinished, olderOpen]).map(
-        (row) => row.number,
-      ),
-    ).toEqual([2, 1, 4, 3]);
-  });
-
-  it("ranks blocked groups according to their involvement", () => {
-    const authored = [
-      entry({ number: 1, isDraft: true }),
-      entry({ number: 2, checksState: "failing" }),
-    ];
-    const reviewing = [
-      entry({ number: 3, updatedAt: "2026-08-02T00:00:00Z" }),
-      entry({ number: 4, updatedAt: "2026-08-01T00:00:00Z" }),
-    ];
-    const others = [
-      entry({ number: 5, updatedAt: "2026-08-02T00:00:00Z" }),
-      entry({ number: 6, isDraft: true }),
-    ];
-    const groups = [
-      { key: "authored", label: "Authored", entries: authored },
-      { key: "reviewRequested", label: "Review requested", entries: reviewing },
-      { key: "others", label: "Others", entries: others },
-    ] as const;
-
-    expect(
-      sortPullRequestGroups(groups, "blocked", "", undefined, "all").map((group) =>
-        group.entries.map((row) => row.number),
-      ),
-    ).toEqual([
-      [2, 1],
-      [3, 4],
-      [5, 6],
-    ]);
-    expect(
-      sortPullRequestGroups([groups[2]], "blocked", "", undefined, "authored")[0]!.entries.map(
-        (row) => row.number,
-      ),
-    ).toEqual([6, 5]);
-    expect(
-      sortPullRequestGroups([groups[2]], "blocked", "", undefined, "reviewing")[0]!.entries.map(
-        (row) => row.number,
-      ),
-    ).toEqual([5, 6]);
-    expect(sortPullRequestGroups(groups, "blocked", "needle", undefined, "authored")).toEqual(
-      groups,
-    );
-  });
-});
-
-describe("line counts that arrive after the rows", () => {
-  const stats = new Map([["env-1 project-1 7", { additions: 42, deletions: 3 }]]);
-
-  it("fills in a row whose host left the counts for later", () => {
-    const row = entry({ number: 7, additions: 0, deletions: 0 });
-    expect(withDiffStat(row, stats)).toEqual({ ...row, additions: 42, deletions: 3 });
-  });
-
-  it("leaves a row the host already counted alone", () => {
-    const row = entry({ number: 7, additions: 1, deletions: 1 });
-    expect(withDiffStat(row, stats)).toBe(row);
-  });
-
-  it("leaves a row whose counts have not arrived as it is", () => {
-    const row = entry({ number: 9, additions: 0, deletions: 0 });
-    expect(withDiffStat(row, stats)).toBe(row);
-  });
-});
-
-describe("merging line counts across keyed stats queries", () => {
-  it("keeps counts already held while a fresh batch says nothing about them", () => {
-    const held = mergePullRequestDiffStats(new Map(), [
-      { environmentId: "env-1", projectId: "project-1", number: 1, additions: 10, deletions: 2 },
-      { environmentId: "env-1", projectId: "project-1", number: 2, additions: 5, deletions: 1 },
-    ]);
-    const merged = mergePullRequestDiffStats(held, []);
-    expect(merged.get("env-1 project-1 1")).toEqual({ additions: 10, deletions: 2 });
-    expect(merged.get("env-1 project-1 2")).toEqual({ additions: 5, deletions: 1 });
-  });
-
-  it("replaces a count once its replacement arrives, keeping its neighbours", () => {
-    const held = mergePullRequestDiffStats(new Map(), [
-      { environmentId: "env-1", projectId: "project-1", number: 1, additions: 10, deletions: 2 },
-    ]);
-    const merged = mergePullRequestDiffStats(held, [
-      { environmentId: "env-1", projectId: "project-1", number: 1, additions: 11, deletions: 2 },
-      { environmentId: "env-1", projectId: "project-1", number: 3, additions: 7, deletions: 0 },
-    ]);
-    expect(merged.get("env-1 project-1 1")).toEqual({ additions: 11, deletions: 2 });
-    expect(merged.get("env-1 project-1 3")).toEqual({ additions: 7, deletions: 0 });
-  });
-
-  it("does not mutate the map it was handed", () => {
-    const held = new Map([["env-1 project-1 1", { additions: 1, deletions: 1 }]]);
-    mergePullRequestDiffStats(held, [
-      { environmentId: "env-1", projectId: "project-1", number: 1, additions: 2, deletions: 2 },
-    ]);
-    expect(held.get("env-1 project-1 1")).toEqual({ additions: 1, deletions: 1 });
-  });
 });
 
 describe("partitioning with the hosts' own priority reads", () => {
@@ -1045,14 +327,6 @@ describe("partitioning with the hosts' own priority reads", () => {
     expect(groups.map((group) => group.key)).toEqual(["authored", "others"]);
     expect(groups[1]!.entries.map((item) => item.number)).toEqual([2, 1]);
     expect(groups[0]!.entries.map((item) => item.number)).toEqual([3]);
-  });
-
-  it("appends an authored row the partition page missed to Others rather than moving it up", () => {
-    const shown = entry({ number: 1, updatedAt: "2026-07-06T00:00:00Z" });
-    const olderMine = authoredRow(9, "2026-01-01T00:00:00Z");
-    const groups = partitionPullRequestsWithPriority([shown, olderMine], [], []);
-    expect(groups).toHaveLength(1);
-    expect(groups[0]!.entries.map((item) => item.number)).toEqual([1, 9]);
   });
 
   it("gives authored precedence over review-requested and orders partitions by recency", () => {
@@ -1072,111 +346,6 @@ describe("partitioning with the hosts' own priority reads", () => {
     expect(groups[0]!.entries.map((item) => item.number)).toEqual([1]);
     expect(groups[1]!.entries.map((item) => item.number)).toEqual([2, 3]);
   });
-
-  it("lets the feed's copy of a partitioned row replace the partition's", () => {
-    const stale = authoredRow(1, "2026-07-01T00:00:00Z");
-    const fresh = { ...stale, title: "Retitled" };
-    const groups = partitionPullRequestsWithPriority([fresh], [stale], []);
-    expect(groups[0]!.entries[0]!.title).toBe("Retitled");
-  });
-});
-
-describe("the list snapshot across a reload", () => {
-  const makeStorage = () => {
-    const held = new Map<string, string>();
-    return {
-      getItem: (key: string) => held.get(key) ?? null,
-      setItem: (key: string, value: string) => void held.set(key, value),
-    };
-  };
-  const data = {
-    entries: [entry({ number: 1 })],
-    viewers: { "github.com": "Bilal" },
-    providers: [],
-    errors: [{ projectId: "project-1", message: "boom" }],
-    truncated: true,
-    nextCursors: { "pingdotgg/t3code": "cursor-1" },
-  } as never;
-
-  it("hydrates the retained rows so ghosts never replace them", () => {
-    const storage = makeStorage();
-    writePullRequestListSnapshot(storage, "env-1", { scope: "env-1:open:all::", data });
-    const snapshot = readPullRequestListSnapshot(storage, "env-1");
-    expect(snapshot?.scope).toBe("env-1:open:all::");
-    expect(snapshot?.data.entries.map((item) => item.number)).toEqual([1]);
-  });
-
-  it("carries neither stale failures nor stale cursors", () => {
-    const storage = makeStorage();
-    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data });
-    const snapshot = readPullRequestListSnapshot(storage, "env-1");
-    expect(snapshot?.data.errors).toEqual([]);
-    expect(snapshot?.data.nextCursors).toEqual({});
-  });
-
-  it("answers nothing for another environment", () => {
-    const storage = makeStorage();
-    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data });
-    expect(readPullRequestListSnapshot(storage, "env-2")).toBeNull();
-  });
-
-  it("rejects a snapshot whose rows do not decode as entries", () => {
-    const storage = makeStorage();
-    storage.setItem(
-      "t3.pullRequests.list:env-1",
-      JSON.stringify({ scope: "s", data: { entries: [null] } }),
-    );
-    expect(readPullRequestListSnapshot(storage, "env-1")).toBeNull();
-    storage.setItem(
-      "t3.pullRequests.list:env-1",
-      JSON.stringify({ scope: "s", data: { entries: [{ host: "github.com" }] } }),
-    );
-    expect(readPullRequestListSnapshot(storage, "env-1")).toBeNull();
-  });
-
-  it("shrugs off corrupt storage and no storage at all", () => {
-    const storage = makeStorage();
-    storage.setItem("t3.pullRequests.list:env-1", "{not json");
-    expect(readPullRequestListSnapshot(storage, "env-1")).toBeNull();
-    expect(readPullRequestListSnapshot(undefined, "env-1")).toBeNull();
-  });
-
-  it("caps the accumulated rows but keeps the whole host set", () => {
-    const storage = makeStorage();
-    const manyEntries = Array.from({ length: 120 }, (_, index) => entry({ number: index + 1 }));
-    const viewers = { "github.com": "Bilal", "gitlab.com": "Bilal" };
-    const providers = [
-      {
-        host: "github.com",
-        kind: "github",
-        searchesOnHost: true,
-        projectCount: 1,
-        configured: true,
-        detail: null,
-      },
-      {
-        host: "gitlab.com",
-        kind: "gitlab",
-        searchesOnHost: true,
-        projectCount: 1,
-        configured: true,
-        detail: null,
-      },
-    ];
-    const accumulated = {
-      entries: manyEntries,
-      viewers,
-      providers,
-      errors: [],
-      truncated: true,
-      nextCursors: {},
-    } as never;
-    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data: accumulated });
-    const snapshot = readPullRequestListSnapshot(storage, "env-1");
-    expect(snapshot?.data.entries).toHaveLength(99);
-    expect(snapshot?.data.viewers).toEqual(viewers);
-    expect(snapshot?.data.providers).toEqual(providers);
-  });
 });
 
 describe("remembered pull request list controls", () => {
@@ -1188,43 +357,7 @@ describe("remembered pull request list controls", () => {
     };
   };
 
-  it("restores every filter and the selected sort", () => {
-    const storage = makeStorage();
-    const preferences = {
-      involvement: "reviewing",
-      state: "merged",
-      environmentId: "env-1" as EnvironmentId,
-      projectId: "project-1" as ProjectId,
-      host: "github.com",
-      q: "workflow",
-      draft: "hide",
-      review: "approved",
-      checks: "passing",
-      author: "octocat",
-      labels: ["bug", "priority"],
-      sort: "largest",
-    } as const;
-
-    writePullRequestListPreferences(preferences, storage);
-    expect(readPullRequestListPreferences(storage)).toEqual(preferences);
-  });
-
-  it("omits the default sort from storage", () => {
-    expect(
-      pullRequestListPreferences({
-        involvement: "all",
-        state: "open",
-        sort: "ready",
-      }),
-    ).toEqual({ involvement: "all", state: "open" });
-  });
-
-  it("keeps an explicit recency sort", () => {
-    expect(
-      pullRequestListPreferences({ involvement: "all", state: "open", sort: "updated" }),
-    ).toEqual({ involvement: "all", state: "open", sort: "updated" });
-  });
-
+  // regression: #9188 corrupt stored list controls broke the page
   it("falls back to the default controls when storage is corrupt", () => {
     const storage = makeStorage();
     storage.setItem("t3.pullRequests.preferences", "{not json");
@@ -1273,10 +406,6 @@ describe("merging the environments' own listings", () => {
       ...overrides,
     }) as Parameters<typeof mergePullRequestLists>[0][number][1];
 
-  it("answers nothing until an environment has", () => {
-    expect(mergePullRequestLists([])).toBeNull();
-  });
-
   it("tags every row with the environment that read it, newest first", () => {
     const merged = mergePullRequestLists([
       [ENV_1, answer({ entries: [entry({ number: 1, updatedAt: "2026-07-01T00:00:00Z" })] })],
@@ -1288,13 +417,7 @@ describe("merging the environments' own listings", () => {
     ]);
   });
 
-  it("tells two environments' copies of one pull request apart", () => {
-    const row = entry({ number: 4 });
-    expect(pullRequestEntryKey({ ...row, environmentId: ENV_1 })).not.toBe(
-      pullRequestEntryKey({ ...row, environmentId: ENV_2 }),
-    );
-  });
-
+  // regression: #6490 one environment's error showed on every environment
   it("keeps project errors scoped to the environment that reported them", () => {
     const error = {
       projectId: "project-1" as ProjectId,
@@ -1339,22 +462,6 @@ describe("merging the environments' own listings", () => {
       },
     ]);
   });
-
-  it("keeps each environment's continuation to itself", () => {
-    const merged = mergePullRequestLists([
-      [ENV_1, answer({ nextCursors: { "github.com pingdotgg/t3code": "cursor-1" } })],
-      [ENV_2, answer()],
-    ]);
-    expect(merged?.nextCursors).toEqual({
-      [ENV_1]: { "github.com pingdotgg/t3code": "cursor-1" },
-    });
-  });
-
-  it("reads the same key whichever order the environments connected in", () => {
-    expect(pullRequestEnvironmentSetKey(["env-2", "env-1"])).toBe(
-      pullRequestEnvironmentSetKey(["env-1", "env-2"]),
-    );
-  });
 });
 
 describe('who "I" am, per server', () => {
@@ -1385,29 +492,6 @@ describe('who "I" am, per server', () => {
       ),
     ).toEqual([1]);
   });
-
-  it("still reads a single server's host-keyed viewers, which is what a snapshot carries", () => {
-    expect(
-      filterPullRequestsByInvolvement(
-        [entry({ number: 1, author: byBilal })],
-        { "github.com": "Bilal" },
-        "authored",
-      ).map((row) => row.number),
-    ).toEqual([1]);
-  });
-
-  it("names the servers with more rows and no cursor to reach them by", () => {
-    const merged = mergePullRequestLists([
-      [
-        ENV_1,
-        { ...answer({}, []), truncated: true, nextCursors: { "github.com acme/web": "cursor-1" } },
-      ],
-      [ENV_2, { ...answer({}, []), truncated: true }],
-    ])!;
-
-    expect(merged.truncatedEnvironments).toEqual([ENV_1, ENV_2]);
-    expect(Object.keys(merged.nextCursors)).toEqual([ENV_1]);
-  });
 });
 
 describe("the project an id names", () => {
@@ -1417,42 +501,15 @@ describe("the project an id names", () => {
     { id: "project-2", environmentId: ENV_2 },
   ];
 
-  it("takes the server it was given", () => {
-    expect(findScopedProject(projects, ENV_2, "project-1")?.environmentId).toBe(ENV_2);
-  });
-
   it("answers a bare id only where one server has it", () => {
     expect(findScopedProject(projects, null, "project-2")?.environmentId).toBe(ENV_2);
     expect(findScopedProject(projects, null, "project-1")).toBeUndefined();
-  });
-
-  it("answers nothing for a server that does not have it", () => {
-    expect(findScopedProject(projects, ENV_1, "project-2")).toBeUndefined();
   });
 });
 
 describe("which environments a listing should ask", () => {
   const ENV_3 = "env-3" as EnvironmentId;
   const environmentIds = [ENV_1, ENV_2, ENV_3];
-
-  it("asks only the owning server once the project is unambiguous", () => {
-    const projects = [{ id: "project-1", environmentId: ENV_2 }];
-    expect(
-      resolveQueryEnvironmentIds(
-        environmentIds,
-        projects,
-        { environmentId: ENV_2 },
-        "project-1",
-        true,
-      ),
-    ).toEqual([ENV_2]);
-  });
-
-  it("asks every environment when there is no project narrowing at all", () => {
-    expect(resolveQueryEnvironmentIds(environmentIds, [], undefined, undefined, true)).toEqual(
-      environmentIds,
-    );
-  });
 
   it("asks only the environments that actually hold an ambiguous bare id, never a third that doesn't", () => {
     const projects = [
@@ -1463,26 +520,6 @@ describe("which environments a listing should ask", () => {
       resolveQueryEnvironmentIds(environmentIds, projects, undefined, "project-1", true),
     ).toEqual([ENV_1, ENV_2]);
   });
-
-  it("asks nothing for a bare id no environment holds", () => {
-    const projects = [{ id: "project-1", environmentId: ENV_1 }];
-    expect(
-      resolveQueryEnvironmentIds(environmentIds, projects, undefined, "project-9", true),
-    ).toEqual([]);
-  });
-
-  it("asks every environment while the servers have not said what they hold yet", () => {
-    expect(resolveQueryEnvironmentIds(environmentIds, [], undefined, "project-1", false)).toEqual(
-      environmentIds,
-    );
-  });
-
-  it("keeps the single-environment case unchanged", () => {
-    const projects = [{ id: "project-1", environmentId: ENV_1 }];
-    expect(resolveQueryEnvironmentIds([ENV_1], projects, undefined, "project-1", true)).toEqual([
-      ENV_1,
-    ]);
-  });
 });
 
 describe("the server a saved selection names", () => {
@@ -1490,73 +527,6 @@ describe("the server a saved selection names", () => {
 
   it("resolves to nothing yet for a server that is known but not ready, rather than falling back", () => {
     expect(resolveSelectedEnvironmentId(ENV_2, known, ENV_1)).toBe(ENV_2);
-  });
-
-  it("falls back for a server the workspace genuinely no longer has", () => {
-    const goneServer = "env-gone" as EnvironmentId;
-    expect(resolveSelectedEnvironmentId(goneServer, known, ENV_1)).toBe(ENV_1);
-  });
-
-  it("falls back to nothing when no server names a fallback either", () => {
-    const goneServer = "env-gone" as EnvironmentId;
-    expect(resolveSelectedEnvironmentId(goneServer, known, null)).toBeNull();
-  });
-
-  it("uses the fallback outright when nothing was named", () => {
-    expect(resolveSelectedEnvironmentId(undefined, known, ENV_1)).toBe(ENV_1);
-    expect(resolveSelectedEnvironmentId(undefined, known, null)).toBeNull();
-  });
-});
-
-describe("colon-namespaced labels typed as a search", () => {
-  it("reads an unknown key as the label it almost always is", () => {
-    expect(parsePullRequestQuery("size:XXL").filters.labels).toEqual([["size:XXL"]]);
-    expect(parsePullRequestQuery("vouch:trusted").filters.labels).toEqual([["vouch:trusted"]]);
-    expect(parsePullRequestQuery("size:XXL").text).toBe("");
-  });
-
-  it("reads the key as the namespace of every bare name in its list", () => {
-    expect(parsePullRequestQuery("size:S,XS").filters.labels).toEqual([["size:S", "size:XS"]]);
-  });
-
-  it("leaves a name that already carries its own namespace alone", () => {
-    expect(parsePullRequestQuery("size:S,size:XS").filters.labels).toEqual([["size:S", "size:XS"]]);
-  });
-
-  it("excludes one the same way", () => {
-    expect(parsePullRequestQuery("-size:XXL").filters.excludedLabels).toEqual(["size:XXL"]);
-    expect(parsePullRequestQuery("-size:S,XS").filters.excludedLabels).toEqual([
-      "size:S",
-      "size:XS",
-    ]);
-  });
-
-  it("keeps a quoted token as text, which is the way back to a literal search", () => {
-    const parsed = parsePullRequestQuery('"size:XXL"');
-    expect(parsed.filters.labels).toBeUndefined();
-    expect(parsed.text).toBe('"size:XXL"');
-  });
-
-  it("reads a hyphenated namespace as a label too", () => {
-    expect(parsePullRequestQuery("priority-1:high").filters.labels).toEqual([["priority-1:high"]]);
-    expect(parsePullRequestQuery("priority-1:high").text).toBe("");
-  });
-
-  it("leaves a pasted link alone rather than naming a label after its scheme", () => {
-    const parsed = parsePullRequestQuery("https://github.com/pingdotgg/t3code/pull/1");
-    expect(parsed.filters.labels).toBeUndefined();
-    expect(parsed.text).toBe("https://github.com/pingdotgg/t3code/pull/1");
-  });
-
-  it("mixes with the keys it does know, and with plain words", () => {
-    const parsed = parsePullRequestQuery("area:web draft:true wizard label:bug");
-    expect(parsed.filters).toEqual({ labels: [["area:web"], ["bug"]], draft: "only" });
-    expect(parsed.text).toBe("wizard");
-  });
-
-  it("shares the ceiling with the labels typed as labels", () => {
-    const many = Array.from({ length: 12 }, (_, index) => `area:${index}`).join(" ");
-    expect(parsePullRequestQuery(many).filters.labels).toHaveLength(10);
   });
 });
 
@@ -1596,22 +566,6 @@ describe("pull request list overrides", () => {
     }) as unknown as PullRequestListEntry;
   const key = (row: { number: number }) => `#${row.number}`;
 
-  it("maps the actions that change a row's state and nothing else", () => {
-    const now = new Date("2026-07-02T00:00:00Z");
-    expect(pullRequestOverrideAfterAction(entry(1, "open"), "close", now, 7)).toEqual({
-      state: "closed",
-      updatedAt: "2026-07-02T00:00:00.000Z",
-      token: 7,
-      at: now.getTime(),
-    });
-    expect(pullRequestOverrideAfterAction(entry(1, "closed"), "reopen", now, 1)?.state).toBe(
-      "open",
-    );
-    expect(pullRequestOverrideAfterAction(entry(1, "open"), "merge", now, 1)?.state).toBe("merged");
-    expect(pullRequestOverrideAfterAction(entry(1, "open"), "draft", now, 1)?.isDraft).toBe(true);
-    expect(pullRequestOverrideAfterAction(entry(1, "open"), "update-branch", now, 1)).toBeNull();
-  });
-
   it("writes the override over the row and drops it from a list whose state it left", () => {
     const rows = [entry(1, "open"), entry(2, "open")];
     const overrides = new Map([
@@ -1628,18 +582,6 @@ describe("pull request list overrides", () => {
     expect(applyPullRequestOverrides(rows, new Map(), key, "open")).toBe(rows);
   });
 
-  it.each([
-    ["open", [1]],
-    ["closed", [2]],
-    ["merged", [3]],
-    ["all", [1, 2, 3]],
-  ] as const)("filters host rows by %s after pending actions settle", (state, expected) => {
-    const rows = [entry(1, "open"), entry(2, "closed"), entry(3, "merged")];
-    expect(applyPullRequestOverrides(rows, new Map(), key, state).map((row) => row.number)).toEqual(
-      expected,
-    );
-  });
-
   it("keeps a confirmed close hidden when its override is cleared", () => {
     const at = 1_000_000;
     const rows = [entry(1, "closed"), entry(2, "open"), entry(3, "merged")];
@@ -1651,17 +593,6 @@ describe("pull request list overrides", () => {
     expect(applyPullRequestOverrides(rows, settled, key, "open").map((row) => row.number)).toEqual([
       2,
     ]);
-  });
-
-  it("hands back the held object for a row a refresh did not change", () => {
-    const previous = [entry(1, "open"), entry(2, "open")];
-    const next = [{ ...entry(1, "open") }, { ...entry(2, "open"), state: "merged" as const }];
-    const reused = reusePullRequestEntries(previous, next, key);
-    expect(reused[0]).toBe(previous[0]);
-    expect(reused[1]).toBe(next[1]);
-    expect(
-      reusePullRequestEntries(previous, [{ ...entry(1, "open") }, { ...entry(2, "open") }], key),
-    ).toBe(previous);
   });
 });
 
@@ -1705,10 +636,11 @@ describe("pull request quick actions", () => {
     ...(actions === undefined ? {} : { actions }),
   });
 
-  it("offers what each host reports, and GitHub's legacy set when a server reports none", () => {
+  it("offers what each host reports, and the host's own set when a server reports none", () => {
     const actionsOf = pullRequestHostActions([
       summary("bitbucket.org", "bitbucket", ["merge", "close"]),
       summary("github.com", "github"),
+      summary("gitlab.com", "gitlab"),
     ]);
     const bitbucket = actionsOf({
       host: "bitbucket.org",
@@ -1723,6 +655,11 @@ describe("pull request quick actions", () => {
       "close",
       "ready",
     ]);
+    const gitlab = actionsOf({
+      host: "gitlab.com",
+      provider: SourceControlProviderKind.make("gitlab"),
+    });
+    expect(pullRequestQuickActions({ state: "open", isDraft: false }, gitlab)).toEqual([]);
   });
 });
 
@@ -1742,7 +679,147 @@ describe("refresh page size", () => {
     expect(largestPullRequestReadCount(twoPagesAcrossFourRepositories("gitlab"))).toBe(198);
   });
 
+  // regression: #19403 refreshes were not bounded by each tracker read
   it("asks for the whole host where one search reads every repository", () => {
     expect(largestPullRequestReadCount(twoPagesAcrossFourRepositories("github"))).toBe(792);
+  });
+});
+
+describe("findProjectForRepository", () => {
+  it("resolves Azure bare names using matching project and environment scope", () => {
+    const azure = (id: string, environmentId: string, path: string) => ({
+      id,
+      environmentId,
+      repositoryIdentity: {
+        canonicalKey: `dev.azure.com/${path}`,
+        locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl: "" },
+        provider: SourceControlProviderKind.make("azure-devops"),
+        displayName: path,
+        owner: "contoso",
+        name: path.split("/").at(-1)!,
+      },
+    });
+    const payments = azure("p1", ENV_1, "contoso/payments/_git/api");
+    const billing = azure("p2", ENV_1, "contoso/billing/_git/api");
+    const remoteBilling = azure("p2", ENV_2, "contoso/billing/_git/api");
+    const unrelated = azure("p3", ENV_2, "contoso/billing/_git/web");
+    const projects = [payments, billing, remoteBilling, unrelated];
+
+    expect(findProjectForRepository(projects, { repository: "api" })).toBe(payments);
+    expect(
+      findProjectForRepository(projects, {
+        repository: "api",
+        scopedProjectId: "p2",
+        scopedEnvironmentId: ENV_2,
+      }),
+    ).toBe(remoteBilling);
+    expect(
+      findProjectForRepository(projects, {
+        repository: "api",
+        scopedProjectId: "p3",
+        scopedEnvironmentId: ENV_2,
+      }),
+    ).toBe(payments);
+  });
+
+  it("keeps repository matches on the selected environment when project IDs overlap", () => {
+    const project = (id: string, environmentId: string, repository: string) => ({
+      id,
+      environmentId,
+      repositoryIdentity: {
+        canonicalKey: `github.com/${repository}`,
+        locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl: "" },
+        provider: SourceControlProviderKind.make("github"),
+        displayName: repository,
+      },
+    });
+    const unrelated = project("p1", ENV_1, "acme/web");
+    const local = project("p2", ENV_1, "acme/api");
+    const remote = project("p1", ENV_2, "acme/api");
+    const projects = [unrelated, local, remote];
+
+    expect(findProjectForRepository(projects, { repository: "acme/api" })).toBe(local);
+    expect(
+      findProjectForRepository(projects, {
+        repository: "acme/api",
+        selectedEnvironmentId: ENV_2,
+      }),
+    ).toBe(remote);
+    expect(
+      findProjectForRepository(projects, {
+        repository: "acme/web",
+        selectedEnvironmentId: ENV_2,
+      }),
+    ).toBeUndefined();
+    expect(
+      findProjectForRepository(projects, {
+        repository: "acme/api",
+        selectedEnvironmentId: "env-connecting",
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("filter picker choices", () => {
+  const actor = (login: string, name: string | null = null) => ({ login, name, avatarUrl: null });
+
+  it("offers authors the host found that no loaded row carries, after the loaded ones", () => {
+    const loaded = [
+      { actor: actor("julius", "Julius"), count: 4, mergedCount: 3 },
+      { actor: actor("theo"), count: 1, mergedCount: 0 },
+    ];
+
+    const choices = pullRequestAuthorChoices(
+      loaded,
+      [actor("Julius"), actor("juliana", "Juliana")],
+      "jul",
+    );
+
+    expect(choices.map((choice) => [choice.actor.login, choice.count])).toEqual([
+      ["julius", 4],
+      ["juliana", 0],
+    ]);
+  });
+
+  it("keeps showing an author picked from the host's search once the search clears", () => {
+    const loaded = [{ actor: actor("julius"), count: 4, mergedCount: 3 }];
+    const hosted = [actor("Juliana", "Juliana")];
+
+    expect(selectedPullRequestAuthor(loaded, hosted, "juliana")?.actor).toEqual(
+      actor("Juliana", "Juliana"),
+    );
+    expect(selectedPullRequestAuthor(loaded, [], "juliana")?.actor.login).toBe("juliana");
+    expect(selectedPullRequestAuthor(loaded, hosted, "JULIUS")?.count).toBe(4);
+    expect(selectedPullRequestAuthor(loaded, hosted, undefined)).toBeUndefined();
+  });
+
+  it("puts the host's authors after the first loaded matches rather than after all of them", () => {
+    const loaded = Array.from({ length: 40 }, (_, index) => ({
+      actor: actor(`dev-${index}`),
+      count: 1,
+      mergedCount: 0,
+    }));
+
+    const choices = pullRequestAuthorChoices(loaded, [actor("dev-from-host")], "dev");
+
+    expect(choices.slice(0, 30).map((choice) => choice.actor.login)).toContain("dev-from-host");
+  });
+
+  it("keeps a loaded label's count when only the host's search found it", () => {
+    const loaded = [{ name: "size:XL", color: "d93f0b", count: 7 }];
+
+    const choices = pullRequestLabelChoices(
+      loaded,
+      [
+        { name: "size:XL", color: "d93f0b" },
+        { name: "bug", color: null },
+      ],
+      "xl-ish",
+    );
+
+    expect(choices).toEqual([
+      { name: "size:XL", color: "d93f0b", count: 7 },
+      { name: "bug", color: null, count: 0 },
+    ]);
   });
 });

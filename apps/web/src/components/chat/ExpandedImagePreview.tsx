@@ -22,7 +22,10 @@ import { resolveProtocolRelativeMediaUrl } from "../media/mediaContent";
 export interface ExpandedImageItem {
   src: string | null;
   name: string;
+  mimeType?: string;
   type?: "video";
+  /** Revoke this owned object URL; other blob URLs belong to the timeline. */
+  ownsSrc?: boolean;
   source?: SnapShotSource;
   autoPlay?: boolean;
   originalUrl?: string;
@@ -33,10 +36,6 @@ export interface ExpandedImageItem {
 export interface ExpandedImagePreview {
   images: ExpandedImageItem[];
   index: number;
-}
-
-export function wrapExpandedImageIndex(index: number, imageCount: number): number {
-  return imageCount > 0 ? ((index % imageCount) + imageCount) % imageCount : 0;
 }
 
 export async function resolveMarkdownMediaPreview(input: {
@@ -106,7 +105,7 @@ export async function resolveMarkdownMediaPreview(input: {
 
 export function buildAttachmentVideoAsset(
   environmentId: EnvironmentId,
-  attachment: ChatFileAttachment,
+  attachment: Pick<ChatFileAttachment, "id" | "name" | "mimeType">,
 ): NonNullable<MediaActionSource["asset"]> {
   return {
     environmentId,
@@ -167,13 +166,28 @@ export function buildExpandedImagePreview(
   const selected = images.find((image) => image.id === selectedImageId);
   if (selected?.type === "file" && selected.file && isVideoAttachment(selected)) {
     return {
-      images: [{ src: URL.createObjectURL(selected.file), name: selected.name, type: "video" }],
+      images: [
+        {
+          src: URL.createObjectURL(selected.file),
+          name: selected.name,
+          type: "video",
+          ownsSrc: true,
+        },
+      ],
       index: 0,
     };
   }
   const previewableImages = images.flatMap((image) =>
     image.type === "image" && image.previewUrl
-      ? [{ id: image.id, src: image.previewUrl, name: image.name, source: image.source }]
+      ? [
+          {
+            id: image.id,
+            src: image.previewUrl,
+            name: image.name,
+            mimeType: image.mimeType,
+            source: image.source,
+          },
+        ]
       : [],
   );
   if (previewableImages.length === 0) {
@@ -187,6 +201,7 @@ export function buildExpandedImagePreview(
     images: previewableImages.map((image) => ({
       src: image.src,
       name: image.name,
+      mimeType: image.mimeType,
       ...(image.source?.kind === "snap-shot" ? { source: image.source } : {}),
     })),
     index: selectedIndex,

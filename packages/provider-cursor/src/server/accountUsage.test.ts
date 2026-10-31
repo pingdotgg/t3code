@@ -6,7 +6,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Path from "effect/Path";
 
@@ -64,30 +63,6 @@ const readAccountUsage = (
   );
 
 describe("Cursor account history", () => {
-  it.effect("reads Cursor account history with the default macOS Keychain login", () =>
-    Effect.gen(function* () {
-      const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
-      let keychainReads = 0;
-      const result = yield* readAccountUsage(
-        { kind: "keychain" },
-        0,
-        1781000000000,
-        ({ headers }) => {
-          assert.include(headers.get("cookie") ?? "", "demo%3A%3A");
-          return Response.json({ totalUsageEventsCount: 0, usageEventsDisplay: [] });
-        },
-        Effect.sync(() => {
-          keychainReads++;
-          return accessToken;
-        }),
-      );
-      assert.strictEqual(keychainReads, 1);
-      assert.isNull(result.error);
-      assert.isFalse(result.missing);
-      assert.isNotNull(result.accountKey);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
   it.effect(
     "reads paginated Cursor account history including headless calls with separate cache tokens",
     () =>

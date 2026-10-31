@@ -142,44 +142,42 @@ export const generateBrowserDpopKey = Effect.gen(function* () {
   };
 });
 
-export function createBrowserDpopProof(input: {
+export const createBrowserDpopProof = Effect.fn("dpop.createBrowserDpopProof")(function* (input: {
   readonly method: string;
   readonly url: string;
   readonly accessToken?: string;
   readonly proofKey: BrowserDpopKey;
-}): Effect.Effect<
+}): Effect.fn.Return<
   { readonly proof: string; readonly thumbprint: string },
   BrowserDpopError,
   Crypto.Crypto
 > {
-  return Effect.gen(function* () {
-    const normalizedUrl = yield* Effect.try({
-      try: () => new URL(input.url),
-      catch: (cause) => dpopError("Could not normalize DPoP proof URL.", cause),
-    });
-    normalizedUrl.search = "";
-    normalizedUrl.hash = "";
-    const jti = yield* Crypto.Crypto.pipe(
-      Effect.flatMap((crypto) => crypto.randomUUIDv4()),
-      Effect.mapError((cause) => dpopError("Could not generate DPoP proof identifier.", cause)),
-    );
-    const proof = yield* Effect.tryPromise({
-      try: () =>
-        new SignJWT({
-          htm: input.method.toUpperCase(),
-          htu: normalizedUrl.toString(),
-          jti,
-          ...(input.accessToken ? { ath: computeDpopAccessTokenHash(input.accessToken) } : {}),
-        })
-          .setProtectedHeader({
-            typ: "dpop+jwt",
-            alg: "ES256",
-            jwk: input.proofKey.publicJwk,
-          })
-          .setIssuedAt()
-          .sign(input.proofKey.privateKey),
-      catch: (cause) => dpopError("Could not sign DPoP proof.", cause),
-    });
-    return { proof, thumbprint: input.proofKey.thumbprint };
+  const normalizedUrl = yield* Effect.try({
+    try: () => new URL(input.url),
+    catch: (cause) => dpopError("Could not normalize DPoP proof URL.", cause),
   });
-}
+  normalizedUrl.search = "";
+  normalizedUrl.hash = "";
+  const jti = yield* Crypto.Crypto.pipe(
+    Effect.flatMap((crypto) => crypto.randomUUIDv4()),
+    Effect.mapError((cause) => dpopError("Could not generate DPoP proof identifier.", cause)),
+  );
+  const proof = yield* Effect.tryPromise({
+    try: () =>
+      new SignJWT({
+        htm: input.method.toUpperCase(),
+        htu: normalizedUrl.toString(),
+        jti,
+        ...(input.accessToken ? { ath: computeDpopAccessTokenHash(input.accessToken) } : {}),
+      })
+        .setProtectedHeader({
+          typ: "dpop+jwt",
+          alg: "ES256",
+          jwk: input.proofKey.publicJwk,
+        })
+        .setIssuedAt()
+        .sign(input.proofKey.privateKey),
+    catch: (cause) => dpopError("Could not sign DPoP proof.", cause),
+  });
+  return { proof, thumbprint: input.proofKey.thumbprint };
+});

@@ -5,9 +5,10 @@ credentials for reaching environments, and managed tunnel allocations. After
 bootstrap, clients send application traffic through the environment's tunnel
 hostname; the relay Worker does not proxy their HTTP or WebSocket sessions.
 The one exception is automation webhooks: the relay forwards
-`/v1/hooks/:environmentId/:hookId/:token` to the environment's tunnel so
-senders get a stable URL. It keeps bodies and tokens out of its traces and
-leaves token and signature verification to the environment
+`/v1/hooks/:endpointKey/:hookId/:token` to the environment's tunnel so
+senders get a stable URL. `endpointKey` is the 16-hex hash suffix of the
+managed tunnel's name, not the environment id. It keeps bodies and tokens out
+of its traces and leaves token and signature verification to the environment
 ([forwarder](../../infra/relay/src/hooks/HookForwarder.ts)).
 
 By default the forwarder stores nothing. An environment can opt in to having
@@ -129,6 +130,21 @@ provisions under the same allocation, so the hostname and DNS record survive
 and clients keep their bindings. Every mutation on an allocation bumps its
 `generation`, and deletion locks the row at the generation it claimed, so a
 host that reconnects mid-sweep wins.
+
+## A paid T3 Chat plan raises the tunnel cap
+
+T3 Chat uses WorkOS, not Clerk, so the two accounts are linked by consent
+rather than by a shared identity. The relay and T3 Chat share one secret
+(`T3CHAT_LINK_SECRET` here, `T3CODE_LINK_SECRET` there). The relay signs a
+short-lived token naming the Clerk user and email; the user confirms it while
+signed in to T3 Chat, and T3 Chat stores the link. T3 Chat owns the link and the
+plan, so the relay keeps no copy. It asks T3 Chat only when an account reaches
+its normal cap for a new environment, and any failure keeps the normal cap.
+An environment that already holds a counted slot restarts without asking, so a
+downgrade or a T3 Chat outage only blocks new environments. A manual override
+row replaces the default for new environments, and a T3 Chat plan does not
+raise it
+([limits](../../infra/relay/src/environments/ManagedTunnelLimits.ts)).
 
 ## The relay client follows the server's pin
 

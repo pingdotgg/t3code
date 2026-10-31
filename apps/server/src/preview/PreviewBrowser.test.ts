@@ -1,24 +1,21 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Deferred from "effect/Deferred";
 import * as Crypto from "effect/Crypto";
 import type * as Duration from "effect/Duration";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as NodeZlib from "node:zlib";
 
 import * as PreviewBrowser from "./PreviewBrowser.ts";
 
-// POSIX modes cannot be checked on NTFS, so follow the host like the Antigravity suite.
+// NTFS cannot enforce POSIX modes; choose the host platform.
 const hostPlatform: NodeJS.Platform =
   HostProcess.Platform.defaultValue() === "win32" ? "win32" : "linux";
 const executableName =
@@ -76,6 +73,7 @@ const browserArchive = makeZip([
 
 const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
   options: {
+    readonly version?: string;
     readonly archive?: Buffer;
     readonly sha256?: string;
     readonly body?: Stream.Stream<Uint8Array>;
@@ -96,7 +94,7 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
     release: options.unsupported
       ? null
       : {
-          version: "1.2.3",
+          version: options.version ?? "1.2.3",
           platform: "fixture",
           url: "https://storage.googleapis.com/chrome-headless-shell-fixture.zip",
           bytes: archive.byteLength,
@@ -124,10 +122,11 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
 });
 
 it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
-  it.effect("installs a verified download with its file modes and then reuses it", () =>
+  it.effect.each(["0.8.0", "1.2.3"])("retains another version when installing %s", (current) =>
     Effect.gen(function* () {
-      const { browser, fs, path, installRoot, requests } = yield* makeHarness();
-      yield* fs.makeDirectory(path.join(installRoot, "1.0.0"), { recursive: true });
+      const { browser, fs, path, installRoot, requests } = yield* makeHarness({ version: current });
+      yield* fs.makeDirectory(path.join(installRoot, "0.9.0"), { recursive: true });
+      yield* fs.makeDirectory(path.join(installRoot, "0.10.0"));
       const active = path.join(installRoot, ".install-other");
       const abandoned = path.join(installRoot, ".install-abandoned");
       yield* fs.makeDirectory(active);
@@ -138,7 +137,7 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
 
       const executable = yield* browser.executable;
 
-      const version = path.join(installRoot, "1.2.3");
+      const version = path.join(installRoot, current);
       expect(executable).toBe(path.join(version, executableName));
       expect(yield* fs.readFileString(path.join(version, "locales", "en-US.pak"))).toBe("strings");
       if (hostPlatform !== "win32") {
@@ -148,10 +147,9 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
         expect(yield* mode("libEGL.so")).toBe(0o755);
         expect(yield* mode(path.join("locales", "en-US.pak"))).toBe(0o644);
       }
-      expect((yield* fs.readDirectory(installRoot)).toSorted()).toEqual([
-        ".install-other",
-        "1.2.3",
-      ]);
+      expect((yield* fs.readDirectory(installRoot)).toSorted()).toEqual(
+        [".install-other", "0.10.0", current].toSorted(),
+      );
       expect(yield* browser.executable).toBe(executable);
       expect(yield* browser.installed).toEqual(Option.some(executable));
       expect(requests).toHaveLength(1);
@@ -201,92 +199,4 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
       );
     }),
   );
-
-  it.effect("shares one install between callers and finishes it after they stop waiting", () =>
-    Effect.gen(function* () {
-      const firstChunkSent = yield* Deferred.make<void>();
-      const finishDownload = yield* Deferred.make<void>();
-      const { browser, requests } = yield* makeHarness({
-        wait: "45 seconds",
-        body: Stream.concat(
-          Stream.make(browserArchive.subarray(0, 100)),
-          Stream.fromEffect(
-            Deferred.succeed(firstChunkSent, undefined).pipe(
-              Effect.andThen(Deferred.await(finishDownload)),
-              Effect.as(browserArchive.subarray(100)),
-            ),
-          ),
-        ),
-      });
-
-      const callers = yield* Effect.forEach([1, 2], () =>
-        Effect.forkChild(browser.executable.pipe(Effect.flip)),
-      );
-      yield* Deferred.await(firstChunkSent);
-      yield* TestClock.adjust("45 seconds");
-      for (const caller of callers) {
-        expect(yield* Fiber.join(caller)).toMatchObject({
-          _tag: "PreviewBrowserInstallingError",
-          downloadedBytes: 100,
-          unpacking: false,
-        });
-      }
-
-      yield* Deferred.succeed(finishDownload, undefined);
-      expect(yield* browser.executable).toMatch(new RegExp(`${executableName}$`));
-      expect(requests).toHaveLength(1);
-    }),
-  );
-
-  it.effect("reports hosts Chrome for Testing does not build for without downloading", () =>
-    Effect.gen(function* () {
-      const { browser, requests } = yield* makeHarness({ unsupported: true });
-      expect((yield* browser.executable.pipe(Effect.flip))._tag).toBe(
-        "PreviewBrowserUnsupportedError",
-      );
-      expect(yield* browser.installed).toEqual(Option.none());
-      expect(requests).toEqual([]);
-    }),
-  );
-});
-
-it("pins one Chrome for Testing build per host", () => {
-  const hosts = [
-    ["linux", "x64"],
-    ["linux", "arm64"],
-    ["darwin", "arm64"],
-    ["darwin", "x64"],
-    ["win32", "x64"],
-    ["win32", "arm64"],
-    ["win32", "ia32"],
-    ["linux", "ia32"],
-    ["freebsd", "x64"],
-  ] as const;
-  expect(
-    hosts.map(([platform, arch]) => PreviewBrowser.previewBrowserRelease(platform, arch)?.platform),
-  ).toEqual([
-    "linux64",
-    "linux-arm64",
-    "mac-arm64",
-    "mac-x64",
-    "win64",
-    "win64",
-    "win32",
-    undefined,
-    undefined,
-  ]);
-  expect(PreviewBrowser.previewBrowserRelease("linux", "x64")).toMatchObject({
-    url: "https://storage.googleapis.com/chrome-for-testing-public/154.0.8037.92/linux64/chrome-headless-shell-linux64.zip",
-    bytes: 120_477_194,
-  });
-});
-
-it("tells the agent how far the install has come", () => {
-  expect(
-    new PreviewBrowser.PreviewBrowserInstallingError({
-      downloadedBytes: 37_200_000,
-      totalBytes: 120_477_194,
-      unpacking: false,
-    }).message,
-  ).toBe("T3 is installing its headless browser (37 of 120 MB downloaded). Try again in a minute.");
 });

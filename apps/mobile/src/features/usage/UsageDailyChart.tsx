@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { View } from "react-native";
 
 import type { DailyTotals } from "@t3tools/shared/usageMerge";
@@ -15,15 +14,18 @@ export interface UsageDailyChartProps {
 
 export function UsageDailyChart({ days, daily, metric, height }: UsageDailyChartProps) {
   const colors = useProviderColors();
-  const chartDays = useMemo(() => buildChartDays(days, daily, metric), [days, daily, metric]);
+  const chartDays = buildChartDays(days, daily, metric);
   const max = chartDays.reduce((peak, day) => Math.max(peak, day.total), 0);
 
   return (
     <View style={{ height }} className="flex-row items-end gap-px">
-      {/* column-reverse stacks the bottom-first provider values upward
-          without reversing the array (Hermes lacks Array#toReversed). */}
+      {/* Use column-reverse: provider values are bottom-first and Hermes lacks toReversed. */}
       {chartDays.map((day) => (
-        <View key={day.day} className="h-full flex-1 flex-col-reverse overflow-hidden rounded-sm">
+        <View
+          key={day.day}
+          style={{ height: max === 0 ? 0 : (day.total / max) * height }}
+          className="flex-1 flex-col-reverse overflow-hidden rounded-t-sm"
+        >
           {day.values.map((entry) => (
             <View
               key={entry.provider}

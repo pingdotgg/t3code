@@ -1,14 +1,8 @@
 import type { DeviceToolVersions } from "@t3tools/contracts";
 /**
- * Pinned installs of the two external tools device support is built on.
- *
- * `expo-device-hub` streams simulator and emulator screens and `agent-device`
- * drives them. Each lives in `<baseDir>/tools/<name>/<version>` and runs from
- * there with the resolved Node runtime. An install counts only when its entry
- * file and a sentinel naming the version are both present.
- *
- * [fork:lockdown] Upstream npm-installs each tool after its consent step. This
- * fork never does; see `installTool`.
+ * Pinned installs of `expo-device-hub` and `agent-device` under `<baseDir>/tools/<name>/<version>`,
+ * counted only with both the entry file and a sentinel naming the version.
+ * [fork:lockdown] Upstream npm-installs each tool after its consent step; see `installTool`.
  */
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";

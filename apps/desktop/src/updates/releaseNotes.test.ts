@@ -28,6 +28,7 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
       releaseNotes: [
         {
           version: "0.0.36-nightly.20260828.1213",
+          releasedAt: "2026-08-28",
           items: [
             "fix(opencode): handle child approvals, stops, and model catalogs by @human in #8480",
             "fix(web): keep long task drawers usable on small screens by @human in #8313",
@@ -60,6 +61,37 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     });
   });
 
+  it("reads a generated summary as a note and skips the folded full list", () => {
+    const fixes = Array.from({ length: 9 }, (_, index) => `- Fix ${index + 1} (#${index + 1})`);
+    const result = normalizeDesktopUpdateReleaseNotes(
+      [
+        "**v1.2.4** · 12 changes from 3 contributors",
+        "## Highlights",
+        "Link machines (beta).",
+        "## Fixes",
+        ...fixes,
+        "<details>",
+        "<summary>Full changelog</summary>",
+        "* fix: raw entry by @human in https://github.com/pingdotgg/t3code/pull/1",
+        "</details>",
+      ].join("\n"),
+      "1.2.4",
+      "latest",
+      "2026-10-29T10:00:00.000Z",
+    );
+
+    expect(result.releaseNotes).toEqual([
+      {
+        version: "1.2.4",
+        releasedAt: "2026-10-29T10:00:00.000Z",
+        stats: "12 changes from 3 contributors",
+        intro: "Link machines (beta).",
+        items: fixes.map((_, index) => `Fix ${index + 1}`),
+        totalItems: 10,
+      },
+    ]);
+  });
+
   it("does not count Markdown or HTML section headings as changes", () => {
     const changes = Array.from({ length: 8 }, (_, index) => `Change ${index + 1}`);
     const result = normalizeDesktopUpdateReleaseNotes(
@@ -80,29 +112,36 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     ]);
   });
 
-  it("keeps per-version order and drops empty groups", () => {
+  it("reads handwritten notes with their own <details> as a list", () => {
     const result = normalizeDesktopUpdateReleaseNotes(
-      [
-        { version: "1.2.3", note: "- Newer release" },
-        { version: "1.2.2", note: "Full changelog: https://example.com/compare/x...y" },
-        { version: "1.2.1", note: "- Older release" },
-      ],
+      "- Older fix\n- Newer fix\n<details><summary>Logs</summary>\n- hidden\n</details>",
       "1.2.3",
       "latest",
     );
 
-    expect(result).toEqual({
-      releaseNotes: [
-        { version: "1.2.3", items: ["Newer release"], totalItems: 1 },
-        { version: "1.2.1", items: ["Older release"], totalItems: 1 },
+    expect(result.releaseNotes).toEqual([
+      { version: "1.2.3", items: ["hidden", "Logs", "Newer fix", "Older fix"], totalItems: 4 },
+    ]);
+  });
+
+  it("dates the offered release from the feed and older nightlies by their build day", () => {
+    const result = normalizeDesktopUpdateReleaseNotes(
+      [
+        { version: "0.0.41-nightly.20260914.1707", note: "- Nightly change 2" },
+        { version: "0.0.41-nightly.20260913.1700", note: "- Nightly change 1" },
       ],
-      omittedReleaseCount: 0,
-    });
+      "0.0.41-nightly.20260914.1707",
+      "nightly",
+      "2026-09-14T18:30:00.000Z",
+    );
+
+    expect(result.releaseNotes.map(({ releasedAt }) => releasedAt)).toEqual([
+      "2026-09-14T18:30:00.000Z",
+      "2026-09-13",
+    ]);
   });
 
   it("drops releases from other trains before grouping on nightly", () => {
-    // electron-updater's full changelog is "every version above the running
-    // one", and preview sorts above nightly, so the preview cuts come first.
     const releaseNotes = [
       { version: "0.0.41-preview.20260914.1683", note: "- Maintainer test build" },
       { version: "0.0.41-preview.20260913.1669", note: "- Maintainer test build" },
@@ -123,6 +162,7 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     expect(result.omittedReleaseCount).toBe(0);
   });
 
+  // regression: #11753 prerelease entries leaked into a channel's update changelog
   it("keeps only stable releases on the latest channel", () => {
     const result = normalizeDesktopUpdateReleaseNotes(
       [
@@ -161,18 +201,6 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     expect(result.omittedReleaseCount).toBe(1);
   });
 
-  it("decodes valid HTML entities", () => {
-    const result = normalizeDesktopUpdateReleaseNotes(
-      "- Fix &amp; polish &#128512;",
-      "1.0.0",
-      "latest",
-    );
-    expect(result).toEqual({
-      releaseNotes: [{ version: "1.0.0", items: ["Fix & polish 😀"], totalItems: 1 }],
-      omittedReleaseCount: 0,
-    });
-  });
-
   it("ignores malformed and empty entries instead of throwing", () => {
     const result = normalizeDesktopUpdateReleaseNotes(
       [
@@ -193,13 +221,6 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     });
   });
 
-  it("returns an empty result for an invalid payload", () => {
-    expect(normalizeDesktopUpdateReleaseNotes({ note: "- Invalid" }, "1.0.0", "latest")).toEqual({
-      releaseNotes: [],
-      omittedReleaseCount: 0,
-    });
-  });
-
   it("does not throw on out-of-range numeric entities and keeps the literal", () => {
     const result = normalizeDesktopUpdateReleaseNotes(
       "- Broken entity &#9999999999;",
@@ -208,6 +229,47 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     );
     expect(result).toEqual({
       releaseNotes: [{ version: "1.0.0", items: ["Broken entity &#9999999999;"], totalItems: 1 }],
+      omittedReleaseCount: 0,
+    });
+  });
+
+  it("ignores the Full Changelog paragraph that ends GitHub's generated notes", () => {
+    const fullChangelog = (from: string, to: string) =>
+      `<p><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/pingdotgg/t3code/compare/v${from}...v${to}"><tt>v${from}...v${to}</tt></a></p>`;
+    const result = normalizeDesktopUpdateReleaseNotes(
+      [
+        {
+          version: "0.1.3-nightly.20261024.3604",
+          note: fullChangelog("0.1.3-nightly.20261023.3592", "0.1.3-nightly.20261024.3604"),
+        },
+        {
+          version: "0.1.3-nightly.20261023.3592",
+          note:
+            "<h2>What's Changed</h2>\n<ul>\n" +
+            '<li>fix(web): A by <a href="https://github.com/a">@a</a> in <a href="https://github.com/pingdotgg/t3code/pull/1">#1</a></li>\n' +
+            '<li>fix(web): B by <a href="https://github.com/b">@b</a> in <a href="https://github.com/pingdotgg/t3code/pull/2">#2</a></li>\n' +
+            "<li>Full Changelog: links open in the browser in #3</li>\n" +
+            "</ul>\n" +
+            fullChangelog("0.1.3-nightly.20261023.3579", "0.1.3-nightly.20261023.3592"),
+        },
+      ],
+      "0.1.3-nightly.20261024.3604",
+      "nightly",
+    );
+
+    expect(result).toEqual({
+      releaseNotes: [
+        {
+          version: "0.1.3-nightly.20261023.3592",
+          items: [
+            "Full Changelog: links open in the browser in #3",
+            "fix(web): B by @b in #2",
+            "fix(web): A by @a in #1",
+          ],
+          releasedAt: "2026-10-23",
+          totalItems: 3,
+        },
+      ],
       omittedReleaseCount: 0,
     });
   });

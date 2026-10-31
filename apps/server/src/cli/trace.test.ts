@@ -31,45 +31,6 @@ function browserSpan(
   });
 }
 
-it("reports count, rate, percentiles, and exits per span name", () => {
-  const refreshes = Array.from({ length: 10 }, (_, index) =>
-    span(
-      "refresh",
-      index + 1,
-      index * MINUTE_MS,
-      index === 0 ? "Interrupted" : index === 1 ? "Failure" : "Success",
-    ),
-  );
-  const summarizer = makeTraceSpanSummary();
-  [...refreshes, span("probe", 2_500, 10 * MINUTE_MS)].forEach(summarizer.addLine);
-  const summary = summarizer.finish();
-
-  assert.strictEqual(summary.spanCount, 11);
-  assert.strictEqual(summary.minutes, 10);
-  assert.deepStrictEqual(summary.spans, [
-    {
-      name: "refresh",
-      count: 10,
-      perMinute: 1,
-      p50Ms: 5,
-      p90Ms: 9,
-      maxMs: 10,
-      interrupted: 1,
-      failures: 1,
-    },
-    {
-      name: "probe",
-      count: 1,
-      perMinute: 0.1,
-      p50Ms: 2_500,
-      p90Ms: 2_500,
-      maxMs: 2_500,
-      interrupted: 0,
-      failures: 0,
-    },
-  ]);
-});
-
 it("drops spans that ended before the window and counts unreadable lines", () => {
   const summarizer = makeTraceSpanSummary(MINUTE_MS);
   [

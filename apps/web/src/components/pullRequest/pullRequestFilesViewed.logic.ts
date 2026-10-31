@@ -28,22 +28,7 @@ export function isFileViewed(
   return pressed ?? isViewedState(states?.get(path));
 }
 
-export function countViewedFiles(
-  paths: ReadonlyArray<string>,
-  states: FileViewedStates | null,
-  overlay: FileViewedOverlay,
-): number {
-  return paths.reduce(
-    (total, path) => (isFileViewed(path, states, overlay) ? total + 1 : total),
-    0,
-  );
-}
-
-/**
- * A press is held until a read that could have seen it comes back, rather than cleared when the
- * write succeeds: that read is a separate round trip, and dropping the press in between flashes
- * the checkbox back.
- */
+/** Retain presses until a read could have observed the write. */
 export function settleFileViewedOverlay(
   overlay: FileViewedOverlay,
   states: FileViewedStates | null,
@@ -59,12 +44,7 @@ export function settleFileViewedOverlay(
   return next.size === overlay.size ? overlay : next;
 }
 
-/**
- * `owned` are the paths that request still answers for, which keeps a failure from reaching past
- * its own presses: a path pressed again since belongs to a later request or to the next flush,
- * and putting that box back to the host's answer would take a press out from under the reader's
- * hand.
- */
+/** Revert only owned paths; later presses belong to other requests. */
 export function revertFileViewedOverlay(
   overlay: FileViewedOverlay,
   batch: ReadonlyArray<{ readonly path: string; readonly viewed: boolean }>,

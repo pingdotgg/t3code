@@ -1,21 +1,19 @@
 import {
-  PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
-import { describe, expect, it } from "vite-plus/test";
+import * as Cause from "effect/Cause";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
-  dedupeProviderSkillsByName,
-  getProviderSlashCommandsForSlashMenu,
+  createProviderWorkspaceSnapshotRefreshAtomFamily,
   getProviderSkillsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
-  hasCurrentProviderWorkspaceSnapshot,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
-  resolveProviderSkillSourceKind,
 } from "./providerSkills.ts";
 
 const provider = {
@@ -39,50 +37,6 @@ const provider = {
     },
   ],
 } satisfies ServerProvider;
-
-describe("formatProviderSkillDisplayName", () => {
-  it("prefers the provider display name", () => {
-    expect(
-      formatProviderSkillDisplayName({
-        name: "review-follow-up",
-        displayName: "Review Follow-up",
-      }),
-    ).toBe("Review Follow-up");
-  });
-
-  it("falls back to a title-cased skill name", () => {
-    expect(
-      formatProviderSkillDisplayName({
-        name: "review-follow-up",
-      }),
-    ).toBe("Review Follow Up");
-  });
-});
-
-describe("dedupeProviderSkillsByName", () => {
-  it("keeps the first resolved skill and preserves unrelated skill order", () => {
-    const firstSkill = {
-      name: "branch-audit",
-      path: "/Users/matt/.codex/skills/branch-audit/SKILL.md",
-      enabled: true,
-    };
-    const otherSkill = {
-      name: "browser",
-      path: "/Users/matt/.agents/skills/browser/SKILL.md",
-      enabled: true,
-    };
-    const duplicateSkill = {
-      name: "Branch-Audit",
-      path: "/Users/matt/.agents/skills/branch-audit/SKILL.md",
-      enabled: true,
-    };
-
-    expect(dedupeProviderSkillsByName([firstSkill, otherSkill, duplicateSkill])).toEqual([
-      firstSkill,
-      otherSkill,
-    ]);
-  });
-});
 
 describe("getProviderSkillsForSlashMenu", () => {
   it("keeps the skill alias when the provider also exposes it as a slash command", () => {
@@ -140,109 +94,6 @@ describe("getProviderSkillsForSlashMenu", () => {
   });
 });
 
-describe("getProviderSkillsForSlashMenu", () => {
-  it("drops a skill the provider reserves for the agent", () => {
-    const skills = [
-      {
-        name: "legacy-system-context",
-        path: "/Users/matt/.claude/skills/legacy-system-context/SKILL.md",
-        enabled: true,
-        userInvocable: false,
-      },
-      {
-        name: "deploy",
-        path: "/Users/matt/.claude/skills/deploy/SKILL.md",
-        enabled: true,
-        userInvocationOnly: true,
-      },
-    ];
-
-    expect(getProviderSkillsForSlashMenu(skills, true).map((skill) => skill.name)).toEqual([
-      "deploy",
-    ]);
-  });
-});
-
-describe("getProviderSlashCommandsForSlashMenu", () => {
-  const commands = [
-    { name: "ask-matt", description: "Ask which skill fits your situation." },
-    { name: "compact", description: "Compact the conversation." },
-  ];
-  const skills = [
-    {
-      name: "ask-matt",
-      path: "/Users/matt/.agents/skills/ask-matt/SKILL.md",
-      enabled: true,
-    },
-  ];
-
-  it("lets the skill alias win when a provider command has the same name", () => {
-    expect(
-      getProviderSlashCommandsForSlashMenu(commands, skills).map((command) => command.name),
-    ).toEqual(["compact"]);
-  });
-
-  it("keeps the provider command when the matching skill alias is hidden", () => {
-    const visibleSkills = getProviderSkillsForSlashMenu(skills, false);
-
-    expect(
-      getProviderSlashCommandsForSlashMenu(commands, visibleSkills).map((command) => command.name),
-    ).toEqual(["ask-matt", "compact"]);
-  });
-});
-
-describe("resolveProviderSkillSourceKind", () => {
-  it("marks plugin-backed skills as app installs", () => {
-    expect(
-      resolveProviderSkillSourceKind({
-        path: "/Users/julius/.codex/plugins/cache/openai-curated/github/skills/gh-fix-ci/SKILL.md",
-        scope: "user",
-      }),
-    ).toBe("app");
-  });
-
-  it("maps standard scopes to source kinds", () => {
-    expect(
-      resolveProviderSkillSourceKind({
-        path: "/workspace/.codex/skills/review-follow-up/SKILL.md",
-        scope: "repo",
-      }),
-    ).toBe("repo");
-    expect(
-      resolveProviderSkillSourceKind({
-        path: "/workspace/.codex/skills/review-follow-up/SKILL.md",
-        scope: "project",
-      }),
-    ).toBe("project");
-    expect(
-      resolveProviderSkillSourceKind({
-        path: "/Users/julius/.agents/skills/agent-browser/SKILL.md",
-        scope: "user",
-      }),
-    ).toBe("personal");
-    expect(
-      resolveProviderSkillSourceKind({
-        path: "/usr/local/share/codex/skills/imagegen/SKILL.md",
-        scope: "system",
-      }),
-    ).toBe("system");
-  });
-
-  it("keeps unknown and missing scopes usable", () => {
-    expect(
-      resolveProviderSkillSourceKind({
-        path: "/opt/skills/team-review/SKILL.md",
-        scope: "team_shared",
-      }),
-    ).toBe("other");
-    expect(
-      resolveProviderSkillSourceKind({
-        path: "/opt/skills/team-review/SKILL.md",
-      }),
-    ).toBe("other");
-  });
-});
-
 describe("workspace provider snapshots", () => {
   it("uses the cwd snapshot after a provider session has populated it", () => {
     expect(resolveProviderSkillsForCwd(provider, "/workspace/project-a")).toEqual([
@@ -279,27 +130,225 @@ describe("workspace provider snapshots", () => {
     expect(hasCompleteProviderWorkspaceSnapshot(undefined, "/workspace/project-a")).toBe(false);
     expect(hasCompleteProviderWorkspaceSnapshot(provider, null)).toBe(false);
   });
+});
 
-  it("asks for a rescan once the workspace snapshot outlives its TTL", () => {
-    const scannedAt = Date.parse("2026-01-01T00:01:00.000Z");
-    const cwd = "/workspace/project-a";
-    expect(hasCurrentProviderWorkspaceSnapshot(provider, cwd, scannedAt)).toBe(true);
-    expect(
-      hasCurrentProviderWorkspaceSnapshot(
-        provider,
-        cwd,
-        scannedAt + PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS - 1,
-      ),
-    ).toBe(true);
-    expect(
-      hasCurrentProviderWorkspaceSnapshot(
-        provider,
-        cwd,
-        scannedAt + PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS,
-      ),
-    ).toBe(false);
-    expect(hasCurrentProviderWorkspaceSnapshot(provider, "/workspace/project-b", scannedAt)).toBe(
-      false,
+describe("provider workspace snapshot refresh atom", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const cwd = "/workspace/project-a";
+  const environmentId = EnvironmentId.make("env");
+  const withSnapshot = (
+    checkedAt: string,
+    slashCommandsPending?: boolean,
+  ): ReadonlyArray<ServerProvider> => [
+    {
+      ...provider,
+      workspaceSnapshots: [
+        {
+          ...provider.workspaceSnapshots[0]!,
+          checkedAt,
+          ...(slashCommandsPending ? { slashCommandsPending } : {}),
+        },
+      ],
+    },
+  ];
+  const noSnapshot: ReadonlyArray<ServerProvider> = [{ ...provider, workspaceSnapshots: [] }];
+
+  type Response = () =>
+    | ReadonlyArray<ServerProvider>
+    | null
+    | Promise<ReadonlyArray<ServerProvider> | null>;
+
+  function setup(initialProviders: ReadonlyArray<ServerProvider>, initialResponses?: Response[]) {
+    const providersAtom = Atom.make<ReadonlyArray<ServerProvider> | null>(initialProviders);
+    const responses: Response[] = [...(initialResponses ?? [])];
+    const run = vi.fn(async () => {
+      const providers = await (responses.shift() ?? (() => null))();
+      return providers === null
+        ? AsyncResult.failure<{ providers: ReadonlyArray<ServerProvider> }, string>(
+            Cause.fail("offline"),
+          )
+        : AsyncResult.success({ providers });
+    });
+    const family = createProviderWorkspaceSnapshotRefreshAtomFamily({
+      providers: () => providersAtom,
+      refreshProviders: { label: "refresh", run },
+    });
+    const registry = AtomRegistry.make();
+    const atom = family({ environmentId, instanceId: provider.instanceId, cwd });
+    const unmount = registry.mount(atom);
+    return { registry, atom, family, providersAtom, responses, run, unmount };
+  }
+
+  it("scans a missing snapshot once and skips a repeat inside the TTL", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:00:00.000Z") });
+    const { registry, atom, family, responses, run, unmount } = setup(noSnapshot);
+    // A second composer on the same target shares the scan.
+    registry.mount(family({ environmentId, instanceId: provider.instanceId, cwd }))();
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith(expect.anything(), {
+      environmentId,
+      input: { instanceId: provider.instanceId, cwd },
+    });
+    responses.push(() => withSnapshot("2026-01-01T00:00:00.000Z"));
+    await vi.advanceTimersByTimeAsync(0);
+    registry.refresh(atom);
+    expect(run).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
+  it.each(["already expired", "expires during discovery"])(
+    "retries an unchanged catalog that %s after the short cooldown",
+    async (expiry) => {
+      const start = Date.parse("2026-01-01T00:05:00.000Z");
+      vi.useFakeTimers({ now: expiry === "expires during discovery" ? start - 1 : start });
+      const stale = withSnapshot("2026-01-01T00:00:00.000Z");
+      const { registry, atom, responses, run, unmount } = setup(
+        expiry === "expires during discovery"
+          ? withSnapshot("2026-01-01T00:00:00.000Z", true)
+          : stale,
+        [
+          () => {
+            if (expiry === "expires during discovery") vi.setSystemTime(start + 1);
+            return stale;
+          },
+        ],
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(9_999);
+      registry.refresh(atom);
+      expect(run).toHaveBeenCalledTimes(1);
+      responses.push(() => withSnapshot("2026-01-01T00:05:10.000Z"));
+      await vi.advanceTimersByTimeAsync(1);
+      registry.refresh(atom);
+      expect(run).toHaveBeenCalledTimes(2);
+      unmount();
+    },
+  );
+
+  it("keeps the TTL guard for a newly scanned catalog when the client clock is ahead", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T01:00:00.000Z") });
+    const { registry, atom, run, unmount } = setup(withSnapshot("2026-01-01T00:00:00.000Z"), [
+      () => withSnapshot("2026-01-01T00:01:00.000Z"),
+    ]);
+    await vi.advanceTimersByTimeAsync(10_000);
+    registry.refresh(atom);
+    expect(run).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
+  it("bounds retries when discovery repeatedly returns the same expired catalog", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:05:00.000Z") });
+    const stale = withSnapshot("2026-01-01T00:00:00.000Z");
+    const { registry, atom, run, unmount } = setup(stale, [() => stale, () => stale, () => stale]);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    registry.refresh(atom);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    registry.refresh(atom);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    registry.refresh(atom);
+    expect(run).toHaveBeenCalledTimes(3);
+    unmount();
+  });
+
+  it("does not rescan a current snapshot, and rescans once it ages past the TTL", () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:01:00.000Z") });
+    const { registry, atom, run, unmount } = setup(withSnapshot("2026-01-01T00:00:00.000Z"));
+    expect(run).not.toHaveBeenCalled();
+    vi.setSystemTime(Date.parse("2026-01-01T00:05:00.000Z"));
+    registry.refresh(atom);
+    expect(run).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
+  it("cools down a failed scan, then retries on its own while the scan stays pending", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:00:00.000Z") });
+    const { registry, atom, run, unmount } = setup(withSnapshot("2026-01-01T00:00:00.000Z", true));
+    expect(run).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(0);
+    registry.refresh(atom);
+    expect(run).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(run).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(run).toHaveBeenCalledTimes(2);
+    unmount();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("stops retrying after three failed scans until the TTL lapses", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:00:00.000Z") });
+    const { registry, atom, run, unmount } = setup(withSnapshot("2026-01-01T00:00:00.000Z", true));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(run).toHaveBeenCalledTimes(3);
+    registry.refresh(atom);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(vi.getTimerCount()).toBe(0);
+    vi.setSystemTime(Date.parse("2026-01-01T00:10:00.000Z"));
+    registry.refresh(atom);
+    expect(run).toHaveBeenCalledTimes(4);
+    unmount();
+  });
+
+  it("does not retry on a timer when the failed scan left no pending snapshot", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:00:00.000Z") });
+    const { registry, atom, run, unmount } = setup(noSnapshot);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(run).toHaveBeenCalledTimes(1);
+    registry.refresh(atom);
+    expect(run).toHaveBeenCalledTimes(2);
+    unmount();
+  });
+
+  it("rescans at once when the server drops the snapshot, lifting TTL and cooldown", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:00:00.000Z") });
+    const { registry, providersAtom, run, unmount } = setup(noSnapshot);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(run).toHaveBeenCalledTimes(1);
+    registry.set(providersAtom, withSnapshot("2026-01-01T00:00:00.000Z"));
+    expect(run).toHaveBeenCalledTimes(1);
+    registry.set(providersAtom, noSnapshot);
+    expect(run).toHaveBeenCalledTimes(2);
+    unmount();
+  });
+
+  it("does not scan again when a scan fails after the last subscriber left", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:00:00.000Z") });
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { run, unmount } = setup(withSnapshot("2026-01-01T00:00:00.000Z", true), [
+      async () => {
+        await gate;
+        return null;
+      },
+    ]);
+    expect(run).toHaveBeenCalledTimes(1);
+    unmount();
+    await vi.advanceTimersByTimeAsync(0);
+    release();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("ignores provider updates that leave the snapshot status unchanged", () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:01:00.000Z") });
+    const { registry, providersAtom, run, unmount } = setup(
+      withSnapshot("2026-01-01T00:00:00.000Z"),
     );
+    vi.setSystemTime(Date.parse("2026-01-01T00:06:00.000Z"));
+    registry.set(providersAtom, withSnapshot("2026-01-01T00:00:00.000Z"));
+    expect(run).not.toHaveBeenCalled();
+    unmount();
   });
 });

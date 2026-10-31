@@ -9,6 +9,15 @@ export interface AndroidFoldState {
   readonly hingeAngle: number | null;
 }
 
+export class AndroidFoldError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -54,8 +63,9 @@ const foldRequest = async (
   if (!response.ok) {
     const payload: unknown = await response.json().catch(() => null);
     const error = isRecord(payload) ? payload.error : null;
-    throw new Error(
+    throw new AndroidFoldError(
       typeof error === "string" ? error : `Fold command failed (${response.status}).`,
+      response.status,
     );
   }
   return parseFold(await response.json());
