@@ -26,6 +26,7 @@ const decodeHead = Schema.decodeUnknownEffect(Schema.fromJsonString(HeadSchema))
 class ChecksUnavailable extends Schema.TaggedError<ChecksUnavailable>()("ChecksUnavailable", {}) {}
 
 const WorkflowRunSchema = Schema.Struct({
+  pull_requests: Schema.optional(Schema.Array(Schema.Struct({ number: Schema.Int }))),
   id: Schema.Int,
   name: Schema.optional(Schema.NullOr(Schema.String)),
   html_url: Schema.optional(Schema.NullOr(Schema.String)),

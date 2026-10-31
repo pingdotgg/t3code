@@ -379,6 +379,7 @@ describe("gitHubViewerPermissions", () => {
           listWorkflowRunsRequiringApproval: () =>
             Effect.succeed([
               {
+                pullRequestNumbers: [7],
                 id: 123,
                 name: "contributor tests",
                 url: "https://github.com/acme/web/actions/runs/123",
@@ -431,7 +432,7 @@ const openDetail = {
   commits: [],
 };
 
-it.effect("does not classify same-repository gates as fork workflow approvals", () =>
+it.effect("discovers workflow approval for a same-repository bot pull request", () =>
   Effect.gen(function* () {
     const provider = yield* make;
     const detail = yield* provider.getChangeRequest({
@@ -441,15 +442,29 @@ it.effect("does not classify same-repository gates as fork workflow approvals", 
       number: 7,
     });
 
-    expect(detail.workflowApprovalsRequired).toBe(0);
-    expect(detail.checks).toEqual([]);
+    expect(detail.workflowApprovalsRequired).toBe(1);
+    expect(detail.checks).toEqual([
+      {
+        name: "bot tests",
+        status: "action-required",
+        description: "A maintainer must approve this workflow before it can run.",
+        url: "https://github.com/acme/web/actions/runs/123",
+      },
+    ]);
   }).pipe(
     Effect.provide(
       Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
         revalidateChecks: (_input, read) => read,
         getPullRequestDetail: () => Effect.succeed({ ...openDetail, isCrossRepository: false }),
         listWorkflowRunsRequiringApproval: () =>
-          Effect.die("same-repository pull requests must not probe fork workflow approvals"),
+          Effect.succeed([
+            {
+              pullRequestNumbers: [7],
+              id: 123,
+              name: "bot tests",
+              url: "https://github.com/acme/web/actions/runs/123",
+            },
+          ]),
         getViewerAccess: () =>
           Effect.succeed({
             canWrite: true,
