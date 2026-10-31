@@ -10731,8 +10731,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.add(turnInput.providerTurnId);
               return next;
             });
-            yield* existing.query.interrupt;
-            yield* existing.query.close.pipe(Effect.ignore);
+            if (!(yield* Deferred.isDone(existing.closed))) {
+              yield* existing.query.interrupt;
+              yield* existing.query.close.pipe(Effect.ignore);
+            }
             const closed = yield* Deferred.await(existing.closed).pipe(
               Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
             );
@@ -10926,6 +10928,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const existing = yield* Ref.get(queryContext);
           if (existing !== null) {
             yield* existing.query.close.pipe(Effect.ignore);
+            // The scope interrupts the stream fiber first, so it may never mark its query closed.
+            yield* Deferred.succeed(existing.closed, undefined);
           }
           yield* Effect.yieldNow;
           yield* queryRunner.assertComplete.pipe(
