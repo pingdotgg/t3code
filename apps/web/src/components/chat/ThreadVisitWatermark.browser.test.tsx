@@ -3,8 +3,11 @@ import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contract
 import { AsyncResult, Atom } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
-import { fakeTimers, render } from "../../../test/render";
+import { act, fakeTimers, render } from "../../../test/render";
 import { AppAtomRegistryProvider, appAtomRegistry } from "../../rpc/atomRegistry";
+import { LayoutPaneContext, useLayoutPane } from "../../layout/layoutPaneContext";
+import { createLayoutState, selectFocusedTab } from "../../layout/layoutModel";
+import { useLayoutStore } from "../../layout/layoutStore";
 
 const mocks = vi.hoisted(() => ({
   visitRun: vi.fn(),
@@ -53,6 +56,46 @@ function visitedThreadIds() {
   );
 }
 
+function TabVisit({ tabId }: { tabId: string }) {
+  const pane = useLayoutPane();
+  return (
+    <AppAtomRegistryProvider>
+      <LayoutPaneContext value={{ ...pane, tabId }}>
+        <ThreadVisitWatermark threadRef={threadA} />
+      </LayoutPaneContext>
+    </AppAtomRegistryProvider>
+  );
+}
+
+it("retains visits across render eviction while the layout tab still exists", async () => {
+  mocks.visitRun.mockReset().mockResolvedValue(AsyncResult.success(undefined));
+  setShell(threadA, "2026-01-02T00:00:00.000Z");
+  using _timers = fakeTimers();
+  vi.setSystemTime(NOW);
+  useLayoutStore.setState({ layout: createLayoutState() });
+  useLayoutStore.getState().openTab({
+    kind: "chat",
+    target: { kind: "server", threadRef: threadA },
+  });
+  const tab = selectFocusedTab(useLayoutStore.getState().layout)!;
+  await using screen = await render(<TabVisit tabId={tab.id} />);
+  expect(visitedThreadIds()).toEqual(["a"]);
+
+  await screen.rerender(<>{null}</>);
+  await screen.rerender(<TabVisit tabId={tab.id} />);
+  expect(visitedThreadIds()).toEqual(["a"]);
+
+  await screen.rerender(<>{null}</>);
+  await act(() => useLayoutStore.getState().closeTab(tab.id));
+  useLayoutStore.getState().openTab({
+    kind: "chat",
+    target: { kind: "server", threadRef: threadA },
+  });
+  const reopened = selectFocusedTab(useLayoutStore.getState().layout)!;
+  await screen.rerender(<TabVisit tabId={reopened.id} />);
+  expect(visitedThreadIds()).toEqual(["a", "a"]);
+});
+
 it("records the visit of the next thread at once after switching threads", async () => {
   mocks.visitRun.mockReset();
   mocks.visitRun.mockResolvedValue(AsyncResult.success(undefined));
@@ -78,5 +121,13 @@ it("records the visit of the next thread at once after switching threads", async
 
   // Thread A's throttle must not hold back B's first watermark: leaving B
   // within the throttle window would otherwise keep it unread.
+  expect(visitedThreadIds()).toEqual(["a", "b"]);
+
+  await screen.rerender(<AppAtomRegistryProvider>{null}</AppAtomRegistryProvider>);
+  await screen.rerender(
+    <AppAtomRegistryProvider>
+      <ThreadVisitWatermark threadRef={threadB} />
+    </AppAtomRegistryProvider>,
+  );
   expect(visitedThreadIds()).toEqual(["a", "b"]);
 });

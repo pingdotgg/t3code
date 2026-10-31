@@ -23,6 +23,11 @@ export const PIERRE_TREE_UNSAFE_CSS = `
   [data-truncate-content='visible'] { overflow: hidden; text-overflow: ellipsis; }
   [data-truncate-marker] { display: none; }
   button[data-type='item'], button[data-type='item']::before { border-radius: 6px; }
+  /* Rows start clear of chrome the tree scrolls under (FileBrowserPanel). The patched tree takes
+     this padding out of its viewport, so keyboard and reveal scrolling land below the chrome. */
+  [data-file-tree-virtualized-scroll='true'] {
+    padding-top: var(--file-tree-top-inset, 0px);
+  }
   /* Git status letters are mono and regular; changed names take a lighter tint of the status color. */
   [data-item-git-status] > [data-item-section='git'] {
     font-family: var(--font-mono);

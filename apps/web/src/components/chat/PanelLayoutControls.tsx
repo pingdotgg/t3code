@@ -1,13 +1,8 @@
-import {
-  ListFilterIcon,
-  PanelBottomIcon,
-  PanelRightIcon,
-  Maximize2Icon,
-  Minimize2Icon,
-} from "lucide-react";
+import { ListFilterIcon, Maximize2Icon, Minimize2Icon } from "lucide-react";
 
-import { memo, type ReactNode } from "react";
+import { memo, type ReactNode, type Ref } from "react";
 import { cn } from "~/lib/utils";
+import { useLayoutPane } from "../../layout/layoutPaneContext";
 
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
@@ -17,48 +12,30 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export interface PanelLayoutControlsProps {
   showThreadPanelControl?: boolean;
-  showTerminalControl?: boolean;
-  showRightPanelControl?: boolean;
-  terminalAvailable: boolean;
-  terminalOpen: boolean;
-  terminalShortcutLabel: string | null;
   threadPanelOpen: boolean;
   threadPanelPresentation: ThreadPanelPresentation;
   threadPanelPopoverHandle?: ReturnType<typeof PopoverCreateHandle>;
   threadPanelShortcutLabel: string | null;
-  rightPanelAvailable: boolean;
-  rightPanelOpen: boolean;
-  rightPanelShortcutLabel: string | null;
-  rightPanelUnavailableLabel?: string;
-  onToggleTerminal: () => void;
   onToggleThreadPanel: () => void;
-  onToggleRightPanel: () => void;
+  /** Shown instead of the toggle's label when there is no thread to detail. */
+  disabledReason?: string | null;
 }
 
 export const PanelLayoutControls = memo(function PanelLayoutControls({
   showThreadPanelControl = true,
-  showTerminalControl = true,
-  showRightPanelControl = true,
-  terminalAvailable,
-  terminalOpen,
-  terminalShortcutLabel,
   threadPanelOpen,
   threadPanelPresentation,
   threadPanelPopoverHandle,
   threadPanelShortcutLabel,
-  rightPanelAvailable,
-  rightPanelOpen,
-  rightPanelShortcutLabel,
-  rightPanelUnavailableLabel = "Right panel is unavailable",
-  onToggleTerminal,
   onToggleThreadPanel,
-  onToggleRightPanel,
+  disabledReason = null,
 }: PanelLayoutControlsProps) {
   const threadPanelToggle = (
     <Toggle
       className="relative shrink-0 [-webkit-app-region:no-drag]"
       pressed={threadPanelOpen}
       onPressedChange={threadPanelPresentation === "popover" ? undefined : onToggleThreadPanel}
+      disabled={disabledReason !== null}
       aria-label="Toggle thread details panel"
       variant="ghost"
       size="sm"
@@ -76,8 +53,12 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
         )}
       </TooltipTrigger>
       <TooltipPopup side="bottom">
-        Toggle thread details
-        {threadPanelShortcutLabel ? ` (${threadPanelShortcutLabel})` : ""}
+        {disabledReason ?? (
+          <>
+            Toggle thread details
+            {threadPanelShortcutLabel ? ` (${threadPanelShortcutLabel})` : ""}
+          </>
+        )}
       </TooltipPopup>
     </Tooltip>
   );
@@ -87,53 +68,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
       data-panel-layout-controls
     >
-      {showTerminalControl ? (
-        <Tooltip>
-          <TooltipTrigger render={<span className="flex shrink-0" />}>
-            <Toggle
-              className="shrink-0 [-webkit-app-region:no-drag]"
-              pressed={terminalOpen}
-              onPressedChange={onToggleTerminal}
-              aria-label="Toggle terminal drawer"
-              variant="ghost"
-              size="sm"
-              disabled={!terminalAvailable}
-            >
-              <PanelBottomIcon className="size-3.5" />
-            </Toggle>
-          </TooltipTrigger>
-          <TooltipPopup side="bottom">
-            {terminalAvailable
-              ? `Toggle terminal drawer${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
-              : "Terminal drawer is unavailable"}
-          </TooltipPopup>
-        </Tooltip>
-      ) : null}
-      {showRightPanelControl ? (
-        <Tooltip>
-          <TooltipTrigger render={<span className="flex shrink-0" />}>
-            <Toggle
-              className="shrink-0 [-webkit-app-region:no-drag]"
-              pressed={rightPanelOpen}
-              onPressedChange={onToggleRightPanel}
-              aria-label="Toggle right panel"
-              data-right-panel-toggle
-              variant="ghost"
-              size="sm"
-              disabled={!rightPanelAvailable}
-            >
-              <PanelRightIcon className="size-3.5" />
-            </Toggle>
-          </TooltipTrigger>
-          <TooltipPopup side="bottom">
-            {rightPanelAvailable
-              ? `Toggle right panel${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}`
-              : rightPanelUnavailableLabel}
-          </TooltipPopup>
-        </Tooltip>
-      ) : null}
-      {/* The workspace menu (pen ZVAPz) closes the cluster at the pane's
-          top-right corner; the pane toggles sit to its left. */}
+      {/* The workspace menu (pen ZVAPz) is the pane's only top-right control. */}
       {showThreadPanelControl ? threadPanelControl : null}
     </div>
   );
@@ -183,23 +118,35 @@ export function ThreadPanelHeaderControl(props: PanelLayoutControlsProps) {
       )}
       data-workspace-titlebar-controls
     >
-      <PanelLayoutControls {...props} showTerminalControl={false} showRightPanelControl={false} />
+      <PanelLayoutControls {...props} />
     </div>
   );
 }
 
-/** The window's top-right panel controls. */
-export function WorkspaceTitlebarControls(props: { readonly children: ReactNode }) {
+/** The pane's top-right panel controls. */
+export function WorkspaceTitlebarControls({
+  children,
+  ref,
+}: {
+  readonly children: ReactNode;
+  readonly ref?: Ref<HTMLDivElement> | undefined;
+}) {
+  const layoutPane = useLayoutPane();
   const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
   return (
     <div
+      ref={ref}
       className={cn(
-        "pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
+        "pointer-events-none z-50 flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
+        // Several panes each carry their own cluster at their own top-right.
+        layoutPane.split
+          ? "absolute top-[var(--workspace-pane-local-controls-top)] right-[var(--workspace-pane-local-controls-right)]"
+          : "fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] mr-px",
         mobileSidebarSheetMounted && "hidden",
       )}
       data-workspace-titlebar-controls
     >
-      <div className="pointer-events-auto flex h-full items-center gap-1.5">{props.children}</div>
+      <div className="pointer-events-auto flex h-full items-center gap-1.5">{children}</div>
     </div>
   );
 }

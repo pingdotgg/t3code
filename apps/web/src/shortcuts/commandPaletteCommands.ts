@@ -2,6 +2,7 @@ import type { AnyRouter } from "@tanstack/react-router";
 
 import {
   dispatchCommandPalette,
+  leaveCommandPaletteOverlay,
   isCommandPaletteMounted,
   useCommandPaletteStore,
 } from "../commandPaletteStore";
@@ -14,6 +15,7 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { type CommandHandler, type CommandScopeOptions, registerCommands } from "./dispatcher";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { resolveThreadRouteTarget } from "../threadRoutes";
+import { isModalDialogOpen } from "../lib/modalDialog";
 
 function consume(event: KeyboardEvent): void {
   event.preventDefault();
@@ -54,7 +56,7 @@ export function installCommandPaletteCommands(
         const { open, mode } = useCommandPaletteStore.getState();
         if (!open || mode === "command") return false;
         consume(event);
-        dispatchCommandPalette({ _tag: "BackToCommand" });
+        leaveCommandPaletteOverlay();
       },
     },
   );
@@ -102,7 +104,7 @@ export function installCommandPaletteCommands(
     },
     {
       ...options,
-      when: isCommandPaletteMounted,
+      when: () => isCommandPaletteMounted() && !isModalDialogOpen(),
       context: () => {
         const threadRef = readRouteThreadRef();
         return {
