@@ -65,7 +65,7 @@ const PreviewStatusTool = Tool.make("preview_status", {
 const PreviewOpenTool = browserTool(
   Tool.make("preview_open", {
     description:
-      "Open a preview tab in this thread and show it. `open=false` keeps it in the background. Reuses your current tab unless `tabId` or `reuseExistingTab=false` says otherwise. Parallel subagents in one session must each use `reuseExistingTab=false`, then their own returned `tabId`.",
+      "Open a tab on this thread's machine. For a linked machine's browser, use `delegate_task` with `target.environmentId`. `open=false` hides it. Reuses your tab unless `tabId` or `reuseExistingTab=false`. Parallel subagents: use `reuseExistingTab=false`, then returned `tabId`.",
     parameters: PreviewAutomationOpenInput,
     success: PreviewAutomationStatus,
     failure: PreviewToolFailure,
