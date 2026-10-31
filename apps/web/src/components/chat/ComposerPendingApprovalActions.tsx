@@ -112,58 +112,58 @@ export function ComposerPendingApprovalActions({
         </label>
       ) : null}
       <div className="flex shrink-0 items-center gap-2">
-      {moreOptions.length > 0 ? (
-        <Menu>
-          <MenuTrigger
-            disabled={disabled}
-            render={<Button size="icon-sm" variant="ghost" aria-label="More approval options" />}
-          >
-            More
-          </MenuTrigger>
-          <MenuPopup {...composerFloatingLayerProps} side="top" align="end" width="content">
-            {moreOptions.map((option) => (
-              <MenuOption
-                key={option.decision}
-                option={option}
+        {moreOptions.length > 0 ? (
+          <Menu>
+            <MenuTrigger
+              disabled={disabled}
+              render={<Button size="icon-sm" variant="ghost" aria-label="More approval options" />}
+            >
+              More
+            </MenuTrigger>
+            <MenuPopup {...composerFloatingLayerProps} side="top" align="end" width="content">
+              {moreOptions.map((option) => (
+                <MenuOption
+                  key={option.decision}
+                  option={option}
+                  disabled={disabled}
+                  onSelect={() => void onRespondToApproval(requestId, option.decision)}
+                />
+              ))}
+            </MenuPopup>
+          </Menu>
+        ) : null}
+        {decline
+          ? withWarning(
+              decline.warning,
+              <Button
+                key="decline"
+                size="sm"
+                variant="secondary"
                 disabled={disabled}
-                onSelect={() => void onRespondToApproval(requestId, option.decision)}
-              />
-            ))}
-          </MenuPopup>
-        </Menu>
-      ) : null}
-      {decline
-        ? withWarning(
-            decline.warning,
-            <Button
-              key="decline"
-              size="sm"
-              variant="secondary"
-              disabled={disabled}
-              aria-description={decline.warning}
-              onClick={() => void onRespondToApproval(requestId, decline.decision)}
-            >
-              {decline.warning ? <TriangleAlertIcon className="size-3 shrink-0" /> : null}
-              <span className="max-w-40 truncate">{decline.label}</span>
-            </Button>,
-          )
-        : null}
-      {primary && allowDecision
-        ? withWarning(
-            allowWarning,
-            <Button
-              key="accept"
-              size="sm"
-              variant="default"
-              disabled={disabled}
-              aria-description={allowWarning}
-              onClick={() => void onRespondToApproval(requestId, allowDecision)}
-            >
-              {allowWarning ? <TriangleAlertIcon className="size-3 shrink-0" /> : null}
-              <span className="max-w-40 truncate">{primary.label}</span>
-            </Button>,
-          )
-        : null}
+                aria-description={decline.warning}
+                onClick={() => void onRespondToApproval(requestId, decline.decision)}
+              >
+                {decline.warning ? <TriangleAlertIcon className="size-3 shrink-0" /> : null}
+                <span className="max-w-40 truncate">{decline.label}</span>
+              </Button>,
+            )
+          : null}
+        {primary && allowDecision
+          ? withWarning(
+              allowWarning,
+              <Button
+                key="accept"
+                size="sm"
+                variant="default"
+                disabled={disabled}
+                aria-description={allowWarning}
+                onClick={() => void onRespondToApproval(requestId, allowDecision)}
+              >
+                {allowWarning ? <TriangleAlertIcon className="size-3 shrink-0" /> : null}
+                <span className="max-w-40 truncate">{primary.label}</span>
+              </Button>,
+            )
+          : null}
       </div>
     </div>
   );
