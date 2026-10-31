@@ -1,7 +1,6 @@
 import { msg, useMessages } from "gt-react";
 import { ChevronRightIcon, SettingsIcon } from "lucide-react";
 
-import { SettingsScopePicker } from "./SettingsScopePicker";
 import { SETTINGS_SECTION_LABELS } from "./settingsSearch";
 
 const SETTINGS_LABEL = msg("Settings");
@@ -17,18 +16,21 @@ function settingsBreadcrumbLabel(pathname: string): string | null {
   return SETTINGS_BREADCRUMB_LABELS[normalizedPathname] ?? null;
 }
 
-/** Keep the section heading accessible without repeating the visible navigation label. */
+/** Identify the page while scope controls live with the settings content. */
 export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
   const m = useMessages();
   const sectionLabel = settingsBreadcrumbLabel(pathname);
 
   return (
-    <nav aria-label="Settings breadcrumb" className="flex min-w-0 items-center gap-1.75">
-      <SettingsIcon aria-hidden className="size-3.5 shrink-0 text-foreground max-sm:hidden" />
+    <nav
+      aria-label="Settings breadcrumb"
+      data-settings-breadcrumb
+      className="flex min-w-0 items-center gap-1.75 text-label"
+    >
+      <SettingsIcon aria-hidden className="size-3.5 shrink-0 max-sm:hidden" />
       <span className="shrink-0">{m(SETTINGS_LABEL)}</span>
       <ChevronRightIcon aria-hidden className="size-3 shrink-0 text-dim-foreground" />
-      <SettingsScopePicker pathname={pathname} />
-      {sectionLabel ? <h1 className="sr-only">{m(sectionLabel)}</h1> : null}
+      {sectionLabel ? <h1 className="min-w-0 truncate">{m(sectionLabel)}</h1> : null}
     </nav>
   );
 }
