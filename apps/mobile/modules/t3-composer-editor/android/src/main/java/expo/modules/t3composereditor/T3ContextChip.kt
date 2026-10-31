@@ -34,8 +34,6 @@ class T3ContextChip(
   }
   private val em = fontSize
 
-  // The size reads as metadata beside the name, so it draws a step down from the label the
-  // way the web chip does.
   private val detailPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
     textSize = fontSize * 0.84f
     typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
