@@ -8,6 +8,7 @@ import { page } from "vite-plus/test/browser";
 const state = vi.hoisted(() => ({
   projection: null as unknown,
   workflow: null as unknown,
+  command: vi.fn(async (_input: unknown) => undefined),
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/thread-workflows"), async (importOriginal) => ({
@@ -31,7 +32,7 @@ vi.mock(import("../../state/query"), async (importOriginal) => ({
 
 vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useAtomCommand: (() => async () => undefined) as never,
+  useAtomCommand: (() => state.command) as never,
 }));
 
 vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
@@ -41,12 +42,13 @@ vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
 }));
 
 import "~/index.css";
-import { render as renderUi } from "../../../test/render";
+import { act, render as renderUi } from "../../../test/render";
 import { QueuedRunsControl } from "./QueuedRunsControl";
 
 function setup() {
   state.projection = null;
   state.workflow = null;
+  state.command.mockClear();
 }
 
 const baseProps = {
@@ -164,6 +166,9 @@ it("shows who sent a queued message and folds automation and agent prompts", asy
   await expect.element(page.getByText(/Follow the runbook/)).not.toBeInTheDocument();
   await automation.click();
   await expect.element(page.getByText(/Follow the runbook/)).toBeVisible();
+  const body = page.getByText(/Follow the runbook/).element();
+  expect(getComputedStyle(body).whiteSpace).toBe("pre-wrap");
+  expect(getComputedStyle(body).textOverflow).not.toBe("ellipsis");
   await expect.element(page.getByRole("link", { name: "Open automation" })).toBeInTheDocument();
 
   await expect.element(page.getByRole("button", { name: /Release lead/ })).toBeVisible();
@@ -172,6 +177,42 @@ it("shows who sent a queued message and folds automation and agent prompts", asy
 
   await expect.element(page.getByText("Sent by T3 Code")).toBeVisible();
   await expect.element(page.getByText("Continue where you left off.")).toBeVisible();
+
+  const dataTransfer = new DataTransfer();
+  await act(() => {
+    page
+      .getByRole("button", { name: "Reorder queued message 1" })
+      .element()
+      .dispatchEvent(new DragEvent("dragstart", { bubbles: true, dataTransfer }));
+  });
+  await act(() => {
+    const last = page.getByRole("listitem").last().element();
+    const bounds = last.getBoundingClientRect();
+    last.dispatchEvent(
+      new DragEvent("dragover", {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer,
+        clientY: bounds.bottom - 1,
+      }),
+    );
+  });
+  await act(() => {
+    page
+      .getByRole("list")
+      .element()
+      .dispatchEvent(
+        new DragEvent("drop", {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer,
+        }),
+      );
+  });
+  expect(state.command).toHaveBeenLastCalledWith({
+    environmentId: baseProps.environmentId,
+    input: { threadId: baseProps.threadId, runId: "run:automation", beforeRunId: null },
+  });
 });
 
 it("stays inside the timeline scroller instead of growing the chat column", async () => {
