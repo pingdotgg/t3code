@@ -14,6 +14,8 @@ type SelectDescriptor = Extract<ProviderOptionDescriptor, { type: "select" }>;
 // Max is named too, so the full scale stops short of it.
 const NAMED_LEVELS = new Set(["ultracode", "max"]);
 const OFF_LEVELS = new Set(["off", "none"]);
+// More bars than this no longer fit the glyph's height in whole pixels.
+const MAX_BARS = 7;
 
 /**
  * Maps a reasoning select to bars: one per ordinary level, filled up to the current one, with an
@@ -22,7 +24,7 @@ const OFF_LEVELS = new Set(["off", "none"]);
 export function resolveEffortGlyph(descriptor: SelectDescriptor, current: string | null) {
   const special = new Set([...(descriptor.promptInjectedValues ?? []), ...NAMED_LEVELS]);
   const levels = descriptor.options.filter((option) => !special.has(option.id));
-  if (levels.length < 2 || current === null) return null;
+  if (levels.length < 2 || levels.length > MAX_BARS || current === null) return null;
   const startsAtOff = OFF_LEVELS.has(levels[0]!.id);
   const count = startsAtOff ? levels.length - 1 : levels.length;
   if (special.has(current)) {

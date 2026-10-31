@@ -129,9 +129,9 @@ describe("buildGrokModelCapabilities", () => {
         type: "select",
         currentValue: "medium",
         options: [
-          { id: "xhigh", label: "Extra High Effort", isDefault: true },
-          { id: "high", label: "High Effort" },
           { id: "medium", label: "Medium Effort" },
+          { id: "high", label: "High Effort" },
+          { id: "xhigh", label: "Extra High Effort", isDefault: true },
         ],
       },
     ]);
