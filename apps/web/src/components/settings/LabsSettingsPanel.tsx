@@ -114,10 +114,8 @@ function GuestLinksRow() {
         <>
           Share a thread with a guest who watches it live in their browser and sends messages you
           approve. Needs T3 Connect: sign in and link this machine in{" "}
-          <Link to="/settings/access" className="underline underline-offset-2">
-            Sharing & access
-          </Link>
-          . While it is off, every guest link stops working.
+          <InlineButton render={<Link to="/settings/access" />}>Sharing & access</InlineButton>.
+          While it is off, every guest link stops working.
         </>
       }
       control={
@@ -144,10 +142,8 @@ function LinkedEnvironmentsRow() {
         <>
           Let agents here work on your other machines, and theirs here. Turn it on for each machine,
           then link them in{" "}
-          <Link to="/settings/connections" className="underline underline-offset-2">
-            Connections
-          </Link>
-          . While it is off, nothing new starts over a link; tasks already running finish.
+          <InlineButton render={<Link to="/settings/connections" />}>Connections</InlineButton>.
+          While it is off, nothing new starts over a link; tasks already running finish.
         </>
       }
       control={

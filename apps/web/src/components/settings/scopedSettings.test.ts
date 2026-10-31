@@ -21,6 +21,7 @@ import {
   resolveScopedSettingsTargets,
   scopedSettingsAreMixed,
   scopedSettingsSource,
+  summarizeProjectOverrides,
   selectScopedSettingsEnvironments,
 } from "./scopedSettings";
 import { resolveSettingsScope } from "./settingsScope";
@@ -557,6 +558,22 @@ describe("scoped settings mixed values", () => {
 });
 
 describe("project overrides at environment scope", () => {
+  it("ignores undefined and empty provider overrides while counting defined values", () => {
+    const empty = environment(server.environmentId, {
+      [projectId]: { worktreeSubmodules: undefined, providerInstances: {} },
+    });
+    expect(summarizeProjectOverrides([group], [empty])).toEqual({
+      countByProjectKey: new Map(),
+      entries: [],
+    });
+    const overridden = environment(server.environmentId, {
+      [projectId]: { worktreeSubmodules: undefined, defaultAutoPull: false },
+    });
+    expect(summarizeProjectOverrides([group], [overridden])).toEqual({
+      countByProjectKey: new Map([[group.projectKey, 1]]),
+      entries: [{ environmentId: server.environmentId, projectId }],
+    });
+  });
   const laptop = EnvironmentId.make("laptop");
   const fleet = ProjectId.make("fleet");
   const t3 = ProjectId.make("t3");

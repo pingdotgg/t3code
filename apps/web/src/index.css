@@ -603,6 +603,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --radius-item: 7px;
   --radius-control: var(--control-radius);
   --radius-card: 12px;
+  /* Rows painted inside a bordered card: the card radius inside its 1px border. */
+  --radius-card-inner: calc(var(--radius-card) - 1px);
   --radius-row-card: 10px;
   --radius-pane: 14px;
   /* The composer's top corners, 1px inside the rounded-2xl tray so they stay concentric. */
