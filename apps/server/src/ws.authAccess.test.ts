@@ -330,10 +330,7 @@ it.effect(
       yield* Queue.take(released);
     }).pipe(
       Effect.provide(
-        Layer.mergeAll(
-          Layer.fresh(layerAuth),
-          Layer.mock(ServerBrowser.ServerBrowser)({}),
-        ),
+        Layer.mergeAll(Layer.fresh(layerAuth), Layer.mock(ServerBrowser.ServerBrowser)({})),
       ),
       Effect.scoped,
     ),
