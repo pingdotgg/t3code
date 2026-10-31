@@ -7,7 +7,7 @@ import {
 const files = new Map<string, { base64: string; deleted: boolean; text?: string }>();
 
 const manipulator = vi.hoisted(() => {
-  const state = { sourceSize: { width: 0, height: 0 } };
+  const state = { sourceSize: { width: 0, height: 0 }, renderedBase64: "cmVuZGVyZWQ=" };
   const manipulate = vi.fn((source: string | { width: number; height: number }) => {
     let size = typeof source === "string" ? state.sourceSize : source;
     const context = {
@@ -20,7 +20,7 @@ const manipulator = vi.hoisted(() => {
         release: vi.fn(),
         saveAsync: vi.fn(async (options: { format: string }) => ({
           uri: `file:///cache/rendered.${options.format}`,
-          base64: `cmVuZGVyZWQ=`,
+          base64: state.renderedBase64,
         })),
       })),
     };
@@ -99,9 +99,19 @@ vi.mock("./uuid", () => ({
 
 import { convertPastedImagesToAttachments } from "./composerImages";
 
+function oversizedPng(): string {
+  const png = Buffer.alloc(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png);
+  png.write("IHDR", 12);
+  png.writeUInt32BE(2000, 16);
+  png.writeUInt32BE(2000, 20);
+  return png.toString("base64");
+}
+
 describe("native pasted image cleanup", () => {
   beforeEach(() => {
     files.clear();
+    manipulator.state.renderedBase64 = "cmVuZGVyZWQ=";
   });
 
   it("converts owned files to data-backed previews and deletes the source", async () => {
@@ -109,7 +119,7 @@ describe("native pasted image cleanup", () => {
       "file:///private/var/mobile/Containers/Data/Application/app/tmp/t3-composer-paste/id.png";
     files.set(uri, { base64: "aGVsbG8=", deleted: false });
 
-    const attachments = await convertPastedImagesToAttachments({
+    const { attachments } = await convertPastedImagesToAttachments({
       uris: [uri],
       existingCount: 0,
     });
@@ -141,6 +151,63 @@ describe("native pasted image cleanup", () => {
     expect(files.get(rejected)?.deleted).toBe(true);
     expect(files.get(overflow)?.deleted).toBe(true);
     expect(files.get(userOwned)?.deleted).toBe(false);
+  });
+
+  it("re-renders an over-limit paste whose dimensions already fit, like the photo picker", async () => {
+    const uri =
+      "file:///private/var/mobile/Containers/Data/Application/app/tmp/t3-composer-paste/photo.png";
+    files.set(uri, { base64: oversizedPng(), deleted: false });
+    files.set("file:///cache/rendered.jpeg", { base64: "", deleted: false });
+    manipulator.state.sourceSize = { width: 2000, height: 2000 };
+
+    const { attachments } = await convertPastedImagesToAttachments({
+      uris: [uri],
+      existingCount: 0,
+    });
+
+    expect(attachments).toHaveLength(1);
+    expect(attachments[0]?.sizeBytes).toBeLessThanOrEqual(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
+    expect(files.get("file:///cache/rendered.jpeg")?.deleted).toBe(true);
+  });
+
+  it("reports a paste it cannot read instead of dropping it silently", async () => {
+    const uri =
+      "file:///private/var/mobile/Containers/Data/Application/app/tmp/t3-composer-paste/gone.png";
+
+    const result = await convertPastedImagesToAttachments({ uris: [uri], existingCount: 0 });
+
+    expect(result).toEqual({ attachments: [], error: "Could not read a pasted image." });
+  });
+
+  it("keeps the readable images of a paste and still reports the one it dropped", async () => {
+    const gone =
+      "file:///private/var/mobile/Containers/Data/Application/app/tmp/t3-composer-paste/gone.png";
+    const kept =
+      "file:///private/var/mobile/Containers/Data/Application/app/tmp/t3-composer-paste/kept.png";
+    files.set(kept, { base64: "aGVsbG8=", deleted: false });
+
+    const result = await convertPastedImagesToAttachments({ uris: [gone, kept], existingCount: 0 });
+
+    expect(result.attachments).toEqual([
+      expect.objectContaining({ dataUrl: "data:image/png;base64,aGVsbG8=" }),
+    ]);
+    expect(result.error).toBe("Could not read a pasted image.");
+  });
+
+  it("reports the size limit when even the JPEG re-render is too large", async () => {
+    const uri =
+      "file:///private/var/mobile/Containers/Data/Application/app/tmp/t3-composer-paste/huge.png";
+    files.set(uri, { base64: oversizedPng(), deleted: false });
+    manipulator.state.sourceSize = { width: 2000, height: 2000 };
+    manipulator.state.renderedBase64 = oversizedPng();
+
+    const result = await convertPastedImagesToAttachments({ uris: [uri], existingCount: 0 });
+
+    expect(result).toEqual({
+      attachments: [],
+      error: "A pasted image exceeds the 10 MB attachment limit.",
+    });
+    expect(files.get(uri)?.deleted).toBe(true);
   });
 });
 
