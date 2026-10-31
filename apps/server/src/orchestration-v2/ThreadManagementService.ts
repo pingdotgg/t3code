@@ -63,7 +63,7 @@ import { projectedRowEncodedBytes } from "./threadHistoryPaging.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
-import { projectTurnItemForDetail } from "./WireProjection.ts";
+import { needsTurnItemContentRead } from "./TurnItemContentStore.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
@@ -379,6 +379,7 @@ export interface ThreadManagementServiceShape {
   readonly getTurnItem: (input: {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
+    readonly includeImageData?: boolean;
   }) => Effect.Effect<OrchestrationV2GetTurnItemResult, Orchestrator.OrchestratorV2Error>;
   readonly getThreadRecords: Orchestrator.OrchestratorV2["Service"]["getThreadRecords"];
   readonly getThreadProjection: (
@@ -673,11 +674,25 @@ const make = Effect.gen(function* () {
     function* (threadId: ThreadId) {
       const { projection } = yield* getThreadSnapshot(threadId);
       const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
+      const items = yield* Effect.forEach(
+        projection.visibleTurnItems,
+        (row) =>
+          !needsTurnItemContentRead(row.item)
+            ? Effect.succeed(row)
+            : orchestrator
+                .getTurnItem({
+                  threadId: row.sourceThreadId,
+                  itemId: row.sourceItemId,
+                  includeImageData: true,
+                })
+                .pipe(Effect.map((item) => (item === null ? row : { ...row, item }))),
+        { concurrency: 1 },
+      );
       const transcript = {
         threadId: projection.thread.id,
         title: projection.thread.title,
         updatedAt: projection.updatedAt,
-        items: projection.visibleTurnItems,
+        items,
       };
       let sizeBytes = Buffer.byteLength(
         threadTranscriptHeader(yield* environment.getEnvironmentId, transcript),
@@ -1503,7 +1518,7 @@ const make = Effect.gen(function* () {
     getTurnItem: Effect.fn("ThreadManagementService.getTurnItem")(function (input) {
       return ensureProjectionTranscript(input.threadId).pipe(
         Effect.andThen(orchestrator.getTurnItem(input)),
-        Effect.map((item) => ({ item: item === null ? null : projectTurnItemForDetail(item) })),
+        Effect.map((item) => ({ item })),
       );
     }),
     getThreadRecords: Effect.fn("ThreadManagementService.getThreadRecords")(

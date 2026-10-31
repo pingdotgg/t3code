@@ -33,6 +33,7 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import * as TurnItemContentStore from "./TurnItemContentStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 
 export class EventSinkWriteError extends Schema.TaggedError<EventSinkWriteError>()(
@@ -209,6 +210,7 @@ const layerBase: Layer.Layer<
   | ProjectionStore.ProjectionStoreV2
   | ProjectStore.ProjectStoreV2
   | SqlClient.SqlClient
+  | TurnItemContentStore.TurnItemContentStore
   | TurnItemPositionStore.TurnItemPositionStoreV2
 > = Layer.effect(
   EventSinkV2,
@@ -219,6 +221,7 @@ const layerBase: Layer.Layer<
     const eventStore = yield* EventStore.EventStoreV2;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const projectStore = yield* ProjectStore.ProjectStoreV2;
+    const turnItemContentStore = yield* TurnItemContentStore.TurnItemContentStore;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
     const liveEvents = yield* PubSub.unbounded<OrchestrationV2StoredEvent>();
     const liveEventsByType = new Map<
@@ -352,6 +355,23 @@ const layerBase: Layer.Layer<
       );
     };
 
+    const prepareEventsForStorage = Effect.fn("orchestrationV2.EventSink.prepareEventsForStorage")(
+      function* (events: ReadonlyArray<OrchestrationV2DomainEvent>) {
+        const prepared: Array<OrchestrationV2DomainEvent> = [];
+        for (const event of events) {
+          if (event.type !== "turn-item.updated") {
+            prepared.push(event);
+            continue;
+          }
+          prepared.push({
+            ...event,
+            payload: yield* turnItemContentStore.store(event.payload),
+          });
+        }
+        return prepared;
+      },
+    );
+
     const applyStoredEvents =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(function* (storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>) {
@@ -415,6 +435,7 @@ const layerBase: Layer.Layer<
         "orchestration_v2.event_count": input.events.length,
         "orchestration_v2.thread_id": input.events[0]?.threadId ?? null,
       });
+      const eventsForStorage = yield* prepareEventsForStorage(input.events);
 
       const { committed } = yield* commitThenPublish(
         Effect.gen(function* () {
@@ -435,8 +456,8 @@ const layerBase: Layer.Layer<
           // Checkpoint capture can finish after a cohort writer reads its parent run.
           // Merge in this transaction so the event log and projection keep that completion.
           const events = input.updateDelegatedCompletionOnly
-            ? yield* updateDelegatedCompletionOnly(input.events, () => true)
-            : input.events;
+            ? yield* updateDelegatedCompletionOnly(eventsForStorage, () => true)
+            : eventsForStorage;
           const normalized = yield* normalizeEvents(
             input.guardPendingUserInputCancellations === true
               ? yield* guardUserInputCancellations(events)
@@ -469,6 +490,7 @@ const layerBase: Layer.Layer<
           "orchestration_v2.run_id": input.runId,
           "orchestration_v2.thread_id": input.threadId,
         });
+        const eventsForStorage = yield* prepareEventsForStorage(input.events);
 
         return yield* commitThenPublish(
           Effect.gen(function* () {
@@ -498,8 +520,8 @@ const layerBase: Layer.Layer<
 
             const normalized = yield* normalizeEvents(
               input.guardPendingUserInputCancellations === true
-                ? yield* guardUserInputCancellations(input.events)
-                : input.events,
+                ? yield* guardUserInputCancellations(eventsForStorage)
+                : eventsForStorage,
             );
             const storedEvents = yield* eventStore.append({
               ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
@@ -532,6 +554,7 @@ const layerBase: Layer.Layer<
         "orchestration_v2.active_attempt_id": input.activeAttemptId,
         "orchestration_v2.expected_last_run_ordinal": input.expectedLastRunOrdinal,
       });
+      const eventsForStorage = yield* prepareEventsForStorage(input.events);
 
       return yield* commitThenPublish(
         Effect.gen(function* () {
@@ -563,8 +586,8 @@ const layerBase: Layer.Layer<
 
           const normalized = yield* normalizeEvents(
             input.guardPendingUserInputCancellations === true
-              ? yield* guardUserInputCancellations(input.events)
-              : input.events,
+              ? yield* guardUserInputCancellations(eventsForStorage)
+              : eventsForStorage,
           );
           const storedEvents = yield* eventStore.append({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
@@ -587,6 +610,7 @@ const layerBase: Layer.Layer<
         "orchestration_v2.event_count": input.events.length,
         "orchestration_v2.provider_thread_id": input.expected.id,
       });
+      const eventsForStorage = yield* prepareEventsForStorage(input.events);
       const expectedJson = yield* ProjectionStore.encodeProviderThreadPayload(input.expected);
 
       return yield* commitThenPublish(
@@ -604,7 +628,7 @@ const layerBase: Layer.Layer<
             };
           }
 
-          const normalized = yield* normalizeEvents(input.events);
+          const normalized = yield* normalizeEvents(eventsForStorage);
           const storedEvents = yield* eventStore.append({ events: normalized });
           const outcomes = yield* applyStoredEvents(storedEvents);
           return { committed: true as const, storedEvents, outcomes };
@@ -635,6 +659,7 @@ const layerBase: Layer.Layer<
     const commitCommandEffect = Effect.fn("orchestrationV2.EventSink.commitCommand")(function* (
       input: Parameters<EventSinkV2Shape["commitCommand"]>[0],
     ) {
+      const eventsForStorage = yield* prepareEventsForStorage(input.events);
       const result = yield* commitThenPublish(
         Effect.gen(function* () {
           const reserved = yield* commandReceipts.insertIfAbsent({
@@ -654,8 +679,8 @@ const layerBase: Layer.Layer<
           const runId = input.updateDelegatedCompletionOnlyRunId;
           const normalized = yield* normalizeEvents(
             runId === undefined
-              ? input.events
-              : yield* updateDelegatedCompletionOnly(input.events, (id) => id === runId),
+              ? eventsForStorage
+              : yield* updateDelegatedCompletionOnly(eventsForStorage, (id) => id === runId),
           );
           const storedEvents = yield* eventStore.append({
             commandId: input.commandId,
@@ -1006,7 +1031,10 @@ export const layerFromStores = layerBase;
 export const layer: Layer.Layer<
   EventSinkV2,
   never,
-  EventStore.EventStoreV2 | ProjectionStore.ProjectionStoreV2 | SqlClient.SqlClient
+  | EventStore.EventStoreV2
+  | ProjectionStore.ProjectionStoreV2
+  | SqlClient.SqlClient
+  | TurnItemContentStore.TurnItemContentStore
 > = layerBase.pipe(
   Layer.provide(
     Layer.mergeAll(

@@ -138,6 +138,7 @@ import { withCommandMetrics } from "../observability/Metrics.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as TurnItemContentStore from "./TurnItemContentStore.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
 import {
   applyToProjection,
@@ -309,6 +310,7 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorThreadAlreadyExistsError,
   OrchestratorCommandRejectedError,
   OrchestratorProjectionError,
+  TurnItemContentStore.TurnItemContentStoreError,
   OrchestratorDomainEventStreamError,
   OrchestratorProviderAdapterError,
   OrchestratorCommandPreviouslyRejectedError,
@@ -365,6 +367,7 @@ export interface OrchestratorV2Shape {
   readonly getTurnItem: (input: {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
+    readonly includeImageData?: boolean;
   }) => Effect.Effect<OrchestrationV2TurnItem | null, OrchestratorV2Error>;
   readonly getThreadRecords: <K extends ProjectionRecordField>(
     threadId: ThreadId,
@@ -979,6 +982,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectionStore = yield* ProjectionStoreV2;
+  const turnItemContentStore = yield* TurnItemContentStore.TurnItemContentStore;
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
   const nextTurnItemOrdinal = (
     projection: Pick<OrchestrationV2ThreadProjection, "thread"> &
@@ -13868,13 +13872,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
     }),
     getTurnItem: Effect.fn("OrchestratorV2.getTurnItem")(function (input) {
-      return projectionStore
-        .getTurnItem(input)
-        .pipe(
-          Effect.mapError(
-            (cause) => new OrchestratorProjectionError({ threadId: input.threadId, cause }),
-          ),
-        );
+      return projectionStore.getTurnItem(input).pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: input.threadId, cause }),
+        ),
+        Effect.flatMap((item) =>
+          item === null
+            ? Effect.succeed(null)
+            : turnItemContentStore.read(item, {
+                includeImageData: input.includeImageData === true,
+              }),
+        ),
+      );
     }),
     getThreadRecords: Effect.fn("OrchestratorV2.getThreadRecords")(
       function (threadId, fields, filter) {
@@ -14003,6 +14012,7 @@ export const layer: Layer.Layer<
   | RuntimePolicyV2
   | ServerSettings.ServerSettingsService
   | ThreadForkServiceV2
+  | TurnItemContentStore.TurnItemContentStore
 > = Layer.effect(OrchestratorV2, makeOrchestrator()).pipe(
   Layer.provide(ThreadCommandExecutor.layer),
 );

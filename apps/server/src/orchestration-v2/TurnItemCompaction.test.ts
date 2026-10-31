@@ -29,11 +29,17 @@ import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as TurnItemContentStoreTestkit from "./TurnItemContentStore.testkit.ts";
 
 const database = SqlitePersistence.layerMemory;
 const eventStoreProvided = EventStore.layer.pipe(Layer.provideMerge(database));
 const projectionStoreProvided = ProjectionStore.layer.pipe(Layer.provideMerge(database));
-const stores = Layer.mergeAll(database, eventStoreProvided, projectionStoreProvided);
+const stores = Layer.mergeAll(
+  database,
+  eventStoreProvided,
+  projectionStoreProvided,
+  TurnItemContentStoreTestkit.layerPassthrough,
+);
 const layerTest = Layer.mergeAll(
   stores,
   EventSink.layer.pipe(Layer.provide(stores)),

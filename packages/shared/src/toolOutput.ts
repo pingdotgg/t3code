@@ -211,6 +211,8 @@ export function toolOutputIndicatesFailure(text: string): boolean {
 export interface ToolOutputImage {
   readonly mimeType: string;
   readonly data?: string;
+  readonly attachmentId?: string;
+  readonly sizeBytes?: number;
 }
 
 /** Raster types only, so agent SVG/HTML cannot be served inline. */
@@ -220,11 +222,28 @@ export function readToolOutputImage(block: unknown): ToolOutputImage | null {
   if (source !== undefined && source.type !== "base64") return null;
   const mimeType = source === undefined ? block.mimeType : source.media_type;
   const data = source === undefined ? block.data : source.data;
+  const attachmentId =
+    source !== undefined && typeof source.attachmentId === "string"
+      ? source.attachmentId
+      : typeof block.attachmentId === "string"
+        ? block.attachmentId
+        : undefined;
+  const sizeBytes =
+    source !== undefined && typeof source.sizeBytes === "number"
+      ? source.sizeBytes
+      : typeof block.sizeBytes === "number"
+        ? block.sizeBytes
+        : undefined;
   if (typeof mimeType !== "string" || !isProviderSendTurnSupportedImageMimeType(mimeType)) {
     return null;
   }
   const image = { mimeType: mimeType.toLowerCase() };
-  return typeof data === "string" ? { ...image, data } : image;
+  return {
+    ...image,
+    ...(typeof data === "string" ? { data } : {}),
+    ...(attachmentId === undefined ? {} : { attachmentId }),
+    ...(sizeBytes === undefined ? {} : { sizeBytes }),
+  };
 }
 
 function outputBlocks(value: unknown): ReadonlyArray<unknown> {
@@ -256,7 +275,9 @@ export function toolOutputImages(value: unknown): ReadonlyArray<ToolOutputImage>
 export function omitToolOutputImageData(value: unknown): unknown {
   const omit = (block: unknown) => {
     const image = readToolOutputImage(block);
-    return image?.data === undefined ? block : { type: "image", mimeType: image.mimeType };
+    return image?.data === undefined && image?.attachmentId === undefined
+      ? block
+      : { type: "image", mimeType: image.mimeType };
   };
   if (Array.isArray(value)) return value.map(omit);
   if (Predicate.isObject(value) && Array.isArray(value.content)) {
