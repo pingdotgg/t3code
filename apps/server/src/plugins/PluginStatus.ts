@@ -79,7 +79,7 @@ const checkKey = (key: string) =>
     ? Effect.void
     : Effect.fail(hostError("Status keys must be 1 to 64 characters without control characters."));
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.fn("PluginStatus.make")(function* () {
   const supervisor = yield* PluginSupervisor;
   const store = yield* ContributionStatusStore;

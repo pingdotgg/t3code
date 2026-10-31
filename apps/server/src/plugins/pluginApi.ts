@@ -65,14 +65,8 @@ interface PluginStorageApi {
 
 type PluginTone = "neutral" | "info" | "success" | "warning" | "error";
 
-/**
- * Short advisory statuses on threads, shown beside provider statuses on every
- * client. Present with the `status` capability. Text is one plain line (up to
- * 80 characters, longer text is truncated); empty text clears the key. A
- * plugin shows at most 16 statuses at once and 10 updates at once, then 2 per
- * second; past a bound `set` rejects. Everything is cleared when the plugin's
- * process stops, so set statuses again after a restart.
- */
+// Statuses require the capability, remain bounded and rate-limited, and clear when the process stops.
+// Text is one plain line, truncated to 80 characters; empty text clears its key.
 interface PluginStatusApi {
   set(status: {
     readonly threadId: string;
