@@ -10,7 +10,7 @@ const CITATION_PROTOCOL = "t3-citation:";
 const CITATION_HREF_PREFIX = `${CITATION_PROTOCOL}//v1/`;
 // Percent encoding needs up to nine characters per UTF-16 code unit.
 // The extra 16k is a shared budget for IDs, selectors, and URL syntax.
-const MAX_CITATION_HREF_LENGTH =
+export const MAX_CITATION_HREF_LENGTH =
   9 * (ASSISTANT_CITATION_MAX_TEXT_LENGTH + ASSISTANT_CITATION_MAX_COMMENT_LENGTH) + 16_000;
 const CITATION_LINK = new RegExp(
   String.raw`\[Assistant quote\]\((${CITATION_HREF_PREFIX}[^\s)]{1,${MAX_CITATION_HREF_LENGTH - CITATION_HREF_PREFIX.length}})\)`,
