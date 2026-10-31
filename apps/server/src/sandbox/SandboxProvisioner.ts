@@ -1,23 +1,33 @@
 import {
+  ExecutionEnvironmentDescriptor,
+  type EnvironmentId,
   type SandboxCreateInput,
   type SandboxCreateResult,
   type SandboxCredentialEnvironment,
   type SandboxCredentialEnvironmentsInput,
   type SandboxCredentialEnvironmentsResult,
   type SandboxDeleteInput,
+  type SandboxLifecycleInput,
+  type SandboxListResult,
+  type SandboxRecord,
+  type SandboxResumeResult,
+  type SandboxStopResult,
   SandboxProviderError,
   type SandboxProviderInfo,
   type SandboxProviderKind,
   type SandboxProvidersResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import { HttpClient } from "effect/http";
+import * as Option from "effect/Option";
+import { HttpClient, HttpClientRequest } from "effect/http";
 
 import * as ServerSettings from "../serverSettings.ts";
-import { shellQuote, type SandboxProviderDriver } from "./SandboxProvider.ts";
+import * as SandboxRecords from "../persistence/SandboxRecords.ts";
+import { requestJson, shellQuote, type SandboxProviderDriver } from "./SandboxProvider.ts";
 import { SANDBOX_PROVIDER_DRIVERS } from "./providers/index.ts";
 
 const installScript = (label: string) => `set -eu
@@ -43,7 +53,12 @@ if ! command -v t3 >/dev/null 2>&1; then
   exit 1
 fi
 if ! curl -fsS http://127.0.0.1:3773/.well-known/t3/environment >/dev/null 2>&1; then
-  nohup t3 serve --host 0.0.0.0 --port 3773 >"$HOME/.t3/sandbox-server.log" 2>&1 &
+  if command -v systemctl >/dev/null 2>&1 && t3 service install >/dev/null 2>&1; then
+    sudo -n loginctl enable-linger "$(id -un)" >/dev/null 2>&1 || true
+    t3 service restart >/dev/null 2>&1 || true
+  else
+    nohup t3 serve --host 0.0.0.0 --port 3773 >"$HOME/.t3/sandbox-server.log" 2>&1 &
+  fi
 fi
 i=0
 while [ "$i" -lt 90 ]; do
@@ -91,11 +106,20 @@ export class SandboxProvisioner extends Context.Service<
     readonly environments: (
       input: SandboxCredentialEnvironmentsInput,
     ) => Effect.Effect<SandboxCredentialEnvironmentsResult, SandboxProviderError>;
+    readonly list: Effect.Effect<SandboxListResult, SandboxProviderError>;
+    readonly stop: (
+      input: SandboxLifecycleInput,
+    ) => Effect.Effect<SandboxStopResult, SandboxProviderError>;
+    readonly resume: (
+      input: SandboxLifecycleInput,
+    ) => Effect.Effect<SandboxResumeResult, SandboxProviderError>;
+    readonly sweepDeadlines: Effect.Effect<void>;
   }
 >()("t3/sandbox/SandboxProvisioner") {}
 
 const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
+  const records = yield* SandboxRecords.SandboxRecordRepository;
   const httpClient = yield* HttpClient.HttpClient;
   const onHttp = Effect.provideService(HttpClient.HttpClient, httpClient);
 
@@ -143,6 +167,19 @@ const make = Effect.gen(function* () {
     return saved;
   });
 
+  const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
+  const readRecord = (environmentId: EnvironmentId) =>
+    records
+      .get(environmentId)
+      .pipe(
+        Effect.orDie,
+        Effect.map(
+          Option.getOrThrowWith(
+            () => new Error(`No sandbox record exists for environment ${environmentId}.`),
+          ),
+        ),
+      );
+
   const providers = settings.getSettings.pipe(
     Effect.map((value): SandboxProvidersResult => ({
       providers: SANDBOX_PROVIDER_DRIVERS.map((driver): SandboxProviderInfo => ({
@@ -159,6 +196,7 @@ const make = Effect.gen(function* () {
     const config = { apiKey };
     const label = input.label?.trim() || `${driver.info.label} sandbox`;
     const size = input.size?.trim() || driver.defaultSize;
+    const ttlMinutes = input.ttlMinutes ?? 480;
     if (input.environment !== undefined && input.allowCredentials !== true) {
       return yield* new SandboxProviderError({
         provider: input.provider,
@@ -173,7 +211,7 @@ const make = Effect.gen(function* () {
         config,
         name: label,
         size,
-        ttlMinutes: input.ttlMinutes,
+        ttlMinutes,
         environment: input.environment,
       }),
     );
@@ -239,9 +277,39 @@ const make = Effect.gen(function* () {
         ),
     );
 
+    const descriptor = yield* stopOnFailure(
+      requestJson({
+        provider: input.provider,
+        stage: "pair",
+        schema: ExecutionEnvironmentDescriptor,
+        request: HttpClientRequest.get(
+          `${httpBaseUrl.replace(/\/+$/, "")}/.well-known/t3/environment`,
+        ),
+      }),
+    );
+    const createdAt = yield* nowIso;
+    const record: SandboxRecord = {
+      environmentId: descriptor.environmentId,
+      provider: input.provider,
+      sandboxId: sandbox.id,
+      label,
+      size,
+      state: "running",
+      createdAt,
+      updatedAt: createdAt,
+      hardDeadlineAt: DateTime.formatIso(
+        DateTime.add(DateTime.makeUnsafe(createdAt), { minutes: ttlMinutes }),
+      ),
+      ttlMinutes,
+      httpBaseUrl,
+      ...(input.environment === undefined ? {} : { credentialEnvironment: input.environment }),
+    };
+    yield* records.put(record).pipe(Effect.orDie);
+
     return {
       provider: input.provider,
       sandboxId: sandbox.id,
+      environmentId: descriptor.environmentId,
       label,
       httpBaseUrl,
       pairingCode,
@@ -252,6 +320,7 @@ const make = Effect.gen(function* () {
     const driver = findDriver(input.provider);
     const apiKey = yield* resolveApiKey(input.provider, undefined);
     yield* onHttp(driver.destroy({ config: { apiKey }, sandboxId: input.sandboxId }));
+    yield* records.remove(input.environmentId).pipe(Effect.orDie);
   });
 
   const environments = Effect.fn("SandboxProvisioner.environments")(function* (
@@ -266,11 +335,105 @@ const make = Effect.gen(function* () {
     return { environments: listed };
   });
 
+  const list = records.list.pipe(
+    Effect.orDie,
+    Effect.map((sandboxes): SandboxListResult => ({ sandboxes })),
+  );
+
+  const stop = Effect.fn("SandboxProvisioner.stop")(function* (input: SandboxLifecycleInput) {
+    const record = yield* readRecord(input.environmentId);
+    const driver = findDriver(record.provider);
+    if (driver.stop === undefined) {
+      return yield* new SandboxProviderError({
+        provider: record.provider,
+        stage: "config",
+        detail: "This provider cannot stop a sandbox.",
+      });
+    }
+    const apiKey = yield* resolveApiKey(record.provider, undefined);
+    yield* onHttp(driver.stop({ config: { apiKey }, sandboxId: record.sandboxId }));
+    const updated: SandboxRecord = {
+      ...record,
+      state: "stopped",
+      // A stopped machine cannot overrun a deadline; resuming starts a new one.
+      hardDeadlineAt: null,
+      updatedAt: yield* nowIso,
+    };
+    yield* records.put(updated).pipe(Effect.orDie);
+    return { sandbox: updated } satisfies SandboxStopResult;
+  });
+
+  const resume = Effect.fn("SandboxProvisioner.resume")(function* (input: SandboxLifecycleInput) {
+    const record = yield* readRecord(input.environmentId);
+    const driver = findDriver(record.provider);
+    if (driver.resume === undefined) {
+      return yield* new SandboxProviderError({
+        provider: record.provider,
+        stage: "config",
+        detail: "This provider cannot resume a sandbox.",
+      });
+    }
+    const apiKey = yield* resolveApiKey(record.provider, undefined);
+    const resumed = yield* onHttp(
+      driver.resume({
+        config: { apiKey },
+        sandboxId: record.sandboxId,
+        ttlMinutes: record.ttlMinutes,
+      }),
+    );
+    const now = yield* nowIso;
+    const updated: SandboxRecord = {
+      ...record,
+      state: "running",
+      updatedAt: now,
+      hardDeadlineAt: DateTime.formatIso(
+        DateTime.add(DateTime.makeUnsafe(now), { minutes: record.ttlMinutes }),
+      ),
+      httpBaseUrl: resumed.publicUrl ?? record.httpBaseUrl,
+    };
+    yield* records.put(updated).pipe(Effect.orDie);
+    return { sandbox: updated, httpBaseUrl: updated.httpBaseUrl } satisfies SandboxResumeResult;
+  });
+
+  const sweepDeadlines = Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const nowMillis = DateTime.toEpochMillis(now);
+    const all = yield* records.list.pipe(Effect.orDie);
+    for (const record of all) {
+      if (record.state !== "running" || record.hardDeadlineAt === null) continue;
+      if (DateTime.toEpochMillis(DateTime.makeUnsafe(record.hardDeadlineAt)) > nowMillis) continue;
+      const driver = findDriver(record.provider);
+      if (driver.stop === undefined) continue;
+      const apiKey = yield* resolveApiKey(record.provider, undefined).pipe(Effect.option);
+      if (Option.isNone(apiKey)) continue;
+      yield* onHttp(
+        driver.stop({ config: { apiKey: apiKey.value }, sandboxId: record.sandboxId }),
+      ).pipe(
+        Effect.tap(() =>
+          records
+            .put({ ...record, state: "stopped", updatedAt: DateTime.formatIso(now) })
+            .pipe(Effect.orDie),
+        ),
+        Effect.catch((cause) =>
+          Effect.logWarning("sandbox deadline stop failed", {
+            environmentId: record.environmentId,
+            sandboxId: record.sandboxId,
+            cause,
+          }),
+        ),
+      );
+    }
+  });
+
   return SandboxProvisioner.of({
     providers,
     create,
     delete: remove,
     environments,
+    list,
+    stop,
+    resume,
+    sweepDeadlines,
   });
 });
 

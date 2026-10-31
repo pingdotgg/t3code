@@ -59,6 +59,15 @@ export interface SandboxProviderDriver {
     readonly config: SandboxProviderConfig;
     readonly sandboxId: string;
   }) => Effect.Effect<void, SandboxProviderError, HttpClient.HttpClient>;
+  readonly stop?: (input: {
+    readonly config: SandboxProviderConfig;
+    readonly sandboxId: string;
+  }) => Effect.Effect<void, SandboxProviderError, HttpClient.HttpClient>;
+  readonly resume?: (input: {
+    readonly config: SandboxProviderConfig;
+    readonly sandboxId: string;
+    readonly ttlMinutes?: number | undefined;
+  }) => Effect.Effect<{ readonly publicUrl?: string }, SandboxProviderError, HttpClient.HttpClient>;
 }
 
 export const requestJson = Effect.fn("SandboxProvider.requestJson")(function* <
