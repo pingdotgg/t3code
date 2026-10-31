@@ -245,28 +245,24 @@ function LinkPullRequestDialog({
             ) : null}
           </div>
           <div className="flex justify-end gap-2">
-            <div className="grid w-25">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => onOpenChange(false)}
-                disabled={pending}
-              >
-                Cancel
-              </Button>
-            </div>
-            <div className="grid w-23.5">
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => void submit()}
-                disabled={pending || resolved === null || "error" in resolved}
-              >
-                {pending ? "Linking..." : "Link"}
-                <SubmitKbd />
-              </Button>
-            </div>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => onOpenChange(false)}
+              disabled={pending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => void submit()}
+              disabled={pending || resolved === null || "error" in resolved}
+            >
+              {pending ? "Linking..." : "Link"}
+              <SubmitKbd />
+            </Button>
           </div>
         </div>
       </DialogPopup>
