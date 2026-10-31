@@ -4,6 +4,7 @@ import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { type ToolActivityIcon } from "@t3tools/contracts";
 import { liveThoughtLine } from "@t3tools/client-runtime/work-log/presentation";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
+import { transcriptRowsStartOpen } from "@t3tools/client-runtime/work-log/disclosure";
 import { observeResize } from "~/lib/observeResize";
 import { tickTextContent } from "~/lib/tickTextContent";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
@@ -67,7 +68,7 @@ export const WorkGroupSection = memo(function WorkGroupSection({
   isExpandedToolGroup: boolean;
   displayLabel?: string | undefined;
 }) {
-  const { workspaceRoot, routeThreadKey, onToggleWorkEntry, pendingApprovals } =
+  const { workspaceRoot, routeThreadKey, onToggleWorkEntry, pendingApprovals, transcriptView } =
     use(TimelineRowCtx);
   const onToggleStandaloneEntry = (collapsed: boolean) =>
     onToggleWorkEntry(disclosureAnchorKey, collapsed);
@@ -80,13 +81,18 @@ export const WorkGroupSection = memo(function WorkGroupSection({
   });
 
   if (nonEmptyEntries.length === 0) return null;
-  if (isExpandedToolGroup && nonEmptyEntries.every((entry) => entry.itemType === "reasoning")) {
+  // Above Normal, thinking rows stay individually foldable instead of opening as one trace.
+  if (
+    isExpandedToolGroup &&
+    transcriptView === "normal" &&
+    nonEmptyEntries.every((entry) => entry.itemType === "reasoning")
+  ) {
     return <ReasoningTraceContent entries={nonEmptyEntries} />;
   }
   if (isExpandedToolGroup) {
     return (
       <ExpandedWorkGroupEntries
-        key={`${routeThreadKey}:${anchorKey}`}
+        key={`${routeThreadKey}:${anchorKey}:${transcriptView}`}
         anchorKey={anchorKey}
         disclosureAnchorKey={disclosureAnchorKey}
         entries={nonEmptyEntries}
@@ -99,7 +105,7 @@ export const WorkGroupSection = memo(function WorkGroupSection({
     <section aria-label="Activity">
       {nonEmptyEntries.map((workEntry) => (
         <SimpleWorkEntryRow
-          key={workEntry.id}
+          key={`${workEntry.id}:${transcriptView}`}
           workEntry={workEntry}
           workspaceRoot={workspaceRoot}
           displayLabel={displayLabel}
@@ -132,7 +138,7 @@ function ExpandedWorkGroupEntries({
   entries: TimelineWorkEntry[];
   workspaceRoot: string | undefined;
 }) {
-  const { workGroupViewState: viewState, onToggleWorkEntry } = use(TimelineRowCtx);
+  const { workGroupViewState: viewState, onToggleWorkEntry, transcriptView } = use(TimelineRowCtx);
   const [initialScrollIndex] = useState(() =>
     resolveWorkGroupScrollIndex(entries, viewState.scrollPositions.get(anchorKey)),
   );
@@ -217,7 +223,9 @@ function ExpandedWorkGroupEntries({
   const updateExpandedContentHeight = () => {
     const state = listRef.current?.getState();
     let height = 0;
-    for (const entryId of viewState.expandedEntries) {
+    // Rows opened by hand grow the box; Verbose opens every row, so its box keeps the cap.
+    const openedByHand = transcriptRowsStartOpen(transcriptView) ? [] : viewState.expandedEntries;
+    for (const entryId of openedByHand) {
       if (state?.indexByKey(entryId) === undefined) continue;
       height += Math.max(
         0,

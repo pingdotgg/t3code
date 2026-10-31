@@ -20,6 +20,10 @@ import {
   commandProgramName,
 } from "@t3tools/client-runtime/work-log/command-label";
 import {
+  disclosureOpen,
+  transcriptFoldsStartOpen,
+} from "@t3tools/client-runtime/work-log/disclosure";
+import {
   liveActivityToolStatus,
   normalizeCompactToolLabel,
   resolveWorkEntryToolPresentation,
@@ -59,6 +63,7 @@ import {
   type RuntimeRequestId,
   RunId,
   type ThreadId,
+  type TranscriptView,
   type TurnItemId,
 } from "@t3tools/contracts";
 import type { ThreadRunSummary } from "@t3tools/client-runtime/state/shell";
@@ -1396,6 +1401,8 @@ export function deriveMessagesTimelineRows(input: {
   expandedRunIds?: ReadonlySet<RunId>;
   expandedAttemptIds?: ReadonlySet<RunAttemptId>;
   expandedWorkGroupIds?: ReadonlySet<string>;
+  /** Above "normal" every fold starts open, and the expanded-id sets name the ones closed. */
+  transcriptView?: TranscriptView;
   isWorking: boolean;
   /** Native subagent work has no app run; runless entries form the live response. */
   runlessWorkActive?: boolean;
@@ -1407,6 +1414,7 @@ export function deriveMessagesTimelineRows(input: {
   worktreeSetup?: WorktreeSetupSnapshot | null;
 }): MessagesTimelineRow[] {
   const timelineEntries = timelineRowEntries(input.timelineEntries);
+  const startsOpen = transcriptFoldsStartOpen(input.transcriptView ?? "normal");
   const isPendingApproval = (entry: WorkLogEntry) => {
     const item = entry.projectedItem?.item;
     return (
@@ -1464,7 +1472,7 @@ export function deriveMessagesTimelineRows(input: {
   const collapsedEntryIds = new Set<string>();
   const collapsedFoldMemberIds = new Set<string>();
   for (const fold of foldsByAnchorEntryId.values()) {
-    if (!input.expandedRunIds?.has(fold.runId)) {
+    if (!disclosureOpen(input.expandedRunIds, fold.runId, startsOpen)) {
       for (const entryId of fold.hiddenEntryIds) {
         collapsedEntryIds.add(entryId);
       }
@@ -1475,7 +1483,7 @@ export function deriveMessagesTimelineRows(input: {
   }
   const collapsedSupersededEntryIds = new Set<string>();
   for (const fold of supersededFoldsByAnchorEntryId.values()) {
-    if (!input.expandedAttemptIds?.has(fold.attemptId)) {
+    if (!disclosureOpen(input.expandedAttemptIds, fold.attemptId, startsOpen)) {
       for (const entryId of fold.hiddenEntryIds) {
         collapsedSupersededEntryIds.add(entryId);
       }
@@ -1567,7 +1575,7 @@ export function deriveMessagesTimelineRows(input: {
             entry: (latestRunningToolEntry ?? latestVisibleToolEntry).entry,
             groupedEntries: visibleActiveToolEntries.map((entry) => entry.entry),
             groupId,
-            expanded: input.expandedWorkGroupIds?.has(groupId) ?? false,
+            expanded: disclosureOpen(input.expandedWorkGroupIds, groupId, startsOpen),
             active: latestToolKeepsActivityLive,
             ...(latestThoughtEntry ? { thought: latestThoughtEntry.entry } : {}),
           };
@@ -1721,7 +1729,7 @@ export function deriveMessagesTimelineRows(input: {
         createdAt: turnFold.createdAt,
         runId: turnFold.runId,
         label: turnFold.label,
-        expanded: input.expandedRunIds?.has(turnFold.runId) ?? false,
+        expanded: disclosureOpen(input.expandedRunIds, turnFold.runId, startsOpen),
       });
     }
 
@@ -1739,7 +1747,7 @@ export function deriveMessagesTimelineRows(input: {
         runId: supersededFold.runId,
         attemptId: supersededFold.attemptId,
         label: "Superseded attempt",
-        expanded: input.expandedAttemptIds?.has(supersededFold.attemptId) ?? false,
+        expanded: disclosureOpen(input.expandedAttemptIds, supersededFold.attemptId, startsOpen),
       });
     }
 
@@ -1850,7 +1858,7 @@ export function deriveMessagesTimelineRows(input: {
         const activeInProgressToolEntries = visibleGroupedEntries.filter(workEntryIsInActiveRun);
         if (activeInProgressToolEntries.length > 0) {
           const groupId = workGroupId(timelineEntry.id);
-          const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+          const expanded = disclosureOpen(input.expandedWorkGroupIds, groupId, startsOpen);
           const latestActiveToolEntry = activeInProgressToolEntries.at(-1)!;
           nextRows.push({
             kind: "work-live",
@@ -1886,7 +1894,7 @@ export function deriveMessagesTimelineRows(input: {
           });
         } else {
           const groupId = workGroupId(timelineEntry.id);
-          const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+          const expanded = disclosureOpen(input.expandedWorkGroupIds, groupId, startsOpen);
           const summaryKind = toolGroupSummaryKind(visibleGroupedEntries);
           const primarySourceEntry = visibleGroupedEntries.find(
             (entry) => entry.toolSource !== undefined,
@@ -2110,7 +2118,7 @@ export function deriveMessagesTimelineRows(input: {
     const failedGroupAnchor = latestToolFailed ? activeWorkAnchor : undefined;
     if (failedGroupAnchor) {
       const groupId = workGroupId(failedGroupAnchor.id);
-      const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+      const expanded = disclosureOpen(input.expandedWorkGroupIds, groupId, startsOpen);
       nextRows.push({
         kind: "thinking",
         id: LIVE_ACTIVITY_ROW_ID,

@@ -1,6 +1,7 @@
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
+import type { TranscriptView } from "@t3tools/contracts";
 import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -28,6 +29,28 @@ const FOLLOW_UP_OPTIONS: ReadonlyArray<{
   },
 ];
 
+const TRANSCRIPT_VIEW_OPTIONS: ReadonlyArray<{
+  readonly view: TranscriptView;
+  readonly label: string;
+  readonly description: string;
+}> = [
+  {
+    view: "normal",
+    label: "Normal",
+    description: "Each finished turn folds its work behind “Worked for”.",
+  },
+  {
+    view: "thinking",
+    label: "Thinking",
+    description: "Every turn opens with its tool calls and intermediate messages.",
+  },
+  {
+    view: "verbose",
+    label: "Verbose",
+    description: "Every turn opens, and so does each tool call's thinking text and output.",
+  },
+];
+
 export function SettingsFollowUpRouteScreen() {
   const insets = useSafeAreaInsets();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
@@ -36,32 +59,50 @@ export function SettingsFollowUpRouteScreen() {
   const selectedBehavior = AsyncResult.isSuccess(preferencesResult)
     ? (preferencesResult.value.followUpBehavior ?? DEFAULT_FOLLOW_UP_BEHAVIOR)
     : null;
+  const selectedTranscriptView = AsyncResult.isSuccess(preferencesResult)
+    ? (preferencesResult.value.transcriptView ?? "normal")
+    : null;
 
   const content = (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
       showsVerticalScrollIndicator={false}
       className="flex-1"
-      contentContainerClassName="gap-3 px-5 pt-4"
+      contentContainerClassName="gap-6 px-5 pt-4"
       contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
     >
-      <SettingsSection title="While the agent is running">
-        {FOLLOW_UP_OPTIONS.map((option, index) => (
+      <View className="gap-3">
+        <SettingsSection title="While the agent is running">
+          {FOLLOW_UP_OPTIONS.map((option, index) => (
+            <SettingsChoiceRow
+              key={option.behavior}
+              label={option.label}
+              description={option.description}
+              selected={selectedBehavior === option.behavior}
+              separated={index > 0}
+              disabled={!preferencesReady}
+              onPress={() => savePreferences({ followUpBehavior: option.behavior })}
+            />
+          ))}
+        </SettingsSection>
+        <Text className="px-2 text-sm text-foreground-muted">
+          Long-press the send button to use the other option for a single message. With a hardware
+          keyboard, hold Command while sending.
+        </Text>
+      </View>
+      <SettingsSection title="Transcript view">
+        {TRANSCRIPT_VIEW_OPTIONS.map((option, index) => (
           <SettingsChoiceRow
-            key={option.behavior}
+            key={option.view}
             label={option.label}
             description={option.description}
-            selected={selectedBehavior === option.behavior}
+            selected={selectedTranscriptView === option.view}
             separated={index > 0}
             disabled={!preferencesReady}
-            onPress={() => savePreferences({ followUpBehavior: option.behavior })}
+            onPress={() => savePreferences({ transcriptView: option.view })}
           />
         ))}
       </SettingsSection>
-      <Text className="px-2 text-sm text-foreground-muted">
-        Long-press the send button to use the other option for a single message. With a hardware
-        keyboard, hold Command while sending.
-      </Text>
     </ScrollView>
   );
 

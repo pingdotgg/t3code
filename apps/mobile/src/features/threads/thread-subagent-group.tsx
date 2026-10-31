@@ -67,6 +67,7 @@ export function ThreadSubagentGroup(props: {
   readonly environmentId: EnvironmentId;
   readonly anchorKey: string;
   readonly expandedRows: Readonly<Record<string, boolean>>;
+  readonly foldsStartOpen: boolean;
   readonly iconSubtleColor: ColorValue;
   readonly onToggleRow: (rowId: string, anchorKey: string) => void;
 }) {
@@ -97,7 +98,7 @@ export function ThreadSubagentGroup(props: {
   const grouped = agents.length > 1;
   const label = `${agents.length} subagents`;
   const summary = summarizeSubagentStatuses(agents.map((agent) => agent.status));
-  const expanded = props.expandedRows[props.anchorKey] ?? false;
+  const expanded = (props.expandedRows[props.anchorKey] ?? false) !== props.foldsStartOpen;
   const serverConfigs = useServerConfigs();
   // A task in a linked environment runs a provider instance of that environment.
   const providerOf = (item: SubagentItem) =>
