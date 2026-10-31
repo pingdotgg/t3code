@@ -181,6 +181,64 @@ export interface KeybindingsConfigState {
   readonly issues: readonly ServerConfigIssue[];
 }
 
+function isSameConfigIssue(left: ServerConfigIssue, right: ServerConfigIssue): boolean {
+  if (left.kind !== right.kind || left.message !== right.message) {
+    return false;
+  }
+  if (left.kind === "keybindings.invalid-entry" && right.kind === "keybindings.invalid-entry") {
+    return left.index === right.index;
+  }
+  return true;
+}
+
+function isSameResolvedShortcut(left: KeybindingShortcut, right: KeybindingShortcut): boolean {
+  return (
+    left.key === right.key &&
+    left.metaKey === right.metaKey &&
+    left.ctrlKey === right.ctrlKey &&
+    left.shiftKey === right.shiftKey &&
+    left.altKey === right.altKey &&
+    left.modKey === right.modKey
+  );
+}
+
+function isSameWhenAst(
+  left: KeybindingWhenNode | null | undefined,
+  right: KeybindingWhenNode | null | undefined,
+): boolean {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return encodeWhenAst(left) === encodeWhenAst(right);
+}
+
+function isSameResolvedRule(left: ResolvedKeybindingRule, right: ResolvedKeybindingRule): boolean {
+  return (
+    left.command === right.command &&
+    isSameResolvedShortcut(left.shortcut, right.shortcut) &&
+    isSameWhenAst(left.whenAst, right.whenAst)
+  );
+}
+
+function isSameKeybindingsConfigState(
+  left: KeybindingsConfigState,
+  right: KeybindingsConfigState,
+): boolean {
+  if (left === right) return true;
+  if (left.keybindings.length !== right.keybindings.length) return false;
+  if (left.issues.length !== right.issues.length) return false;
+  for (let i = 0; i < left.keybindings.length; i++) {
+    if (!isSameResolvedRule(left.keybindings[i]!, right.keybindings[i]!)) {
+      return false;
+    }
+  }
+  for (let i = 0; i < left.issues.length; i++) {
+    if (!isSameConfigIssue(left.issues[i]!, right.issues[i]!)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export interface KeybindingsChangeEvent {
   readonly keybindings: ResolvedKeybindingsConfig;
   readonly issues: readonly ServerConfigIssue[];
@@ -221,6 +279,8 @@ export class Keybindings extends Context.Service<
 
     readonly streamChanges: Stream.Stream<KeybindingsChangeEvent>;
 
+    readonly revalidate: Effect.Effect<void, KeybindingsConfigError>;
+
     /** Acquire before reading a snapshot to buffer changes until the stream starts. */
     readonly subscribeChanges: Effect.Effect<
       Stream.Stream<KeybindingsChangeEvent>,
@@ -249,12 +309,17 @@ const make = Effect.gen(function* () {
   const upsertSemaphore = yield* Semaphore.make(1);
   const resolvedConfigCacheKey = "resolved" as const;
   const changesPubSub = yield* PubSub.unbounded<KeybindingsChangeEvent>();
+  const lastEmittedStateRef = yield* Ref.make<KeybindingsConfigState | null>(null);
   const startedRef = yield* Ref.make(false);
   const startedDeferred = yield* Deferred.make<void, KeybindingsConfigError>();
   const watcherScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(watcherScope, Exit.void));
-  const emitChange = (configState: KeybindingsConfigState) =>
-    PubSub.publish(changesPubSub, configState).pipe(Effect.asVoid);
+  const emitChange = Effect.fn("keybindings.emitChange")(function* (
+    configState: KeybindingsConfigState,
+  ) {
+    yield* Ref.set(lastEmittedStateRef, configState);
+    yield* PubSub.publish(changesPubSub, configState);
+  });
 
   const readConfigExists = fs.exists(keybindingsConfigPath).pipe(
     Effect.mapError(
@@ -446,8 +511,12 @@ const make = Effect.gen(function* () {
 
   const revalidateAndEmit = upsertSemaphore.withPermits(1)(
     Effect.gen(function* () {
+      const previousState = yield* Ref.get(lastEmittedStateRef);
       yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
       const configState = yield* loadConfigStateFromCacheOrDisk;
+      if (previousState && isSameKeybindingsConfigState(previousState, configState)) {
+        return;
+      }
       yield* emitChange(configState);
     }),
   );
@@ -617,7 +686,8 @@ const make = Effect.gen(function* () {
       yield* startWatcher;
       yield* syncDefaultKeybindingsOnStartup;
       yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
-      yield* loadConfigStateFromCacheOrDisk;
+      const initialState = yield* loadConfigStateFromCacheOrDisk;
+      yield* Ref.set(lastEmittedStateRef, initialState);
     });
 
     const startupExit = yield* Effect.exit(startup);
@@ -635,6 +705,7 @@ const make = Effect.gen(function* () {
     syncDefaultKeybindingsOnStartup,
     loadConfigState: loadConfigStateFromCacheOrDisk,
     getSnapshot: loadConfigStateFromCacheOrDisk,
+    revalidate: revalidateAndEmit,
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },

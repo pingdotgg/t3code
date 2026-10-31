@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as SharedKeybindings from "@t3tools/shared/keybindings";
@@ -568,5 +569,42 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         assert.isTrue(persistedCommands.has(command), `expected persisted command ${command}`);
       }
     }).pipe(Effect.provide(layerKeybindings())),
+  );
+
+  it.effect(
+    "suppresses change emission when revalidating unchanged keybindings configuration",
+    () =>
+      Effect.gen(function* () {
+        const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+        yield* writeKeybindingsConfig(keybindingsConfigPath, [
+          { key: "mod+j", command: "terminal.toggle" },
+        ]);
+
+        const keybindings = yield* Keybindings.Keybindings;
+        yield* keybindings.start;
+
+        const emitted: Keybindings.KeybindingsChangeEvent[] = [];
+        const subscription = yield* keybindings.subscribeChanges;
+        yield* Stream.runForEach(subscription, (event) =>
+          Effect.sync(() => {
+            emitted.push(event);
+          }),
+        ).pipe(Effect.forkScoped);
+
+        // Revalidate when config on disk has not changed (e.g. atime bump on Windows)
+        yield* keybindings.revalidate;
+        assert.equal(emitted.length, 0);
+
+        // Update the file content on disk and revalidate
+        yield* writeKeybindingsConfig(keybindingsConfigPath, [
+          { key: "mod+j", command: "terminal.toggle" },
+          { key: "mod+k", command: "threadPanel.toggle" },
+        ]);
+        yield* keybindings.revalidate;
+        assert.equal(emitted.length, 1);
+        assert.isTrue(
+          emitted[0]?.keybindings.some((rule) => rule.command === "threadPanel.toggle"),
+        );
+      }).pipe(Effect.scoped, Effect.provide(layerKeybindings())),
   );
 });
