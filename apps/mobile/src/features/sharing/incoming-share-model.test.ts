@@ -21,11 +21,17 @@ describe("incoming native shares", () => {
       value: "file:///shared/Screenshot.png",
       mimeType: "image/png",
     };
+    const file: SharePayload = {
+      shareType: "file",
+      value: "file:///shared/report.pdf",
+      mimeType: "application/pdf",
+    };
     const payloads: SharePayload[] = [
       { shareType: "text", value: "Please explain this error" },
       { shareType: "url", value: "https://example.com/issue/1" },
       { shareType: "text", value: "Please explain this error" },
       image,
+      file,
     ];
     const resolvedImage: ResolvedSharePayload = {
       ...image,
@@ -37,16 +43,35 @@ describe("incoming native shares", () => {
     };
     const removeOwnedFile = vi.fn(() => Promise.resolve());
 
-    const result = await buildIncomingShareDraft({
-      id: "share-1",
-      createdAt: "2026-07-15T10:00:00.000Z",
-      payloads,
-      resolvedPayloads: [resolvedImage],
-      fileReader: {
-        readBase64: async () => "YWJj",
-        removeOwnedFile,
-      },
-    });
+    const build = (attachmentIdPrefix: string) =>
+      buildIncomingShareDraft({
+        attachmentIdPrefix,
+        id: "share-1",
+        createdAt: "2026-07-15T10:00:00.000Z",
+        payloads,
+        resolvedPayloads: [
+          resolvedImage,
+          {
+            ...file,
+            contentUri: file.value,
+            contentType: "file",
+            contentMimeType: "application/pdf",
+            contentSize: 3,
+            originalName: "report.pdf",
+          },
+        ],
+        fileReader: {
+          readBase64: async () => "YWJj",
+          removeOwnedFile,
+        },
+      });
+
+    const result = await build("share-1");
+    const repeated = await build("second-handoff");
+    expect(
+      new Set([...result.attachments, ...repeated.attachments].map((attachment) => attachment.id))
+        .size,
+    ).toBe(4);
 
     expect(result).toEqual({
       schemaVersion: 2,
@@ -62,6 +87,14 @@ describe("incoming native shares", () => {
           sizeBytes: 3,
           dataUrl: "data:image/png;base64,YWJj",
           previewUri: "data:image/png;base64,YWJj",
+        },
+        {
+          id: "share-1:file:4",
+          type: "file",
+          name: "report.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 3,
+          fileUri: "file:///shared/report.pdf",
         },
       ],
       warnings: [],
@@ -85,6 +118,7 @@ describe("incoming native shares", () => {
     const removeOwnedFile = vi.fn(() => Promise.resolve());
 
     const result = await buildIncomingShareDraft({
+      attachmentIdPrefix: "share-2",
       id: "share-2",
       createdAt: "2026-07-15T10:00:00.000Z",
       payloads: [image],
@@ -119,6 +153,7 @@ describe("incoming native shares", () => {
     const removeOwnedFile = vi.fn(async (_uri: string) => undefined);
 
     const result = await buildIncomingShareDraft({
+      attachmentIdPrefix: "share-report",
       id: "share-report",
       createdAt: "2026-07-15T10:00:00.000Z",
       payloads: [file],
@@ -161,6 +196,7 @@ describe("incoming native shares", () => {
     const removeOwnedFile = vi.fn(async () => undefined);
 
     const result = await buildIncomingShareDraft({
+      attachmentIdPrefix: "share-video",
       id: "share-video",
       createdAt: "2026-08-30T10:00:00.000Z",
       payloads: [{ ...video, shareType: "video" }],
@@ -206,6 +242,7 @@ describe("incoming native shares", () => {
     };
 
     const result = await buildIncomingShareDraft({
+      attachmentIdPrefix: "share-empty",
       id: "share-empty",
       createdAt: "2026-07-15T10:00:00.000Z",
       payloads: [file],
@@ -231,6 +268,7 @@ describe("incoming native shares", () => {
     const readSize = vi.fn(async (uri: string) => (uri.startsWith("content:") ? null : 42));
 
     const result = await buildIncomingShareDraft({
+      attachmentIdPrefix: "share-android-report",
       id: "share-android-report",
       createdAt: "2026-07-15T10:00:00.000Z",
       payloads: [file],
@@ -269,6 +307,7 @@ describe("incoming native shares", () => {
     const removeOwnedFile = vi.fn(async (_uri: string) => undefined);
 
     const result = await buildIncomingShareDraft({
+      attachmentIdPrefix: "share-empty-copy",
       id: "share-empty-copy",
       createdAt: "2026-07-15T10:00:00.000Z",
       payloads: [file],
@@ -291,6 +330,7 @@ describe("incoming native shares", () => {
     const removeOwnedFile = vi.fn(async () => undefined);
 
     const result = await buildIncomingShareDraft({
+      attachmentIdPrefix: "share-no-copy",
       id: "share-no-copy",
       createdAt: "2026-07-15T10:00:00.000Z",
       payloads: [{ shareType: "file", value: sourceUri, mimeType: "application/pdf" }],
@@ -313,6 +353,7 @@ describe("incoming native shares", () => {
     const removeOwnedFile = vi.fn(async (_uri: string) => undefined);
 
     const result = await buildIncomingShareDraft({
+      attachmentIdPrefix: "share-copy",
       id: "share-copy",
       createdAt: "2026-07-15T10:00:00.000Z",
       payloads: [{ shareType: "file", value: payloadUri, mimeType: "application/pdf" }],
@@ -395,6 +436,7 @@ describe("incoming native shares", () => {
     const readBase64 = vi.fn(async () => "YWJj");
 
     const result = await buildIncomingShareDraft({
+      attachmentIdPrefix: "share-3",
       id: "share-3",
       createdAt: "2026-07-15T10:00:00.000Z",
       payloads,
@@ -440,6 +482,7 @@ describe("incoming native shares", () => {
     const removeOwnedFile = vi.fn(async () => undefined);
 
     const result = await buildIncomingShareDraft({
+      attachmentIdPrefix: "share-duplicates",
       id: "share-duplicates",
       createdAt: "2026-07-16T08:00:00.000Z",
       payloads: [duplicate, duplicate],
@@ -467,6 +510,7 @@ describe("incoming native shares", () => {
     };
 
     const result = await buildIncomingShareDraft({
+      attachmentIdPrefix: "share-cleanup-failure",
       id: "share-cleanup-failure",
       createdAt: "2026-07-16T08:00:00.000Z",
       payloads: [image],
@@ -493,6 +537,7 @@ describe("incoming native shares", () => {
     const removeOwnedFile = vi.fn(async (_uri: string) => undefined);
 
     const result = await buildIncomingShareDraft({
+      attachmentIdPrefix: "share-persist-leak",
       id: "share-persist-leak",
       createdAt: "2026-07-16T08:00:00.000Z",
       payloads: [file],

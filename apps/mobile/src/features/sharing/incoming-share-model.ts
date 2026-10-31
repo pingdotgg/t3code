@@ -232,6 +232,7 @@ export async function buildIncomingShareDraft(input: {
   readonly resolvedPayloads: ReadonlyArray<ResolvedSharePayload>;
   readonly fileReader: IncomingShareFileReader;
   readonly id: string;
+  readonly attachmentIdPrefix: string;
   readonly createdAt: string;
 }): Promise<IncomingShareDraft> {
   const attachments: DraftComposerAttachment[] = [];
@@ -332,7 +333,7 @@ export async function buildIncomingShareDraft(input: {
           }
         }
         attachments.push({
-          id: `${input.id}:file:${index}`,
+          id: `${input.attachmentIdPrefix}:file:${index}`,
           type: "file",
           name,
           mimeType,
@@ -397,7 +398,7 @@ export async function buildIncomingShareDraft(input: {
       }
       const dataUrl = `data:${mimeType};base64,${base64}`;
       attachments.push({
-        id: `${input.id}:image:${index}`,
+        id: `${input.attachmentIdPrefix}:image:${index}`,
         type: "image",
         name: resolved?.originalName ?? fallbackName(uri, index, mimeType),
         mimeType,
