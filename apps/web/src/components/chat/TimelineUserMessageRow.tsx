@@ -55,6 +55,7 @@ import {
   MessagesSquareIcon,
   PencilIcon,
   LinkIcon,
+  Redo2Icon,
 } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
 import { FreshSessionRow, ModelSwitchRow } from "./V2LifecycleRow";
@@ -140,7 +141,7 @@ function UserFileCard({
   return (
     <div
       data-markdown-copy={copyMarkdown}
-      className="flex w-64 max-w-full items-center gap-1 rounded-pane surface-bubble py-2 ps-2 pe-1 text-foreground"
+      className="flex w-64 max-w-full items-center gap-1 rounded-2xl surface-bubble py-2 ps-2 pe-1 text-foreground"
     >
       {file.downloadable === false ? (
         <>
@@ -351,7 +352,7 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
       ) : null}
       <UserMessageProjectedStatus row={row} />
       {expanded ? (
-        <div className="flex items-center justify-end whitespace-nowrap text-meta tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/user-row:opacity-100 has-[button]:-me-1.5">
+        <div className="flex items-center justify-end whitespace-nowrap text-meta tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:static pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/user-row:opacity-100 has-[button]:-me-1.5">
           <div className="flex shrink-0 items-center gap-2">
             {scheduledTaskId ? (
               <InlineButton
@@ -701,13 +702,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               : collage
                 ? cn(
                     MEDIA_EDGE_CLASS_NAME,
-                    "w-80 max-w-full gap-px overflow-hidden rounded-2xl bg-black/9 dark:bg-white/12",
+                    "w-64 max-w-full gap-px overflow-hidden rounded-2xl bg-black/9 dark:bg-white/12",
                     mediaCornerClassName,
                     regularImages.length === 2
-                      ? "auto-rows-[12rem] grid-cols-2"
+                      ? "auto-rows-[154px] grid-cols-2"
                       : regularImages.length === 3
-                        ? "auto-rows-[calc(6rem-0.5px)] grid-cols-[3fr_2fr]"
-                        : "auto-rows-[6rem] grid-cols-2",
+                        ? "auto-rows-[76.5px] grid-cols-[3fr_2fr]"
+                        : "auto-rows-[77px] grid-cols-2",
                   )
                 : regularImages.length + userVideos.length === 1
                   ? "w-80 max-w-full"
@@ -858,7 +859,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
   return (
     <div
-      className="group/user-row @container flex flex-col items-end gap-1"
+      className="group/user-row @container relative flex flex-col items-end gap-1"
       data-user-message-attribution={folded ? "agent" : undefined}
     >
       {userMessage.attribution === "t3code" ? (
@@ -888,7 +889,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       ) : null}
       <div
         className={cn(
-          "relative min-w-0 max-w-[80%] rounded-pane text-foreground",
+          "relative min-w-0 max-w-[min(80%,32.5rem)] rounded-pane text-foreground",
           (mediaAboveText || row.groupedWithPrevious) && "rounded-tr-md",
           row.groupedWithNext && "rounded-br-md",
           BUBBLE_CHIP_CLASS_NAME,
@@ -1064,9 +1065,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </div>
         ) : null}
       </div>
-      {userMessageMeta && !row.continuesSteer ? (
-        <UserMessageMeta unread={row.projectedItem?.item.status === "pending"} intent={userMessageMeta.intent} label={userMessageMeta.label} />
-      ) : null}
       <UserMessageProjectedStatus row={row} />
       {!folded || expanded ? (
         <div
@@ -1084,7 +1082,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
 }
 
 const ACTIONS_REVEAL_CLASS_NAME =
-  "items-center text-meta tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/user-row:opacity-100";
+  "items-center text-meta tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 group-focus-within/user-row:opacity-100 group-hover/user-row:opacity-100";
 
 function RevertUserMessageButton({
   turnCount,
@@ -1255,11 +1253,12 @@ function UserMessageMeta({
       <TooltipTrigger
         render={
           <p
-            className="text-caption leading-none text-dim-foreground tabular-nums"
+            className="flex items-center gap-1 pe-1 text-caption text-dim-foreground tabular-nums"
             data-user-message-intent={intent}
           />
         }
       >
+        <Redo2Icon aria-hidden className="size-3" />
         {label}
         {unread ? <span className="ms-1">waiting to be read</span> : null}
       </TooltipTrigger>
