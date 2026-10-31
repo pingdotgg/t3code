@@ -34,6 +34,7 @@ import {
   workEntryDisplayLabel,
 } from "./MessagesTimeline.logic";
 
+import { workEntryIconName } from "./TimelineWorkEntryRow.logic";
 describe("resolveAssistantMessageCopyState", () => {
   it("copies the rendered representation of Codex directives", () => {
     expect(
@@ -372,6 +373,49 @@ describe("deriveMessagesTimelineRows", () => {
         (row) => row.kind === "work" && row.groupedEntries.includes(notice.entry),
       );
       expect(row).toMatchObject({ kind: "work", groupedEntries: [notice.entry] });
+    },
+  );
+
+  it.each(["info", "warning", "error", undefined] as const)(
+    "renders %s notices with compatible severity",
+    (level) => {
+      const fixture = makeStreamingTimelineFixture();
+      const message = "TPS 227.1 tok/s · TTFT 3.4s";
+      const id = TurnItemId.make("info-notice");
+      const [notice] = deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: [
+          {
+            ...fixture.visibleTurnItems[0]!,
+            sourceItemId: id,
+            item: {
+              id,
+              threadId: fixture.threadId,
+              runId: fixture.runId,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              startedAt: DateTime.makeUnsafe(fixture.time(1)),
+              completedAt: DateTime.makeUnsafe(fixture.time(1)),
+              updatedAt: DateTime.makeUnsafe(fixture.time(1)),
+              type: "system_notice",
+              message,
+              ...(level === undefined ? {} : { level }),
+              title: message,
+              status: "completed",
+            },
+          },
+        ],
+        optimisticMessages: [],
+      });
+      if (notice?.kind !== "work") throw new Error("Expected a notice work entry");
+      expect(notice.entry.sourceActivityKind).toBe(
+        level === "info" ? undefined : "runtime.warning",
+      );
+      expect(workEntryIconName(notice.entry)).toBe(level === "info" ? "zap" : "circle-alert");
+      expect(workEntryDisplayLabel(notice.entry, undefined)).toBe(message);
     },
   );
 

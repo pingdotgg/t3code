@@ -2969,25 +2969,27 @@ describe("PiAdapterV2", () => {
       });
       yield* startTurn(runtime, providerThread, "default", [], "/command-only");
       yield* fake.takeRequest("prompt");
-      yield* fake.emit({
-        type: "extension_ui_request",
-        id: "ui-cmd",
-        method: "notify",
-        message: "Command finished\nwith details",
-        notifyType: "info",
-      });
+      for (const notifyType of ["info", "warning", "error", undefined, "unknown"] as const) {
+        yield* fake.emit({
+          type: "extension_ui_request",
+          id: "ui-cmd",
+          method: "notify",
+          message: "Command finished\nwith details",
+          ...(notifyType === undefined ? {} : { notifyType }),
+        });
+        const notice = yield* takeEvent(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
+        );
+        assert.isTrue(
+          notice.type === "turn_item.updated" &&
+            notice.turnItem.type === "system_notice" &&
+            notice.turnItem.status === "completed" &&
+            notice.turnItem.level ===
+              (notifyType === "warning" || notifyType === "error" ? notifyType : "info") &&
+            notice.turnItem.message === "Command finished\nwith details",
+        );
+      }
       yield* fake.emit({ type: "response", command: "prompt", success: true });
-      const notice = yield* takeEvent(
-        (event) =>
-          (event.type === "turn_item.updated" && event.turnItem.type === "system_notice") ||
-          event.type === "turn.terminal",
-      );
-      assert.isTrue(
-        notice.type === "turn_item.updated" &&
-          notice.turnItem.type === "system_notice" &&
-          notice.turnItem.status === "completed" &&
-          notice.turnItem.message === "Command finished\nwith details",
-      );
       const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
       assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
