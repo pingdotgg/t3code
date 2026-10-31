@@ -50,14 +50,15 @@ const commandIn = (
       : make;
   });
 
-const fakePowerShell = (initial: string) => {
+/** `inherited` stands in for the app's own environment, which `extendEnv` passes on. */
+const fakePowerShell = (initial: string, inherited: Record<string, string> = {}) => {
   const registry = { path: initial, failReads: false, writes: 0 };
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.sync(() => {
       const { options } = command as unknown as {
-        readonly options: { readonly env?: Record<string, string> };
+        readonly options: { readonly env?: Record<string, string>; readonly extendEnv?: boolean };
       };
-      const env = options.env ?? {};
+      const env = { ...(options.extendEnv ? inherited : {}), ...options.env };
       let exitCode = 0;
       let stdout = "";
       if (env.T3_SET === "1") {
@@ -197,6 +198,9 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const link = (yield* before.install).installedPath;
 
       const after = yield* commandIn({ home, baseDir: path.join(home, "new-t3") });
+      // A first launch leaves another home's command alone; only Install takes it over.
+      yield* after.installOnFirstLaunch;
+      expect(yield* fs.readLink(link!)).toBe(path.join(home, "old-t3", "bin", "t3"));
       expect((yield* after.state).installedPath).toBe(link);
       // Behind another t3 the install fails, and the old link still works.
       const shadow = path.join(home, "shadow");
@@ -361,6 +365,12 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       expect(registry.path).toBe(`${userPath};${launcherDir}`);
       yield* command.uninstall;
       expect(registry.path).toBe(userPath);
+
+      // An inherited T3_SET=1 never turns a read into a write of the whole PATH.
+      const inherited = fakePowerShell(userPath, { T3_SET: "1", T3_PATH: "C:\\other" });
+      const reader = yield* commandIn({ home, platform: "win32" }, inherited.spawner);
+      yield* reader.install;
+      expect(inherited.registry).toMatchObject({ path: `${userPath};${launcherDir}`, writes: 1 });
     }).pipe(Effect.scoped),
   );
 

@@ -246,7 +246,8 @@ export function ServerUpdateAction({
   appearance = "button",
 }: ServerUpdateTarget & UpdateButtonProps) {
   const isDesktopAppUpdate = selfUpdate === "desktop-managed";
-  const serverVersion = useServerConfigs().get(environmentId)?.environment.serverVersion;
+  const hostEnvironment = useServerConfigs().get(environmentId)?.environment;
+  const serverVersion = hostEnvironment?.serverVersion;
   const sessionStateAtom = environmentSession.sessionStateAtom(environmentId);
   const canUpdate = canUpdateServer(useAtomValue(sessionStateAtom));
   const update = useServerUpdate();
@@ -311,7 +312,9 @@ export function ServerUpdateAction({
   }
 
   const manualCommand =
-    selfUpdate === null ? manualServerUpdateCommand(targetVersion, installation) : null;
+    selfUpdate === null
+      ? manualServerUpdateCommand(targetVersion, installation, hostEnvironment?.platform.os)
+      : null;
   const actionLabel =
     manualCommand !== null
       ? installation?.kind === "npm-global"

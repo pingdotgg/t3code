@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  ExecutionEnvironmentPlatformOs,
   ServerConfig,
   ServerInstallation,
   ServerSelfUpdateCapability,
@@ -95,9 +96,11 @@ export function supportsDesktopAppUpdate(
   return serverConfig?.environment.capabilities.desktopAppUpdate === true;
 }
 
+/** Runner commands opt out of npx running a newer installed `t3`; `os` picks the shell syntax. */
 export function manualServerUpdateCommand(
   targetVersion: string,
   installation?: ServerInstallation,
+  os?: ExecutionEnvironmentPlatformOs,
 ): string {
   if (installation?.kind === "npm-global") {
     const prefix = `'${installation.prefix.replaceAll("'", "'\\''")}'`;
@@ -105,7 +108,8 @@ export function manualServerUpdateCommand(
   }
   const runner =
     installation?.kind === "pnpm-dlx" ? "pnpm dlx" : installation?.kind === "bunx" ? "bunx" : "npx";
-  return `${runner} t3@${targetVersion}`;
+  const useNpm = os === "windows" ? "$env:T3CODE_USE_NPM=1; " : "T3CODE_USE_NPM=1 ";
+  return `${useNpm}${runner} t3@${targetVersion}`;
 }
 
 export function buildVersionMismatchDismissalKey(

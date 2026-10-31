@@ -10,6 +10,8 @@ const { version } = JSON.parse(
   fs.readFileSync(path.join(import.meta.dirname, "../package.json"), "utf8"),
 );
 
+const executableName = process.platform === "win32" ? "t3.exe" : "t3";
+
 const SUPPORTED = ["darwin-arm64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"];
 
 function t3Home() {
@@ -186,6 +188,8 @@ function newestInstalled(home) {
         const relative = target ? path.relative(base, target) : "..";
         const installed = relative.split(path.sep)[0];
         if (relative.startsWith("..") || path.isAbsolute(relative)) continue;
+        // Only `<version>/t3`, never another executable inside a version.
+        if (relative !== path.join(installed, executableName)) continue;
         if (!isComplete(path.join(versions, installed), installed)) continue;
         fs.accessSync(target, fs.constants.X_OK);
         // A Windows `t3.cmd` needs a shell; its target does not.
@@ -234,7 +238,11 @@ async function main() {
   const home = t3Home();
   // Service IPC and signals must reach the child; terminal Ctrl-C already does, so do not forward SIGINT twice.
   const ipc = process.send !== undefined;
-  const installed = ipc || process.env.T3CODE_USE_NPM === "1" ? undefined : newestInstalled(home);
+  // `install` links npm's copy itself; the desktop app's t3 cannot install itself.
+  const installed =
+    ipc || process.env.T3CODE_USE_NPM === "1" || process.argv[2] === "install"
+      ? undefined
+      : newestInstalled(home);
   if (installed && compareVersions(installed.version, version) >= 0) {
     note(
       `using your installed t3 ${installed.version} (${installed.command}). Set T3CODE_USE_NPM=1 for npm's ${version}.`,
@@ -265,7 +273,7 @@ async function runNpm(home, ipc) {
   if (!isComplete(dir)) await install(dir, key);
   // The executable lives in the T3 home, so this is how it knows npm launched it.
   run(
-    path.join(dir, process.platform === "win32" ? "t3.exe" : "t3"),
+    path.join(dir, executableName),
     { ...process.env, T3CODE_NPM_LAUNCHER_PATH: import.meta.filename },
     ipc,
   );
@@ -305,7 +313,15 @@ function run(executable, env, ipc, fallback) {
     for (const stop of forwards) stop();
     fallback();
   };
-  child.on("error", (error) => finish(() => (fallback ? fallBack() : fail(error))));
+  // After the child starts, an error comes from a failed kill or send; it is still running, and
+  // its exit ends the launcher. Falling back then would run the command twice.
+  let started = false;
+  child.on("spawn", () => {
+    started = true;
+  });
+  child.on("error", (error) => {
+    if (!started) finish(() => (fallback ? fallBack() : fail(error)));
+  });
   child.on("exit", (code, signal) =>
     finish(() =>
       // 126 and 127 mean the shell could not run it; t3 never exits with them (triage maps them).

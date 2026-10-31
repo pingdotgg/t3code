@@ -368,6 +368,20 @@ fs.readFileSync = (file, ...rest) => {
         });
         assert.equal(optedOut.stdout.trim(), `stub connect launcher=${launcher}`, optedOut.stderr);
 
+        // `install` links npm's copy, so it never hands off.
+        const install = yield* run(process.execPath, [launcher, "install"], { cwd: root, env });
+        assert.equal(install.stdout.trim(), `stub install launcher=${launcher}`, install.stderr);
+
+        // Only `<version>/t3` counts, not another executable inside a completed version.
+        const nested = path.join(home, "runtime/versions/1.2.4-nightly.20261026.1/helper");
+        yield* fs.writeFileString(nested, "#!/bin/sh\necho nested\n");
+        yield* fs.chmod(nested, 0o755);
+        yield* fs.remove(path.join(root, "bin", "t3"));
+        yield* fs.symlink(nested, path.join(root, "bin", "t3"));
+        const other = yield* run(process.execPath, [launcher, "connect"], { cwd: root, env });
+        assert.equal(other.stdout.trim(), `stub connect launcher=${launcher}`, other.stderr);
+        yield* installAs("1.2.4-nightly.20261026.1");
+
         yield* fs.chmod(path.join(home, "runtime/versions/1.2.4-nightly.20261026.1/t3"), 0o644);
         const brokenInstall = yield* run(process.execPath, [launcher, "connect"], {
           cwd: root,
@@ -546,6 +560,15 @@ fs.readFileSync = (file, ...rest) => {
         const optedOut = launch({ T3CODE_USE_NPM: "1" });
         assert.notEqual(optedOut.status, 0);
         assert.notInclude(optedOut.stdout.toLowerCase(), user);
+
+        // A hand-edited wrapper may set its own environment, which a direct exe run would drop.
+        yield* fs.writeFileString(
+          shim,
+          `@echo off\r\nset "T3CODE_HOME=D:\\other"\r\n"${path.join(installed, "t3.exe")}" %*`,
+        );
+        const edited = launch({});
+        assert.notEqual(edited.status, 0);
+        assert.notInclude(edited.stdout.toLowerCase(), user);
       }),
   );
 });

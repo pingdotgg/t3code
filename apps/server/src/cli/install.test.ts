@@ -77,6 +77,15 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       assert.include(error.message, "Another t3 is already at");
       assert.equal(yield* fs.readFileString(link), "#!/bin/sh\n");
 
+      // A failed link leaves a staging path it did not create alone.
+      yield* fs.remove(link);
+      const staging = `${link}.${process.pid}.tmp`;
+      yield* fs.writeFileString(staging, "someone else's\n");
+      const linkFailed = yield* provide(installCli()).pipe(Effect.flip);
+      assert.include(linkFailed.message, "Could not link");
+      assert.equal(yield* fs.readFileString(staging), "someone else's\n");
+      yield* fs.remove(staging);
+
       // Windows writes a t3.cmd: only over its own, and only for paths cmd can run.
       const shim = path.join(root, "bin", "t3.cmd");
       const windows = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -153,6 +162,8 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       yield* offer(false, { foreground: false });
       yield* offer(false, { args: ["connect", "--help"] });
       yield* offer(false, { args: ["--log-level", "debug", "install"] });
+      yield* offer(false, { args: ["status", "--json"] });
+      yield* offer(false, { args: ["up", "--yes"] });
       yield* offer(false, { env: { T3CODE_USE_NPM: "1" } });
       const globalBin = path.join(root, "global-bin");
       yield* fs.makeDirectory(globalBin);

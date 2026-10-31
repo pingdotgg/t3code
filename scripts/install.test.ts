@@ -172,6 +172,17 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
       expect(noShell.code, noShell.output).toBe(0);
       expect(noShell.output).toContain(`Add ${binDir} to your PATH`);
 
+      // A relative folder is made absolute, so the PATH command never follows the working directory.
+      const relative = await installOver({
+        script: "install.sh",
+        home,
+        binDir: "bin",
+        cwd: root,
+        env: { HOME: root, SHELL: "/bin/zsh", PATH: "/usr/bin:/bin" },
+      });
+      expect(relative.code, relative.output).toBe(0);
+      expect(relative.output).toContain(`'export PATH="$HOME/bin:$PATH"'`);
+
       await NodeFSP.rm(link);
       await NodeFSP.symlink(NodePath.join(home, "bin/t3"), link);
       const overDesktop = await installOver({
@@ -203,6 +214,13 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("install.ps1 t3
       expect(foreign.code).not.toBe(0);
       expect(foreign.output).toContain("another t3 is already at");
       expect(await NodeFSP.readFile(shim, "utf8")).toBe(desktopShim);
+
+      // A hand-edited wrapper may set its own environment; replacing it would drop that.
+      const edited = `@echo off\r\nset "T3CODE_HOME=D:\\other"\r\n"${NodePath.join(home, "runtime", "versions", "1.0.0", "t3.exe")}" %*`;
+      await NodeFSP.writeFile(shim, edited, "utf8");
+      const wrapper = await installOver({ script: "install.ps1", home, binDir });
+      expect(wrapper.code).not.toBe(0);
+      expect(await NodeFSP.readFile(shim, "utf8")).toBe(edited);
 
       const climbing = `@echo off\r\n"${NodePath.join(home, "runtime", "versions")}\\..\\other\\t3.exe" %*`;
       await NodeFSP.writeFile(shim, climbing, "utf8");

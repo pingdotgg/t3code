@@ -981,7 +981,8 @@ interface PathSetupInput {
 export function pathSetup(
   input: PathSetupInput,
 ): { readonly file: string; readonly line: string } | undefined {
-  if (input.platform === "win32") return undefined;
+  // A relative folder on PATH would follow the working directory into any checkout.
+  if (input.platform === "win32" || !input.directory.startsWith("/")) return undefined;
   const underHome = input.directory.startsWith(`${input.home}/`);
   const rest = underHome ? input.directory.slice(input.home.length) : input.directory;
   if (!/^[\w./-]+$/.test(rest)) return undefined;

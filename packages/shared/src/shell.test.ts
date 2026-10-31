@@ -1069,6 +1069,8 @@ describe("pathSetupCommand", () => {
     ["C:\\Users\\theo\\.local\\bin", "pwsh", "win32", undefined],
     ["/Users/theo/it's here", "/bin/zsh", "darwin", undefined],
     ["/opt/a$PWD/bin", "/bin/zsh", "linux", undefined],
+    // Relative: PATH would follow the working directory into any checkout's `bin`.
+    ["bin", "/bin/zsh", "linux", undefined],
   ] as const)("%s with %s on %s", (directory, shell, platform, expected) => {
     expect(pathSetupCommand({ directory, home: "/Users/theo", shell, platform })).toBe(expected);
   });

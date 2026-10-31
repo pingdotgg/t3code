@@ -114,7 +114,8 @@ export function runCli() {
   keepOutboundFetchOnHttp1();
   offerCliInstall({
     args: process.argv.slice(2),
-    interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+    // A child started over IPC (a service launcher) has no one to answer.
+    interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY) && process.send === undefined,
     foreground: inTerminalForeground,
     confirm: confirmCliInstall,
   }).pipe(

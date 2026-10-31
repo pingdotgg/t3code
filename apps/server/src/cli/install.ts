@@ -61,7 +61,10 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
       reason: `A t3.cmd cannot run ${executable}, because the path has % or non-ASCII characters. Keep using npx t3.`,
     });
   }
-  const binDir = environment.T3CODE_INSTALL_BIN_DIR?.trim() || path.join(home, ".local", "bin");
+  // Absolute, so the PATH hint never adds a folder that changes with the working directory.
+  const binDir = path.resolve(
+    environment.T3CODE_INSTALL_BIN_DIR?.trim() || path.join(home, ".local", "bin"),
+  );
   const name = windows ? "t3.cmd" : "t3";
   const link = path.join(binDir, name);
   const failed = (reason: string) => (cause: unknown) => new CliInstallError({ reason, cause });
@@ -108,11 +111,17 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
   } else {
     // Swap a temporary link into place so a running `t3` never sees the command missing.
     const staging = `${link}.${process.pid}.tmp`;
-    yield* fs.symlink(executable, staging).pipe(
-      Effect.andThen(fs.rename(staging, link)),
-      Effect.tapError(() => fs.remove(staging, { force: true }).pipe(Effect.ignore)),
-      Effect.mapError(failed(`Could not link ${link}.`)),
-    );
+    // Clean up only a staging link this call made, never a file that was already there.
+    yield* fs
+      .symlink(executable, staging)
+      .pipe(
+        Effect.andThen(
+          fs
+            .rename(staging, link)
+            .pipe(Effect.tapError(() => fs.remove(staging, { force: true }).pipe(Effect.ignore))),
+        ),
+        Effect.mapError(failed(`Could not link ${link}.`)),
+      );
   }
 
   // Pruning keeps what recorded launchers point at; a background service cannot see binDir otherwise.
@@ -170,7 +179,17 @@ export const installCommand = Command.make("install").pipe(
 /** Saying no lasts until the next minor release: `0.2` covers `0.2.5` and `0.2.6-nightly.…`. */
 const minorRelease = (version: string) => version.split(".").slice(0, 2).join(".");
 
-const SKIPPED_ARGUMENTS = new Set(["help", "--help", "-h", "--version", "-v"]);
+const SKIPPED_ARGUMENTS = new Set([
+  "help",
+  "--help",
+  "-h",
+  "--version",
+  "-v",
+  // Scripts and machine-readable output; a prompt would stall them or corrupt their output.
+  "--json",
+  "--yes",
+  "-y",
+]);
 
 /** The subcommand, past global flags that may come first (two take a value). */
 const topLevelCommand = (args: ReadonlyArray<string>) => {

@@ -140,7 +140,8 @@ export const make = Effect.gen(function* () {
         return stdout;
       }),
     );
-  const readUserPath = powershell({}).pipe(
+  // Explicit, so an inherited T3_SET=1 can never turn a read into a PATH write.
+  const readUserPath = powershell({ T3_SET: "0" }).pipe(
     Effect.map((encoded) => Buffer.from(encoded.trim(), "base64").toString("utf8")),
     Effect.mapError(() => fail("Could not read your PATH, so it was left unchanged.")),
   );
@@ -381,6 +382,16 @@ export const make = Effect.gen(function* () {
       if (!environment.isPackaged || (yield* exists(firstLaunchMarker))) return;
       // Mark first so a failed or removed install is never retried behind the user's back.
       yield* fs.writeFileString(firstLaunchMarker, "");
+      // Another T3 home's app owns the existing link; only Install in Settings may take it over.
+      const existing = Option.getOrUndefined(yield* installedAt);
+      if (existing !== undefined) {
+        const target = yield* fs.readLink(existing).pipe(Effect.option);
+        if (Option.getOrUndefined(target) !== launcher) {
+          return yield* logInfo("left another T3 Code app's t3 command in place", {
+            existing,
+          });
+        }
+      }
       const installed = yield* install;
       yield* logInfo("installed the t3 command on first launch", {
         installedPath: installed.installedPath,

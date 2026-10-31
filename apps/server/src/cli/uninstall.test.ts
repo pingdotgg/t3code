@@ -65,6 +65,19 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
       for (const dir of [versionsDir, path.join(root, "alias/runtime/versions")]) {
         assert.deepStrictEqual(yield* findRecordedLaunchers(dir), [ours, throughAlias, pruned]);
       }
+
+      // On Windows only an unedited t3.cmd is ours; a hand-edited wrapper belongs to the user.
+      const cmd = path.join(root, "bin/t3.cmd");
+      const edited = path.join(root, "bin/edited.cmd");
+      yield* fs.writeFileString(cmd, `@echo off\r\n"${exe}" %*`);
+      yield* fs.writeFileString(edited, `@echo off\r\nset "T3CODE_HOME=D:\\other"\r\n"${exe}" %*`);
+      yield* fs.writeFileString(path.join(root, "runtime/launchers"), `${cmd}\r\n${edited}\r\n`);
+      assert.deepStrictEqual(
+        yield* findRecordedLaunchers(versionsDir).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+        ),
+        [cmd],
+      );
     }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 });
