@@ -827,6 +827,11 @@ export function resolveAdjacentThreadId<T>(input: {
   threadIds: readonly T[];
   currentThreadId: T | null;
   direction: ThreadTraversalDirection;
+  /**
+   * Cycle past the list ends: the thread after the last is the first, and
+   * the thread before the first is the last.
+   */
+  wrap?: boolean;
 }): T | null {
   const { currentThreadId, direction, threadIds } = input;
 
@@ -841,6 +846,13 @@ export function resolveAdjacentThreadId<T>(input: {
   const currentIndex = threadIds.indexOf(currentThreadId);
   if (currentIndex === -1) {
     return null;
+  }
+
+  if (input.wrap === true) {
+    const offset = direction === "previous" ? -1 : 1;
+    const target = threadIds[(currentIndex + offset + threadIds.length) % threadIds.length] ?? null;
+    // A list with a single visible thread has nothing to cycle to.
+    return target === currentThreadId ? null : target;
   }
 
   if (direction === "previous") {

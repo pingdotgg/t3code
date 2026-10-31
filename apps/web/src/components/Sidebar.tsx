@@ -92,6 +92,7 @@ import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
   shouldShowThreadJumpHintsForModifiers,
+  threadCycleDirectionFromCommand,
   threadJumpCommandForIndex,
   threadJumpIndexFromCommand,
   threadTraversalDirectionFromCommand,
@@ -2837,6 +2838,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             threadIds: orderedThreadKeys,
             currentThreadId: routeRowThreadKey,
             direction: traversalDirection,
+          }),
+        );
+        return;
+      }
+      const cycleDirection = threadCycleDirectionFromCommand(command);
+      if (cycleDirection !== null) {
+        navigateToThreadKey(
+          resolveAdjacentThreadId({
+            threadIds: orderedThreadKeys,
+            currentThreadId: routeRowThreadKey,
+            direction: cycleDirection,
+            wrap: true,
           }),
         );
         return;

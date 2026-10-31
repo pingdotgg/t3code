@@ -22,6 +22,7 @@ import {
   shouldShowThreadJumpHintsForModifiers,
   shortcutLabelForCommand,
   terminalNavigationShortcutData,
+  threadCycleDirectionFromCommand,
   type ShortcutEventLike,
 } from "./keybindings";
 
@@ -917,6 +918,36 @@ describe("Usage shortcuts", () => {
       resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
         platform: "Linux",
       }),
+    );
+  });
+});
+
+describe("thread cycle commands", () => {
+  it("maps cycle commands to traversal directions", () => {
+    assert.equal(threadCycleDirectionFromCommand("thread.cycleNext"), "next");
+    assert.equal(threadCycleDirectionFromCommand("thread.cyclePrevious"), "previous");
+    assert.equal(threadCycleDirectionFromCommand("thread.next"), null);
+    assert.equal(threadCycleDirectionFromCommand(null), null);
+  });
+
+  it("resolves Ctrl+Tab and Ctrl+Shift+Tab bound to the cycle commands", () => {
+    const bindings = mergeWithDefaultKeybindings(
+      compileResolvedKeybindingsConfig([
+        { key: "ctrl+tab", command: "thread.cycleNext" },
+        { key: "ctrl+shift+tab", command: "thread.cyclePrevious" },
+      ]),
+    );
+    assert.equal(
+      resolveShortcutCommand(event({ key: "Tab", ctrlKey: true }), bindings, {
+        platform: "MacIntel",
+      }),
+      "thread.cycleNext",
+    );
+    assert.equal(
+      resolveShortcutCommand(event({ key: "Tab", ctrlKey: true, shiftKey: true }), bindings, {
+        platform: "MacIntel",
+      }),
+      "thread.cyclePrevious",
     );
   });
 });
