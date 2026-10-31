@@ -1553,7 +1553,7 @@ function ComposerPromptEditorTiptapInner(
     latestValueRef.current = value;
     // A Suspense boundary revealing again re-runs this against an editor `useEditor` already
     // destroyed; the replacement editor reruns it once it exists.
-    if (!editor?.isInitialized) return;
+    if (!editor || editor.isDestroyed) return;
     const initialSelection = !hasAppliedControlledSelectionRef.current;
     hasAppliedControlledSelectionRef.current = true;
     const normalizedCursor = clampEditorCursor(value, cursor);
@@ -1657,7 +1657,7 @@ function ComposerPromptEditorTiptapInner(
     return () => {
       // Capture focus before the keyed editor's DOM is removed. A hiding Suspense boundary may
       // already have destroyed the editor, which leaves no view to read.
-      restoreFocusRef.current = editor.isInitialized && editor.view.hasFocus();
+      restoreFocusRef.current = !editor.isDestroyed && editor.view.hasFocus();
     };
   }, [editor, restoreFocusRef]);
 
