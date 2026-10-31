@@ -7871,6 +7871,12 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       }
       if (scenario === "settled") {
         yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("recovery:arm-before-settle:settled"),
+          threadId,
+          limitRecovery: { runId: run.id, resetAt, autoResume: true },
+        });
+        yield* orchestrator.dispatch({
           type: "thread.settle",
           commandId: CommandId.make("recovery:settle:settled"),
           threadId,
@@ -7885,8 +7891,14 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           .pipe(Effect.flip);
         assert(error._tag === "OrchestratorDispatchError");
         assert.equal(error.cause, "The thread is settled. Un-settle it to resume at the reset.");
-        assert.isNull(
-          (yield* orchestrator.getThreadProjection(threadId)).thread.limitRecovery ?? null,
+        // Settling disarms the resume armed before it, so nothing is left pending out of sight.
+        assert.deepInclude(
+          (yield* orchestrator.getThreadProjection(threadId)).thread.limitRecovery,
+          {
+            runId: run.id,
+            autoResume: false,
+            snooze: false,
+          },
         );
         return;
       }
