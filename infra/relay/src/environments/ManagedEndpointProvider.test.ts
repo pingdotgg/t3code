@@ -35,8 +35,19 @@ const config = RelayConfiguration.RelayConfiguration.of({
 });
 
 interface TunnelCall {
-  readonly operation: "get" | "list" | "create" | "putConfiguration" | "getToken" | "delete";
+  readonly operation:
+    | "get"
+    | "list"
+    | "create"
+    | "putConfiguration"
+    | "getConfiguration"
+    | "getToken"
+    | "delete";
   readonly input: unknown;
+}
+
+interface TunnelConfiguration {
+  readonly ingress: ReadonlyArray<{ readonly hostname?: string; readonly service: string }>;
 }
 
 interface DnsCall {
@@ -99,7 +110,10 @@ function makeTunnelClient(calls: TunnelCall[] = []) {
   });
 }
 
-function makePersistentTunnelClient(calls: TunnelCall[] = []) {
+function makePersistentTunnelClient(
+  calls: TunnelCall[] = [],
+  configuration: { current: TunnelConfiguration | null } = { current: null },
+) {
   let tunnel: { readonly id: string; readonly name: string } | null = null;
   return ManagedEndpointProvider.ManagedEndpointTunnelClient.of({
     get: (tunnelId) =>
@@ -133,6 +147,12 @@ function makePersistentTunnelClient(calls: TunnelCall[] = []) {
     putConfiguration: (tunnelId, tunnelConfig) =>
       Effect.sync(() => {
         calls.push({ operation: "putConfiguration", input: { tunnelId, tunnelConfig } });
+        configuration.current = tunnelConfig;
+      }),
+    getConfiguration: (tunnelId: string) =>
+      Effect.sync(() => {
+        calls.push({ operation: "getConfiguration", input: tunnelId });
+        return configuration.current ?? { ingress: [] };
       }),
     getToken: (tunnelId) =>
       Effect.sync(() => {
@@ -1108,6 +1128,40 @@ describe("ManagedEndpointProvider", () => {
           },
         },
       ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("restores Cloudflare ingress that drifted from the recorded origin", () => {
+    const tunnelCalls: TunnelCall[] = [];
+    const configuration: { current: TunnelConfiguration | null } = { current: null };
+    const layer = layerProvider(makePersistentTunnelClient(tunnelCalls, configuration));
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
+      const origin = { localHttpHost: "127.0.0.1", localHttpPort: 3773 } as const;
+      const provisioned = yield* provider.provision({ ...key, origin });
+      configuration.current = {
+        ingress: [
+          { hostname: expectedManagedHostname("env_ABC"), service: "http://127.0.0.1:4711" },
+          { service: "http_status:404" },
+        ],
+      };
+
+      expect(
+        yield* provider.reconcileOrigin({
+          ...key,
+          tunnelId: provisioned.runtime.tunnelId!,
+          origin,
+          endpoint: provisioned.endpoint,
+        }),
+      ).toBe("ready");
+      expect(configuration.current).toEqual({
+        ingress: [
+          { hostname: expectedManagedHostname("env_ABC"), service: "http://127.0.0.1:3773" },
+          { service: "http_status:404" },
+        ],
+      });
     }).pipe(Effect.provide(layer));
   });
 
