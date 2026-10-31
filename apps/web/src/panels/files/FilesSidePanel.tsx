@@ -1,4 +1,6 @@
 import { usePanelHost } from "../panelHost";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { useScopedComposerInsert, useScopeLifetime } from "./fileScope";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { DownloadIcon, CopyIcon, CheckIcon } from "lucide-react";
@@ -1005,6 +1007,11 @@ export default function FilesSidePanel({
   const environmentId = threadRef.environmentId;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const onOpenFile = (path: string) => useRightPanelStore.getState().openFile(threadRef, path);
+  const isScopeCurrent = useScopeLifetime(
+    `${scopedThreadKey(threadRef)}|${typeof composerDraftTarget === "string" ? composerDraftTarget : scopedThreadKey(composerDraftTarget)}`,
+  );
+  const addToChat = useScopedComposerInsert(isScopeCurrent);
+  const isThreadVisitCurrent = useScopeLifetime(scopedThreadKey(threadRef));
   const relativePath =
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
   const draft = typeof composerDraftTarget === "string";
@@ -1208,13 +1215,18 @@ export default function FilesSidePanel({
     void (async () => {
       const result = await openFileInPreview({
         threadRef,
+        isScopeCurrent: isThreadVisitCurrent,
         filePath: absolutePath,
         workspaceRoot: cwd,
         httpBaseUrl: environmentHttpBaseUrl,
         createAssetUrl,
         openPreview,
       });
-      if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+      if (
+        result._tag === "Success" ||
+        isAtomCommandInterrupted(result) ||
+        !isThreadVisitCurrent()
+      ) {
         return;
       }
       const error = squashAtomCommandFailure(result);
@@ -1541,6 +1553,7 @@ export default function FilesSidePanel({
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
               workspaceMutationId={workspaceMutationId}
+              addToChat={addToChat}
               {...(previewPath && !isMedia && !isPdf
                 ? {
                     onRefreshSelectedFile: () => {
