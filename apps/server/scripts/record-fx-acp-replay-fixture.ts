@@ -38,6 +38,7 @@ const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown
 const HOME_PLACEHOLDER = "/home/fx-replay";
 const FX_INSTANCE_ID = ProviderInstanceId.make("fx");
 const T3_INSTRUCTIONS_BODY = /<t3_code_instructions>\n[\s\S]*?\n<\/t3_code_instructions>/u;
+const T3_INSTRUCTIONS_PLACEHOLDER = "<t3_code_instructions>\n<any>\n</t3_code_instructions>";
 const EMAIL = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/giu;
 const TOKEN = /\b(?:sk-|gho_|ghp_|xai-|vercel_)[A-Za-z0-9_-]{8,}\b/gu;
 
@@ -208,10 +209,7 @@ function normalizeOutboundFrame(frame: Record<string, unknown>, runtimeInstructi
             isRecord(part) && typeof part.text === "string"
               ? {
                   ...part,
-                  text: part.text.replace(
-                    T3_INSTRUCTIONS_BODY,
-                    "<t3_code_instructions>\n<any>\n</t3_code_instructions>",
-                  ),
+                  text: part.text.replace(T3_INSTRUCTIONS_BODY, T3_INSTRUCTIONS_PLACEHOLDER),
                 }
               : part,
           ),
@@ -223,8 +221,46 @@ function normalizeOutboundFrame(frame: Record<string, unknown>, runtimeInstructi
   }
 }
 
-function normalizeInboundFrame(frame: Record<string, unknown>): Record<string, unknown> {
+/** A model call's request content: up to 64 KiB per hook that T3 never reads. */
+const HOOK_MODEL_REQUEST_FIELDS = new Set(["messages", "instructions", "tools", "toolsJson"]);
+
+function normalizeInboundFrame(
+  frame: Record<string, unknown>,
+  runtimeInstructions: string,
+): Record<string, unknown> {
   const params = isRecord(frame.params) ? frame.params : undefined;
+  if (frame.method === "libfx/hook" && params?.type === "model.start" && isRecord(params.data)) {
+    const data = params.data;
+    return {
+      ...frame,
+      params: {
+        ...params,
+        data: Object.fromEntries(
+          Object.entries(data).filter(([key]) => !HOOK_MODEL_REQUEST_FIELDS.has(key)),
+        ),
+      },
+    };
+  }
+  // fx echoes the whole prompt as the turn's input, T3's own text included.
+  if (
+    frame.method === "libfx/hook" &&
+    params?.type === "turn.start" &&
+    isRecord(params.data) &&
+    typeof params.data.input === "string"
+  ) {
+    return {
+      ...frame,
+      params: {
+        ...params,
+        data: {
+          ...params.data,
+          input: params.data.input
+            .replace(T3_INSTRUCTIONS_BODY, T3_INSTRUCTIONS_PLACEHOLDER)
+            .replace(runtimeInstructions, "<any>"),
+        },
+      },
+    };
+  }
   const update = isRecord(params?.update) ? params.update : undefined;
   if (
     update?.sessionUpdate === "available_commands_update" &&
@@ -310,7 +346,7 @@ function normalizeEntries(input: {
     const frame =
       entry.type === "expect_outbound"
         ? normalizeOutboundFrame(entry.frame, input.runtimeInstructions)
-        : normalizeInboundFrame(entry.frame);
+        : normalizeInboundFrame(entry.frame, input.runtimeInstructions);
     return {
       ...entry,
       ...(entry.label === undefined ? {} : { label: replaceAll(entry.label) }),
@@ -461,7 +497,7 @@ const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: str
       generatedBy: "live-fx-recorder",
       fxVersion: initializeAgent.version ?? "unknown",
       normalization:
-        "Session ids are fx-session-NN, the workspace is <workspace>, HOME is /home/fx-replay and the recording user is fx-replay. T3-owned prompt text, MCP servers and initialize params other than clientCapabilities and _meta are <any>. User skill names, emails and token-shaped strings are removed. Timestamps are kept as recorded.",
+        "Session ids are fx-session-NN, the workspace is <workspace>, HOME is /home/fx-replay and the recording user is fx-replay. T3-owned prompt text, MCP servers and initialize params other than clientCapabilities and _meta are <any>. User skill names, emails and token-shaped strings are removed. libfx/hook model.start events keep their ids and purpose but not their request content. Timestamps are kept as recorded.",
       droppedFrames,
     },
     entries: [

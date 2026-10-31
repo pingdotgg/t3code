@@ -5,7 +5,6 @@ import { FxSettings } from "../settings.ts";
 import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
@@ -38,9 +37,12 @@ import {
   makeAcpAdapterV2,
   type AcpAdapterV2Flavor,
   type AcpAdapterV2RuntimeInput,
-  type AcpAdapterV2SubagentUpdate,
 } from "@t3tools/provider-acp/server/adapter";
-import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
+import {
+  extractFxSubagentUpdate,
+  fxPermissionSubagentSessionId,
+  withFxSubagentHooks,
+} from "./subagents.ts";
 
 export { FX_DRIVER_KIND } from "./acpSupport.ts";
 
@@ -70,79 +72,6 @@ const FxProviderCapabilitiesV2 = {
     emitsSubagentLifecycle: true,
   },
 } satisfies OrchestrationV2ProviderCapabilities;
-
-const FxSubagentRequest = Schema.Union([
-  Schema.Struct({
-    action: Schema.Literal("run"),
-    task: Schema.String,
-    model: Schema.optionalKey(Schema.String),
-  }),
-  Schema.Struct({
-    action: Schema.Literal("message"),
-    agent: Schema.String,
-    message: Schema.String,
-    model: Schema.optionalKey(Schema.String),
-  }),
-]);
-// fx 0.0.14 wraps the arguments in `request`; later fx sends them flat (vercel-labs/fx@df0878eb).
-const decodeFxSubagentInput = Schema.decodeUnknownOption(
-  Schema.Union([FxSubagentRequest, Schema.Struct({ request: FxSubagentRequest })]),
-);
-const decodeFxToolContent = Schema.decodeUnknownOption(
-  Schema.Array(Schema.Struct({ content: Schema.Struct({ text: Schema.String }) })),
-);
-const decodeFxSubagentResult = Schema.decodeUnknownOption(
-  Schema.fromJsonString(
-    Schema.Struct({ ok: Schema.Boolean, result: Schema.NullOr(Schema.String) }),
-  ),
-);
-const decodeJsonString = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.String));
-
-/**
- * fx clips every tool result to 199 bytes, so a long sub-agent reply arrives
- * as cut-off `{"ok":…,"result":"…` JSON. Keeps the readable prefix and marks the cut.
- */
-function fxSubagentOutcome(
-  text: string,
-): { readonly ok: boolean; readonly result: string | null } | undefined {
-  const whole = decodeFxSubagentResult(text);
-  if (Option.isSome(whole)) return whole.value;
-  const clipped = /^\{"ok":(true|false),"result":"((?:[^"\\]|\\.)*)/.exec(text);
-  if (clipped === null) return undefined;
-  const prefix = decodeJsonString(`"${(clipped[2] ?? "").replace(/\\u[0-9a-fA-F]{0,3}$/, "")}"`);
-  const cut = text[clipped[0].length] !== '"';
-  return {
-    ok: clipped[1] === "true",
-    result: Option.isSome(prefix) ? `${prefix.value}${cut ? "…" : ""}` : null,
-  };
-}
-
-/** fx streams no child frames over ACP, so each `subagent` call becomes a child thread holding its task and reply. */
-function extractFxSubagentUpdate(tool: AcpToolCallState): AcpAdapterV2SubagentUpdate | undefined {
-  if (tool.data.name !== "subagent") return undefined;
-  const input = decodeFxSubagentInput(tool.data.rawInput);
-  if (Option.isNone(input)) return undefined;
-  const request = "request" in input.value ? input.value.request : input.value;
-  const text = Option.getOrUndefined(decodeFxToolContent(tool.data.content))?.[0]?.content.text;
-  const outcome = text === undefined ? undefined : fxSubagentOutcome(text);
-  const status =
-    tool.status === "completed"
-      ? outcome?.ok === false
-        ? "failed"
-        : "completed"
-      : tool.status === "failed"
-        ? "failed"
-        : "running";
-  return {
-    nativeTaskId: tool.toolCallId,
-    childSessionId: null,
-    prompt: request.action === "run" ? request.task : request.message,
-    title: request.action === "message" ? request.agent : null,
-    model: request.model ?? null,
-    status,
-    result: status === "running" ? null : (outcome?.result ?? text ?? null),
-  };
-}
 
 export interface FxAdapterV2Options {
   readonly instanceId: Parameters<typeof makeAcpAdapterV2>[0]["instanceId"];
@@ -177,13 +106,17 @@ function makeFxAcpAdapterFlavor(options: FxAdapterV2Options): AcpAdapterV2Flavor
     driver: FX_DRIVER_KIND,
     runtimeHarness: "fx",
     capabilities: FxProviderCapabilitiesV2,
-    makeRuntime: (input) => makeRuntime(input).pipe(Effect.map(withFxSessionMode)),
+    makeRuntime: (input) =>
+      makeRuntime(input).pipe(
+        Effect.map((runtime) => withFxSubagentHooks(withFxSessionMode(runtime))),
+      ),
     applyModelSelection: ({ runtime, modelSelection }) =>
       applyFxModelSelection(runtime, modelSelection, options.defaultModel).pipe(
         Effect.tap(() => applyFxEffortDefault(runtime, modelSelection)),
       ),
     sessionModeForPolicy: fxSessionModeForPolicy,
     permissionDisposition: fxPermissionDisposition,
+    permissionSubagentSessionId: fxPermissionSubagentSessionId,
     extractSubagentUpdate: extractFxSubagentUpdate,
     ...(options.assertComplete === undefined ? {} : { assertComplete: options.assertComplete }),
   };
