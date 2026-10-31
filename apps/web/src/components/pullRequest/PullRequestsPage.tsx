@@ -685,6 +685,8 @@ export function PullRequestsPage() {
     heldPullRequestsBySurface,
   } = pullRequestGroups({
     known: ordered?.key === filterKey ? ordered.entries : (listData?.entries ?? []),
+    // The baseline was read without typed qualifiers, and rows cannot be checked for `checks:`.
+    baseline: typedParsed.filters.checks === undefined ? baselineQuery.data?.entries : undefined,
     providers: baselineQuery.data?.providers ?? listData?.providers ?? [],
     viewers,
     involvement: search.involvement,
