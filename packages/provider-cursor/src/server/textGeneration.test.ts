@@ -105,11 +105,18 @@ describe("CursorTextGeneration", () => {
 
   it.effect("continues in the temp directory when the SDK cannot sandbox", () =>
     Effect.gen(function* () {
-      cursorSdkMock.create.mockImplementationOnce(async () => {
-        throw new Error(
-          "Local SDK sandboxing was requested, but sandboxing is not supported in this environment. Disable local.sandboxOptions.enabled or remove ~/.cursor/sandbox.json to run without sandboxing.",
-        );
-      });
+      // The SDK accepts sandboxOptions at create and rejects them when send builds the executor.
+      cursorSdkMock.create.mockImplementationOnce(async () => ({
+        close: cursorSdkMock.close,
+        [Symbol.asyncDispose]: async () => {
+          cursorSdkMock.close();
+        },
+        send: async () => {
+          throw new Error(
+            "Local SDK sandboxing was requested, but sandboxing is not supported in this environment. Disable local.sandboxOptions.enabled or remove ~/.cursor/sandbox.json to run without sandboxing.",
+          );
+        },
+      }));
       const textGeneration = yield* makeCursorTextGeneration(cursorSettings, {
         CURSOR_API_KEY: "test-cursor-key",
       });
@@ -124,6 +131,7 @@ describe("CursorTextGeneration", () => {
 
       expect(generated.subject).toBe("Add generated commit message");
       expect(cursorSdkMock.create).toHaveBeenCalledTimes(2);
+      expect(cursorSdkMock.close).toHaveBeenCalledTimes(2);
       expect(cursorSdkMock.create.mock.calls[0]?.[0]).toMatchObject({
         local: { sandboxOptions: { enabled: true } },
       });

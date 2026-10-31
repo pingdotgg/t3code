@@ -98,42 +98,30 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         Effect.tryPromise(() => SqliteLocalAgentStore.open({ workspaceRef: cwd, stateRoot })),
         (store) => Effect.tryPromise(() => store.dispose()).pipe(Effect.ignore({ log: true })),
       );
-      const agentOptions = {
-        apiKey,
-        mode: "plan",
-        model: cursorSdkModelSelection(modelSelection),
-        local: {
-          cwd,
-          store,
-          autoReview: false,
-          sandboxOptions: { enabled: true },
-          settingSources: [],
-          enableAgentRetries: true,
-        },
-      } satisfies AgentOptions;
-      const createCursorAgent = (sandboxEnabled: boolean) =>
-        Effect.tryPromise((signal) =>
-          Agent.create(
-            sandboxEnabled
-              ? agentOptions
-              : {
-                  ...agentOptions,
-                  local: {
-                    ...agentOptions.local,
-                    sandboxOptions: { enabled: false },
-                  },
-                },
-          ).then((agent) => {
-            if (signal.aborted) agent.close();
-            return agent;
-          }),
-        );
+      const agentOptions = (sandboxEnabled: boolean) =>
+        ({
+          apiKey,
+          mode: "plan",
+          model: cursorSdkModelSelection(modelSelection),
+          local: {
+            cwd,
+            store,
+            autoReview: false,
+            sandboxOptions: { enabled: sandboxEnabled },
+            settingSources: [],
+            enableAgentRetries: true,
+          },
+        }) satisfies AgentOptions;
 
-      const request = Effect.gen(function* () {
-        // Empty cwd and setting sources isolate the run from user projects even if sandboxing fails.
+      const request = Effect.fn("CursorTextGeneration.request")(function* (
+        sandboxEnabled: boolean,
+      ) {
         const agent = yield* Effect.acquireRelease(
-          createCursorAgent(true).pipe(
-            Effect.catchIf(cursorSandboxUnsupported, () => createCursorAgent(false)),
+          Effect.tryPromise((signal) =>
+            Agent.create(agentOptions(sandboxEnabled)).then((agent) => {
+              if (signal.aborted) agent.close();
+              return agent;
+            }),
           ),
           (agent) =>
             Effect.tryPromise(() => agent[Symbol.asyncDispose]()).pipe(
@@ -157,8 +145,11 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
             : Effect.void,
         );
         return yield* Effect.tryPromise(() => run.wait());
-      }).pipe(Effect.scoped);
-      const promptResult = yield* request.pipe(
+      }, Effect.scoped);
+      // Empty cwd and setting sources isolate the run from user projects even if sandboxing fails.
+      // The SDK may reject sandboxing at create or lazily at send.
+      const promptResult = yield* request(true).pipe(
+        Effect.catchIf(cursorSandboxUnsupported, () => request(false)),
         Effect.timeoutOption(CURSOR_TIMEOUT_MS),
         Effect.flatMap(
           Option.match({
