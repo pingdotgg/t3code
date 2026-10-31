@@ -69,6 +69,18 @@ function onlyHubAccount(
   );
   // Learn workspaces from every report, so an account without one never merges into one of several.
   const resolveKey = environmentAccountKeyResolver(providers, sources);
+  const [only, ...rest] = freshestPerAccount(candidates, resolveKey);
+  if (!only || rest.length > 0) return null;
+  // A login seen in several workspaces, reported without one, may be another workspace's account.
+  if (hasLogin(only.account) && resolveKey(only.account) === null) return null;
+  return limitsNotice(only.account.usageLimits) === null ? only : null;
+}
+
+/** One entry per account key, keeping its most recently checked snapshot. */
+function freshestPerAccount(
+  candidates: readonly HubAccount[],
+  resolveKey: (account: UsageLimitSourceAccount) => string | null,
+): HubAccount[] {
   const freshestByAccount = new Map<string, HubAccount>();
   for (const candidate of candidates) {
     const key = resolveKey(candidate.account) ?? `${candidate.source.id}:${candidate.account.id}`;
@@ -77,11 +89,7 @@ function onlyHubAccount(
       freshestByAccount.set(key, candidate);
     }
   }
-  const [only, ...rest] = freshestByAccount.values();
-  if (!only || rest.length > 0) return null;
-  // A login seen in several workspaces, reported without one, may be another workspace's account.
-  if (hasLogin(only.account) && resolveKey(only.account) === null) return null;
-  return limitsNotice(only.account.usageLimits) === null ? only : null;
+  return [...freshestByAccount.values()];
 }
 
 const hasLogin = (account: UsageLimitSourceAccount) =>
