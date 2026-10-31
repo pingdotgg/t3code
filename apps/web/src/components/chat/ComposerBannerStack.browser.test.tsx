@@ -12,6 +12,7 @@ import {
   NoticeText,
   type ComposerBannerStackItem,
 } from "./ComposerBannerStack";
+import { ComposerSurface } from "./ComposerSurface";
 
 function notice(title: string, group?: ComposerBannerStackItem["group"]): ComposerBannerStackItem {
   return { id: title, variant: "default", icon: <InfoIcon />, title, ...(group ? { group } : {}) };
@@ -25,19 +26,24 @@ it("puts machine notices first, whatever order the notices arrive in", async () 
   expect(screen.container.textContent).toBe("OfflineBranch changed");
 });
 
-it("leaves the next attachment its own top edge when there are no notices", async () => {
+it("keeps the tray's top edge without leaving an empty notice region", async () => {
   await using screen = await render(
-    <ComposerBanner.Column>
-      <ComposerBannerStack items={[]} />
-      <ComposerBanner.Attachment>
-        <ComposerBanner.Root data-testid="drawer">Approval</ComposerBanner.Root>
-      </ComposerBanner.Attachment>
-    </ComposerBanner.Column>,
+    <ComposerSurface.Shell data-testid="tray">
+      <ComposerBanner.Dock data-testid="notices">
+        <ComposerBannerStack items={[]} />
+      </ComposerBanner.Dock>
+      <ComposerSurface.Main data-testid="composer">Message</ComposerSurface.Main>
+    </ComposerSurface.Shell>,
   );
 
-  const surface = getComputedStyle(screen.getByTestId("drawer").element(), "::before");
+  const tray = screen.getByTestId("tray").element();
+  const surface = getComputedStyle(tray);
   expect(surface.borderTopWidth).toBe("1px");
   expect(surface.borderTopLeftRadius).not.toBe("0px");
+  expect(screen.getByTestId("notices").element().getBoundingClientRect().height).toBe(0);
+  expect(screen.getByTestId("composer").element().getBoundingClientRect().top).toBe(
+    tray.getBoundingClientRect().top + Number.parseFloat(surface.borderTopWidth),
+  );
 });
 
 function noticeRow(width: string, children: ReactNode) {

@@ -414,6 +414,10 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     void handleSwitchCheckoutToThread();
   });
   const activeBackgroundTasks = activeThread ? pendingBackgroundTasks : [];
+  const timelineBackgroundTaskLabel =
+    activeBackgroundTasks.length === 0
+      ? null
+      : activeBackgroundTasks.map((task) => task.description || task.taskId).join(", ");
   const [backgroundWorkStops, setBackgroundWorkStops] = useState<
     Record<string, BackgroundWorkStopRequest | undefined>
   >({});
@@ -613,7 +617,8 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         onOpenThread: onOpenRelatedThreadStable,
       })
     : null;
-  // The relative times read the clock; nowMinute re-renders them on the minute.
+  // Derive the formatter clock from the minute subscription so render stays pure.
+  const statusNowMs = Date.parse(`${nowMinute}:00.000Z`);
   const snoozedUntil = activeThreadShell?.snoozedUntil ?? null;
   const settledAt = activeThreadShell?.settledAt ?? null;
   // Same rounding as the sidebar's snoozed shelf, so both read the same hour.
@@ -634,7 +639,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   ) : activeThreadSettled ? (
     <ThreadStatusLine
       icon={<CheckCircle2Icon />}
-      label={settledAt ? `Settled ${formatRelativeTimeLabel(settledAt)}` : "Settled"}
+      label={settledAt ? `Settled ${formatRelativeTimeLabel(settledAt, statusNowMs)}` : "Settled"}
       clockMinute={nowMinute}
       actionLabel={isUnsettling ? "Un-settling..." : "Un-settle"}
       actionDisabled={!canOperateThread || isUnsettling}
@@ -703,6 +708,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     },
   } satisfies ChatShortcutCommands;
   return {
+    timelineBackgroundTaskLabel,
     shortcuts,
     acknowledgeActiveThreadWoke,
     activeBranchMismatchKey,

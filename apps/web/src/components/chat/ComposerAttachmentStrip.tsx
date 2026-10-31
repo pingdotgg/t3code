@@ -30,7 +30,7 @@ import { getRestingComposerImagePreviewCounts } from "../composerFooterLayout";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { AttachmentImage } from "../media/AttachmentImage";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
@@ -68,6 +68,20 @@ function ComposerImageFallback() {
       className="flex size-full items-center justify-center p-3 text-secondary-label"
     >
       <ImageIcon aria-hidden="true" className="size-4" />
+    </span>
+  );
+}
+
+// A tile's remove button shows on hover or focus; touch screens always show it.
+const COMPOSER_TILE_REMOVE_CLASS_NAME =
+  "absolute right-1 top-1 flex opacity-0 transition-opacity pointer-coarse:opacity-100 group-hover/attachment:opacity-100 group-focus-within/attachment:opacity-100";
+
+/** Upload progress as a centered percentage over a dimmed tile. */
+function ComposerTileUploadProgress({ id, upload }: { readonly id: string; readonly upload: AttachmentUploadState | undefined }) {
+  const progress = useAttachmentUploadProgress(id, upload);
+  return (
+    <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/65 text-white text-meta tabular-nums">
+      {upload?.status === "uploading" ? progress : "Preparing"}
     </span>
   );
 }
@@ -178,7 +192,7 @@ export function ComposerAttachmentMediaRow({
   return (
     <div
       className={cn(
-        "mb-3 flex max-w-full gap-2",
+        "mb-2 flex max-w-full gap-2",
         pendingSnapShotIds.length > 0 ||
           expandedImages.some((image) => image.source?.kind === "snap-shot")
           ? "snap-x snap-proximity overflow-x-auto overscroll-x-contain pb-1 scrollbar-thumb-foreground/18 scrollbar-track-transparent [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-3 [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-foreground/18 [&::-webkit-scrollbar-thumb]:bg-clip-content [&::-webkit-scrollbar-thumb:hover]:bg-foreground/28 [&::-webkit-scrollbar-track]:mx-1 [&::-webkit-scrollbar-track]:bg-transparent"
@@ -213,7 +227,7 @@ export function ComposerAttachmentMediaRow({
                 "group/attachment shrink-0 snap-start bg-background",
                 source?.kind === "snap-shot"
                   ? SNAP_SHOT_ATTACHMENT_FRAME_CLASS
-                  : "relative h-16 w-16 overflow-hidden rounded-lg border border-border/80",
+                  : "relative h-16 w-16 overflow-hidden rounded-lg",
                 snapShotAnimationPending && "invisible",
               )}
             >
@@ -254,10 +268,7 @@ export function ComposerAttachmentMediaRow({
               {source?.kind === "snap-shot" ? (
                 <SnapShotAttachmentDetails
                   source={source}
-                  className={cn(
-                    upload?.status === "uploading" && "bottom-4",
-                    upload?.status === "failed" && "bottom-8",
-                  )}
+                  className={cn(upload?.status === "failed" && "bottom-8")}
                 />
               ) : null}
               {nonPersistedImageIdSet.has(image.id) && (
@@ -279,13 +290,7 @@ export function ComposerAttachmentMediaRow({
                 </Tooltip>
               )}
               {(!ready || upload?.status === "uploading") && (
-                <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-background/85 px-1 text-center text-3xs text-foreground">
-                  {upload?.status === "uploading" ? (
-                    <ComposerAttachmentUploadProgress id={image.id} upload={upload} />
-                  ) : (
-                    "Preparing"
-                  )}
-                </span>
+                <ComposerTileUploadProgress id={image.id} upload={upload} />
               )}
               {ready && upload?.status === "failed" && (
                 <Tooltip>
@@ -312,16 +317,11 @@ export function ComposerAttachmentMediaRow({
                   <TooltipPopup side="top">{upload.reason}</TooltipPopup>
                 </Tooltip>
               )}
-              <span
-                className={cn(
-                  "absolute right-1 top-1 flex",
-                  source?.kind === "snap-shot" &&
-                    "opacity-0 transition-opacity pointer-coarse:opacity-100 group-hover/attachment:opacity-100 group-focus-within/attachment:opacity-100",
-                )}
-              >
+              {/* Tiles reveal their remove button on hover or focus. */}
+              <span className={COMPOSER_TILE_REMOVE_CLASS_NAME}>
                 <Button
                   variant="media-close"
-                  size="icon-xs"
+                  size={source?.kind === "snap-shot" ? "icon-xs" : "icon-micro"}
                   onClick={() => onRemoveImage(image.id)}
                   aria-label={`Remove ${image.name}`}
                 >
@@ -356,7 +356,7 @@ export function ComposerAttachmentMediaRow({
         return (
           <div
             key={file.id}
-            className="relative h-16 w-16 shrink-0 snap-start overflow-hidden rounded-lg border border-border/80 bg-black"
+            className="group/attachment relative h-16 w-16 shrink-0 snap-start overflow-hidden rounded-lg bg-black"
           >
             <button
               type="button"
@@ -381,9 +381,7 @@ export function ComposerAttachmentMediaRow({
               <PlayIcon className="relative z-10 size-4 fill-current drop-shadow-md" />
             </button>
             {upload?.status === "uploading" && (
-              <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-background/85 px-1 text-center text-3xs text-foreground">
-                <ComposerAttachmentUploadProgress id={file.id} upload={upload} />
-              </span>
+              <ComposerTileUploadProgress id={file.id} upload={upload} />
             )}
             {upload?.status === "failed" && (
               <Tooltip>
@@ -410,15 +408,16 @@ export function ComposerAttachmentMediaRow({
                 <TooltipPopup side="top">{upload.reason}</TooltipPopup>
               </Tooltip>
             )}
-            <Button
-              variant="media-close"
-              size="icon-xs"
-              className="absolute right-1 top-1"
-              onClick={() => onRemoveFile(file.id)}
-              aria-label={`Remove ${file.name}`}
-            >
-              <XIcon />
-            </Button>
+            <span className={COMPOSER_TILE_REMOVE_CLASS_NAME}>
+              <Button
+                variant="media-close"
+                size="icon-micro"
+                onClick={() => onRemoveFile(file.id)}
+                aria-label={`Remove ${file.name}`}
+              >
+                <XIcon />
+              </Button>
+            </span>
           </div>
         );
       })}
@@ -452,7 +451,7 @@ export function ComposerAttachmentFileList({
 }) {
   const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
   return (
-    <div className="mb-3 flex flex-col gap-1">
+    <div className="mb-2 flex flex-col gap-1">
       {files.map((file) => {
         const fileCanUpload =
           supportsAttachmentUploads &&
@@ -464,33 +463,25 @@ export function ComposerAttachmentFileList({
         return (
           <div
             key={file.id}
-            className="flex min-w-0 items-center gap-2 py-1 text-sm text-foreground"
+            data-chat-composer-file-row="true"
+            className="flex h-8.5 min-w-0 items-center gap-2 rounded-control bg-foreground/[0.03] ps-2.5 pe-1 text-body text-foreground"
           >
             <PierreEntryIcon pathValue={file.name} kind="file" theme={resolvedTheme} />
-            <button
-              type="button"
+            <InlineButton
               disabled={needsReattach}
-              className="min-w-0 flex-1 truncate text-left hover:underline focus-visible:outline-2"
+              className="min-w-0 shrink"
               onClick={() => onPreviewFile(file.id)}
             >
-              {file.name}
-            </button>
-            <span className="shrink-0 text-xs text-secondary-label">
-              {needsReattach ? (
-                canReattachFile ? (
-                  "Attach again"
-                ) : (
-                  "Remove to send"
-                )
-              ) : upload?.status === "uploading" ? (
-                <ComposerAttachmentUploadProgress
-                  id={file.id}
-                  upload={upload}
-                  fallback={formatAttachmentSize(file.sizeBytes)}
-                />
-              ) : (
-                formatAttachmentSize(file.sizeBytes)
-              )}
+              <span className="truncate">{file.name}</span>
+            </InlineButton>
+            <span className="min-w-0 flex-1 truncate text-dim-foreground text-meta">
+              {needsReattach
+                ? canReattachFile
+                  ? "Attach again"
+                  : "Remove to send"
+                : upload?.status === "uploading"
+                  ? <ComposerAttachmentUploadProgress id={file.id} upload={upload} fallback={formatAttachmentSize(file.sizeBytes)} />
+                  : formatAttachmentSize(file.sizeBytes)}
             </span>
             {!needsReattach && upload?.status === "failed" ? (
               <Tooltip>
@@ -517,7 +508,7 @@ export function ComposerAttachmentFileList({
               </Tooltip>
             ) : null}
             <Button
-              variant="ghost"
+              variant="ghost-muted"
               size="icon-xs"
               onClick={() => onRemoveFile(file.id)}
               aria-label={`Remove ${file.name}`}
@@ -671,7 +662,7 @@ export function ComposerQueuedAttachmentRow({
   readonly onRemove: (attachmentId: string) => void;
 }) {
   return (
-    <div className="mb-3 flex flex-wrap gap-2">
+    <div className="mb-2 flex flex-wrap gap-2">
       {attachments.map(({ attachment, url }) => (
         <div
           key={attachment.id}
@@ -731,7 +722,7 @@ export function ComposerAttachButton({
             <Button
               type="button"
               variant="ghost"
-              size="icon-sm"
+              size="icon"
               onPointerDown={(event) => event.preventDefault()}
               onClick={() => inputRef.current?.click()}
               aria-label="Attach files"
