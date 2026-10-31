@@ -52,6 +52,9 @@ describe("appendTerminalOutput", () => {
     expect(state.text.length).toBeLessThanOrEqual(1_000);
     expect(state.text.startsWith("line ")).toBe(true);
     expect(state.text.endsWith("line 1999")).toBe(true);
+    // A newline a quarter of the budget past the cut is too far to start on.
+    expect(feed(["abcdefgh\nij\nklmnop"], 8).text).toBe("klmnop");
+    expect(feed(["abcdefgh\nijk\nlmnop"], 8).text).toBe("jk\nlmnop");
   });
 
   it("stays bounded across many appends of huge output, including one endless line", () => {
