@@ -72,6 +72,7 @@ import { ConnectionStatusDot, connectionPhaseDotClassName } from "../ConnectionS
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { readEnvironmentScope } from "~/state/session";
 import { useSettingsScope } from "./SettingsScopeContext";
+import { TimeOfDayInput } from "./TimeOfDayInput";
 import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
@@ -1771,15 +1772,12 @@ function ScheduledTaskEditorForm({
               <div className="flex flex-wrap items-center gap-3">
                 <div className="flex items-center gap-2">
                   <Label htmlFor="scheduled-task-time">Run at</Label>
-                  <Input
-                    type="time"
+                  <TimeOfDayInput
                     id="scheduled-task-time"
-                    nativeInput
-                    className="w-32"
+                    label="Run at"
                     value={draft.timeOfDay}
-                    onChange={(event) =>
-                      setDraft((current) => ({ ...current, timeOfDay: event.target.value }))
-                    }
+                    timestampFormat={settings.timestampFormat}
+                    onChange={(timeOfDay) => setDraft((current) => ({ ...current, timeOfDay }))}
                   />
                   <span className="text-xs text-muted-foreground">on</span>
                 </div>
