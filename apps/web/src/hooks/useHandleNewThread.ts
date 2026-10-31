@@ -3,7 +3,12 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { DEFAULT_SERVER_SETTINGS, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  type ModelSelection,
+  type ScopedProjectRef,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { type AnyRouter, useRouter } from "@tanstack/react-router";
 import {
   composerDraftHasUserContent,
@@ -36,12 +41,19 @@ import {
 } from "../lib/chatThreadActions";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  resolveSelectableProviderInstanceEntry,
+} from "../providerInstances";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { environmentSummaries } from "../state/presentation";
+import { environmentPresentations, environmentSummaries } from "../state/presentation";
 import { environmentServerConfigsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
-import { getClientSettings } from "./useSettings";
+import { getClientSettings, mergeEnvironmentSettings } from "./useSettings";
+import { getAppModelOptionsForInstance } from "../modelSelection";
+import { resolveSelectableModel } from "@t3tools/shared/model";
 import { useThreadRouteTarget } from "./useThreadRouteTarget";
 import { readUnloadedThreadCount } from "../state/olderSettledShelf";
 import { resolveProjectDefaultProviderModelSelection } from "../providerInstances";
@@ -83,8 +95,17 @@ export function createNewThreadHandler(router: AnyRouter) {
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
       replace?: boolean;
+      /**
+       * Explicit provider pick a project picker carries from the draft the user
+       * is looking at. Wins over the project default and sticky state so picking
+       * a project does not silently reset it; ignored when the destination
+       * machine does not offer that provider instance.
+       */
+      modelSelection?: ModelSelection;
       /** Composer text for the draft, set before it shows. A draft with user text keeps it. */
       prompt?: string;
+      /** "manual" keeps a draft tied to machine-local resources off Auto balance. */
+      environmentSelection?: "manual";
     },
   ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
     const projects = readProjects();
@@ -175,6 +196,32 @@ export function createNewThreadHandler(router: AnyRouter) {
           currentRouteTarget?.kind === "draft" ? currentRouteTarget.draftId : null,
         destinationDraftId,
       });
+    // A picker-carried selection applies only when the destination machine's
+    // catalog still offers that exact instance and model; otherwise the ordinary
+    // project-default/carry resolution decides.
+    const pickerModelSelection = (() => {
+      const requested = options?.modelSelection ?? null;
+      if (requested === null) return null;
+      const providers =
+        appAtomRegistry
+          .get(environmentPresentations.providersByEnvironmentAtom)
+          .get(projectRef.environmentId) ?? [];
+      const entries = applyProviderInstanceSettings(
+        deriveProviderInstanceEntries(providers),
+        targetServerSettings,
+        project?.id ?? null,
+      );
+      const entry = resolveSelectableProviderInstanceEntry(entries, requested.instanceId);
+      if (entry?.instanceId !== requested.instanceId) return null;
+      const modelOptions = getAppModelOptionsForInstance(
+        mergeEnvironmentSettings(targetServerSettings, getClientSettings()),
+        entry,
+      );
+      return resolveSelectableModel(entry.driverKind, requested.model, modelOptions) ===
+        requested.model
+        ? requested
+        : null;
+    })();
     const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
       // Environment queries wait for a connection, so reading the project file on an
       // offline machine would never settle and the draft would never open.
@@ -215,6 +262,9 @@ export function createNewThreadHandler(router: AnyRouter) {
     const hasWorktreePathOption = options?.worktreePath !== undefined;
     const hasEnvModeOption = options?.envMode !== undefined;
     const hasStartFromOriginOption = options?.startFromOrigin !== undefined;
+    const environmentSelectionOption = options?.environmentSelection
+      ? { environmentSelection: options.environmentSelection }
+      : {};
     const storedDraftThread = getDraftSessionByLogicalProjectKey(logicalProjectKey);
     const storedDraftThreadRef = storedDraftThread
       ? scopeThreadRef(storedDraftThread.environmentId, storedDraftThread.threadId)
@@ -289,7 +339,13 @@ export function createNewThreadHandler(router: AnyRouter) {
         }
         const storedDraft = getComposerDraft(emptyStoredDraftThread.draftId);
         const storedDraftHasExplicitModelPick = hasExplicitComposerModelSelection(storedDraft);
-        if (!storedDraftHasExplicitModelPick) {
+        if (pickerModelSelection !== null) {
+          applyStickyState(emptyStoredDraftThread.draftId);
+          setModelSelection(emptyStoredDraftThread.draftId, pickerModelSelection, {
+            explicit: true,
+            replaceOptions: true,
+          });
+        } else if (!storedDraftHasExplicitModelPick) {
           applyStickyState(emptyStoredDraftThread.draftId);
           const modelSelectionOverride = resolveModelSelectionOverride(
             emptyStoredDraftThread.draftId,
@@ -308,6 +364,7 @@ export function createNewThreadHandler(router: AnyRouter) {
           {
             threadId: emptyStoredDraftThread.threadId,
             ...workspaceContext,
+            ...environmentSelectionOption,
             ...(!isDraftAlreadyOpen ? { runtimeMode: defaultRuntimeMode } : {}),
             ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
           },
@@ -354,6 +411,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         runtimeMode: latestActiveDraftThread.runtimeMode,
         interactionMode: latestActiveDraftThread.interactionMode,
         ...pickExplicitWorkspaceOptions(options),
+        ...environmentSelectionOption,
       });
       seedPrompt(currentRouteTarget.draftId);
       return Promise.resolve({
@@ -383,6 +441,7 @@ export function createNewThreadHandler(router: AnyRouter) {
           runtimeMode: racedDraft.runtimeMode,
           interactionMode: racedDraft.interactionMode,
           ...pickExplicitWorkspaceOptions(options),
+          ...environmentSelectionOption,
         });
         seedPrompt(racedDraft.draftId);
         await router.navigate({
@@ -406,11 +465,15 @@ export function createNewThreadHandler(router: AnyRouter) {
           }),
         runtimeMode: defaultRuntimeMode,
         ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
+        ...environmentSelectionOption,
       });
       applyStickyState(draftId);
-      const modelSelectionOverride = resolveModelSelectionOverride(draftId);
+      const modelSelectionOverride = pickerModelSelection ?? resolveModelSelectionOverride(draftId);
       if (modelSelectionOverride) {
-        setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });
+        setModelSelection(draftId, modelSelectionOverride, {
+          replaceOptions: true,
+          ...(pickerModelSelection !== null ? { explicit: true } : {}),
+        });
       }
       seedPrompt(draftId);
       await router.navigate({

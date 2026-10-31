@@ -51,6 +51,9 @@ import {
   deriveLockedProvider,
   hasServerAcknowledgedLocalDispatch,
   waitForRevertedMessage,
+  planLoadBalancedDraftRetarget,
+  isDraftEnvironmentRetargetApplicable,
+  createKeyedRequestGate,
 } from "./ChatView.logic";
 
 const environmentId = EnvironmentId.make("environment-local");
@@ -1097,6 +1100,199 @@ describe("boundAttachmentIds", () => {
     expect(
       boundAttachmentIds([{ id: "upload-1" }, {}], [{ id: "local-1" }, { id: "local-2" }]),
     ).toEqual(["upload-1", "local-2"]);
+  });
+});
+
+describe("planLoadBalancedDraftRetarget", () => {
+  const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+  const baseInput = {
+    needsLoadBalancing: true,
+    loadBalancingPending: false,
+    draftId: "draft-1",
+  };
+
+  it("stays idle while balancing is unresolved", () => {
+    const target = { environmentId: remoteEnvironmentId, projectId };
+    expect(planLoadBalancedDraftRetarget({ ...baseInput, target })).toEqual({
+      kind: "retarget",
+      environmentId: remoteEnvironmentId,
+      projectId,
+    });
+    expect(
+      planLoadBalancedDraftRetarget({ ...baseInput, loadBalancingPending: true, target }),
+    ).toBeNull();
+    expect(
+      planLoadBalancedDraftRetarget({ ...baseInput, needsLoadBalancing: false, target }),
+    ).toBeNull();
+    expect(planLoadBalancedDraftRetarget({ ...baseInput, draftId: null, target })).toBeNull();
+    expect(planLoadBalancedDraftRetarget({ ...baseInput, target: null })).toBeNull();
+    expect(planLoadBalancedDraftRetarget({ ...baseInput, target: undefined })).toBeNull();
+  });
+
+  it("opens a scratch project first when the chosen machine has none", () => {
+    expect(
+      planLoadBalancedDraftRetarget({
+        ...baseInput,
+        target: { environmentId: remoteEnvironmentId, projectId: null },
+      }),
+    ).toEqual({ kind: "open-scratch", environmentId: remoteEnvironmentId });
+  });
+});
+
+describe("isDraftEnvironmentRetargetApplicable", () => {
+  const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+  const snapshot = { environmentId, projectId };
+  const currentOnSnapshot = {
+    environmentId,
+    projectId,
+    promotedTo: null,
+    environmentSelection: "auto" as const,
+    loadBalancedEnvironmentId: null,
+  };
+
+  it("applies while the draft is still the one the routing started on", () => {
+    expect(
+      isDraftEnvironmentRetargetApplicable({
+        snapshot,
+        current: currentOnSnapshot,
+        sendInFlight: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("aborts for stale targets: moved, promoted, sending or gone drafts", () => {
+    expect(
+      isDraftEnvironmentRetargetApplicable({ snapshot, current: null, sendInFlight: false }),
+    ).toBe(false);
+    expect(
+      isDraftEnvironmentRetargetApplicable({ snapshot, current: undefined, sendInFlight: false }),
+    ).toBe(false);
+    expect(
+      isDraftEnvironmentRetargetApplicable({
+        snapshot,
+        current: currentOnSnapshot,
+        sendInFlight: true,
+      }),
+    ).toBe(false);
+    expect(
+      isDraftEnvironmentRetargetApplicable({
+        snapshot,
+        current: {
+          ...currentOnSnapshot,
+          promotedTo: { environmentId, threadId },
+        },
+        sendInFlight: false,
+      }),
+    ).toBe(false);
+    // A manual machine switch while an async target resolve was in flight.
+    expect(
+      isDraftEnvironmentRetargetApplicable({
+        snapshot,
+        current: { ...currentOnSnapshot, environmentId: remoteEnvironmentId },
+        sendInFlight: false,
+      }),
+    ).toBe(false);
+    expect(
+      isDraftEnvironmentRetargetApplicable({
+        snapshot,
+        current: {
+          ...currentOnSnapshot,
+          projectId: ProjectId.make("project-2"),
+        },
+        sendInFlight: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("requireUnresolvedAuto aborts once the draft was pinned manually or already resolved", () => {
+    expect(
+      isDraftEnvironmentRetargetApplicable({
+        snapshot,
+        current: currentOnSnapshot,
+        sendInFlight: false,
+        requireUnresolvedAuto: true,
+      }),
+    ).toBe(true);
+    expect(
+      isDraftEnvironmentRetargetApplicable({
+        snapshot,
+        current: { ...currentOnSnapshot, environmentSelection: "manual" as const },
+        sendInFlight: false,
+        requireUnresolvedAuto: true,
+      }),
+    ).toBe(false);
+    // A newer automatic resolution landed first; the stale one must not overwrite it.
+    expect(
+      isDraftEnvironmentRetargetApplicable({
+        snapshot,
+        current: { ...currentOnSnapshot, loadBalancedEnvironmentId: remoteEnvironmentId },
+        sendInFlight: false,
+        requireUnresolvedAuto: true,
+      }),
+    ).toBe(false);
+    // Without the flag, manual routing (which pins the draft itself) still applies.
+    expect(
+      isDraftEnvironmentRetargetApplicable({
+        snapshot,
+        current: { ...currentOnSnapshot, environmentSelection: "manual" as const },
+        sendInFlight: false,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("createKeyedRequestGate", () => {
+  const deferred = () => {
+    let resolve!: (value: string | null) => void;
+    const promise = new Promise<string | null>((r) => (resolve = r));
+    return { promise, resolve };
+  };
+  // Mirrors the scratch auto-routing effect: begin, await the open, apply if current.
+  const run = (
+    gate: ReturnType<typeof createKeyedRequestGate>,
+    key: string,
+    open: Promise<string | null>,
+    applied: string[],
+  ) => {
+    const token = gate.begin(key);
+    if (token === null) return null;
+    return open.then((project) => {
+      if (project && gate.isCurrent(token)) applied.push(project);
+    });
+  };
+
+  it("drops an old target's open after A -> B -> A re-arms the same key", async () => {
+    const gate = createKeyedRequestGate();
+    const first = deferred();
+    const second = deferred();
+    const applied: string[] = [];
+    const firstSettled = run(gate, "draft:env-a", first.promise, applied);
+    gate.sync("draft:env-b");
+    const secondSettled = run(gate, "draft:env-a", second.promise, applied);
+    first.resolve("scratch-a-old");
+    await firstSettled;
+    expect(applied).toEqual([]);
+    second.resolve("scratch-a-new");
+    await secondSettled;
+    expect(applied).toEqual(["scratch-a-new"]);
+  });
+
+  it("dedupes the active key, keeps a failed key from retry loops, and cancels on unmount", async () => {
+    const gate = createKeyedRequestGate();
+    const failed = deferred();
+    const applied: string[] = [];
+    const settled = run(gate, "draft:env-a", failed.promise, applied);
+    failed.resolve(null);
+    await settled;
+    expect(run(gate, "draft:env-a", Promise.resolve("retry"), applied)).toBeNull();
+
+    gate.cancel();
+    const late = deferred();
+    const lateSettled = run(gate, "draft:env-a", late.promise, applied);
+    gate.cancel();
+    late.resolve("scratch-a");
+    await lateSettled;
+    expect(applied).toEqual([]);
   });
 });
 

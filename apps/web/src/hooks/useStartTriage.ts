@@ -77,6 +77,8 @@ export function useStartTriage() {
     // A null result means the user went elsewhere; only a throw is a failure.
     await handleNewThread(scopeProjectRef(project.value.environmentId, project.value.id), {
       prompt: prepared.value.prompt,
+      // The playbook files live on this machine only.
+      environmentSelection: "manual",
     }).catch(() => fail("T3 Code could not open a new thread."));
   };
 
