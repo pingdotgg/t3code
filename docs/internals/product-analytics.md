@@ -47,13 +47,17 @@ runs; use `surface` for the connected client.
 
 ## Interpreting events
 
-Use `client.turn.requested` for active-use reports. `client.connected` counts
-reconnects, so network behavior can inflate it. One identity can appear in several
-client groups during a period; adding those groups double-counts users.
+Use `client.turn.requested` for active-use reports. There is no connection event,
+because T3 Connect sessions expire hourly and each reconnect would count again.
+A command whose id was already accepted is a retry, so it records nothing again.
+One identity can appear in several client groups during a period; adding those
+groups double-counts users.
 
-Provider send and completion counts need not match. Providers can emit synthetic
-turns without a send request. Collection is best effort, with no scan or backfill
-of provider history.
+Provider send and completion counts need not match. Most completions start
+without a person: provider continuations, agent sends, and delegated subagents.
+`provider.turn.completed` carries the starting message's `createdBy` and
+`creationSource`, plus `scheduled` and `subagent`; filter on them to count user
+turns. Collection is best effort, with no scan or backfill of provider history.
 
 Token totals cover the main agent. Child agents and model rerouting prevent a turn
 from representing one provider/model combination's full cost. For provider
@@ -66,11 +70,14 @@ Unknown counts stay absent. Partial usage contains valid observed counts but
 cannot establish a whole-turn total. Keep these distinctions when changing token
 normalization or building reports.
 
-`feature.used` counts WebSocket requests that start a feature, observed in the
-RPC authorization middleware after the request succeeds.
+`feature.used` counts WebSocket requests that start a feature. RPCs are observed in
+the RPC authorization middleware after the request succeeds; dispatched commands
+are recorded by the dispatch handler, which can tell a retry apart.
 [Feature mapping](../../apps/server/src/telemetry/FeatureUsage.ts) allowlists
 the methods and commands, and takes variants only from closed contract enums,
-so paths, ids, and text never reach analytics.
+so paths, ids, and text never reach analytics. Guests of a shared thread have no
+WebSocket connection, so the guest share service records their joins and messages
+itself, with no `surface`.
 
 Agent tool events report driver kinds, never instance ids: users name
 instances, so an instance id can identify an account or employer.
@@ -80,7 +87,9 @@ Pi, and ACP agents list models from user configuration, such as local Ollama
 tags, so their models stay out. Handoff settings come from closed enums and
 booleans in tool arguments; prompts, titles, and ids are never read. Thread ids
 are used only to look up the threads on each side and never leave the server,
-which is also why tool events carry no per-thread sequence.
+which is also why tool events carry no per-thread sequence. A handoff to several
+threads, such as `create_threads`, records one `mcp.tool.invoked` per target, each
+repeating the call's outcome and duration, so event counts are not call counts.
 
 ## Delivery
 
@@ -98,3 +107,7 @@ Keep analytics payloads to product metadata and normalized measurements. Do not
 send prompts, authentication material, raw provider payloads, user-assigned device
 names, or conversation identifiers. Client metadata is best effort; invalid values
 must not reject a connection. PostHog person profiles remain disabled.
+
+Dev-runner servers and the CI archive smoke test turn telemetry off, which also
+stops relay tracing, because each would count as a new install. Set
+`T3CODE_TELEMETRY_ENABLED=true` to test analytics or relay tracing from a dev server.

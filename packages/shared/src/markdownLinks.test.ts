@@ -26,6 +26,8 @@ describe("inlineCodeFilePathCandidate", () => {
     ["origin/main", null],
     ["z-ai/glm-5.3", null],
     ["share/man/ls.1", "share/man/ls.1"],
+    ["src/main.ts/", null],
+    ["./patches/", "./patches/"],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });
@@ -40,12 +42,26 @@ describe("parseMarkdownFileLink", () => {
     expect(parseMarkdownFileLink(href)?.path).toBe(path);
   });
 
-  it.each(["https://example.com/docs", "/chat/settings#L3", "TODO:12"])(
+  it.each(["https://example.com/docs", "/chat/settings#L3", "TODO:12", "patches"])(
     "does not treat %s as a file",
     (href) => {
       expect(parseMarkdownFileLink(href)).toBeNull();
     },
   );
+
+  it("recognizes a relative folder that ends in a slash", () => {
+    expect(parseMarkdownFileLink("patches/")).toEqual({ path: "patches/" });
+    expect(parseMarkdownFileLink("docs/My%20Folder/")?.path).toBe("docs/My Folder/");
+  });
+
+  // regression: #16096 relative links with non-ASCII names open as files
+  it("recognizes relative paths with non-ASCII names", () => {
+    expect(parseMarkdownFileLink("pastexam/線性代數/exam_易志偉.pdf")?.path).toBe(
+      "pastexam/線性代數/exam_易志偉.pdf",
+    );
+    expect(parseMarkdownFileLink("Résumé%20final.pdf")?.path).toBe("Résumé final.pdf");
+    expect(parseMarkdownFileLink("資料.備份")?.path).toBe("資料.備份");
+  });
 
   it("accepts conventional extensionless names with or without a position", () => {
     expect(parseMarkdownFileLink("Makefile")).toEqual({ path: "Makefile" });
@@ -89,6 +105,13 @@ describe("extractMarkdownLinkHrefs", () => {
 });
 
 describe("resolveMarkdownFileLinkTarget", () => {
+  it("resolves a relative folder with a trailing slash against cwd", () => {
+    expect(resolveMarkdownFileLinkTarget("patches/", "/repo/project")).toBe(
+      "/repo/project/patches/",
+    );
+    expect(resolveMarkdownFileLinkTarget("patches", "/repo/project")).toBeNull();
+  });
+
   it("does not treat filename line references as external schemes", () => {
     expect(resolveMarkdownFileLinkTarget("script.ts:10", "/Users/julius/project")).toBe(
       "/Users/julius/project/script.ts:10",
@@ -112,10 +135,15 @@ describe("resolveMarkdownFileLinkTarget", () => {
     );
   });
 
-  it("resolves file uri authorities as windows UNC paths", () => {
-    expect(resolveMarkdownFileLinkTarget("file://server/share/workspace-image.svg")).toBe(
+  it("links a network path only inside the project's share", () => {
+    const cwd = "\\\\server\\share";
+    expect(resolveMarkdownFileLinkTarget("file://server/share/workspace-image.svg", cwd)).toBe(
       "\\\\server\\share\\workspace-image.svg",
     );
+    // Opening these sent the Windows user's NTLM credentials to attacker.test.
+    for (const href of ["file://attacker.test/s/x.ts", "\\\\attacker.test\\s\\x.ts"]) {
+      expect(resolveMarkdownFileLinkTarget(href, cwd)).toBeNull();
+    }
   });
 
   it("keeps an encoded final space in the absolute target", () => {
