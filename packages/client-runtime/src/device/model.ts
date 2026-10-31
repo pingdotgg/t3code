@@ -15,12 +15,13 @@ export interface DeviceAccessorySource {
 
 export type DeviceAssetSource = DeviceModelSource | DeviceAccessorySource;
 
+/** Matches a hardware name; simulator types can add a memory suffix such as " (16GB)". */
 export function resolveDeviceModelId(platform: DevicePlatform, name: string): DeviceModelId | null {
   if (platform !== "ios") return null;
   if (/^iPhone Duo$/i.test(name)) return "iphone-duo";
   if (/^iPhone 18 Pro Max$/i.test(name)) return "iphone-18-pro-max";
   if (/^iPhone 18 Pro$/i.test(name)) return "iphone-18-pro";
-  if (/^iPad Pro 13-inch \(M5\)$/i.test(name)) return "ipad-pro-13-m5";
+  if (/^iPad Pro 13-inch \(M5\)(?: \(\d+GB\))?$/i.test(name)) return "ipad-pro-13-m5";
   return null;
 }
 
