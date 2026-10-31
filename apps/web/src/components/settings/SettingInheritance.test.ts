@@ -99,4 +99,114 @@ describe("settingInheritanceLayers", () => {
       ["Current checkout", false],
     ]);
   });
+
+  it("resolves one storage cleanup rule per environment", () => {
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      storageCleanup: { ...DEFAULT_SERVER_SETTINGS.storageCleanup, logsAfterDays: 30 },
+    };
+    const layers = (field: "logsAfterDays" | "worktreeOnMerge") =>
+      settingInheritanceLayers(
+        {
+          environmentId,
+          label: "Laptop",
+          projectId: null,
+          ...resolveProjectSettings(settings, null),
+        },
+        settings,
+        "storageCleanup",
+        field,
+      ).map((layer) => [layer.label, layer.value, layer.effective]);
+    expect(layers("logsAfterDays")).toEqual([
+      ["Laptop", "30 days", true],
+      ["Default", "Off", false],
+    ]);
+    // Another rule on the same environment is still at its default.
+    expect(layers("worktreeOnMerge")).toEqual([
+      ["Laptop", "Inherits", false],
+      ["Default", "Off", true],
+    ]);
+  });
+
+  it("reads worktree rules through the environment's cleanup policy", () => {
+    const layers = (
+      worktreeCleanup: (typeof DEFAULT_SERVER_SETTINGS)["worktreeCleanup"],
+      field: "worktreeOnMerge" | "worktreeKeepWhen",
+    ) => {
+      const settings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        storageCleanup: {
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeOnMerge: true,
+          worktreeKeepWhen: "tracked-changes" as const,
+        },
+        worktreeCleanup,
+      };
+      return settingInheritanceLayers(
+        {
+          environmentId,
+          label: "Laptop",
+          projectId: null,
+          ...resolveProjectSettings(settings, null),
+        },
+        settings,
+        "storageCleanup",
+        field,
+      ).map((layer) => [layer.label, layer.value, layer.effective]);
+    };
+    // The policy, not the default, turned the enabled rule off.
+    expect(layers({ mode: "off" }, "worktreeOnMerge")).toEqual([
+      ["Laptop", "Off", true],
+      ["Default", "Off", false],
+    ]);
+    expect(
+      layers(
+        {
+          mode: "custom",
+          rules: {
+            ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+            worktreeOnMerge: false,
+            worktreeKeepWhen: "any-local-files",
+          },
+        },
+        "worktreeKeepWhen",
+      ),
+    ).toEqual([
+      ["Laptop", "Any local files", true],
+      ["Default", "Uncommitted changes", false],
+    ]);
+  });
+
+  it("credits the environment's cleanup policy for rules that match the default", () => {
+    const layers = (
+      worktreeCleanup: (typeof DEFAULT_SERVER_SETTINGS)["worktreeCleanup"],
+      field: "worktreeOnMerge" | "worktreeKeepWhen",
+    ) => {
+      const settings = { ...DEFAULT_SERVER_SETTINGS, worktreeCleanup };
+      return settingInheritanceLayers(
+        {
+          environmentId,
+          label: "Laptop",
+          projectId: null,
+          ...resolveProjectSettings(settings, null),
+        },
+        settings,
+        "storageCleanup",
+        field,
+      ).map((layer) => [layer.label, layer.value, layer.effective]);
+    };
+    const policyWins = [
+      ["Laptop", "Off", true],
+      ["Default", "Off", false],
+    ];
+    expect(layers({ mode: "off" }, "worktreeOnMerge")).toEqual(policyWins);
+    expect(
+      layers({ mode: "custom", rules: DEFAULT_SERVER_SETTINGS.storageCleanup }, "worktreeOnMerge"),
+    ).toEqual(policyWins);
+    // An off policy keeps the environment's own keep-when rule.
+    expect(layers({ mode: "off" }, "worktreeKeepWhen")).toEqual([
+      ["Laptop", "Inherits", false],
+      ["Default", "Uncommitted changes", true],
+    ]);
+  });
 });

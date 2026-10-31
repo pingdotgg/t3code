@@ -4,8 +4,11 @@ import {
   type ProjectFileBackedSettingKey,
   resolveEnvironmentMachineKind,
   type ServerSettings,
+  type StorageCleanupSettings,
+  type WorktreeKeepWhen,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
+import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import { CheckIcon, ChevronRightIcon, LayersIcon } from "lucide-react";
 import * as Equal from "effect/Equal";
 
@@ -31,6 +34,12 @@ interface InheritanceLayer {
   readonly set: boolean;
 }
 
+export const WORKTREE_KEEP_WHEN_LABELS = {
+  "any-local-files": "Any local files",
+  "uncommitted-changes": "Uncommitted changes",
+  "tracked-changes": "Edited tracked files",
+} as const satisfies Record<WorktreeKeepWhen, string>;
+
 const WRITING_STYLE_LABELS: Record<string, string> = {
   repo_conventions: "Repository conventions",
   conventional_commits: "Conventional Commits",
@@ -50,19 +59,21 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
       ? "Last selected"
       : key === "sidebarAutoSettleAfterDays"
         ? "Never"
-        : key === "defaultModelSelection"
-          ? "Automatic"
-          : key === "sourceControlWriterModelSelection"
-            ? "Text generation model"
-            : key === "reviewGuideModelSelection"
-              ? "Source control writer model"
-              : key === "defaultThreadEnvMode" || key === "worktreeSubmodules"
-                ? "Inherit"
-                : "Not set";
+        : key === "storageCleanup"
+          ? "Off"
+          : key === "defaultModelSelection"
+            ? "Automatic"
+            : key === "sourceControlWriterModelSelection"
+              ? "Text generation model"
+              : key === "reviewGuideModelSelection"
+                ? "Source control writer model"
+                : key === "defaultThreadEnvMode" || key === "worktreeSubmodules"
+                  ? "Inherit"
+                  : "Not set";
   }
   if (typeof value === "boolean") return value ? "On" : "Off";
   if (typeof value === "number") {
-    return key === "sidebarAutoSettleAfterDays"
+    return key === "sidebarAutoSettleAfterDays" || key === "storageCleanup"
       ? `${value} ${value === 1 ? "day" : "days"}`
       : String(value);
   }
@@ -72,6 +83,9 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
     }
     if (key === "worktreeSubmodules" && value in WORKTREE_SUBMODULES_LABELS) {
       return WORKTREE_SUBMODULES_LABELS[value as WorktreeSubmodules];
+    }
+    if (key === "storageCleanup" && value in WORKTREE_KEEP_WHEN_LABELS) {
+      return WORKTREE_KEEP_WHEN_LABELS[value as WorktreeKeepWhen];
     }
     if (key === "pullRequestMergeMethod" && value in PULL_REQUEST_MERGE_METHOD_LABELS) {
       return PULL_REQUEST_MERGE_METHOD_LABELS[
@@ -96,15 +110,56 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
   return "Custom";
 }
 
+/**
+ * An environment's own value for a setting. `storageCleanup` holds one rule
+ * per field, so its rows name the field they show.
+ */
+function environmentSettingValue(
+  settings: ServerSettings,
+  key: keyof ServerSettings,
+  field?: keyof StorageCleanupSettings,
+): unknown {
+  return key === "storageCleanup" && field
+    ? { ...settings.storageCleanup, ...resolveWorktreeCleanup(settings, null) }[field]
+    : settings[key];
+}
+
+/**
+ * Whether an environment chose its own value. A storage rule also counts when
+ * the environment's `worktreeCleanup` policy decides it, even if the result
+ * happens to match the built-in default.
+ */
+export function environmentSettingIsSet(
+  settings: ServerSettings,
+  key: keyof ServerSettings,
+  field?: keyof StorageCleanupSettings,
+): boolean {
+  const policy = settings.worktreeCleanup;
+  return (
+    !Equal.equals(
+      environmentSettingValue(settings, key, field),
+      environmentSettingValue(DEFAULT_SERVER_SETTINGS, key, field),
+    ) ||
+    (key === "storageCleanup" &&
+      field !== undefined &&
+      policy !== null &&
+      field in resolveWorktreeCleanup(settings, null) &&
+      // An off policy still reads keep-when from `storageCleanup`.
+      !(policy.mode === "off" && field === "worktreeKeepWhen"))
+  );
+}
+
 /** Matches resolveProjectSettings order. */
 export function settingInheritanceLayers(
   target: ScopedSettingsTarget,
   environmentSettings: ServerSettings,
   key: keyof ServerSettings,
+  field?: keyof StorageCleanupSettings,
 ): readonly InheritanceLayer[] {
-  const environmentValue = environmentSettings[key];
+  const environmentValue = environmentSettingValue(environmentSettings, key, field);
+  const defaultValue = environmentSettingValue(DEFAULT_SERVER_SETTINGS, key, field);
   const source = isProjectScopedSettingKey(key) ? target.sources[key] : "environment";
-  const environmentSet = !Equal.equals(environmentValue, DEFAULT_SERVER_SETTINGS[key]);
+  const environmentSet = environmentSettingIsSet(environmentSettings, key, field);
   const fileBacked = isProjectFileBackedSettingKey(key);
   const layers: InheritanceLayer[] = [];
   if (target.projectId !== null && isProjectScopedSettingKey(key)) {
@@ -133,9 +188,7 @@ export function settingInheritanceLayers(
     });
   }
   // File-backed defaults come from the resolver, not the schema's decoded null.
-  const builtIn = fileBacked
-    ? PROJECT_FILE_BACKED_SETTINGS[key].builtIn
-    : DEFAULT_SERVER_SETTINGS[key];
+  const builtIn = fileBacked ? PROJECT_FILE_BACKED_SETTINGS[key].builtIn : defaultValue;
   layers.push({
     key: "built-in",
     label: "Default",
@@ -170,6 +223,7 @@ export function SettingInheritance({
   targets,
   environments,
   keys,
+  field,
   overridingProjects = [],
   onClearOverrides,
 }: {
@@ -181,6 +235,7 @@ export function SettingInheritance({
     "environmentId" | "label" | "displayUrl" | "serverConfig"
   >[];
   keys: readonly (keyof ServerSettings)[];
+  field?: keyof StorageCleanupSettings;
   overridingProjects?: readonly SettingOverridingProject[];
   onClearOverrides?: (entries: readonly ProjectOverrideEntry[]) => void;
 }) {
@@ -204,7 +259,7 @@ export function SettingInheritance({
     const secondary = [labels.secondary, path?.split(/[\\/]/).filter(Boolean).slice(-2).join("/")]
       .filter(Boolean)
       .join(" · ");
-    const layers = settingInheritanceLayers(target, environment.serverConfig.settings, key);
+    const layers = settingInheritanceLayers(target, environment.serverConfig.settings, key, field);
     const winningLayer = layers.find((layer) => layer.effective);
     return [
       {
@@ -219,7 +274,9 @@ export function SettingInheritance({
         resolution: {
           winner: winningLayer?.key,
           layers: layers.map(({ key, value }) => [key, value]),
-          settings: keys.map((settingKey) => target.settings[settingKey]),
+          settings: keys.map((settingKey) =>
+            environmentSettingValue(target.settings, settingKey, field),
+          ),
         },
       },
     ];
@@ -268,7 +325,7 @@ export function SettingInheritance({
         </TooltipTrigger>
         <TooltipPopup side="top">{overrideSummary}</TooltipPopup>
       </Tooltip>
-      <PopoverPopup align="start" width="md" padding="none">
+      <PopoverPopup align="start" width="lg" padding="none">
         <div className="divide-y divide-border/60">
           {groups.map((members) => {
             const first = members[0];
@@ -302,7 +359,7 @@ export function SettingInheritance({
                             : "text-muted-foreground/60",
                       )}
                     >
-                      <span className="max-w-32 truncate">{layer.value}</span>
+                      <span className="max-w-44 truncate">{layer.value}</span>
                       {layer.effective ? (
                         <CheckIcon aria-hidden className="size-3.5 shrink-0 text-primary" />
                       ) : (
@@ -431,7 +488,7 @@ export function SettingInheritance({
                               </span>
                             ) : null}
                           </span>
-                          <span className="max-w-32 truncate text-muted-foreground tabular-nums">
+                          <span className="max-w-44 truncate text-muted-foreground tabular-nums">
                             {isProjectScopedSettingKey(key)
                               ? formatValue(
                                   key,
