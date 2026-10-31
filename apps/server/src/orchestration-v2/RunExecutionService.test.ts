@@ -858,7 +858,7 @@ it.effect("fails strict skill preparation before calling the provider", () =>
                 new SkillTurnPreparation.SkillTurnPreparationError({
                   runId,
                   stage: "trial-identification",
-                  detail: "evaluation trial lookup failed",
+                  cause: new Error("evaluation trial lookup failed"),
                 }),
               ),
           }),
