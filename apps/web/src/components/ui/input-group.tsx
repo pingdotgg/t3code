@@ -15,6 +15,8 @@ const inputGroupVariants = cva(
       size: {
         default: null,
         lg: "h-9",
+        sidebar:
+          "h-7 text-control font-normal [&_[data-slot=input]]:h-6.5 [&_[data-slot=input]]:leading-6.5 [&_[data-slot=input]]:px-1.5 [&_[data-slot=input-group-addon]]:ps-2",
       },
       variant: {
         default:
