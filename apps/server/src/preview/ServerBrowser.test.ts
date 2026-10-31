@@ -506,6 +506,122 @@ it.live("preview_open reports its navigation timeout instead of the request budg
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("an unanswered viewer still releases the capture lock and same-tab automation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      const context = contexts[0]!;
+      const captured = Promise.withResolvers<Record<string, unknown>>();
+      const captureStarted = Promise.withResolvers<void>();
+      const newSession = context.newCDPSession;
+      context.newCDPSession = async (target) => {
+        const session = await newSession(target);
+        const send = session.send.getMockImplementation()!;
+        session.send.mockImplementation((method, input) => {
+          if (method === "Page.captureScreenshot") {
+            captureStarted.resolve();
+            return captured.promise;
+          }
+          return send(method, input);
+        });
+        return session;
+      };
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const attaching = yield* browser
+          .attachViewer(viewerInput(tabId, true))
+          .pipe(Effect.forkScoped);
+        yield* Effect.promise(() => captureStarted.promise);
+        const snapshotting = yield* broker
+          .invoke<PreviewAutomationSnapshot>({ scope, tabId, operation: "snapshot", input: {} })
+          .pipe(Effect.forkScoped);
+        const evaluating = yield* broker
+          .invoke({ scope, tabId, operation: "evaluate", input: { expression: "document.title" } })
+          .pipe(Effect.forkScoped);
+
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(3_000));
+        const viewer = yield* Fiber.join(attaching);
+        expect((yield* Fiber.join(snapshotting)).screenshot?.data).toBe(PNG_HEADER);
+        expect(yield* Fiber.join(evaluating)).toBe("evaluated");
+        const navigated = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "navigate",
+          input: { url: "http://localhost:5173/recovered" },
+        });
+        expect(navigated.url).toBe("http://localhost:5173/recovered");
+
+        captured.resolve({ data: "late-frame" });
+        yield* Effect.promise(() => captured.promise);
+        expect((yield* Queue.clear(viewer.output)).some((event) => event._tag === "frame")).toBe(
+          false,
+        );
+        yield* viewer.input({ type: "takeControl" });
+        const status = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "status",
+          input: {},
+        });
+        expect(status.control?.owner).toBe("human");
+      } finally {
+        vi.useRealTimers();
+      }
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("reports a stalled snapshot capture without losing the tab or its control queue", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const session = contexts[0]!.sessions[0]!;
+      const send = session.send.getMockImplementation()!;
+      const captureStarted = Promise.withResolvers<void>();
+      const captured = Promise.withResolvers<Record<string, unknown>>();
+      session.send.mockImplementation((method, input) => {
+        if (method === "Page.captureScreenshot") {
+          captureStarted.resolve();
+          return captured.promise;
+        }
+        return send(method, input);
+      });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const snapshotting = yield* broker
+          .invoke<PreviewAutomationSnapshot>({ scope, tabId, operation: "snapshot", input: {} })
+          .pipe(Effect.flip, Effect.forkScoped);
+        yield* Effect.promise(() => captureStarted.promise);
+        const evaluating = yield* broker
+          .invoke({ scope, tabId, operation: "evaluate", input: { expression: "document.title" } })
+          .pipe(Effect.forkScoped);
+
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(6_000));
+        const error = yield* Fiber.join(snapshotting);
+        expect(error).toMatchObject({
+          _tag: "PreviewAutomationExecutionError",
+          message: expect.stringContaining("show or restore the T3 Code window"),
+        });
+        expect(
+          session.send.mock.calls.filter(([method]) => method === "Page.captureScreenshot"),
+        ).toHaveLength(2);
+        expect(yield* Fiber.join(evaluating)).toBe("evaluated");
+        const status = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "status",
+          input: {},
+        });
+        expect(status).toMatchObject({ tabId, available: true });
+        expect(status.control?.ownedByCaller).toBe(true);
+        captured.resolve({ data: PNG_HEADER });
+      } finally {
+        vi.useRealTimers();
+      }
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live.each(["desktop" as const, undefined])(
   "explicit desktop targets ($0 runtime) fail without creating a server tab",
   (runtime) =>

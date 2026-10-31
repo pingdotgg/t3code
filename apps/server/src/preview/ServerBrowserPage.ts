@@ -26,6 +26,8 @@ import { BrowserControlInterrupted } from "./SessionControl.ts";
 const MAX_EVALUATION_BYTES = 64_000;
 const MAX_VISIBLE_TEXT_LENGTH = 20_000;
 const MAX_SCREENSHOT_WIDTH = 1280;
+// Leave room for a snapshot retry before the broker's 15-second deadline.
+const SCREENSHOT_TIMEOUT_MS = 3_000;
 const WAIT_POLL_MS = 100;
 export const DIAGNOSTIC_BUFFER_LIMIT = 200;
 
@@ -450,10 +452,26 @@ export const captureViewport = async (
   cdp: CDPSession,
   options: { readonly format: "png" | "jpeg"; readonly quality?: number },
 ) => {
-  const { data } = await cdp.send("Page.captureScreenshot", {
+  const capture = cdp.send("Page.captureScreenshot", {
     format: options.format,
     ...(options.quality === undefined ? {} : { quality: options.quality }),
   });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new ServerBrowserOperationError(
+            "PreviewAutomationExecutionError",
+            "The browser is not producing screenshot frames. For a desktop tab, show or restore the T3 Code window and try again.",
+          ),
+        ),
+      SCREENSHOT_TIMEOUT_MS,
+    );
+  });
+  // Hidden native guests can leave CDP captures pending forever. This deadline also
+  // releases a viewer's still-capture lock, which an agent snapshot may be waiting for.
+  const { data } = await Promise.race([capture, expired]).finally(() => clearTimeout(timer));
   return data;
 };
 
