@@ -278,3 +278,29 @@ it("returns the row to the server's state when the saved settings do not hide th
   await act(async () => hide.resolve(AsyncResult.success(config.settings)));
   expect(sheet.button("Hide model: Codex, GPT-6.1-Sol")).not.toBeNull();
 });
+
+it("keeps a second hidden row through an earlier save's push", async () => {
+  const hideSol = Promise.withResolvers<unknown>();
+  const hideBase = Promise.withResolvers<unknown>();
+  mocks.updateSettings.mockReturnValueOnce(hideSol.promise).mockReturnValueOnce(hideBase.promise);
+  using sheet = mountSheet();
+  act(() => sheet.button("Hide model: Codex, GPT-6.1-Sol")!.click());
+  act(() => sheet.button("Hide model: Codex, GPT-6.1")!.click());
+
+  await act(async () => hideSol.resolve(AsyncResult.success(hiddenSettings)));
+  act(() => sheet.pushConfig({ ...config, settings: hiddenSettings }));
+  await act(async () =>
+    hideBase.resolve(
+      AsyncResult.success({
+        ...config.settings,
+        providerModelPreferences: {
+          [codex]: { hiddenModels: ["gpt-6.1-sol", "gpt-6.1"], modelOrder: [] },
+        },
+      }),
+    ),
+  );
+  expect(
+    sheet.button("Show model: Codex, GPT-6.1"),
+    "the second row keeps its tapped state until its own push",
+  ).not.toBeNull();
+});

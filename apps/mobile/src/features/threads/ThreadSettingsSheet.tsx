@@ -294,7 +294,7 @@ export type ExistingThreadSettingsRouteParams = {
 
 type HiddenModelOverride = {
   readonly hidden: boolean;
-  /** Settings the save was confirmed against, held until the next push; `null` while in flight. */
+  /** Settings held when the save was confirmed, kept until the next push; `null` while in flight. */
   readonly settledSettings: ServerSettings | null;
 };
 
@@ -474,7 +474,6 @@ function ThreadSettingsSessionProvider(
     if (!settings || !environmentId || !option.canHide || pendingHidden.current.has(option.key))
       return;
     pendingHidden.current.add(option.key);
-    const baseSettings = settings;
     const override: HiddenModelOverride = { hidden: !option.isHidden, settledSettings: null };
     setHiddenOverrides((current) => new Map(current).set(option.key, override));
     void Haptics.selectionAsync();
@@ -498,13 +497,11 @@ function ThreadSettingsSessionProvider(
         (result.value.providerModelPreferences?.[
           option.selection.instanceId
         ]?.hiddenModels.includes(option.selection.model) ?? false) === override.hidden;
-      // Once any push has landed since the tap, the server's settings are the truth.
-      const awaitingPush =
-        registry.get(environmentServerConfigsAtom).get(environmentId)?.settings === baseSettings;
+      const latest = registry.get(environmentServerConfigsAtom).get(environmentId)?.settings;
       setHiddenOverrides((current) => {
         const next = new Map(current);
-        if (confirmed && awaitingPush) {
-          next.set(option.key, { ...override, settledSettings: baseSettings });
+        if (confirmed && latest) {
+          next.set(option.key, { ...override, settledSettings: latest });
         } else {
           next.delete(option.key);
         }
@@ -554,13 +551,7 @@ function ThreadSettingsSessionProvider(
   );
   const commitPendingModel = () => {
     if (pendingModel) {
-      const committableGroups = manageHidden
-        ? providerGroups.map((group) => ({
-            ...group,
-            models: group.models.map(withHiddenOverride),
-          }))
-        : props.providerGroups;
-      if (!canCommitPendingModel(pendingModel, committableGroups)) {
+      if (!canCommitPendingModel(pendingModel, props.providerGroups)) {
         Dialog.alert(
           "Model unavailable",
           "Set up this provider on web or desktop, or select another model.",
@@ -734,7 +725,10 @@ function ThreadSettingsModelListRow(props: {
 }) {
   const session = useThreadSettingsSession();
   const option = session.manageHidden ? session.withHiddenOverride(props.option) : props.option;
-  const onPress = () => session.pressModel(option);
+  // Callers can only apply a model once the server has unhidden it.
+  const onPress = () => {
+    if (!props.option.isHidden) session.pressModel(option);
+  };
 
   return (
     <ModelRow
