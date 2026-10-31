@@ -1,4 +1,4 @@
-import { WS_METHODS, type EnvironmentId } from "@t3tools/contracts";
+import { WS_METHODS, type EnvironmentId, type LinearIssueActivity } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import * as Effect from "effect/Effect";
@@ -10,6 +10,11 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+
+const NO_PEER_ACTIVITY: ReadonlyArray<{
+  readonly environmentId: EnvironmentId;
+  readonly issues: ReadonlyArray<LinearIssueActivity>;
+}> = [];
 
 /** How often the mounted Linear page re-reads while visible. */
 export const LINEAR_POLL_INTERVAL_MS = 60_000;
@@ -95,9 +100,48 @@ export function createLinearEnvironmentAtoms<R, E>(
     { environmentId }: { readonly environmentId: EnvironmentId },
   ) => registry.refresh(status({ environmentId, input: {} }));
 
+  const activity = keepPrevious(
+    createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:linear:activity",
+      tag: WS_METHODS.linearActivity,
+      staleTimeMs: 15_000,
+      idleTtlMs: LINEAR_IDLE_TTL_MS,
+      refreshTrigger,
+    }),
+  );
+  /**
+   * Activity of the machines connected to the same Linear workspace as the primary. Keyed by the
+   * primary id and the candidate machines, joined with "\n"; reading it is what subscribes, so only
+   * the open Linear page pays for it.
+   */
+  const peerActivity = Atom.family((environmentIdsKey: string) =>
+    Atom.make((get) => {
+      const [primaryId, ...candidates] = environmentIdsKey.split("\n") as EnvironmentId[];
+      if (primaryId === undefined || candidates.length === 0) return NO_PEER_ACTIVITY;
+      const organizationOf = (environmentId: EnvironmentId) => {
+        const connection = AsyncResult.getOrElse(
+          get(status({ environmentId, input: {} })),
+          () => null,
+        );
+        return connection?.state === "connected" ? (connection.organization?.id ?? null) : null;
+      };
+      const primaryOrganization = organizationOf(primaryId);
+      if (primaryOrganization === null) return NO_PEER_ACTIVITY;
+      return candidates.flatMap((environmentId) => {
+        if (organizationOf(environmentId) !== primaryOrganization) return [];
+        const result = AsyncResult.getOrElse(
+          get(activity({ environmentId, input: {} })),
+          () => null,
+        );
+        return result === null ? [] : [{ environmentId, issues: result.issues }];
+      });
+    }).pipe(Atom.withLabel(`environment-data:linear:peer-activity:${environmentIdsKey}`)),
+  );
+
   return {
     refreshes,
     pollTick,
+    peerActivity,
     status,
     teams: keepPrevious(
       createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -179,15 +223,7 @@ export function createLinearEnvironmentAtoms<R, E>(
         idleTtlMs: 10_000,
       }),
     ),
-    activity: keepPrevious(
-      createEnvironmentRpcQueryAtomFamily(runtime, {
-        label: "environment-data:linear:activity",
-        tag: WS_METHODS.linearActivity,
-        staleTimeMs: 15_000,
-        idleTtlMs: LINEAR_IDLE_TTL_MS,
-        refreshTrigger,
-      }),
-    ),
+    activity,
     connect: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:linear:connect",
       tag: WS_METHODS.linearConnect,

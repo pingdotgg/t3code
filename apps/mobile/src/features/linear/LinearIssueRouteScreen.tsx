@@ -1,6 +1,7 @@
 import type { StaticScreenProps } from "@react-navigation/native";
 import {
   activityStatusLabel,
+  activityItemEnvironmentId,
   pickActivityPill,
   stepTone,
   type LinearStepTone,
@@ -247,7 +248,10 @@ function DetailBody(props: {
   };
   // A pipeline run opens through its parent thread, like every other run entry point.
   const openActivity = (item: LinearActivityItem) =>
-    openThread({ environmentId, threadId: ThreadId.make(item.link.threadId) });
+    openThread({
+      environmentId: activityItemEnvironmentId(item, environmentId),
+      threadId: ThreadId.make(item.link.threadId),
+    });
   const openPullRequest = (url: string) => void navigateToPullRequest(url, { environmentId });
   return (
     <View className="gap-5 px-4 pt-3 pb-10">

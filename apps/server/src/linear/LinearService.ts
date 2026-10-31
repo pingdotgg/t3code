@@ -30,6 +30,7 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import {
   isStateMoveEligible,
   renderChatCommentBody,
+  renderRemotePipelineCommentBody,
   renderPipelineCommentBody,
 } from "@t3tools/shared/linearWriteBack";
 import * as Clock from "effect/Clock";
@@ -418,9 +419,10 @@ export const layer = Layer.effect(
       const issue = Option.getOrNull(loaded);
       const { target } = input;
       // A pipeline comment is the reactor's job, so it still lands once Linear is readable again.
+      // A run on another machine cannot be read here, so its comment is a static one-off post.
       const commentMode = !input.writeBack.comment
         ? "none"
-        : target.kind === "pipeline_run"
+        : target.kind === "pipeline_run" && input.remote === undefined
           ? "pipeline"
           : issue === null
             ? "none"
@@ -450,6 +452,7 @@ export const layer = Layer.effect(
           createdAt: DateTime.formatIso(yield* DateTime.now),
           commentMode,
           threadUrl: input.threadUrl,
+          environmentId: input.remote?.environmentId ?? null,
         })
         .pipe(Effect.mapError(unavailableStorage));
 
@@ -507,11 +510,18 @@ export const layer = Layer.effect(
             ) {
               yield* Effect.gen(function* () {
                 const { viewer } = yield* viewerInfo;
-                const body = renderChatCommentBody({
-                  viewerName: viewer.name,
-                  threadTitle: target.title,
-                  threadUrl: input.threadUrl,
-                });
+                const body =
+                  input.remote === undefined
+                    ? renderChatCommentBody({
+                        viewerName: viewer.name,
+                        threadTitle: target.title,
+                        threadUrl: input.threadUrl,
+                      })
+                    : renderRemotePipelineCommentBody({
+                        pipelineName: input.remote.pipelineName,
+                        machineName: input.remote.machineName,
+                        threadUrl: input.threadUrl,
+                      });
                 const created = yield* trackerCall(tracker.createComment(issue.id, body));
                 yield* store
                   .recordComment(stored.link.linkId, created.id, bodyHash(body))

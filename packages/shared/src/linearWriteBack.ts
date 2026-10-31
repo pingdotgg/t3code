@@ -88,3 +88,14 @@ export function renderChatCommentBody(input: {
     ? `${input.viewerName} started a T3 Code chat: ${title}`
     : `${input.viewerName} started a T3 Code chat: [${title}](${target})`;
 }
+
+/** Body of the one static comment for a pipeline run on a machine without a matching Linear connection. */
+export function renderRemotePipelineCommentBody(input: {
+  readonly pipelineName: string;
+  readonly machineName: string;
+  readonly threadUrl: string;
+}): string {
+  const target = linkTarget(input.threadUrl);
+  const text = `**T3 Code pipeline "${input.pipelineName}"** started on ${input.machineName}`;
+  return target === null ? text : `${text}\n\n[Open in T3 Code](${target})`;
+}

@@ -32,9 +32,33 @@ issue**. You can still switch each one off for a single launch from the hint und
 or in the pipeline dialog. The issue is only moved when it is in Backlog, Triage or an unstarted
 state. A pipeline keeps one comment up to date as its steps finish.
 
+## Choosing the machine
+
+With two or more connected machines that have the project, the pipeline dialog shows a **Machine**
+control. The pipeline runs on the machine you pick, in that machine's copy of the project, and its
+pipelines are listed: switching machines keeps the pipeline with the same name selected. **Auto
+balance** (when [load balancing](./remote-access.md#balance-new-threads-across-machines) is on)
+picks the machine with the most free CPU and memory that has the providers the pipeline needs.
+Machines set to Manual only are never picked automatically. The pick stays until you choose Auto
+balance again.
+
+The Linear page and its project mappings always belong to the machine that serves Linear, so the
+project list is that machine's. Only machines that have the same project can run it.
+
+What happens in Linear depends on the machine's own Linear connection:
+
+- **Same Linear workspace connected on that machine:** it records the launch itself, moves the
+  issue and keeps the comment up to date, as it does on the main machine.
+- **Otherwise:** the main machine moves the issue and posts one comment naming the pipeline and
+  machine with a link to the run. That comment is not updated afterwards. The issue still shows
+  its T3 activity, and opening it goes to the run on that machine.
+
+To make the first case work, connect the same Linear workspace on the other machine from that
+machine's own T3 Code (Settings → Integrations → Linear).
+
 ## On mobile
 
-The mobile app has a Linear tab. Browse teams, projects, milestones and issues, open an issue, and start a chat or run a pipeline from it. Connecting Linear and editing mappings stay on the computer (Settings → Integrations → Linear); the phone picks up the connection automatically. Comments posted for a launch from the phone link to the hosted web app (app.t3.codes), because the phone has no web address of its own.
+The mobile app has a Linear tab. Browse teams, projects, milestones and issues, open an issue, and start a chat or run a pipeline from it. Connecting Linear and editing mappings stay on the computer (Settings → Integrations → Linear); the phone picks up the connection automatically. Running a pipeline from the phone also has a Machine row, with **Auto balance** that weighs every machine equally (the phone has no load-balancing preferences). It starts on the machine that serves Linear. Comments posted for a launch from the phone link to the hosted web app (app.t3.codes), because the phone has no web address of its own.
 
 ## Things to know
 

@@ -32,6 +32,7 @@ export interface NewLinearLink {
   readonly createdAt: string;
   readonly commentMode: LinearCommentMode;
   readonly threadUrl: string;
+  readonly environmentId?: string | null;
 }
 
 interface LinkRow {
@@ -49,6 +50,7 @@ interface LinkRow {
   readonly state_moved_to: string | null;
   readonly thread_url: string;
   readonly comment_body_hash: string | null;
+  readonly environment_id: string | null;
 }
 
 const decodeLink = Schema.decodeUnknownEffect(LinearIssueLink);
@@ -67,6 +69,7 @@ const toStoredLink = (row: LinkRow) =>
     commentId: row.comment_id,
     commentMode: row.comment_mode,
     stateMovedTo: row.state_moved_to,
+    environmentId: row.environment_id,
   }).pipe(
     Effect.map((link): StoredLink => ({
       link,
@@ -133,11 +136,11 @@ export const layer: Layer.Layer<LinearLinkStore, never, SqlClient.SqlClient> = L
         yield* sql`
           INSERT INTO linear_issue_links (
             link_id, issue_id, issue_identifier, team_id, project_id, target_kind, target_id,
-            thread_id, created_at, comment_mode, thread_url
+            thread_id, created_at, comment_mode, thread_url, environment_id
           ) VALUES (
             ${link.linkId}, ${link.issueId}, ${link.issueIdentifier}, ${link.teamId},
             ${link.projectId}, ${link.targetKind}, ${link.targetId}, ${link.threadId},
-            ${link.createdAt}, ${link.commentMode}, ${link.threadUrl}
+            ${link.createdAt}, ${link.commentMode}, ${link.threadUrl}, ${link.environmentId ?? null}
           )
           ON CONFLICT (issue_id, target_kind, target_id) DO NOTHING
         `.pipe(storage("Could not save the Linear link."));

@@ -1,6 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useIsFocused } from "@react-navigation/native";
-import { indexActivityByIssueId } from "@t3tools/client-runtime/linear/activity";
+import {
+  applyRemoteRunStatus,
+  indexActivityByIssueId,
+  mergeLinearActivity,
+} from "@t3tools/client-runtime/linear/activity";
 import {
   resolveLinearDegradation,
   type LinearDegradation,
@@ -16,7 +20,9 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { useAppActive } from "../../lib/appState";
 import { useNowAfter } from "../../lib/clock";
+import { useEnvironments } from "../../state/environments";
 import { linearEnvironment, linearEnvironmentIdAtom } from "../../state/linear";
+import { serverEnvironment } from "../../state/server";
 import { useEnvironmentQuery, type EnvironmentQueryView } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -122,14 +128,45 @@ export function useLinearSearchIssues(environmentId: EnvironmentId | null, term:
 
 const EMPTY_ACTIVITY: ReadonlyArray<LinearIssueActivity> = [];
 
-/** Reads the T3 activity of linked issues; `enabled` stays false while Linear is not connected. */
+/**
+ * Reads the T3 activity of linked issues; `enabled` stays false while Linear is not connected.
+ * Machines connected to the same Linear workspace add their own activity, and runs on other
+ * machines show live state while this app is connected to them.
+ */
 export function useLinearActivity(environmentId: EnvironmentId | null, enabled = true) {
+  const { environments } = useEnvironments();
   const query = useEnvironmentQuery(
     environmentId === null || !enabled
       ? null
       : linearEnvironment.activity({ environmentId, input: {} }),
   );
-  const issues = query.data?.issues ?? EMPTY_ACTIVITY;
+  const connectedPeers = environments
+    .filter(
+      (environment) =>
+        environment.environmentId !== environmentId && environment.connection.phase === "connected",
+    )
+    .map((environment) => environment.environmentId);
+  const peers = useAtomValue(
+    linearEnvironment.peerActivity(
+      environmentId === null || !enabled || query.data === null
+        ? ""
+        : [environmentId, ...connectedPeers].join("\n"),
+    ),
+  );
+  const merged = mergeLinearActivity({ primary: query.data?.issues ?? EMPTY_ACTIVITY, peers });
+  const remoteIds = [
+    ...new Set(
+      merged
+        .flatMap((entry) => entry.items)
+        .flatMap((item) =>
+          item.link.environmentId != null && connectedPeers.includes(item.link.environmentId)
+            ? [item.link.environmentId]
+            : [],
+        ),
+    ),
+  ];
+  const liveRuns = useAtomValue(serverEnvironment.pipelineLiveRunsAtom(remoteIds.join("\n")));
+  const issues = applyRemoteRunStatus(merged, liveRuns);
   return { ...query, issues, byIssueId: indexActivityByIssueId(issues) };
 }
 

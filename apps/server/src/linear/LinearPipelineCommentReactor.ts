@@ -31,6 +31,8 @@ export const layer = Layer.effectDiscard(
         yield* LinearService.pipelineCommentCutoff,
       );
       for (const stored of links) {
+        // A run on another machine is not readable here; its comment is a one-off post.
+        if (stored.link.environmentId != null) continue;
         // Failures (offline, rate limited, key rejected) are retried on the next pass.
         yield* linear.syncPipelineComment(stored).pipe(
           Effect.catch((error) =>

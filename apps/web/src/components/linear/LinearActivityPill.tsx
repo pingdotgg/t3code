@@ -7,6 +7,7 @@ import type { LinearActivityPill as Pill } from "@t3tools/client-runtime/linear/
 const KIND_CLASS: Record<Pill["kind"], string> = {
   "pipeline-failed": "border-destructive/35 bg-destructive/8 text-destructive-foreground",
   "pipeline-running": "border-info/35 bg-info/9 text-info-foreground",
+  "pipeline-remote": "border-border bg-muted text-muted-foreground",
   "pr-opened": "border-success/30 bg-success/8 text-success-foreground",
   chats: "border-border bg-muted text-muted-foreground",
 };
@@ -15,6 +16,7 @@ function PillGlyph({ kind }: { kind: Pill["kind"] }) {
   switch (kind) {
     case "pipeline-failed":
       return <XIcon aria-hidden className="size-3" />;
+    case "pipeline-remote":
     case "pipeline-running":
       return <span aria-hidden className="size-1.5 rounded-full bg-current" />;
     case "pr-opened":

@@ -1,8 +1,19 @@
-import type { LinearIssue, LinearIssueActivity } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  LinearActivityItem,
+  LinearIssue,
+  LinearIssueActivity,
+  PipelineRunSummary,
+} from "@t3tools/contracts";
 
 import { topLevelIssues } from "./issueList.ts";
 
-export type LinearActivityPillKind = "pipeline-failed" | "pipeline-running" | "pr-opened" | "chats";
+export type LinearActivityPillKind =
+  | "pipeline-failed"
+  | "pipeline-running"
+  | "pipeline-remote"
+  | "pr-opened"
+  | "chats";
 
 export interface LinearActivityPill {
   readonly kind: LinearActivityPillKind;
@@ -32,6 +43,9 @@ export function pickActivityPill(
   if (activity.pipelineRunning)
     return { kind: "pipeline-running", label: "pipeline running", chatCount };
   if (hasOpenPullRequest(issue)) return { kind: "pr-opened", label: "PR opened", chatCount };
+  if (activity.items.some(isUnreadRemoteRun)) {
+    return { kind: "pipeline-remote", label: "pipeline run", chatCount };
+  }
   if (chatCount > 0) {
     return {
       kind: "chats",
@@ -128,4 +142,119 @@ const ACTIVITY_STATUS_LABEL: Record<string, string> = {
 
 export function activityStatusLabel(status: string): string {
   return ACTIVITY_STATUS_LABEL[status] ?? status;
+}
+
+/** A pipeline run on another machine whose state this client has not read (yet). */
+function isUnreadRemoteRun(item: LinearActivityItem): boolean {
+  return (
+    item.link.targetKind === "pipeline_run" &&
+    item.link.environmentId != null &&
+    item.pipeline === null
+  );
+}
+
+/** The machine an activity item opens on: its own, else the one that serves Linear. */
+export function activityItemEnvironmentId(
+  item: Pick<LinearActivityItem, "link">,
+  primaryEnvironmentId: EnvironmentId,
+): EnvironmentId {
+  return item.link.environmentId ?? primaryEnvironmentId;
+}
+
+function summarizeIssueActivity(
+  issueId: string,
+  items: ReadonlyArray<LinearActivityItem>,
+): LinearIssueActivity | null {
+  const first = items[0];
+  if (first === undefined) return null;
+  const sorted = [...items].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return {
+    issueId,
+    issueIdentifier: first.link.issueIdentifier,
+    teamId: first.link.teamId,
+    items: sorted,
+    latestActivityAt: sorted[0]?.updatedAt ?? first.updatedAt,
+    runningCount: sorted.filter((item) => item.status === "running").length,
+    threadCount: sorted.filter((item) => item.link.targetKind === "thread").length,
+    pipelineRunning: sorted.some((item) => item.pipeline !== null && item.status === "running"),
+    pipelineFailed: sorted.some((item) => item.pipeline !== null && item.status === "failed"),
+  };
+}
+
+/**
+ * One activity list from the server that serves Linear and the machines connected to the same
+ * Linear workspace. A peer's own items are stamped with its environment id so they open there, and
+ * an item present in several sources appears once.
+ */
+export function mergeLinearActivity(input: {
+  readonly primary: ReadonlyArray<LinearIssueActivity>;
+  readonly peers: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly issues: ReadonlyArray<LinearIssueActivity>;
+  }>;
+}): ReadonlyArray<LinearIssueActivity> {
+  if (input.peers.length === 0) return input.primary;
+  const itemsByIssue = new Map<string, Map<string, LinearActivityItem>>();
+  const add = (issues: ReadonlyArray<LinearIssueActivity>, stamp: EnvironmentId | null) => {
+    for (const entry of issues) {
+      const items = itemsByIssue.get(entry.issueId) ?? new Map<string, LinearActivityItem>();
+      itemsByIssue.set(entry.issueId, items);
+      for (const item of entry.items) {
+        const stamped =
+          stamp === null || item.link.environmentId != null
+            ? item
+            : { ...item, link: { ...item.link, environmentId: stamp } };
+        const key = `${stamped.link.environmentId ?? ""}:${stamped.link.targetKind}:${stamped.link.targetId}`;
+        if (!items.has(key)) items.set(key, stamped);
+      }
+    }
+  };
+  add(input.primary, null);
+  for (const peer of input.peers) add(peer.issues, peer.environmentId);
+  return [...itemsByIssue]
+    .flatMap(([issueId, items]) => summarizeIssueActivity(issueId, [...items.values()]) ?? [])
+    .sort((a, b) => b.latestActivityAt.localeCompare(a.latestActivityAt));
+}
+
+/**
+ * Shows the live state of runs on other machines this client is connected to. Runs missing from
+ * `liveRuns` (finished, or the machine is not streaming) keep the state the server reported.
+ */
+export function applyRemoteRunStatus(
+  issues: ReadonlyArray<LinearIssueActivity>,
+  liveRuns: ReadonlyMap<string, PipelineRunSummary>,
+): ReadonlyArray<LinearIssueActivity> {
+  if (liveRuns.size === 0) return issues;
+  let changed = false;
+  const result = issues.map((entry) => {
+    let entryChanged = false;
+    const items = entry.items.map((item) => {
+      if (!isUnreadRemoteRun(item)) return item;
+      const run = liveRuns.get(`${item.link.environmentId}:${item.link.targetId}`);
+      if (run === undefined) return item;
+      entryChanged = true;
+      const current = run.status === "running" || run.status === "paused";
+      const failedIndex = run.steps.findIndex((step) => step.status === "failed");
+      return {
+        ...item,
+        title: run.name,
+        status:
+          run.status === "running"
+            ? "running"
+            : run.pauseReason === "step_failed"
+              ? "failed"
+              : "paused",
+        pipeline: {
+          name: run.name,
+          steps: run.steps.map((step) => ({ name: step.name, status: step.status })),
+          currentStepName: current ? (run.steps[run.currentStepIndex]?.name ?? null) : null,
+          failedStepName: failedIndex >= 0 ? (run.steps[failedIndex]?.name ?? null) : null,
+        },
+      } satisfies LinearActivityItem;
+    });
+    if (!entryChanged) return entry;
+    changed = true;
+    return summarizeIssueActivity(entry.issueId, items) ?? entry;
+  });
+  return changed ? result : issues;
 }

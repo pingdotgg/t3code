@@ -9,8 +9,10 @@ import { toastManager } from "../ui/toast";
 
 /** Web adapter: warns with a toast and never blocks the launch it records. */
 export async function recordLinearLaunch(input: RecordLinearLaunchInput): Promise<void> {
-  // Linear is served by the primary environment only.
-  if (readPrimaryEnvironmentId() !== input.environmentId) return;
+  // Chats from other machines are not recorded; pipeline runs carry the machine that records them.
+  if (input.target.kind !== "pipeline_run" && readPrimaryEnvironmentId() !== input.environmentId) {
+    return;
+  }
   const warning = await recordLaunch(
     {
       registry: appAtomRegistry,

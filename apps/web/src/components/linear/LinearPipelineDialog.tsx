@@ -9,15 +9,21 @@ import type {
 } from "@t3tools/contracts";
 import type { LinearIssueIncludes } from "@t3tools/shared/linearLaunch";
 import { useNavigate } from "@tanstack/react-router";
-import { WorkflowIcon } from "lucide-react";
+import { RefreshCwIcon, WorkflowIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
+import {
+  pipelineCommentDescription,
+  resolveLinearWriteBackRoute,
+  resolvePipelineSelection,
+} from "@t3tools/client-runtime/linear/pipeline-machines";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { randomUUID } from "../../lib/utils";
 import { useProjects } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
+import { linearEnvironment } from "../../state/linear";
 import { vcsEnvironment } from "../../state/vcs";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import ChatMarkdown from "../ChatMarkdown";
@@ -47,17 +53,18 @@ import {
   pipelineInputText,
   pipelineLaunchRecord,
   pipelineWorkspaceStrategy,
-  readLastUsedPipelineId,
-  resolveInitialPipelineId,
+  readLastUsedPipelineName,
   resolvePipelineLaunch,
-  writeLastUsedPipelineId,
+  writeLastUsedPipelineName,
 } from "@t3tools/client-runtime/linear/pipeline-dialog";
 import { recordLinearLaunch } from "./recordLinearLaunch";
 import {
   useLinearEnvironmentId,
   useLinearIssueDetail,
+  useLinearStatus,
   useLinearTeamMetadata,
 } from "./useLinearData";
+import { useLinearAutoMachine, useLinearPipelineMachines } from "./useLinearPipelineMachines";
 
 export function LinearPipelineDialog({
   issueId,
@@ -175,13 +182,14 @@ function PipelineDialogBody({
   const storage = typeof window === "undefined" ? undefined : window.localStorage;
   const settings = useEnvironmentSettings(environmentId, (all) => all.linear);
   const states = useLinearTeamMetadata(issue.team.id).data?.states ?? null;
-  const pipelines = useDraftPipelines(environmentId, true);
-  const projects = useProjects().filter((project) => project.environmentId === environmentId);
+  const allProjects = useProjects();
+  const projects = allProjects.filter((project) => project.environmentId === environmentId);
   const startPipelineRun = useOrchestrationCommand(serverEnvironment.startPipelineRun, {
     reportFailure: false,
   });
   const attemptRef = useRef<ReturnType<typeof nextPipelineStartAttempt> | null>(null);
 
+  // The pick is remembered by name: the same pipeline has a different id on every machine.
   const [pipelineChoice, setPipelineChoice] = useState<string | null>(null);
   const [tab, setTab] = useState<"preview" | "edit">("preview");
   const [edited, setEdited] = useState<string | null>(null);
@@ -195,15 +203,7 @@ function PipelineDialogBody({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const lastUsed = readLastUsedPipelineId(storage);
-  const pipelineId =
-    pipelineChoice ??
-    resolveInitialPipelineId({
-      pipelineIds: pipelines.pipelines.map((pipeline) => pipeline.id),
-      requested: initialPipelineId,
-      lastUsed,
-    });
-  const pipeline = pipelines.pipelines.find((candidate) => candidate.id === pipelineId) ?? null;
+  const lastUsed = readLastUsedPipelineName(storage);
   const launch = resolvePipelineLaunch({
     issue,
     settings,
@@ -212,25 +212,91 @@ function PipelineDialogBody({
     choices: { projectId: projectChoice, move: moveChoice, comment: commentChoice },
   });
   const { mappedProjectId, projectId, moveTarget, moveEnabled, commentEnabled } = launch;
-  const project = projects.find((candidate) => candidate.id === projectId) ?? null;
+  const primaryProject = projects.find((candidate) => candidate.id === projectId) ?? null;
+
+  const machineState = useLinearPipelineMachines(environmentId, primaryProject);
+  const { machines } = machineState;
+  const primaryPipelines = useDraftPipelines(environmentId, true);
+  const pipelines = useDraftPipelines(machineState.listEnvironmentId, true);
+  const requestedName =
+    primaryPipelines.pipelines.find((candidate) => candidate.id === initialPipelineId)?.name ??
+    null;
+  const { pipeline, unmatchedName } = resolvePipelineSelection({
+    pipelines: pipelines.pipelines,
+    chosenName: pipelineChoice,
+    requestedName,
+    lastUsedName: lastUsed,
+  });
+  const pipelineId = pipeline?.id ?? null;
+
+  const auto = useLinearAutoMachine({
+    machines,
+    active: machineState.effective === "auto",
+    live: machineState.live,
+    pipeline,
+    latch: machineState.latch,
+  });
+  const targetEnvironmentId =
+    machineState.effective === "auto"
+      ? auto.state.kind === "picked"
+        ? auto.state.environmentId
+        : null
+      : machineState.effective;
+  const machine =
+    machines.find((candidate) => candidate.environmentId === targetEnvironmentId) ?? null;
+  const project =
+    machine === null
+      ? null
+      : (allProjects.find(
+          (candidate) =>
+            candidate.environmentId === machine.environmentId && candidate.id === machine.projectId,
+        ) ?? null);
+  const isPrimaryRun = machine === null || machine.environmentId === environmentId;
+
+  const primaryLinear = useLinearStatus().data;
+  const machineLinear = useEnvironmentQuery(
+    machine !== null && !isPrimaryRun
+      ? linearEnvironment.status({ environmentId: machine.environmentId, input: {} })
+      : null,
+  ).data;
+  const writeBackRoute =
+    machine === null
+      ? null
+      : resolveLinearWriteBackRoute({
+          runEnvironmentId: machine.environmentId,
+          runMachineName: machine.label,
+          primaryEnvironmentId: environmentId,
+          primaryOrganizationId: primaryLinear?.organization?.id ?? null,
+          runLinear:
+            machineLinear === null
+              ? null
+              : {
+                  state: machineLinear.state,
+                  organizationId: machineLinear.organization?.id ?? null,
+                },
+        });
 
   const projectStatus = useEnvironmentQuery(
-    project !== null && launch.mappedBaseBranch === null
-      ? vcsEnvironment.status({ environmentId, input: { cwd: project.workspaceRoot } })
+    machine !== null && project !== null && launch.mappedBaseBranch === null
+      ? vcsEnvironment.status({
+          environmentId: machine.environmentId,
+          input: { cwd: project.workspaceRoot },
+        })
       : null,
   );
   const baseRef = launch.mappedBaseBranch ?? projectStatus.data?.refName ?? null;
 
   const text = pipelineInputText({ detail, includes, edited });
   const summary = pipelineInputSummary({ detail, text });
-  const canStart = !pending && pipeline !== null && project !== null && summary.startable;
+  const canStart =
+    !pending && pipeline !== null && machine !== null && project !== null && summary.startable;
 
   const updateIncludes = (key: keyof LinearIssueIncludes, checked: boolean) => {
     setIncludes((current) => ({ ...current, [key]: checked }));
   };
 
   const start = async () => {
-    if (!canStart || pipeline === null || project === null) return;
+    if (!canStart || pipeline === null || project === null || machine === null) return;
     setPending(true);
     setError(null);
     const workspaceStrategy = pipelineWorkspaceStrategy({
@@ -244,7 +310,7 @@ function PipelineDialogBody({
       randomUUID,
     ));
     const result = await startPipelineRun({
-      environmentId,
+      environmentId: machine.environmentId,
       input: {
         commandId: attempt.commandId,
         pipelineId: pipeline.id,
@@ -261,24 +327,25 @@ function PipelineDialogBody({
       return;
     }
     const run = result.value.run;
-    writeLastUsedPipelineId(storage, pipeline.id);
+    writeLastUsedPipelineName(storage, pipeline.name);
     // The run exists; linking it is best effort and never delays or blocks the launch.
     void recordLinearLaunch(
       pipelineLaunchRecord({
-        environmentId,
+        environmentId: machine.environmentId,
         issue,
         pipelineName: pipeline.name,
         run,
         writeBack: { moveTo: moveTarget, moveEnabled, commentEnabled },
+        ...(writeBackRoute === null ? {} : { route: writeBackRoute }),
       }),
     );
     onClose();
-    const parentRef = scopeThreadRef(environmentId, run.parentThreadId);
+    const parentRef = scopeThreadRef(machine.environmentId, run.parentThreadId);
     toastManager.add(
       stackedThreadToast({
         type: "success",
         title: "Pipeline started",
-        description: `${pipeline.name} on ${issue.identifier}`,
+        description: `${pipeline.name} on ${issue.identifier}${isPrimaryRun ? "" : ` · ${machine.label}`}`,
       }),
     );
     void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(parentRef) });
@@ -320,18 +387,28 @@ function PipelineDialogBody({
             ) : (
               <RadioGroup
                 value={pipelineId}
-                onValueChange={(value) => setPipelineChoice(value as string)}
+                onValueChange={(value) =>
+                  setPipelineChoice(
+                    pipelines.pipelines.find((candidate) => candidate.id === value)?.name ?? null,
+                  )
+                }
               >
                 {pipelines.pipelines.map((candidate) => (
                   <PipelineChoice
                     key={candidate.id}
                     pipeline={candidate}
                     selected={candidate.id === pipelineId}
-                    lastUsed={candidate.id === lastUsed}
+                    lastUsed={candidate.name === lastUsed}
                   />
                 ))}
               </RadioGroup>
             )}
+            {unmatchedName !== null && pipeline !== null ? (
+              <p role="status" className="text-xs text-muted-foreground">
+                &quot;{unmatchedName}&quot; isn&apos;t on this machine, so {pipeline.name} is
+                selected.
+              </p>
+            ) : null}
           </section>
 
           <section className="space-y-1.5">
@@ -403,6 +480,58 @@ function PipelineDialogBody({
           </section>
 
           <div className="grid gap-3 sm:grid-cols-2">
+            {machines.length >= 2 ? (
+              <section className="min-w-0 space-y-1.5 sm:col-span-2">
+                <h3 className="text-xs font-medium text-muted-foreground">Machine</h3>
+                <div className="flex items-center gap-2">
+                  <Select
+                    value={machineState.effective as string | null}
+                    onValueChange={(value) => {
+                      if (value !== null) machineState.choose(value as EnvironmentId | "auto");
+                    }}
+                  >
+                    <SelectTrigger aria-label="Machine" className="min-w-0 flex-1">
+                      <SelectValue>
+                        {() => {
+                          if (machineState.effective !== "auto") {
+                            return machine?.label ?? "Choose a machine";
+                          }
+                          if (auto.state.kind === "checking") return "Checking machines…";
+                          if (auto.state.kind === "unavailable") {
+                            return "Auto balance unavailable. Choose a machine";
+                          }
+                          return `Auto balance · ${machine?.label ?? ""}`;
+                        }}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup align="start" alignItemWithTrigger={false}>
+                      {machineState.autoOffered ? (
+                        <SelectItem value="auto">Auto balance</SelectItem>
+                      ) : null}
+                      {machines.map((candidate) => (
+                        <SelectItem key={candidate.environmentId} value={candidate.environmentId}>
+                          {candidate.label}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                  {machineState.effective === "auto" && auto.state.kind !== "checking" ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label="Check machines again"
+                      onClick={() => {
+                        machineState.choose("auto");
+                        auto.recheck();
+                      }}
+                    >
+                      <RefreshCwIcon aria-hidden className="size-3.5" />
+                    </Button>
+                  ) : null}
+                </div>
+              </section>
+            ) : null}
             <section className="min-w-0 space-y-1.5">
               <h3 className="text-xs font-medium text-muted-foreground">Project</h3>
               <LinearProjectSelect
@@ -467,7 +596,11 @@ function PipelineDialogBody({
             />
             <WriteBackRow
               title="Comment on the issue"
-              description="One comment with a link, updated as each step finishes"
+              description={
+                writeBackRoute === null
+                  ? "One comment with a link, updated as each step finishes"
+                  : pipelineCommentDescription(writeBackRoute)
+              }
               checked={commentEnabled}
               onCheckedChange={setCommentChoice}
             />

@@ -20,6 +20,7 @@ const PILL_CLASS: Record<ActivityPill["kind"], { container: string; text: string
     text: "text-danger-foreground",
   },
   "pipeline-running": { container: "border-border bg-subtle", text: "text-primary-text" },
+  "pipeline-remote": { container: "border-border bg-subtle", text: "text-foreground-muted" },
   "pr-opened": { container: "border-border bg-subtle", text: "text-foreground-secondary" },
   chats: { container: "border-border bg-subtle", text: "text-foreground-muted" },
 };

@@ -7,16 +7,20 @@ import {
   pipelineInputText,
   pipelineLaunchRecord,
   pipelineWorkspaceStrategy,
-  resolveInitialPipelineId,
   resolvePipelineLaunch,
 } from "@t3tools/client-runtime/linear/pipeline-dialog";
+import {
+  pipelineCommentDescription,
+  resolveLinearWriteBackRoute,
+  resolvePipelineSelection,
+} from "@t3tools/client-runtime/linear/pipeline-machines";
 import { nextPipelineStartAttempt } from "@t3tools/client-runtime/pipeline-start";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
-import { EnvironmentId, type PipelineId, type ProjectId } from "@t3tools/contracts";
+import { EnvironmentId, type ProjectId } from "@t3tools/contracts";
 import type { LinearIssueIncludes } from "@t3tools/shared/linearLaunch";
 import { AsyncResult } from "effect/reactivity";
 import { useRef, useState } from "react";
@@ -44,10 +48,12 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
 import { PullRequestMarkdown } from "../pull-requests/PullRequestMarkdown";
 import { waitForThreadShell } from "../threads/wait-for-thread-shell";
+import { linearEnvironment } from "../../state/linear";
 import { linearSettingsOf } from "./linearLaunchHelpers";
 import { recordLinearLaunch } from "./recordLinearLaunch";
 import { useLinearLaunch } from "./useLinearLaunch";
-import { useLinearIssueDetail, useLinearTeamMetadata } from "./useLinearData";
+import { useLinearIssueDetail, useLinearStatus, useLinearTeamMetadata } from "./useLinearData";
+import { useLinearAutoMachine, useLinearPipelineMachines } from "./useLinearPipelineMachines";
 
 type LinearPipelineRouteParams = {
   readonly environmentId: string;
@@ -109,12 +115,9 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
   const settings = linearSettingsOf(useServerConfigs().get(environmentId));
   const teamStates =
     useLinearTeamMetadata(environmentId, detail?.issue.team.id).data?.states ?? null;
-  const pipelinesQuery = useEnvironmentQuery(
-    canRunPipeline ? serverEnvironment.pipelinesLive({ environmentId, input: {} }) : null,
-  );
-  const pipelines = pipelinesQuery.data?.pipelines ?? [];
   const scratchRoot = useServerConfigs().get(environmentId)?.scratchWorkspaceRoot;
-  const projects = useProjects().filter(
+  const allProjects = useProjects();
+  const projects = allProjects.filter(
     (project) => project.environmentId === environmentId && !isScratchProject(project, scratchRoot),
   );
   const startPipelineRun = useAtomCommand(serverEnvironment.startPipelineRun, {
@@ -126,8 +129,9 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
   const preferences = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const lastUsed = AsyncResult.isSuccess(preferences)
-    ? (preferences.value.linearLastPipelineId ?? null)
+    ? (preferences.value.linearLastPipelineName ?? null)
     : null;
+  // Remembered by name: the same pipeline has a different id on every machine.
   const [pipelineChoice, setPipelineChoice] = useState<string | null>(null);
   const [tab, setTab] = useState<"preview" | "edit">("preview");
   const [edited, setEdited] = useState<string | null>(null);
@@ -153,31 +157,107 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
     : null;
   const mappedProjectId = launch?.mappedProjectId ?? null;
   const projectId = launch?.projectId ?? null;
-  const project = projects.find((candidate) => candidate.id === projectId) ?? null;
+  const primaryProject = projects.find((candidate) => candidate.id === projectId) ?? null;
   const moveTarget = launch?.moveTarget ?? null;
   const moveEnabled = launch?.moveEnabled ?? false;
   const commentEnabled = launch?.commentEnabled ?? settings.commentEnabled;
-  const pipelineId = resolveInitialPipelineId({
-    pipelineIds: pipelines.map((candidate) => candidate.id),
-    requested: pipelineChoice ?? params.pipelineId,
-    lastUsed,
+
+  const machineState = useLinearPipelineMachines(environmentId, primaryProject);
+  const { machines } = machineState;
+  const primaryPipelinesQuery = useEnvironmentQuery(
+    canRunPipeline ? serverEnvironment.pipelinesLive({ environmentId, input: {} }) : null,
+  );
+  const pipelinesQuery = useEnvironmentQuery(
+    canRunPipeline
+      ? serverEnvironment.pipelinesLive({
+          environmentId: machineState.listEnvironmentId,
+          input: {},
+        })
+      : null,
+  );
+  const pipelines = pipelinesQuery.data?.pipelines ?? [];
+  const requestedName =
+    (primaryPipelinesQuery.data?.pipelines ?? []).find(
+      (candidate) => candidate.id === params.pipelineId,
+    )?.name ?? null;
+  const { pipeline, unmatchedName } = resolvePipelineSelection({
+    pipelines,
+    chosenName: pipelineChoice,
+    requestedName,
+    lastUsedName: lastUsed,
   });
-  const pipeline = pipelines.find((candidate) => candidate.id === pipelineId) ?? null;
+  const pipelineId = pipeline?.id ?? null;
+
+  const auto = useLinearAutoMachine({
+    machines,
+    active: machineState.effective === "auto",
+    live: machineState.live,
+    pipeline,
+    latch: machineState.latch,
+  });
+  const targetEnvironmentId =
+    machineState.effective === "auto"
+      ? auto.state.kind === "picked"
+        ? auto.state.environmentId
+        : null
+      : machineState.effective;
+  const machine =
+    machines.find((candidate) => candidate.environmentId === targetEnvironmentId) ?? null;
+  const project =
+    machine === null
+      ? null
+      : (allProjects.find(
+          (candidate) =>
+            candidate.environmentId === machine.environmentId && candidate.id === machine.projectId,
+        ) ?? null);
+
+  const primaryLinear = useLinearStatus(environmentId).data;
+  const machineLinear = useEnvironmentQuery(
+    machine !== null && machine.environmentId !== environmentId
+      ? linearEnvironment.status({ environmentId: machine.environmentId, input: {} })
+      : null,
+  ).data;
+  const writeBackRoute =
+    machine === null
+      ? null
+      : resolveLinearWriteBackRoute({
+          runEnvironmentId: machine.environmentId,
+          runMachineName: machine.label,
+          primaryEnvironmentId: environmentId,
+          primaryOrganizationId: primaryLinear?.organization?.id ?? null,
+          runLinear:
+            machineLinear === null
+              ? null
+              : {
+                  state: machineLinear.state,
+                  organizationId: machineLinear.organization?.id ?? null,
+                },
+        });
 
   const mappedBaseBranch = launch?.mappedBaseBranch ?? null;
   const projectStatus = useEnvironmentQuery(
-    project !== null && mappedBaseBranch === null
-      ? vcsEnvironment.status({ environmentId, input: { cwd: project.workspaceRoot } })
+    machine !== null && project !== null && mappedBaseBranch === null
+      ? vcsEnvironment.status({
+          environmentId: machine.environmentId,
+          input: { cwd: project.workspaceRoot },
+        })
       : null,
   );
   const baseRef = mappedBaseBranch ?? projectStatus.data?.refName ?? null;
 
   const text = detail ? pipelineInputText({ detail, includes, edited }) : "";
   const summary = detail ? pipelineInputSummary({ detail, text }) : null;
-  const canStart = !pending && pipeline !== null && project !== null && summary?.startable === true;
+  const canStart =
+    !pending &&
+    pipeline !== null &&
+    machine !== null &&
+    project !== null &&
+    summary?.startable === true;
 
   const start = async () => {
-    if (!canStart || issue === null || pipeline === null || project === null) return;
+    if (!canStart || issue === null || pipeline === null || project === null || machine === null) {
+      return;
+    }
     setPending(true);
     setError(null);
     const workspaceStrategy = pipelineWorkspaceStrategy({
@@ -191,7 +271,7 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
       uuidv4,
     ));
     const result = await startPipelineRun({
-      environmentId,
+      environmentId: machine.environmentId,
       input: {
         commandId: attempt.commandId,
         pipelineId: pipeline.id,
@@ -211,27 +291,28 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
     }
     const run = result.value.run;
     attemptRef.current = null;
-    savePreferences({ linearLastPipelineId: pipeline.id });
+    savePreferences({ linearLastPipelineName: pipeline.name });
     // The run exists; linking it is best effort and never delays or blocks the launch.
     void recordLinearLaunch(
       pipelineLaunchRecord({
-        environmentId,
+        environmentId: machine.environmentId,
         issue,
         pipelineName: pipeline.name,
         run,
         writeBack: { moveTo: moveTarget, moveEnabled, commentEnabled },
+        ...(writeBackRoute === null ? {} : { route: writeBackRoute }),
       }),
     );
     // The thread route treats a shell that has not arrived yet as an unavailable thread.
     const shellReady = await waitForThreadShell(
-      { environmentId, threadId: run.parentThreadId },
+      { environmentId: machine.environmentId, threadId: run.parentThreadId },
       5_000,
     );
     setPending(false);
     if (shellReady) {
       navigation.dispatch(
         StackActions.replace("Thread", {
-          environmentId: params.environmentId,
+          environmentId: machine.environmentId,
           threadId: String(run.parentThreadId),
         }),
       );
@@ -324,7 +405,7 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
                       accessibilityRole="radio"
                       accessibilityLabel={candidate.name}
                       accessibilityState={{ selected }}
-                      onPress={() => setPipelineChoice(candidate.id as PipelineId)}
+                      onPress={() => setPipelineChoice(candidate.name)}
                       className="min-h-12 flex-row items-center gap-3 border-t border-border-subtle py-2"
                     >
                       <View
@@ -344,7 +425,7 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
                       <View className="min-w-0 flex-1">
                         <Text numberOfLines={1} className="text-sm font-t3-medium text-foreground">
                           {candidate.name}
-                          {candidate.id === lastUsed ? "  ·  Last used" : ""}
+                          {candidate.name === lastUsed ? "  ·  Last used" : ""}
                         </Text>
                         <Text className="text-xs text-foreground-muted">
                           {candidate.steps.map((step) => step.name).join(" → ")}
@@ -353,6 +434,11 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
                     </Pressable>
                   );
                 })}
+                {unmatchedName !== null && pipeline !== null ? (
+                  <Text className="pt-1 text-xs text-foreground-muted">
+                    "{unmatchedName}" isn't on this machine, so {pipeline.name} is selected.
+                  </Text>
+                ) : null}
               </View>
 
               <View className="gap-2">
@@ -420,6 +506,51 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
               </View>
 
               <View>
+                {machines.length >= 2 ? (
+                  <Menu
+                    title="Machine"
+                    actions={[
+                      {
+                        id: "auto",
+                        title: "Auto balance",
+                        state: machineState.effective === "auto" ? "on" : "off",
+                      },
+                      ...machines.map((candidate) => ({
+                        id: String(candidate.environmentId),
+                        title: candidate.label,
+                        state:
+                          machineState.effective === candidate.environmentId
+                            ? ("on" as const)
+                            : ("off" as const),
+                      })),
+                    ]}
+                    onPressAction={({ nativeEvent }) => {
+                      if (nativeEvent.event === "auto") {
+                        // Choosing Auto again re-checks the machines.
+                        machineState.choose("auto");
+                        auto.recheck();
+                        return;
+                      }
+                      const chosen = machines.find(
+                        (candidate) => String(candidate.environmentId) === nativeEvent.event,
+                      );
+                      if (chosen) machineState.choose(chosen.environmentId);
+                    }}
+                  >
+                    <PickerRow
+                      label="Machine"
+                      value={
+                        machineState.effective !== "auto"
+                          ? (machine?.label ?? "Choose a machine")
+                          : auto.state.kind === "checking"
+                            ? "Checking machines…"
+                            : auto.state.kind === "unavailable"
+                              ? "Auto balance unavailable. Choose a machine"
+                              : `Auto balance · ${machine?.label ?? ""}`
+                      }
+                    />
+                  </Menu>
+                ) : null}
                 <Menu
                   title="Project"
                   actions={projects.map((candidate) => ({
@@ -488,7 +619,11 @@ export function LinearPipelineSheet({ route }: StaticScreenProps<LinearPipelineR
                 />
                 <ToggleRow
                   title="Comment on the issue"
-                  description="One comment with a link, updated as each step finishes"
+                  description={
+                    writeBackRoute === null
+                      ? "One comment with a link, updated as each step finishes"
+                      : pipelineCommentDescription(writeBackRoute)
+                  }
                   value={commentEnabled}
                   onValueChange={setCommentChoice}
                 />

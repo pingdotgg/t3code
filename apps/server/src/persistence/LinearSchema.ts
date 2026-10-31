@@ -27,9 +27,18 @@ export const ensureLinearSchema = Effect.gen(function* () {
       state_moved_to TEXT,
       thread_url TEXT NOT NULL DEFAULT '',
       comment_body_hash TEXT,
+      environment_id TEXT,
       UNIQUE (issue_id, target_kind, target_id)
     )
   `;
+
+  // Tables created before machine-aware links lack the column; null keeps their links local.
+  const columns = yield* sql<{ readonly name: string }>`
+    SELECT name FROM pragma_table_info('linear_issue_links')
+  `;
+  if (!columns.some((column) => column.name === "environment_id")) {
+    yield* sql`ALTER TABLE linear_issue_links ADD COLUMN environment_id TEXT`;
+  }
 
   yield* sql`
     CREATE INDEX IF NOT EXISTS idx_linear_issue_links_issue

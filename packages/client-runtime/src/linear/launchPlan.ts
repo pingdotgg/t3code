@@ -45,7 +45,12 @@ export const LinearDraftIssue = Schema.Struct({
 export type LinearDraftIssue = typeof LinearDraftIssue.Type;
 
 export interface RecordLinearLaunchInput {
+  /** The machine the thread or run lives on; its id is in the link Linear shows. */
   readonly environmentId: EnvironmentId;
+  /** The machine whose server records the launch. Defaults to `environmentId`. */
+  readonly recordOn?: EnvironmentId;
+  /** Set when `recordOn` is not the run's machine, so the link remembers where the run is. */
+  readonly remote?: { readonly machineName: string; readonly pipelineName: string };
   readonly issueId: string;
   readonly identifier: string;
   /** Ids the client already holds, so the launch is linked even when Linear can't be read. */

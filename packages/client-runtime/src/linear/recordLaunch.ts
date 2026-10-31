@@ -15,9 +15,12 @@ export interface RecordLinearLaunchDeps {
 
 function buildLinearRecordLaunchRequest(input: RecordLinearLaunchInput, threadOrigin: string) {
   return {
-    environmentId: input.environmentId,
+    environmentId: input.recordOn ?? input.environmentId,
     input: {
       issueId: input.issueId,
+      ...(input.remote === undefined
+        ? {}
+        : { remote: { environmentId: input.environmentId, ...input.remote } }),
       target: input.target,
       writeBack: input.writeBack,
       ...(input.teamId === undefined

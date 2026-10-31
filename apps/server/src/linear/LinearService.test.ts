@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  EnvironmentId,
   type PipelineRun,
   ThreadId as ThreadIdSchema,
   type LinearRecordLaunchInput,
@@ -19,6 +20,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PipelineService from "../pipelines/PipelineService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { computeLinearActivity } from "./LinearActivity.ts";
 import * as LinearLinkStore from "./LinearLinkStore.ts";
 import * as LinearService from "./LinearService.ts";
 
@@ -640,7 +642,109 @@ describe("LinearService", () => {
   });
 });
 
+describe("pipeline runs on another machine", () => {
+  const remoteLaunch = launchInput({
+    target: { kind: "pipeline_run", targetId: "run-9", threadId, title: "Feature delivery" },
+    writeBack: { moveToStateId: "state-progress", comment: true },
+    remote: {
+      environmentId: EnvironmentId.make("env-b"),
+      machineName: "Studio Mac",
+      pipelineName: "Feature delivery",
+    },
+  });
+
+  it.effect("stores the machine, moves the issue and posts one static comment", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const linear = yield* LinearService.LinearService;
+      const store = yield* LinearLinkStore.LinearLinkStore;
+      yield* linear.connect({ apiKey: KEY });
+      const bodies: string[] = [];
+      const base = okHandler();
+      harness.handler = (operation, variables) => {
+        if (operation === "CreateComment") bodies.push(String(variables.body));
+        return base(operation, variables);
+      };
+
+      const launched = yield* linear.recordLaunch(remoteLaunch);
+      assert.strictEqual(launched.link.environmentId, "env-b");
+      assert.strictEqual(launched.link.commentMode, "thread");
+      assert.strictEqual(launched.link.stateMovedTo, "state-progress");
+      assert.strictEqual(count(harness, "MoveIssue"), 1);
+      assert.strictEqual(count(harness, "CreateComment"), 1);
+      assert.include(bodies[0], "Feature delivery");
+      assert.include(bodies[0], "Studio Mac");
+      assert.include(bodies[0], "https://t3.example/env/thread-1");
+
+      // The reactor never reads this link, and a repeated record adds nothing.
+      assert.deepStrictEqual(
+        yield* store.listByCommentMode("pipeline", "1970-01-01T00:00:00.000Z"),
+        [],
+      );
+      yield* linear.recordLaunch(remoteLaunch);
+      assert.strictEqual(count(harness, "CreateComment"), 1);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
+  it.effect("keeps the link in activity without reading the run", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const linear = yield* LinearService.LinearService;
+      const store = yield* LinearLinkStore.LinearLinkStore;
+      yield* linear.connect({ apiKey: KEY });
+      yield* linear.recordLaunch(remoteLaunch);
+      // Reading the run would fail: it only exists on the other machine.
+      const pipelines = {
+        getRun: () => Effect.die("run is on another machine"),
+      } as unknown as PipelineService.PipelineService["Service"];
+      const projection = {} as ProjectionStore.ProjectionStoreV2["Service"];
+
+      const { issues } = yield* computeLinearActivity(store, pipelines, projection);
+      const item = issues[0]?.items[0];
+      assert.strictEqual(issues.length, 1);
+      assert.strictEqual(item?.link.environmentId, "env-b");
+      assert.strictEqual(item?.link.threadId, threadId);
+      assert.strictEqual(item?.pipeline, null);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+});
+
 describe("linear_issue_links schema", () => {
+  it.effect("adds the machine column to tables created without it", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const store = yield* LinearLinkStore.LinearLinkStore;
+      const { ensureLinearSchema } = yield* Effect.promise(
+        () => import("../persistence/LinearSchema.ts"),
+      );
+      yield* sql`DROP TABLE IF EXISTS linear_issue_links`;
+      yield* sql`
+        CREATE TABLE linear_issue_links (
+          link_id TEXT PRIMARY KEY, issue_id TEXT NOT NULL, issue_identifier TEXT NOT NULL,
+          team_id TEXT NOT NULL, project_id TEXT, target_kind TEXT NOT NULL,
+          target_id TEXT NOT NULL, thread_id TEXT NOT NULL, created_at TEXT NOT NULL,
+          comment_id TEXT, comment_mode TEXT NOT NULL, state_moved_to TEXT,
+          thread_url TEXT NOT NULL DEFAULT '', comment_body_hash TEXT,
+          UNIQUE (issue_id, target_kind, target_id)
+        )
+      `;
+      yield* sql`
+        INSERT INTO linear_issue_links (link_id, issue_id, issue_identifier, team_id, target_kind,
+          target_id, thread_id, created_at, comment_mode)
+        VALUES ('old', 'issue-1', 'ATT-1', 'team-1', 'pipeline_run', 'run-1', 'thread-1',
+          '2026-10-30T10:00:00.000Z', 'pipeline')
+      `;
+      yield* ensureLinearSchema;
+      const old = yield* store.get("old");
+      assert.strictEqual(old?.link.environmentId, null);
+      assert.strictEqual(old?.link.commentMode, "pipeline");
+    }).pipe(
+      Effect.provide(
+        LinearLinkStore.layer.pipe(Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory))),
+      ),
+    ),
+  );
+
   it.effect("is idempotent and keeps one link per issue and target", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

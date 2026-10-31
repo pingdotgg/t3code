@@ -53,6 +53,25 @@ const succeed = (warnings: ReadonlyArray<{ step: string; message: string }>) => 
   Promise.resolve(AsyncResult.success({ link: {}, warnings }));
 
 describe("recordLinearLaunch", () => {
+  it("sends a fallback launch to the primary with the run's machine and a link to it", async () => {
+    const { warning, requests } = record(succeed([]), {
+      ...launch,
+      environmentId: "env-b" as EnvironmentId,
+      recordOn: "env-a" as EnvironmentId,
+      remote: { machineName: "Studio", pipelineName: "Ship it" },
+    });
+    expect(await warning).toBeNull();
+    expect(requests).toMatchObject([
+      {
+        environmentId: "env-a",
+        input: {
+          remote: { environmentId: "env-b", machineName: "Studio", pipelineName: "Ship it" },
+          threadUrl: "https://app.t3.codes/env-b/thr-1",
+        },
+      },
+    ]);
+  });
+
   it("sends what the client knows about the issue and a link to the thread", async () => {
     const { warning, requests } = record(succeed([]));
     expect(await warning).toBeNull();

@@ -94,6 +94,18 @@ export const computeLinearActivity = Effect.fn("LinearActivity.compute")(functio
         pipeline: null,
       } satisfies LinearActivityItem;
     }
+    // The run lives on another machine; this server can only report that it was launched.
+    if (stored.link.environmentId != null) {
+      return {
+        link: stored.link,
+        title: "Pipeline run",
+        provider: null,
+        messageCount: null,
+        status: "idle",
+        updatedAt: stored.link.createdAt,
+        pipeline: null,
+      } satisfies LinearActivityItem;
+    }
     const run = yield* pipelines.getRun(stored.link.targetId as PipelineRun["id"]);
     return {
       link: stored.link,

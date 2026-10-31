@@ -165,7 +165,10 @@ that choice stable. Choose **Auto balance** again to check current resources, or
 a specific machine to override it. Choosing a branch or worktree also keeps the draft
 on that machine. Existing threads stay where they started. If resource checks are
 unavailable or all eligible machines are full, choose a machine manually to continue.
-Mobile keeps its manual environment selection.
+The Linear [pipeline dialog](./linear.md#choosing-the-machine) uses the same balancing and your
+preferences. Mobile has no load-balancing preferences, so its Linear pipeline sheet offers
+**Auto balance** with all machines weighted equally; everywhere else it keeps its manual
+environment selection.
 
 ### Tailscale HTTPS
 

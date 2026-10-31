@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import {
+  EnvironmentId,
   IsoDateTime,
   NonNegativeInt,
   ProjectId,
@@ -326,6 +327,11 @@ export const LinearIssueLink = Schema.Struct({
   commentId: Schema.NullOr(Schema.String),
   commentMode: LinearCommentMode,
   stateMovedTo: Schema.NullOr(Schema.String),
+  /**
+   * The machine that holds a pipeline run this server cannot read. Absent or null: the run (or
+   * thread) lives on the server that stores the link.
+   */
+  environmentId: Schema.optional(Schema.NullOr(EnvironmentId)),
 });
 export type LinearIssueLink = typeof LinearIssueLink.Type;
 
@@ -399,6 +405,17 @@ export const LinearRecordLaunchInput = Schema.Struct({
     moveToStateId: Schema.optional(LinearId),
     comment: Schema.Boolean,
   }),
+  /**
+   * Set when the run is on a machine other than the one recording it (no matching Linear
+   * connection there). The link keeps the machine and the comment is one static post.
+   */
+  remote: Schema.optional(
+    Schema.Struct({
+      environmentId: EnvironmentId,
+      machineName: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+      pipelineName: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+    }),
+  ),
   /** `<origin>/<environmentId>/<threadId>` of the launching client. */
   threadUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)),
   /**

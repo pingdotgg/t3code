@@ -51,6 +51,7 @@ import { formatProgressPercent } from "@t3tools/client-runtime/linear/issue-list
 import { linearIssueMatchesRoute } from "@t3tools/client-runtime/linear/issue-link";
 import {
   activityStatusLabel,
+  activityItemEnvironmentId,
   pickActivityPill,
   stepTone,
 } from "@t3tools/client-runtime/linear/activity";
@@ -309,7 +310,10 @@ function DetailBody({
     // A pipeline run opens through its parent thread, like every other run entry point.
     void navigate({
       to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams({ environmentId, threadId: item.link.threadId }),
+      params: buildThreadRouteParams({
+        environmentId: activityItemEnvironmentId(item, environmentId),
+        threadId: item.link.threadId,
+      }),
     });
   };
   return (

@@ -1,7 +1,14 @@
-import type { LinearIssue, LinearIssueActivity } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  LinearIssue,
+  LinearIssueActivity,
+  PipelineRunSummary,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  applyRemoteRunStatus,
+  mergeLinearActivity,
   pickActivityPill,
   jumpBackInIssueIds,
   orderJumpBackInIssues,
@@ -45,7 +52,7 @@ function activity(overrides: Partial<LinearIssueActivity> = {}): LinearIssueActi
     issueId: "a",
     issueIdentifier: "ATT-1",
     teamId: "t",
-    items: [{} as LinearIssueActivity["items"][number]],
+    items: [{ link: {}, pipeline: null } as LinearIssueActivity["items"][number]],
     latestActivityAt: "2026-01-02T00:00:00.000Z",
     runningCount: 0,
     threadCount: 0,
@@ -148,5 +155,80 @@ describe("activity summaries", () => {
       "idle",
       "idle",
     ]);
+  });
+});
+
+describe("remote pipeline activity", () => {
+  const envB = "env-b" as EnvironmentId;
+  const entry = (
+    issueId: string,
+    targetId: string,
+    environmentId: string | null,
+    updatedAt = "2026-01-02T00:00:00.000Z",
+  ): LinearIssueActivity =>
+    ({
+      issueId,
+      issueIdentifier: issueId.toUpperCase(),
+      teamId: "t",
+      items: [
+        {
+          link: {
+            linkId: `l-${targetId}`,
+            issueId,
+            targetKind: "pipeline_run",
+            targetId,
+            environmentId,
+          },
+          title: "Pipeline run",
+          status: "idle",
+          updatedAt,
+          pipeline: null,
+        },
+      ],
+      latestActivityAt: updatedAt,
+      runningCount: 0,
+      threadCount: 0,
+      pipelineRunning: false,
+      pipelineFailed: false,
+    }) as unknown as LinearIssueActivity;
+
+  it("stamps a peer's own items with its machine and drops duplicates", () => {
+    const merged = mergeLinearActivity({
+      primary: [entry("a", "run-1", null), entry("a", "run-2", "env-b")],
+      peers: [
+        { environmentId: envB, issues: [entry("a", "run-2", null), entry("b", "run-3", null)] },
+      ],
+    });
+    expect(merged.map((issue) => issue.issueId).toSorted()).toEqual(["a", "b"]);
+    const a = merged.find((issue) => issue.issueId === "a")!;
+    expect(a.items.map((item) => [item.link.targetId, item.link.environmentId]).toSorted()).toEqual(
+      [
+        ["run-1", null],
+        ["run-2", "env-b"],
+      ],
+    );
+  });
+
+  it("shows a pipeline pill for a run on another machine and its live state when streamed", () => {
+    const issues = [entry("a", "run-1", "env-b")];
+    expect(pickActivityPill(issue("a"), issues[0])?.kind).toBe("pipeline-remote");
+
+    const live = new Map([
+      [
+        "env-b:run-1",
+        {
+          id: "run-1",
+          name: "Ship it",
+          status: "paused",
+          pauseReason: "step_failed",
+          currentStepIndex: 0,
+          steps: [{ stepId: "s", name: "Plan", status: "failed", childThreadId: null }],
+        } as unknown as PipelineRunSummary,
+      ],
+    ]);
+    const updated = applyRemoteRunStatus(issues, live);
+    expect(updated[0]?.pipelineFailed).toBe(true);
+    expect(pickActivityPill(issue("a"), updated[0])?.kind).toBe("pipeline-failed");
+    expect(applyRemoteRunStatus(issues, new Map())).toBe(issues);
   });
 });

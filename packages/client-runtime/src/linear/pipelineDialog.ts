@@ -18,6 +18,7 @@ import {
   type LinearIssueIncludes,
 } from "@t3tools/shared/linearLaunch";
 
+import type { LinearWriteBackRoute } from "./pipelineMachines.ts";
 import {
   linearWriteBackOf,
   type LinearDraftIssue,
@@ -25,10 +26,11 @@ import {
   type RecordLinearLaunchInput,
 } from "./launchPlan.ts";
 
-const LAST_USED_PIPELINE_KEY = "t3code:linear:last-pipeline:v1";
+// Pipelines have a different id on every machine, so the last used one is remembered by name.
+const LAST_USED_PIPELINE_KEY = "t3code:linear:last-pipeline-name:v1";
 
 /** The pipeline last started from an issue on this device; null when none or storage fails. */
-export function readLastUsedPipelineId(
+export function readLastUsedPipelineName(
   storage: Pick<Storage, "getItem"> | undefined,
 ): string | null {
   try {
@@ -38,27 +40,15 @@ export function readLastUsedPipelineId(
   }
 }
 
-export function writeLastUsedPipelineId(
+export function writeLastUsedPipelineName(
   storage: Pick<Storage, "setItem"> | undefined,
-  pipelineId: string,
+  pipelineName: string,
 ): void {
   try {
-    storage?.setItem(LAST_USED_PIPELINE_KEY, pipelineId);
+    storage?.setItem(LAST_USED_PIPELINE_KEY, pipelineName);
   } catch {
     // The "Last used" hint is a convenience; losing it must not block a launch.
   }
-}
-
-/** Preselects the requested pipeline, else the last used one, else the first. */
-export function resolveInitialPipelineId(input: {
-  readonly pipelineIds: ReadonlyArray<string>;
-  readonly requested: string | undefined;
-  readonly lastUsed: string | null;
-}): string | null {
-  const has = (id: string | null | undefined) => id != null && input.pipelineIds.includes(id);
-  if (has(input.requested)) return input.requested!;
-  if (has(input.lastUsed)) return input.lastUsed!;
-  return input.pipelineIds[0] ?? null;
 }
 
 export function includesFromSettings(
@@ -149,10 +139,16 @@ export function pipelineLaunchRecord(input: {
   readonly pipelineName: string;
   readonly run: { readonly id: string; readonly parentThreadId: ThreadId };
   readonly writeBack: Pick<LinearDraftIssue, "moveTo" | "moveEnabled" | "commentEnabled">;
+  /** Where the launch is recorded; omitted when the run's own machine records it. */
+  readonly route?: LinearWriteBackRoute;
 }): RecordLinearLaunchInput {
-  const { issue } = input;
+  const { issue, route } = input;
   return {
     environmentId: input.environmentId,
+    ...(route === undefined ? {} : { recordOn: route.recordOn }),
+    ...(route?.kind === "fallback"
+      ? { remote: { machineName: route.machineName, pipelineName: input.pipelineName } }
+      : {}),
     issueId: issue.id,
     identifier: issue.identifier,
     teamId: issue.team.id,

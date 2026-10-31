@@ -103,6 +103,14 @@
       "types": "./src/worktreeSetup.ts",
       "default": "./src/worktreeSetup.ts"
     },
+    "./state/host-resources-balancing": {
+      "types": "./src/state/hostResourcesBalancing.ts",
+      "default": "./src/state/hostResourcesBalancing.ts"
+    },
+    "./linear/pipeline-machines": {
+      "types": "./src/linear/pipelineMachines.ts",
+      "default": "./src/linear/pipelineMachines.ts"
+    },
     "./load-balancing": {
       "types": "./src/load-balancing.ts",
       "default": "./src/load-balancing.ts"

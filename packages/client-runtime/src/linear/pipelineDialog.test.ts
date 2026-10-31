@@ -14,10 +14,9 @@ import {
   pipelineInputText,
   pipelineLaunchRecord,
   pipelineWorkspaceStrategy,
-  readLastUsedPipelineId,
-  resolveInitialPipelineId,
+  readLastUsedPipelineName,
   resolvePipelineLaunch,
-  writeLastUsedPipelineId,
+  writeLastUsedPipelineName,
 } from "./pipelineDialog.ts";
 
 const detail = {
@@ -43,18 +42,6 @@ const detail = {
   attachments: [],
 } as unknown as LinearIssueDetail;
 
-describe("resolveInitialPipelineId", () => {
-  const pipelineIds = ["a", "b", "c"];
-  it("prefers the requested pipeline, then the last used, then the first", () => {
-    expect(resolveInitialPipelineId({ pipelineIds, requested: "c", lastUsed: "b" })).toBe("c");
-    expect(resolveInitialPipelineId({ pipelineIds, requested: "gone", lastUsed: "b" })).toBe("b");
-    expect(resolveInitialPipelineId({ pipelineIds, requested: undefined, lastUsed: "gone" })).toBe(
-      "a",
-    );
-    expect(resolveInitialPipelineId({ pipelineIds: [], requested: "a", lastUsed: "a" })).toBeNull();
-  });
-});
-
 describe("last used pipeline storage", () => {
   it("round-trips and survives broken storage", () => {
     const data = new Map<string, string>();
@@ -62,9 +49,9 @@ describe("last used pipeline storage", () => {
       getItem: (key: string) => data.get(key) ?? null,
       setItem: (key: string, value: string) => void data.set(key, value),
     };
-    expect(readLastUsedPipelineId(storage)).toBeNull();
-    writeLastUsedPipelineId(storage, "p1");
-    expect(readLastUsedPipelineId(storage)).toBe("p1");
+    expect(readLastUsedPipelineName(storage)).toBeNull();
+    writeLastUsedPipelineName(storage, "p1");
+    expect(readLastUsedPipelineName(storage)).toBe("p1");
     const broken = {
       getItem: () => {
         throw new Error("denied");
@@ -73,9 +60,9 @@ describe("last used pipeline storage", () => {
         throw new Error("denied");
       },
     };
-    expect(readLastUsedPipelineId(broken)).toBeNull();
-    expect(() => writeLastUsedPipelineId(broken, "p1")).not.toThrow();
-    expect(readLastUsedPipelineId(undefined)).toBeNull();
+    expect(readLastUsedPipelineName(broken)).toBeNull();
+    expect(() => writeLastUsedPipelineName(broken, "p1")).not.toThrow();
+    expect(readLastUsedPipelineName(undefined)).toBeNull();
   });
 });
 
@@ -231,6 +218,35 @@ describe("pipelineLaunchRecord", () => {
       },
       writeBack: { moveToStateId: "prog", comment: false },
     });
+  });
+});
+
+describe("pipelineLaunchRecord routing", () => {
+  const base = {
+    environmentId: "env-b" as EnvironmentId,
+    issue: detail.issue,
+    pipelineName: "Ship it",
+    run: { id: "run-1", parentThreadId: "thr-1" as ThreadId },
+    writeBack: { moveTo: null, moveEnabled: false, commentEnabled: true },
+  };
+
+  it("records on the run's machine for a seamless route", () => {
+    const record = pipelineLaunchRecord({
+      ...base,
+      route: { kind: "seamless", recordOn: "env-b" as EnvironmentId },
+    });
+    expect(record.recordOn).toBe("env-b");
+    expect(record.remote).toBeUndefined();
+  });
+
+  it("records on the primary and remembers the machine for a fallback route", () => {
+    const record = pipelineLaunchRecord({
+      ...base,
+      route: { kind: "fallback", recordOn: "env-a" as EnvironmentId, machineName: "Studio" },
+    });
+    expect(record.environmentId).toBe("env-b");
+    expect(record.recordOn).toBe("env-a");
+    expect(record.remote).toEqual({ machineName: "Studio", pipelineName: "Ship it" });
   });
 });
 
