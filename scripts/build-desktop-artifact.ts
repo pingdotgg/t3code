@@ -63,6 +63,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const DESKTOP_APP_ID = "com.t3tools.t3code";
+
+// Squirrel.Mac renames an install named after its executable to the update's executable,
+// then relaunches from the old path. One executable name for every channel keeps it in place.
+const MAC_BUNDLE_FILENAME = "T3 Code (Beta)";
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -2819,6 +2823,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     const path = yield* Path.Path;
     const repoRoot = yield* RepoRoot;
     buildConfig.mac = {
+      executableName: MAC_BUNDLE_FILENAME,
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
@@ -2876,7 +2881,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         height: 432,
       },
       contents: [
-        { x: 166, y: 214, type: "file" },
+        // Name the app after its channel so a nightly installs beside stable. Squirrel.Mac
+        // never renames a bundle whose folder differs from its executable, so it stays put.
+        { x: 166, y: 214, type: "file", name: `${resolveDesktopProductName(version)}.app` },
         { x: 474, y: 214, type: "link", path: "/Applications" },
       ],
       iconSize: 120,
