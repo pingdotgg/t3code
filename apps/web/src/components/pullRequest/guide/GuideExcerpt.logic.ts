@@ -13,7 +13,12 @@ export function excerptLoader(
   sliceRows: ReadonlyArray<DiffRow>,
   loadDiffFiles: FileDiffContentsLoader,
 ): FileDiffContentsLoader | null {
-  if (sliceRows.some((row) => row.hunk !== sliceRows[0]?.hunk)) {
+  // An added or deleted file has no unchanged context to expand.
+  if (
+    file.type === "new" ||
+    file.type === "deleted" ||
+    sliceRows.some((row) => row.hunk !== sliceRows[0]?.hunk)
+  ) {
     return null;
   }
   return async () => {

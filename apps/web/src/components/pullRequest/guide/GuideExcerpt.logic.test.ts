@@ -69,3 +69,25 @@ it("expands an excerpt whose file has another hunk that changes its length", asy
     new DiffHunksRenderer({ expandUnchanged: true }).asyncRender(hydrated),
   ).resolves.toBeDefined();
 });
+
+it("leaves a deleted file's excerpt without context expansion", () => {
+  const file = parse(
+    [
+      "diff --git a/file.ts b/file.ts",
+      "deleted file mode 100644",
+      "--- a/file.ts",
+      "+++ /dev/null",
+      "@@ -1,3 +0,0 @@",
+      "-a",
+      "-b",
+      "-c",
+      "",
+    ].join("\n"),
+  );
+  const excerpt = { path: "file.ts", side: "old", start: 2, end: 2, caption: "" } as const;
+  const rows = excerptRows(fileDiffRows(file), excerpt);
+
+  expect(excerptLoader(excerpt, file, rows, async () => Promise.reject(new Error("unused")))).toBe(
+    null,
+  );
+});
