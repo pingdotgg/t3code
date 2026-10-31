@@ -621,6 +621,46 @@ it.effect("a read-only client reads threads and is refused every write before it
 );
 const dispatched: Array<string> = [];
 
+it.effect("an agent turns a thread's auto-settle off and back on", () => {
+  const commands: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    for (const action of ["disable_auto_settle", "enable_auto_settle"]) {
+      const result = yield* server
+        .callTool({ name: "t3_thread_organize", arguments: { action } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(result.isError).toBe(false);
+    }
+    expect(commands).toMatchObject([
+      { type: "thread.auto-settle.set", threadId, enabled: false },
+      { type: "thread.auto-settle.set", threadId, enabled: true },
+    ]);
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+            getProjectThreadRecords: ({ threadId: id }) =>
+              Effect.succeed(
+                McpToolAccessTestkit.idleThreadProjection(McpToolAccessTestkit.liveThreadShell(id)),
+              ),
+            dispatch: (command) => {
+              commands.push(command);
+              return Effect.succeed({ sequence: 1 } as never);
+            },
+          }),
+        ),
+      ),
+    ),
+  );
+});
+
 it.effect("refuses act-as-caller tools to a client caller", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
