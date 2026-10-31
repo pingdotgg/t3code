@@ -33,7 +33,6 @@ import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateDisabledReason,
-  getDesktopUpdateInstallConfirmationMessage,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
 } from "../../components/desktopUpdate.logic";
@@ -58,6 +57,7 @@ import { scopedIdleCompaction } from "./scopedSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { ThreadTitleInstructionsSettings } from "./ThreadTitleInstructionsSettings";
 import { SnoozePresetsRow } from "./SnoozePresetsSettings";
+import { useConfirmDesktopUpdateInstall } from "../../state/desktopHostedWork";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
   getCustomModelOptionsByInstance,
@@ -153,6 +153,9 @@ function AboutVersionSection() {
   );
   // A second run would replace the first run's progress and local download.
   const updateRun = useUpdateEverythingRun();
+  const confirmInstall = useConfirmDesktopUpdateInstall(
+    updateState !== null && resolveDesktopUpdateButtonAction(updateState) === "install",
+  );
 
   const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
   const selectedUpdateChannel = updateState?.channel ?? "latest";
@@ -200,10 +203,8 @@ function AboutVersionSection() {
       setIsUpdateActionPending(true);
       let confirmed = false;
       try {
-        confirmed = await ensureLocalApi().dialogs.confirm(
-          getDesktopUpdateInstallConfirmationMessage(
-            updateState ?? { availableVersion: null, downloadedVersion: null },
-          ),
+        confirmed = await confirmInstall(
+          updateState ?? { availableVersion: null, downloadedVersion: null },
         );
       } catch (error) {
         setIsUpdateActionPending(false);
