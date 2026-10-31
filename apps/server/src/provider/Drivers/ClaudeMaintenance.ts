@@ -1,8 +1,11 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 import {
+  makeCachedProviderMaintenanceResolution,
   makePackageManagedProviderMaintenanceResolver,
   normalizeCommandPath,
   resolveProviderMaintenanceCapabilitiesEffect,
+  type ProviderMaintenanceCapabilities,
+  type ProviderMaintenanceResolverServices,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
@@ -70,10 +73,9 @@ const readUpdateChannel = Effect.fn("ClaudeMaintenance.readUpdateChannel")(funct
   return channels.findLast((channel) => channel !== undefined) ?? "latest";
 });
 
-export const resolveClaudeMaintenance = Effect.fn("ClaudeMaintenance.resolve")(function* (
-  options: Parameters<typeof resolveProviderMaintenanceCapabilitiesEffect>[1],
+const resolveClaudeMaintenance = Effect.fn("ClaudeMaintenance.resolve")(function* (
+  capabilities: ProviderMaintenanceCapabilities,
 ) {
-  const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(update, options);
   if (capabilities.update?.lockKey !== "claudeAgent-native") return capabilities;
   const channel = yield* readUpdateChannel();
   const client = yield* HttpClient.HttpClient;
@@ -92,4 +94,23 @@ export const resolveClaudeMaintenance = Effect.fn("ClaudeMaintenance.resolve")(f
       Effect.orElseSucceed(() => null),
     ),
   };
+});
+
+export const makeClaudeMaintenanceResolution = Effect.fn("ClaudeMaintenance.make")(function* (
+  options: Parameters<typeof resolveProviderMaintenanceCapabilitiesEffect>[1],
+) {
+  const services = yield* Effect.context<
+    ProviderMaintenanceResolverServices | HttpClient.HttpClient
+  >();
+  const resolveInstallation = yield* makeCachedProviderMaintenanceResolution(
+    resolveProviderMaintenanceCapabilitiesEffect(update, options).pipe(
+      Effect.provideContext(services),
+    ),
+  );
+  const resolve: typeof resolveInstallation = (refreshOptions) =>
+    resolveInstallation(refreshOptions).pipe(
+      Effect.flatMap(resolveClaudeMaintenance),
+      Effect.provideContext(services),
+    );
+  return resolve;
 });
