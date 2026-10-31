@@ -40,7 +40,13 @@ export function ComposerBannerStack({
   readonly detached?: boolean;
 }) {
   const ordered = GROUPS.flatMap((group) =>
-    items.filter((item) => (item.group ?? "attention") === group),
+    items
+      .filter((item) => (item.group ?? "attention") === group)
+      .sort(
+        (a, b) =>
+          (a.variant === "error" ? 0 : a.variant === "warning" ? 1 : 2) -
+          (b.variant === "error" ? 0 : b.variant === "warning" ? 1 : 2),
+      ),
   );
   if (detached) {
     return ordered.map((item) => (
@@ -49,11 +55,39 @@ export function ComposerBannerStack({
       </div>
     ));
   }
-  return ordered.map((item) => (
-    <ComposerBanner.Attachment key={item.id} data-composer-banner-stack="true" className={FADE_IN}>
-      <NoticeCard item={item} />
+  const [first, ...rest] = ordered;
+  if (!first) return null;
+  return (
+    <ComposerBanner.Attachment key={first.id} data-composer-banner-stack="true" className={FADE_IN}>
+      <NoticeCard
+        item={first}
+        overflow={
+          rest.length ? (
+            <Popover>
+              <PopoverTrigger
+                render={
+                  <Button
+                    variant="ghost-muted"
+                    size="micro"
+                    aria-label={`${rest.length} more notices`}
+                  />
+                }
+              >
+                +{rest.length}
+              </PopoverTrigger>
+              <PopoverPopup side="top" align="end" className="w-[min(40rem,calc(100vw-2rem))]">
+                <ComposerBanner.Scroll>
+                  {rest.map((item) => (
+                    <NoticeCard key={item.id} item={item} detached />
+                  ))}
+                </ComposerBanner.Scroll>
+              </PopoverPopup>
+            </Popover>
+          ) : null
+        }
+      />
     </ComposerBanner.Attachment>
-  ));
+  );
 }
 
 const SUBPIXEL_ROUNDING = 0.001;
@@ -165,7 +199,9 @@ export function NoticeText({
 function NoticeCard({
   item,
   detached = false,
+  overflow,
 }: {
+  readonly overflow?: ReactNode;
   readonly item: ComposerBannerStackItem;
   readonly detached?: boolean;
 }) {
@@ -204,8 +240,9 @@ function NoticeCard({
             </NoticeText>
           ) : null}
         </ComposerBanner.Content>
-        {item.actions || item.onDismiss ? (
+        {item.actions || item.onDismiss || overflow ? (
           <ComposerBanner.Actions className="min-w-14 sm:min-w-12">
+            {overflow}
             {item.actions}
             {item.onDismiss ? (
               <ComposerBanner.Dismiss
