@@ -104,6 +104,7 @@ import {
   awaitAttachmentUploads,
   getUploadedAttachments,
   refreshExpiredAttachmentUploads,
+  markAttachmentClaimFailure,
   readAttachmentUpload,
   releaseDraftAttachments,
   retryAttachmentUpload,
@@ -1505,6 +1506,11 @@ export function useComposerSend(input: ComposerSendInput) {
       }
       if (!isAtomCommandInterrupted(failure)) {
         const error = squashAtomCommandFailure(failure);
+        markAttachmentClaimFailure({
+          environmentId,
+          attachments: composerAttachmentsSnapshot,
+          error,
+        });
         setThreadError(
           threadIdForSend,
           error instanceof Error ? error.message : "Failed to send message.",
