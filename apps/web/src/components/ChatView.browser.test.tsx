@@ -63,8 +63,7 @@ it("a new draft does not load its reserved thread before the server lists it", a
   expect(threadRequests).toEqual([]);
 });
 
-it("a stashed prompt ending in a file chip restores with the chip", async () => {
-  using _environment = installFakeEnvironment([]);
+async function draftRouterWithPrompt(prompt: string) {
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
@@ -74,10 +73,15 @@ it("a stashed prompt ending in a file chip restores with the chip", async () => 
   drafts.setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
     threadId: ThreadId.make("thread-28338"),
   });
-  drafts.setPrompt(draftId, "Check [package.json](package.json) ");
-
+  drafts.setPrompt(draftId, prompt);
   const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
   await router.load();
+  return router;
+}
+
+it("a stashed prompt ending in a file chip restores with the chip", async () => {
+  using _environment = installFakeEnvironment([]);
+  const router = await draftRouterWithPrompt("Check [package.json](package.json) ");
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
     router: false,
@@ -94,4 +98,23 @@ it("a stashed prompt ending in a file chip restores with the chip", async () => 
   await vi.waitFor(() => expect(editor.element().textContent).toContain("Check"));
   expect(editor.element().textContent).not.toContain("[package.json](package.json)");
   await expect.element(chip).toBeVisible();
+});
+
+it("a stashed unfinished mention query restores as text", async () => {
+  using _environment = installFakeEnvironment([]);
+  const router = await draftRouterWithPrompt("Check @Rea");
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const editor = page.getByTestId("composer-editor");
+  await vi.waitFor(() => expect(editor.element().textContent).toContain("Check @Rea"));
+
+  await userEvent.click(editor);
+  await userEvent.keyboard("{ControlOrMeta>}s{/ControlOrMeta}");
+  await vi.waitFor(() => expect(editor.element().textContent).not.toContain("Check"));
+  await userEvent.keyboard("{ControlOrMeta>}s{/ControlOrMeta}");
+
+  await vi.waitFor(() => expect(editor.element().textContent).toContain("Check @Rea"));
+  await expect.element(page.getByRole("button", { name: "Preview Rea" })).not.toBeInTheDocument();
 });

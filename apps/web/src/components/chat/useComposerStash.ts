@@ -208,7 +208,7 @@ export function useComposerStash(input: {
     const rewrittenContextIds = entry.records
       ? importContextRecords(entry.records, null, composerDraftTarget)
       : new Map<string, string>();
-    const rewrittenPrompt = replaceComposerContextReferences(entry.prompt, (reference) => {
+    const restoredPrompt = replaceComposerContextReferences(entry.prompt, (reference) => {
       const contextId = rewrittenContextIds.get(reference.contextId);
       return contextId
         ? formatInlineContextReference({
@@ -218,13 +218,6 @@ export function useComposerStash(input: {
           })
         : reference.source;
     });
-    // Stash entries are stored trimmed, and a chip token only parses when whitespace follows it.
-    const lastToken = collectComposerPromptInlineTokens(`${rewrittenPrompt}\n`).at(-1);
-    const restoredPrompt =
-      (lastToken?.type === "mention" || lastToken?.type === "skill") &&
-      lastToken.end === rewrittenPrompt.length
-        ? `${rewrittenPrompt} `
-        : rewrittenPrompt;
     const currentPrompt = promptRef.current;
     const nextPrompt =
       restoredPrompt.length === 0
@@ -463,7 +456,14 @@ export function useComposerStash(input: {
       });
       return;
     }
-    const prompt = promptRef.current.trim();
+    const rawPrompt = promptRef.current;
+    const lastToken = collectComposerPromptInlineTokens(rawPrompt).at(-1);
+    // A trailing chip only parses with whitespace after it, so keep one space to restore it.
+    const prompt =
+      (lastToken?.type === "mention" || lastToken?.type === "skill") &&
+      rawPrompt.slice(lastToken.end).trim().length === 0
+        ? `${rawPrompt.trim()} `
+        : rawPrompt.trim();
     const attachmentDraft = readAttachmentDraft();
     const images = [...attachmentDraft.images];
     const files = [...attachmentDraft.files];
