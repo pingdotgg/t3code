@@ -225,6 +225,8 @@ function makePushNotificationRequest(input: {
         },
         sound: "default",
         "thread-id": notificationThreadId(input.notification),
+        // iOS Focus filters match this against the app's notificationFilterPredicate.
+        "filter-criteria": input.notification.environmentId,
       },
       // Expo iOS exposes userInfo.body as notification.content.data for remote pushes.
       body: {
