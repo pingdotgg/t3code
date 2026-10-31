@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as TestClock from "effect/testing/TestClock";
 import { beforeEach } from "vite-plus/test";
 
 import { OpenCodeSettings } from "../settings.ts";
@@ -21,6 +22,7 @@ import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 import {
   checkOpenCodeProviderStatus,
   loadOpenCode2Workspace,
+  makeOpenCode2ModelLoader,
   type OpenCode2Model,
   type OpenCode2Workspace,
 } from "./status.ts";
@@ -1074,4 +1076,66 @@ it.effect("reads a fresh OpenCode 2 directory again once its scan has ended", ()
     yield* Deferred.succeed(scanEnded, undefined);
     NodeAssert.deepEqual(yield* Fiber.join(load), scanned);
   }),
+);
+
+const bigPickle: OpenCode2Model = {
+  providerID: "opencode",
+  id: "big-pickle",
+  name: "Big Pickle",
+  variants: [],
+};
+
+it.effect("does not spend the OpenCode 2 catalog budget on a cold server start", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    const load = yield* makeOpenCode2ModelLoader(
+      Effect.gen(function* () {
+        reads += 1;
+        // The first read also waits for the server to spawn.
+        if (reads === 1) {
+          yield* Effect.sleep("4500 millis");
+          return [];
+        }
+        return [bigPickle];
+      }),
+    );
+    const fiber = yield* load.pipe(Effect.forkChild);
+    yield* TestClock.adjust("6 seconds");
+    NodeAssert.ok(fiber.pollUnsafe(), "The catalog should settle after the slow cold start");
+    NodeAssert.deepEqual(yield* Fiber.join(fiber), [bigPickle]);
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("keeps the last OpenCode 2 model list while a fresh server's stays empty", () =>
+  Effect.gen(function* () {
+    let listed: ReadonlyArray<OpenCode2Model> = [bigPickle];
+    const load = yield* makeOpenCode2ModelLoader(Effect.sync(() => listed));
+    const first = yield* load.pipe(Effect.forkChild);
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(yield* Fiber.join(first), [bigPickle]);
+
+    listed = [];
+    const empty = yield* load.pipe(Effect.forkChild);
+    yield* TestClock.adjust("6 seconds");
+    NodeAssert.deepEqual(yield* Fiber.join(empty), [bigPickle]);
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("confirms a growing OpenCode 2 catalog twice before caching it", () =>
+  Effect.gen(function* () {
+    const second = { ...bigPickle, id: "second-pickle", name: "Second Pickle" };
+    const replies: Array<ReadonlyArray<OpenCode2Model>> = [
+      [bigPickle],
+      [bigPickle],
+      [bigPickle, second],
+      [bigPickle, second],
+    ];
+    const load = yield* makeOpenCode2ModelLoader(
+      Effect.sync(() => replies.shift() ?? [bigPickle, second]),
+    );
+    const fiber = yield* load.pipe(Effect.forkChild);
+    yield* TestClock.adjust("2 seconds");
+    NodeAssert.ok(fiber.pollUnsafe(), "A settled catalog should finish before the deadline");
+    NodeAssert.deepEqual(yield* Fiber.join(fiber), [bigPickle, second]);
+  }).pipe(Effect.provide(TestClock.layer())),
 );
