@@ -403,6 +403,11 @@ export function useThreadListActions(): {
       );
       return false;
     }
+    if (
+      (thread.settledOverride === "settled" || thread.settledAt != null) &&
+      !(await unsettleThread(thread))
+    )
+      return false;
     selectionHaptic();
     const shells = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
     let firstKey: string | null = null;
@@ -649,6 +654,7 @@ export function useThreadListActions(): {
     const reorder = section === "pinned" ? reorderPinnedMutation : reorderActiveMutation;
     const moved = await (async () => {
       if (crossSection) {
+        if (lifecycle.unsettle && !(await unsettleThread(thread))) return false;
         if (section === "pinned") {
           const orderKey = assignments.find(
             ({ id }) => id === scopedThreadKey(thread.environmentId, thread.id),
@@ -667,7 +673,6 @@ export function useThreadListActions(): {
           }
         } else {
           if (lifecycle.unpin && !(await unpinThread(thread))) return false;
-          if (lifecycle.unsettle && !(await unsettleThread(thread))) return false;
           if (lifecycle.unsnooze && !(await unsnoozeThread(thread))) return false;
         }
       }

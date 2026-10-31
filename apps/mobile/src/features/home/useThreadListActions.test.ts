@@ -278,6 +278,51 @@ describe("thread delete completion", () => {
   });
 });
 
+describe("settled thread promotion", () => {
+  it.each(["pin", "pinned", "active"] as const)(
+    "clears timestamp-only settlement before promotion to %s",
+    async (destination) => {
+      const thread = makeThread({ settledOverride: null, settledAt: "2026-09-02T00:00:00.000Z" });
+      state.shells = [thread];
+      const actions = useThreadListActions();
+      const result =
+        destination === "pin"
+          ? await actions.pinThread(thread)
+          : await actions.moveThread(thread, {
+              targetId: null,
+              section: destination,
+              placement: "before",
+            });
+      expect(result).toBe(true);
+      expect(state.requests.map(({ action }) => action)).toEqual([
+        "unsettle",
+        destination === "active" ? "reorderActive" : "pin",
+      ]);
+    },
+  );
+
+  it.each(["pin", "pinned", "active"] as const)(
+    "does not promote to %s when clearing settlement fails",
+    async (destination) => {
+      const thread = makeThread({ settledOverride: null, settledAt: "2026-09-02T00:00:00.000Z" });
+      state.shells = [thread];
+      state.failedAction = "unsettle";
+      const actions = useThreadListActions();
+      const result =
+        destination === "pin"
+          ? await actions.pinThread(thread)
+          : await actions.moveThread(thread, {
+              targetId: null,
+              section: destination,
+              placement: "before",
+            });
+      expect(result).toBe(false);
+      expect(state.requests.map(({ action }) => action)).toEqual(["unsettle"]);
+      expect(state.dropBusy).toBe(false);
+    },
+  );
+});
+
 describe("pinned thread operation permissions", () => {
   it("checks every materialization target before writing any keys", async () => {
     const moved = makeThread({ pinnedAt: "2026-09-02T00:00:00.000Z" });

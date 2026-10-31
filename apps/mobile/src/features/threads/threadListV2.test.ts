@@ -1264,7 +1264,7 @@ describe("cross-section thread drops", () => {
     expect(threadDropLifecycle(thread, "pinned", NOW)).toEqual({
       pin: true,
       unpin: false,
-      unsettle: false,
+      unsettle: true,
       unsnooze: false,
     });
   });
