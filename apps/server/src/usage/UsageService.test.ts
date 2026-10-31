@@ -2631,9 +2631,7 @@ describe("UsageService", () => {
             ...settings.providerInstances,
             [ProviderInstanceId.make("secretFixture")]: {
               driver: ProviderDriverKind.make("antigravity"),
-              environment: [
-                { name: "OPENROUTER_API_KEY", value: "synthetic-secret", sensitive: true },
-              ],
+              environment: [{ name: "API_TOKEN", value: "fixture-token", sensitive: true }],
             },
           },
         });
