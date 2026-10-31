@@ -1,8 +1,12 @@
-import { type ReactNode } from "react";
+import { type ReactNode, type ComponentProps } from "react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
+import { TerminalIcon, ChevronRightIcon } from "lucide-react";
+import { ContextChip, ContextChipLabel } from "../ContextChip";
+import { mergeProps } from "@base-ui/react/merge-props";
+import { useRender } from "@base-ui/react/use-render";
 
 export const MESSAGE_HEADING_LEVEL = 3;
 
@@ -52,4 +56,84 @@ export function ActivityShimmerOverlay({ children }: { children: ReactNode }) {
       </span>
     </span>
   );
+}
+
+/** The fold toggle shared by the working bar and the finished turn's bar; it trails the label. */
+export function WorkFoldChevron({ expanded }: { expanded: boolean }) {
+  return (
+    <ChevronRightIcon
+      aria-hidden
+      className={cn(
+        "size-3 shrink-0 text-dim-foreground transition-transform",
+        expanded && "rotate-90",
+      )}
+    />
+  );
+}
+
+/** The bar's quiet action chip (Snooze), a feature look rather than a button variant. */
+export function WorkingBarChip({
+  icon,
+  children,
+  tone = "neutral",
+  ...buttonProps
+}: {
+  icon: ReactNode;
+  children: ReactNode;
+  tone?: "neutral" | "warning";
+} & Omit<ComponentProps<"button">, "className" | "children" | "type">) {
+  return (
+    <WorkingBarControl variant="chip" tone={tone} {...buttonProps}>
+      {icon}
+      <span className="min-w-0 truncate">{children}</span>
+    </WorkingBarControl>
+  );
+}
+
+/**
+ * The working bar's frame: a 32px line over a hairline, shared by the bar and the fold.
+ * The label starts on the assistant text's edge, 4px into the lane.
+ */
+export const WORKING_BAR_CLASS_NAME =
+  "group/timeline-row relative flex h-8 min-w-0 items-center gap-2.5 border-b border-(--timeline-working-rule,var(--border)) ps-1 pe-1";
+
+/** A provider command in the timeline: in a work row's trailing slot, or opening a prompt. */
+export function SlashCommandChip({ name }: { name: string }) {
+  return (
+    <ContextChip kind="terminal">
+      <TerminalIcon aria-hidden="true" />
+      <ContextChipLabel className="font-mono">{name}</ContextChipLabel>
+    </ContextChip>
+  );
+}
+
+/** The working bar's controls share its compact, feature-owned spacing. */
+export function WorkingBarControl({
+  variant,
+  tone = "neutral",
+  render,
+  ...props
+}: Omit<useRender.ComponentProps<"button">, "className"> & {
+  variant: "chip" | "history" | "question";
+  tone?: "neutral" | "warning";
+}) {
+  const defaultProps = {
+    type: render ? undefined : ("button" as const),
+    className: cn(
+      variant === "chip"
+        ? "inline-flex h-[22px] shrink-0 cursor-pointer items-center gap-1.5 rounded-row px-2 text-meta whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 disabled:pointer-events-none disabled:opacity-64 [&_svg]:size-3 [&_svg]:shrink-0"
+        : variant === "history"
+          ? "flex min-w-0 flex-1 cursor-pointer select-none items-center gap-2 self-stretch rounded-md text-left text-label text-muted-foreground tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 disabled:cursor-default"
+          : "inline-flex h-[22px] min-w-0 shrink items-center gap-1.5 rounded-row text-meta focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 text-info-foreground cursor-pointer",
+      variant === "chip" &&
+        (tone === "warning"
+          ? "bg-warning-foreground/10 text-warning-foreground hover:bg-warning-foreground/15"
+          : "bg-badge-neutral text-muted-foreground hover:text-foreground"),
+    ),
+  };
+  return useRender({
+    defaultTagName: "button",
+    props: mergeProps<"button">(defaultProps, props),
+    render,
+  });
 }
