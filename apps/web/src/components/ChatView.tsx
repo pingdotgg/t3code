@@ -3113,9 +3113,12 @@ export default function ChatView(props: ChatViewProps) {
     onShowLimits: usageLimitsOffered && usageLimitsKey !== null ? openUsageLimits : null,
     threadId: activeThread?.id ?? null,
     threadError: timelineThreadError,
-    threadErrorClass:
-      threadErrorIsServerRuntimeError ? (serverRuntime?.lastErrorClass ?? null) : null,
-    threadErrorCode: threadErrorIsServerRuntimeError ? (serverRuntime?.lastErrorCode ?? null) : null,
+    threadErrorClass: threadErrorIsServerRuntimeError
+      ? (serverRuntime?.lastErrorClass ?? null)
+      : null,
+    threadErrorCode: threadErrorIsServerRuntimeError
+      ? (serverRuntime?.lastErrorCode ?? null)
+      : null,
     threadErrorBannerKey,
     onRetry: canRetryFailedRun ? () => void onRetryFailedRunStable() : null,
     retrying: retryingFailedRunId !== null,
@@ -3552,6 +3555,7 @@ export default function ChatView(props: ChatViewProps) {
                 usageLimit={timelineUsageLimit}
                 threadErrorMessage={timelineThreadError}
                 onFocusComposer={focusComposerAtEndStable}
+                onInterrupt={canInterruptRunningThread ? onInterruptStable : null}
                 awaitingUser={
                   activePendingApproval !== null
                     ? "approval"
