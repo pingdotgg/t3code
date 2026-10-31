@@ -166,6 +166,46 @@ describe("terminal session reducers", () => {
     expect(readTerminalOutputUpdate(state.output, update.cursor).type).toBe("none");
   });
 
+  it("bounds historical chunk inspection when reading new tail output", () => {
+    let state = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
+      type: "snapshot",
+      snapshot: { ...BASE_SNAPSHOT, history: "" },
+    });
+    for (let index = 0; index < 512; index += 1) {
+      state = applyTerminalAttachStreamEvent(state, {
+        type: "output",
+        threadId: TARGET.threadId,
+        terminalId: TARGET.terminalId,
+        data: "history\r\n",
+      });
+    }
+    const cursor = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR).cursor;
+    const next = applyTerminalAttachStreamEvent(state, {
+      type: "output",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      data: "latest\r\n",
+    });
+    let historicalChunkReads = 0;
+    const chunks = next.output.chunks.map((chunk, index) =>
+      index < state.output.chunks.length
+        ? {
+            ...chunk,
+            get startOffset() {
+              historicalChunkReads += 1;
+              return chunk.startOffset;
+            },
+          }
+        : chunk,
+    );
+
+    expect(readTerminalOutputUpdate({ ...next.output, chunks }, cursor)).toMatchObject({
+      type: "append",
+      data: "latest\r\n",
+    });
+    expect(historicalChunkReads).toBeLessThanOrEqual(2);
+  });
+
   it("preserves the byte-limited tail and resets a cursor before a partially trimmed chunk", () => {
     const initial = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
       type: "snapshot",

@@ -28,6 +28,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import {
@@ -41,6 +42,8 @@ import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRe
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
 import { ACP_SESSION_MODE_OPTION_ID } from "@t3tools/provider-acp/server/sessionConfig";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { t3AcpPromptWithInstructions } from "@t3tools/provider-core/server/orchestrationInstructions";
+import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   decodeAcpReplayTranscript,
@@ -466,6 +469,7 @@ describe("AcpRegistryAdapterV2", () => {
       readonly storedModel?: string;
       readonly storedModePick?: string;
       readonly turnModels?: ReadonlyArray<string>;
+      readonly rejectedModel?: string;
     }) {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       // Scope release gives the replay agent at most a second to exit, so the status
@@ -603,7 +607,19 @@ describe("AcpRegistryAdapterV2", () => {
           configurations.push(published);
           current = target;
         }
-      }).pipe(Effect.scoped);
+      }).pipe(
+        Effect.match({
+          onFailure: (error) => {
+            assert.isDefined(input.rejectedModel);
+            assert.equal(
+              makeProviderFailure({ cause: error }).message,
+              `The agent did not accept the model "${input.rejectedModel}". Choose another model for this provider, then retry.`,
+            );
+          },
+          onSuccess: () => assert.isUndefined(input.rejectedModel),
+        }),
+        Effect.scoped,
+      );
       yield* Effect.all(agentExits, { discard: true });
       yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
       return { configurations };
@@ -770,8 +786,70 @@ describe("AcpRegistryAdapterV2", () => {
         }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
 
+    it.effect.each([
+      "config",
+      "legacy",
+      "updated-config",
+      "removed-config",
+      "configuration-update",
+      "unavailable-before-configuration",
+    ] as const)(
+      "rejects an unavailable explicit model in a %s catalog before inference",
+      (catalog) => {
+        const duringTurn = catalog === "updated-config" || catalog === "removed-config";
+        const duringConfiguration = catalog === "configuration-update";
+        const changesOptions =
+          duringConfiguration || catalog === "unavailable-before-configuration";
+        const model = duringTurn || duringConfiguration ? "hermes" : "missing";
+        const restrictedOption = {
+          ...modelOption("model", "other"),
+          options: [{ value: "other", name: "Other" }],
+        };
+        return openWithStoredPicks({
+          setup: {
+            ...(catalog === "legacy" || catalog === "removed-config"
+              ? {
+                  models: {
+                    currentModelId: "other",
+                    availableModels: [{ modelId: "other", name: "Other" }],
+                  },
+                }
+              : {}),
+            configOptions:
+              catalog === "legacy"
+                ? []
+                : [
+                    {
+                      ...modelOption("model", "hermes"),
+                      options: [{ value: "hermes", name: "Hermes" }],
+                    },
+                    ...(changesOptions ? [permissionModeOption("ask")] : []),
+                  ],
+          },
+          storedModel: model,
+          ...(duringTurn ? { turnModels: [model, model] } : {}),
+          ...(changesOptions ? { storedModePick: "auto" } : {}),
+          rejectedModel: model,
+          pickFrames: duringTurn
+            ? prompt(configOptionUpdate(catalog === "removed-config" ? [] : [restrictedOption]))
+            : duringConfiguration
+              ? [
+                  outbound("session/set_config_option", {
+                    sessionId: "agent-session",
+                    configId: "permission-mode",
+                    value: "auto",
+                  }),
+                  answer("session/set_config_option", {
+                    configOptions: [restrictedOption, permissionModeOption("auto")],
+                  }),
+                ]
+              : [],
+        }).pipe(Effect.provide(layerTest), Effect.scoped);
+      },
+    );
+
     // regression: #19519 models come from session model state, not a hardcoded list
-    it.effect("leaves unadvertised model IDs alone in both model selection protocols", () =>
+    it.effect("keeps unadvertised default and auto selections agent-controlled", () =>
       Effect.gen(function* () {
         const { configurations } = yield* openWithStoredPicks({
           setup: {
@@ -781,15 +859,7 @@ describe("AcpRegistryAdapterV2", () => {
             },
           },
           storedModel: "default",
-          turnModels: [
-            "auto",
-            "removed-model",
-            "other",
-            "default",
-            "auto",
-            "hermes",
-            "removed-model",
-          ],
+          turnModels: ["auto", "default", "other", "default", "auto", "default", "auto"],
           pickFrames: [
             ...prompt(),
             ...prompt(),
@@ -1005,6 +1075,134 @@ describe("AcpRegistryAdapterV2", () => {
       if (terminal.type !== "turn.terminal") throw new Error("Missing fallback terminal");
       assert.equal(terminal.status, "completed");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  // regression: #26695 cancelling a Copilot prompt kills its background agents
+  it.effect("never steers Copilot by cancelling its prompt", () =>
+    Effect.gen(function* () {
+      const steering = Effect.fn("steering")(function* (config: Record<string, unknown>) {
+        const instanceId = ProviderInstanceId.make("acp-registry-steering");
+        const adapter = yield* makeAcpRegistryAdapterV2({
+          selfInvocation: yield* resolveSelfInvocation(),
+          instanceId,
+          settings: yield* decodeAcpRegistryAdapterSettings(config),
+          environment: {},
+        }).pipe(Effect.provide(layerInjectedRuntimeCatalog));
+        const { turns } = yield* adapter.getCapabilities();
+        return {
+          supportsInterrupt: turns.supportsInterrupt,
+          supportsActiveSteering: turns.supportsActiveSteering,
+          supportsSteeringByInterruptRestart: turns.supportsSteeringByInterruptRestart,
+        };
+      });
+      const copilot = {
+        supportsInterrupt: true,
+        supportsActiveSteering: false,
+        supportsSteeringByInterruptRestart: false,
+      };
+
+      assert.deepEqual(yield* steering({ agentId: "github-copilot-cli" }), copilot);
+      assert.deepEqual(
+        yield* steering({ source: "local", commandPath: "C:\\tools\\copilot.cmd" }),
+        copilot,
+      );
+      assert.deepEqual(yield* steering({ agentId: "gemini" }), {
+        ...copilot,
+        supportsSteeringByInterruptRestart: true,
+      });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect.each(["before", "after"] as const)(
+    "reconciles a full prompt echo %s acknowledgment",
+    (ordering) =>
+      Effect.gen(function* () {
+        const runtimeInstructions = {
+          type: "text",
+          text: buildRuntimeInstructions({ harness: "acpRegistry", model: "default" }),
+        };
+        const promptBlocks = (ordinal: number) => [
+          {
+            type: "text",
+            text:
+              ordinal === 1
+                ? t3AcpPromptWithInstructions({
+                    prompt: "test prompt",
+                    state: { interactionMode: "default", hasT3Mcp: false, hasDeviceTools: false },
+                  })
+                : "test prompt",
+          },
+          runtimeInstructions,
+        ];
+        const echo = (messageId: string, content: ReadonlyArray<unknown>) =>
+          claudeFrames.update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "user_message",
+            messageId,
+            content,
+          });
+        const promptText = (ordinal: number) =>
+          promptBlocks(ordinal)
+            .map((block) => block.text)
+            .join("\n");
+        const frames = (ordinal: number) => {
+          const [request, , acknowledgment] = claudeFrames.prompt(ordinal);
+          const matching = echo(`echo-${ordinal}`, promptBlocks(ordinal));
+          return [
+            request,
+            echo("different-blocks", [
+              {
+                type: "text",
+                text: promptText(ordinal),
+              },
+            ]),
+            ...(ordering === "before" ? [matching, acknowledgment] : [acknowledgment, matching]),
+            claudeFrames.update(CLAUDE_ROOT_SESSION, {
+              sessionUpdate: "user_message_chunk",
+              messageId: `echo-${ordinal}`,
+              content: { type: "text", text: "updated echo" },
+            }),
+            echo(`echo-${ordinal}`, [{ type: "text", text: "updated echo" }]),
+            echo("second-id", promptBlocks(ordinal)),
+            echo("unmatched", [{ type: "text", text: "Continue the review." }]),
+            claudeFrames.idle("end_turn"),
+          ];
+        };
+        const session = yield* openClaudeReplaySession(
+          [
+            ...claudeFrames.open,
+            ...frames(1),
+            ...frames(2),
+            claudeFrames.closeRequest,
+            claudeFrames.closed,
+          ],
+          undefined,
+          false,
+        );
+        for (const ordinal of [1, 2]) {
+          yield* session.runtime.startTurn(session.turnInput(ordinal));
+          const events = yield* session.until((event) => event.type === "turn.terminal");
+          const messages = events.flatMap((event) =>
+            event.type === "message.updated" && event.message.role === "user"
+              ? [event.message]
+              : [],
+          );
+          const items = events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "user_message"
+              ? [event.turnItem]
+              : [],
+          );
+          const expected = new Set([promptText(ordinal), "Continue the review."]);
+          assert.deepEqual(new Set(messages.map((message) => message.text)), expected);
+          assert.equal(new Set(messages.map((message) => message.id)).size, 3);
+          assert.equal(new Set(items.map((item) => item.id)).size, 3);
+          for (const id of ["different-blocks", "second-id", "unmatched"]) {
+            assert.isTrue(
+              items.some((item) => item.nativeItemRef?.nativeId?.endsWith(`:user:message:${id}`)),
+              `${id} remains visible`,
+            );
+          }
+        }
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("settles Claude's accepted foreground reply while retaining child output", () =>
