@@ -110,7 +110,8 @@ function shortcutForContext(binding: ResolvedKeybindingRule, context: ShortcutMa
   // Resolve persisted Mod+Enter against send preference without rewriting saved shortcuts.
   if (
     context.composerRequiresModifier &&
-    binding.command === "composer.sendAlternate" &&
+    (binding.command === "composer.sendAlternate" ||
+      binding.command === "composer.sendBackground") &&
     shortcut.key === "enter" &&
     shortcut.modKey &&
     !shortcut.metaKey &&

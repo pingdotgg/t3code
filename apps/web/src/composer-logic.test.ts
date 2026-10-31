@@ -145,6 +145,92 @@ describe("composerSubmissionIntentForKey", () => {
     ).toBe("alternate");
   });
 
+  it.each(["MacIntel", "Win32", "Linux"])(
+    "honors the send shortcut when starting a draft on %s",
+    (platform) => {
+      const modEnter = {
+        ...enter,
+        metaKey: platform === "MacIntel",
+        ctrlKey: platform !== "MacIntel",
+      };
+      for (const [sendShortcut, prompt, requiresModifier] of [
+        ["enter", "one line", false],
+        ["enter", "two\nlines", false],
+        ["mod-enter", "one line", true],
+        ["mod-enter", "two\nlines", true],
+        ["mod-enter-multiline", "one line", false],
+        ["mod-enter-multiline", "two\nlines", true],
+      ] as const) {
+        const draft = { ...input, platform, sendShortcut, prompt, isDraftThread: true };
+        expect(composerSubmissionIntentForKey({ ...draft, event: modEnter })).toBe(
+          requiresModifier ? "foreground" : "background",
+        );
+        expect(
+          composerSubmissionIntentForKey({
+            ...draft,
+            event: { ...modEnter, shiftKey: true },
+          }),
+        ).toBe(requiresModifier ? "background" : null);
+        expect(composerSubmissionIntentForKey({ ...draft, event: enter })).toBe(
+          requiresModifier ? null : "foreground",
+        );
+        expect(
+          composerSubmissionIntentForKey({ ...draft, event: { ...enter, shiftKey: true } }),
+        ).toBeNull();
+        expect(
+          composerSubmissionIntentForKey({ ...draft, event: { ...modEnter, altKey: true } }),
+        ).toBe("background");
+      }
+    },
+  );
+
+  it("honors the send preference with an existing install's saved background binding", () => {
+    const keybindings = mergeWithDefaultKeybindings(
+      compileResolvedKeybindingsConfig([
+        {
+          key: "mod+enter",
+          command: "composer.sendBackground",
+          when: "composerFocus && draftThreadRoute",
+        },
+      ]),
+    );
+    const draft = {
+      ...input,
+      keybindings,
+      isDraftThread: true,
+      sendShortcut: "mod-enter" as const,
+    };
+    expect(composerSubmissionIntentForKey({ ...draft, event: { ...enter, ctrlKey: true } })).toBe(
+      "foreground",
+    );
+    expect(
+      composerSubmissionIntentForKey({
+        ...draft,
+        event: { ...enter, ctrlKey: true, shiftKey: true },
+      }),
+    ).toBe("background");
+  });
+
+  it.each([
+    ["mod+arrowup", { key: "ArrowUp", ctrlKey: true }],
+    ["shift+tab", { key: "Tab", shiftKey: true }],
+  ] as const)("accepts a remapped %s action", (key, event) => {
+    const keybindings = mergeWithDefaultKeybindings(
+      compileResolvedKeybindingsConfig([
+        { key, command: "composer.sendBackground", when: "composerFocus && draftThreadRoute" },
+      ]),
+    );
+    expect(
+      composerSubmissionIntentForKey({
+        ...input,
+        keybindings,
+        sendShortcut: "mod-enter",
+        isDraftThread: true,
+        event: { ...enter, ...event },
+      }),
+    ).toBe("background");
+  });
+
   it.each(["enter", "mod-enter", "mod-enter-multiline"] as const)(
     "uses remapped keys and removes the old action bindings with %s",
     (sendShortcut) => {

@@ -835,6 +835,65 @@ describe("composer and pull request shortcuts", () => {
     },
   );
 
+  it.each(["MacIntel", "Win32", "Linux"])(
+    "reserves the normal send chord on new drafts on %s",
+    (platform) => {
+      const modifier = {
+        metaKey: platform === "MacIntel",
+        ctrlKey: platform !== "MacIntel",
+      };
+      for (const composerRequiresModifier of [false, true]) {
+        const context = {
+          composerFocus: true,
+          draftThreadRoute: true,
+          composerRequiresModifier,
+        };
+        assert.strictEqual(
+          resolveShortcutCommand(
+            event({ key: "Enter", ...modifier }),
+            DEFAULT_RESOLVED_KEYBINDINGS,
+            {
+              platform,
+              context,
+            },
+          ),
+          composerRequiresModifier ? null : "composer.sendBackground",
+        );
+        assert.strictEqual(
+          resolveShortcutCommand(
+            event({ key: "Enter", shiftKey: true, ...modifier }),
+            DEFAULT_RESOLVED_KEYBINDINGS,
+            { platform, context },
+          ),
+          composerRequiresModifier ? "composer.sendBackground" : "thread.steerQueuedMessage",
+        );
+        const backgroundShortcuts = effectiveShortcutsForCommand(
+          DEFAULT_RESOLVED_KEYBINDINGS,
+          "composer.sendBackground",
+          { platform, context },
+        );
+        assert.deepEqual(
+          backgroundShortcuts.map((shortcut) => formatShortcutLabel(shortcut, platform)),
+          [
+            formatShortcutLabel(modShortcut("enter", { altKey: true }), platform),
+            formatShortcutLabel(
+              modShortcut("enter", { shiftKey: composerRequiresModifier }),
+              platform,
+            ),
+          ],
+        );
+        assert.strictEqual(
+          resolveShortcutCommand(
+            event({ key: "Enter", shiftKey: true, ...modifier }),
+            DEFAULT_RESOLVED_KEYBINDINGS,
+            { platform, context: { ...context, composerFocus: false } },
+          ),
+          "thread.steerQueuedMessage",
+        );
+      }
+    },
+  );
+
   const altEffortBindings = compileResolvedKeybindingsConfig([
     { key: "mod+alt+e", command: "composer.effort", when: "!terminalFocus" },
   ]);
