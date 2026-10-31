@@ -185,6 +185,8 @@ export interface FakeThread {
   readonly title: string;
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+  readonly plans?: OrchestrationV2ThreadProjection["plans"];
+  readonly interactionMode?: OrchestrationV2ThreadShell["interactionMode"];
 }
 
 /** A thread of `turns` user prompts, each answered in markdown with a list and inline code. */
@@ -219,7 +221,7 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     providerInstanceId: CODEX,
     modelSelection: MODEL,
     runtimeMode: "full-access",
-    interactionMode: "default",
+    interactionMode: thread.interactionMode ?? "default",
     branch: "main",
     worktreePath: null,
     activeProviderThreadId: null,
@@ -291,7 +293,7 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
     providerTurns: [],
     runtimeRequests: [],
     messages: [],
-    plans: [],
+    plans: [...(thread.plans ?? [])],
     turnItems: [...thread.items],
     checkpointScopes: [],
     checkpoints: [],
@@ -436,6 +438,16 @@ export function installFakeEnvironment(fixtures: ReadonlyArray<FakeThread>): Dis
 }
 
 type ThreadEvent = Extract<OrchestrationV2ThreadStreamItem, { readonly kind: "event" }>["event"];
+
+/** Answers one RPC method with `handler` until disposed, in place of leaving it pending. */
+export function answerRpc(method: string, handler: (input: never) => unknown): Disposable {
+  handlers[method] = handler;
+  return {
+    [Symbol.dispose]: () => {
+      delete handlers[method];
+    },
+  };
+}
 
 /** Whether the app holds a live subscription to the thread, so events reach it. */
 export function isThreadSubscribed(threadId: ThreadId): boolean {

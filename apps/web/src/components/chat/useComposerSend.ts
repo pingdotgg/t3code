@@ -759,8 +759,12 @@ export function useComposerSend(input: ComposerSendInput) {
         interactionMode: followUp.interactionMode,
       });
       if (!followUpSent) {
-        promptRef.current = followUpPromptSnapshot;
-        composerTerminalContextsRef.current = [...followUpTerminalContexts];
+        // The draft store is per thread, but these refs now belong to whichever thread is showing.
+        const stillOnThread = currentRouteThreadKeyRef.current === routeThreadKey;
+        if (stillOnThread) {
+          promptRef.current = followUpPromptSnapshot;
+          composerTerminalContextsRef.current = [...followUpTerminalContexts];
+        }
         restorePlanFollowUpComposer({
           snapshot: {
             prompt: followUpPromptSnapshot,
@@ -781,7 +785,9 @@ export function useComposerSend(input: ComposerSendInput) {
             setComposerDraftThreadContexts(composerDraftTarget, [...records]),
           writeEnvironmentContexts: (records) =>
             setComposerDraftEnvironmentContexts(composerDraftTarget, [...records]),
-          resetCursor: (options) => composerRef.current?.resetCursorState(options),
+          resetCursor: (options) => {
+            if (stillOnThread) composerRef.current?.resetCursorState(options);
+          },
         });
       } else if (
         submissionIntent === "background" &&
