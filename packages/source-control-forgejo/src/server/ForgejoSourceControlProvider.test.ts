@@ -183,6 +183,37 @@ it("treats a required pattern's `*` as a wildcard even when the check name has o
   );
 });
 
+const tiedStatuses = [
+  { id: 15, status: "success" },
+  { id: 14, status: "pending" },
+].map(({ id, status }) => ({
+  id,
+  context: "ci/required-build",
+  status,
+  description: null,
+  target_url: null,
+  updated_at: "2026-10-12T10:14:29Z",
+}));
+
+it.effect.each([
+  ["newest first", tiedStatuses],
+  ["oldest first", tiedStatuses.toReversed()],
+] as const)("reads the status created last when two share a second, listed %s", ([, statuses]) =>
+  Effect.gen(function* () {
+    const provider = yield* ForgejoPullRequestProvider.make;
+    const readChecks = provider.getChangeRequestChecks;
+    if (readChecks === undefined) return yield* Effect.die("checks read missing");
+    const summary = yield* readChecks(requiredChecksInput);
+    const detail = yield* provider.getChangeRequest(requiredChecksInput);
+    for (const checks of [summary.checks, detail.checks]) {
+      assert.deepStrictEqual(
+        checks.map((check) => [check.name, check.status]),
+        [["ci/required-build", "success"]],
+      );
+    }
+  }).pipe(Effect.provide(requiredChecksLayer(Effect.succeed({}), statuses))),
+);
+
 const forgejoMergeProvider = (repository: Effect.Effect<string, ForgejoCli.ForgejoCliError>) => {
   const writes: Array<ForgejoCli.ForgejoApiInput> = [];
   const provider = ForgejoPullRequestProvider.make.pipe(

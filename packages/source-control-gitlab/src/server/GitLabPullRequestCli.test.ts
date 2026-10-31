@@ -963,6 +963,122 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("shows a failed child pipeline that left the head pipeline green", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              mergeRequestJson({
+                // A fork's pipeline runs in the source project, so its id is not the target's.
+                head_pipeline: {
+                  id: 31,
+                  project_id: 12,
+                  status: "success",
+                  web_url: "https://gitlab.com/bilal/web/-/pipelines/31",
+                },
+              }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              JSON.stringify([
+                {
+                  name: "deploy",
+                  status: "success",
+                  downstream_pipeline: {
+                    status: "failed",
+                    web_url: "https://gitlab.com/bilal/web/-/pipelines/32",
+                  },
+                },
+                { name: "docs", status: "created", downstream_pipeline: null },
+              ]),
+            ),
+          ),
+        );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const detail = yield* cli.getMergeRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(detail.checks.map((check) => [check.name, check.status, check.url])).toEqual([
+        ["Pipeline", "success", "https://gitlab.com/bilal/web/-/pipelines/31"],
+        ["deploy", "failure", "https://gitlab.com/bilal/web/-/pipelines/32"],
+      ]);
+      expect(argsOfCall(1)[1]).toBe("projects/12/pipelines/31/bridges?per_page=100");
+    }),
+  );
+
+  it.effect("keeps the one pipeline check when the trigger jobs cannot be read whole", () =>
+    Effect.gen(function* () {
+      const detailOutput = output(
+        mergeRequestJson({ head_pipeline: { id: 31, project_id: 12, status: "success" } }),
+      );
+      const failedChild = { name: "deploy", downstream_pipeline: { status: "failed" } };
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(detailOutput))
+        .mockReturnValueOnce(
+          Effect.fail(
+            new GitLabCli.GitLabCliCommandError({
+              operation: "execute",
+              command: "glab",
+              cwd: "/w",
+              cause: new Error("403 Forbidden"),
+            }),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(detailOutput))
+        // A full page may have left out the trigger job whose pipeline failed.
+        .mockReturnValueOnce(
+          Effect.succeed(output(JSON.stringify(Array.from({ length: 100 }, () => failedChild)))),
+        );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      for (const scenario of ["read fails", "page is full"]) {
+        const detail = yield* cli.getMergeRequestDetail({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+        });
+        expect(
+          detail.checks.map((check) => [check.name, check.status]),
+          scenario,
+        ).toEqual([["Pipeline", "success"]]);
+      }
+    }),
+  );
+
+  it.effect("reads merge permissions without reading the trigger jobs", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            mergeRequestJson({
+              head_pipeline: { id: 31, project_id: 12, status: "success" },
+              user: { can_merge: false },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const detail = yield* cli.getMergeRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        downstreamChecks: false,
+      });
+
+      expect(detail.viewerCanMerge).toBe(false);
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+    }),
+  );
+
   it.effect("reads who has access to the project and who is already on the merge request", () =>
     Effect.gen(function* () {
       mockedExecute
