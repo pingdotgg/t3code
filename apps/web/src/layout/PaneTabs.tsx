@@ -19,7 +19,7 @@ import {
   SquareTerminal,
   XIcon,
 } from "lucide-react";
-import { memo, type ComponentType, type MouseEvent as ReactMouseEvent } from "react";
+import { memo, useLayoutEffect, useRef, type ReactNode, type ComponentType, type MouseEvent as ReactMouseEvent } from "react";
 
 import {
   selectThreadRightPanelState,
@@ -60,8 +60,47 @@ import { closeLayoutTabByUser, closeOtherLayoutTabsByUser, splitLayoutTab } from
 import { beginLayoutTabDrag } from "./layoutDrag";
 import { useLayoutPane } from "./layoutPaneContext";
 import { useLayoutStore } from "./layoutStore";
+import { setWheelScroller, wheelDeltaPx } from "../motion/gesture";
+import { observeResize } from "../lib/observeResize";
 
 const EMPTY_TABS: readonly LayoutTab[] = [];
+
+/** Keep overflow reachable by wheel and touch, and reveal the selected tab without moving its pane. */
+export function LayoutPaneTabStrip({ children }: { children: ReactNode }) {
+  const { tabId } = useLayoutPane();
+  const stripRef = useRef<HTMLDivElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the tab scroller's wheel routing and reveal its active tab after header resizing.
+  useLayoutEffect(() => {
+    const strip = stripRef.current;
+    if (!strip) return;
+    const reveal = () => {
+      const tab = [...strip.querySelectorAll<HTMLElement>("[data-layout-pane-tab]")].find(
+        (candidate) => candidate.dataset.layoutPaneTab === tabId,
+      );
+      if (!tab) return;
+      const bounds = strip.getBoundingClientRect();
+      const rect = tab.getBoundingClientRect();
+      if (rect.left < bounds.left) strip.scrollLeft -= bounds.left - rect.left;
+      else if (rect.right > bounds.right) strip.scrollLeft += rect.right - bounds.right;
+    };
+    const wheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey || strip.scrollWidth <= strip.clientWidth) return;
+      event.preventDefault();
+      event.stopPropagation();
+      strip.scrollLeft += wheelDeltaPx(Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY, event);
+    };
+    setWheelScroller(strip, () => strip.scrollWidth > strip.clientWidth);
+    strip.addEventListener("wheel", wheel, { passive: false });
+    const stop = observeResize([strip], reveal);
+    reveal();
+    return () => {
+      stop();
+      setWheelScroller(strip, null);
+      strip.removeEventListener("wheel", wheel);
+    };
+  }, [tabId]);
+  return <div ref={stripRef} data-layout-tab-strip="" className="flex min-w-0 items-center gap-1 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">{children}</div>;
+}
 
 /**
  * The other tabs of the pane this chat renders in, split around the active
