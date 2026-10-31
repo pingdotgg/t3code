@@ -1,4 +1,5 @@
 import {
+  latestExecutedRun,
   latestRootProviderFailure,
   latestUnheldRun,
   threadErrorSummary,
@@ -16,6 +17,7 @@ import {
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ThreadProjection,
   orchestrationV2RunWorkStartedAt,
+  type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -207,6 +209,20 @@ export function formatProviderSubagentStatus(
   if (!Number.isFinite(start) || !Number.isFinite(end)) return label;
   const elapsed = formatDuration(Math.max(1_000, Math.floor((end - start) / 1_000) * 1_000));
   return live ? `${label} ${elapsed}` : `${label} in ${elapsed}`;
+}
+
+/** The run a manual continuation resumes; the server holds the queue until it does. */
+export function deriveResumableRunId(
+  projection: Pick<ThreadStructure, "runs" | "turnItems">,
+  runtime: Pick<ThreadStructureRuntime, "lastErrorClass"> | null,
+): RunId | null {
+  const run = latestExecutedRun(projection.runs);
+  if (run?.status === "interrupted") return run.id;
+  return run?.status === "failed" &&
+    runtime?.lastErrorClass === "usage_limit" &&
+    latestRootProviderFailure(run, projection.turnItems)?.class === "usage_limit"
+    ? run.id
+    : null;
 }
 
 export function deriveThreadRuntime(
