@@ -1,9 +1,11 @@
 import { AuthStandardClientScopes, EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -620,6 +622,76 @@ describe("EnvironmentSupervisor", () => {
         supervisor.state,
         (state) => state.phase === "connected" && state.generation === 2 && state.attempt === 1,
       );
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each([
+    "application-active",
+    "application-active-probe",
+    "application-active-reconnect",
+  ] as const)("retries at once on %s but keeps climbing the ladder", (reason) =>
+    Effect.gen(function* () {
+      const attempts = yield* Queue.unbounded<number>();
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          Queue.offer(attempts, attempt).pipe(
+            Effect.andThen(Effect.fail(transient("Could not resolve hostname."))),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+      const nextBackoffDelay = Effect.gen(function* () {
+        yield* Queue.take(attempts);
+        const waiting = yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+        return waiting.retryAt! - (yield* Clock.currentTimeMillis);
+      });
+
+      const delays = [yield* nextBackoffDelay];
+      for (let wakeup = 0; wakeup < 4; wakeup += 1) {
+        yield* harness.wake(reason);
+        // The clock never moves here, so each attempt was started by the wakeup.
+        delays.push(yield* nextBackoffDelay);
+      }
+      expect(delays).toEqual([2_000, 2_000, 4_000, 8_000, 16_000]);
+
+      yield* TestClock.adjust("5 minutes");
+      yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+      yield* harness.wake(reason);
+      const restarted = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 1,
+      );
+      expect(restarted.retryAt! - (yield* Clock.currentTimeMillis)).toBe(2_000);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("restarts the retry ladder on every network change", () =>
+    Effect.gen(function* () {
+      const attempts = yield* Queue.unbounded<number>();
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          Queue.offer(attempts, attempt).pipe(Effect.andThen(Effect.fail(transient()))),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+      const nextBackoffAttempt = Effect.gen(function* () {
+        yield* Queue.take(attempts);
+        const waiting = yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+        return waiting.attempt;
+      });
+
+      const ladder = [yield* nextBackoffAttempt];
+      for (const reason of [
+        "application-active",
+        "application-active",
+        "network-changed",
+      ] as const) {
+        yield* harness.wake(reason);
+        ladder.push(yield* nextBackoffAttempt);
+      }
+      expect(ladder).toEqual([1, 1, 2, 1]);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
