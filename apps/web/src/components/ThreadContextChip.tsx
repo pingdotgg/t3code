@@ -4,6 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { MessagesSquareIcon } from "lucide-react";
 
 import { useProject, useThreadShell } from "~/state/entities";
+import { useThreadFamilyIfMissing } from "~/state/threads";
 import { ContextChip, ContextChipLabel } from "./ContextChip";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -15,6 +16,7 @@ export function ThreadContextChip(props: {
 }) {
   const { environmentId, threadId } = props.record;
   const shell = useThreadShell({ environmentId, threadId });
+  useThreadFamilyIfMissing({ environmentId, threadId }, shell === null);
   const project = useProject(shell ? scopeProjectRef(environmentId, shell.projectId) : null);
   const title = shell?.title?.trim() || props.record.title;
   return (

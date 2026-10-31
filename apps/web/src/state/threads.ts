@@ -11,10 +11,16 @@ import {
   createThreadEnvironmentAtoms,
   createThreadFamilyAtoms,
 } from "@t3tools/client-runtime/state/threads";
-import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationV2ThreadFamily,
+  OrchestrationV2ThreadShell,
+  ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -52,6 +58,20 @@ export function useThreadFamily(
     if (environmentId === null || rootThreadId === null) return;
     return threadFamilies.mount(appAtomRegistry, environmentId, rootThreadId);
   }, [environmentId, rootThreadId]);
+}
+
+const EMPTY_FAMILY_ATOM = Atom.make(AsyncResult.initial<OrchestrationV2ThreadFamily, never>());
+
+export function useThreadFamilyIfMissing(ref: ScopedThreadRef | null, missing: boolean) {
+  const [lookup, setLookup] = useState(missing ? ref : null);
+  const active =
+    ref !== null && lookup?.environmentId === ref.environmentId && lookup.threadId === ref.threadId;
+  // Family rows make their own shell visible, so retain the lookup until its target changes.
+  if (ref !== null && missing && !active) setLookup(ref);
+  useThreadFamily(active ? ref.environmentId : null, active ? ref.threadId : null);
+  return useAtomValue(
+    active ? threadFamilies.familyAtom(ref.environmentId, ref.threadId) : EMPTY_FAMILY_ATOM,
+  );
 }
 
 const EMPTY_THREAD_STATE_ATOM = Atom.make(AsyncResult.success(EMPTY_ENVIRONMENT_THREAD_STATE)).pipe(
