@@ -3,9 +3,11 @@ import { it } from "@effect/vitest";
 import { EnvironmentId, SandboxProviderError } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientRequest, HttpClientResponse, UrlParams } from "effect/http";
 import { describe, expect } from "vite-plus/test";
 
@@ -368,6 +370,174 @@ describe("daytonaDriver", () => {
   );
 });
 
+describe("sandbox templates", () => {
+  const recording = (
+    requests: Array<{ readonly method: string; readonly url: string; readonly body: unknown }>,
+    respond: (request: HttpClientRequest.HttpClientRequest) => Response,
+  ) =>
+    HttpClient.make((request) => {
+      const query = UrlParams.toString(request.urlParams);
+      requests.push({
+        method: request.method,
+        url: query === "" ? request.url : `${request.url}?${query}`,
+        body:
+          request.body._tag === "Uint8Array"
+            ? JSON.parse(new TextDecoder().decode(request.body.body))
+            : undefined,
+      });
+      return Effect.succeed(HttpClientResponse.fromWeb(request, respond(request)));
+    });
+
+  it.effect("lists Boat's ready saved snapshots with the allowance and deletes one", () => {
+    const requests: Array<{ method: string; url: string; body: unknown }> = [];
+    const client = recording(requests, (request) =>
+      request.method === "DELETE"
+        ? Response.json({ ok: true })
+        : Response.json({
+            snapshots: [
+              {
+                name: "web-stack",
+                status: "ready",
+                type: "large",
+                sizeBytes: 2048,
+                createdAt: "2026-10-30T00:00:00.000Z",
+              },
+              { name: "half-saved", status: "saving", type: "small" },
+              { name: "broken", status: "failed", error: "echo boat_live_secret" },
+            ],
+            allowance: {
+              included: 50,
+              used: 3,
+              extra: 0,
+              pricePerExtraDailyDollars: 0.056,
+              extraMonthlyDollars: 0,
+            },
+          }),
+    );
+    return Effect.gen(function* () {
+      const listed = yield* boatDriver.listTemplates!({ config: { apiKey: "boat_test" } });
+      yield* boatDriver.deleteTemplate!({ config: { apiKey: "boat_test" }, name: "web-stack" });
+
+      // Only a ready snapshot can start a sandbox.
+      expect(listed).toEqual({
+        templates: [
+          {
+            name: "web-stack",
+            size: "large",
+            sizeBytes: 2048,
+            createdAt: "2026-10-30T00:00:00.000Z",
+          },
+        ],
+        templateAllowance: { included: 50, used: 3, extra: 0, pricePerExtraDailyDollars: 0.056 },
+      });
+      expect(requests.map((request) => `${request.method} ${request.url}`)).toEqual([
+        "GET https://boat.dev/api/v1/saved-snapshots",
+        "DELETE https://boat.dev/api/v1/saved-snapshots/web-stack",
+      ]);
+    }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+  });
+
+  it.effect("saves, lists, deletes, and starts from Daytona snapshots T3 made", () => {
+    const requests: Array<{ method: string; url: string; body: unknown }> = [];
+    let snapshotPolls = 0;
+    let sandboxPolls = 0;
+    const snapshot = {
+      id: "snap_1",
+      name: "t3-web-stack",
+      state: "active",
+      cpu: 2,
+      mem: 4,
+      sourceSandboxId: "sandbox_1",
+      createdAt: "2026-10-30T00:00:00.000Z",
+    };
+    const client = recording(requests, (request) => {
+      const url = new URL(request.url);
+      if (url.pathname === "/api/sandbox/sandbox_1" && request.method === "GET") {
+        sandboxPolls += 1;
+        return Response.json({ id: "sandbox_1", state: sandboxPolls < 2 ? "stopping" : "stopped" });
+      }
+      if (url.pathname === "/api/snapshots/t3-web-stack") {
+        snapshotPolls += 1;
+        return snapshotPolls < 2
+          ? Response.json({ message: "Not found" }, { status: 404 })
+          : Response.json(snapshotPolls < 3 ? { ...snapshot, state: "snapshotting" } : snapshot);
+      }
+      if (url.pathname === "/api/snapshots") {
+        return Response.json({
+          items: [
+            snapshot,
+            // A base image and a snapshot someone else made: neither is a T3 template.
+            { id: "base", name: "daytonaio/sandbox:0.4", state: "active", general: true },
+            { id: "other", name: "t3-imported", state: "active", sourceSandboxId: null },
+          ],
+          total: 3,
+          page: 1,
+          totalPages: 1,
+        });
+      }
+      if (url.pathname === "/api/sandbox" && request.method === "POST") {
+        return Response.json({ id: "sandbox_2", state: "started" });
+      }
+      return Response.json({ id: "sandbox_1", state: "started" });
+    });
+    return Effect.gen(function* () {
+      const config = { apiKey: "dtn_test" };
+      const fiber = yield* daytonaDriver.saveTemplate!({
+        config,
+        sandboxId: "sandbox_1",
+        name: "web-stack",
+      }).pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 minute");
+      const saved = yield* Fiber.join(fiber);
+      const listed = yield* daytonaDriver.listTemplates!({ config });
+      yield* daytonaDriver.deleteTemplate!({ config, name: "web-stack" });
+      const createFiber = yield* daytonaDriver
+        .create({
+          config,
+          name: "From template",
+          size: "daytona-small",
+          idempotencyKey: "attempt-1",
+          template: "web-stack",
+        })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 minute");
+      yield* Fiber.join(createFiber);
+
+      expect(saved).toEqual({
+        name: "web-stack",
+        createdAt: "2026-10-30T00:00:00.000Z",
+        size: "daytona-medium",
+      });
+      expect(listed.templates.map((template) => template.name)).toEqual(["web-stack"]);
+      const calls = requests.map((request) => `${request.method} ${request.url}`);
+      // A cold snapshot needs a stopped sandbox, and `/stop` returns while it is still stopping.
+      expect(calls.slice(0, 3)).toEqual([
+        "GET https://app.daytona.io/api/sandbox/sandbox_1",
+        "GET https://app.daytona.io/api/sandbox/sandbox_1",
+        "POST https://app.daytona.io/api/sandbox/sandbox_1/snapshot",
+      ]);
+      expect(requests[2]?.body).toEqual({ name: "t3-web-stack" });
+      expect(calls).toContain("GET https://app.daytona.io/api/snapshots?name=t3-&limit=200");
+      expect(calls).toContain("DELETE https://app.daytona.io/api/snapshots/snap_1");
+      expect(
+        requests.find((request) => request.method === "POST" && request.url.endsWith("/sandbox"))
+          ?.body,
+      ).toMatchObject({ snapshot: "t3-web-stack" });
+    }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+  });
+
+  it.effect("tells a Daytona key without snapshot permission apart from a bad key", () => {
+    const client = recording([], () => Response.json({ message: "Forbidden" }, { status: 403 }));
+    return Effect.gen(function* () {
+      const error = yield* daytonaDriver.listTemplates!({ config: { apiKey: "dtn_test" } }).pipe(
+        Effect.flip,
+      );
+      expect(error).toMatchObject({ code: "api_key_rejected", status: 403, stage: "template" });
+      expect(error.detail).toContain("cannot manage snapshots");
+    }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+  });
+});
+
 describe("boat credential environments", () => {
   it.effect("lists only credential flags and never returns environment secrets", () => {
     const client = HttpClient.make((request) =>
@@ -625,6 +795,20 @@ describe("provider limits", () => {
           code: "capacity_unavailable",
           retryAfterSeconds: 120,
         },
+        {
+          provider: "boat",
+          status: 403,
+          body: { code: "trial_saved_snapshots_not_allowed" },
+          code: "templates_unavailable",
+          detail: "Your Boat plan cannot save templates.",
+        },
+        {
+          provider: "boat",
+          status: 409,
+          body: { code: "save_in_progress" },
+          code: "template_saving",
+        },
+        { provider: "boat", status: 404, body: { code: "snapshot_not_found" }, code: "not_found" },
         { provider: "boat", status: 401, body: { code: "unauthorized" }, code: "api_key_rejected" },
         { provider: "boat", status: 404, body: {}, code: "not_found" },
         {
@@ -1363,6 +1547,249 @@ describe("SandboxProvisioner lifecycle", () => {
       expect(requests.filter((request) => /\/sandboxes\/bx_/.test(request))).toHaveLength(6);
     });
   });
+  const runningRecord: SandboxRecord = {
+    environmentId: testEnvironmentId,
+    provider: "boat",
+    sandboxId: boatSandboxId,
+    label: "Prepared sandbox",
+    size: "large",
+    state: "running",
+    createdAt: "1970-01-01T00:00:00.000Z",
+    updatedAt: "1970-01-01T00:00:00.000Z",
+    httpBaseUrl: "https://boat.example/t3",
+    hardDeadlineAt: "2100-01-01T00:00:00.000Z",
+    ttlMinutes: 480,
+  };
+
+  // Boat as the save sees it: archived only after `/stop`, the saved snapshot `saving` until its
+  // second poll, and a fresh environment id once T3's state is gone.
+  const templateClient = (
+    requests: Array<string>,
+    options: { readonly saveStatus?: "ready" | "failed"; readonly commands?: Array<string> } = {},
+  ) => {
+    let stopped = false;
+    let scrubbed = false;
+    let polls = 0;
+    const json = (request: HttpClientRequest.HttpClientRequest, body: unknown, status = 200) =>
+      Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body, { status })));
+    return HttpClient.make((request) => {
+      requests.push(`${request.method} ${request.url}`);
+      if (request.url.endsWith("/limits")) return json(request, { ok: false }, 500);
+      if (request.url.endsWith("/commands")) {
+        const command =
+          request.body._tag === "Uint8Array"
+            ? JSON.parse(new TextDecoder().decode(request.body.body)).command
+            : "";
+        options.commands?.push(command);
+        if (command.includes("rm -rf")) scrubbed = true;
+        return json(request, { exitCode: 0, stdout: "", stderr: "" });
+      }
+      if (request.url.endsWith("/stop")) {
+        stopped = true;
+        return json(request, { ok: true });
+      }
+      if (request.url.endsWith("/resume")) {
+        stopped = false;
+        return json(request, { ok: true });
+      }
+      if (request.url.endsWith(`/sandboxes/${boatSandboxId}`) && request.method === "GET") {
+        return json(request, {
+          sandbox: { id: boatSandboxId, state: stopped ? "archived" : "ready" },
+        });
+      }
+      if (request.url.endsWith("/saved-snapshots") && request.method === "POST") {
+        return json(request, { ok: true, status: "saving" }, 202);
+      }
+      if (request.url.endsWith("/saved-snapshots/web-stack")) {
+        polls += 1;
+        return json(request, {
+          snapshot: {
+            name: "web-stack",
+            status: polls < 2 ? "saving" : (options.saveStatus ?? "ready"),
+            type: "large",
+            sizeBytes: 1024,
+            createdAt: "2026-10-31T00:00:00.000Z",
+            ...(options.saveStatus === "failed" ? { error: "disk read failed" } : {}),
+          },
+        });
+      }
+      if (request.url.endsWith("/.well-known/t3/environment")) {
+        return json(request, {
+          ...descriptor,
+          ...(scrubbed ? { environmentId: "33333333-3333-4333-8333-333333333333" } : {}),
+        });
+      }
+      return json(request, { ok: true });
+    });
+  };
+
+  it.effect("resets T3, stops, and saves a sandbox as a template, then deletes the source", () => {
+    const requests: Array<string> = [];
+    const commands: Array<string> = [];
+    const repository = memoryRepository([runningRecord]);
+    return Effect.gen(function* () {
+      const provisioner = yield* SandboxProvisioner.SandboxProvisioner;
+      const fiber = yield* provisioner
+        .saveTemplate({ environmentId: testEnvironmentId, name: "web-stack" })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 minute");
+      const saved = yield* Fiber.join(fiber);
+
+      expect(saved.template).toEqual({
+        name: "web-stack",
+        createdAt: "2026-10-31T00:00:00.000Z",
+        sizeBytes: 1024,
+        size: "large",
+      });
+      // The snapshot copies the disk, so T3's identity and sessions are gone before the stop that
+      // the save captures, and the save waits for the stop to finish.
+      expect(requests).toEqual([
+        `POST https://boat.dev/api/v1/sandboxes/${boatSandboxId}/commands`,
+        `POST https://boat.dev/api/v1/sandboxes/${boatSandboxId}/stop`,
+        `GET https://boat.dev/api/v1/sandboxes/${boatSandboxId}`,
+        "POST https://boat.dev/api/v1/saved-snapshots",
+        "GET https://boat.dev/api/v1/saved-snapshots/web-stack",
+        "GET https://boat.dev/api/v1/saved-snapshots/web-stack",
+        `DELETE https://boat.dev/api/v1/sandboxes/${boatSandboxId}`,
+      ]);
+      expect(commands[0]).toContain("t3 service uninstall");
+      expect(commands[0]).toContain(`rm -rf "$HOME/.t3/userdata" "$HOME/.t3/environment-label"`);
+      expect(commands[0]).not.toContain("pkill");
+      // Without its T3 identity the source could only come back as a different environment.
+      expect(repository.records.has(testEnvironmentId)).toBe(false);
+    }).pipe(
+      Effect.provide(
+        provisionerLayer({ sandboxProviders: { boat: { apiKey: "boat_test" } } }, repository.layer),
+      ),
+      Effect.provideService(HttpClient.HttpClient, templateClient(requests, { commands })),
+    );
+  });
+
+  it.effect("keeps the source when the save fails and refuses to resume it as itself", () => {
+    const requests: Array<string> = [];
+    const repository = memoryRepository([runningRecord]);
+    return Effect.gen(function* () {
+      const provisioner = yield* SandboxProvisioner.SandboxProvisioner;
+      const fiber = yield* provisioner
+        .saveTemplate({ environmentId: testEnvironmentId, name: "web-stack" })
+        .pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust("1 minute");
+      const failure = yield* Fiber.join(fiber);
+
+      expect(failure.stage).toBe("template");
+      expect(failure.detail).toBe(
+        "Boat could not save the template. T3 Code on this sandbox was already reset, so it cannot reconnect. Delete it.",
+      );
+      expect(failure.message).not.toContain("disk read failed");
+      expect(requests.some((request) => request.startsWith("DELETE"))).toBe(false);
+      expect(repository.records.get(testEnvironmentId)?.state).toBe("stopped");
+
+      // A resumed source answers with a new id that no client holds a session for.
+      const resumeFiber = yield* provisioner
+        .resume({ environmentId: testEnvironmentId })
+        .pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust("1 minute");
+      const resumeFailure = yield* Fiber.join(resumeFiber);
+      expect(resumeFailure.detail).toContain("cannot reconnect as this environment");
+      expect(repository.records.get(testEnvironmentId)?.state).toBe("error");
+    }).pipe(
+      Effect.provide(
+        provisionerLayer({ sandboxProviders: { boat: { apiKey: "boat_test" } } }, repository.layer),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        templateClient(requests, { saveStatus: "failed" }),
+      ),
+    );
+  });
+
+  it.effect(
+    "starts from a template, and destroys a copy that answers as a known environment",
+    () => {
+      const requests: Array<string> = [];
+      const bodies: Array<{ readonly url: string; readonly body: unknown }> = [];
+      let environmentId: string = testEnvironmentId;
+      const repository = memoryRepository([runningRecord]);
+      const client = HttpClient.make((request) => {
+        requests.push(`${request.method} ${request.url}`);
+        if (request.body._tag === "Uint8Array") {
+          bodies.push({
+            url: request.url,
+            body: JSON.parse(new TextDecoder().decode(request.body.body)),
+          });
+        }
+        const json = (body: unknown) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body)));
+        if (request.url.endsWith("/saved-snapshots")) {
+          return json({
+            snapshots: [
+              { name: "web-stack", status: "ready", type: "large", sourceSandboxId: "bx_x" },
+            ],
+          });
+        }
+        if (request.method === "POST" && request.url.endsWith("/sandboxes")) {
+          return Effect.succeed(boatResponse(request));
+        }
+        if (request.url.endsWith("/.well-known/t3/environment")) {
+          return json({ ...descriptor, environmentId });
+        }
+        if (request.method === "GET" && request.url.endsWith(`/sandboxes/${boatSandboxId}`)) {
+          return json({ sandbox: { id: boatSandboxId, state: "ready" } });
+        }
+        if (request.url.endsWith("/host")) {
+          return json({ url: "https://boat.example/t3" });
+        }
+        if (request.url.endsWith("/commands")) {
+          return json({ exitCode: 0, stdout: "Token: pair_tpl\n", stderr: "" });
+        }
+        return json({ ok: true });
+      });
+      return Effect.gen(function* () {
+        const provisioner = yield* SandboxProvisioner.SandboxProvisioner;
+        const collision = yield* provisioner
+          .create({ provider: "boat", template: "web-stack", size: "small" })
+          .pipe(Effect.flip);
+        expect(collision.stage).toBe("pair");
+        expect(collision.detail).toContain("already exists");
+        // Never paired: the destroy follows the identity check directly.
+        expect(requests.slice(-2)).toEqual([
+          "GET https://boat.example/t3/.well-known/t3/environment",
+          `DELETE https://boat.dev/api/v1/sandboxes/${boatSandboxId}`,
+        ]);
+
+        environmentId = "44444444-4444-4444-8444-444444444444";
+        const created = yield* provisioner.create({ provider: "boat", template: "web-stack" });
+        const createBody = bodies.findLast((entry) => entry.url.endsWith("/sandboxes"))?.body;
+        // The template carries its size; sending `type` could ask for a smaller disk than it holds.
+        expect(createBody).toMatchObject({ from: "web-stack", noEnv: true });
+        expect(createBody).not.toHaveProperty("type");
+        // Boat relays a copy's port to loopback only once it is hosted again on the running machine.
+        expect(bodies.findLast((entry) => entry.url.endsWith("/host"))?.body).toMatchObject({
+          port: 3773,
+          public: true,
+          localhost: true,
+        });
+        expect(repository.records.get(created.environmentId)).toMatchObject({
+          template: "web-stack",
+          size: "large",
+        });
+
+        const missing = yield* provisioner
+          .create({ provider: "boat", template: "gone" })
+          .pipe(Effect.flip);
+        expect(missing.code).toBe("not_found");
+        expect(requests.at(-1)).toBe("GET https://boat.dev/api/v1/saved-snapshots");
+      }).pipe(
+        Effect.provide(
+          provisionerLayer(
+            { sandboxProviders: { boat: { apiKey: "boat_test" } } },
+            repository.layer,
+          ),
+        ),
+        Effect.provideService(HttpClient.HttpClient, client),
+      );
+    },
+  );
 });
 
 describe("SandboxProvisioner", () => {
@@ -1431,13 +1858,14 @@ describe("SandboxProvisioner", () => {
       expect(providers.providers.find((provider) => provider.kind === "boat")?.configured).toBe(
         true,
       );
-      // Limits that cannot be read never block a start; the provider stays the authority.
+      // Limits that cannot be read never block a start; the provider stays the authority. The
+      // environment's identity is checked before a pairing code is minted on it.
       expect(requests).toEqual([
         "GET https://boat.dev/api/v1/limits",
         "POST https://boat.dev/api/v1/sandboxes",
         `POST https://boat.dev/api/v1/sandboxes/${boatSandboxId}/commands`,
-        `POST https://boat.dev/api/v1/sandboxes/${boatSandboxId}/commands`,
         "GET https://boat.example/t3/.well-known/t3/environment",
+        `POST https://boat.dev/api/v1/sandboxes/${boatSandboxId}/commands`,
       ]);
       expect(idempotencyKeys).toEqual([expect.stringMatching(/^[0-9a-f-]{36}$/u)]);
     });
@@ -1452,6 +1880,14 @@ describe("SandboxProvisioner", () => {
           HttpClientResponse.fromWeb(
             request,
             Response.json({ ok: true, sandbox: { id: boatSandboxId, name: "Boat sandbox" } }),
+          ),
+        );
+      }
+      if (request.method === "GET" && request.url.endsWith(`/sandboxes/${boatSandboxId}`)) {
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({ sandbox: { id: boatSandboxId, state: "ready" } }),
           ),
         );
       }

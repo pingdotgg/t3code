@@ -10,7 +10,7 @@ remote path. Nothing downstream knows the machine is a sandbox.
 
 [`SandboxProviderDriver`](../../apps/server/src/sandbox/SandboxProvider.ts) is the whole extension
 point: `create`, `execute`, `exposePort`, `destroy`, the optional `stop`/`resume` pair, `limits`,
-`listEnvironments`, `status`, and `usage`, and the presentation metadata in `info`. Clients learn which optional
+`listEnvironments`, `status`, `usage`, and templates, and the presentation metadata in `info`. Clients learn which optional
 methods exist from the `capabilities` the provisioner derives; they never branch on provider kind.
 [`providers/index.ts`](../../apps/server/src/sandbox/providers/index.ts) is the registry. Add one
 file and one array entry; settings, RPC, provisioning, and the Add environment UI read the driver's
@@ -67,6 +67,13 @@ one registry entry.
      returns `null` so the record is left alone.
    - `usage` only if one request can return every T3 sandbox's cost; the sweep calls it once per
      provider, never once per machine. Tag sandboxes at create so the provider can filter them.
+   - `saveTemplate`/`listTemplates`/`deleteTemplate` (with `stop`, and `create`'s `template`) only
+     if the provider can snapshot a stopped machine and start new ones from it. A snapshot copies
+     `~/.t3/userdata`: the environment id, auth sessions, and secrets. The provisioner's scrub
+     removes them before the driver saves, and create refuses any machine that answers with an id
+     a record already has, so a copy never inherits its source's identity or valid bearer tokens.
+     Because the source loses its identity too, a successful save deletes it. List only templates
+     T3 saved, never the provider's base images.
 6. **Add a size default and the server port.** `defaultSize` must be one of the `info.sizes` ids,
    and `serverPort` is `3773` unless the provider reserves it.
 7. **Test it without the network.** Follow `SandboxProvisioner.test.ts`: `HttpClient.make`

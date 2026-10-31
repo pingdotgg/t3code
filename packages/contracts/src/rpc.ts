@@ -42,6 +42,11 @@ import {
   SandboxExtendInput,
   SandboxExtendResult,
   SandboxStopResult,
+  SandboxTemplatesInput,
+  SandboxTemplatesResult,
+  SandboxSaveTemplateInput,
+  SandboxSaveTemplateResult,
+  SandboxDeleteTemplateInput,
 } from "./sandbox.ts";
 import {
   ChatGptReconnectProfileInput,
@@ -620,6 +625,9 @@ export const WS_METHODS = {
   sandboxesStop: "sandboxes.stop",
   sandboxesResume: "sandboxes.resume",
   sandboxesExtend: "sandboxes.extend",
+  sandboxesTemplates: "sandboxes.templates",
+  sandboxesSaveTemplate: "sandboxes.saveTemplate",
+  sandboxesDeleteTemplate: "sandboxes.deleteTemplate",
   projectCloneStart: "projectClone.start",
   projectCloneCancel: "projectClone.cancel",
   projectCloneRetry: "projectClone.retry",
@@ -1317,6 +1325,24 @@ const WsSandboxesResumeRpc = Rpc.make(WS_METHODS.sandboxesResume, {
 const WsSandboxesExtendRpc = Rpc.make(WS_METHODS.sandboxesExtend, {
   payload: SandboxExtendInput,
   success: SandboxExtendResult,
+  error: Schema.Union([SandboxProviderError, EnvironmentAuthorizationError]),
+});
+
+const WsSandboxesTemplatesRpc = Rpc.make(WS_METHODS.sandboxesTemplates, {
+  payload: SandboxTemplatesInput,
+  success: SandboxTemplatesResult,
+  error: Schema.Union([SandboxProviderError, EnvironmentAuthorizationError]),
+});
+
+const WsSandboxesSaveTemplateRpc = Rpc.make(WS_METHODS.sandboxesSaveTemplate, {
+  payload: SandboxSaveTemplateInput,
+  success: SandboxSaveTemplateResult,
+  error: Schema.Union([SandboxProviderError, EnvironmentAuthorizationError]),
+});
+
+const WsSandboxesDeleteTemplateRpc = Rpc.make(WS_METHODS.sandboxesDeleteTemplate, {
+  payload: SandboxDeleteTemplateInput,
+  success: Schema.Void,
   error: Schema.Union([SandboxProviderError, EnvironmentAuthorizationError]),
 });
 
@@ -2169,6 +2195,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsSandboxesStopRpc,
   WsSandboxesResumeRpc,
   WsSandboxesExtendRpc,
+  WsSandboxesTemplatesRpc,
+  WsSandboxesSaveTemplateRpc,
+  WsSandboxesDeleteTemplateRpc,
   WsProjectCloneStartRpc,
   WsProjectCloneCancelRpc,
   WsProjectCloneRetryRpc,

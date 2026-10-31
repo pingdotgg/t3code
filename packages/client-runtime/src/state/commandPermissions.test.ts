@@ -96,33 +96,36 @@ describe("command permissions", () => {
     ),
   );
 
-  // Extending a sandbox keeps a billable machine alive longer, like the other sandbox writes.
-  it.effect.each([WS_METHODS.serverRunStorageCleanup, WS_METHODS.sandboxesExtend])(
-    "requires the destination settings grant for %s",
-    (method) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const registry = yield* setup;
-          const cleanup = createCommandPermissions(runtime, method);
-          registry.set(sessions(env), AsyncResult.success(grant(true)));
-          expect(registry.get(cleanup.permissionAtom(env))).toBe(false);
-          expect((yield* cleanup.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
-            "EnvironmentAuthorizationError",
-          );
-          registry.set(
-            sessions(env),
-            AsyncResult.success({
-              ...grant(true),
-              scopes: [AuthSettingsWriteScope],
-              permissions: [AuthSettingsWriteScope],
-            }),
-          );
-          expect(registry.get(cleanup.permissionAtom(env))).toBe(true);
-          yield* cleanup.authorize(registry, env);
-          registry.set(sessions(other), AsyncResult.success(grant(false)));
-          expect(registry.get(cleanup.permissionAtom(other))).toBe(false);
-        }),
-      ),
+  // Sandbox writes keep a billable machine alive longer or change what the account keeps.
+  it.effect.each([
+    WS_METHODS.serverRunStorageCleanup,
+    WS_METHODS.sandboxesExtend,
+    WS_METHODS.sandboxesSaveTemplate,
+    WS_METHODS.sandboxesDeleteTemplate,
+  ])("requires the destination settings grant for %s", (method) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const cleanup = createCommandPermissions(runtime, method);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(cleanup.permissionAtom(env))).toBe(false);
+        expect((yield* cleanup.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(true),
+            scopes: [AuthSettingsWriteScope],
+            permissions: [AuthSettingsWriteScope],
+          }),
+        );
+        expect(registry.get(cleanup.permissionAtom(env))).toBe(true);
+        yield* cleanup.authorize(registry, env);
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        expect(registry.get(cleanup.permissionAtom(other))).toBe(false);
+      }),
+    ),
   );
 
   it.effect("requires the destination settings grant to check OTLP endpoints", () =>

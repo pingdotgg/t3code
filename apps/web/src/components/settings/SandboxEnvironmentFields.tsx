@@ -27,6 +27,7 @@ import {
   SandboxStartConfirmation,
   useSandboxStartCheck,
 } from "./SandboxStartLimits";
+import { useSandboxTemplates } from "./SandboxTemplates";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
@@ -37,6 +38,7 @@ import { AuthSettingsWriteScope } from "@t3tools/contracts";
 const EMPTY_PROVIDERS: ReadonlyArray<SandboxProviderInfo> = [];
 const EMPTY_CREDENTIAL_ENVIRONMENTS: ReadonlyArray<SandboxCredentialEnvironment> = [];
 const NO_CREDENTIAL_ENVIRONMENT = "__none__";
+const FRESH_MACHINE = "__fresh__";
 
 const describeCredentialEnvironment = (
   environment: SandboxCredentialEnvironment,
@@ -96,11 +98,22 @@ export function SandboxEnvironmentFields({
   const [size, setSize] = useState("");
   const [repositoryUrl, setRepositoryUrl] = useState("");
   const [credentialEnvironment, setCredentialEnvironment] = useState("");
+  const [templateName, setTemplateName] = useState("");
   const [allowCredentials, setAllowCredentials] = useState(false);
   const [isProvisioning, setIsProvisioning] = useState(false);
   const providers = providersQuery.data?.providers ?? EMPTY_PROVIDERS;
   const provider = providers.find((candidate) => candidate.kind === selectedKind) ?? providers[0];
-  const selectedSize = size === "" ? (provider ? providerDefaultSize(provider) : "") : size;
+  const templates = useSandboxTemplates(environmentId, provider);
+  const template = templates.templates.find((candidate) => candidate.name === templateName);
+  // A template keeps the machine size it was saved from.
+  const selectedSize =
+    template !== undefined
+      ? (template.size ?? "")
+      : size === ""
+        ? provider
+          ? providerDefaultSize(provider)
+          : ""
+        : size;
   const environmentsQuery = useEnvironmentQuery(
     provider?.capabilities.credentialEnvironments
       ? serverEnvironment.sandboxesEnvironments({
@@ -145,7 +158,11 @@ export function SandboxEnvironmentFields({
         provider: provider.kind,
         ...(apiKey.trim() === "" ? {} : { apiKey: apiKey.trim() }),
         ...(label.trim() === "" ? {} : { label: label.trim() }),
-        ...(selectedSize === "" ? {} : { size: selectedSize }),
+        ...(template !== undefined
+          ? { template: template.name }
+          : selectedSize === ""
+            ? {}
+            : { size: selectedSize }),
         ...(repositoryUrl.trim() === "" ? {} : { repositoryUrl: repositoryUrl.trim() }),
         ...(credentialEnvironment === ""
           ? {}
@@ -233,6 +250,7 @@ export function SandboxEnvironmentFields({
                 onClick={() => {
                   setSelectedKind(candidate.kind);
                   setSize("");
+                  setTemplateName("");
                   // Never carry one provider's key into another provider's replacement field.
                   setApiKey("");
                   setCredentialEnvironment("");
@@ -278,7 +296,7 @@ export function SandboxEnvironmentFields({
               <span className="mb-1.5 block text-xs font-medium text-foreground">Machine</span>
               <Select
                 value={selectedSize}
-                disabled={isProvisioning}
+                disabled={isProvisioning || template !== undefined}
                 onValueChange={(value) => {
                   if (value !== null) setSize(value);
                 }}
@@ -286,7 +304,7 @@ export function SandboxEnvironmentFields({
                 <SelectTrigger aria-label="Sandbox machine size" size="default">
                   <SelectValue>
                     {provider.sizes.find((candidate) => candidate.id === selectedSize)?.label ??
-                      "Choose a size"}
+                      (template === undefined ? "Choose a size" : "Template's size")}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
@@ -308,6 +326,39 @@ export function SandboxEnvironmentFields({
           </div>
           {startCheck.limits === null ? null : (
             <SandboxQuotaLine limits={startCheck.limits} defaultTtlMinutes={DEFAULT_TTL_MINUTES} />
+          )}
+
+          {templates.templates.length === 0 ? null : (
+            <div className="space-y-1.5">
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-foreground">Start from</span>
+                <Select
+                  value={template?.name ?? FRESH_MACHINE}
+                  disabled={isProvisioning}
+                  onValueChange={(value) => {
+                    if (value !== null) setTemplateName(value === FRESH_MACHINE ? "" : value);
+                  }}
+                >
+                  <SelectTrigger aria-label="Start the sandbox from" size="default">
+                    <SelectValue>{template?.name ?? "Fresh machine"}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    <SelectItem value={FRESH_MACHINE}>Fresh machine</SelectItem>
+                    {templates.templates.map((candidate) => (
+                      <SelectItem key={candidate.name} value={candidate.name}>
+                        {candidate.name}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </label>
+              {template === undefined ? null : (
+                <p className="text-2xs leading-relaxed text-muted-foreground">
+                  Starts with the template's tools, repositories, and files, at the size it was
+                  saved from. T3 Code sets up as a new environment.
+                </p>
+              )}
+            </div>
           )}
 
           <div className="grid gap-3 sm:grid-cols-2">

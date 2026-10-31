@@ -1,6 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Schema from "effect/Schema";
 
-import { assessSandboxStart, type SandboxProviderLimits } from "./sandbox.ts";
+import {
+  assessSandboxStart,
+  describeSandboxTemplateNameProblem,
+  type SandboxProviderLimits,
+  SandboxTemplateName,
+} from "./sandbox.ts";
 
 const assess = (limits: Partial<SandboxProviderLimits>) =>
   assessSandboxStart({ canStart: true, ...limits }, { providerLabel: "Boat", nowMillis: 0 });
@@ -33,6 +39,33 @@ describe("assessSandboxStart", () => {
     ];
     for (const [limits, warnings] of cases) {
       expect(assess(limits)).toEqual({ blocked: null, warnings });
+    }
+  });
+});
+
+const isSandboxTemplateName = Schema.is(SandboxTemplateName);
+
+describe("SandboxTemplateName", () => {
+  it("accepts only names every provider can save, and says why the rest fail", () => {
+    const cases: ReadonlyArray<[string, string | null]> = [
+      ["web-stack", null],
+      ["0", null],
+      ["a".repeat(63), null],
+      ["", "Enter a name."],
+      ["a".repeat(64), "Use at most 63 characters."],
+      ["-stack", "Use lowercase letters, digits, and dashes, starting with a letter or digit."],
+      ["Web-Stack", "Use lowercase letters, digits, and dashes, starting with a letter or digit."],
+      ["web_stack", "Use lowercase letters, digits, and dashes, starting with a letter or digit."],
+      ["web stack", "Use lowercase letters, digits, and dashes, starting with a letter or digit."],
+      // Boat reserves these for its CLI.
+      ...["latest", "tree", "pull", "rm", "save", "current", "self", "new"].map(
+        (name): [string, string] => [name, `"${name}" is a reserved name.`],
+      ),
+      ["newer", null],
+    ];
+    for (const [name, problem] of cases) {
+      expect(describeSandboxTemplateNameProblem(name), name).toBe(problem);
+      expect(isSandboxTemplateName(name), name).toBe(problem === null);
     }
   });
 });

@@ -34,6 +34,7 @@ export const SandboxProviderInfo = Schema.Struct({
     stopResume: Schema.Boolean,
     credentialEnvironments: Schema.Boolean,
     extend: Schema.Boolean,
+    templates: Schema.Boolean,
   }),
 });
 export type SandboxProviderInfo = typeof SandboxProviderInfo.Type;
@@ -133,6 +134,8 @@ export const SandboxCreateInput = Schema.Struct({
   allowCredentials: Schema.optional(Schema.Boolean),
   /** Stop the machine after this many minutes. Omit to leave the provider default. */
   ttlMinutes: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 43200 }))),
+  /** A saved template to start from. The template decides the machine size. */
+  template: Schema.optional(TrimmedString),
 });
 export type SandboxCreateInput = typeof SandboxCreateInput.Type;
 
@@ -184,6 +187,8 @@ export const SandboxRecord = Schema.Struct({
   hardDeadlineAt: Schema.NullOr(TrimmedString),
   ttlMinutes: Schema.Int,
   credentialEnvironment: Schema.optionalKey(TrimmedString),
+  /** The template the sandbox started from, for display. */
+  template: Schema.optionalKey(TrimmedString),
   /** Machine cost this calendar month at list price, when the provider reports it. */
   costDollars: Schema.optionalKey(Schema.Number),
   costSince: Schema.optionalKey(TrimmedString),
@@ -226,6 +231,81 @@ export const SandboxExtendResult = Schema.Struct({
 });
 export type SandboxExtendResult = typeof SandboxExtendResult.Type;
 
+const SANDBOX_TEMPLATE_RESERVED_NAMES: ReadonlySet<string> = new Set([
+  "latest",
+  "tree",
+  "pull",
+  "rm",
+  "save",
+  "current",
+  "self",
+  "new",
+]);
+
+/** Why `name` cannot name a template, or null. The save dialog and the RPC schema share it. */
+export const describeSandboxTemplateNameProblem = (name: string): string | null => {
+  if (name === "") return "Enter a name.";
+  if (name.length > 63) return "Use at most 63 characters.";
+  if (!/^[a-z0-9][a-z0-9-]*$/u.test(name)) {
+    return "Use lowercase letters, digits, and dashes, starting with a letter or digit.";
+  }
+  if (SANDBOX_TEMPLATE_RESERVED_NAMES.has(name)) return `"${name}" is a reserved name.`;
+  return null;
+};
+
+// Boat's saved-snapshot rule, the strictest of the providers, so one name works everywhere.
+export const SandboxTemplateName = Schema.String.check(
+  Schema.makeFilter((name: string) => describeSandboxTemplateNameProblem(name) === null, {
+    expected: "a template name of 1-63 lowercase letters, digits, or dashes",
+  }),
+);
+
+export const SandboxTemplate = Schema.Struct({
+  name: TrimmedString,
+  createdAt: Schema.optionalKey(TrimmedString),
+  sizeBytes: Schema.optionalKey(Schema.Number),
+  /** One of the provider's size ids, when the template decides the size of what starts from it. */
+  size: Schema.optionalKey(TrimmedString),
+});
+export type SandboxTemplate = typeof SandboxTemplate.Type;
+
+/** What the account pays for templates, when the provider reports it. */
+export const SandboxTemplateAllowance = Schema.Struct({
+  included: Schema.Number,
+  used: Schema.Number,
+  extra: Schema.optionalKey(Schema.Number),
+  pricePerExtraDailyDollars: Schema.optionalKey(Schema.Number),
+});
+export type SandboxTemplateAllowance = typeof SandboxTemplateAllowance.Type;
+
+export const SandboxTemplatesInput = Schema.Struct({
+  provider: SandboxProviderKind,
+});
+export type SandboxTemplatesInput = typeof SandboxTemplatesInput.Type;
+
+export const SandboxTemplatesResult = Schema.Struct({
+  templates: Schema.Array(SandboxTemplate),
+  templateAllowance: Schema.optionalKey(SandboxTemplateAllowance),
+});
+export type SandboxTemplatesResult = typeof SandboxTemplatesResult.Type;
+
+export const SandboxSaveTemplateInput = Schema.Struct({
+  environmentId: EnvironmentId,
+  name: SandboxTemplateName,
+});
+export type SandboxSaveTemplateInput = typeof SandboxSaveTemplateInput.Type;
+
+export const SandboxSaveTemplateResult = Schema.Struct({
+  template: SandboxTemplate,
+});
+export type SandboxSaveTemplateResult = typeof SandboxSaveTemplateResult.Type;
+
+export const SandboxDeleteTemplateInput = Schema.Struct({
+  provider: SandboxProviderKind,
+  name: TrimmedString,
+});
+export type SandboxDeleteTemplateInput = typeof SandboxDeleteTemplateInput.Type;
+
 export const SandboxStopResult = Schema.Struct({
   sandbox: SandboxRecord,
 });
@@ -245,6 +325,7 @@ export const SandboxStage = Schema.Literals([
   "pair",
   "delete",
   "config",
+  "template",
 ]);
 export type SandboxStage = typeof SandboxStage.Type;
 
@@ -257,6 +338,8 @@ export const SandboxProviderErrorCode = Schema.Literals([
   "snapshot_expired",
   "capacity_unavailable",
   "not_found",
+  "templates_unavailable",
+  "template_saving",
   "unknown",
 ]);
 export type SandboxProviderErrorCode = typeof SandboxProviderErrorCode.Type;

@@ -7,6 +7,8 @@ import {
   SandboxProviderError,
   type SandboxProviderKind,
   type SandboxStage,
+  type SandboxTemplate,
+  type SandboxTemplateAllowance,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
@@ -55,6 +57,8 @@ export interface SandboxProviderDriver {
     readonly environment?: string | undefined;
     /** One per provisioning attempt; providers that support it must not bill a retried create twice. */
     readonly idempotencyKey: string;
+    /** Start from this saved template instead of a fresh machine. */
+    readonly template?: string | undefined;
   }) => Effect.Effect<CreatedSandbox, SandboxProviderError, HttpClient.HttpClient>;
   /** Null when the account's limits are unreadable (for example a key without that scope). */
   readonly limits?: (input: {
@@ -109,6 +113,29 @@ export interface SandboxProviderDriver {
     readonly ttlMinutes: number;
     readonly running: boolean;
   }) => Effect.Effect<void, SandboxProviderError, HttpClient.HttpClient>;
+  /**
+   * Saves a stopped sandbox's disk under `name` and waits until it can start new sandboxes. The
+   * provisioner scrubs T3's identity and stops the machine first; the driver waits for the
+   * provider to finish stopping when its snapshot needs that.
+   */
+  readonly saveTemplate?: (input: {
+    readonly config: SandboxProviderConfig;
+    readonly sandboxId: string;
+    readonly name: string;
+  }) => Effect.Effect<SandboxTemplate, SandboxProviderError, HttpClient.HttpClient>;
+  /** Only templates T3 saved, never the provider's own base images. */
+  readonly listTemplates?: (input: { readonly config: SandboxProviderConfig }) => Effect.Effect<
+    {
+      readonly templates: ReadonlyArray<SandboxTemplate>;
+      readonly templateAllowance?: SandboxTemplateAllowance;
+    },
+    SandboxProviderError,
+    HttpClient.HttpClient
+  >;
+  readonly deleteTemplate?: (input: {
+    readonly config: SandboxProviderConfig;
+    readonly name: string;
+  }) => Effect.Effect<void, SandboxProviderError, HttpClient.HttpClient>;
   /** This month's cost of every T3 sandbox on the account in one call, keyed by sandbox id. */
   readonly usage?: (input: {
     readonly config: SandboxProviderConfig;
@@ -134,6 +161,9 @@ const PROVIDER_ERROR_CODES: Record<string, SandboxProviderErrorCode> = {
   snapshot_data_expired: "snapshot_expired",
   no_ready_machine: "capacity_unavailable",
   out_of_capacity: "capacity_unavailable",
+  trial_saved_snapshots_not_allowed: "templates_unavailable",
+  save_in_progress: "template_saving",
+  snapshot_not_found: "not_found",
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -212,6 +242,10 @@ const describeProviderFailure = (input: {
       return `${name} has no free machines right now.${retry || " Try again in a few minutes."}`;
     case "not_found":
       return "The provider could not find this resource.";
+    case "templates_unavailable":
+      return `Your ${name} plan cannot save templates.`;
+    case "template_saving":
+      return "A template with this name is still being saved. Wait for it to finish.";
     case "unknown":
       return `The provider responded with HTTP ${input.status}.`;
   }

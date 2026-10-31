@@ -21,6 +21,11 @@ That list follows the provider: a sandbox you stop or delete in the provider's d
 stopped or deleted within a minute, and Boat's monthly cost appears next to each sandbox. Boat keeps
 a stopped sandbox's disk for 14 days; after that it shows as expired and can only be deleted.
 
+Once a sandbox has your tools and repositories, **Save as template…** in the same list turns it into
+a starting point: choose the template under **Start from** when you add the next sandbox. Saving
+resets T3 Code on the sandbox and deletes it once the template is ready, so each copy connects as a
+new environment; its files live on in the template.
+
 ## T3 Connect
 
 T3 Connect makes an environment available to your other devices without setting

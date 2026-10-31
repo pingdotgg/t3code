@@ -26,7 +26,9 @@ const FAILURE_TITLES: Record<SandboxProviderErrorCode, string | null> = {
   size_unavailable: "Machine size not available",
   snapshot_expired: "Sandbox disk expired",
   capacity_unavailable: "Provider is out of machines",
-  not_found: "Sandbox not found",
+  not_found: "Not found",
+  templates_unavailable: "Templates not available",
+  template_saving: "Template still saving",
   unknown: null,
 };
 

@@ -1,4 +1,11 @@
-import { BoxIcon, ChevronDownIcon, PlayIcon, SquareIcon, Trash2Icon } from "lucide-react";
+import {
+  BoxIcon,
+  ChevronDownIcon,
+  LayersIcon,
+  PlayIcon,
+  SquareIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { useState } from "react";
 import {
   isAtomCommandInterrupted,
@@ -26,6 +33,7 @@ import {
   SandboxStartConfirmation,
   useSandboxStartCheck,
 } from "./SandboxStartLimits";
+import { SandboxTemplateList, SaveSandboxTemplateDialog } from "./SandboxTemplates";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -114,7 +122,16 @@ export function SandboxManagementSection() {
         }),
   );
   const sandboxes = list.data?.sandboxes ?? [];
-  if (provisionerEnvironmentId === null || sandboxes.length === 0) return null;
+  // Templates outlive the sandbox they came from, so they keep the section open on their own.
+  const templateProviders = (providersQuery.data?.providers ?? []).filter(
+    (provider) => provider.configured && provider.capabilities.templates,
+  );
+  if (
+    provisionerEnvironmentId === null ||
+    (sandboxes.length === 0 && templateProviders.length === 0)
+  ) {
+    return null;
+  }
 
   return (
     <SettingsSection id="sandboxes" title="Sandboxes">
@@ -129,6 +146,13 @@ export function SandboxManagementSection() {
             (candidate) => candidate.kind === sandbox.provider,
           )}
           onChanged={() => void list.refresh()}
+        />
+      ))}
+      {templateProviders.map((provider) => (
+        <SandboxTemplateList
+          key={provider.kind}
+          environmentId={provisionerEnvironmentId}
+          provider={provider}
         />
       ))}
     </SettingsSection>
@@ -207,6 +231,7 @@ function SandboxRow({
   const minute = useNowMinute();
   const [pending, setPending] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [savingTemplate, setSavingTemplate] = useState(false);
   // The tick is UTC truncated to the minute; a minute's precision is all these labels show.
   const nowMillis = Date.parse(`${minute}:00.000Z`);
   const remainingMinutes =
@@ -237,6 +262,9 @@ function SandboxRow({
     (sandbox.state === "running" || sandbox.state === "stopped") &&
     remainingMinutes !== null &&
     !pastDeadline;
+
+  const canSaveTemplate =
+    provider !== undefined && provider.capabilities.templates && sandbox.state === "running";
 
   const run = async (action: "stop" | "resume" | "delete" | { readonly extend: number }) => {
     startCheck.cancel();
@@ -291,6 +319,7 @@ function SandboxRow({
   const subtitle = [
     provider?.label ?? sandbox.provider,
     sandbox.size,
+    ...(sandbox.template === undefined ? [] : [`from ${sandbox.template}`]),
     ...(attention === undefined ? [stateLabel(sandbox)] : []),
     ...(sandbox.costDollars === undefined ? [] : [formatCost(sandbox.costDollars)]),
     ...(remainingMinutes === null || attention !== undefined
@@ -375,6 +404,17 @@ function SandboxRow({
               </Tooltip>
             )
           ) : null}
+          {canSaveTemplate ? (
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={pending}
+              onClick={() => setSavingTemplate(true)}
+            >
+              <LayersIcon className="size-3" />
+              Save as template…
+            </Button>
+          ) : null}
           {canDelete && !confirmingDelete ? (
             <Button
               size="xs"
@@ -414,6 +454,16 @@ function SandboxRow({
           destructive
           onConfirm={() => void run("delete")}
           onCancel={() => setConfirmingDelete(false)}
+        />
+      ) : null}
+      {canSaveTemplate ? (
+        <SaveSandboxTemplateDialog
+          environmentId={environmentId}
+          sandbox={sandbox}
+          provider={provider}
+          open={savingTemplate}
+          onOpenChange={setSavingTemplate}
+          onSaved={onChanged}
         />
       ) : null}
     </div>

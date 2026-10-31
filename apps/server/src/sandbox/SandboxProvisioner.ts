@@ -16,7 +16,12 @@ import {
   type SandboxListResult,
   type SandboxRecord,
   type SandboxResumeResult,
+  type SandboxSaveTemplateInput,
+  type SandboxSaveTemplateResult,
+  type SandboxDeleteTemplateInput,
   type SandboxStopResult,
+  type SandboxTemplatesInput,
+  type SandboxTemplatesResult,
   SandboxProviderError,
   type SandboxProviderInfo,
   type SandboxProviderKind,
@@ -53,6 +58,7 @@ const SERVE_SCRIPT = `if ! curl -fsS http://127.0.0.1:3773/.well-known/t3/enviro
     t3 service restart >/dev/null 2>&1 || true
   else
     nohup t3 serve --host 0.0.0.0 --port 3773 >"$HOME/.t3/sandbox-server.log" 2>&1 &
+    echo "$!" >"$HOME/.t3/sandbox-server.pid"
   fi
 fi
 i=0
@@ -97,6 +103,41 @@ if ! command -v t3 >/dev/null 2>&1; then
   exit 1
 fi
 ${SERVE_SCRIPT}`;
+
+// A template copies the disk, and T3's userdata holds the environment id, auth sessions, and secrets:
+// a sandbox started from it would answer as the source with the source's valid bearer sessions.
+// So the server stops, by the PID it started or the owner of its port, and its state is removed.
+// The installed binary stays, so install on the new sandbox skips the download.
+const SCRUB_SCRIPT = `set -eu
+export PATH="$HOME/.local/bin:$PATH"
+answering() { curl -fsS http://127.0.0.1:3773/.well-known/t3/environment >/dev/null 2>&1; }
+# Uninstalling the unit also keeps it from starting T3 on every sandbox made from the template.
+if command -v t3 >/dev/null 2>&1; then
+  t3 service uninstall >/dev/null 2>&1 || true
+fi
+pids=""
+if command -v ss >/dev/null 2>&1; then
+  pids="$(ss -H -ltnp 'sport = :3773' 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 || true)"
+fi
+if [ -f "$HOME/.t3/sandbox-server.pid" ]; then
+  pids="$pids $(cat "$HOME/.t3/sandbox-server.pid")"
+fi
+for pid in $pids; do
+  if tr '\\000' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -q 'serve'; then
+    kill "$pid" 2>/dev/null || true
+  fi
+done
+i=0
+while answering; do
+  i=$((i + 1))
+  if [ "$i" -ge 30 ]; then
+    echo "T3 Code is still running, so its state was not removed." >&2
+    exit 1
+  fi
+  sleep 1
+done
+rm -rf "$HOME/.t3/userdata" "$HOME/.t3/environment-label" "$HOME/.t3/usage-host-id"
+rm -f "$HOME/.t3/sandbox-server.log" "$HOME/.t3/sandbox-server.pid"`;
 
 const PAIR_SCRIPT = `set -eu
 export PATH="$HOME/.local/bin:$PATH"
@@ -156,6 +197,19 @@ export class SandboxProvisioner extends Context.Service<
     readonly extend: (
       input: SandboxExtendInput,
     ) => Effect.Effect<SandboxExtendResult, SandboxProviderError>;
+    readonly templates: (
+      input: SandboxTemplatesInput,
+    ) => Effect.Effect<SandboxTemplatesResult, SandboxProviderError>;
+    /**
+     * Resets T3 on the sandbox, saves its disk as a template, and deletes it: the sandbox's T3
+     * identity is gone, so it could only come back as a different environment.
+     */
+    readonly saveTemplate: (
+      input: SandboxSaveTemplateInput,
+    ) => Effect.Effect<SandboxSaveTemplateResult, SandboxProviderError>;
+    readonly deleteTemplate: (
+      input: SandboxDeleteTemplateInput,
+    ) => Effect.Effect<void, SandboxProviderError>;
     /** Stops sandboxes past their deadline and syncs every other record with its provider. */
     readonly sweep: Effect.Effect<void>;
   }
@@ -235,6 +289,11 @@ const make = Effect.gen(function* () {
           stopResume: driver.stop !== undefined && driver.resume !== undefined,
           credentialEnvironments: driver.listEnvironments !== undefined,
           extend: driver.extend !== undefined,
+          templates:
+            driver.saveTemplate !== undefined &&
+            driver.listTemplates !== undefined &&
+            driver.deleteTemplate !== undefined &&
+            driver.stop !== undefined,
         },
       })),
     })),
@@ -275,7 +334,6 @@ const make = Effect.gen(function* () {
     const apiKey = yield* resolveApiKey(input.provider, input.apiKey);
     const config = { apiKey };
     const label = input.label?.trim() || `${driver.info.label} sandbox`;
-    const size = input.size?.trim() || driver.defaultSize;
     if (input.environment !== undefined && input.allowCredentials !== true) {
       return yield* new SandboxProviderError({
         provider: input.provider,
@@ -283,6 +341,29 @@ const make = Effect.gen(function* () {
         detail:
           "This sandbox would receive the credential environment's secrets. Confirm that explicitly first.",
       });
+    }
+    const template = input.template?.trim() || undefined;
+    let size = input.size?.trim() || driver.defaultSize;
+    if (template !== undefined) {
+      if (driver.listTemplates === undefined) {
+        return yield* new SandboxProviderError({
+          provider: input.provider,
+          stage: "config",
+          detail: "This provider cannot start a sandbox from a template.",
+        });
+      }
+      // Fails before anything bills when the template is gone, and the template decides the size.
+      const listed = yield* onHttp(driver.listTemplates({ config }));
+      const found = listed.templates.find((candidate) => candidate.name === template);
+      if (found === undefined) {
+        return yield* new SandboxProviderError({
+          provider: input.provider,
+          stage: "template",
+          code: "not_found",
+          detail: `${driver.info.label} has no template named ${template}.`,
+        });
+      }
+      size = found.size ?? size;
     }
     const limits = yield* preflightStart(driver, config, size);
     // The record keeps the clamped lifetime, so its deadline matches what the provider enforces.
@@ -307,6 +388,7 @@ const make = Effect.gen(function* () {
         ttlMinutes,
         environment: input.environment,
         idempotencyKey,
+        template,
       }),
     );
 
@@ -347,6 +429,37 @@ const make = Effect.gen(function* () {
       }),
     );
 
+    // A sandbox that answers with an id T3 already tracks was cloned with another environment's
+    // identity and sessions; it must never be paired.
+    const descriptor = yield* stopOnFailure(
+      requestJson({
+        provider: input.provider,
+        stage: "pair",
+        schema: ExecutionEnvironmentDescriptor,
+        request: HttpClientRequest.get(
+          `${httpBaseUrl.replace(/\/+$/, "")}/.well-known/t3/environment`,
+        ),
+      }).pipe(
+        Effect.tap((described) =>
+          records.get(described.environmentId).pipe(
+            Effect.orDie,
+            Effect.flatMap((existing) =>
+              Option.isNone(existing)
+                ? Effect.void
+                : Effect.fail(
+                    new SandboxProviderError({
+                      provider: input.provider,
+                      stage: "pair",
+                      detail:
+                        "The new sandbox answered as an environment that already exists, so it was deleted. Save the template again from a sandbox T3 Code set up.",
+                    }),
+                  ),
+            ),
+          ),
+        ),
+      ),
+    );
+
     const pairingCode = yield* stopOnFailure(
       driver
         .execute({
@@ -371,16 +484,6 @@ const make = Effect.gen(function* () {
         ),
     );
 
-    const descriptor = yield* stopOnFailure(
-      requestJson({
-        provider: input.provider,
-        stage: "pair",
-        schema: ExecutionEnvironmentDescriptor,
-        request: HttpClientRequest.get(
-          `${httpBaseUrl.replace(/\/+$/, "")}/.well-known/t3/environment`,
-        ),
-      }),
-    );
     const createdAt = yield* nowIso;
     const record: SandboxRecord = {
       environmentId: descriptor.environmentId,
@@ -397,6 +500,7 @@ const make = Effect.gen(function* () {
       ttlMinutes,
       httpBaseUrl,
       ...(input.environment === undefined ? {} : { credentialEnvironment: input.environment }),
+      ...(template === undefined ? {} : { template }),
     };
     yield* records.put(record).pipe(Effect.orDie);
 
@@ -556,6 +660,29 @@ const make = Effect.gen(function* () {
         ),
       ),
     );
+    // Saving a template resets T3 on its source; one that failed to save comes back as a different
+    // environment, which the client's saved connection cannot reach.
+    const described = yield* onHttp(
+      requestJson({
+        provider: record.provider,
+        stage: "start",
+        schema: ExecutionEnvironmentDescriptor,
+        request: HttpClientRequest.get(
+          `${httpBaseUrl.replace(/\/+$/, "")}/.well-known/t3/environment`,
+        ),
+      }),
+    ).pipe(Effect.option);
+    if (Option.isSome(described) && described.value.environmentId !== record.environmentId) {
+      yield* records
+        .put({ ...record, state: "error", updatedAt: now, httpBaseUrl })
+        .pipe(Effect.orDie);
+      return yield* new SandboxProviderError({
+        provider: record.provider,
+        stage: "start",
+        detail:
+          "T3 Code on this sandbox was reset, so it cannot reconnect as this environment. Delete it.",
+      });
+    }
     const updated: SandboxRecord = {
       ...record,
       state: "running",
@@ -623,6 +750,104 @@ const make = Effect.gen(function* () {
     };
     yield* records.put(updated).pipe(Effect.orDie);
     return { sandbox: updated } satisfies SandboxExtendResult;
+  });
+
+  const templates = Effect.fn("SandboxProvisioner.templates")(function* (
+    input: SandboxTemplatesInput,
+  ) {
+    const driver = findDriver(input.provider);
+    if (driver.listTemplates === undefined)
+      return { templates: [] } satisfies SandboxTemplatesResult;
+    const apiKey = yield* resolveApiKey(input.provider, undefined).pipe(Effect.option);
+    if (Option.isNone(apiKey)) return { templates: [] } satisfies SandboxTemplatesResult;
+    const listed = yield* onHttp(driver.listTemplates({ config: { apiKey: apiKey.value } }));
+    return listed satisfies SandboxTemplatesResult;
+  });
+
+  const saveTemplate = Effect.fn("SandboxProvisioner.saveTemplate")(function* (
+    input: SandboxSaveTemplateInput,
+  ) {
+    const record = yield* readRecord(input.environmentId);
+    const driver = findDriver(record.provider);
+    const { saveTemplate: save, stop: stopMachine } = driver;
+    if (save === undefined || stopMachine === undefined) {
+      return yield* new SandboxProviderError({
+        provider: record.provider,
+        stage: "config",
+        detail: "This provider cannot save templates.",
+      });
+    }
+    // The reset runs on the machine. Resuming here would spend a start nobody confirmed.
+    if (record.state !== "running") {
+      return yield* new SandboxProviderError({
+        provider: record.provider,
+        stage: "config",
+        detail: "Only a running sandbox can be saved as a template. Resume it first.",
+      });
+    }
+    const apiKey = yield* resolveApiKey(record.provider, undefined);
+    const config = { apiKey };
+    yield* onHttp(
+      driver.execute({
+        config,
+        sandboxId: record.sandboxId,
+        command: SCRUB_SCRIPT,
+        timeoutSeconds: 120,
+      }),
+    );
+    // From here T3's identity on the machine is gone, and resume refuses the different one it gets.
+    const afterReset = (error: SandboxProviderError) =>
+      new SandboxProviderError({
+        provider: error.provider,
+        stage: error.stage,
+        detail: `${error.detail} T3 Code on this sandbox was already reset, so it cannot reconnect. Delete it.`,
+        ...(error.status === undefined ? {} : { status: error.status }),
+        ...(error.code === undefined ? {} : { code: error.code }),
+        ...(error.retryAfterSeconds === undefined
+          ? {}
+          : { retryAfterSeconds: error.retryAfterSeconds }),
+        cause: error,
+      });
+    yield* onHttp(stopMachine({ config, sandboxId: record.sandboxId })).pipe(
+      Effect.mapError(afterReset),
+    );
+    yield* records
+      .put({ ...record, state: "stopped", updatedAt: yield* nowIso })
+      .pipe(Effect.orDie);
+    const template = yield* onHttp(
+      save({ config, sandboxId: record.sandboxId, name: input.name }),
+    ).pipe(Effect.mapError(afterReset));
+    yield* onHttp(driver.destroy({ config, sandboxId: record.sandboxId })).pipe(
+      Effect.catchIf(
+        (error) => error.code === "not_found",
+        () => Effect.void,
+      ),
+      Effect.andThen(records.remove(record.environmentId).pipe(Effect.orDie)),
+      // The template is saved either way; a sandbox that survives stays listed for a manual delete.
+      Effect.catch((cause) =>
+        Effect.logWarning("sandbox delete after saving a template failed", {
+          environmentId: record.environmentId,
+          sandboxId: record.sandboxId,
+          cause,
+        }),
+      ),
+    );
+    return { template } satisfies SandboxSaveTemplateResult;
+  });
+
+  const deleteTemplate = Effect.fn("SandboxProvisioner.deleteTemplate")(function* (
+    input: SandboxDeleteTemplateInput,
+  ) {
+    const driver = findDriver(input.provider);
+    if (driver.deleteTemplate === undefined) {
+      return yield* new SandboxProviderError({
+        provider: input.provider,
+        stage: "config",
+        detail: "This provider cannot delete templates.",
+      });
+    }
+    const apiKey = yield* resolveApiKey(input.provider, undefined);
+    yield* onHttp(driver.deleteTemplate({ config: { apiKey }, name: input.name }));
   });
 
   // The sweep reads records, then waits on the provider; a user action in between wins.
@@ -736,6 +961,9 @@ const make = Effect.gen(function* () {
     stop,
     resume,
     extend,
+    templates,
+    saveTemplate,
+    deleteTemplate,
     sweep,
   });
 });

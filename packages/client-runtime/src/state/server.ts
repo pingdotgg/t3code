@@ -1187,6 +1187,11 @@ export function createServerEnvironmentAtoms<R, E>(
     tag: WS_METHODS.sandboxesLimits,
     idleTtlMs: 0,
   });
+  const sandboxesTemplates = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:sandboxes:templates",
+    tag: WS_METHODS.sandboxesTemplates,
+    idleTtlMs: 0,
+  });
   const sandboxesListRevisionAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make(0).pipe(
       Atom.keepAlive,
@@ -1225,6 +1230,7 @@ export function createServerEnvironmentAtoms<R, E>(
     sandboxesProviders,
     sandboxesEnvironments,
     sandboxesLimits,
+    sandboxesTemplates,
     sandboxesList,
     sandboxesStop: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:sandboxes:stop",
@@ -1237,6 +1243,14 @@ export function createServerEnvironmentAtoms<R, E>(
     sandboxesExtend: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:sandboxes:extend",
       tag: WS_METHODS.sandboxesExtend,
+    }),
+    sandboxesSaveTemplate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:sandboxes:save-template",
+      tag: WS_METHODS.sandboxesSaveTemplate,
+    }),
+    sandboxesDeleteTemplate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:sandboxes:delete-template",
+      tag: WS_METHODS.sandboxesDeleteTemplate,
     }),
     sandboxesCreate: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:sandboxes:create",

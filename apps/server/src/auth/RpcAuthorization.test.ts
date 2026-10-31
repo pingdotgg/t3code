@@ -73,6 +73,7 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.sandboxesProviders,
       WS_METHODS.sandboxesEnvironments,
       WS_METHODS.sandboxesLimits,
+      WS_METHODS.sandboxesTemplates,
       WS_METHODS.sandboxesList,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
@@ -81,6 +82,8 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.sandboxesCreate,
       WS_METHODS.sandboxesResume,
       WS_METHODS.sandboxesExtend,
+      WS_METHODS.sandboxesSaveTemplate,
+      WS_METHODS.sandboxesDeleteTemplate,
       WS_METHODS.sandboxesStop,
       WS_METHODS.sandboxesDelete,
     ]) {

@@ -59,6 +59,7 @@ vi.mock(import("~/state/query"), async (original) => ({
                   stopResume: true,
                   credentialEnvironments: false,
                   extend: true,
+                  templates: false,
                 },
               },
             ],
