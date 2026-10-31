@@ -79,6 +79,25 @@ function quantity(count: number, noun: string, plural = `${noun}s`): string {
   return `${count} ${count === 1 ? noun : plural}`;
 }
 
+/** One PR per single call; a batch counts what its result reports. */
+function pullRequestQuantity(
+  calls: ReadonlyArray<{
+    readonly input: Record<string, unknown> | undefined;
+    readonly output: Record<string, unknown> | undefined;
+  }>,
+  countKey: "linkedCount" | "unlinkedCount",
+): string {
+  let count = 0;
+  for (const call of calls) {
+    const reported = call.output?.[countKey];
+    if (typeof reported === "number") count += reported;
+    else if (call.input?.url !== undefined || call.input?.number !== undefined) count += 1;
+    // A batch result too large to compact loses its count, so the label drops the number.
+    else return "pull requests";
+  }
+  return quantity(count, "pull request");
+}
+
 export function summarizeT3ToolCalls(
   action: T3McpToolSummaryAction,
   calls: ReadonlyArray<T3ToolSummaryCall>,
@@ -388,33 +407,12 @@ export function summarizeT3ToolCalls(
       );
       break;
     }
-    case "link-pr": {
-      let count = 0;
-      let countKnown = true;
-      for (const call of selected) {
-        if (Array.isArray(call.input?.urls)) count += call.input.urls.length;
-        // A batch input too large for the wire is summarized, so the label drops the number.
-        else if (call.input?.url === undefined && call.input?.number === undefined)
-          countKnown = false;
-        else count += 1;
-      }
-      const object = countKnown ? quantity(count, "pull request") : "pull requests";
-      label = phrase("Linked", "link", object);
+    case "link-pr":
+      label = phrase("Linked", "link", pullRequestQuantity(selected, "linkedCount"));
       break;
-    }
-    case "unlink-pr": {
-      let count = 0;
-      let countKnown = true;
-      for (const call of selected) {
-        if (typeof call.output?.unlinkedCount === "number") count += call.output.unlinkedCount;
-        // A batch result too large to compact loses its count, so the label drops the number.
-        else if (Array.isArray(call.input?.states)) countKnown = false;
-        else count += 1;
-      }
-      const object = countKnown ? quantity(count, "pull request") : "pull requests";
-      label = phrase("Unlinked", "unlink", object);
+    case "unlink-pr":
+      label = phrase("Unlinked", "unlink", pullRequestQuantity(selected, "unlinkedCount"));
       break;
-    }
     case "watch-pr":
       label = phrase("Watching", "watch", quantity(selected.length, "pull request"));
       break;
