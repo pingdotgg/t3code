@@ -3244,7 +3244,7 @@ describe("PiAdapterV2", () => {
     "exit",
     "paused",
     "paused-widget",
-  ])("retires native async tracking on %s and ignores late notices", (reason) =>
+  ])("releases native async tracking on %s and reconciles late notices", (reason) =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
       const { runtime, takeEvent, observed } = yield* openRuntime(fake);
@@ -3326,7 +3326,7 @@ describe("PiAdapterV2", () => {
         reason.startsWith("paused") ? "idle" : "interrupted",
       );
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
-      if (reason === "replacement" || reason === "paused") {
+      if (reason === "replacement" || reason.startsWith("paused")) {
         const owner =
           reason === "replacement"
             ? yield* runtime.ensureThread({
@@ -3347,10 +3347,11 @@ describe("PiAdapterV2", () => {
           },
         });
         yield* piEventBarrier(fake, takeEvent);
-        assert.isFalse(
+        assert.equal(
           observed.some(
             (event) => event.type === "subagent.updated" && event.subagent.status === "completed",
           ),
+          reason.startsWith("paused"),
         );
         if (reason === "paused") {
           yield* asyncSubagentTool(fake, "resumed-run", "single", {
