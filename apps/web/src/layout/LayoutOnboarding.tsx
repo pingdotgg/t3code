@@ -140,7 +140,7 @@ export function LayoutOnboarding() {
         }}
       >
         <DialogPopup className="max-w-[1000px]" bottomStickOnMobile={false}>
-          <div className="flex flex-col gap-6 p-8">
+          <div className="flex min-h-0 flex-col gap-6 overflow-y-auto p-8">
             <div className="flex flex-col gap-2">
               <DialogTitle render={<h1 />} size="page">
                 Tabs, side by side
