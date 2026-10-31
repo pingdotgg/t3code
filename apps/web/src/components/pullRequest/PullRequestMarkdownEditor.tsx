@@ -12,6 +12,7 @@ import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
+import { textDirection } from "~/textDirection";
 
 export function PullRequestMarkdownEditor({
   value,
@@ -106,6 +107,7 @@ export function PullRequestMarkdownEditor({
           autoFocus
           disabled={saving}
           value={draft}
+          dir={textDirection(draft)}
           rows={6}
           placeholder={placeholder}
           aria-label={label}

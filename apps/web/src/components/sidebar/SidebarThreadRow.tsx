@@ -1013,7 +1013,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     <span
       aria-hidden
       className={cn(
-        "min-w-0 flex-1 text-start text-sm transition-opacity motion-reduce:transition-none",
+        "min-w-0 flex-1 text-left text-sm transition-opacity motion-reduce:transition-none",
         shouldRecede ? "font-normal" : "font-medium",
         variant !== "slim"
           ? cn(
@@ -1724,13 +1724,14 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
             <span className="flex min-w-0 items-center gap-2.5">
               <span
                 className={cn(
-                  "min-w-0 flex-1 truncate",
+                  "min-w-0 flex-1 truncate text-left",
                   props.isSettled
                     ? "font-normal text-secondary-label/70 group-hover/sidebar-row:text-foreground"
                     : "font-medium text-foreground",
                   (props.isHighlighted || props.isRouteActive) && "text-foreground",
                   thread.titleRegeneration != null && "opacity-55",
                 )}
+                dir={textDirection(thread.title)}
               >
                 {thread.title}
               </span>

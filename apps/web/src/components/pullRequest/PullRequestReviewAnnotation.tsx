@@ -29,6 +29,7 @@ import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import type { PendingReviewComment } from "./pullRequestReviewStore";
+import { textDirection } from "~/textDirection";
 
 const CARD_CLASS =
   "mx-3 my-2 rounded-xl border border-border/70 bg-background p-3 text-sm shadow-sm";
@@ -328,6 +329,7 @@ export function ReviewThreadCard({
                   autoFocus
                   size="sm"
                   value={reply}
+                  dir={textDirection(reply)}
                   placeholder="Reply"
                   aria-label="Reply to this conversation"
                   onChange={(event) => setReply(event.target.value)}

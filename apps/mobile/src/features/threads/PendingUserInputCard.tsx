@@ -2,6 +2,13 @@ import { Button } from "../../components/ui/Button";
 import { QuestionAttachments } from "./QuestionAttachments";
 import type { EnvironmentId, RuntimeRequestId } from "@t3tools/contracts";
 import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
+import {
+  markdownProseDirection,
+  markdownWithDirection,
+  textDirection,
+  type TextDirection,
+} from "@t3tools/shared/textDirection";
+import { directionalText } from "../../lib/directionalText";
 import { useRef } from "react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
@@ -61,14 +68,37 @@ export interface PendingUserInputCardProps {
 /** Android cannot hit-test overlays beyond their parent's bounds; render its expanded card in-flow. */
 const EXPANDED_CARD_IS_OVERLAY = Platform.OS === "ios";
 
-function QuestionText(props: { readonly markdown: string; readonly environmentId: EnvironmentId }) {
+function proseDirectionStyle(text: string, setDirection: TextDirection | undefined) {
+  const direction = textDirection(text);
+  return {
+    ...(direction ? { direction, writingDirection: direction } : null),
+    textAlign: (direction === "rtl") === (setDirection === "rtl") ? "left" : "right",
+  } as const;
+}
+
+function QuestionText(props: {
+  readonly markdown: string;
+  readonly environmentId: EnvironmentId;
+  readonly setDirection: TextDirection | undefined;
+}) {
   const styles = useMarkdownPreviewStyles();
   const markdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
+  const direction = markdownProseDirection(markdown);
   const openLink = useOpenPullRequest();
   return (
     <SelectableMarkdownText
-      markdown={markdown}
+      markdown={Platform.OS === "android" ? markdownWithDirection(markdown, direction) : markdown}
       textStyle={styles.nativeTextStyle}
+      writingDirection={direction}
+      textAlign={
+        Platform.OS === "android"
+          ? (direction === "rtl") === (props.setDirection === "rtl")
+            ? "left"
+            : "right"
+          : props.setDirection === "rtl"
+            ? "right"
+            : "left"
+      }
       onLinkPress={(href) => void openLink(href)}
     />
   );
@@ -79,6 +109,13 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   const canRespond = props.pendingUserInput.responseCapability !== "not_resumable";
   const isResponding = props.respondingUserInputId === props.pendingUserInput.requestId;
   const responseDisabled = !canRespond || isResponding;
+  const setDirection = markdownProseDirection(
+    ...props.pendingUserInput.questions.flatMap((question) => [
+      question.header,
+      question.question,
+      ...question.options.flatMap((option) => [option.label, option.description ?? ""]),
+    ]),
+  );
 
   const cardCoverage = props.cardCoverage;
   const barHeightRef = useRef(0);
@@ -217,10 +254,17 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
           const draft = props.drafts[question.id];
           return (
             <View key={question.id} className="gap-2 pt-1">
-              <Text className="font-t3-bold text-xs uppercase tracking-[1px] text-foreground-muted">
-                {question.header}
+              <Text
+                className="font-t3-bold text-xs uppercase tracking-[1px] text-foreground-muted"
+                style={proseDirectionStyle(question.header, setDirection)}
+              >
+                {directionalText(question.header)}
               </Text>
-              <QuestionText markdown={question.question} environmentId={props.environmentId} />
+              <QuestionText
+                markdown={question.question}
+                environmentId={props.environmentId}
+                setDirection={setDirection}
+              />
               <View className="gap-2">
                 {question.options.map((option) => {
                   const optionValue = option.value ?? option.label.trim();
@@ -251,12 +295,16 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                             "font-t3-bold text-sm",
                             selected ? "text-foreground" : "text-foreground-secondary",
                           )}
+                          style={proseDirectionStyle(option.label, setDirection)}
                         >
-                          {option.label}
+                          {directionalText(option.label)}
                         </Text>
                         {description ? (
-                          <Text className="font-sans text-sm leading-5 text-foreground-muted">
-                            {description}
+                          <Text
+                            className="font-sans text-sm leading-5 text-foreground-muted"
+                            style={proseDirectionStyle(description, setDirection)}
+                          >
+                            {directionalText(description)}
                           </Text>
                         ) : null}
                       </View>

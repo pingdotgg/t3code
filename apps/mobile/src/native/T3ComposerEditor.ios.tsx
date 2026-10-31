@@ -1,6 +1,7 @@
 import { PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES } from "@t3tools/client-runtime/text-paste";
 import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
+import { composerParagraphDirections } from "@t3tools/shared/textDirection";
 import { composerContextEditorTokens, composerSkillLabels } from "../lib/composerContext";
 import { requireNativeView } from "expo";
 import {
@@ -175,10 +176,18 @@ export function ComposerEditor({
   );
 
   const skillLabels = useMemo(() => composerSkillLabels(skills), [skills]);
+  const editorTokens = useMemo(
+    () => composerContextEditorTokens(props.value, tokens, skillLabels),
+    [props.value, tokens, skillLabels],
+  );
+  const paragraphDirections = useMemo(
+    () => composerParagraphDirections(props.value, editorTokens),
+    [props.value, editorTokens],
+  );
   const chipTextColor = createNativeComposerTheme(theme).text;
   const tokensJson = useMemo(() => {
     return JSON.stringify(
-      composerContextEditorTokens(props.value, tokens, skillLabels).map((token) => {
+      editorTokens.map((token) => {
         const record =
           token.type === "context"
             ? props.context?.records.find((record) => record.contextId === token.contextId)
@@ -209,7 +218,7 @@ export function ComposerEditor({
         };
       }),
     );
-  }, [props.value, tokens, props.context, skillLabels, theme, chipTextColor]);
+  }, [editorTokens, props.context, skillLabels, theme, chipTextColor]);
   // Every render resolves against the snapshot history, so a render whose
   // (value, selection) lags the acknowledged native state is stamped behind
   // the native revision and rejected by the editor instead of re-applying a
@@ -234,6 +243,7 @@ export function ComposerEditor({
     value: props.value,
     selection: isNativeEcho ? null : (selection ?? null),
     tokensJson,
+    paragraphDirections,
     mostRecentEventCount: controlledEventCount,
     isNativeEcho,
   });

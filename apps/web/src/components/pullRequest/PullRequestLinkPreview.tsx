@@ -19,6 +19,7 @@ import { useEnvironmentQuery } from "~/state/query";
 import { PreviewCard, PreviewCardPopup, PreviewCardTrigger } from "../ui/preview-card";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestActorAvatar, resolvePullRequestState } from "./pullRequestPresentation";
+import { textDirection } from "~/textDirection";
 
 interface PullRequestLinkPreviewTarget {
   readonly environmentId: EnvironmentId;
@@ -131,7 +132,10 @@ export function PullRequestLinkPreview({
                     </span>
                   )}
                 </div>
-                <p className="mt-1 text-sm font-medium leading-snug text-foreground text-pretty">
+                <p
+                  className="mt-1 text-sm font-medium leading-snug text-foreground text-pretty"
+                  dir={textDirection(preview.title)}
+                >
                   {preview.title}
                 </p>
                 <div className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">

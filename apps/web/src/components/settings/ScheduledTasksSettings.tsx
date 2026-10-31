@@ -117,6 +117,7 @@ import {
   SettingsSection,
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
 } from "./settingsLayout";
+import { textDirection } from "~/textDirection";
 
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
@@ -1539,6 +1540,7 @@ function ScheduledTaskEditorForm({
               className="max-h-64 overflow-y-auto"
               placeholder="What should the agent do each time this runs?"
               value={draft.prompt}
+              dir={textDirection(draft.prompt)}
               onChange={(event) =>
                 setDraft((current) => ({ ...current, prompt: event.target.value }))
               }

@@ -42,6 +42,7 @@ export function ThreadTitleInstructionsSettings() {
           }}
           rows={4}
           defaultValue={mixed ? "" : settings.threadTitleInstructions}
+          dir="auto"
           placeholder={
             mixed
               ? "Mixed. Enter instructions to apply to all selected targets."
