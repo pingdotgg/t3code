@@ -1,17 +1,15 @@
 import {
-  parseScopedProjectKey,
   scopedProjectKey,
   scopedThreadKey,
   scopeProjectRef,
 } from "@t3tools/client-runtime/environment";
 import type { DesktopPreviewFavicon, ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
-import * as Option from "effect/Option";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { normalizeHostname } from "~/browser/browserTargetResolver";
-import { readThreadShell, useQuietThreadShell } from "~/state/entities";
-import { readPreparedConnection, usePreparedConnection } from "~/state/session";
+import { readThreadShell } from "~/state/entities";
+import { readPreparedConnection } from "~/state/session";
 
 import {
   BROWSER_FAVICON_MAX_ALIASES_PER_ENTRY,
@@ -171,17 +169,6 @@ function mergeBrowserFaviconState(
   };
 }
 
-/** Server threads name their project in the shell; drafts in the composer draft store. */
-function useFaviconProjectRefForThread(threadRef: ScopedThreadRef): ScopedProjectRef | null {
-  const shell = useQuietThreadShell(threadRef);
-  const draftProjectRef = useComposerDraftStore((state) => {
-    const draft = state.getDraftSessionByRef(threadRef);
-    return draft ? scopedProjectKey(scopeProjectRef(draft.environmentId, draft.projectId)) : null;
-  });
-  if (shell?.projectId) return scopeProjectRef(threadRef.environmentId, shell.projectId);
-  return draftProjectRef === null ? null : parseScopedProjectKey(draftProjectRef);
-}
-
 function readThreadProjectRef(threadRef: ScopedThreadRef): ScopedProjectRef | null {
   const projectId = readThreadShell(threadRef)?.projectId;
   if (projectId) return scopeProjectRef(threadRef.environmentId, projectId);
@@ -282,18 +269,6 @@ function flushPendingFaviconsForThread(
     return { pendingByThreadKey };
   });
   return Object.keys(remaining).length === 0;
-}
-
-export function useFaviconForThreadUrl(threadRef: ScopedThreadRef, url: string): string | null {
-  const projectRef = useFaviconProjectRefForThread(threadRef);
-  const preparedConnection = usePreparedConnection(threadRef.environmentId);
-  const environmentHostname = Option.isSome(preparedConnection)
-    ? new URL(preparedConnection.value.httpBaseUrl).hostname
-    : null;
-  const threadKey = scopedThreadKey(threadRef);
-  return useBrowserFaviconStore((state) =>
-    lookupFaviconForThread(state, threadKey, projectRef, url, environmentHostname),
-  );
 }
 
 /**
