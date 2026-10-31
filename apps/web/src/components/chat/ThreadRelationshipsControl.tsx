@@ -490,7 +490,9 @@ export function ThreadRelationshipsPanel(props: {
       previous.length > 0 ||
       runningCount > 0 ||
       remoteSubagents.length > 0 ||
-      delegatedFrom !== undefined);
+      delegatedFrom !== undefined ||
+      // Disconnect lives in this heading, so a thread with only side chats still shows it.
+      (canDetach && sideChats.length > 0));
   const sideChatsVisible = props.showSideChats && sideChats.length > 0;
   const runningSideChats = sideChats.filter(({ edge }) => edge.status === "running").length;
 
