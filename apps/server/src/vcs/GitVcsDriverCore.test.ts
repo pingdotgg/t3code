@@ -1890,6 +1890,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           .sources[0]!;
         assert.equal(rootSource.baseRef, emptyTree);
         assert.include(rootSource.diff, "+# test");
+        const rootFile = yield* driver.getReviewDiffPreview({
+          cwd: upstream,
+          commitSha: root,
+          baseRef: "missing-branch",
+          file: { path: "README.md", previousPath: null, sourceKind: "commit" },
+        });
+        assert.equal(rootFile.sources[0]?.baseRef, emptyTree);
+        assert.include(rootFile.sources[0]!.diff, "+# test");
 
         yield* writeTextFile(upstream, "README.md", "# boundary\n");
         yield* git(upstream, ["commit", "-am", "boundary"]);
