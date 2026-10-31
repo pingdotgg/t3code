@@ -18,6 +18,7 @@ import {
   WS_METHODS,
   WsRpcGroup,
   type OrchestrationProjectShell,
+  type OrchestrationV2AppThreadLineage,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2Run,
   type OrchestrationV2ShellStreamItem,
@@ -25,6 +26,7 @@ import {
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ThreadStreamItem,
   type OrchestrationV2TurnItem,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import type {
   ConnectionAttemptError,
@@ -185,6 +187,8 @@ export interface FakeThread {
   readonly title: string;
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+  readonly runtimeMode?: RuntimeMode;
+  readonly lineage?: OrchestrationV2AppThreadLineage;
 }
 
 /** A thread of `turns` user prompts, each answered in markdown with a list and inline code. */
@@ -218,12 +222,16 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     title: thread.title,
     providerInstanceId: CODEX,
     modelSelection: MODEL,
-    runtimeMode: "full-access",
+    runtimeMode: thread.runtimeMode ?? "full-access",
     interactionMode: "default",
     branch: "main",
     worktreePath: null,
     activeProviderThreadId: null,
-    lineage: { rootThreadId: thread.id, parentThreadId: null, relationshipToParent: null },
+    lineage: thread.lineage ?? {
+      rootThreadId: thread.id,
+      parentThreadId: null,
+      relationshipToParent: null,
+    },
     forkedFrom: null,
     createdBy: "user",
     creationSource: "web",

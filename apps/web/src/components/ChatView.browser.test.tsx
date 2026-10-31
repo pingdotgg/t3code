@@ -4,7 +4,7 @@ import { ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { AppRoot } from "~/AppRoot";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -14,6 +14,7 @@ import {
   ENVIRONMENT_ID,
   PROJECT_ID,
   installFakeEnvironment,
+  threadWithHistory,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
 import { render } from "../../test/render";
@@ -61,4 +62,45 @@ it("a new draft does not load its reserved thread before the server lists it", a
     .filter((url) => url.includes(`/api/orchestration/threads/${threadId}/`));
   // A 404 here marks the thread deleted, and the view never loads it once the send creates it.
   expect(threadRequests).toEqual([]);
+});
+
+it("an empty side chat offers only Supervised for the first turn the server supervises", async () => {
+  const parent = threadWithHistory("parent-28110", 1);
+  const sideChatId = ThreadId.make("side-chat-28110");
+  using _environment = installFakeEnvironment([
+    parent,
+    {
+      id: sideChatId,
+      title: "Side chat",
+      runs: [],
+      items: [],
+      runtimeMode: "approval-required",
+      lineage: {
+        rootThreadId: parent.id,
+        parentThreadId: parent.id,
+        relationshipToParent: null,
+        sideChat: true,
+      },
+    },
+  ]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${sideChatId}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await userEvent.click(page.getByRole("button", { name: "Permissions: Supervised" }));
+  await expect.element(page.getByRole("menuitemradio", { name: "Supervised" })).toBeVisible();
+
+  // The server runs this turn supervised whatever is picked, so picking another mode would lie.
+  await expect
+    .element(page.getByRole("menuitemradio", { name: "Full access" }))
+    .not.toBeInTheDocument();
 });
