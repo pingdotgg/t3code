@@ -169,6 +169,7 @@ import type {
 } from "../../lib/threadActivity";
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { ComposerErrorNotice } from "./ComposerErrorNotice";
+import { Notice } from "../../components/ui/Notice";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
@@ -250,6 +251,7 @@ export interface ThreadDetailScreenProps {
   readonly respondingUserInputId: RuntimeRequestId | null;
   readonly connectionStateLabel: EnvironmentConnectionPhase;
   readonly threadSyncStatus?: EnvironmentThreadStatus;
+  readonly threadSyncError?: string | null;
   readonly historyControls?: ThreadFeedHistoryControls;
   readonly activeThreadBusy: boolean;
   readonly canStopThread: boolean;
@@ -518,6 +520,7 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
   const composerKeyboardOffset = composerBottomInset;
   const contentPresentationKind = props.contentPresentation.kind;
   const realThreadSyncLabel = (() => {
+    if (props.threadSyncError != null) return null;
     switch (props.threadSyncStatus) {
       case "empty":
       case "cached":
@@ -1545,6 +1548,17 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                       onDismiss={() => props.onDismissFeedback(submission.id)}
                     />
                   ))}
+                  {props.threadSyncError != null && contentPresentationKind === "ready" ? (
+                    <View className="shrink-0 px-4 pb-3">
+                      <Notice
+                        message={props.threadSyncError}
+                        icon="exclamationmark.circle"
+                        tone="danger"
+                        iconTone="danger"
+                        floating
+                      />
+                    </View>
+                  ) : null}
                   {composerError !== null ? (
                     <Animated.View
                       className="shrink-0"
