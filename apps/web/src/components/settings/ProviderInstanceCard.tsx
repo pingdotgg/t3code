@@ -639,14 +639,7 @@ interface ProviderInstanceCardProps {
    * edits to different fields compose instead of each sending a stale copy.
    */
   readonly onUpdate: (update: (current: ProviderInstanceConfig) => ProviderInstanceConfig) => void;
-  /**
-   * Pass `undefined` to hide the delete footer entirely. Built-in default
-   * instance slots use `undefined` — they can't be deleted without losing
-   * the slot, and their "reset to defaults" affordance lives on an outer
-   * reset button instead. Explicit `| undefined` in the type accommodates
-   * `exactOptionalPropertyTypes: true`, where an absent key and
-   * `{ onDelete: undefined }` are treated as distinct shapes.
-   */
+  /** Default slots hide this footer and reset through the outer action. */
   readonly onDelete?: (() => void) | undefined;
   readonly headerAction?: ReactNode | undefined;
   readonly setup?: ReactNode;
@@ -887,7 +880,7 @@ export function ProviderInstanceCard({
     field: ProviderEnvironmentField,
     secret: SecretReference | undefined,
   ) => {
-    updateEnvironment(nextProviderEnvironmentWithFieldSecret(instance.environment, field, secret));
+    updateEnvironment((current) => nextProviderEnvironmentWithFieldSecret(current, field, secret));
   };
   const removeEnvironmentField = (field: ProviderEnvironmentField) => {
     updateEnvironment((current) => providerEnvironmentWithoutNames(current, new Set([field.name])));

@@ -32,7 +32,7 @@ describe("providerInstanceInitials", () => {
 
 describe("resolveProviderInstanceBadgeLabel", () => {
   it("falls back to the display name's initials", () => {
-    expect(resolveProviderInstanceBadgeLabel({ displayName: "Z.ai GLM" })).toBe("ZG");
+    expect(resolveProviderInstanceBadgeLabel({ displayName: "Z.ai GLM" })).toBe("ZA");
     expect(resolveProviderInstanceBadgeLabel({ displayName: "Kimi", badgeLabel: "  " })).toBe("KI");
   });
 

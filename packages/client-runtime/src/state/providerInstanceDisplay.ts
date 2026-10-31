@@ -1,11 +1,3 @@
-/**
- * How a configured provider instance presents itself in a client: its label,
- * its accent color, its glyph and badge text, and whether its icon carries
- * the account badge. Shared by
- * web and mobile so both clients name and badge the same instance identically.
- *
- * @module providerInstanceDisplay
- */
 import {
   defaultInstanceIdForDriver,
   PROVIDER_DISPLAY_NAMES,
