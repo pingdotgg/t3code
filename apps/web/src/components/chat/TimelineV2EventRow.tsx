@@ -1,3 +1,5 @@
+import { type TimelineRow, TimelineRowCtx } from "./timelineRowContext";
+import { subagentGroupTiming } from "./TimelineV2EventRow.logic";
 import { WorkLogBlock } from "./WorkLog";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useAtomValue } from "@effect/atom-react";
@@ -13,8 +15,6 @@ import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "../ui/collaps
 import { EnvironmentSubagentAvatar, SubagentElapsed, V2LifecycleRow } from "./V2LifecycleRow";
 import { LinkRequestCard } from "./LinkRequestCard";
 import { SecretRequestCard } from "./SecretRequestCard";
-import { TimelineRowCtx, type TimelineRow } from "./timelineRowContext";
-import { subagentGroupTiming } from "./TimelineV2EventRow.logic";
 
 export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event" }> }) {
   const ctx = use(TimelineRowCtx);
@@ -51,7 +51,7 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   );
 }
 
-const V2SubagentGroup = memo(function V2SubagentGroup({
+export const V2SubagentGroup = memo(function V2SubagentGroup({
   row,
 }: {
   row: Extract<TimelineRow, { kind: "event" }>;
@@ -83,7 +83,7 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
   const label = `${members.length} ${members.length === 1 ? "subagent" : "subagents"}`;
   const statusSummary = summarizeSubagentStatuses(agents.map(({ status }) => status));
   const toggleExpanded = (open: boolean) => {
-    ctx.onToggleWorkEntry(row.id, expanded);
+    ctx.onToggleWorkEntry(row.id);
     if (open) ctx.workGroupViewState.expandedEntries.add(groupId);
     else ctx.workGroupViewState.expandedEntries.delete(groupId);
     setExpanded(open);
@@ -94,12 +94,12 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
         open={expanded}
         onOpenChange={toggleExpanded}
         data-subagent-group
-        render={<div className="rounded-card surface-card" />}
+        render={<div className="rounded-card surface-card p-1" />}
       >
         <CollapsibleTrigger
           aria-label={label}
           aria-description={statusSummary}
-          className="flex w-full min-w-0 items-center gap-2.5 py-2 pr-3.25"
+          className="flex h-10 w-full min-w-0 items-center gap-2.5 ps-2.5 pe-3.25"
         >
           <span className="flex shrink-0 items-center -space-x-1.5" aria-hidden>
             {agents.slice(0, 3).map(({ item, status }, index) => (
@@ -130,8 +130,8 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
             <span className="block text-left text-xs font-medium text-foreground">{label}</span>
             <span
               className={cn(
-                "block truncate text-left text-3xs text-muted-foreground",
-                summary.active ? "text-info-foreground" : summary.failed && "text-error-foreground",
+                "block truncate text-left text-micro",
+                summary.failed && !summary.active ? "text-error-foreground" : "text-dim-foreground",
               )}
             >
               {statusSummary}
@@ -151,7 +151,7 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
         {/* Virtualized rows must settle before disclosure scroll anchoring resumes. */}
         <CollapsiblePanel animate={false}>
           {expanded ? (
-            <div className="mt-1 mb-1 rounded-card border border-transparent surface-card p-1">
+            <div className="pb-1">
               {members.map((item) => (
                 <V2LifecycleRow
                   environmentId={ctx.activeThreadEnvironmentId}
@@ -159,6 +159,7 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
                   item={item}
                   runs={ctx.runs}
                   onOpenThread={ctx.onOpenThread}
+                  subagentLayout="flat"
                 />
               ))}
             </div>

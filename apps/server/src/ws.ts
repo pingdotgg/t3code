@@ -168,7 +168,7 @@ import {
   projectDomainEventForWire,
   projectThreadProjectionForWire,
   threadStreamEventItem,
-} from "./orchestration-v2/WireProjection.ts";
+} from "@t3tools/shared/wireProjection";
 import { dedupeSnapshotBodies } from "@t3tools/shared/orchestrationV2DedupedBodies";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";

@@ -41,7 +41,6 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
       ) : null}
       <div className="mt-2 flex flex-wrap gap-2">
         <ComposerPendingApprovalActions
-          presentation="inline"
           requestId={approval.requestId}
           isResponding={responding}
           canRespond={approval.responseCapability === "live"}
