@@ -135,6 +135,7 @@ describe("plugin preview upgrade", () => {
     "unknown-schema",
     "partial-upstream",
     "partial-search",
+    "partial-project",
     "partial-target",
   ])("rejects %s unchanged", (variant) =>
     memory(
@@ -149,6 +150,8 @@ describe("plugin preview upgrade", () => {
           yield* sql`ALTER TABLE scheduled_tasks ADD COLUMN last_run_webhook_delivery_id TEXT`;
         if (variant === "partial-search")
           yield* sql`CREATE TABLE orchestration_v2_message_search (text TEXT)`;
+        if (variant === "partial-project")
+          yield* sql`ALTER TABLE projection_projects ADD COLUMN pinned_at TEXT`;
         const before = yield* snapshot;
         assert.ok(
           Exit.isFailure(
