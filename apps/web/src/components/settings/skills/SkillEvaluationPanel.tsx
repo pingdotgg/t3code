@@ -865,7 +865,7 @@ export function SkillEvaluationPanel({
         {selectedRunId && runDetail ? <RunDetail detail={runDetail} /> : null}
       </div>
 
-      <TaskDialog
+      {taskDialog.open ? <TaskDialog
         key={taskDialog.task?.taskId ?? "new"}
         open={taskDialog.open}
         skillName={skillName}
@@ -874,8 +874,8 @@ export function SkillEvaluationPanel({
         busy={taskBusy}
         onOpenChange={(open) => setTaskDialog((current) => ({ ...current, open }))}
         onMutate={onMutateTask}
-      />
-      <StartRunDialog
+      /> : null}
+      {runDialogOpen ? <StartRunDialog
         key={`${cell.driver}:${cell.model}`}
         open={runDialogOpen}
         skillName={skillName}
@@ -887,7 +887,7 @@ export function SkillEvaluationPanel({
         busy={runBusy}
         onOpenChange={setRunDialogOpen}
         onControl={onControlRun}
-      />
+      /> : null}
     </section>
   );
 }

@@ -619,7 +619,9 @@ export const layer = Layer.effect(
             const rows = yield* sql<SkillVariantRevisionRow>`
               SELECT rule_id, revision, action, mode, body, enabled, deleted, created_at
               FROM skill_variant_revisions
-              WHERE rule_id = ${current.ruleId} AND revision = ${current.revision - 1}
+              WHERE rule_id = ${current.ruleId} AND revision < ${current.revision}
+                AND mode = 'variant' AND body IS NOT NULL AND body != ${current.body}
+              ORDER BY revision DESC LIMIT 1
             `.pipe(
               Effect.mapError((cause) =>
                 persistenceError("load the previous skill variant revision", cause),

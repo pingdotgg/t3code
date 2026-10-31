@@ -1131,7 +1131,7 @@ const make = Effect.gen(function* () {
       variantRevisions[arm.ruleId] = rows[0].revision;
     }
 
-    yield* resolveSkillEvalJudge({
+    const judge = yield* resolveSkillEvalJudge({
       providers: providerSnapshots,
       explicit: input.judge,
       now: DateTime.toEpochMillis(yield* DateTime.now),
@@ -1142,6 +1142,7 @@ const make = Effect.gen(function* () {
       taskIds,
       taskSnapshots,
       variantRevisions,
+      judge: judge.modelSelection,
     });
   });
 
@@ -1814,7 +1815,13 @@ const make = Effect.gen(function* () {
       SET status = 'failed', error = ${causeMessage(cause)}, completed_at = ${completedAt}
       WHERE eval_run_id = ${evalRunId}
         AND status IN ('queued', 'running', 'judging')
+      RETURNING eval_run_id
     `;
+    const config = yield* loadRunConfig(yield* loadRunRow(evalRunId));
+    yield* Effect.gen(function* () {
+      const project = yield* projectFor(config.projectId);
+      yield* cleanupTrialWorktrees({ evalRunId, projectId: config.projectId, projectRoot: project.workspaceRoot });
+    }).pipe(Effect.catchCause((cleanupCause) => Effect.logWarning("Failed to clean skill evaluation worktrees", {evalRunId, cause: cleanupCause})));
   });
 
   const spawnRun = Effect.fn("SkillEvalService.spawnRun")(function* (evalRunId: SkillEvalRunId) {
@@ -1896,7 +1903,7 @@ const make = Effect.gen(function* () {
     function* (input: { readonly evalRunId: SkillEvalRunId; readonly projectId: ProjectId }) {
       const trials = (yield* loadTrialRows(input.evalRunId)).map(trialFromRow);
       yield* Effect.forEach(
-        trials.filter((trial) => trial.threadId !== null && trial.status === "running"),
+        trials.filter((trial) => trial.threadId !== null && (trial.status === "running" || trial.status === "cancelled")),
         (trial) =>
           threadManagement
             .interruptThread({
@@ -1920,44 +1927,33 @@ const make = Effect.gen(function* () {
   const cancel = Effect.fn("SkillEvalService.cancel")(function* (evalRunId: SkillEvalRunId) {
     const row = yield* loadRunRow(evalRunId);
     const config = yield* loadRunConfig(row);
-    if (row.status === "completed") {
-      return yield* new SkillEvalValidationError({
-        message: "A completed evaluation run cannot be cancelled.",
-      });
-    }
-    const fiber = (yield* Ref.get(fibers)).get(evalRunId);
-    if (fiber !== undefined) yield* Fiber.interrupt(fiber);
-    const runningTrials = (yield* loadTrialRows(evalRunId))
-      .map(trialFromRow)
-      .filter((trial) => trial.status === "running");
-    yield* interruptTrialThreads({ evalRunId, projectId: config.projectId });
-    const project = yield* projectFor(config.projectId);
-    yield* Effect.forEach(
-      runningTrials,
-      (trial) =>
-        cleanupTrialWorktree({
-          trial,
-          projectId: config.projectId,
-          projectRoot: project.workspaceRoot,
-        }),
-      { concurrency: 1, discard: true },
-    );
     const now = DateTime.formatIso(yield* DateTime.now);
-    yield* sql.withTransaction(
+    const cancelled = yield* sql.withTransaction(
       Effect.gen(function* () {
-        yield* sql`
+        const updated = yield* sql`
           UPDATE skill_eval_runs
           SET status = 'cancelled', error = NULL, completed_at = ${now}
           WHERE eval_run_id = ${evalRunId}
+            AND status IN ('queued', 'running', 'judging', 'interrupted')
+          RETURNING eval_run_id
         `;
+        if (updated.length === 0) return false;
         yield* sql`
           UPDATE skill_eval_trials
           SET status = 'cancelled', error = 'Evaluation run cancelled.', completed_at = ${now}
           WHERE eval_run_id = ${evalRunId}
             AND status IN ('pending', 'running')
         `;
+        return true;
       }),
     );
+    if (cancelled) {
+      const fiber = (yield* Ref.get(fibers)).get(evalRunId);
+      if (fiber !== undefined) yield* Fiber.interrupt(fiber);
+      yield* interruptTrialThreads({ evalRunId, projectId: config.projectId });
+      const project = yield* projectFor(config.projectId);
+      yield* cleanupTrialWorktrees({ evalRunId, projectId: config.projectId, projectRoot: project.workspaceRoot });
+    }
     const { trials: _trials, ...summary } = yield* getRun(evalRunId);
     return summary;
   });

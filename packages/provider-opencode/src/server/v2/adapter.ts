@@ -2857,7 +2857,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       nextSkillPolicy?: OpenCodeSkillPolicy | null,
     ) {
       const skillPolicy =
-        nextSkillPolicy === undefined ? state.skillPolicy : (nextSkillPolicy ?? undefined);
+        nextSkillPolicy === undefined ? (state.skillPolicy ?? rootOf(state).skillPolicy) : (nextSkillPolicy ?? undefined);
       const rules = yield* rulesFor(
         state,
         policy,
