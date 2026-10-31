@@ -274,7 +274,7 @@ export function PullRequestReadinessCard({
   const conflictsMeta = [mergeMethodLabel, commitCount].filter(Boolean).join(" · ");
 
   return (
-    <div className="min-w-0">
+    <div className="surface-panel min-w-0 overflow-hidden rounded-xl p-1.5">
       <div className="space-y-1">
         {/* A finished pull request leads with how it ended; the rows below are its record. */}
         {open ? null : (
@@ -517,7 +517,7 @@ export function PullRequestReadinessCard({
         ) : null}
       </div>
       {primary ? (
-        <div className="mt-3 px-2">
+        <div className="px-2 pt-3 pb-2">
           <div className="inline-flex min-w-0 items-stretch">
             {primaryMenu ? (
               <Group>
