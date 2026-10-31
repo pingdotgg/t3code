@@ -571,6 +571,17 @@ function isOwnedPastedImageUri(uri: string): boolean {
   }
 }
 
+export async function removeTemporaryPastedImage(uri: string): Promise<void> {
+  if (!isOwnedPastedImageUri(uri)) return;
+  try {
+    const { File } = await import("expo-file-system");
+    const file = new File(uri);
+    if (file.exists) file.delete();
+  } catch (error) {
+    console.warn("Failed to remove temporary pasted image", uri, error);
+  }
+}
+
 export async function convertPastedImagesToAttachments(input: {
   readonly uris: ReadonlyArray<string>;
   readonly existingCount: number;
@@ -606,16 +617,7 @@ export async function convertPastedImagesToAttachments(input: {
     } catch (error) {
       console.warn("Failed to read pasted image", uri, error);
     } finally {
-      if (ownedTemporaryFile) {
-        try {
-          const file = new File(uri);
-          if (file.exists) {
-            file.delete();
-          }
-        } catch (error) {
-          console.warn("Failed to remove temporary pasted image", uri, error);
-        }
-      }
+      await removeTemporaryPastedImage(uri);
     }
   }
 

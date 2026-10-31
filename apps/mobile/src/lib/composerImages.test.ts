@@ -97,11 +97,23 @@ vi.mock("./uuid", () => ({
   uuidv4: () => "attachment-id",
 }));
 
-import { convertPastedImagesToAttachments } from "./composerImages";
+import { convertPastedImagesToAttachments, removeTemporaryPastedImage } from "./composerImages";
 
 describe("native pasted image cleanup", () => {
   beforeEach(() => {
     files.clear();
+  });
+
+  it("discards owned images rejected by a locked composer without deleting user files", async () => {
+    const owned = "file:///tmp/t3-composer-paste/drop.png";
+    const userOwned = "file:///photos/drop.png";
+    files.set(owned, { base64: "aGVsbG8=", deleted: false });
+    files.set(userOwned, { base64: "aGVsbG8=", deleted: false });
+
+    await Promise.all([owned, userOwned].map(removeTemporaryPastedImage));
+
+    expect(files.get(owned)?.deleted).toBe(true);
+    expect(files.get(userOwned)?.deleted).toBe(false);
   });
 
   it("converts owned files to data-backed previews and deletes the source", async () => {
