@@ -90,7 +90,15 @@ function revealInScrollers(target: HTMLElement) {
 export function createWorkspaceFocusController(doc: Document) {
   const lastFocused = new Map<string, HTMLElement>();
   let lastArea: string | undefined;
+  // An area the controller itself focused from the keyboard. Chromium's :focus-visible also
+  // matches a clicked area after any bare key press, so the ring and window return read this.
+  let keyboardArea: HTMLElement | undefined;
+  const unmarkKeyboardArea = () => {
+    keyboardArea?.removeAttribute("data-workspace-keyboard-focus");
+    keyboardArea = undefined;
+  };
   const remember = (event: FocusEvent) => {
+    if (event.target !== keyboardArea) unmarkKeyboardArea();
     if (!(event.target instanceof HTMLElement)) return;
     const area = workspaceArea(event.target);
     if (!area?.dataset.workspaceArea) return;
@@ -162,6 +170,10 @@ export function createWorkspaceFocusController(doc: Document) {
       const active = root instanceof ShadowRoot ? root.activeElement : doc.activeElement;
       if (active === target || (active && target.contains(active))) {
         if (target !== area && !isConversation) revealInScrollers(target);
+        if (target === area && area.matches(":focus-visible")) {
+          keyboardArea = area;
+          area.setAttribute("data-workspace-keyboard-focus", "");
+        }
         return true;
       }
     }
@@ -301,7 +313,11 @@ export function createWorkspaceFocusController(doc: Document) {
   const onUserInput = () => {
     if (cancelOnInput) cancelRequest();
   };
-  doc.addEventListener("pointerdown", onUserInput, true);
+  const onPointerDown = () => {
+    unmarkKeyboardArea();
+    onUserInput();
+  };
+  doc.addEventListener("pointerdown", onPointerDown, true);
   doc.addEventListener("keydown", onUserInput, true);
 
   return {
@@ -313,9 +329,10 @@ export function createWorkspaceFocusController(doc: Document) {
     request,
     dispose: () => {
       cancelRequest();
+      unmarkKeyboardArea();
       doc.removeEventListener("focusin", remember);
       doc.removeEventListener("focusout", recover);
-      doc.removeEventListener("pointerdown", onUserInput, true);
+      doc.removeEventListener("pointerdown", onPointerDown, true);
       doc.removeEventListener("keydown", onUserInput, true);
     },
   };

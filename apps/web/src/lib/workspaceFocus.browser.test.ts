@@ -286,5 +286,8 @@ describe("workspace area focus", () => {
     fixture.controller.move(1);
     expect(document.activeElement).toBe(home);
     expect(outline()).toBe("solid");
+
+    await userEvent.click(home);
+    expect(outline(), "clicking the ringed area keeps its ring").toBe("none");
   });
 });
