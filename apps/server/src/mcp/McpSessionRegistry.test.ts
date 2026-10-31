@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 
@@ -20,10 +21,10 @@ const fakeEnvironment = ServerEnvironment.ServerEnvironment.of({
   getDescriptor: Effect.die("unused"),
 });
 
-const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
+const makeRegistry = (now?: () => number, httpServer = fakeHttpServer) =>
   McpSessionRegistry.__testing
     .make({
-      now,
+      ...(now === undefined ? {} : { now }),
       livenessWindowMs: 100,
     })
     .pipe(
@@ -136,6 +137,32 @@ it.effect("expires credentials once their session stops showing signs of life", 
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
     timestamp += 101;
+    expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
+);
+
+it.effect("MCP requests do not renew a token; only a trusted touch does", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry();
+    const threadId = ThreadId.make("thread-polling");
+    const issued = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["preview"]),
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+
+    for (let step = 0; step < 3; step++) {
+      yield* TestClock.adjust(50);
+      yield* registry.touch(threadId);
+      expect(yield* registry.resolve(token)).toBeDefined();
+    }
+
+    for (let step = 0; step < 2; step++) {
+      yield* TestClock.adjust(50);
+      expect(yield* registry.resolve(token)).toBeDefined();
+    }
+    yield* TestClock.adjust(1);
     expect(yield* registry.resolve(token)).toBeUndefined();
   }),
 );
