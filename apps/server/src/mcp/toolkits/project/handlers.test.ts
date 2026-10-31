@@ -1,8 +1,11 @@
+import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
+  ProviderDriverKind,
+  type ServerProvider,
   type Project as ProjectRecord,
   type ModelSelection,
   type RuntimeMode,
@@ -25,6 +28,7 @@ import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementSer
 import * as ServerConfig from "../../../config.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as Project from "../../../project/ProjectService.ts";
+import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
@@ -37,6 +41,8 @@ import { ProjectToolkit } from "./tools.ts";
 const clientLaunchHarness = (input: {
   readonly runtimeModeCeiling: RuntimeMode;
   readonly defaultRuntimeMode?: RuntimeMode;
+  readonly fallbackModel?: ModelSelection;
+  readonly providers?: readonly ServerProvider[];
   /** Where Settings saves a project's model; the legacy project field stays null. */
   readonly overrideModel?: ModelSelection;
   readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
@@ -54,7 +60,11 @@ const clientLaunchHarness = (input: {
     model: input.overrideModel === undefined ? modelSelection : null,
   };
   const layerDependencies = Layer.mergeAll(
+    Layer.mock(ProviderRegistry.ProviderRegistry)({
+      getProviders: Effect.succeed(input.providers ?? []),
+    }),
     ServerSettings.layerTest({
+      fallbackModelSelection: input.fallbackModel ?? null,
       ...(input.defaultRuntimeMode === undefined
         ? {}
         : { defaultRuntimeMode: input.defaultRuntimeMode }),
@@ -232,6 +242,62 @@ it.effect(
       });
       expect(fromSettings.launched[0]?.modelSelection).toEqual(overrideModel);
     }),
+);
+
+it.effect("a launch steps an inherited mode down to the provider's, and refuses one it lacks", () =>
+  Effect.gen(function* () {
+    // Pi offers no Auto; a mode a provider lacks would run as Supervised.
+    const pi = ProviderInstanceId.make("pi");
+    const launchPi = Effect.fn("test.launchPi")(function* (runtimeMode?: RuntimeMode) {
+      const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+      const { projectId, dependencies } = clientLaunchHarness({
+        runtimeModeCeiling: "auto",
+        launched,
+        providers: [
+          {
+            instanceId: pi,
+            driver: ProviderDriverKind.make("pi"),
+            enabled: true,
+            installed: true,
+            status: "ready",
+            version: null,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-01-01T00:00:00Z",
+            models: [],
+            slashCommands: [],
+            skills: [],
+            supportedRuntimeModes: ["approval-required", "auto-accept-edits", "full-access"],
+          },
+        ],
+      });
+      const toolkit = yield* ProjectToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      const result = yield* toolkit
+        .handle("t3_thread_launch", {
+          projectId,
+          title: "Fix",
+          modelSelection: { instanceId: pi, model: "pi-model" },
+          ...(runtimeMode === undefined ? {} : { runtimeMode }),
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+      return { result: result.at(-1)?.result, launched };
+    });
+
+    const inherited = yield* launchPi();
+    expect(inherited.launched[0]?.runtimeMode).toBe("auto-accept-edits");
+
+    const requested = yield* launchPi("auto");
+    expect(requested.result).toMatchObject({ code: "invalid_request" });
+    expect(requested.launched).toHaveLength(0);
+
+    const offered = yield* launchPi("approval-required");
+    expect(offered.launched[0]?.runtimeMode).toBe("approval-required");
+  }),
 );
 
 it.effect("a launch retried with the same clientRequestId replays the first one", () =>
@@ -471,5 +537,98 @@ it.effect("a retried worktree launch replays after its base ref is gone", () =>
       launched[0]?.threadId,
       launched[0]?.threadId,
     ]);
+  }),
+);
+
+it.effect("a client launches with the fallback for an exhausted default", () =>
+  Effect.gen(function* () {
+    const launched: ThreadLaunch.ThreadLaunchInput[] = [];
+    const fallbackModel = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
+    const providers: ServerProvider[] = ["claudeAgent", "codex"].map((driver) => ({
+      instanceId: ProviderInstanceId.make(driver),
+      driver: ProviderDriverKind.make(driver),
+      enabled: true,
+      installed: true,
+      status: "ready",
+      version: null,
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+      ...(driver === "claudeAgent"
+        ? {
+            usageLimits: {
+              checkedAt: "2026-01-01T00:00:00Z",
+              windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 100 }],
+            },
+          }
+        : {}),
+    }));
+    const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "full-access",
+      launched,
+      fallbackModel,
+      providers,
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const result = yield* toolkit
+      .handle("t3_thread_launch", {
+        projectId,
+        title: "Fallback",
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(result.at(-1)?.result).toMatchObject({
+      modelSelection: fallbackModel,
+    });
+    expect(launched[0]?.modelSelection).toEqual(fallbackModel);
+  }),
+);
+
+it.effect("deleting a project through MCP also discards its clone record", () =>
+  Effect.gen(function* () {
+    const discarded: Array<ProjectId> = [];
+    const harness = clientLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
+    const dependencies = Layer.merge(
+      harness.dependencies,
+      Layer.mergeAll(
+        Layer.mock(Project.ProjectService)({
+          delete: (input) =>
+            Effect.succeed({
+              id: input.projectId,
+              title: "client-target",
+              workspaceRoot: "/projects/client-target",
+              repositoryIdentity: null,
+              faviconPath: null,
+              defaultModelSelection: null,
+              defaultThreadEnvMode: null,
+              autoPull: false,
+              projectIcon: null,
+              scripts: [],
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+              deletedAt: "2026-01-01T00:00:00.000Z",
+            }),
+        }),
+        Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({
+          discard: (projectId) => Effect.sync(() => void discarded.push(projectId)),
+        }),
+      ),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+
+    yield* toolkit
+      .handle("t3_project_delete", { projectId: harness.projectId })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    expect(discarded).toEqual([harness.projectId]);
   }),
 );

@@ -215,6 +215,15 @@ describe("CursorAdapterV2", () => {
 
   it.effect.each([
     {
+      reason: "the SDK's detailed plan usage limit code",
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        status: "error" as const,
+        error: { message: "You've hit your usage limit", code: "PRO_USER_USAGE_LIMIT" },
+      }),
+      failure: { class: "usage_limit", message: "You've hit your usage limit" },
+    },
+    {
       reason: "the error Cursor's run ended with",
       wait: Effect.succeed({
         id: "native-cursor-run",
@@ -232,7 +241,7 @@ describe("CursorAdapterV2", () => {
       },
     },
     {
-      reason: "the SDK error that broke the run",
+      reason: "the SDK rate limit that broke the run",
       wait: Effect.fail(
         new CursorAgentSdk.CursorAgentSdkRunnerError({
           method: "run.wait",
@@ -243,7 +252,7 @@ describe("CursorAdapterV2", () => {
         }),
       ),
       failure: {
-        class: "transport_error",
+        class: "usage_limit",
         message:
           "Cursor Agent SDK run.wait failed: Too many requests (resource_exhausted, HTTP 429)",
       },
@@ -859,6 +868,32 @@ describe("CursorAdapterV2", () => {
         {
           type: "tool-call-completed",
           modelCallId: "native-model-call",
+          callId: "grep-counts",
+          toolCall: {
+            type: "grep",
+            args: { pattern: "TODO", outputMode: "count" },
+            result: {
+              status: "success",
+              value: {
+                workspaceResults: {
+                  [workspace]: {
+                    type: "count",
+                    output: {
+                      counts: [
+                        { file: "src/a.ts", count: 1 },
+                        { file: "src/b.ts", count: 3 },
+                      ],
+                      total: 4,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        {
+          type: "tool-call-completed",
+          modelCallId: "native-model-call",
           callId: "glob-failed",
           toolCall: {
             type: "glob",
@@ -1105,6 +1140,14 @@ describe("CursorAdapterV2", () => {
             pattern: "TODO",
             status: "failed",
             results: [{ fileName: "src", preview: "search failed" }],
+          },
+          {
+            pattern: "TODO",
+            status: "completed",
+            results: [
+              { fileName: "src/a.ts", preview: "1 match" },
+              { fileName: "src/b.ts", preview: "3 matches" },
+            ],
           },
           {
             pattern: "*.ts",

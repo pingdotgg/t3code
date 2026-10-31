@@ -47,6 +47,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -337,6 +338,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
+    readonly interruptTurn?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
     readonly spawnBeforeOpen?: boolean;
     readonly scopeCloseReached?: Deferred.Deferred<void>;
@@ -436,7 +438,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
             Ref.update(state, (current) => ({
               ...current,
               interruptCount: current.interruptCount + 1,
-            })),
+            })).pipe(Effect.andThen(options.interruptTurn ?? Effect.void)),
           unloadThread: ({ providerThread }) =>
             (options.beforeUnload ?? Effect.void).pipe(
               Effect.andThen(
@@ -484,6 +486,7 @@ function layerTest(input: {
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void>;
+  readonly interruptTurn?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Deferred.Deferred<void>;
@@ -519,6 +522,7 @@ function layerTest(input: {
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
       ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
+      ...(input.interruptTurn === undefined ? {} : { interruptTurn: input.interruptTurn }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
       ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
       ...(input.scopeCloseReached === undefined
@@ -533,6 +537,10 @@ function layerTest(input: {
   const layerProviderEventIngestorTest = ProviderEventIngestor.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+          // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional instances require undefined rather than void.
+          getInstance: () => Effect.succeed(undefined),
+        }),
         layerConfiguredEventSink,
         IdAllocator.layer,
         layerTestStores,
@@ -1359,6 +1367,159 @@ it.effect(
           }),
         ),
       );
+    }),
+);
+
+it.effect("ProviderSessionManagerV2 gives up on a provider that never confirms a Stop", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-unresponsive-stop");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const stopping = yield* runtime
+        .interruptTurn({
+          providerThread: makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "native-turn-unresponsive",
+          }),
+        })
+        .pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust(ProviderSessionManager.PROVIDER_INTERRUPT_TIMEOUT_MS);
+      assert.equal((yield* Fiber.join(stopping))._tag, "ProviderAdapterInterruptTimeoutError");
+    }).pipe(
+      Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, interruptTurn: Effect.never })),
+    );
+  }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps a shared session a sibling is busy on when releasing",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const stopping = ThreadId.make("thread-provider-session-manager-release-stopping");
+        const sibling = ThreadId.make("thread-provider-session-manager-release-sibling");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: stopping, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: sibling, now }),
+          ],
+        });
+        const runtime = yield* manager.open({
+          threadId: stopping,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* manager.open({
+          threadId: sibling,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThreadOf = (threadId: ThreadId) =>
+          makeProviderThread({
+            idAllocator,
+            threadId,
+            providerSessionId,
+            now,
+            nativeThreadId: `native-${threadId}`,
+          });
+        const runId = idAllocator.derive.run({ threadId: sibling, ordinal: 1 });
+        yield* runtime.startTurn({
+          appThread: (yield* projectionStore.getThreadProjection(sibling)).thread,
+          threadId: sibling,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread: providerThreadOf(sibling),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({ threadId: sibling, ordinal: 1 }),
+            text: "turn",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+        const release = (own: ThreadId) =>
+          manager.releaseUnlessBusy({
+            providerSessionId,
+            ownProviderThreadIds: [providerThreadOf(own).id],
+            reason: "manual_shutdown",
+          });
+
+        assert.isFalse(yield* release(stopping));
+        assert.isTrue(yield* manager.isLive(providerSessionId));
+        assert.isTrue(yield* release(sibling));
+        assert.isFalse(yield* manager.isLive(providerSessionId));
+
+        // A turn that starts on a runtime released meanwhile fails instead of running on it.
+        const startOnReleasedRuntime = Effect.gen(function* () {
+          const lateRunId = idAllocator.derive.run({ threadId: stopping, ordinal: 1 });
+          return yield* Effect.flip(
+            runtime.startTurn({
+              appThread: (yield* projectionStore.getThreadProjection(stopping)).thread,
+              threadId: stopping,
+              runId: lateRunId,
+              runOrdinal: 1,
+              providerTurnOrdinal: 1,
+              attemptId: idAllocator.derive.runAttempt({ runId: lateRunId, attemptOrdinal: 1 }),
+              rootNodeId: idAllocator.derive.rootNode({ runId: lateRunId }),
+              providerThread: providerThreadOf(stopping),
+              message: {
+                createdBy: "user",
+                creationSource: "web",
+                messageId: yield* idAllocator.allocate.message({ threadId: stopping, ordinal: 1 }),
+                text: "turn",
+                attachments: [],
+              },
+              modelSelection,
+              runtimePolicy,
+            }),
+          );
+        });
+        assert.equal((yield* startOnReleasedRuntime)._tag, "ProviderAdapterTurnStartError");
+
+        // Nor may it leave its turn busy on a replacement opened under the same id.
+        yield* manager.open({
+          threadId: sibling,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal((yield* startOnReleasedRuntime)._tag, "ProviderAdapterTurnStartError");
+        assert.isTrue(yield* release(sibling));
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60 * 60_000 })));
     }),
 );
 
@@ -2546,6 +2707,10 @@ it.effect("ProviderSessionManagerV2 releases sessions when provider event stream
       assert.isTrue(Option.isNone(liveSession));
       assert.equal(runtimeState.closeCount, 1);
       assert.equal(projection.providerSessions.at(-1)?.status, "error");
+      assert.equal(
+        projection.providerSessions.at(-1)?.lastError,
+        "The provider event stream closed unexpectedly. Retry the turn; if it keeps failing, check the provider and server logs.",
+      );
     });
 
     yield* effect.pipe(
