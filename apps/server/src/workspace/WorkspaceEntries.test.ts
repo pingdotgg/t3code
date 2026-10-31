@@ -476,6 +476,156 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(paths.some((entryPath) => entryPath.startsWith(".convex/"))).toBe(false);
       }),
     );
+
+    it.effect("indexes symlinked files and directories inside the workspace", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-symlinks-" });
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "src/index.ts", "export {};");
+        yield* fileSystem.symlink("src", path.join(cwd, "src-link"));
+        yield* fileSystem.symlink("src/index.ts", path.join(cwd, "index-link.ts"));
+        const symlinkEntries = [
+          { kind: "directory", path: "src-link" },
+          { kind: "file", path: "index-link.ts" },
+        ];
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const searched = yield* searchWorkspaceEntries({ cwd, query: "link", limit: 100 });
+        const listed = yield* workspaceEntries.list({ cwd });
+
+        for (const entry of symlinkEntries) {
+          expect(searched.entries).toContainEqual(expect.objectContaining(entry));
+          expect(listed.entries).toContainEqual(expect.objectContaining(entry));
+        }
+      }),
+    );
+    it.effect("skips ignored symlinks and symlinks that leave the workspace", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-symlinks-", git: true });
+        const outside = yield* makeTempDir({ prefix: "t3code-workspace-symlinks-outside-" });
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, ".gitignore", "ignored-link\n");
+        yield* writeTextFile(cwd, "src/index.ts", "export {};");
+        yield* fileSystem.symlink("src", path.join(cwd, "ignored-link"));
+        yield* fileSystem.symlink(outside, path.join(cwd, "outside-link"));
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const searched = yield* searchWorkspaceEntries({ cwd, query: "link", limit: 100 });
+        const listed = yield* workspaceEntries.list({ cwd });
+
+        for (const entries of [searched.entries, listed.entries]) {
+          const paths = entries.map((entry) => entry.path);
+          expect(paths).not.toContain("ignored-link");
+          expect(paths).not.toContain("outside-link");
+        }
+      }),
+    );
+    it.effect("honors .ignore files, ignored tracked links, and submodule rules for symlinks", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-symlinks-", git: true });
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "src/index.ts", "export {};");
+        yield* writeTextFile(cwd, ".ignore", "custom-link\n");
+        yield* fileSystem.symlink("src", path.join(cwd, "custom-link"));
+        yield* fileSystem.symlink("src/index.ts", path.join(cwd, "tracked-link.ts"));
+        yield* fileSystem.symlink("src", path.join(cwd, "ignored-link"));
+        yield* fileSystem.symlink("src", path.join(cwd, "kept-link"));
+        yield* git(cwd, ["add", "tracked-link.ts"]);
+        yield* writeTextFile(cwd, ".gitignore", "tracked-link.ts\nignored-link\n");
+        // A submodule path makes `git check-ignore` refuse the whole batch without --no-index.
+        const submodule = path.join(cwd, "vendor/sub");
+        yield* writeTextFile(submodule, "a.ts", "export {};");
+        yield* git(submodule, ["init"]);
+        yield* git(submodule, ["add", "a.ts"]);
+        yield* git(submodule, [
+          "-c",
+          "user.name=t",
+          "-c",
+          "user.email=t@t",
+          "commit",
+          "-m",
+          "init",
+        ]);
+        yield* git(cwd, ["add", "vendor/sub"]);
+        yield* fileSystem.symlink("a.ts", path.join(submodule, "sublink.ts"));
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const searched = yield* searchWorkspaceEntries({ cwd, query: "link", limit: 100 });
+        const listed = yield* workspaceEntries.list({ cwd });
+
+        for (const entries of [searched.entries, listed.entries]) {
+          const paths = entries.map((entry) => entry.path);
+          expect(paths).toContain("kept-link");
+          expect(paths).toContain("vendor/sub/sublink.ts");
+          expect(paths).not.toContain("custom-link");
+          expect(paths).not.toContain("tracked-link.ts");
+          expect(paths).not.toContain("ignored-link");
+        }
+      }),
+    );
+    it.effect("lets the nearest .ignore rule decide a symlink, ahead of .gitignore", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-symlinks-", git: true });
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, ".gitignore", "*keep*\n");
+        yield* writeTextFile(cwd, "keep-real.ts", "export {};");
+        yield* fileSystem.symlink("keep-real.ts", path.join(cwd, "keep-link.ts"));
+        // Rejecting this name against the pattern above stalls a backtracking regex.
+        yield* fileSystem.symlink("keep-real.ts", path.join(cwd, `${"a".repeat(200)}c`));
+        yield* writeTextFile(cwd, "sub/.ignore", "!*hide*\n");
+        yield* writeTextFile(cwd, ".ignore", `!*keep*\n*hide*\n${"a*".repeat(20)}b\n`);
+        yield* writeTextFile(cwd, "sub/hide-real.ts", "export {};");
+        yield* fileSystem.symlink("hide-real.ts", path.join(cwd, "sub/hide-link.ts"));
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const searched = yield* searchWorkspaceEntries({ cwd, query: "link", limit: 100 });
+        const listed = yield* workspaceEntries.list({ cwd });
+
+        for (const entries of [searched.entries, listed.entries]) {
+          const paths = entries.map((entry) => entry.path);
+          expect(paths).toContain("keep-link.ts");
+          expect(paths).toContain("sub/hide-link.ts");
+        }
+        // fff indexes the real files under the same rules.
+        expect(listed.entries.map((entry) => entry.path)).toEqual(
+          expect.arrayContaining(["keep-real.ts", "sub/hide-real.ts", `${"a".repeat(200)}c`]),
+        );
+      }),
+    );
+    it.effect("matches .ignore rules against whole names and treats folder links as links", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-symlinks-", git: true });
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "src/index.ts", "export {};");
+        yield* writeTextFile(cwd, ".gitignore", "blink\n");
+        // `!link` must not re-include `blink`, and `folder-link/` does not apply to a link.
+        yield* writeTextFile(cwd, ".ignore", "!link\nfolder-link/\n");
+        yield* fileSystem.symlink("src", path.join(cwd, "blink"));
+        yield* fileSystem.symlink("src", path.join(cwd, "folder-link"));
+        yield* writeTextFile(cwd, "sub/blink", "regular");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const searched = yield* searchWorkspaceEntries({ cwd, query: "link", limit: 100 });
+        const listed = yield* workspaceEntries.list({ cwd });
+
+        for (const entries of [searched.entries, listed.entries]) {
+          const paths = entries.map((entry) => entry.path);
+          expect(paths).not.toContain("blink");
+          expect(paths).not.toContain("sub/blink");
+          expect(paths).toContain("folder-link");
+        }
+      }),
+    );
   });
 
   describe("searchContents", () => {
