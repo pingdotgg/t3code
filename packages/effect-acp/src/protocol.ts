@@ -1,5 +1,6 @@
 import type * as AcpCompat from "./compat.ts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
@@ -756,10 +757,16 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         return handleTermination(() => Effect.succeed(normalized));
       },
       onSuccess: () =>
-        handleTermination(
-          () =>
-            options.terminationError ?? Effect.succeed(new AcpError.AcpInputStreamEndedError({})),
-        ),
+        handleTermination(() => {
+          const ended = new AcpError.AcpInputStreamEndedError({});
+          if (!options.terminationError) return Effect.succeed(ended);
+          // Stdout can close without process exit; use a live-clock diagnostic grace period.
+          return options.terminationError.pipe(
+            Effect.timeoutOption("250 millis"),
+            Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
+            Effect.map(Option.getOrElse(() => ended)),
+          );
+        }),
     }),
     Effect.forkScoped,
   );
