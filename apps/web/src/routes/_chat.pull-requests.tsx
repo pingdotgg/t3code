@@ -58,8 +58,11 @@ export const Route = createFileRoute("/_chat/pull-requests")({
     ...(typeof raw.selectedEnvironmentId === "string" && raw.selectedEnvironmentId
       ? { selectedEnvironmentId: raw.selectedEnvironmentId as EnvironmentId }
       : {}),
-    // Always include q to override numeric values in the parent route's unvalidated search.
-    q: typeof raw.q === "string" && raw.q ? raw.q.slice(0, 200) : undefined,
+    // Keep every query as text and always own the key so an unvalidated parent value cannot leak.
+    q:
+      raw.q !== undefined && raw.q !== null && raw.q !== ""
+        ? (typeof raw.q === "string" ? raw.q : JSON.stringify(raw.q)).slice(0, 200)
+        : undefined,
     ...(raw.draft === "only" || raw.draft === "hide" ? { draft: raw.draft } : {}),
     ...(raw.review === "approved" ||
     raw.review === "changes-requested" ||
