@@ -219,7 +219,7 @@ function ReasoningSlider({
   disabled: boolean;
   onValueChange: (value: string) => void;
 }) {
-  const options = selectableProviderOptionChoices(descriptor);
+  const options = disabled ? descriptor.options : selectableProviderOptionChoices(descriptor);
   const index = options.findIndex((option) => option.id === value);
   const option = options[index];
 
@@ -270,9 +270,8 @@ function ReasoningSlider({
             if (next) onValueChange(next.id);
           }}
           onKeyDown={(event) => {
-            if (
-              ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)
-            ) {
+            if (["ArrowUp", "ArrowDown"].includes(event.key)) event.preventDefault();
+            if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
               event.stopPropagation();
             }
           }}
@@ -288,7 +287,7 @@ function ReasoningSlider({
   );
 }
 
-export function EffortLevels(props: { traits: TraitsSelectionInput }) {
+function EffortLevels(props: { traits: TraitsSelectionInput }) {
   const traits = useTraitsSelection(props.traits);
   const { effort, others } = columnControls(
     props.traits.provider,
@@ -335,10 +334,13 @@ export function EffortLevels(props: { traits: TraitsSelectionInput }) {
     const locked =
       descriptor.id === traits.primarySelectDescriptor?.id && traits.ultrathinkInBodyText;
     const value = traits.selectValue(control.descriptor);
+    const choices = locked
+      ? control.descriptor.options
+      : selectableProviderOptionChoices(control.descriptor);
     if (
       REASONING_SELECT_DESCRIPTOR_IDS.has(descriptor.id) &&
-      descriptor.options.length > 1 &&
-      descriptor.options.some((option) => option.id === value)
+      choices.length > 1 &&
+      choices.some((option) => option.id === value)
     ) {
       return (
         <div key={descriptor.id}>

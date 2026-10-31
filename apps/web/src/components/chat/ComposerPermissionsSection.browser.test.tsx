@@ -88,8 +88,8 @@ it("marks the current mode as checked and closes on Escape", async () => {
 });
 
 it("explains hovered permissions while keeping the selected mode in the header", async () => {
-  await using screen = await render(<EffortMenu />, { router: false }); // no routes involved
-  await userEvent.click(screen.getByRole("button", { name: "Effort" }));
+  await using screen = await render(<OverflowMenu />, { router: false }); // no routes involved
+  await userEvent.click(screen.getByRole("button", { name: "More" }));
   await userEvent.hover(page.getByRole("menuitemradio", { name: "Supervised" }));
   await expect
     .element(
