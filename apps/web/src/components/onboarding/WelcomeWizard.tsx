@@ -1,4 +1,5 @@
 import { useAuth } from "@clerk/react";
+import { Link } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   AgentSessionProjectCandidate,
@@ -449,6 +450,7 @@ function ConnectionStep({
           .
         </p>
         <Button
+          size="standard"
           className="shrink-0 self-end"
           ref={continueRef}
           autoFocus={!expandPairingInitially}
@@ -600,7 +602,7 @@ function PairingForm({
             aria-invalid={errorMessage.length > 0}
             aria-describedby={errorMessage ? "onboarding-pairing-error" : undefined}
             className="mt-2"
-            size="lg"
+            size="default"
             autoCapitalize="none"
             autoComplete="off"
             autoCorrect="off"
@@ -634,7 +636,11 @@ function PairingForm({
               <ChevronRightIcon className="size-3.5 group-data-panel-open:rotate-90" />
               Need a pairing link?
             </CollapsibleTrigger>
-            <Button type="submit" disabled={isPairing || pairingUrl.trim().length === 0}>
+            <Button
+              size="standard"
+              type="submit"
+              disabled={isPairing || pairingUrl.trim().length === 0}
+            >
               {isPairing ? "Pairing..." : "Pair"}
             </Button>
           </div>
@@ -675,10 +681,7 @@ function AgentsStep({
 }) {
   const { environments } = useEnvironments();
   return (
-    <StepShell
-      title="Connect your agents"
-      description="Choose an agent to start coding. You can add more later."
-    >
+    <StepShell title="Your agents" description="Agents available on your selected computers.">
       <ScrollArea scrollFade className="mt-5 h-auto max-h-[min(32rem,55dvh)]">
         <div className="space-y-5 pr-3">
           {environmentIds.map((environmentId) => (
@@ -694,7 +697,7 @@ function AgentsStep({
         </div>
       </ScrollArea>
       <div className="mt-6 flex justify-end">
-        <Button autoFocus onClick={onContinue}>
+        <Button size="standard" autoFocus onClick={onContinue}>
           Continue
           <ArrowRightIcon className="size-3.5" />
         </Button>
@@ -838,6 +841,52 @@ function ConnectedAgentsStep({
           ),
         )}
       </div>
+      {providers?.some(
+        (provider) =>
+          provider.driver !== "codex" &&
+          provider.driver !== "claudeAgent" &&
+          isManagedDriverAllowed(managedPolicy, provider.driver),
+      ) ? (
+        <div className="mt-2 flex flex-col gap-1.5">
+          {providers
+            .filter(
+              (provider) =>
+                provider.driver !== "codex" &&
+                provider.driver !== "claudeAgent" &&
+                isManagedDriverAllowed(managedPolicy, provider.driver),
+            )
+            .map((provider) => (
+              <OnboardingAgentRow
+                key={provider.instanceId}
+                driver={provider.driver}
+                title={
+                  provider.displayName ??
+                  providerClients.get(provider.driver)?.label ??
+                  provider.driver
+                }
+                description={getProviderSummary(provider).headline}
+                control={
+                  <Button
+                    size="xs"
+                    variant="secondary"
+                    render={
+                      <Link
+                        to="/settings/providers"
+                        search={{
+                          environmentId,
+                          instanceId: provider.instanceId,
+                          resumeEnvironmentId: environmentId,
+                        }}
+                      />
+                    }
+                  >
+                    Set up
+                  </Button>
+                }
+              />
+            ))}
+        </div>
+      ) : null}
       {chatGptAllowed &&
       providers?.some(
         (provider) =>
@@ -971,20 +1020,26 @@ function AgentCard({
   const providerState = getOnboardingProviderState(provider);
 
   return (
-    <div className="flex items-center gap-3 rounded-control border border-border surface-card px-4 py-4">
-      <ProviderInstanceIcon
-        driverKind={ProviderDriverKind.make(driver)}
-        displayName={displayName}
-        iconClassName="size-5"
-      />
-      <div className="min-w-0 flex-1">
-        <span className="block text-label text-foreground">{displayName}</span>
-        <p className="mt-0.5 text-meta leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
-          {providerState !== "ready" && (summary.detail || summary.authLabel) ? (<Tooltip><TooltipTrigger render={<span tabIndex={0} />}>{summary.headline}</TooltipTrigger><TooltipPopup>{summary.authLabel ? <span className="block">{summary.authLabel}</span> : null}{summary.detail ? <span className="block">{summary.detail}</span> : null}</TooltipPopup></Tooltip>) : providerState === "ready" ? "Ready to code." : summary.headline}
-        </p>
-      </div>
-      <div className="shrink-0">
-        {providerState === "ready" ? (
+    <OnboardingAgentRow
+      driver={ProviderDriverKind.make(driver)}
+      title={displayName}
+      description={
+        providerState !== "ready" && (summary.detail || summary.authLabel) ? (
+          <Tooltip>
+            <TooltipTrigger render={<span tabIndex={0} />}>{summary.headline}</TooltipTrigger>
+            <TooltipPopup>
+              {summary.authLabel ? <span className="block">{summary.authLabel}</span> : null}
+              {summary.detail ? <span className="block">{summary.detail}</span> : null}
+            </TooltipPopup>
+          </Tooltip>
+        ) : providerState === "ready" ? (
+          "Ready to code."
+        ) : (
+          summary.headline
+        )
+      }
+      control={
+        providerState === "ready" ? (
           <span className="inline-flex items-center gap-1.5 text-meta text-success-foreground">
             <CheckIcon className="size-3.5" />
             Ready
@@ -1005,9 +1060,9 @@ function AgentCard({
             <TerminalIcon className="size-3.5" />
             {providerState === "signIn" ? "Sign in" : "Install"}
           </Button>
-        )}
-      </div>
-    </div>
+        )
+      }
+    />
   );
 }
 
@@ -1430,7 +1485,7 @@ function ImportStep({
           </p>
         </div>
         <div className="flex justify-end">
-          <Button variant="ghost-muted" onClick={() => void onDone()}>
+          <Button size="standard" variant="ghost-muted" onClick={() => void onDone()}>
             Do not import projects
           </Button>
         </div>
@@ -1534,10 +1589,16 @@ function ImportStep({
         <p className="mt-3 text-body text-destructive">{visibleImportError}</p>
       ) : null}
       <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
-        <Button variant="ghost-muted" disabled={isImporting} onClick={finishAfterImport}>
+        <Button
+          size="standard"
+          variant="ghost-muted"
+          disabled={isImporting}
+          onClick={finishAfterImport}
+        >
           Do not import projects
         </Button>
         <Button
+          size="standard"
           autoFocus
           disabled={!canImport || isImporting || selected.length === 0}
           onClick={() => void runImport(selected)}
