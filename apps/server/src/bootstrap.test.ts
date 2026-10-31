@@ -55,8 +55,7 @@ const closeIfOpen = (fd: number) => {
   }
 };
 
-// A successful Windows read streams the inherited fd with autoClose. POSIX
-// reopens the fd through /proc or /dev, so the test still owns the original.
+// Windows auto-closes the inherited fd; POSIX reopens it, leaving the original for the test to close.
 const openBootstrapInputFd = (filePath: string) =>
   Effect.acquireRelease(
     Effect.sync(() => NodeFS.openSync(filePath, "r")),
@@ -96,10 +95,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
         `${yield* encodeTestEnvelopeSchema({ mode: "desktop" })}\n`,
       );
 
-      // Open without acquireRelease: the direct-stream fallback uses autoClose: true,
-      // so the stream owns the fd lifecycle and closes it asynchronously on end.
-      // Attempting to also close it synchronously in a finalizer races with the
-      // stream's async close and produces an uncaught EBADF.
+      // The fallback stream auto-closes asynchronously; a finalizer would race and cause EBADF.
       const fd = NodeFS.openSync(filePath, "r");
 
       openSyncInterceptor.failPath = `/proc/self/fd/${fd}`;
