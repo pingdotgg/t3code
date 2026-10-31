@@ -1,8 +1,12 @@
 import type { PreviewAnnotationPayload } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import type { ComposerImageAttachment } from "../../composerDraftStore";
-import { buildMessageContext, previewAnnotationContextId } from "../../lib/composerContextRecords";
+import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
+import {
+  buildMessageContext,
+  fileContextReference,
+  previewAnnotationContextId,
+} from "../../lib/composerContextRecords";
 import {
   reconcileAttachmentContextReferences,
   type RetainedAttachmentContextPayloads,
@@ -43,23 +47,45 @@ function retention(): RetainedAttachmentContextPayloads {
 describe("reconcileAttachmentContextReferences", () => {
   it("restores an annotation and its screenshot attachment after undo", () => {
     const retained = retention();
+    const file = {
+      type: "file",
+      id: "picked-file",
+      name: "question.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: binary.size,
+      file: binary,
+    } satisfies ComposerFileAttachment;
+    const contextId = fileContextReference(file).contextId;
+    const standalone = reconcileAttachmentContextReferences({
+      referencedContextIds: new Set(),
+      previousReferencedContextIds: new Set(),
+      files: [file],
+      images: [],
+      previewAnnotations: [],
+      retained,
+    });
+    expect(standalone.filesToRemove).toEqual([]);
     const removed = reconcileAttachmentContextReferences({
       referencedContextIds: new Set(),
-      files: [],
+      previousReferencedContextIds: new Set([contextId]),
+      files: [file],
       images: [image],
       previewAnnotations: [annotation],
       retained,
     });
     expect(removed.annotationIdsToRemove).toEqual(["annotation-1"]);
+    expect(removed.filesToRemove).toEqual([file.id]);
 
     const restored = reconcileAttachmentContextReferences({
-      referencedContextIds: new Set([previewAnnotationContextId(annotation.id)]),
+      referencedContextIds: new Set([previewAnnotationContextId(annotation.id), contextId]),
+      previousReferencedContextIds: new Set(),
       files: [],
       images: [],
       previewAnnotations: [],
       retained,
     });
     expect(restored.annotationsToRestore).toEqual([{ annotation, image }]);
+    expect(restored.filesToRestore).toEqual([file]);
     expect(restored.annotationsToRestore[0]?.annotation.screenshot?.dataUrl).toBe(
       "data:image/png;base64,YmluYXJ5",
     );
