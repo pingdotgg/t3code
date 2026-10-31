@@ -1670,14 +1670,34 @@ describe("OrchestratorMcpService provider resolution", () => {
             ],
           },
         };
+        const fallbackProvider = providerSnapshot({
+          instanceId: fallbackInstanceId,
+          driver: ProviderDriverKind.make("claudeAgent"),
+          model: "claude-sonnet-4-6",
+        });
         for (const testCase of [
           {
+            name: "explicit",
             target: { providerInstanceId: codexInstanceId },
             expected: { instanceId: codexInstanceId, model: "gpt-5.4" },
           },
-          { target: undefined, expected: fallbackModelSelection },
+          { name: "implicit", target: undefined, expected: fallbackModelSelection },
+          {
+            name: "stale fallback health is re-probed",
+            target: undefined,
+            staleFallback: true,
+            expected: fallbackModelSelection,
+          },
+          {
+            name: "accepted retry replays the committed provider",
+            target: undefined,
+            committed: { instanceId: codexInstanceId, model: "gpt-5.4" },
+            expected: { instanceId: codexInstanceId, model: "gpt-5.4" },
+          },
         ]) {
           const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+          const refreshed = yield* Ref.make<ReadonlyArray<ProviderInstanceId>>([]);
+          const healthyProviders = [exhaustedCodex, fallbackProvider];
           const task = {
             id: taskId,
             threadId: parentThreadId,
@@ -1702,7 +1722,8 @@ describe("OrchestratorMcpService provider resolution", () => {
           const layerDependencies = Layer.mergeAll(
             NodeServices.layer,
             Layer.mock(ThreadManagementService.ThreadManagementService)({
-              hasReceipt: () => Effect.succeed(false),
+              hasReceipt: () => Effect.succeed(testCase.committed !== undefined),
+              getThreadShell: () => Effect.succeed({ modelSelection: testCase.committed } as never),
               getThreadRecords: (threadId) =>
                 Effect.succeed(
                   threadId === parentThreadId
@@ -1728,14 +1749,17 @@ describe("OrchestratorMcpService provider resolution", () => {
                   } as never),
                 ),
             }),
-            providerRegistryLayer([
-              exhaustedCodex,
-              providerSnapshot({
-                instanceId: fallbackInstanceId,
-                driver: ProviderDriverKind.make("claudeAgent"),
-                model: "claude-sonnet-4-6",
-              }),
-            ]),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({
+              getProviders: Effect.succeed(
+                testCase.staleFallback
+                  ? [exhaustedCodex, { ...fallbackProvider, status: "error" as const }]
+                  : healthyProviders,
+              ),
+              refreshInstance: (instanceId) =>
+                Ref.update(refreshed, (ids) => [...ids, instanceId]).pipe(
+                  Effect.as(healthyProviders),
+                ),
+            }),
             adapterRegistryLayer([codexInstanceId, fallbackInstanceId]),
             Layer.mock(ProjectService.ProjectService)({}),
             Layer.mock(SecretRequests.SecretRequests)({}),
@@ -1756,8 +1780,11 @@ describe("OrchestratorMcpService provider resolution", () => {
             assert.deepEqual(
               (commands[0] as { modelSelection: unknown }).modelSelection,
               testCase.expected,
-              testCase.target === undefined ? "implicit" : "explicit",
+              testCase.name,
             );
+            if (testCase.staleFallback) {
+              assert.deepEqual(yield* Ref.get(refreshed), [fallbackInstanceId], testCase.name);
+            }
           }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
         }
       }),
