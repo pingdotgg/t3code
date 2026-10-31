@@ -24,10 +24,10 @@ export function DeviceHostUpdates({
           <div
             key={host.id}
             role={failed ? "alert" : "status"}
-            className="flex items-start gap-3 rounded-md border border-border/60 px-3 py-2 text-xs"
+            className="flex items-start gap-3 rounded-card surface-panel px-3 py-2 text-xs"
           >
             <div className="min-w-0 flex-1">
-              <p className="font-medium">{host.label}</p>
+              <p className="font-medium text-strong-foreground">{host.label}</p>
               <p className="whitespace-pre-wrap break-words text-muted-foreground">
                 {status.detail ??
                   (failed
@@ -46,7 +46,7 @@ export function DeviceHostUpdates({
             {failed && state.supportsHostRetry ? (
               <Button
                 size="compact"
-                variant="outline"
+                variant="secondary"
                 disabled={pending !== null}
                 onClick={() => {
                   setPending(host.id);

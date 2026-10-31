@@ -130,16 +130,17 @@ function LinkRowImpl({
     actionEntry !== null && pullRequestQuickActions(actionEntry, linkHostActions).length > 0;
   return (
     <div
-      className={cn(PULL_REQUEST_ROW_CLASS, "relative hover:bg-accent/60")}
+      // Content on the panel's 16px lines: the 6px list inset plus 10px of row padding a side.
+      className={cn(PULL_REQUEST_ROW_CLASS, "relative pr-2.5 hover:surface-ghost-hover")}
       onContextMenu={(event) => {
         event.preventDefault();
         event.stopPropagation();
         setMenuPosition({ x: event.clientX, y: event.clientY });
         setMenuOpen(true);
       }}
-      style={{ paddingLeft: `${0.5 + Math.min(depth, 3) * 1.25}rem` }}
+      style={{ paddingLeft: `${0.625 + Math.min(depth, 3) * 1.25}rem` }}
     >
-      {depth > 0 ? <span aria-hidden className="-ml-2 h-6 w-px shrink-0 bg-border/70" /> : null}
+      {depth > 0 ? <span aria-hidden className="-ml-2 h-6 w-px shrink-0 bg-border" /> : null}
       {snapshot === null ? (
         <PullRequestGlyph.pullRequest
           aria-label="Waiting for host state"
@@ -183,7 +184,12 @@ function LinkRowImpl({
                 #{link.number}
               </TooltipTrigger>
               <TooltipPopup>
-                {SOURCE_LABELS[link.source]} · <RelativeTime timestamp={link.linkedAt} />
+                <span className="grid gap-1">
+                  <span>{SOURCE_LABELS[link.source]}</span>
+                  <span>
+                    <RelativeTime timestamp={link.linkedAt} />
+                  </span>
+                </span>
               </TooltipPopup>
             </Tooltip>
           }
@@ -296,7 +302,7 @@ function LinkRowImpl({
           speedMode && hasQuickActions && "hidden",
         )}
       >
-        <span aria-hidden className="absolute inset-0 bg-accent/60" />
+        <span aria-hidden className="absolute inset-0 surface-ghost-hover" />
         <Menu
           open={menuOpen}
           onOpenChange={(open) => {
@@ -434,7 +440,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
           Pull requests the agent opens from this thread land here. Link one yourself from a URL or
           a number.
         </p>
-        <Button size="sm" variant="outline" onClick={openLinkDialog}>
+        <Button size="sm" variant="secondary" onClick={openLinkDialog}>
           <PlusIcon className="size-3.5" />
           Link pull request
         </Button>
@@ -471,16 +477,21 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
           drawDistance={440}
           className="min-h-0 flex-1 overscroll-contain p-1.5"
         />
-        <footer className="flex items-center justify-between border-t border-border/60 px-2 py-1.5 text-2xs text-muted-foreground">
-          <span>
-            {openCount} open · {linkCount} linked
-            {lastSynced ? (
-              <>
-                {" · synced "}
-                <RelativeTime timestamp={lastSynced} />
-              </>
-            ) : null}
-          </span>
+        <footer className="flex items-center justify-between border-t border-border py-1.5 ps-4 pe-2.25 text-2xs text-muted-foreground">
+          <Tooltip>
+            <TooltipTrigger render={<span />}>{linkCount} linked</TooltipTrigger>
+            <TooltipPopup>
+              <span className="flex flex-col gap-0.5">
+                <span>{openCount} open</span>
+                {lastSynced ? (
+                  <span>
+                    synced <RelativeTime timestamp={lastSynced} />
+                  </span>
+                ) : null}
+              </span>
+            </TooltipPopup>
+          </Tooltip>
+          {/* Borderless: the footer's 9px end padding puts its ink, 7px inside, on the 16px line. */}
           <Button size="xs" variant="ghost" onClick={openLinkDialog}>
             <PlusIcon className="size-3.5" />
             Link

@@ -17,17 +17,17 @@ const PROVIDER_UPDATE_PILL_EXIT_MS = 180;
 
 const PROVIDER_UPDATE_PILL_STYLES = {
   loading:
-    "bg-sidebar-control-surface text-sidebar-foreground group-has-[button[data-provider-update-main]:hover]/provider-update:bg-sidebar-row-hover",
+    "bg-update/12 text-update-foreground group-has-[button[data-provider-update-main]:hover]/provider-update:bg-update/18",
   success:
-    "bg-sidebar-control-surface text-sidebar-foreground group-has-[button[data-provider-update-main]:hover]/provider-update:bg-sidebar-row-hover",
+    "bg-update/12 text-update-foreground group-has-[button[data-provider-update-main]:hover]/provider-update:bg-update/18",
   warning:
-    "bg-warning/12 text-warning group-has-[button[data-provider-update-main]:hover]/provider-update:bg-warning/18",
+    "bg-warning/12 text-warning-foreground group-has-[button[data-provider-update-main]:hover]/provider-update:bg-warning/18",
   error:
-    "bg-destructive/12 text-destructive group-has-[button[data-provider-update-main]:hover]/provider-update:bg-destructive/18",
+    "bg-destructive/12 text-error-foreground group-has-[button[data-provider-update-main]:hover]/provider-update:bg-destructive/18",
 } as const;
 
 const PROVIDER_UPDATE_PILL_PROGRESS_STYLES = {
-  success: "bg-foreground/8",
+  success: "bg-update/14",
   warning: "bg-warning/14",
   error: "bg-destructive/14",
 } as const;
@@ -140,7 +140,7 @@ export function SidebarProviderUpdatePill() {
 
   return (
     <div
-      className={`group/provider-update relative flex min-h-7 w-full shrink-0 items-center overflow-hidden rounded-lg text-2xs leading-4 font-medium transform-gpu transition-all duration-180 ease-drawer will-change-transform ${
+      className={`group/provider-update relative flex min-h-7 w-full shrink-0 items-center overflow-hidden rounded-control text-2xs leading-4 font-medium transform-gpu transition-all duration-180 ease-drawer will-change-transform ${
         PROVIDER_UPDATE_PILL_STYLES[displayedView.tone]
       } ${
         exitingKey === displayedView.key
@@ -152,7 +152,7 @@ export function SidebarProviderUpdatePill() {
         <div
           key={displayedView.key}
           aria-hidden="true"
-          className={`pointer-events-none absolute inset-y-0 left-0 w-full origin-left scale-x-0 transition-transform duration-(--provider-update-pill-dismiss-ms) ease-linear starting:scale-x-100 border-r border-current/15 inset-shadow-2xs inset-shadow-white/8 ${
+          className={`pointer-events-none absolute inset-y-0 left-0 w-full origin-left scale-x-0 transition-transform duration-(--provider-update-pill-dismiss-ms) ease-linear starting:scale-x-100 border-r border-current/15 inset-shadow-2xs inset-shadow-update/8 ${
             PROVIDER_UPDATE_PILL_PROGRESS_STYLES[displayedView.tone]
           }`}
           style={
@@ -162,7 +162,7 @@ export function SidebarProviderUpdatePill() {
           }
         />
       ) : null}
-      <div className="pointer-events-none absolute inset-0 rounded-lg transition-colors" />
+      <div className="pointer-events-none absolute inset-0 rounded-control transition-colors" />
       <Tooltip>
         <TooltipTrigger
           render={

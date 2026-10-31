@@ -209,7 +209,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       >
         <ComposerBanner.Content>
           <span
-            className={cn("min-w-0 truncate text-muted-foreground", isCollapsed && "max-w-1/2")}
+            className={cn(
+              "min-w-0 truncate font-medium text-foreground",
+              isCollapsed && "max-w-1/2",
+            )}
             dir={textDirection(activeQuestion.header)}
           >
             {activeQuestion.header}
@@ -218,7 +221,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             <>
               <ComposerBanner.Separator />
               <span
-                className={cn("min-w-0 flex-1 truncate text-secondary-label", questionTextAlign)}
+                className={cn("min-w-0 flex-1 truncate text-dim-foreground", questionTextAlign)}
                 dir={markdownProseDirection(activeQuestion.question)}
               >
                 {activeQuestion.question}
@@ -262,7 +265,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               text={activeQuestion.question}
               cwd={cwd}
               threadRef={threadRef}
-              className={cn("pt-2 text-foreground/85", questionTextAlign)}
+              className={cn("pt-2 text-foreground", questionTextAlign)}
             />
             {/* Rows span the header row's width so the radios align with the question text and the shortcut column sits under the dismiss button. */}
             <div className="-ms-2 mt-1.5 sm:-ms-1.5">
@@ -275,8 +278,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   isOptimisticallySelected || draftSelectedOptions?.[index] === true;
                 const className = cn(
                   questionTextAlign,
-                  "group flex w-full items-start gap-2.5 rounded-md bg-transparent py-1.5 ps-2 sm:ps-1.5 outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25",
-                  isSelected ? "text-foreground" : "text-foreground/70 hover:bg-muted/30",
+                  "group flex w-full items-start gap-2.5 rounded-row bg-transparent py-1.5 ps-2 sm:ps-1.5 outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+                  isSelected
+                    ? "bg-selection-neutral text-foreground"
+                    : "text-foreground hover:surface-ghost-hover",
                   (disabled || isResponding) && "opacity-50 cursor-not-allowed",
                   !disabled && !isResponding && "cursor-pointer",
                 );
@@ -291,12 +296,12 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                       )}
                     </span>
                     <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                      <span className="text-sm font-medium" dir={textDirection(option.label)}>
+                      <span className="text-sm font-normal" dir={textDirection(option.label)}>
                         {option.label}
                       </span>
                       {option.description && option.description !== option.label ? (
                         <span
-                          className="text-secondary-label text-2xs"
+                          className="text-dim-foreground text-2xs"
                           dir={textDirection(option.description)}
                         >
                           {option.description}

@@ -160,7 +160,9 @@ in a text field such as the composer. Once you type or press another key, the
 field gets its own undo back. Terminals always keep their native shortcut.
 
 `navigation.back` (`mod+[` by default) and `navigation.forward` (`mod+]`) move
-through the pages you have visited, like a browser's back and forward buttons.
+through the pages you have visited, like the back and forward buttons next to the
+sidebar toggle. Both stop at the first page you opened in T3 Code, so in a browser
+they never leave the app; the browser's own buttons still can.
 
 `chat.new` may ask you to choose a project when there is more than one.
 `chat.newLocal` skips that chooser. Both use your

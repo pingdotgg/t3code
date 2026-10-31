@@ -167,18 +167,13 @@ function WindowBar({
       </TooltipTrigger>
       <TooltipPopup side="top">
         <div className="flex flex-col gap-0.5">
-          <span className="text-foreground">
-            {remaining}% left{timeLeft !== null ? ` · ${timeLeft}% of the window left` : ""}
-          </span>
+          <span className="text-foreground">{remaining}% left</span>
+          {timeLeft !== null ? <span>{timeLeft}% of the window left</span> : null}
           {timeLeft !== null ? (
             <span className="text-muted-foreground">The line is where even spending would be.</span>
           ) : null}
-          {resetsAt ? (
-            <span className="text-muted-foreground">
-              Resets {resetsAt}
-              {resetsIn ? ` · ${resetsIn}` : ""}
-            </span>
-          ) : null}
+          {resetsAt ? <span className="text-muted-foreground">Resets {resetsAt}</span> : null}
+          {resetsIn ? <span className="text-muted-foreground">{resetsIn}</span> : null}
         </div>
       </TooltipPopup>
     </Tooltip>
@@ -292,7 +287,7 @@ export function ResetCreditDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+          <AlertDialogClose render={<Button variant="secondary" />}>Cancel</AlertDialogClose>
           <Button disabled={disabled} onClick={onConfirm}>
             Use credit
           </Button>
@@ -306,16 +301,22 @@ export function resetCreditsSummary(
   credits: ServerProviderResetCredits,
   now: number,
   compact = false,
-): string {
+) {
   const expiresIn = credits.nextExpiresAt
     ? formatDuration(Date.parse(credits.nextExpiresAt) - now)
     : null;
-  if (credits.availableCount === 0) return "No reset credits banked";
-  if (compact)
-    return `${credits.availableCount} banked${expiresIn ? ` · expires in ${expiresIn}` : ""}`;
-  return `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked${
-    expiresIn ? ` · next expires in ${expiresIn}` : ""
-  }`;
+  return {
+    label:
+      credits.availableCount === 0
+        ? "No reset credits banked"
+        : compact
+          ? `${credits.availableCount} banked`
+          : `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked`,
+    expiry:
+      credits.availableCount > 0 && expiresIn
+        ? `${compact ? "Expires" : "Next expires"} in ${expiresIn}`
+        : null,
+  };
 }
 
 export function ResetCredits({
@@ -334,13 +335,17 @@ export function ResetCredits({
     input,
   );
   if (credits.availableCount === 0 && status === null) return null;
+  const summary = resetCreditsSummary(credits, now);
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-      <span className="tabular-nums">{resetCreditsSummary(credits, now)}</span>
+      <Tooltip>
+        <TooltipTrigger render={<span tabIndex={0} />}>{summary.label}</TooltipTrigger>
+        <TooltipPopup>{summary.expiry ?? "No expiry"}</TooltipPopup>
+      </Tooltip>
       {credits.availableCount > 0 ? (
         <Button
           size="xs"
-          variant="outline"
+          variant="secondary"
           disabled={busy || !canManageProviders}
           onClick={() => {
             if (readEnvironmentScope(environmentId, AuthProvidersManageScope)) setConfirming(true);

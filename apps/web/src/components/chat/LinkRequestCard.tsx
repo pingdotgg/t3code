@@ -116,18 +116,20 @@ function PendingLinkRequest(props: {
       className="flex min-w-0 flex-col gap-3 rounded-xl border border-border/60 bg-card p-4"
     >
       <div className="flex min-w-0 flex-col gap-1">
-        <p className="text-sm font-medium text-foreground">
+        <p className="text-label text-foreground">
           {picksMachine(item)
             ? "Link a machine to this environment"
             : `Link ${target} to this environment`}
         </p>
-        {item.reason.trim() ? <p className="text-sm text-muted-foreground">{item.reason}</p> : null}
+        {item.reason.trim() ? (
+          <p className="text-body text-muted-foreground">{item.reason}</p>
+        ) : null}
         {item.label !== undefined && item.url !== undefined ? (
-          <p className="truncate text-xs text-muted-foreground/80">{item.url}</p>
+          <p className="truncate text-meta text-muted-foreground/80">{item.url}</p>
         ) : null}
       </div>
       {error !== null ? (
-        <p role="alert" className="text-xs text-destructive">
+        <p role="alert" className="text-meta text-destructive">
           {error}
         </p>
       ) : null}
@@ -147,7 +149,7 @@ function PendingLinkRequest(props: {
           </Button>
         </div>
       ) : (
-        <p className="text-xs text-muted-foreground">
+        <p className="text-meta text-muted-foreground">
           Only a session that manages access here can answer this.
         </p>
       )}
@@ -373,7 +375,7 @@ function LinkRequestDialog(props: {
                 ) : null}
                 {asksAddress ? (
                   <label className="block space-y-1.5">
-                    <span className="block text-xs font-medium text-foreground">Address</span>
+                    <span className="block text-caption text-foreground">Address</span>
                     <Input
                       value={address}
                       onChange={(event) => setAddress(event.target.value)}
@@ -383,7 +385,7 @@ function LinkRequestDialog(props: {
                       spellCheck={false}
                     />
                     {target.kind === "machine" ? (
-                      <span className="block text-xs text-muted-foreground">
+                      <span className="block text-meta text-muted-foreground">
                         This app has no address for {target.label} that another machine can reach.
                         Enter its https or Tailscale address.
                       </span>
@@ -394,15 +396,13 @@ function LinkRequestDialog(props: {
             ) : (
               <>
                 {item.url !== undefined && !pickMachine ? (
-                  <p className="truncate text-xs text-muted-foreground">{item.url}</p>
+                  <p className="truncate text-meta text-muted-foreground">{item.url}</p>
                 ) : null}
                 {useExisting ? null : (
                   <>
                     {canMint ? null : (
                       <label className="block space-y-1.5">
-                        <span className="block text-xs font-medium text-foreground">
-                          Pairing code
-                        </span>
+                        <span className="block text-caption text-foreground">Pairing code</span>
                         <Input
                           value={pairingCode}
                           onChange={(event) => setPairingCode(event.target.value)}
@@ -412,7 +412,7 @@ function LinkRequestDialog(props: {
                           nativeInput
                           spellCheck={false}
                         />
-                        <span className="block text-xs text-muted-foreground">
+                        <span className="block text-meta text-muted-foreground">
                           Create a link on {targetName}: Settings → Connections → Create link, then
                           paste its code here.
                         </span>
@@ -424,13 +424,13 @@ function LinkRequestDialog(props: {
               </>
             )}
             {useExisting ? (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-meta text-muted-foreground">
                 This environment is already linked to {targetName}. The agent can use that link as
                 it is; change its access in Settings → Connections.
               </p>
             ) : null}
             {error !== null ? (
-              <p role="alert" className="text-xs text-destructive">
+              <p role="alert" className="text-meta text-destructive">
                 {error}
               </p>
             ) : null}
@@ -439,7 +439,7 @@ function LinkRequestDialog(props: {
         <WizardFooter>
           {current === "access" && steps.length > 1 ? (
             <Button
-              variant="outline"
+              variant="secondary"
               type="button"
               disabled={busy}
               onClick={() => {
@@ -450,7 +450,7 @@ function LinkRequestDialog(props: {
               Back
             </Button>
           ) : (
-            <Button variant="outline" type="button" disabled={busy} onClick={close}>
+            <Button variant="secondary" type="button" disabled={busy} onClick={close}>
               Cancel
             </Button>
           )}
@@ -477,7 +477,7 @@ function MachinePicker(props: {
   const labelId = useId();
   return (
     <div className="space-y-2">
-      <span id={labelId} className="block text-xs font-medium">
+      <span id={labelId} className="block text-caption">
         Machine
       </span>
       <RadioGroup
@@ -489,20 +489,20 @@ function MachinePicker(props: {
         {props.machines.map((machine) => (
           <label
             key={machine.environmentId}
-            className="flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2 text-sm"
+            className="flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2 text-body"
           >
             <Radio value={machine.environmentId} />
             <EnvironmentMachineIcon
               kind={machine.machine}
               className="size-4 shrink-0 text-muted-foreground"
             />
-            <span className="min-w-0 flex-1 truncate font-medium">{machine.label}</span>
+            <span className="min-w-0 flex-1 truncate text-label">{machine.label}</span>
             <LinkMachineBadge machine={machine} />
           </label>
         ))}
-        <label className="flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2 text-sm">
+        <label className="flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2 text-body">
           <Radio value={ANOTHER_ADDRESS} />
-          <span className="min-w-0 flex-1 font-medium">Another address…</span>
+          <span className="min-w-0 flex-1 text-label">Another address…</span>
         </label>
       </RadioGroup>
     </div>

@@ -284,20 +284,20 @@ function CodexArtifactTemplateCard(props: {
       role="group"
       aria-label={`${props.template.displayName} template`}
       data-chat-markdown-artifact-template
-      className="my-[0.65rem] flex w-full min-w-0 items-center gap-3 rounded-xl border border-border/70 bg-card/60 px-3 py-2.5 text-foreground shadow-xs"
+      className="my-[0.65rem] flex w-full min-w-0 items-center gap-3 rounded-card border border-transparent surface-card px-3 py-2.5 text-foreground"
       data-artifact-kind={props.template.artifactKind}
       data-markdown-copy={`${props.template.displayName} (${presentationLabel})\n\n`}
       data-skill-name={props.template.skillName}
     >
       <div className="flex min-w-0 flex-1 items-center gap-3">
-        <span className="relative flex size-9 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background text-muted-foreground shadow-xs">
+        <span className="relative flex size-9 shrink-0 items-center justify-center rounded-control surface-well text-muted-foreground">
           <Icon aria-hidden className="size-5" />
           <span className="absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full border border-background bg-primary text-primary-foreground shadow-xs">
             <SparklesIcon aria-hidden className="size-2.5" />
           </span>
         </span>
         <div className="min-w-0">
-          <div className="truncate text-sm font-medium text-foreground">
+          <div className="truncate text-sm font-medium text-strong-foreground">
             {props.template.displayName}
           </div>
           <div className="text-xs text-muted-foreground">{presentationLabel}</div>
@@ -308,7 +308,7 @@ function CodexArtifactTemplateCard(props: {
           data-thread-find-ignore
           type="button"
           size="sm"
-          variant="outline"
+          variant="secondary"
           className="shrink-0"
           onClick={() => props.onUse?.(props.template)}
         >
@@ -344,6 +344,7 @@ function orderedListGutterStyle(
   return { "--list-gutter": `${markerWidth + 2}ch` };
 }
 
+/** GitHub alert kinds use the matching semantic status tone. */
 const GITHUB_ALERT_PRESENTATIONS: Record<
   string,
   { label: string; Icon: typeof InfoIcon; borderClassName: string; titleClassName: string }
@@ -351,32 +352,32 @@ const GITHUB_ALERT_PRESENTATIONS: Record<
   note: {
     label: "Note",
     Icon: InfoIcon,
-    borderClassName: "border-blue-500/70",
-    titleClassName: "text-blue-600 dark:text-blue-400",
+    borderClassName: "border-info/70",
+    titleClassName: "text-info-foreground",
   },
   tip: {
     label: "Tip",
     Icon: LightbulbIcon,
-    borderClassName: "border-emerald-500/70",
-    titleClassName: "text-emerald-600 dark:text-emerald-400",
+    borderClassName: "border-success/70",
+    titleClassName: "text-success-foreground",
   },
   important: {
     label: "Important",
     Icon: MessageSquareWarningIcon,
-    borderClassName: "border-purple-500/70",
-    titleClassName: "text-purple-600 dark:text-purple-400",
+    borderClassName: "border-update/70",
+    titleClassName: "text-update-foreground",
   },
   warning: {
     label: "Warning",
     Icon: TriangleAlertIcon,
-    borderClassName: "border-amber-500/70",
-    titleClassName: "text-amber-600 dark:text-amber-500",
+    borderClassName: "border-warning/70",
+    titleClassName: "text-warning-foreground",
   },
   caution: {
     label: "Caution",
     Icon: OctagonAlertIcon,
-    borderClassName: "border-red-500/70",
-    titleClassName: "text-red-600 dark:text-red-400",
+    borderClassName: "border-error/70",
+    titleClassName: "text-error-foreground",
   },
 };
 
@@ -1769,8 +1770,7 @@ function ChatMarkdown({
       ref={bindMarkdownRef}
       className={cn(
         "chat-markdown w-full min-w-0 [overflow-wrap:anywhere] [word-break:break-word]",
-        !inline &&
-          "text-sm leading-relaxed text-foreground/[calc(90%+var(--appearance-contrast-boost)/10)]",
+        !inline && "text-sm leading-relaxed text-foreground",
         className,
       )}
       data-streaming={componentState.isStreaming ? "" : undefined}
