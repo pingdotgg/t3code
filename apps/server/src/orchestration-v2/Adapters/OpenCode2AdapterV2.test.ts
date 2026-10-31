@@ -45,6 +45,7 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/Pro
 import {
   OPENCODE_2_STILL_STOPPING,
   OPENCODE_PROVIDER,
+  PROPOSED_PLAN_BLOCK_INSTRUCTIONS,
   t3McpServerName,
 } from "@t3tools/provider-opencode/testing";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -314,11 +315,14 @@ const resumed = (
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly fileSystem?: FileSystem.FileSystem;
     readonly onPrompt?: (input: unknown) => void;
+    readonly ownInstructions?: boolean;
   },
 ) =>
   Effect.gen(function* () {
     const runtime = yield* openCode2ReplayRuntime(
-      withInstructions([
+      (options?.ownInstructions === true
+        ? (all: ReadonlyArray<ProviderReplayEntry>) => all
+        : withInstructions)([
         ...opening,
         out("session.get", { sessionID: SESSION }),
         replyData("session.get", sessionInfo()),
@@ -2460,6 +2464,196 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         assert.equal((yield* Fiber.join(terminal))?.status, "completed");
       }
     }).pipe(Effect.scoped),
+  );
+
+  const planTurnInput = (thread: OrchestrationV2ProviderThread) => ({
+    ...turnInput(thread),
+    runtimePolicy: { ...policy(), interactionMode: "plan" as const },
+  });
+  const planTurnSetup = (instructions: string): ReadonlyArray<ProviderReplayEntry> => [
+    out("session.switchAgent", { sessionID: SESSION, agent: "plan" }),
+    reply("session.switchAgent", null),
+    out("agent.list", "<any>"),
+    reply("agent.list", agentList),
+    out("session.update", { sessionID: SESSION, permissions: "<any>" }),
+    reply("session.update", null),
+    out("session.instructions.entry.put", {
+      sessionID: SESSION,
+      key: "t3-code",
+      value: instructions,
+    }),
+    reply("session.instructions.entry.put", null),
+    out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+    promptAccepted,
+  ];
+  const textEnded = (text: string) =>
+    event("session.text.ended", {
+      sessionID: SESSION,
+      assistantMessageID: "msg_plan_assistant",
+      ordinal: 0,
+      text,
+    });
+  const planTurn = (entries: ReadonlyArray<ProviderReplayEntry>) =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([...planTurnSetup("<any>"), ...entries], {
+        ownInstructions: true,
+      });
+      const collected = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(planTurnInput(thread));
+      const events = Array.from(yield* Fiber.join(collected));
+      return {
+        events,
+        plans: events.flatMap((event) =>
+          event.type === "plan.updated" && event.plan.kind === "proposed_plan" ? [event.plan] : [],
+        ),
+        planItems: events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "proposed_plan"
+            ? [event.turnItem]
+            : [],
+        ),
+        messages: events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+            ? [event.turnItem.text]
+            : [],
+        ),
+      };
+    }).pipe(Effect.scoped);
+
+  it.effect("asks for a proposed plan block in plan mode and drops the ask in build mode", () =>
+    Effect.gen(function* () {
+      const base = buildRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model });
+      const { runtime, thread } = yield* resumed(
+        [
+          ...planTurnSetup(`${base}\n\n${PROPOSED_PLAN_BLOCK_INSTRUCTIONS}`),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          out("session.switchAgent", { sessionID: SESSION, agent: "build" }),
+          reply("session.switchAgent", null),
+          out("session.update", { sessionID: SESSION, permissions: "<any>" }),
+          reply("session.update", null),
+          out("session.instructions.entry.put", {
+            sessionID: SESSION,
+            key: "t3-code",
+            value: base,
+          }),
+          reply("session.instructions.entry.put", null),
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { ownInstructions: true },
+      );
+      const first = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(planTurnInput(thread));
+      assert.equal((yield* Fiber.join(first))?.status, "completed");
+      const second = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn({
+        ...turnInput(thread),
+        runId: RunId.make("run:opencode2-adapter:2"),
+        runOrdinal: 2,
+        providerTurnOrdinal: 2,
+        attemptId: RunAttemptId.make("attempt:opencode2-adapter:2"),
+      });
+      assert.equal((yield* Fiber.join(second))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("shows a tagged plan as a proposed plan without its markup in the message", () =>
+    Effect.gen(function* () {
+      const { plans, planItems, messages } = yield* planTurn([
+        textEnded("Here you go.\n<proposed_plan>\n# Plan\n- step\n</proposed_plan>"),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      assert.deepEqual(messages, ["Here you go."]);
+      assert.equal(plans.at(-1)?.status, "active");
+      assert.equal(plans.at(-1)?.markdown, "# Plan\n- step");
+      assert.equal(planItems.at(-1)?.streaming, false);
+    }),
+  );
+
+  it.effect("accepts a plan missing its closing tag when the turn succeeds", () =>
+    Effect.gen(function* () {
+      const { plans, planItems } = yield* planTurn([
+        textEnded("<proposed_plan>\n# Plan"),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      assert.equal(plans.at(-1)?.status, "active");
+      assert.equal(planItems.at(-1)?.streaming, false);
+    }),
+  );
+
+  it.effect("leaves no assistant message for whitespace streamed before a plan", () =>
+    Effect.gen(function* () {
+      const delta = (text: string) =>
+        event("session.text.delta", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_plan_assistant",
+          ordinal: 0,
+          delta: text,
+        });
+      const { plans, messages } = yield* planTurn([
+        delta("\n"),
+        delta("<proposed_plan>\n# Plan\n</proposed_plan>"),
+        textEnded("\n<proposed_plan>\n# Plan\n</proposed_plan>"),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      assert.deepEqual(messages, []);
+      assert.equal(plans.at(-1)?.status, "active");
+    }),
+  );
+
+  it.effect("sends a closed plan once while prose keeps streaming after it", () =>
+    Effect.gen(function* () {
+      const delta = (text: string) =>
+        event("session.text.delta", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_plan_assistant",
+          ordinal: 0,
+          delta: text,
+        });
+      const { plans, messages } = yield* planTurn([
+        delta("<proposed_plan>\n# Plan\n</proposed_plan>\n"),
+        delta("Ready"),
+        delta(" when you are."),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      assert.equal(plans.length, 1);
+      assert.equal(plans[0]?.status, "active");
+      assert.equal(messages.at(-1), "Ready when you are.");
+    }),
+  );
+
+  it.effect("supersedes a plan left unclosed by a failed turn", () =>
+    Effect.gen(function* () {
+      const { plans, planItems } = yield* planTurn([
+        event("session.text.delta", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_plan_assistant",
+          ordinal: 0,
+          delta: "<proposed_plan>\n# Half a pl",
+        }),
+        event("session.execution.failed", {
+          sessionID: SESSION,
+          error: { type: "provider", message: "failed" },
+        }),
+      ]);
+      assert.equal(plans.at(-1)?.status, "superseded");
+      assert.equal(planItems.at(-1)?.streaming, false);
+    }),
+  );
+
+  it.effect("keeps untagged plan mode text as a normal message", () =>
+    Effect.gen(function* () {
+      const { plans, planItems, messages } = yield* planTurn([
+        textEnded("Which database do you use?"),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      assert.deepEqual(messages, ["Which database do you use?"]);
+      assert.deepEqual([plans.length, planItems.length], [0, 0]);
+    }),
   );
 
   it.effect("registers a long thread id's MCP server under a name OpenCode accepts", () =>
