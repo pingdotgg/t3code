@@ -316,10 +316,10 @@ export function SettingsSection({
       ) : (
         <div
           data-settings-scroll-target
-          className="flex min-h-7 flex-wrap items-center justify-between gap-x-4 gap-y-1"
+          className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1"
         >
           <div className="flex min-w-0 items-center gap-1.5">
-            <h2 className="flex min-h-7 items-center gap-2 text-label text-dim-foreground">
+            <h2 className="flex items-center gap-2 text-title text-foreground">
               {icon}
               {title}
             </h2>
@@ -342,7 +342,7 @@ export function SettingsSection({
             ) : null}
           </div>
           {headerAction || lockIndicator ? (
-            <div className="flex min-h-7 min-w-7 items-center justify-end gap-2">
+            <div className="flex min-w-6 items-center justify-end gap-2">
               {headerAction}
               {lockIndicator}
             </div>
@@ -676,7 +676,7 @@ export function SettingsRow({
           )}
         >
           {leading ? <SettingsRowTile>{leading}</SettingsRowTile> : null}
-          <div className="min-w-0 flex-1 space-y-1">
+          <div className="min-w-0 flex-1 space-y-0.75">
             <div className="flex min-h-5 items-center gap-1.5">
               <h3 className="text-label text-foreground">{title}</h3>
               {renderedInheritance ? (
@@ -694,7 +694,9 @@ export function SettingsRow({
               ) : null}
             </div>
             {description ? (
-              <p className="max-w-xl text-pretty text-meta leading-normal text-dim-foreground">{description}</p>
+              <p className="max-w-xl text-pretty text-meta font-normal leading-normal text-dim-foreground">
+                {description}
+              </p>
             ) : null}
             {renderedStatus ? (
               <div className="pt-0.5 text-body text-muted-foreground [--type-body:var(--type-meta)]">
@@ -949,7 +951,11 @@ export function SettingsPageContainer({
       <div className="scrollbar-gutter-both flex-1 overflow-y-auto" data-settings-page-scroll>
         <WorkspacePageContainer
           width={width}
-          className={cn("gap-7 pt-9", centered && "min-h-full justify-center", className)}
+          className={cn(
+            "max-w-[688px] gap-7 pt-9",
+            centered && "min-h-full justify-center",
+            className,
+          )}
         >
           {children}
         </WorkspacePageContainer>
