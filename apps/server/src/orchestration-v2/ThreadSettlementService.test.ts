@@ -442,6 +442,78 @@ describe("resolveAutoSettlementAt", () => {
       }),
     ).toEqual(at(-45 * 60 * 1_000));
   });
+
+  it("defers merge settlement while the merged pull request is still watched", () => {
+    const watch = {
+      startedAt: DateTime.formatIso(at(-50 * 60 * 1_000)),
+      headSha: "abc123",
+      failedChecks: [],
+      passed: true,
+      passedChecks: [],
+      remarksThrough: DateTime.formatIso(at(-50 * 60 * 1_000)),
+      remarkIds: [],
+      conflicting: false,
+      wakes: 0,
+    };
+    const open = persistedLink("open", at(-60 * 60 * 1_000));
+    const merged = {
+      ...open,
+      snapshot: {
+        ...open.snapshot!,
+        state: "merged" as const,
+        mergedAt: DateTime.formatIso(at(-1_000)),
+        syncedAt: DateTime.formatIso(at(-1_000)),
+      },
+    };
+    const input = {
+      thread: shell({
+        latestUserMessageAt: at(-2 * 60 * 60 * 1_000),
+        latestRunCompletedAt: at(-45 * 60 * 1_000),
+        pullRequests: [{ ...merged, watch }],
+      }),
+      pullRequest: null,
+      nowMs: NOW_MS,
+      autoSettleAfterDays: null,
+      autoSettleOnMerge: true,
+    };
+    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        thread: { ...input.thread, pullRequests: [{ ...merged, endedWatch: watch }] },
+      }),
+    ).toEqual(at(-45 * 60 * 1_000));
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        thread: { ...input.thread, pullRequests: [merged] },
+      }),
+    ).toEqual(at(-45 * 60 * 1_000));
+    const later = (state: "closed" | "merged") => ({
+      ...open,
+      number: 43,
+      url: "https://example.test/owner/repository/pull/43",
+      snapshot: {
+        ...open.snapshot!,
+        headBranch: "feature-43",
+        state,
+        [state === "merged" ? "mergedAt" : "closedAt"]: DateTime.formatIso(at(-500)),
+        syncedAt: DateTime.formatIso(at(-500)),
+      },
+    });
+    for (const state of ["closed", "merged"] as const) {
+      const withLater = (first: ReturnType<typeof persistedLink>) =>
+        ThreadSettlementService.resolveAutoSettlementAt({
+          ...input,
+          thread: { ...input.thread, pullRequests: [first, later(state)] },
+        });
+      expect(withLater({ ...merged, watch }), `watched merge, later ${state}`).toBeNull();
+      expect(withLater({ ...merged, endedWatch: watch }), `ended watch, later ${state}`).toEqual(
+        at(-45 * 60 * 1_000),
+      );
+      expect(withLater(merged), `no watch, later ${state}`).toEqual(at(-45 * 60 * 1_000));
+    }
+  });
 });
 
 const NOW = "2026-08-28T12:00:00.000Z";
