@@ -28,6 +28,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import {
@@ -468,6 +469,7 @@ describe("AcpRegistryAdapterV2", () => {
       readonly storedModel?: string;
       readonly storedModePick?: string;
       readonly turnModels?: ReadonlyArray<string>;
+      readonly rejectedModel?: string;
     }) {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       // Scope release gives the replay agent at most a second to exit, so the status
@@ -605,7 +607,19 @@ describe("AcpRegistryAdapterV2", () => {
           configurations.push(published);
           current = target;
         }
-      }).pipe(Effect.scoped);
+      }).pipe(
+        Effect.match({
+          onFailure: (error) => {
+            assert.isDefined(input.rejectedModel);
+            assert.equal(
+              makeProviderFailure({ cause: error }).message,
+              `The agent did not accept the model "${input.rejectedModel}". Choose another model for this provider, then retry.`,
+            );
+          },
+          onSuccess: () => assert.isUndefined(input.rejectedModel),
+        }),
+        Effect.scoped,
+      );
       yield* Effect.all(agentExits, { discard: true });
       yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
       return { configurations };
@@ -772,8 +786,70 @@ describe("AcpRegistryAdapterV2", () => {
         }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
 
+    it.effect.each([
+      "config",
+      "legacy",
+      "updated-config",
+      "removed-config",
+      "configuration-update",
+      "unavailable-before-configuration",
+    ] as const)(
+      "rejects an unavailable explicit model in a %s catalog before inference",
+      (catalog) => {
+        const duringTurn = catalog === "updated-config" || catalog === "removed-config";
+        const duringConfiguration = catalog === "configuration-update";
+        const changesOptions =
+          duringConfiguration || catalog === "unavailable-before-configuration";
+        const model = duringTurn || duringConfiguration ? "hermes" : "missing";
+        const restrictedOption = {
+          ...modelOption("model", "other"),
+          options: [{ value: "other", name: "Other" }],
+        };
+        return openWithStoredPicks({
+          setup: {
+            ...(catalog === "legacy" || catalog === "removed-config"
+              ? {
+                  models: {
+                    currentModelId: "other",
+                    availableModels: [{ modelId: "other", name: "Other" }],
+                  },
+                }
+              : {}),
+            configOptions:
+              catalog === "legacy"
+                ? []
+                : [
+                    {
+                      ...modelOption("model", "hermes"),
+                      options: [{ value: "hermes", name: "Hermes" }],
+                    },
+                    ...(changesOptions ? [permissionModeOption("ask")] : []),
+                  ],
+          },
+          storedModel: model,
+          ...(duringTurn ? { turnModels: [model, model] } : {}),
+          ...(changesOptions ? { storedModePick: "auto" } : {}),
+          rejectedModel: model,
+          pickFrames: duringTurn
+            ? prompt(configOptionUpdate(catalog === "removed-config" ? [] : [restrictedOption]))
+            : duringConfiguration
+              ? [
+                  outbound("session/set_config_option", {
+                    sessionId: "agent-session",
+                    configId: "permission-mode",
+                    value: "auto",
+                  }),
+                  answer("session/set_config_option", {
+                    configOptions: [restrictedOption, permissionModeOption("auto")],
+                  }),
+                ]
+              : [],
+        }).pipe(Effect.provide(layerTest), Effect.scoped);
+      },
+    );
+
     // regression: #19519 models come from session model state, not a hardcoded list
-    it.effect("leaves unadvertised model IDs alone in both model selection protocols", () =>
+    it.effect("keeps unadvertised default and auto selections agent-controlled", () =>
       Effect.gen(function* () {
         const { configurations } = yield* openWithStoredPicks({
           setup: {
@@ -783,15 +859,7 @@ describe("AcpRegistryAdapterV2", () => {
             },
           },
           storedModel: "default",
-          turnModels: [
-            "auto",
-            "removed-model",
-            "other",
-            "default",
-            "auto",
-            "hermes",
-            "removed-model",
-          ],
+          turnModels: ["auto", "default", "other", "default", "auto", "default", "auto"],
           pickFrames: [
             ...prompt(),
             ...prompt(),
