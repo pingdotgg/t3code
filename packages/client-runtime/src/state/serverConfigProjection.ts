@@ -15,7 +15,8 @@ export function withoutEnvironmentThemes(config: ServerConfig): ServerConfig {
   if (
     config.environmentThemes === undefined &&
     config.usageLimitSources === undefined &&
-    config.memoryPressure === undefined
+    config.memoryPressure === undefined &&
+    config.quietRuns === undefined
   ) {
     return config;
   }
@@ -23,6 +24,7 @@ export function withoutEnvironmentThemes(config: ServerConfig): ServerConfig {
     environmentThemes: _themes,
     usageLimitSources: _sources,
     memoryPressure: _pressure,
+    quietRuns: _quietRuns,
     ...rest
   } = config;
   return rest;
@@ -81,13 +83,19 @@ export function applyServerConfigProjection(
       const carriedSources = Option.isSome(current)
         ? current.value.config.usageLimitSources
         : undefined;
-      // A server without the event would never clear carried pressure.
+      // A server without the event would never clear carried pressure or quiet runs.
+      const capabilities = event.config.environment.capabilities;
       const carriedPressure =
-        Option.isSome(current) && event.config.environment.capabilities.memoryPressure === true
+        Option.isSome(current) && capabilities.memoryPressure === true
           ? current.value.config.memoryPressure
+          : undefined;
+      const carriedQuietRuns =
+        Option.isSome(current) && capabilities.quietRuns === true
+          ? current.value.config.quietRuns
           : undefined;
       const config: ServerConfig = {
         ...event.config,
+        ...(carriedQuietRuns === undefined ? {} : { quietRuns: carriedQuietRuns }),
         ...(carriedThemes === undefined ? {} : { environmentThemes: carriedThemes }),
         ...(carriedSources === undefined ? {} : { usageLimitSources: carriedSources }),
         ...(carriedPressure === undefined ? {} : { memoryPressure: carriedPressure }),
@@ -153,6 +161,16 @@ export function applyServerConfigProjection(
           latestEvent: event,
           source: "live",
         });
+      });
+    case "quietRunsUpdated":
+      return Option.map(current, (projection) => {
+        const { quietRuns: _previous, ...config } = projection.config;
+        return {
+          config:
+            event.payload.runs.length === 0 ? config : { ...config, quietRuns: event.payload.runs },
+          latestEvent: event,
+          source: "live",
+        };
       });
     case "usageLimitSourcesUpdated":
       return Option.map(current, (projection) => ({

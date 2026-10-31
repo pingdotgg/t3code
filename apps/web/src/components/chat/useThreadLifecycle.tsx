@@ -62,8 +62,10 @@ import {
   backgroundWorkNowItem,
   childInputNowItem,
   goalNowItem,
+  quietRunNowItem,
   runStopNowItem,
 } from "./ThreadActivityBanners";
+import { useQuietRunId, useQuietRunSince } from "../../hooks/useQuietRunSince";
 import { useForceStopThread } from "./useForceStopThread";
 import { useAtomValue } from "@effect/atom-react";
 import type { RunStopPresentation } from "@t3tools/client-runtime/state/thread-execution";
@@ -556,6 +558,42 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
           onForceStop: () => void forceStop.forceStopThread(activeThread.id, runStop.runId),
         })
       : null;
+  const quietRunThread = isWorking && activeThread ? activeThreadShell : null;
+  const quietSince = useQuietRunSince(environmentId, quietRunThread);
+  const [stoppingQuietRunKey, setStoppingQuietRunKey] = useState<string | null>(null);
+  // The run the server saw go quiet, not the latest one: a queued follow-up can be newer.
+  const quietRunId = useQuietRunId(environmentId, quietRunThread);
+  const handleStopQuietRun = async () => {
+    if (!activeThread) return;
+    const requestKey = `${environmentId}:${activeThread.id}`;
+    setStoppingQuietRunKey(requestKey);
+    const result = await interruptThreadTurn({
+      environmentId,
+      input:
+        quietRunId === undefined
+          ? { threadId: activeThread.id }
+          : { threadId: activeThread.id, runId: quietRunId },
+    });
+    setStoppingQuietRunKey((current) => (current === requestKey ? null : current));
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      setThreadError(activeThread.id, error instanceof Error ? error.message : "Failed to stop.");
+    }
+  };
+  const quietRunNow =
+    activeThread && quietSince !== null && runStop === null
+      ? quietRunNowItem({
+          threadId: activeThread.id,
+          quietSince,
+          stopDisabled:
+            !canOperateThread || stoppingQuietRunKey === `${environmentId}:${activeThread.id}`,
+          stopping: stoppingQuietRunKey === `${environmentId}:${activeThread.id}`,
+          onStop: () => void handleStopQuietRun(),
+          canForceStop: forceStop.canForceStop,
+          forceStopping: forceStop.stoppingThreadId === activeThread.id,
+          onForceStop: () => void forceStop.forceStopThread(activeThread.id, quietRunId),
+        })
+      : null;
   const backgroundWorkNow = activeThread
     ? backgroundWorkNowItem({
         threadId: activeThread.id,
@@ -641,7 +679,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     activeBranchMismatchKey,
     // A Stop that went unanswered needs the user; one in progress is the thread's work.
     attentionNow: runStop?.state === "unresponsive" ? runStopNow : childInputNow,
-    workNow: runStop?.state === "stopping" ? runStopNow : backgroundWorkNow,
+    workNow: runStop?.state === "stopping" ? runStopNow : (quietRunNow ?? backgroundWorkNow),
     childInputNow,
     goalNow,
     handleSwitchCheckoutToThread,

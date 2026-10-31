@@ -32,6 +32,12 @@ export type FloatingWorkingStatus =
       readonly action: FloatingStatusAction;
     }
   | {
+      readonly kind: "quiet";
+      /** When the provider last sent anything for the running turn. */
+      readonly quietSince: string;
+      readonly action: FloatingStatusAction;
+    }
+  | {
       readonly kind: "stop";
       readonly label: string;
       readonly unresponsive: boolean;

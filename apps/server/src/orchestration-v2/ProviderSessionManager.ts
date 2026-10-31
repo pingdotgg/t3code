@@ -10,6 +10,8 @@ import {
   OrchestrationV2RuntimeRequest,
   ProviderInstanceId,
   ProviderSessionId,
+  type RunId,
+  type ServerQuietRun,
   ThreadId,
   type ProviderThreadId,
 } from "@t3tools/contracts";
@@ -59,6 +61,9 @@ const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
 const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
 /** Past adapters' own 10 s stop fallbacks, so they settle first when the provider answers at all. */
 export const PROVIDER_INTERRUPT_TIMEOUT_MS = 15 * 1000;
+/** Tools legitimately run long, so this flags a quiet turn for the user, never stops it. */
+export const QUIET_RUN_AFTER_MS = 10 * 60 * 1000;
+const QUIET_RUN_CHECK_INTERVAL = "30 seconds";
 
 const busyTurnPrefix = (providerThreadId: ProviderThreadId) => `${providerThreadId}#`;
 const busyTurnKey = (providerThreadId: ProviderThreadId, runOrdinal: number) =>
@@ -151,6 +156,45 @@ export const ProviderSessionManagerV2Error = Schema.Union([
 ]);
 export type ProviderSessionManagerV2Error = typeof ProviderSessionManagerV2Error.Type;
 
+interface ActivityTarget {
+  readonly providerThreadId?: ProviderThreadId;
+  readonly threadId?: ThreadId;
+  /** Set when the event belongs to one run; an older run's late event must not count. */
+  readonly runOrdinal?: number;
+}
+
+/** The turn an event speaks for, so a busy sibling in a shared session cannot hide a quiet one. */
+function eventActivityTarget(
+  event: ProviderAdapter.ProviderAdapterV2Event,
+): ActivityTarget | undefined {
+  const onProviderThread = (providerThreadId: ProviderThreadId | null | undefined) =>
+    providerThreadId == null ? undefined : { providerThreadId };
+  switch (event.type) {
+    case "turn_item.updated":
+      return onProviderThread(event.turnItem.providerThreadId);
+    case "provider_thread.updated":
+      return { providerThreadId: event.providerThread.id };
+    case "provider_turn.updated":
+      return { providerThreadId: event.providerTurn.providerThreadId };
+    case "node.updated":
+      return onProviderThread(event.node.providerThreadId);
+    case "subagent.updated":
+      return onProviderThread(event.subagent.providerThreadId);
+    case "turn.terminal":
+      return { providerThreadId: event.providerThreadId, runOrdinal: event.runOrdinal };
+    case "message.updated":
+      return { threadId: event.message.threadId };
+    case "command_output.delta":
+      return { threadId: event.threadId };
+    case "plan.updated":
+      return { threadId: event.plan.threadId };
+    case "runtime_request.updated":
+      return event.threadId === undefined ? undefined : { threadId: event.threadId };
+    default:
+      return undefined;
+  }
+}
+
 export interface ProviderSessionManagerV2Shape {
   readonly shutdown: Effect.Effect<void>;
   readonly open: (input: {
@@ -200,6 +244,11 @@ export interface ProviderSessionManagerV2Shape {
     readonly reason: ProviderSessionReleaseReason;
     readonly detail?: string;
   }) => Effect.Effect<boolean, ProviderSessionManagerV2Error>;
+  /**
+   * Threads whose running turn has had no provider event for `QUIET_RUN_AFTER_MS`, sorted by
+   * thread. Changes only; checks while someone listens.
+   */
+  readonly quietRuns: Stream.Stream<ReadonlyArray<ServerQuietRun>>;
   /**
    * Other threads with a run or background work on this session's shared process; empty when
    * it serves one thread.
@@ -402,6 +451,41 @@ export const layerWithOptions = (
           }),
       );
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
+      // Running turns by provider thread, and when the provider last sent anything for them.
+      const runActivity = new Map<
+        ProviderThreadId,
+        {
+          readonly threadId: ThreadId;
+          readonly providerSessionId: ProviderSessionId;
+          readonly runId: RunId;
+          readonly runOrdinal: number;
+          lastEventMs: number;
+        }
+      >();
+      const touchRunActivity = (
+        providerSessionId: ProviderSessionId,
+        target: ActivityTarget | undefined,
+      ) =>
+        Effect.map(Clock.currentTimeMillis, (nowMs) => {
+          const tracked =
+            target?.providerThreadId === undefined
+              ? undefined
+              : runActivity.get(target.providerThreadId);
+          if (tracked !== undefined) {
+            if (target?.runOrdinal === undefined || target.runOrdinal === tracked.runOrdinal)
+              tracked.lastEventMs = nowMs;
+            return;
+          }
+          // Session events and native subagents' own threads count for every turn in the
+          // session; an event naming its app thread counts only for that thread's turns.
+          for (const run of runActivity.values()) {
+            if (
+              run.providerSessionId === providerSessionId &&
+              (target?.threadId === undefined || run.threadId === target.threadId)
+            )
+              run.lastEventMs = nowMs;
+          }
+        });
       // Retry per released entry; reusing ids must not lose cleanup for earlier threads.
       const releaseRecordRetries = yield* FiberSet.make();
       const nextSubscriberId = yield* Ref.make(0);
@@ -1019,6 +1103,10 @@ export const layerWithOptions = (
               onNone: () => Effect.void,
               onSome: (entry) =>
                 Effect.gen(function* () {
+                  for (const [providerThreadId, run] of runActivity) {
+                    if (run.providerSessionId === input.providerSessionId)
+                      runActivity.delete(providerThreadId);
+                  }
                   const releasedBackgroundTasks = yield* readReleasedBackgroundTasks({
                     entry,
                     reason: input.reason,
@@ -1463,6 +1551,9 @@ export const layerWithOptions = (
               if (entry === undefined) {
                 return current;
               }
+              // A stopped run's late terminal must not clear the newer run on this thread.
+              if (runActivity.get(providerThreadId)?.runOrdinal === runOrdinal)
+                runActivity.delete(providerThreadId);
               const busyTurns = new Set(entry.busyTurns);
               busyTurns.delete(busyTurnKey(providerThreadId, runOrdinal));
               const updated = new Map(current);
@@ -1697,6 +1788,7 @@ export const layerWithOptions = (
         >,
       ): ProviderAdapter.ProviderAdapterV2SessionRuntime => {
         const providerSessionId = runtime.providerSessionId;
+        const compactThread = runtime.compactThread;
         const subscribeEvents = makeEventSubscription(eventSubscribers);
         const turnMetrics = (operation: string, model?: string) =>
           withMetrics({
@@ -1857,6 +1949,16 @@ export const layerWithOptions = (
                             }),
                           ),
                     ),
+                    Effect.andThen(Clock.currentTimeMillis),
+                    Effect.map((nowMs) => {
+                      runActivity.set(input.providerThread.id, {
+                        threadId: input.threadId,
+                        providerSessionId,
+                        runId: input.runId,
+                        runOrdinal: input.runOrdinal,
+                        lastEventMs: nowMs,
+                      });
+                    }),
                   ),
                   () =>
                     runtime.startTurn(input).pipe(turnMetrics("send", input.modelSelection.model)),
@@ -1870,6 +1972,27 @@ export const layerWithOptions = (
                 ),
               ),
             ),
+          // A compaction is a provider turn too, so a frozen one must be flagged quiet.
+          ...(compactThread === undefined
+            ? {}
+            : {
+                compactThread: (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+                  Clock.currentTimeMillis.pipe(
+                    Effect.map((nowMs) => {
+                      runActivity.set(input.providerThread.id, {
+                        threadId: input.threadId,
+                        providerSessionId,
+                        runId: input.runId,
+                        runOrdinal: input.runOrdinal,
+                        lastEventMs: nowMs,
+                      });
+                    }),
+                    Effect.andThen(compactThread(input)),
+                    Effect.onError(() =>
+                      Effect.sync(() => runActivity.delete(input.providerThread.id)),
+                    ),
+                  ),
+              }),
           steerTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
               Effect.andThen(runtime.steerTurn(input).pipe(turnMetrics("steer"))),
@@ -1945,9 +2068,13 @@ export const layerWithOptions = (
         return entry.runtime.events.pipe(
           Stream.runForEach((event) => {
             if (shutdownSignal.received) return Effect.void;
+            const touched = touchRunActivity(
+              entry.runtime.providerSessionId,
+              eventActivityTarget(event),
+            );
             // Live output bypasses persistence and subscribers so floods cannot delay domain events.
             if (event.type === "command_output.delta") {
-              return commandOutput.append(event);
+              return touched.pipe(Effect.andThen(commandOutput.append(event)));
             }
             const releaseLiveOutput =
               event.type === "turn_item.updated" &&
@@ -1964,76 +2091,81 @@ export const layerWithOptions = (
             ) {
               stoppedByProvider = true;
             }
-            return observeActivity(
-              entry.runtime.providerSessionId,
-              event.type === "turn.terminal"
-                ? markIdle(
-                    entry.runtime.providerSessionId,
-                    event.providerThreadId,
-                    event.runOrdinal,
-                  )
-                : touchActivity(entry.runtime.providerSessionId, { providerActivity: true }),
-            ).pipe(
+            return touched.pipe(
               Effect.andThen(
-                event.type === "provider_session.updated"
-                  ? persistProviderSessionUpdate(entry, event)
-                  : Effect.void,
-              ),
-              Effect.andThen(
-                Effect.gen(function* () {
-                  if (
-                    event.type === "provider_thread.updated" &&
-                    event.providerThread.status === "error"
-                  ) {
-                    const threadId = event.providerThread.appThreadId;
-                    yield* Ref.update(sessions, (sessions) => {
-                      const key = sessionKey(entry.runtime.providerSessionId);
-                      const latest = sessions.get(key);
-                      if (latest?.runtime !== entry.runtime || threadId === null) return sessions;
-                      const loadedProviderThreadKeyByThread = new Map(
-                        latest.loadedProviderThreadKeyByThread,
-                      );
-                      loadedProviderThreadKeyByThread.delete(threadId);
-                      return new Map(sessions).set(key, {
-                        ...latest,
-                        loadedProviderThreadKeyByThread,
-                      });
-                    });
-                  }
-                  // Some providers can block before a run subscriber exists
-                  // (project trust, login, or session-switch hooks). Persist
-                  // their runless request artifacts directly so the normal T3
-                  // request UI can answer them and unblock session setup.
-                  const threadId = sessionScopedRuntimeRequestThreadId(event);
-                  if (threadId !== undefined) {
-                    yield* Effect.gen(function* () {
-                      const current = (yield* Ref.get(sessions)).get(
-                        sessionKey(entry.runtime.providerSessionId),
-                      );
-                      if (current?.runtime !== entry.runtime) return;
-                      yield* providerEventIngestor
-                        .ingestNormalized({
-                          providerSessionId: entry.runtime.providerSessionId,
-                          providerInstanceId: entry.runtime.instanceId,
-                          threadId,
-                          event,
-                        })
-                        .pipe(
-                          Effect.mapError(
-                            (cause) =>
-                              new ProviderAdapter.ProviderAdapterEventStreamError({
-                                driver: entry.runtime.driver,
-                                providerSessionId: entry.runtime.providerSessionId,
-                                cause,
-                              }),
-                          ),
-                        );
-                    }).pipe(entry.requestEventPermit.withPermits(1));
-                    return;
-                  }
-                  yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
-                  yield* releaseLiveOutput;
-                }),
+                observeActivity(
+                  entry.runtime.providerSessionId,
+                  event.type === "turn.terminal"
+                    ? markIdle(
+                        entry.runtime.providerSessionId,
+                        event.providerThreadId,
+                        event.runOrdinal,
+                      )
+                    : touchActivity(entry.runtime.providerSessionId, { providerActivity: true }),
+                ).pipe(
+                  Effect.andThen(
+                    event.type === "provider_session.updated"
+                      ? persistProviderSessionUpdate(entry, event)
+                      : Effect.void,
+                  ),
+                  Effect.andThen(
+                    Effect.gen(function* () {
+                      if (
+                        event.type === "provider_thread.updated" &&
+                        event.providerThread.status === "error"
+                      ) {
+                        const threadId = event.providerThread.appThreadId;
+                        yield* Ref.update(sessions, (sessions) => {
+                          const key = sessionKey(entry.runtime.providerSessionId);
+                          const latest = sessions.get(key);
+                          if (latest?.runtime !== entry.runtime || threadId === null)
+                            return sessions;
+                          const loadedProviderThreadKeyByThread = new Map(
+                            latest.loadedProviderThreadKeyByThread,
+                          );
+                          loadedProviderThreadKeyByThread.delete(threadId);
+                          return new Map(sessions).set(key, {
+                            ...latest,
+                            loadedProviderThreadKeyByThread,
+                          });
+                        });
+                      }
+                      // Some providers can block before a run subscriber exists
+                      // (project trust, login, or session-switch hooks). Persist
+                      // their runless request artifacts directly so the normal T3
+                      // request UI can answer them and unblock session setup.
+                      const threadId = sessionScopedRuntimeRequestThreadId(event);
+                      if (threadId !== undefined) {
+                        yield* Effect.gen(function* () {
+                          const current = (yield* Ref.get(sessions)).get(
+                            sessionKey(entry.runtime.providerSessionId),
+                          );
+                          if (current?.runtime !== entry.runtime) return;
+                          yield* providerEventIngestor
+                            .ingestNormalized({
+                              providerSessionId: entry.runtime.providerSessionId,
+                              providerInstanceId: entry.runtime.instanceId,
+                              threadId,
+                              event,
+                            })
+                            .pipe(
+                              Effect.mapError(
+                                (cause) =>
+                                  new ProviderAdapter.ProviderAdapterEventStreamError({
+                                    driver: entry.runtime.driver,
+                                    providerSessionId: entry.runtime.providerSessionId,
+                                    cause,
+                                  }),
+                              ),
+                            );
+                        }).pipe(entry.requestEventPermit.withPermits(1));
+                        return;
+                      }
+                      yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
+                      yield* releaseLiveOutput;
+                    }),
+                  ),
+                ),
               ),
             );
           }),
@@ -2113,6 +2245,39 @@ export const layerWithOptions = (
         shutdown.pipe(
           Effect.ensuring(closeScopeWithin(sessionScopes, { reason: "server_shutdown" })),
         ),
+      );
+
+      const quietRuns = yield* Stream.fromEffectSchedule(
+        Effect.map(Clock.currentTimeMillis, (nowMs) => {
+          // A thread is quiet only when none of its provider threads heard anything.
+          const latestByThread = new Map<ThreadId, { lastEventMs: number; runId: RunId }>();
+          for (const run of runActivity.values()) {
+            const latest = latestByThread.get(run.threadId);
+            if (latest === undefined || run.lastEventMs > latest.lastEventMs)
+              latestByThread.set(run.threadId, { lastEventMs: run.lastEventMs, runId: run.runId });
+          }
+          return [...latestByThread]
+            .filter(([, latest]) => nowMs - latest.lastEventMs >= QUIET_RUN_AFTER_MS)
+            .map(([threadId, latest]) => ({
+              threadId,
+              runId: latest.runId,
+              quietSince: DateTime.makeUnsafe(latest.lastEventMs),
+            }))
+            .toSorted((left, right) => left.threadId.localeCompare(right.threadId));
+        }),
+        Schedule.spaced(QUIET_RUN_CHECK_INTERVAL),
+      ).pipe(
+        Stream.changesWith(
+          (previous, next) =>
+            previous.length === next.length &&
+            previous.every(
+              (run, index) =>
+                run.threadId === next[index]?.threadId &&
+                DateTime.toEpochMillis(run.quietSince) ===
+                  DateTime.toEpochMillis(next[index].quietSince),
+            ),
+        ),
+        Stream.share({ capacity: 1, strategy: "sliding", replay: 1 }),
       );
 
       return ProviderSessionManagerV2.of({
@@ -2371,6 +2536,7 @@ export const layerWithOptions = (
           // Identity, not presence: open can install a replacement under the same id meanwhile.
           return before !== undefined && (yield* Ref.get(sessions)).get(key) !== before;
         }),
+        quietRuns,
         otherWorkingThreads: Effect.fn("ProviderSessionManager.otherWorkingThreads")(
           function* (input) {
             const entry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
@@ -2486,6 +2652,14 @@ export const layerWithOptions = (
             });
             if (Option.isSome(detachResult)) {
               yield* cancelIdleFiber(detachResult.value.idleUnloadFiber);
+              // A detached thread's run gets no terminal from this session, so it stops counting here.
+              for (const [providerThreadId, run] of runActivity) {
+                if (
+                  run.providerSessionId === input.providerSessionId &&
+                  run.threadId === input.threadId
+                )
+                  runActivity.delete(providerThreadId);
+              }
             }
             const detached = Option.map(detachResult, (result) => result.entry);
             // Plain detaches preserve credentials held by live shared providers across workspace handoffs.

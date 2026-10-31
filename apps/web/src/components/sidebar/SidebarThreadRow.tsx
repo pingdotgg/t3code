@@ -64,6 +64,7 @@ import { useOpenPrLink } from "../../lib/openPullRequestLink";
 import { useUiStateStore } from "../../uiStateStore";
 import { useThreadSelectionStore } from "../../threadSelectionStore";
 import { useNowMinute } from "../../hooks/useNowMinute";
+import { useQuietRunSince } from "../../hooks/useQuietRunSince";
 import { useNowSecond } from "../../hooks/useNowSecond";
 import { vcsEnvironment } from "../../state/vcs";
 import { useEnvironmentQuery } from "../../state/query";
@@ -707,6 +708,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarThreadStatus(thread);
+  const quietSince = useQuietRunSince(thread.environmentId, status === "working" ? thread : null);
   const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
   const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
   const isWoke =
@@ -722,11 +724,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   });
   const topStatus =
     status === "working"
-      ? {
-          label: thread.goal?.status === "active" ? "Goal" : "Working",
-          icon: "working" as const,
-          className: "text-info-foreground",
-        }
+      ? quietSince !== null
+        ? {
+            label: "No activity",
+            icon: "waiting" as const,
+            className: "text-warning-foreground",
+          }
+        : {
+            label: thread.goal?.status === "active" ? "Goal" : "Working",
+            icon: "working" as const,
+            className: "text-info-foreground",
+          }
       : status === "waiting"
         ? {
             label: "Waiting",
@@ -1494,7 +1502,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           {topStatus.label}
                           {status === "working" ? (
                             <span aria-hidden>
-                              <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
+                              <WorkingDuration
+                                startedAt={quietSince ?? resolveWorkingStartedAt(thread)}
+                              />
                             </span>
                           ) : status === "waiting" ? (
                             <span aria-hidden>

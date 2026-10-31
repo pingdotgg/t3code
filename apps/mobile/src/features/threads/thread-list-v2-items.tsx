@@ -13,6 +13,9 @@ import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { threadArrangementOpenAtom } from "../../state/thread-order";
 import { threadEnvironment } from "../../state/threads";
+import { serverEnvironment } from "../../state/server";
+import { useAtomValue } from "@effect/atom-react";
+import { quietRunSince } from "@t3tools/client-runtime/state/thread-execution";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 import type { ThreadMoveDestination } from "./threadOrder";
@@ -131,6 +134,12 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
     className: "text-warning-foreground",
     iconTintClassName: "accent-warning-foreground",
   },
+};
+const QUIET_STATUS_LABEL: StatusLabel = {
+  label: "No activity",
+  icon: "timer",
+  className: "text-warning-foreground",
+  iconTintClassName: "accent-warning-foreground",
 };
 const DONE_STATUS_LABEL: StatusLabel = {
   label: "Done",
@@ -688,10 +697,24 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   const status = resolveThreadListV2Status(thread);
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
-  const workingLabel = STATUS_LABEL_BY_STATUS[status];
+  const quietSince = useAtomValue(
+    serverEnvironment.configValueAtom(thread.environmentId),
+    (config) => (status === "working" ? quietRunSince(config, thread) : null),
+  );
+  const workingLabel = quietSince !== null ? QUIET_STATUS_LABEL : STATUS_LABEL_BY_STATUS[status];
+  const rowAccessibilityLabel = [
+    thread.title,
+    quietSince !== null ? QUIET_STATUS_LABEL.label : null,
+    props.hasQueuedMessages ? "messages queued to send" : null,
+  ]
+    .filter((part) => part !== null)
+    .join(", ");
   const showsWoke = status === "ready" && props.wokeAt !== null;
   const statusLabel =
-    (status === "working" && workingLabel !== undefined && thread.goal?.status === "active"
+    (status === "working" &&
+    quietSince === null &&
+    workingLabel !== undefined &&
+    thread.goal?.status === "active"
       ? { ...workingLabel, label: "Goal" }
       : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
   const recede = shouldRecedeThreadRow({ status, selected });
@@ -1143,7 +1166,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               >
                 {statusLabel.label}
                 {status === "working" ? (
-                  <ThreadListV2Duration startedAt={resolveThreadWorkingStartedAt(thread)} />
+                  <ThreadListV2Duration
+                    startedAt={quietSince ?? resolveThreadWorkingStartedAt(thread)}
+                  />
                 ) : status === "waiting" ? (
                   <ThreadListV2Duration startedAt={thread.latestRun?.completedAt ?? null} />
                 ) : null}

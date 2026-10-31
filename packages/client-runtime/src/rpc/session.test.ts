@@ -504,112 +504,117 @@ describe("RpcSessionFactory", () => {
     ),
   );
 
-  it.effect("replays theme updates, deletion and memory pressure as authoritative events", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { factory, sockets } = yield* makeFactory({ environmentThemes: true });
-        const session = yield* factory.connect(PREPARED);
-        const readyFiber = yield* Effect.forkChild(session.ready);
-        const socket = yield* awaitSocket(sockets);
-        socket.open();
-        yield* completeInitialConfig(socket, ENCODED_THEME_SERVER_CONFIG, {
-          environmentThemes: true,
-        });
-        yield* Fiber.join(readyFiber);
+  it.effect(
+    "replays theme updates, deletion, memory pressure and quiet runs as authoritative events",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { factory, sockets } = yield* makeFactory({ environmentThemes: true });
+          const session = yield* factory.connect(PREPARED);
+          const readyFiber = yield* Effect.forkChild(session.ready);
+          const socket = yield* awaitSocket(sockets);
+          socket.open();
+          yield* completeInitialConfig(socket, ENCODED_THEME_SERVER_CONFIG, {
+            environmentThemes: true,
+          });
+          yield* Fiber.join(readyFiber);
 
-        const firstThemes = [
-          {
-            id: "nightfall",
-            name: "Nightfall",
-            appearance: "dark" as const,
-            canvas: "#1a1b26",
-            accent: "#7aa2f7",
-          },
-        ];
-        const replacementThemes = [
-          {
-            id: "midnight",
-            name: "Midnight",
-            appearance: "dark" as const,
-            canvas: "#000000",
-            accent: "#ffffff",
-          },
-        ];
-        const subscriberStarted = yield* Deferred.make<void>();
-        const subscriber = yield* session.subscribeServerConfig({ environmentThemes: true }).pipe(
-          Stream.mapEffect((event) =>
-            Deferred.succeed(subscriberStarted, undefined).pipe(Effect.as(event)),
-          ),
-          Stream.take(5),
-          Stream.runCollect,
-          Effect.forkChild,
-        );
-        yield* Deferred.await(subscriberStarted);
-        yield* publishConfigEvents(socket, [
-          {
-            version: 1,
-            type: "memoryPressureUpdated",
-            payload: {
-              level: "severe",
-              heaviestAgents: [],
+          const firstThemes = [
+            {
+              id: "nightfall",
+              name: "Nightfall",
+              appearance: "dark" as const,
+              canvas: "#1a1b26",
+              accent: "#7aa2f7",
             },
-          },
-          {
+          ];
+          const replacementThemes = [
+            {
+              id: "midnight",
+              name: "Midnight",
+              appearance: "dark" as const,
+              canvas: "#000000",
+              accent: "#ffffff",
+            },
+          ];
+          const subscriberStarted = yield* Deferred.make<void>();
+          const subscriber = yield* session.subscribeServerConfig({ environmentThemes: true }).pipe(
+            Stream.mapEffect((event) =>
+              Deferred.succeed(subscriberStarted, undefined).pipe(Effect.as(event)),
+            ),
+            Stream.take(6),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* Deferred.await(subscriberStarted);
+          yield* publishConfigEvents(socket, [
+            {
+              version: 1,
+              type: "memoryPressureUpdated",
+              payload: {
+                level: "severe",
+                heaviestAgents: [],
+              },
+            },
+            { version: 1, type: "quietRunsUpdated", payload: { runs: [] } },
+            {
+              version: 1,
+              type: "environmentThemesUpdated",
+              payload: { themes: firstThemes },
+            },
+            {
+              version: 1,
+              type: "environmentThemesUpdated",
+              payload: { themes: replacementThemes },
+            },
+            {
+              version: 1,
+              type: "environmentThemesUpdated",
+              payload: { themes: [] },
+            },
+          ]);
+
+          const liveEvents = Array.from(yield* Fiber.join(subscriber));
+          expect(liveEvents.map((event) => event.type)).toEqual([
+            "snapshot",
+            "memoryPressureUpdated",
+            "quietRunsUpdated",
+            "environmentThemesUpdated",
+            "environmentThemesUpdated",
+            "environmentThemesUpdated",
+          ]);
+          expect(liveEvents[4]).toMatchObject({ payload: { themes: replacementThemes } });
+
+          // A late subscriber also needs live pressure and quiet runs, which snapshots never carry.
+          const replay = Array.from(
+            yield* session
+              .subscribeServerConfig({ environmentThemes: true })
+              .pipe(Stream.take(4), Stream.runCollect),
+          );
+          expect(replay.map((event) => event.type)).toEqual([
+            "snapshot",
+            "environmentThemesUpdated",
+            "memoryPressureUpdated",
+            "quietRunsUpdated",
+          ]);
+          expect(replay[1]).toMatchObject({ payload: { themes: [] } });
+
+          let projection = applyServerConfigProjection(Option.none(), {
+            version: 1,
+            type: "snapshot",
+            config: THEME_SERVER_CONFIG,
+          });
+          projection = applyServerConfigProjection(projection, {
             version: 1,
             type: "environmentThemesUpdated",
             payload: { themes: firstThemes },
-          },
-          {
-            version: 1,
-            type: "environmentThemesUpdated",
-            payload: { themes: replacementThemes },
-          },
-          {
-            version: 1,
-            type: "environmentThemesUpdated",
-            payload: { themes: [] },
-          },
-        ]);
-
-        const liveEvents = Array.from(yield* Fiber.join(subscriber));
-        expect(liveEvents.map((event) => event.type)).toEqual([
-          "snapshot",
-          "memoryPressureUpdated",
-          "environmentThemesUpdated",
-          "environmentThemesUpdated",
-          "environmentThemesUpdated",
-        ]);
-        expect(liveEvents[3]).toMatchObject({ payload: { themes: replacementThemes } });
-
-        // A late subscriber also needs the live pressure, which snapshots never carry.
-        const replay = Array.from(
-          yield* session
-            .subscribeServerConfig({ environmentThemes: true })
-            .pipe(Stream.take(3), Stream.runCollect),
-        );
-        expect(replay.map((event) => event.type)).toEqual([
-          "snapshot",
-          "environmentThemesUpdated",
-          "memoryPressureUpdated",
-        ]);
-        expect(replay[1]).toMatchObject({ payload: { themes: [] } });
-
-        let projection = applyServerConfigProjection(Option.none(), {
-          version: 1,
-          type: "snapshot",
-          config: THEME_SERVER_CONFIG,
-        });
-        projection = applyServerConfigProjection(projection, {
-          version: 1,
-          type: "environmentThemesUpdated",
-          payload: { themes: firstThemes },
-        });
-        for (const event of replay) {
-          projection = applyServerConfigProjection(projection, event);
-        }
-        expect(Option.getOrThrow(projection).config.environmentThemes).toBeUndefined();
-      }),
-    ),
+          });
+          for (const event of replay) {
+            projection = applyServerConfigProjection(projection, event);
+          }
+          expect(Option.getOrThrow(projection).config.environmentThemes).toBeUndefined();
+        }),
+      ),
   );
 
   it.effect("recovers a slow subscriber after it misses theme and usage-source deletion", () =>
