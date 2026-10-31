@@ -10,6 +10,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -21,11 +22,19 @@ import kotlin.math.max
 class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
   private val container = FrameLayout(context)
   private val terminalCanvas = TerminalCanvasView(context)
+  private val sentText = TerminalSentText()
 
   // Newer Android can request autofill even with importantForAutofill=no.
   // Reporting no autofill type keeps terminal input out of credential autofill.
   private val inputView = object : EditText(context) {
     override fun getAutofillType(): Int = View.AUTOFILL_TYPE_NONE
+
+    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? =
+      super.onCreateInputConnection(outAttrs)?.let { connection ->
+        TerminalInputConnection(connection, sentText) { count ->
+          if (!readOnly) onInput(mapOf("data" to "\u007F".repeat(count)))
+        }
+      }
   }
   private val onInput by EventDispatcher()
   private val onResize by EventDispatcher()
@@ -304,6 +313,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
           val end = (start + count).coerceAtMost(s.length)
           if (start < end) {
             val insertedText = s.subSequence(start, end).toString()
+            sentText.append(insertedText)
             onInput(mapOf("data" to insertedText))
           }
         }
