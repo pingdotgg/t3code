@@ -69,6 +69,21 @@ function codexInstance(usageLimits: ServerProviderUsageLimits, email?: string): 
   };
 }
 
+/** A Claude instance signed in to one workspace, by email unless `email` is null. */
+function signedIn(
+  id: string,
+  workspaceId: string,
+  limits: ServerProviderUsageLimits,
+  email: string | null = "me@example.com",
+): ServerProvider {
+  const base = claudeInstance(limits);
+  return {
+    ...base,
+    instanceId: ProviderInstanceId.make(id),
+    auth: { ...base.auth, ...(email ? { email } : {}), workspaceId },
+  };
+}
+
 function hub(
   label: string,
   accounts: ReadonlyArray<{
@@ -212,18 +227,14 @@ describe("thread details limits", () => {
   });
 
   it("keeps one login's hub accounts apart when the instances report it in two workspaces", () => {
-    const signedIn = (id: string, workspaceId: string): ServerProvider => {
-      const base = claudeInstance(limitsAt(10));
-      return {
-        ...base,
-        instanceId: ProviderInstanceId.make(id),
-        auth: { ...base.auth, email: "me@example.com", workspaceId },
-      };
-    };
     const fresher = { ...limitsAt(25), checkedAt: "2026-10-30T11:59:30.000Z" };
     const resolved = resolveThreadDetailsLimits(
       instanceId,
-      [claudeInstance(unsupported), signedIn("claude-a", "team-a"), signedIn("claude-b", "team-b")],
+      [
+        claudeInstance(unsupported),
+        signedIn("claude-a", "team-a", limitsAt(10)),
+        signedIn("claude-b", "team-b", limitsAt(10)),
+      ],
       [
         hub("hub", [
           {
@@ -242,14 +253,6 @@ describe("thread details limits", () => {
   });
 
   it("does not borrow a login's hub account when its workspace could be another instance's", () => {
-    const signedIn = (id: string, workspaceId: string, limits: ServerProviderUsageLimits) => {
-      const base = claudeInstance(limits);
-      return {
-        ...base,
-        instanceId: ProviderInstanceId.make(id),
-        auth: { ...base.auth, email: "me@example.com", workspaceId },
-      };
-    };
     const resolved = resolveThreadDetailsLimits(
       instanceId,
       [signedIn(instanceId, "team-a", unsupported), signedIn("claude-b", "team-b", limitsAt(10))],
@@ -261,11 +264,7 @@ describe("thread details limits", () => {
   });
 
   it("does not borrow a hub account in a different workspace of the same login", () => {
-    const base = claudeInstance(unsupported);
-    const inTeamA = {
-      ...base,
-      auth: { ...base.auth, email: "me@example.com", workspaceId: "team-a" },
-    };
+    const inTeamA = signedIn(instanceId, "team-a", unsupported);
     const hubIn = (workspaceId: string) => [
       hub("hub", [
         { id: "claude-a.json", email: "me@example.com", workspaceId, limits: limitsAt(19) },
@@ -280,6 +279,46 @@ describe("thread details limits", () => {
       limits: limitsAt(19),
       sourceLabel: "hub",
     });
+  });
+
+  it("counts one credential as one account when two hubs report it without an email", () => {
+    const credential = (usedPercent: number, at: string) => ({
+      ...limitsAt(usedPercent),
+      checkedAt: at,
+      credentialFingerprint: "fp-1",
+    });
+    const fresher = credential(25, "2026-10-30T11:59:30.000Z");
+    const resolved = resolveThreadDetailsLimits(
+      instanceId,
+      [claudeInstance(unsupported)],
+      [
+        hub("hub-a", [{ id: "claude-a.json", limits: credential(19, checkedAt) }]),
+        hub("hub-b", [{ id: "claude-b.json", limits: fresher }]),
+      ],
+      now,
+    );
+
+    expect(resolved).toEqual({ limits: fresher, sourceLabel: "hub-b" });
+  });
+
+  it("does not borrow a credential's hub account when its workspace could be another's", () => {
+    const credential = { ...limitsAt(10), credentialFingerprint: "fp-1" };
+    const resolved = resolveThreadDetailsLimits(
+      instanceId,
+      [
+        claudeInstance(unsupported),
+        signedIn("claude-a", "team-a", credential, null),
+        signedIn("claude-b", "team-b", credential, null),
+      ],
+      [
+        hub("hub", [
+          { id: "claude-x.json", limits: { ...limitsAt(25), credentialFingerprint: "fp-1" } },
+        ]),
+      ],
+      now,
+    );
+
+    expect(resolved).toEqual({ limits: unsupported, sourceLabel: null });
   });
 
   it("falls back to the one hub account when a Codex instance's own probe failed", () => {
