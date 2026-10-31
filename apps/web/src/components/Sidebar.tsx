@@ -2615,11 +2615,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       if (confirmThreadDelete) {
         const confirmed = await settlePromise(() =>
           api.dialogs.confirm(
-            [
-              `Delete ${count} thread${count === 1 ? "" : "s"}?`,
-              "This permanently clears conversation history for these threads.",
-            ].join("\n"),
-            { variant: "destructive" },
+            `This deletes ${count === 1 ? "the thread" : "these threads"} and ${count === 1 ? "its" : "their"} chat history. You can't undo this.`,
+            {
+              variant: "destructive",
+              title: `Delete ${count} thread${count === 1 ? "" : "s"}?`,
+              confirmLabel: count === 1 ? "Delete thread" : "Delete threads",
+            },
           ),
         );
         if (confirmed._tag === "Failure" || !confirmed.value) return;
@@ -2979,11 +2980,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             if (confirmThreadDelete) {
               const confirmed = await settlePromise(() =>
                 api.dialogs.confirm(
-                  [
-                    `Delete thread "${thread.title}"?`,
-                    "This permanently clears conversation history for this thread.",
-                  ].join("\n"),
-                  { variant: "destructive" },
+                  `This deletes "${thread.title}" and its chat history. You can't undo this.`,
+                  {
+                    variant: "destructive",
+                    title: "Delete thread?",
+                    confirmLabel: "Delete thread",
+                  },
                 ),
               );
               if (confirmed._tag === "Failure" || !confirmed.value) return;

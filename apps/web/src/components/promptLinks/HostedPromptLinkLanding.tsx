@@ -113,7 +113,7 @@ function HostedPromptLinkLanding({
 
   if (!summary.ok) {
     return (
-      <StandalonePage>
+      <StandalonePage tone="error">
         <StandalonePageHeader title="Could not open the link" description={summary.error} />
       </StandalonePage>
     );
@@ -121,7 +121,7 @@ function HostedPromptLinkLanding({
 
   const { prompt, details } = summary.value;
   return (
-    <StandalonePage>
+    <StandalonePage tone="plain">
       <StandalonePageHeader
         title="Open this prompt"
         description="It opens as a draft. Nothing runs until you press Send."

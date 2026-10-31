@@ -150,9 +150,6 @@ export function ProviderModelsSection({
     modelOrder,
   });
   const favoriteCount = displayModels.filter((model) => favoriteModelSet.has(model.slug)).length;
-  const hiddenCount = displayModels.filter(
-    (model) => !model.isCustom && hiddenModelSet.has(model.slug),
-  ).length;
   const flagMissingReasoning = models.some(hasReasoningControl);
   const showFilter = models.length > FILTER_THRESHOLD;
   const normalizedFilter = filter.trim().toLowerCase();
@@ -332,13 +329,6 @@ export function ProviderModelsSection({
               {allBuiltInModelsHidden ? "Enable all" : "Disable all"}
             </Button>
           ) : null}
-          <span className="text-xs text-muted-foreground">
-            {models.length} model{models.length === 1 ? "" : "s"}
-            {favoriteCount > 0
-              ? ` · ${favoriteCount} favorite${favoriteCount === 1 ? "" : "s"}`
-              : ""}
-            {hiddenCount > 0 ? ` · ${hiddenCount} hidden` : ""}
-          </span>
         </div>
         {driverKind !== "antigravity" && !isAdding ? (
           <Button
@@ -473,6 +463,13 @@ function ProviderModelRow({
   readonly onRemove: (slug: string) => void;
 }) {
   const capLabels = describeModelCapabilities(model, flagMissingReasoning);
+  const descriptor = [
+    model.name !== model.slug ? model.slug : null,
+    model.isCustom ? "custom" : null,
+    ...capLabels,
+  ]
+    .filter((part) => part !== null)
+    .join(" · ");
   const nameClassName = cn("text-xs", isHidden ? "text-muted-foreground" : "text-foreground");
   const pickerTooltip = model.isCustom
     ? "Custom models are always shown in the picker"
@@ -484,7 +481,7 @@ function ProviderModelRow({
     <div
       data-model-slug={model.slug}
       className={cn(
-        "grid h-7 grid-cols-[1.5rem_minmax(0,1fr)_auto_minmax(5.5rem,auto)_auto] items-center gap-2 rounded-row px-2 transition-colors hover:surface-ghost-hover",
+        "grid grid-cols-[1.5rem_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-row px-2 py-1 transition-colors hover:surface-ghost-hover",
         isHidden && "opacity-50",
       )}
     >
@@ -510,34 +507,18 @@ function ProviderModelRow({
           {isFavorite ? "Remove from favorites" : "Add to favorites"}
         </TooltipPopup>
       </Tooltip>
-      <span className="flex min-w-0 items-baseline gap-2">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span tabIndex={0} className="flex min-w-0 items-baseline gap-2 overflow-hidden" />
-            }
-          >
-            <span className={cn(nameClassName, "max-w-full shrink-0 truncate")}>{model.name}</span>
-            {model.name !== model.slug ? (
-              <code className="truncate font-mono text-2xs text-dim-foreground">{model.slug}</code>
-            ) : null}
-          </TooltipTrigger>
-          <TooltipPopup side="top" align="start">
-            <div>{model.name}</div>
-            {model.name !== model.slug ? (
-              <code className="text-micro font-mono text-dim-foreground">{model.slug}</code>
-            ) : null}
-          </TooltipPopup>
-        </Tooltip>
-        {model.isCustom ? (
-          <span className="shrink-0 text-2xs text-dim-foreground">custom</span>
-        ) : null}
-      </span>
-      <span className="text-2xs text-dim-foreground">
-        {capLabels.length > 0 ? (
-          <span className="hidden sm:inline">{capLabels.join(" · ")}</span>
-        ) : null}
-      </span>
+      <Tooltip>
+        <TooltipTrigger render={<span tabIndex={0} className="flex min-w-0 flex-col" />}>
+          <span className={cn(nameClassName, "truncate")}>{model.name}</span>
+          {descriptor ? (
+            <span className="truncate text-2xs text-dim-foreground">{descriptor}</span>
+          ) : null}
+        </TooltipTrigger>
+        <TooltipPopup side="top" align="start">
+          <div>{model.name}</div>
+          {model.name !== model.slug ? <code className="font-mono">{model.slug}</code> : null}
+        </TooltipPopup>
+      </Tooltip>
       <span className="flex shrink-0 items-center justify-end gap-0.5">
         {!isHidden && !isFiltering ? (
           <>

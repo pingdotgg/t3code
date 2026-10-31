@@ -154,10 +154,7 @@ function DialogPopup({
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
-      className={cn(
-        "flex flex-col gap-2 p-6 in-[[data-slot=dialog-popup]:has([data-slot=dialog-panel])]:pb-3 max-sm:pb-4",
-        className,
-      )}
+      className={cn("flex flex-col gap-1 px-5 pt-5 pb-4", className)}
       data-slot="dialog-header"
       {...props}
     />
@@ -174,9 +171,7 @@ function DialogFooter({
   return (
     <div
       className={cn(
-        "flex flex-col-reverse gap-2 px-6 sm:flex-row sm:justify-end sm:rounded-b-[calc(var(--radius-pane)-1px)]",
-        variant === "default" && "py-4",
-        variant === "bare" && "py-4",
+        "flex flex-col-reverse gap-2 px-5 pb-5 sm:flex-row sm:justify-end sm:rounded-b-[calc(var(--radius-pane)-1px)]",
         className,
       )}
       data-slot="dialog-footer"
@@ -189,7 +184,10 @@ function DialogFooter({
 function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
   return (
     <DialogPrimitive.Title
-      className={cn("wrap-anywhere text-title text-foreground leading-none", className)}
+      className={cn(
+        "wrap-anywhere text-label font-semibold text-strong-foreground leading-snug",
+        className,
+      )}
       data-slot="dialog-title"
       {...props}
     />
@@ -215,7 +213,7 @@ function DialogPanel({
     <ScrollArea scrollFade={scrollFade}>
       <div
         className={cn(
-          "space-y-4 p-6 in-[[data-slot=dialog-popup]:has([data-slot=dialog-header])]:pt-1 in-[[data-slot=dialog-popup]:has([data-slot=dialog-footer][data-variant=bare])]:pb-1",
+          "space-y-4 px-5 pt-5 pb-4 in-[[data-slot=dialog-popup]:has([data-slot=dialog-header])]:pt-0",
           className,
         )}
         data-slot="dialog-panel"

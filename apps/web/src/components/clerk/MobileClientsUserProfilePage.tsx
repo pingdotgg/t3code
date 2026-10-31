@@ -38,14 +38,10 @@ function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord 
     <ClerkUserProfileRow icon={<SmartphoneIcon className="size-4" />}>
       <div className="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
         <div className="min-w-0">
-          <h3 className="truncate text-sm leading-4.5 font-medium text-strong-foreground">
-            {device.label}
-          </h3>
-          <p className="text-xs leading-4.5 text-muted-foreground">
-            {mobileClientPlatformLabel(device)}
-          </p>
+          <h3 className="truncate text-label text-strong-foreground">{device.label}</h3>
+          <p className="text-meta text-muted-foreground">{mobileClientPlatformLabel(device)}</p>
         </div>
-        <p className="shrink-0 text-2xs leading-4 text-dim-foreground">
+        <p className="shrink-0 text-caption text-dim-foreground">
           {mobileClientUpdatedAtLabel(device.updatedAt)}
         </p>
       </div>
@@ -56,7 +52,7 @@ function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord 
         />
         <MobileClientStatusBadge enabled={device.liveActivities.enabled} label="Live Activities" />
       </div>
-      <p className="mt-1.5 text-xs leading-4.5 text-dim-foreground">
+      <p className="mt-1.5 text-meta text-dim-foreground">
         {mobileClientNotificationDetail(device)}
       </p>
     </ClerkUserProfileRow>
@@ -123,14 +119,14 @@ export function MobileClientsUserProfilePage() {
       <div>
         {devicesState.error ? (
           <div
-            className="mb-4 flex flex-col gap-3 border-t border-destructive/35 py-3 text-xs sm:flex-row sm:items-center sm:justify-between"
+            className="mb-4 flex flex-col gap-3 border-t border-destructive/35 py-3 sm:flex-row sm:items-center sm:justify-between"
             role="alert"
           >
             <div>
-              <p className="font-medium text-destructive-foreground">
+              <p className="text-label text-destructive-foreground">
                 Could not load mobile clients
               </p>
-              <p className="mt-0.5 text-xs text-muted-foreground">{devicesState.error}</p>
+              <p className="mt-0.5 text-meta text-muted-foreground">{devicesState.error}</p>
             </div>
             <Button size="xs" variant="secondary" onClick={devicesState.refresh}>
               Try again

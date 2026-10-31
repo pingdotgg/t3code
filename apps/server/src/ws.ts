@@ -6,6 +6,7 @@ import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as NodeOS from "node:os";
 
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Base64 from "effect/encoding/Base64";
@@ -79,6 +80,7 @@ import {
   ProviderSetupError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
+  type AgentSessionImportProgressEvent,
   type ServerConfig as ClientServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleStreamEvent,
@@ -597,6 +599,8 @@ function projectFileFailureContext(
 }
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
+/** Onboarding import counts are a label; a few updates a second is plenty. */
+const AGENT_SESSION_IMPORT_PROGRESS_INTERVAL_MS = 250;
 
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
@@ -1866,11 +1870,30 @@ export const layerWsRpc = (
           listProjects: projectStore.listShells(),
           latestSequence: applicationEvents.latestApplicationSequence,
         });
+        // Settings › Archive shows how much conversation each thread holds.
+        // Only this snapshot pays for the count; live shells stay lean.
+        const messageCountRows = yield* sql<{ threadId: string; messageCount: number }>`
+          SELECT message.thread_id AS "threadId", COUNT(*) AS "messageCount"
+          FROM orchestration_v2_projection_messages AS message
+          INNER JOIN orchestration_v2_projection_threads AS thread
+            ON thread.thread_id = message.thread_id
+          WHERE thread.archived_at IS NOT NULL
+            AND thread.deleted_at IS NULL
+            AND message.streaming = 0
+            AND message.role IN ('user', 'assistant')
+          GROUP BY message.thread_id
+        `;
+        const messageCountByThread = new Map(
+          messageCountRows.map((row) => [row.threadId, Number(row.messageCount)] as const),
+        );
         return {
           schemaVersion: threads.schemaVersion,
           snapshotSequence,
           projects,
-          threads: threads.archivedThreads,
+          threads: threads.archivedThreads.map((thread) => ({
+            ...thread,
+            messageCount: messageCountByThread.get(thread.id) ?? 0,
+          })),
         } as const;
       }).pipe(
         Effect.flatMap((snapshot) =>
@@ -2901,6 +2924,32 @@ export const layerWsRpc = (
         [WS_METHODS.agentSessionsScan]: () => agentSessionScanner.scan,
         [WS_METHODS.agentSessionsImport]: (input) =>
           agentSessionImporter.importRecentAgentThreads(input),
+        [WS_METHODS.agentSessionsImportWithProgress]: (input) =>
+          Stream.callback<
+            AgentSessionImportProgressEvent,
+            Effect.Error<ReturnType<typeof agentSessionImporter.importRecentAgentThreads>>
+          >((queue) => {
+            let lastReportedAt = Number.NEGATIVE_INFINITY;
+            const reportProgress = (processedCount: number) =>
+              Clock.currentTimeMillis.pipe(
+                Effect.flatMap((now) => {
+                  if (now - lastReportedAt < AGENT_SESSION_IMPORT_PROGRESS_INTERVAL_MS) {
+                    return Effect.void;
+                  }
+                  lastReportedAt = now;
+                  return Queue.offer(queue, { type: "progress", processedCount });
+                }),
+                Effect.asVoid,
+              );
+            return agentSessionImporter.importRecentAgentThreads(input, reportProgress).pipe(
+              Effect.flatMap((result) => Queue.offer(queue, { type: "complete", result })),
+              Effect.matchCauseEffect({
+                onFailure: (cause) => Queue.failCause(queue, cause),
+                onSuccess: () => Queue.end(queue),
+              }),
+              Effect.forkScoped,
+            );
+          }),
         [WS_METHODS.assetsCreateUrl]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {

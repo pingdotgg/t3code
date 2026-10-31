@@ -137,6 +137,9 @@ export function reduceCommandPaletteUiState(
         parentSearch: action.context,
       };
     case "BackToCommand":
+      if (state.open && state.mode !== "command" && !state.parentSearch) {
+        return { open: false, mode: state.mode, openIntent: null, session };
+      }
       return state.open && state.mode !== "command"
         ? {
             open: true,

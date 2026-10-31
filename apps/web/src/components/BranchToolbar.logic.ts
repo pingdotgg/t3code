@@ -113,6 +113,8 @@ export function resolveLockedWorkspaceLabel(
 export interface PreviousWorktreeSeed {
   branch: string | null;
   worktreePath: string;
+  /** When a thread last touched the worktree, for the picker's "2h ago". */
+  updatedAt: string;
 }
 
 export function resolvePreviousWorktreeSeed(input: {
@@ -124,7 +126,12 @@ export function resolvePreviousWorktreeSeed(input: {
   }>;
   currentWorktreePath: string | null;
 }): PreviousWorktreeSeed | null {
-  let latest: { branch: string | null; worktreePath: string; updatedAt: number } | null = null;
+  let latest: {
+    branch: string | null;
+    worktreePath: string;
+    updatedAt: number;
+    updatedAtIso: string;
+  } | null = null;
   for (const thread of input.threads) {
     if (
       !thread.worktreePath ||
@@ -142,10 +149,13 @@ export function resolvePreviousWorktreeSeed(input: {
         branch: thread.branch,
         worktreePath: thread.worktreePath,
         updatedAt,
+        updatedAtIso: thread.updatedAt,
       };
     }
   }
-  return latest === null ? null : { branch: latest.branch, worktreePath: latest.worktreePath };
+  return latest === null
+    ? null
+    : { branch: latest.branch, worktreePath: latest.worktreePath, updatedAt: latest.updatedAtIso };
 }
 
 export function resolvePreviousWorktreeLabel(seed: PreviousWorktreeSeed): string {
@@ -305,4 +315,30 @@ export function shouldIncludeBranchPickerItem(input: {
     sanitizedQuery !== normalizedQuery &&
     lowerItemValue.includes(sanitizedQuery)
   );
+}
+
+/** Ref names for the picker: local branches first, then remote refs, each in server order. */
+export function orderRefNamesByGroup(refs: ReadonlyArray<VcsRef>): string[] {
+  return [
+    ...refs.filter((ref) => !ref.isRemote).map((ref) => ref.name),
+    ...refs.filter((ref) => ref.isRemote).map((ref) => ref.name),
+  ];
+}
+
+/**
+ * The section label each group's first visible row carries, keyed by item value. Items whose
+ * group is null (create, checkout-by-reference) get no label and do not start a group.
+ */
+export function groupLabelsForPickerItems(
+  items: ReadonlyArray<string>,
+  groupOf: (item: string) => string | null,
+): ReadonlyMap<string, string> {
+  const labels = new Map<string, string>();
+  let previousGroup: string | null = null;
+  for (const item of items) {
+    const group = groupOf(item);
+    if (group !== null && group !== previousGroup) labels.set(item, group);
+    previousGroup = group;
+  }
+  return labels;
 }

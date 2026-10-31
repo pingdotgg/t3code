@@ -1,6 +1,5 @@
-import { DownloadIcon, PlusIcon } from "lucide-react";
+import { FileUpIcon, FileXIcon, PlusIcon, SearchIcon, XIcon } from "lucide-react";
 import type { ChangeEvent, DragEvent, UIEvent } from "react";
-import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { useRef, useState } from "react";
 import { cn } from "../../lib/utils";
 import {
@@ -20,7 +19,16 @@ import {
 } from "../../vscodeThemeImport";
 import { Alert } from "../ui/alert";
 import { Button } from "../ui/button";
-import { Dialog, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "../ui/dialog";
+import { Badge } from "../ui/badge";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
 import { ThemeSearchSection } from "./ThemeSearchSection";
 
 /**
@@ -95,7 +103,7 @@ function ThemeJsonEditor({
 }) {
   const highlightRef = useRef<HTMLPreElement>(null);
   const isPlainText = value.length > MAX_HIGHLIGHTED_JSON_LENGTH;
-  const highlightedJson = isPlainText ? "" : highlightJson(value);
+  const highlightedJson = value.length > MAX_HIGHLIGHTED_JSON_LENGTH ? "" : highlightJson(value);
 
   const syncScroll = (event: UIEvent<HTMLTextAreaElement>) => {
     const highlightElement = highlightRef.current;
@@ -105,12 +113,12 @@ function ThemeJsonEditor({
   };
 
   return (
-    <div className="relative overflow-hidden rounded-xl border border-input bg-background shadow-xs/5 focus-within:border-ring focus-within:ring-3 focus-within:ring-inset focus-within:ring-ring/24">
+    <div className="relative overflow-hidden rounded-control border border-input bg-background shadow-xs/5 focus-within:border-ring focus-within:ring-3 focus-within:ring-inset focus-within:ring-ring/24">
       {isPlainText ? null : (
         <pre
           ref={highlightRef}
           aria-hidden
-          className="pointer-events-none absolute inset-0 m-0 overflow-hidden whitespace-pre-wrap break-words p-3 font-mono text-xs leading-5 text-foreground"
+          className="pointer-events-none absolute inset-0 m-0 overflow-hidden whitespace-pre-wrap break-words p-3 font-mono text-caption leading-5 text-foreground"
         >
           <code dangerouslySetInnerHTML={{ __html: highlightedJson }} />
         </pre>
@@ -118,14 +126,14 @@ function ThemeJsonEditor({
       <textarea
         aria-label="Theme JSON"
         className={cn(
-          "relative z-10 block min-h-44 w-full resize-y overflow-auto bg-transparent p-3 font-mono text-xs leading-5 caret-foreground outline-none placeholder:text-muted-foreground selection:bg-primary selection:text-primary-foreground",
+          "relative z-10 block min-h-16 w-full resize-y overflow-auto bg-transparent p-3 font-mono text-caption leading-5 caret-foreground outline-none placeholder:text-muted-foreground selection:bg-primary selection:text-primary-foreground",
           isPlainText ? "text-foreground" : "text-transparent",
         )}
         id={id}
         onChange={(event) => onChange(event.currentTarget.value)}
         onScroll={syncScroll}
         placeholder={
-          '{\n  "version": 1,\n  "name": "Aurora",\n  "appearance": "light",\n  "colors": { ... }\n}'
+          '{ "name": "Aurora", "type": "dark",\n  "colors": { "editor.background": "#0b0e14", … } }'
         }
         spellCheck={false}
         value={value}
@@ -135,6 +143,119 @@ function ThemeJsonEditor({
 }
 
 type ImportableThemeFile = { name: string; size: number; text: () => Promise<string> };
+
+/** A file waiting in the list until Add theme installs it. */
+type StagedThemeFile = Readonly<{
+  fileName: string;
+  text: string | null;
+  theme: ThemeDefinition | null;
+  error: string | null;
+}>;
+
+// Background, sidebar, accent, then a status hue so two themes sharing an
+// accent still read apart in the row.
+const SWATCH_ROLES = ["canvas", "sidebar", "accent", "warning"] as const;
+
+function parseThemeText(text: string): ThemeDefinition {
+  return parseThemeImport(text);
+}
+
+async function stageThemeFile(file: ImportableThemeFile): Promise<StagedThemeFile> {
+  const oversized = describeOversizedThemeFile(file.size);
+  if (oversized) return { fileName: file.name, text: null, theme: null, error: oversized };
+  let text: string;
+  try {
+    text = await file.text();
+  } catch {
+    return {
+      fileName: file.name,
+      text: null,
+      theme: null,
+      error: "Could not read that file. Paste the JSON below instead.",
+    };
+  }
+  try {
+    return { fileName: file.name, text, theme: parseThemeText(text), error: null };
+  } catch {
+    return { fileName: file.name, text, theme: null, error: "That theme file is invalid." };
+  }
+}
+
+const isInstalledTheme = (theme: ThemeDefinition) =>
+  getCustomThemes().some((existing) => existing.id === theme.id);
+
+function versionedCopy(theme: ThemeDefinition, preferredName?: string | null): ThemeDefinition {
+  if (preferredName && preferredName.toLowerCase() !== theme.label.toLowerCase()) {
+    const candidate = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: preferredName.slice(0, 48),
+      appearance: theme.appearance,
+      colors: theme.colors,
+      ...(theme.variants ? { variants: theme.variants } : {}),
+      ...(theme.managed ? { managed: true } : {}),
+    });
+    if (!isInstalledTheme(candidate)) return candidate;
+  }
+  for (let copy = 1; copy < 100; copy += 1) {
+    const candidate = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: `${theme.label.slice(0, 48 - ` (${copy})`.length)} (${copy})`,
+      appearance: theme.appearance,
+      colors: theme.colors,
+      ...(theme.variants ? { variants: theme.variants } : {}),
+      ...(theme.managed ? { managed: true } : {}),
+    });
+    if (isInstalledTheme(candidate)) continue;
+    return candidate;
+  }
+  throw new Error(`Too many copies of "${theme.label}".`);
+}
+
+function StagedThemeRow({ file, onRemove }: { file: StagedThemeFile; onRemove: () => void }) {
+  const { theme } = file;
+  const removeButton = (
+    <Button
+      aria-label={`Remove ${file.fileName}`}
+      onClick={onRemove}
+      size="icon-xs"
+      variant="ghost-muted"
+    >
+      <XIcon />
+    </Button>
+  );
+  if (!theme) {
+    return (
+      <li className="flex items-center gap-2.5 px-3 py-2.5">
+        <span className="flex h-6 w-10 shrink-0 items-center justify-center rounded-md border border-border bg-muted/40 text-error-foreground">
+          <FileXIcon className="size-3.5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-label text-muted-foreground">{file.fileName}</p>
+          <p className="text-error-foreground text-meta">{file.error}</p>
+        </div>
+        {removeButton}
+      </li>
+    );
+  }
+  const installed = isInstalledTheme(theme);
+  return (
+    <li className="flex items-center gap-2.5 px-3 py-2.5">
+      <span className="flex h-6 w-10 shrink-0 overflow-hidden rounded-md border border-border">
+        {SWATCH_ROLES.map((role) => (
+          <span className="flex-1" key={role} style={{ backgroundColor: theme.colors[role] }} />
+        ))}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-label">{theme.label}</p>
+        <p className="truncate text-muted-foreground text-meta">{file.fileName}</p>
+      </div>
+      <Badge size="lg" variant={installed ? "unavailable" : "secondary"}>
+        {installed ? "Already installed" : "Theme file"}
+      </Badge>
+      {removeButton}
+    </li>
+  );
+}
 
 interface ThemeImportCallbacks {
   onImported: (theme: ThemeDefinition) => boolean;
@@ -175,9 +296,10 @@ export function ThemeImportDialog({
         else close();
       }}
     >
-      <DialogPopup className="max-w-3xl overflow-hidden">
+      <DialogPopup className="overflow-hidden">
         <DialogHeader>
           <DialogTitle>Add a theme</DialogTitle>
+          <DialogDescription>T3 Code or VS Code color themes.</DialogDescription>
         </DialogHeader>
         <ThemeImportBody
           key={session.id}
@@ -202,8 +324,11 @@ function ThemeImportBody({
 }) {
   const { signal } = session;
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [searchSession, setSearchSession] = useState<AbortController | null>(null);
+  const [staged, setStaged] = useState<ReadonlyArray<StagedThemeFile>>([]);
   const [json, setJson] = useState("");
-  const [fileName, setFileName] = useState<string | null>(null);
+  // The staged file whose text fills the JSON field; edits there replace it.
+  const [jsonSource, setJsonSource] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isReading, setIsReading] = useState(false);
   const [isDropTarget, setIsDropTarget] = useState(false);
@@ -213,95 +338,54 @@ function ThemeImportBody({
   const isCurrentRequest = (requestId: number) =>
     requestId === importRequestRef.current && !signal.aborted;
 
-  const readThemeFile = async (file: ImportableThemeFile) => {
-    const oversized = describeOversizedThemeFile(file.size);
-    if (oversized) {
-      setError(oversized);
-      return;
-    }
-
-    const requestId = ++importRequestRef.current;
-    setIsReading(true);
-    const fileText = await settlePromise(() => file.text());
-    if (!isCurrentRequest(requestId)) return;
-    setIsReading(false);
-    if (fileText._tag === "Failure") {
-      setError("Could not read that file. Paste the JSON below instead.");
-      return;
-    }
-    setJson(fileText.value);
-    setFileName(file.name);
-    setError(null);
-  };
-
-  const readThemeBatch = (files: ReadonlyArray<ImportableThemeFile>) => {
-    const requestId = ++importRequestRef.current;
-    setIsReading(true);
-    return installThemeBatch(files, requestId).finally(() => {
-      if (isCurrentRequest(requestId)) setIsReading(false);
+  const openSearch = () => {
+    const controller = new AbortController();
+    signal.addEventListener("abort", () => controller.abort(), {
+      once: true,
+      signal: controller.signal,
     });
+    setSearchSession(controller);
   };
 
-  const installThemeBatch = async (
-    files: ReadonlyArray<ImportableThemeFile>,
-    requestId: number,
-  ) => {
-    const failures: string[] = [];
-    const parsed: Array<{ theme: ThemeDefinition; sourceName: string }> = [];
-    for (const file of files) {
-      const oversized = describeOversizedThemeFile(file.size);
-      if (oversized) {
-        failures.push(`${file.name}: too large`);
-        continue;
-      }
-      try {
-        parsed.push({
-          sourceName: file.name,
-          theme: parseThemeImport(await file.text()),
-        });
-      } catch (cause) {
-        failures.push(
-          `${file.name}: ${cause instanceof Error ? cause.message : "not a theme file"}`,
-        );
-      }
-    }
-    if (!isCurrentRequest(requestId)) return;
-    const installed: ThemeDefinition[] = [];
-    const conflicting: ThemeDefinition[] = [];
-    for (const theme of pairVsCodeThemes(resolveThemeLabelCollisions(parsed))) {
-      if (getCustomThemes().some((existing) => existing.id === theme.id)) {
-        conflicting.push(theme);
-        continue;
-      }
-      try {
-        installed.push(installCustomTheme(theme));
-      } catch (cause) {
-        failures.push(
-          `${theme.label}: ${cause instanceof Error ? cause.message : "could not install"}`,
-        );
-      }
-    }
-    if (installed.length > 0) onImportedMany(installed, { updated: false });
-    setError(failures.length > 0 ? failures.join("; ") : null);
-    if (conflicting.length > 0) {
-      setConflicts(conflicting);
-    } else if (installed.length > 0 && failures.length === 0) {
-      onClose();
-    }
+  const closeSearch = () => {
+    searchSession?.abort();
+    setSearchSession(null);
   };
 
-  const readThemeFiles = (files: ReadonlyArray<ImportableThemeFile>) => {
-    if (files.length === 0) return;
-    if (files.length === 1) void readThemeFile(files[0]!);
-    else void readThemeBatch(files);
+  // Files are read and checked as they arrive, then wait in the list so the
+  // whole batch installs together. A lone file also fills the JSON field for
+  // review, as long as nothing was pasted there.
+  const readThemeFiles = async (files: ReadonlyArray<ImportableThemeFile>) => {
+    if (signal.aborted || files.length === 0) return;
+    const requestId = ++importRequestRef.current;
+    setIsReading(true);
+    await Promise.all(files.map(stageThemeFile))
+      .then((read) => {
+        if (!isCurrentRequest(requestId)) return;
+        const names = new Set(read.map((file) => file.fileName));
+        const next = [...staged.filter((file) => !names.has(file.fileName)), ...read];
+        setStaged(next);
+        setError(null);
+        const lone = next.length === 1 ? next[0] : undefined;
+        if (lone?.text != null && (!json.trim() || jsonSource !== null)) {
+          setJson(lone.text);
+          setJsonSource(lone.fileName);
+        } else if (jsonSource !== null) {
+          setJson("");
+          setJsonSource(null);
+        }
+      })
+      .finally(() => {
+        if (isCurrentRequest(requestId)) setIsReading(false);
+      });
   };
 
   const openFilePicker = () => {
     const bridge = window.desktopBridge;
     if (bridge) {
       void bridge.pickThemeFiles().then((picked) => {
-        if (!picked || picked.length === 0) return;
-        readThemeFiles(
+        if (signal.aborted || !picked || picked.length === 0) return;
+        void readThemeFiles(
           picked.map((file) => ({
             name: file.name,
             size: file.size,
@@ -317,49 +401,49 @@ function ThemeImportBody({
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const files = [...(event.currentTarget.files ?? [])];
     event.currentTarget.value = "";
-    readThemeFiles(files);
+    void readThemeFiles(files);
   };
 
   const handleDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setIsDropTarget(false);
-    readThemeFiles([...event.dataTransfer.files]);
+    void readThemeFiles([...event.dataTransfer.files]);
   };
 
-  const versionedCopy = (
-    theme: ThemeDefinition,
-    preferredName?: string | null,
-  ): ThemeDefinition => {
-    if (preferredName && preferredName.toLowerCase() !== theme.label.toLowerCase()) {
-      const candidate = parseThemeFile({
-        version: THEME_FILE_VERSION,
-        name: preferredName.slice(0, 48),
-        appearance: theme.appearance,
-        colors: theme.colors,
-        ...(theme.variants ? { variants: theme.variants } : {}),
-        ...(theme.managed ? { managed: true } : {}),
-      });
-      if (!getCustomThemes().some((existing) => existing.id === candidate.id)) return candidate;
+  // What Add theme would install: every valid staged file, with the JSON
+  // field standing in for the file it was filled from (or added on its own
+  // when pasted), and VS Code light/dark families paired into one theme.
+  const pending = (() => {
+    const entries: Array<{ theme: ThemeDefinition; sourceName?: string | undefined }> = [];
+    for (const file of staged) {
+      if (file.fileName === jsonSource || !file.theme) continue;
+      entries.push({ theme: file.theme, sourceName: file.fileName });
     }
-    for (let copy = 1; copy < 100; copy += 1) {
-      const candidate = parseThemeFile({
-        version: THEME_FILE_VERSION,
-        name: `${theme.label.slice(0, 48 - ` (${copy})`.length)} (${copy})`,
-        appearance: theme.appearance,
-        colors: theme.colors,
-        ...(theme.variants ? { variants: theme.variants } : {}),
-        ...(theme.managed ? { managed: true } : {}),
-      });
-      if (getCustomThemes().some((existing) => existing.id === candidate.id)) continue;
-      return candidate;
+    let jsonError: string | null = null;
+    if (json.trim()) {
+      const oversized = describeOversizedThemeFile(json.length);
+      if (oversized) jsonError = oversized;
+      else {
+        try {
+          entries.push({ theme: parseThemeText(json), sourceName: jsonSource ?? undefined });
+        } catch (cause) {
+          jsonError = cause instanceof Error ? cause.message : "That theme file is invalid.";
+        }
+      }
     }
-    throw new Error(`Too many copies of "${theme.label}".`);
-  };
+    const themes = pairVsCodeThemes(resolveThemeLabelCollisions(entries));
+    return {
+      themes,
+      jsonError,
+      newCount: themes.filter((theme) => !isInstalledTheme(theme)).length,
+    };
+  })();
 
   const resolveConflicts = (mode: "update" | "copy") => {
     if (!conflicts) return;
     const resolved: ThemeDefinition[] = [];
     const failures: string[] = [];
+    const fileName = staged.length === 1 ? staged[0]!.fileName : null;
     const preferredName =
       conflicts.length === 1 && fileName
         ? humanizeThemeName(fileName.replace(/\.[^.]+$/, ""))
@@ -389,153 +473,204 @@ function ThemeImportBody({
   };
 
   const handleSubmit = () => {
-    const oversized = describeOversizedThemeFile(json.length);
-    if (oversized) {
-      setError(oversized);
+    if (pending.jsonError) {
+      setError(pending.jsonError);
       return;
     }
-    try {
-      const theme = parseThemeImport(json);
-      if (getCustomThemes().some((existing) => existing.id === theme.id)) {
-        setError(null);
-        setConflicts([theme]);
-        return;
+    const fresh = pending.themes.filter((theme) => !isInstalledTheme(theme));
+    const conflicting = pending.themes.filter(isInstalledTheme);
+    setError(null);
+
+    const failures = staged
+      .filter((file) => file.fileName !== jsonSource && file.error !== null)
+      .map((file) => `${file.fileName}: ${file.error}`);
+
+    // A single theme is selected right away; batches install quietly.
+    if (fresh.length === 1 && conflicting.length === 0 && failures.length === 0) {
+      try {
+        const installedTheme = installCustomTheme(fresh[0]!);
+        if (!onImported(installedTheme)) {
+          try {
+            removeCustomTheme(installedTheme.id);
+          } catch {}
+          setError("Theme added, but it could not be selected. Try again.");
+          return;
+        }
+        onClose();
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "That theme file is invalid.");
       }
-      const installedTheme = installCustomTheme(theme);
-      if (!onImported(installedTheme)) {
-        try {
-          removeCustomTheme(installedTheme.id);
-        } catch {}
-        setError("Theme added, but it could not be selected. Try again.");
-        return;
-      }
-      onClose();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "That theme file is invalid.");
+      return;
     }
+
+    const installed: ThemeDefinition[] = [];
+    for (const theme of fresh) {
+      try {
+        installed.push(installCustomTheme(theme));
+      } catch (cause) {
+        failures.push(
+          `${theme.label}: ${cause instanceof Error ? cause.message : "could not install"}`,
+        );
+      }
+    }
+    if (installed.length > 0) onImportedMany(installed, { updated: false });
+    setError(failures.length > 0 ? failures.join("; ") : null);
+    if (conflicting.length > 0) setConflicts(conflicting);
+    else if (installed.length > 0 && failures.length === 0) onClose();
   };
 
+  const dropHandlers = {
+    onDragEnter: (event: DragEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      setIsDropTarget(true);
+    },
+    onDragOver: (event: DragEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      setIsDropTarget(true);
+    },
+    onDragLeave: (event: DragEvent<HTMLDivElement>) => {
+      if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+      setIsDropTarget(false);
+    },
+    onDrop: handleDrop,
+  };
+
+  const removeStaged = (fileName: string) => {
+    setStaged((current) => current.filter((file) => file.fileName !== fileName));
+    if (jsonSource === fileName) {
+      setJson("");
+      setJsonSource(null);
+    }
+    setError(null);
+  };
+
+  // What Add theme will do, counted: new installs, already installed (they go
+  // to update-or-copy), and files that will be skipped.
+  const installedCount = pending.themes.length - pending.newCount;
+  const invalidCount = staged.filter((file) => !file.theme).length;
+  const footerNote = [
+    pending.newCount > 0
+      ? `${pending.newCount} new ${pending.newCount === 1 ? "theme" : "themes"}`
+      : null,
+    installedCount > 0 ? `${installedCount} already installed` : null,
+    invalidCount > 0 ? `${invalidCount} invalid` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
-    <DialogPanel>
-      <ThemeSearchSection
-        onInstalled={(themes, context) => {
-          onImportedMany(themes, context);
-          onClose();
-        }}
-        signal={signal}
-      />
-
-      <div className="flex items-center gap-3" aria-hidden>
-        <div className="h-px flex-1 bg-border" />
-        <span className="text-muted-foreground text-2xs">or import a file</span>
-        <div className="h-px flex-1 bg-border" />
-      </div>
-
-      {(() => {
-        const dropHandlers = {
-          onDragEnter: (event: DragEvent<HTMLDivElement>) => {
-            event.preventDefault();
-            setIsDropTarget(true);
-          },
-          onDragOver: (event: DragEvent<HTMLDivElement>) => {
-            event.preventDefault();
-            setIsDropTarget(true);
-          },
-          onDragLeave: (event: DragEvent<HTMLDivElement>) => {
-            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
-            setIsDropTarget(false);
-          },
-          onDrop: handleDrop,
-        };
-        const fileInput = (
-          <input
-            ref={fileInputRef}
-            accept=".json,application/json"
-            className="sr-only"
-            onChange={handleFileChange}
-            multiple
-            type="file"
+    <>
+      <DialogPanel>
+        {searchSession !== null ? (
+          <ThemeSearchSection
+            onInstalled={(themes, context) => {
+              onImportedMany(themes, context);
+              onClose();
+            }}
+            signal={searchSession.signal}
           />
-        );
-        const chooseButton = (label = "Choose files") => (
-          <Button disabled={isReading} size="sm" variant="secondary" onClick={openFilePicker}>
-            <DownloadIcon />
-            {isReading ? "Reading…" : label}
-          </Button>
-        );
-        const editorSection = () => (
-          <div className="space-y-2">
-            <div className="flex items-baseline justify-between gap-3">
-              <label className="text-sm font-medium" htmlFor="theme-json-editor">
-                Theme JSON
-              </label>
-            </div>
-            <ThemeJsonEditor id="theme-json-editor" onChange={setJson} value={json} />
+        ) : conflicts ? (
+          <div className="rounded-control border border-border/70 bg-muted/20 p-3">
+            <p className="text-label">Already installed</p>
+            <p className="mt-1 text-meta text-muted-foreground">
+              {conflicts.map((theme) => theme.label).join(", ")}
+            </p>
           </div>
-        );
-        if (conflicts) {
-          return (
-            <div className="space-y-3">
-              <div className="rounded-xl border border-border/70 bg-muted/20 p-3">
-                <p className="text-sm font-medium">Already installed</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {conflicts.map((theme) => theme.label).join(", ")}
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button size="sm" onClick={() => resolveConflicts("update")}>
-                  Update existing
-                </Button>
-                <Button size="sm" variant="secondary" onClick={() => resolveConflicts("copy")}>
-                  Keep both
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setConflicts(null)}>
-                  Back
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => onClose()}>
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          );
-        }
-        return (
-          <div className="space-y-4">
+        ) : (
+          <>
             <div
               className={cn(
-                "flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed px-3 py-3 transition-colors",
-                isDropTarget ? "border-ring bg-accent/20" : "border-border/80 bg-muted/20",
+                "flex flex-col items-center gap-2 rounded-control border px-4 py-5.5 text-center transition-colors",
+                isDropTarget ? "border-ring bg-accent/20" : "border-border bg-muted/20",
               )}
               {...dropHandlers}
             >
-              <div className="min-w-0">
-                <p className="text-sm font-medium">Theme file</p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {fileName ?? "Drop T3 Code or VS Code .json files"}
-                </p>
+              <FileUpIcon className="size-5 text-muted-foreground" />
+              <p className="text-label">Drop T3 Code or VS Code .json files</p>
+              <div className="flex flex-wrap justify-center gap-2">
+                <Button disabled={isReading} size="sm" variant="secondary" onClick={openFilePicker}>
+                  {isReading ? "Reading…" : "Choose files"}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={openSearch}>
+                  <SearchIcon />
+                  Search community themes
+                </Button>
               </div>
-              {chooseButton()}
-              {fileInput}
+              <input
+                ref={fileInputRef}
+                accept=".json,application/json"
+                className="sr-only"
+                onChange={handleFileChange}
+                multiple
+                type="file"
+              />
             </div>
-            {editorSection()}
-            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <Button variant="ghost" onClick={() => onClose()}>
-                Cancel
-              </Button>
-              <Button disabled={!json.trim() || isReading} onClick={handleSubmit}>
-                <PlusIcon />
-                Add theme
-              </Button>
+            {staged.length > 0 ? (
+              <ul className="divide-y divide-border/50 rounded-control border border-border/60">
+                {staged.map((file) => (
+                  <StagedThemeRow
+                    file={file}
+                    key={file.fileName}
+                    onRemove={() => removeStaged(file.fileName)}
+                  />
+                ))}
+              </ul>
+            ) : null}
+            <div className="space-y-1.5">
+              <label className="text-meta text-muted-foreground" htmlFor="theme-json-editor">
+                Theme JSON
+              </label>
+              <ThemeJsonEditor
+                id="theme-json-editor"
+                onChange={(value) => {
+                  setJson(value);
+                  if (!value.trim()) setJsonSource(null);
+                }}
+                value={json}
+              />
             </div>
-          </div>
-        );
-      })()}
+          </>
+        )}
 
-      {error ? (
-        <Alert aria-live="polite" variant="error">
-          {error}
-        </Alert>
-      ) : null}
-    </DialogPanel>
+        {error ? (
+          <Alert aria-live="polite" variant="error">
+            {error}
+          </Alert>
+        ) : null}
+      </DialogPanel>
+      <DialogFooter className="items-center">
+        {searchSession !== null ? (
+          <Button variant="ghost" onClick={closeSearch}>
+            Back
+          </Button>
+        ) : conflicts ? (
+          <>
+            <Button variant="ghost" onClick={() => setConflicts(null)}>
+              Back
+            </Button>
+            <Button variant="secondary" onClick={() => resolveConflicts("copy")}>
+              Keep both
+            </Button>
+            <Button onClick={() => resolveConflicts("update")}>Update existing</Button>
+          </>
+        ) : (
+          <>
+            {footerNote ? (
+              <span className="text-meta text-muted-foreground sm:mr-auto">{footerNote}</span>
+            ) : null}
+            <Button variant="ghost" onClick={() => onClose()}>
+              Cancel
+            </Button>
+            <Button
+              disabled={isReading || (pending.themes.length === 0 && !pending.jsonError)}
+              onClick={handleSubmit}
+            >
+              <PlusIcon />
+              Add theme
+            </Button>
+          </>
+        )}
+      </DialogFooter>
+    </>
   );
 }

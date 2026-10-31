@@ -325,8 +325,14 @@ const workEntryKey = (entry: TimelineWorkEntry) => entry.id;
 
 export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
   const ctx = use(TimelineRowCtx);
-  const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup, pendingRequest } =
-    use(TimelineRowActivityCtx);
+  const {
+    isCompacting,
+    isPreparingWorktree,
+    backgroundWorktreeSetup,
+    pendingRequest,
+    worktreeSetupCardOwnsHeader,
+  } = use(TimelineRowActivityCtx);
+  if (worktreeSetupCardOwnsHeader) return null;
   const window = row.window;
   if (
     window?.compactCommand &&
@@ -979,7 +985,7 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
                   item={item}
                   itemKey={itemKey}
                   current={item === window.items.at(-1)}
-                  historyOpen={open}
+                  historyOpen
                 />
               </div>
             )}
@@ -1013,7 +1019,7 @@ function WorkingWindowView({ window, itemKey }: { window: WorkingWindow; itemKey
                   item={item}
                   itemKey={itemKey}
                   current={item === window.items.at(-1)}
-                  historyOpen={open}
+                  historyOpen={false}
                 />
               </div>
             ))}
