@@ -2016,6 +2016,42 @@ it.live("an agent action waits for an in-flight restore instead of racing ahead"
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("visibility failures retry hiding and prevent actions until restoration succeeds", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      yield* useFakeTimers;
+      const { broker, tabId } = yield* ready;
+      const cdp = contexts[0]!.sessions[0]!;
+      const events = recordWindowEvents(cdp);
+      const send = cdp.send.getMockImplementation()!;
+      let failHide = true;
+      let failRestore = true;
+      cdp.send.mockImplementation(async (method, input) => {
+        if (method === "Browser.setWindowBounds") {
+          const state = (input as { bounds: { windowState: string } }).bounds.windowState;
+          if ((state === "minimized" && failHide) || (state === "normal" && failRestore)) {
+            if (state === "minimized") failHide = false;
+            else failRestore = false;
+            throw new Error("window transition failed");
+          }
+        }
+        return send(method, input);
+      });
+      yield* advanceTime(60_000);
+      expect(events).toEqual([]);
+      yield* advanceTime(60_000);
+      expect(events).toEqual(["minimized"]);
+      const evaluate = () =>
+        broker.invoke({ scope, tabId, operation: "evaluate", input: { expression: "1" } });
+      const failed = yield* evaluate().pipe(Effect.exit);
+      expect(Exit.isFailure(failed)).toBe(true);
+      expect(events).toEqual(["minimized"]);
+      yield* evaluate();
+      expect(events).toEqual(["minimized", "normal", "agent evaluated"]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a tab the desktop renders is never hidden", () =>
   Effect.scoped(
     Effect.gen(function* () {

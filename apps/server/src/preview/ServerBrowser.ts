@@ -335,7 +335,6 @@ interface ServerTab {
   capturing: number;
   operations: number;
   hidden: boolean;
-  appliedHidden: boolean;
   visibilitySync: Promise<void> | null;
   hideTimer: ReturnType<typeof setTimeout> | null;
 }
@@ -866,7 +865,6 @@ const make = Effect.gen(function* () {
       capturing: 0,
       operations: 0,
       hidden: false,
-      appliedHidden: false,
       visibilitySync: null,
       hideTimer: null,
     };
@@ -1352,40 +1350,33 @@ const make = Effect.gen(function* () {
     tab.recordingStart !== null;
 
   // Serialize window changes so actions await a restore already started by a viewer.
-  const driveVisibility = async (tab: ServerTab) => {
-    if (tab.closing || tab.appliedHidden === tab.hidden) return;
-    const target = tab.hidden;
-    try {
-      await setPageHidden(tab.cdp, target);
-      tab.appliedHidden = target;
-    } catch {
-      // Leave appliedHidden unchanged; the next show/hide retries the change.
-    }
-  };
-
-  const syncVisibility = (tab: ServerTab): Promise<void> => {
-    tab.visibilitySync = (tab.visibilitySync ?? Promise.resolve()).then(() => driveVisibility(tab));
+  const setHidden = (tab: ServerTab, hidden: boolean): Promise<void> => {
+    tab.visibilitySync = (tab.visibilitySync ?? Promise.resolve())
+      .catch(constVoid)
+      .then(async () => {
+        if (tab.desktop || tab.closing || tab.hidden === hidden || (hidden && watched(tab))) return;
+        await setPageHidden(tab.cdp, hidden);
+        tab.hidden = hidden;
+      });
     return tab.visibilitySync;
   };
 
-  const hideWhenUnwatched = (tab: ServerTab) => {
+  const hideWhenUnwatched = (tab: ServerTab, retry = true) => {
     if (tab.hideTimer !== null) clearTimeout(tab.hideTimer);
     tab.hideTimer = null;
     if (tab.desktop || tab.closing || tab.hidden || watched(tab)) return;
     tab.hideTimer = setTimeout(() => {
       tab.hideTimer = null;
-      if (tab.closing || watched(tab)) return;
-      tab.hidden = true;
-      void syncVisibility(tab);
+      void setHidden(tab, true).catch(() => {
+        if (retry) hideWhenUnwatched(tab, false);
+      });
     }, UNWATCHED_TAB_HIDE_MS);
   };
 
   const show = async (tab: ServerTab) => {
     if (tab.hideTimer !== null) clearTimeout(tab.hideTimer);
     tab.hideTimer = null;
-    tab.hidden = false;
-    // Always await the chain: even when already shown, a hide may be in flight.
-    await syncVisibility(tab);
+    await setHidden(tab, false);
   };
 
   const whileShown = async <A>(tab: ServerTab, run: () => Promise<A>): Promise<A> => {
