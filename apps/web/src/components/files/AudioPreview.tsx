@@ -3,6 +3,7 @@ import { createContext, useContext, useRef, useState } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip";
+import { InlineButton } from "../ui/button";
 import { middleTruncateAttachmentName } from "../composerInlineChip";
 
 export const AudioPreviewUnmountContext = createContext<((audio: HTMLAudioElement) => void) | null>(
@@ -144,19 +145,20 @@ function AudioChip(props: AudioPreviewProps) {
       </ContextChipAction>
       <ContextChipLabel className={props.variant === "bubble" ? "flex-1" : "max-w-72"}>
         {open ? (
-          <button
-            type="button"
-            className="block max-w-full cursor-pointer truncate rounded-sm text-left focus-visible:outline-2 focus-visible:outline-foreground"
+          <InlineButton
+            className="block max-w-full"
             onClick={open}
             aria-label={`${props.failed && !props.onOpen ? "Retry" : "Preview"} ${props.name}`}
           >
-            {middleTruncateAttachmentName(props.name)}
-          </button>
+            <span className="block truncate text-left">
+              {middleTruncateAttachmentName(props.name)}
+            </span>
+          </InlineButton>
         ) : (
           middleTruncateAttachmentName(props.name)
         )}
       </ContextChipLabel>
-      <span dir="ltr" className="shrink-0 self-baseline text-3xs text-current">
+      <span dir="ltr" className="shrink-0 text-micro text-current">
         {props.failed
           ? "Unavailable"
           : loading

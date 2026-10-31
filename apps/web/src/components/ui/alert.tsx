@@ -4,26 +4,33 @@ import type * as React from "react";
 
 import { cn } from "~/lib/utils";
 
-const alertVariants = cva("relative rounded-xl border px-3.5 py-3 text-card-foreground text-sm", {
+// Status alerts are the tint recipe: the tone's hue as a faint gradient fill
+// and rim, with the icon in the tone and the text in the normal tiers.
+const alertVariants = cva("relative rounded-lg px-3.5 py-3 text-body text-foreground", {
   defaultVariants: {
     surface: "default",
     variant: "default",
   },
   variants: {
+    // "floating" lifts the alert over content; alert-floating tints from data-variant.
     surface: {
       default: "",
-      glass: "alert-glass",
+      floating: "alert-floating",
+      tray: "surface-tray! rounded-[18px] before:hidden [&_[data-slot=alert-description]]:font-medium [&_[data-slot=alert-icon]>svg]:size-3!",
     },
     variant: {
-      default: "bg-transparent dark:bg-input/32 [&_svg]:text-muted-foreground",
+      default:
+        "surface-tint [--surface-tint:var(--muted-foreground)] [&_svg]:text-muted-foreground",
       sidebar:
-        "rounded-lg border-sidebar-border bg-sidebar-control-surface px-2 py-1.5 text-[11px] leading-4 [&_[data-slot=alert-description]]:block [&_[data-slot=alert-description]]:text-sidebar-muted-foreground",
+        "rounded-lg border border-sidebar-border bg-sidebar-control-surface px-2 py-1.5 text-[11px] leading-4 [&_[data-slot=alert-description]]:block [&_[data-slot=alert-description]]:text-sidebar-muted-foreground",
+      // Bare sidebar text, for transient confirmations that should not read as a card.
+      "sidebar-plain":
+        "px-(--sidebar-row-content-inset) py-1.5 text-[11px] leading-4 [&_[data-slot=alert-description]]:block [&_[data-slot=alert-description]]:text-sidebar-muted-foreground",
       error:
-        "border-error/32 bg-error-surface text-error-foreground [&_[data-slot=alert-description]]:text-error-foreground/80 [&_svg]:text-error",
-      info: "border-info/32 bg-info/4 [&_svg]:text-info",
-      success: "border-success/32 bg-success/4 [&_svg]:text-success",
+        "surface-tint [--surface-tint:var(--error)] [--surface-tint-fill:var(--error-alert-fill)] [--surface-tint-rim:var(--error-alert-rim)] [&_svg]:text-error-foreground",
+      info: "surface-tint [--surface-tint:var(--info)] [--surface-tint-fill:var(--info-alert-fill)] [--surface-tint-rim:var(--info-alert-rim)] [&_svg]:text-info-foreground",
       warning:
-        "border-warning/32 bg-warning-surface text-warning-foreground [&_[data-slot=alert-description]]:text-warning-foreground/80 [&_svg]:text-warning",
+        "surface-tint [--surface-tint:var(--warning)] [--surface-tint-fill:var(--warning-alert-fill)] [--surface-tint-rim:var(--warning-alert-rim)] [&_svg]:text-warning-foreground",
     },
   },
 });
@@ -96,11 +103,12 @@ function Alert({
       >
         {icon.length > 0 && (
           <div
+            data-slot="alert-icon"
             className={cn(
               "flex shrink-0 items-center justify-center",
               controlAlignment === "first-line"
-                ? "h-lh w-4 [&>svg]:size-4"
-                : "size-4 [&>svg]:size-full",
+                ? "h-lh w-4 [&>svg]:size-3.5"
+                : "h-lh w-4 self-start [&>svg]:size-3.5",
             )}
           >
             {icon}
@@ -125,7 +133,13 @@ function Alert({
 }
 
 function AlertTitle({ className, ...props }: React.ComponentProps<"div">) {
-  return <div className={cn("font-medium", className)} data-slot="alert-title" {...props} />;
+  return (
+    <div
+      className={cn("text-label text-foreground", className)}
+      data-slot="alert-title"
+      {...props}
+    />
+  );
 }
 
 function AlertDescription({ className, ...props }: React.ComponentProps<"div">) {

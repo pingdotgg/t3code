@@ -85,7 +85,7 @@ export function DeviceStreamView(props: {
   readonly platform: DevicePlatform;
   readonly deviceId: string;
   readonly deviceName?: string;
-  readonly deviceDescription?: string;
+  readonly deviceDescription?: ReactNode;
   readonly visible: boolean;
   readonly hostId: string;
   readonly allowPhoneView?: boolean;
@@ -485,7 +485,7 @@ export function DeviceStreamView(props: {
               {status === "error" ? (
                 <Button
                   size="sm"
-                  variant="outline"
+                  variant="secondary"
                   onClick={() => {
                     // An expired ticket surfaces as unauthorized on restart and
                     // refreshes access, which starts a new session.

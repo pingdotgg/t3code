@@ -61,11 +61,11 @@ export function DiffCommentAnnotation({
     return (
       <div
         data-diff-comment-annotation
-        className="group/comment flex min-w-0 items-start gap-2.5 border-s-2 border-primary/55 bg-primary/[0.045] px-3 py-2.5 font-sans text-foreground selection:bg-primary selection:text-primary-foreground"
+        className="group/comment flex min-w-0 items-start gap-2.5 border-s-2 border-info/55 bg-info/[0.045] px-3 py-2.5 font-sans text-foreground selection:bg-primary selection:text-primary-foreground"
         contentEditable={false}
         onPointerDown={(event) => event.stopPropagation()}
       >
-        <MessageCircle className="size-3.5 h-5 shrink-0 text-primary/70" aria-hidden="true" />
+        <MessageCircle className="size-3.5 h-5 shrink-0 text-info-foreground" aria-hidden="true" />
         <p
           className="min-w-0 flex-1 whitespace-pre-wrap text-sm leading-5"
           dir={textDirection(displayedText)}
@@ -92,7 +92,7 @@ export function DiffCommentAnnotation({
   return (
     <div
       data-diff-comment-annotation
-      className="px-3 py-2 font-sans text-foreground caret-foreground selection:bg-primary selection:text-primary-foreground"
+      className="relative rounded-card bg-linear-to-b from-(--popover-top) to-(--popover-bottom) px-3 py-2 font-sans text-foreground shadow-(--popover-shadow) [--surface-tint-rim:var(--diff-comment-rim,var(--popover-rim))] before:pointer-events-none before:absolute before:inset-0 before:rounded-[inherit] before:surface-tint-rim caret-foreground selection:bg-primary selection:text-primary-foreground"
       contentEditable={false}
       onPointerDown={(event) => event.stopPropagation()}
     >
@@ -121,14 +121,14 @@ export function DiffCommentAnnotation({
         }}
       />
       <div className="mt-1.5 flex items-center gap-1">
-        <span className="mr-auto text-3xs text-muted-foreground/70">⌘/Ctrl Enter to send</span>
+        <span className="mr-auto text-3xs text-dim-foreground">⌘/Ctrl Enter to send</span>
         <Button variant="ghost-muted" size="xs" onClick={onCancel}>
           Cancel
         </Button>
         {secondaryAction ? (
           <Button
             size="xs"
-            variant="outline"
+            variant="secondary"
             disabled={!secondaryAction.allowEmpty && !trimmedText}
             onClick={() => secondaryAction.onAction(trimmedText)}
           >
