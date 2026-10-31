@@ -296,9 +296,36 @@ it.live.skipIf(!windowsHost)("opens Windows folders through the default shell ha
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-for (const replacement of ["none", "Directory", "Drive", "Folder"]) {
+for (const [replacement, verb, handler, target, expected] of [
+  ["none", "none", "", "C:/repo/file.txt", 'explorer.exe /select,"C:\\repo\\file.txt"'],
+  ["Directory", "openindopus", "dopusrt.exe", "C:/repo/file.txt", "shell:C:\\repo"],
+  ["Folder", "openindopus", "dopusrt.exe", "C:/repo/file.txt", "shell:C:\\repo"],
+  [
+    "Folder",
+    "open",
+    '"C:\\Windows\\explorer.exe"',
+    "C:/repo/file.txt",
+    'explorer.exe /select,"C:\\repo\\file.txt"',
+  ],
+  ["Folder", "open", "filepilot.exe", "C:/repo/file.txt", "shell:C:\\repo"],
+  [
+    "Folder",
+    "open",
+    "ExplorerDelegate",
+    "C:/repo/file.txt",
+    'explorer.exe /select,"C:\\repo\\file.txt"',
+  ],
+  [
+    "Drive",
+    "openindopus",
+    "dopusrt.exe",
+    "C:/repo/file.txt",
+    'explorer.exe /select,"C:\\repo\\file.txt"',
+  ],
+  ["Drive", "openindopus", "dopusrt.exe", "C:/file.txt", "shell:C:\\"],
+] as const) {
   it.live.skipIf(!windowsHost)(
-    `reveals Windows files with the ${replacement} replacement registration`,
+    `reveals ${target} with ${replacement}/${verb} handled by ${handler}`,
     () =>
       Effect.gen(function* () {
         let spawned: ChildProcess.StandardCommand | undefined;
@@ -306,7 +333,7 @@ for (const replacement of ["none", "Directory", "Drive", "Folder"]) {
           const launcher = yield* ExternalLauncher.ExternalLauncher;
           yield* launcher.launchEditor({
             editor: "file-manager",
-            cwd: "C:/repo/file.txt",
+            cwd: target,
             reveal: true,
           });
         }).pipe(
@@ -322,7 +349,7 @@ for (const replacement of ["none", "Directory", "Drive", "Folder"]) {
         );
         assert.ok(spawned);
         const source = Buffer.from(spawned.args.at(-1) ?? "", "base64").toString("utf16le");
-        const stubs = `function Get-ItemProperty { param($LiteralPath, $ErrorAction) @{ '(default)' = if ($LiteralPath -eq 'Registry::HKEY_CLASSES_ROOT\\${replacement}\\shell') { 'openindopus' } else { 'none' } } }; function Invoke-Item { param($LiteralPath) Write-Output "shell:$LiteralPath" }; function Start-Process { param($FilePath, $ArgumentList) Write-Output "$FilePath $ArgumentList" }; `;
+        const stubs = `function Get-ItemProperty { param($LiteralPath, $ErrorAction) @{ '(default)' = if ($LiteralPath -eq 'Registry::HKEY_CLASSES_ROOT\\${replacement}\\shell') { '${verb}' } elseif ($LiteralPath -eq 'Registry::HKEY_CLASSES_ROOT\\${replacement}\\shell\\${verb}\\command') { '${handler}' } else { 'none' }; DelegateExecute = if ('${handler}' -eq 'ExplorerDelegate') { '{11dbb47c-a525-400b-9e80-a54615a090c0}' } else { '' } } }; function Invoke-Item { param($LiteralPath) Write-Output "shell:$LiteralPath" }; function Start-Process { param($FilePath, $ArgumentList) Write-Output "$FilePath $ArgumentList" }; `;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const output = yield* spawner.string(
           ChildProcess.make(spawned.command, [
@@ -330,10 +357,7 @@ for (const replacement of ["none", "Directory", "Drive", "Folder"]) {
             Buffer.from(stubs + source, "utf16le").toString("base64"),
           ]),
         );
-        assert.equal(
-          output.trim(),
-          replacement === "none" ? 'explorer.exe /select,"C:\\repo\\file.txt"' : "shell:C:\\repo",
-        );
+        assert.equal(output.trim(), expected);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 }
@@ -385,9 +409,14 @@ it.effect.skipIf(windowsHost)(
       assert.equal(spawned.options.detached, true);
       const encodedCommand = spawned.args[spawned.args.length - 1] ?? "";
       const decodedCommand = Buffer.from(encodedCommand, "base64").toString("utf16le");
-      assert.equal(
+      assert.include(decodedCommand, "'Directory', 'Folder'");
+      assert.include(
         decodedCommand,
-        "$ProgressPreference = 'SilentlyContinue'; $folderVerb = 'Directory', 'Drive', 'Folder' | ForEach-Object { (Get-ItemProperty -LiteralPath \"Registry::HKEY_CLASSES_ROOT\\$_\\shell\" -ErrorAction SilentlyContinue).'(default)' } | Where-Object { $_ -and $_ -ne 'none' }; if ($folderVerb) { Invoke-Item -LiteralPath '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media' } else { Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media\\clip|draft.mp4' + '\"') }",
+        "Invoke-Item -LiteralPath '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media'",
+      );
+      assert.include(
+        decodedCommand,
+        "'\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media\\clip|draft.mp4'",
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
