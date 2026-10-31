@@ -134,7 +134,8 @@ export interface EnvironmentSupervisorOptions {
   readonly initiallyDesired?: boolean;
   readonly learnRoutes?: (input: {
     readonly activeRoute: ConnectionRoute;
-    readonly reported: ReadonlyArray<ReportedEndpoint>;
+    readonly reported: ReadonlyArray<ReportedEndpoint> | undefined;
+    readonly label: string;
   }) => Effect.Effect<Option.Option<ConnectionCatalogEntry>>;
 }
 
@@ -334,15 +335,18 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     learn: NonNullable<EnvironmentSupervisorOptions["learnRoutes"]>,
     lease: ConnectionDriver.EnvironmentConnectionLease,
   ) {
-    const config = yield* lease.session.initialConfig.pipe(Effect.option);
-    const reported = Option.getOrUndefined(config)?.directEndpoints;
-    if (reported === undefined) return;
+    const config = Option.getOrUndefined(yield* lease.session.initialConfig.pipe(Effect.option));
+    if (config === undefined) return;
     const activeId = connectionRouteId(lease.prepared.target);
     const activeRoute = (yield* currentRoutes).find(
       (route) => connectionRouteId(route.target) === activeId,
     );
     if (activeRoute === undefined) return;
-    const updated = yield* learn({ activeRoute, reported });
+    const updated = yield* learn({
+      activeRoute,
+      reported: config.directEndpoints,
+      label: config.environment.label,
+    });
     if (Option.isSome(updated)) {
       yield* Ref.set(currentEntry, updated.value);
       yield* requestBetterRouteCheck(lease);

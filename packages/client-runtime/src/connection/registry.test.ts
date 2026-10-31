@@ -416,7 +416,10 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
           initialConfig:
             options?.directEndpoints === undefined
               ? Effect.die(new Error("Config is not used by registry tests."))
-              : Effect.succeed({ directEndpoints: options.directEndpoints } as ServerConfig),
+              : Effect.succeed({
+                  directEndpoints: options.directEndpoints,
+                  environment: { label: target.label },
+                } as ServerConfig),
           subscribeServerConfig: () =>
             Stream.die(new Error("Config is not used by registry tests.")),
           ready: Effect.void,

@@ -4,11 +4,12 @@ import * as Option from "effect/Option";
 
 import {
   BearerConnectionProfile,
+  SshConnectionProfile,
   type ConnectionCatalogEntry,
   type ConnectionRoute,
 } from "./catalog.ts";
 import { pullRequestRoutingConnectionKey } from "./pullRequestRoutingPermissions.ts";
-import { BearerConnectionTarget, RelayConnectionTarget } from "./model.ts";
+import { BearerConnectionTarget, RelayConnectionTarget, SshConnectionTarget } from "./model.ts";
 import {
   connectionRouteId,
   connectionRouteKind,
@@ -110,6 +111,7 @@ describe("learned routes", () => {
 
   it("learns a LAN address over T3 Connect, ahead of it, using the T3 Connect credential", () => {
     const routes = mergeLearnedRoutes({
+      label: "Desk",
       entry: relayOnly,
       activeRoute: RELAY,
       reported: [{ httpBaseUrl: "http://192.168.1.10:3773/" }],
@@ -125,6 +127,7 @@ describe("learned routes", () => {
 
   it("replaces a learned LAN address when the server reports a new one", () => {
     const first = mergeLearnedRoutes({
+      label: "Desk",
       entry: relayOnly,
       activeRoute: RELAY,
       reported: [{ httpBaseUrl: "http://192.168.1.10:3773/" }],
@@ -137,6 +140,7 @@ describe("learned routes", () => {
       alternateRoutes: first.slice(1),
     };
     const moved = mergeLearnedRoutes({
+      label: "Desk",
       entry,
       activeRoute: RELAY,
       reported: [{ httpBaseUrl: "http://10.0.0.42:3773/" }],
@@ -148,6 +152,7 @@ describe("learned routes", () => {
   it("keeps a learned route where the user moved it while the server reports it", () => {
     const lan = { httpBaseUrl: "http://192.168.1.10:3773/" };
     const first = mergeLearnedRoutes({
+      label: "Desk",
       entry: relayOnly,
       activeRoute: RELAY,
       reported: [lan],
@@ -156,6 +161,7 @@ describe("learned routes", () => {
     const reordered = entryWithRoutes(relayOnly, [first[1]!, first[0]!]);
     expect(
       mergeLearnedRoutes({
+        label: "Desk",
         entry: reordered,
         activeRoute: RELAY,
         reported: [lan],
@@ -163,6 +169,7 @@ describe("learned routes", () => {
       }),
     ).toBeNull();
     const next = mergeLearnedRoutes({
+      label: "Desk",
       entry: reordered,
       activeRoute: RELAY,
       reported: [lan, { httpBaseUrl: "http://100.101.102.103:3773/" }],
@@ -179,6 +186,7 @@ describe("learned routes", () => {
     const tailscale = { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" };
     const mesh = { kind: "lan", httpBaseUrl: "http://100.96.0.1:3773/" };
     const first = mergeLearnedRoutes({
+      label: "Desk",
       entry: relayOnly,
       activeRoute: RELAY,
       reported: [tailscale, mesh],
@@ -187,6 +195,7 @@ describe("learned routes", () => {
     expect(first.map(connectionRouteLabel)).toEqual(["Tailscale", "VPN", "T3 Connect"]);
 
     const corrected = mergeLearnedRoutes({
+      label: "Desk",
       entry: entryWithRoutes(relayOnly, first),
       activeRoute: RELAY,
       reported: [{ ...tailscale, kind: "lan" }, mesh],
@@ -196,6 +205,7 @@ describe("learned routes", () => {
     expect(corrected.map(connectionRouteLabel)).toEqual(["VPN", "VPN", "T3 Connect"]);
     expect(
       mergeLearnedRoutes({
+        label: "Desk",
         entry: entryWithRoutes(relayOnly, corrected),
         activeRoute: RELAY,
         reported: [{ ...tailscale, kind: "lan" }, mesh],
@@ -213,6 +223,7 @@ describe("learned routes", () => {
     };
     expect(
       mergeLearnedRoutes({
+        label: "Desk",
         entry,
         activeRoute: RELAY,
         reported: [{ httpBaseUrl: "http://192.168.1.10:3773" }],
@@ -220,8 +231,69 @@ describe("learned routes", () => {
       }),
     ).toBeNull();
     expect(
-      mergeLearnedRoutes({ entry, activeRoute: RELAY, reported: [], allowInsecure: true }),
+      mergeLearnedRoutes({
+        label: "Desk",
+        entry,
+        activeRoute: RELAY,
+        reported: [],
+        allowInsecure: true,
+      }),
     ).toBeNull();
+  });
+
+  it("renames every saved route when the server reports a new label", () => {
+    const entry: ConnectionCatalogEntry = {
+      target: LAN.target,
+      profile: LAN.profile,
+      alternateRoutes: [RELAY],
+      enabled: true,
+    };
+    const routes = mergeLearnedRoutes({
+      label: "Studio",
+      entry,
+      activeRoute: RELAY,
+      reported: [{ httpBaseUrl: "http://192.168.1.10:3773" }],
+      allowInsecure: true,
+    });
+    expect(ids(routes)).toEqual(["lan", "relay"]);
+    expect(routes!.map((route) => route.target.label)).toEqual(["Studio", "Studio"]);
+    expect(profileOf(routes![0]!).label).toBe("Studio");
+
+    // Without an endpoint report, learned routes stay as saved.
+    const unreported = mergeLearnedRoutes({
+      label: "Studio",
+      entry: entryWithRoutes(entry, [LAN, learned("old", "http://192.168.1.20:3773/"), RELAY]),
+      activeRoute: RELAY,
+      reported: undefined,
+      allowInsecure: true,
+    });
+    expect(ids(unreported)).toEqual(["lan", "old", "relay"]);
+    expect(unreported!.map((route) => route.target.label)).toEqual(["Studio", "Studio", "Studio"]);
+
+    const ssh: ConnectionRoute = {
+      target: new SshConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Desk",
+        connectionId: "ssh",
+      }),
+      profile: Option.some(
+        new SshConnectionProfile({
+          connectionId: "ssh",
+          environmentId: ENVIRONMENT_ID,
+          label: "Desk",
+          target: { alias: "desk", hostname: "desk", username: null, port: null },
+        }),
+      ),
+    };
+    const overSsh = mergeLearnedRoutes({
+      label: "Studio",
+      entry: { target: ssh.target, profile: ssh.profile, enabled: true },
+      activeRoute: ssh,
+      reported: [],
+      allowInsecure: true,
+    });
+    expect(ids(overSsh)).toEqual(["ssh"]);
+    expect(profileOf(overSsh![0]!).label).toBe("Studio");
   });
 
   it("borrows the paired token when learned over a bearer route", () => {
@@ -231,6 +303,7 @@ describe("learned routes", () => {
       profile: LAN.profile,
     };
     const routes = mergeLearnedRoutes({
+      label: "Desk",
       entry,
       activeRoute: LAN,
       reported: [{ httpBaseUrl: "https://desk.tail1234.ts.net/" }],
@@ -244,6 +317,7 @@ describe("learned routes", () => {
   it("keeps a token paired over HTTPS off plain HTTP addresses outside the tailnet", () => {
     const entry = entryWithRoutes(relayOnly, [PUBLIC, RELAY]);
     const routes = mergeLearnedRoutes({
+      label: "Desk",
       entry,
       activeRoute: PUBLIC,
       reported: [
@@ -268,6 +342,7 @@ describe("learned routes", () => {
     expect(sendsTokenInClear([stale, PUBLIC, RELAY], stale)).toBe(true);
     expect(ids(usableRoutes(entry))).toEqual(["public", "relay"]);
     const routes = mergeLearnedRoutes({
+      label: "Desk",
       entry,
       activeRoute: RELAY,
       reported: [{ kind: "lan", httpBaseUrl: `${lanOrigin}/` }],
@@ -282,6 +357,7 @@ describe("learned routes", () => {
     const lanOrigin = "http://10.0.0.42:3773";
     const overLan = learned(`learned:${ENVIRONMENT_ID}:${lanOrigin}@lan`, `${lanOrigin}/`);
     const routes = mergeLearnedRoutes({
+      label: "Desk",
       entry: entryWithRoutes(relayOnly, [overLan, LAN, PUBLIC, RELAY]),
       activeRoute: PUBLIC,
       reported: [{ kind: "lan", httpBaseUrl: `${lanOrigin}/` }],
@@ -293,6 +369,7 @@ describe("learned routes", () => {
   it("learns plain HTTP LAN addresses over a token paired over plain HTTP", () => {
     const entry = entryWithRoutes(relayOnly, [LAN, RELAY]);
     const routes = mergeLearnedRoutes({
+      label: "Desk",
       entry,
       activeRoute: LAN,
       reported: [{ kind: "lan", httpBaseUrl: "http://10.0.0.42:3773/" }],
@@ -308,6 +385,7 @@ describe("learned routes", () => {
   it("skips plain HTTP from an HTTPS page and never learns loopback", () => {
     expect(
       mergeLearnedRoutes({
+        label: "Desk",
         entry: relayOnly,
         activeRoute: RELAY,
         reported: [
@@ -321,6 +399,7 @@ describe("learned routes", () => {
 
   it("removes learned routes along with the route whose credential they borrow", () => {
     const overRelay = mergeLearnedRoutes({
+      label: "Desk",
       entry: relayOnly,
       activeRoute: RELAY,
       reported: [{ httpBaseUrl: "http://192.168.1.10:3773/" }],
@@ -335,6 +414,7 @@ describe("learned routes", () => {
       alternateRoutes: [RELAY],
     };
     const overLan = mergeLearnedRoutes({
+      label: "Desk",
       entry: paired,
       activeRoute: LAN,
       reported: [{ httpBaseUrl: "https://desk.tail1234.ts.net/" }],
@@ -346,6 +426,7 @@ describe("learned routes", () => {
 
   it("counts an environment reached only through T3 Connect as removed with it", () => {
     const learned = mergeLearnedRoutes({
+      label: "Desk",
       entry: relayOnly,
       activeRoute: RELAY,
       reported: [{ httpBaseUrl: "http://192.168.1.10:3773/" }],
@@ -358,6 +439,7 @@ describe("learned routes", () => {
 
   it("keeps pull request routing trust when a route is learned", () => {
     const learned = mergeLearnedRoutes({
+      label: "Desk",
       entry: relayOnly,
       activeRoute: RELAY,
       reported: [{ httpBaseUrl: "http://192.168.1.10:3773/" }],
@@ -376,6 +458,7 @@ describe("learned routes", () => {
 
   it("keeps the T3 Connect credential when learning over a learned T3 Connect route", () => {
     const first = mergeLearnedRoutes({
+      label: "Desk",
       entry: relayOnly,
       activeRoute: RELAY,
       reported: [{ httpBaseUrl: "http://192.168.1.10:3773/" }],
@@ -389,6 +472,7 @@ describe("learned routes", () => {
       alternateRoutes: first.slice(1),
     };
     const next = mergeLearnedRoutes({
+      label: "Desk",
       entry,
       activeRoute: learnedLan,
       reported: [
@@ -405,6 +489,7 @@ describe("learned routes", () => {
 
   it("saves a scheme change on the same host as a new address", () => {
     const first = mergeLearnedRoutes({
+      label: "Desk",
       entry: relayOnly,
       activeRoute: RELAY,
       reported: [{ httpBaseUrl: "http://desk.local:3773/" }],
@@ -417,6 +502,7 @@ describe("learned routes", () => {
       alternateRoutes: first.slice(1),
     };
     const moved = mergeLearnedRoutes({
+      label: "Desk",
       entry,
       activeRoute: RELAY,
       reported: [{ httpBaseUrl: "https://desk.local:3773/" }],

@@ -11,8 +11,15 @@ import {
   BearerConnectionProfile,
   type ConnectionCatalogEntry,
   type ConnectionRoute,
+  SshConnectionProfile,
 } from "./catalog.ts";
-import { BearerConnectionTarget, type ConnectionTarget } from "./model.ts";
+import {
+  BearerConnectionTarget,
+  type ConnectionTarget,
+  PrimaryConnectionTarget,
+  RelayConnectionTarget,
+  SshConnectionTarget,
+} from "./model.ts";
 
 export type ConnectionRouteKind =
   | "relay"
@@ -201,15 +208,22 @@ export function hasRelayRoute(
 export function mergeLearnedRoutes(input: {
   readonly entry: ConnectionCatalogEntry;
   readonly activeRoute: ConnectionRoute;
-  readonly reported: ReadonlyArray<ReportedEndpoint>;
+  /** Undefined when the server sends no endpoint report, which keeps learned routes as saved. */
+  readonly reported: ReadonlyArray<ReportedEndpoint> | undefined;
+  /** The label the server reports now, which replaces the one saved at pairing. */
+  readonly label: string;
   /** Plain HTTP routes are unusable from an HTTPS page (mixed content). */
   readonly allowInsecure: boolean;
 }): ReadonlyArray<ConnectionRoute> | null {
-  const { entry } = input;
+  const { entry, label } = input;
   const active = input.activeRoute.target;
-  const saved = connectionRoutes(entry);
-  if (active._tag !== "RelayConnectionTarget" && active._tag !== "BearerConnectionTarget") {
-    return null;
+  const previous = connectionRoutes(entry);
+  const saved = previous.map((route) => withLabel(route, label));
+  if (
+    input.reported === undefined ||
+    (active._tag !== "RelayConnectionTarget" && active._tag !== "BearerConnectionTarget")
+  ) {
+    return routesSignature(previous) === routesSignature(saved) ? null : saved;
   }
   const activeProfile = Option.getOrNull(input.activeRoute.profile);
   const authorization =
@@ -279,14 +293,14 @@ export function mergeLearnedRoutes(input: {
     next = insertRoute(next, {
       target: new BearerConnectionTarget({
         environmentId: entry.target.environmentId,
-        label: entry.target.label,
+        label,
         connectionId,
       }),
       profile: Option.some(
         new BearerConnectionProfile({
           connectionId,
           environmentId: entry.target.environmentId,
-          label: entry.target.label,
+          label,
           httpBaseUrl,
           wsBaseUrl: `${url.protocol === "https:" ? "wss:" : "ws:"}//${url.host}/`,
           learned: true,
@@ -296,14 +310,45 @@ export function mergeLearnedRoutes(input: {
       ),
     });
   }
-  const signature = (routes: ReadonlyArray<ConnectionRoute>) =>
-    routes
-      .map(
-        (route) =>
-          `${connectionRouteId(route.target)} ${routeHttpBaseUrl(route) ?? ""} ${connectionRouteKind(route)}`,
-      )
-      .join("\n");
-  return signature(saved) === signature(next) ? null : next;
+  return routesSignature(previous) === routesSignature(next) ? null : next;
+}
+
+function routesSignature(routes: ReadonlyArray<ConnectionRoute>): string {
+  return routes
+    .map(
+      (route) =>
+        `${connectionRouteId(route.target)} ${routeHttpBaseUrl(route) ?? ""} ${connectionRouteKind(route)} ${route.target.label}`,
+    )
+    .join("\n");
+}
+
+function withLabel(route: ConnectionRoute, label: string): ConnectionRoute {
+  if (route.target.label === label) return route;
+  const profile = Option.getOrNull(route.profile);
+  return {
+    target: relabelTarget(route.target, label),
+    profile:
+      profile === null
+        ? route.profile
+        : Option.some(
+            profile._tag === "BearerConnectionProfile"
+              ? new BearerConnectionProfile({ ...profile, label })
+              : new SshConnectionProfile({ ...profile, label }),
+          ),
+  };
+}
+
+function relabelTarget(target: ConnectionTarget, label: string): ConnectionTarget {
+  switch (target._tag) {
+    case "PrimaryConnectionTarget":
+      return new PrimaryConnectionTarget({ ...target, label });
+    case "BearerConnectionTarget":
+      return new BearerConnectionTarget({ ...target, label });
+    case "RelayConnectionTarget":
+      return new RelayConnectionTarget({ ...target, label });
+    case "SshConnectionTarget":
+      return new SshConnectionTarget({ ...target, label });
+  }
 }
 
 // A paired token goes to a plain HTTP address outside the tailnet only when
