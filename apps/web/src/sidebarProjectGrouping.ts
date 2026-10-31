@@ -181,6 +181,15 @@ export function buildSidebarProjectSnapshots(input: {
   });
 }
 
+export function buildSettingsProjectSnapshots(
+  input: Omit<Parameters<typeof buildSidebarProjectSnapshots>[0], "groupScratchProjects">,
+): SidebarProjectSnapshot[] {
+  return buildSidebarProjectSnapshots({
+    ...input,
+    groupScratchProjects: true,
+  });
+}
+
 export function buildSidebarProjectPickerEntries(input: {
   groups: ReadonlyArray<SidebarProjectSnapshot>;
   preferredProjectRef: ScopedProjectRef | null;
