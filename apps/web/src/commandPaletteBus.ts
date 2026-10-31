@@ -1,4 +1,6 @@
+import { openLayerMatches } from "./lib/openLayers";
 import type { EnvironmentId, PullRequestLinkedThreadsResult } from "@t3tools/contracts";
+import type { Project } from "./types";
 
 import { dispatchCommandPalette, isCommandPaletteMounted } from "./commandPaletteStore";
 
@@ -11,6 +13,7 @@ export interface CommandPaletteOpenDetail {
   readonly open?: "add-project" | "new-thread-in";
   readonly query?: string;
   readonly linkedThreads?: CommandPaletteLinkedThreads;
+  readonly onSelectProject?: (project: Project) => void;
 }
 
 export function openCommandPalette(detail: CommandPaletteOpenDetail = {}): void {
@@ -18,7 +21,10 @@ export function openCommandPalette(detail: CommandPaletteOpenDetail = {}): void 
   // store, it would pop a stale palette once the app shell mounts.
   if (!isCommandPaletteMounted()) return;
   if (detail.open === "new-thread-in") {
-    dispatchCommandPalette({ _tag: "OpenNewThreadIn" });
+    dispatchCommandPalette({
+      _tag: "OpenNewThreadIn",
+      ...(detail.onSelectProject ? { onSelectProject: detail.onSelectProject } : {}),
+    });
   } else if (detail.open === "add-project") {
     dispatchCommandPalette({ _tag: "OpenAddProject" });
   } else if (detail.query !== undefined) {
@@ -34,7 +40,5 @@ export function openCommandPalette(detail: CommandPaletteOpenDetail = {}): void 
 
 /** True while the palette popup is on screen, including its closing animation. */
 export function isCommandPaletteOpen(): boolean {
-  return (
-    typeof document !== "undefined" && document.querySelector("[data-command-palette]") !== null
-  );
+  return openLayerMatches("[data-command-palette]");
 }

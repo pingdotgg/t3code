@@ -182,7 +182,10 @@ function ProjectFaviconImage({
         <img
           src={displayedSrc}
           alt=""
-          className={cn("size-3.5 shrink-0 rounded-[25%] object-contain", className)}
+          className={cn(
+            "size-3.5 shrink-0 rounded-[25%] object-contain outline -outline-offset-1 outline-(--project-icon-rim)",
+            className,
+          )}
           onError={() => handleLoadError(displayedSrc)}
         />
       ) : null}
