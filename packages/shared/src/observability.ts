@@ -548,13 +548,21 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
 });
 
 // Effect's HTTP errors, including failed upgrades, put the request URL in their message.
+export function redactCauseCredentials(cause: Cause.Cause<unknown>): Cause.Cause<unknown> {
+  if (cause.reasons.length === 0 || Cause.hasInterruptsOnly(cause)) {
+    return cause;
+  }
+  const pretty = Cause.pretty(cause);
+  const redacted = redactUrlCredentials(pretty);
+  return redacted === pretty ? cause : Cause.die(new Error(redacted));
+}
+
 function redactExitCredentials(exit: Exit.Exit<unknown, unknown>): Exit.Exit<unknown, unknown> {
-  if (ExitRuntime.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)) {
+  if (ExitRuntime.isSuccess(exit)) {
     return exit;
   }
-  const pretty = Cause.pretty(exit.cause);
-  const redacted = redactUrlCredentials(pretty);
-  return redacted === pretty ? exit : ExitRuntime.die(new Error(redacted));
+  const cause = redactCauseCredentials(exit.cause);
+  return cause === exit.cause ? exit : ExitRuntime.failCause(cause);
 }
 
 class LocalFileSpan implements Tracer.Span {
