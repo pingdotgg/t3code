@@ -368,6 +368,20 @@ describe("LinearService", () => {
     }).pipe(Effect.provide(makeLayer(harness)));
   });
 
+  it.effect("a manual refresh re-reads the team cards and their counts", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const linear = yield* LinearService.LinearService;
+      yield* linear.connect({ apiKey: KEY });
+      yield* linear.teams;
+      yield* linear.teams;
+      assert.strictEqual(count(harness, "Teams"), 1);
+      yield* linear.refresh;
+      yield* linear.teams;
+      assert.strictEqual(count(harness, "Teams"), 2);
+    }).pipe(Effect.provide(makeLayer(harness)));
+  });
+
   it.effect("deduplicates concurrent identical reads", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

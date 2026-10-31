@@ -159,6 +159,8 @@ export const layer = Layer.effect(
         subIssuesCache.expire,
         searchCache.expire,
         milestonesCache.expire,
+        // Team cards carry per-viewer issue counts, so they go stale with the issues.
+        teamsCache.expire,
       ],
       { discard: true },
     );
