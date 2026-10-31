@@ -126,7 +126,7 @@ function trimNonEmpty(value: string | null | undefined): string | undefined {
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }
 
-function readUserLoginShell(): string | undefined {
+export function readUserLoginShell(): string | undefined {
   try {
     return trimNonEmpty(NodeOS.userInfo().shell);
   } catch {
@@ -965,3 +965,65 @@ export const resolveWindowsEnvironment = Effect.fn("shell.resolveWindowsEnvironm
     ? { ...baselinePatch, ...profiledPatch }
     : baselinePatch;
 });
+
+interface PathSetupInput {
+  readonly directory: string;
+  readonly home: string;
+  readonly shell: string | undefined;
+  readonly platform: NodeJS.Platform;
+  /** `XDG_CONFIG_HOME`, where fish reads its startup file when set. */
+  readonly configHome?: string | undefined;
+  /** `ZDOTDIR`, where zsh reads `.zshrc` when set. */
+  readonly zdotdir?: string | undefined;
+}
+
+/**
+ * The startup file (`~/...`, or absolute under `configHome`) and line that put `directory` last on
+ * PATH for new zsh, bash, or fish terminals, so it never shadows another `t3`. Undefined on Windows (writing PATH there would flatten the registry's
+ * `%VAR%` entries), for other shells, macOS bash, or unsafe paths.
+ */
+export function pathSetup(
+  input: PathSetupInput,
+): { readonly file: string; readonly line: string } | undefined {
+  // A relative folder on PATH would follow the working directory into any checkout.
+  if (input.platform === "win32" || !input.directory.startsWith("/")) return undefined;
+  const underHome = input.directory.startsWith(`${input.home}/`);
+  const rest = underHome ? input.directory.slice(input.home.length) : input.directory;
+  if (!/^[\w./-]+$/.test(rest)) return undefined;
+  const directory = underHome ? `$HOME${rest}` : rest;
+  const shell = input.shell?.split("/").pop();
+  // A set folder the shell reads from replaces the default; one unsafe to write means no setup,
+  // since the default file would never be read.
+  const readFrom = (value: string | undefined, fallback: string) =>
+    !value ? fallback : value.startsWith("/") && /^[\w./-]+$/.test(value) ? value : undefined;
+  if (shell === "fish") {
+    const configHome = readFrom(input.configHome, "~/.config");
+    if (configHome === undefined) return undefined;
+    // --path changes $PATH itself; fish_user_paths would go ahead of the system folders.
+    return {
+      file: `${configHome}/fish/config.fish`,
+      line: `fish_add_path --append --path ${directory}`,
+    };
+  }
+  // macOS bash reads only the first of .bash_profile, .bash_login, and .profile; no file is safe.
+  const zdotdir = readFrom(input.zdotdir, "~");
+  const file =
+    shell === "zsh"
+      ? zdotdir && `${zdotdir}/.zshrc`
+      : shell === "bash" && input.platform !== "darwin"
+        ? "~/.bashrc"
+        : undefined;
+  return file === undefined ? undefined : { file, line: `export PATH="$PATH:${directory}"` };
+}
+
+/** A command to paste that does what {@link pathSetup} describes. */
+export function pathSetupCommand(input: PathSetupInput): string | undefined {
+  const setup = pathSetup(input);
+  if (!setup) return undefined;
+  // The leading newline keeps the line out of a final comment with no newline after it.
+  const append = `printf '\\n%s\\n' '${setup.line}' >> ${setup.file}`;
+  // fish's config folder may not exist yet; `&&` works in fish 3 too.
+  return setup.file.endsWith(".fish")
+    ? `mkdir -p ${setup.file.slice(0, setup.file.lastIndexOf("/"))} && ${append}`
+    : append;
+}

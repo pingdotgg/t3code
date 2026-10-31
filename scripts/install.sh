@@ -21,6 +21,11 @@ repo="pingdotgg/t3code"
 base_url="${T3CODE_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
 t3_home="${T3CODE_HOME:-$HOME/.t3}"
 bin_dir="${T3CODE_INSTALL_BIN_DIR:-$HOME/.local/bin}"
+# Trailing slashes would put `//` in the paths the t3 command guard compares.
+while [ "${t3_home%/}" != "$t3_home" ] && [ "$t3_home" != / ]; do t3_home="${t3_home%/}"; done
+while [ "${bin_dir%/}" != "$bin_dir" ] && [ "$bin_dir" != / ]; do bin_dir="${bin_dir%/}"; done
+# Absolute, so the PATH hint never adds a folder that changes with the working directory.
+case "$bin_dir" in /*) ;; *) bin_dir="$PWD/$bin_dir" ;; esac
 
 fail() {
   printf '\nt3 install: %s\n' "$1" >&2
@@ -230,14 +235,95 @@ fi
 
 step "Setting up the t3 command..."
 mkdir -p "$bin_dir"
-ln -sfn "${target_dir}/t3" "${bin_dir}/t3"
+# Replace only this home's own t3 links: into its versions, or the desktop app's launcher.
+# Anything that is not a symlink (a script, a copied binary) belongs to someone else.
+# Exactly <versions>/<version>/t3 ($1 under $2), never another program inside a version.
+version_t3() {
+  case "$1" in "$2"/*) ;; *) return 1 ;; esac
+  case "${1#"$2"/}" in */*/*) return 1 ;; */t3) return 0 ;; *) return 1 ;; esac
+}
+slot_empty=true
+if [ -e "${bin_dir}/t3" ] || [ -L "${bin_dir}/t3" ]; then
+  slot_empty=false
+  owned=false
+  if [ -L "${bin_dir}/t3" ]; then
+    existing="$(readlink "${bin_dir}/t3" 2>/dev/null || true)"
+    case "$existing" in /*) ;; *) existing="${bin_dir}/${existing}" ;; esac
+    real_versions_dir="$(CDPATH='' cd -P -- "$versions_dir" && pwd)"
+    # Through a symlinked T3 home the link text names the alias; resolve its folder to compare.
+    existing_dir="$(CDPATH='' cd -P -- "$(dirname -- "$existing")" 2>/dev/null && pwd || true)"
+    # The text alone counts only without . or .. segments (a pruned version leaves a dangling link).
+    case "$existing" in
+      */./* | */../* | */. | */..) ;;
+      *)
+        if version_t3 "$existing" "$versions_dir" || version_t3 "$existing" "$real_versions_dir" ||
+          [ "$existing" = "${t3_home}/bin/t3" ]; then owned=true; fi
+        ;;
+    esac
+    if [ -n "$existing_dir" ] && version_t3 "${existing_dir}/${existing##*/}" "$real_versions_dir"; then
+      owned=true
+    fi
+  fi
+  "$owned" || fail "another t3 is already at ${bin_dir}/t3. Remove it and run this again, or run ${target_dir}/t3 directly."
+fi
+# An empty spot is linked without -f, so a file that appears after the check above is kept.
+if "$slot_empty"; then
+  ln -s "${target_dir}/t3" "${bin_dir}/t3" || fail "could not link ${bin_dir}/t3; something else was created there."
+else
+  ln -sfn "${target_dir}/t3" "${bin_dir}/t3"
+fi
 # Pruning keeps what this launcher points at; a background service cannot see bin_dir otherwise.
 launcher="$(CDPATH='' cd -P -- "$bin_dir" && pwd)/t3"
 launchers="${t3_home}/runtime/launchers"
 grep -qxF "$launcher" "$launchers" 2>/dev/null || printf '%s\n' "$launcher" >> "$launchers"
 if "$interactive"; then printf '\r\033[2K' >&2; fi
 printf '  %sInstalled T3 Code %s%s\n\n' "$green" "$version" "$reset" >&2
-case ":${PATH}:" in
-  *":${bin_dir}:"*) printf '  Run %st3%s to use T3 Code here, or %st3 up%s to use it from your other devices.\n\n' "$bold" "$reset" "$bold" "$reset" ;;
-  *) printf '  Add %s to your PATH, then run %st3%s.\n\n' "$bin_dir" "$bold" "$reset" ;;
-esac
+# The folder a shell reads its startup file from: $1 when set and safe to paste, else $2 when
+# unset. A set but unsafe folder prints nothing, since the default would never be read.
+read_from() {
+  case "$1" in
+    "") printf '%s' "$2" ;;
+    /*) case "$1" in *[!A-Za-z0-9_./-]*) ;; *) printf '%s' "$1" ;; esac ;;
+  esac
+}
+# A command to paste for zsh, Linux bash, or fish, like `t3 install` prints. macOS bash reads only
+# one of several startup files, so no single file is safe to change there.
+path_command=
+path_rest="$bin_dir"
+path_prefix=
+case "$bin_dir" in "$HOME"/*) path_rest="${bin_dir#"$HOME"}" path_prefix='$HOME' ;; esac
+case "$path_rest" in *[!A-Za-z0-9_./-]*) path_rest= ;; esac
+if [ -n "$path_rest" ]; then
+  # Last on PATH, so it never shadows another t3.
+  path_line="export PATH=\"\$PATH:${path_prefix}${path_rest}\""
+  shell_name="${SHELL:-}"
+  case "${shell_name##*/}" in
+    zsh)
+      # zsh reads .zshrc from ZDOTDIR when it is set; ~/.zshrc would never be read then.
+      zsh_dir="$(read_from "${ZDOTDIR:-}" '~')"
+      [ -z "$zsh_dir" ] || path_command="printf '\\n%s\\n' '${path_line}' >> ${zsh_dir}/.zshrc" ;;
+    bash) [ "$platform" = darwin ] || path_command="printf '\\n%s\\n' '${path_line}' >> ~/.bashrc" ;;
+    fish)
+      # --path changes $PATH itself; fish_user_paths would go ahead of the system folders.
+      config_dir="$(read_from "${XDG_CONFIG_HOME:-}" '~/.config')"
+      fish_dir="${config_dir}/fish"
+      [ -z "$config_dir" ] || path_command="mkdir -p ${fish_dir} && printf '\\n%s\\n' 'fish_add_path --append --path ${path_prefix}${path_rest}' >> ${fish_dir}/config.fish" ;;
+  esac
+fi
+# A t3 earlier on PATH runs instead; the PATH command adds this folder last.
+first_t3="$(command -v t3 2>/dev/null || true)"
+case "$first_t3" in "" | "${bin_dir}/t3") first_t3= ;; esac
+if [ -n "$first_t3" ]; then
+  printf '  Another t3 at %s runs first, so run %s%s/t3%s to use this one.\n\n' "$first_t3" "$bold" "$bin_dir" "$reset"
+else
+  case ":${PATH}:" in
+    *":${bin_dir}:"*) printf '  Run %st3%s to use T3 Code here, or %st3 up%s to use it from your other devices.\n\n' "$bold" "$reset" "$bold" "$reset" ;;
+    *)
+      if [ -n "$path_command" ]; then
+        printf '  %s is not on your PATH yet. Add it with:\n\n    %s\n\n  Then open a new terminal and run %st3%s.\n\n' "$bin_dir" "$path_command" "$bold" "$reset"
+      else
+        printf '  Add %s to your PATH, then run %st3%s.\n\n' "$bin_dir" "$bold" "$reset"
+      fi
+      ;;
+  esac
+fi
