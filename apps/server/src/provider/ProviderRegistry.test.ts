@@ -410,6 +410,28 @@ it.layer(
       }),
     );
 
+    it.effect("labels the plan the usage read reports over the cached login plan", () =>
+      Effect.gen(function* () {
+        const statusWithUsagePlan = (planType: string | null) =>
+          checkCodexProviderStatus(defaultCodexSettings, () =>
+            Effect.succeed(
+              makeCodexProbeSnapshot({
+                rateLimits: { snapshot: { planType }, resetCredits: null },
+              }),
+            ),
+          );
+
+        const downgraded = yield* statusWithUsagePlan("free");
+        assert.strictEqual(downgraded.auth.label, "ChatGPT Free Subscription");
+
+        const unreported = yield* statusWithUsagePlan(null);
+        assert.strictEqual(unreported.auth.label, "ChatGPT Pro 200 Subscription");
+
+        const unknown = yield* statusWithUsagePlan("unknown");
+        assert.strictEqual(unknown.auth.label, "ChatGPT Pro 200 Subscription");
+      }),
+    );
+
     it.effect("returns unauthenticated when app-server requires OpenAI auth", () =>
       Effect.gen(function* () {
         const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
