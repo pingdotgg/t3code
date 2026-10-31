@@ -1,6 +1,16 @@
-import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+
+import {
+  ChatAttachmentId,
+  DEFAULT_SERVER_SETTINGS,
+  isProviderSendTurnSupportedImageMimeType,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  type ServerSettings,
+} from "@t3tools/contracts";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
+import * as Hex from "effect/encoding/Hex";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -30,6 +40,7 @@ export const layer = (
   Layer.effectContext(
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
+      const crypto = yield* Crypto.Crypto;
       const path = yield* Path.Path;
       const baseDir = yield* fileSystem
         .makeTempDirectoryScoped({ prefix: "t3-provider-host-" })
@@ -60,6 +71,30 @@ export const layer = (
           return Effect.succeed(options.runBackgroundWork ?? true);
         }),
         resolveAttachmentPath: (attachment) => path.join(attachmentsDir, attachment.id),
+        persistImageAttachment: Effect.fn("ProviderHost.persistImageAttachment")(function* (input) {
+          if (
+            !isProviderSendTurnSupportedImageMimeType(input.mimeType) ||
+            input.bytes.byteLength > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
+          ) {
+            return null;
+          }
+          const prefix = new TextEncoder().encode(
+            `${input.threadId}:${input.messageId}:${input.index}:`,
+          );
+          const bytes = new Uint8Array(prefix.byteLength + input.bytes.byteLength);
+          bytes.set(prefix);
+          bytes.set(input.bytes, prefix.byteLength);
+          const digest = Hex.encode(yield* crypto.digest("SHA-256", bytes));
+          const attachment = {
+            type: "image" as const,
+            id: ChatAttachmentId.make(`${input.threadId}-${digest.slice(0, 32)}`),
+            name: `image-${input.index + 1}`,
+            mimeType: input.mimeType,
+            sizeBytes: input.bytes.byteLength,
+          };
+          yield* fileSystem.writeFile(path.join(attachmentsDir, attachment.id), input.bytes);
+          return attachment;
+        }),
         credentials: Effect.fn("ProviderHost.credentials")(function (namespace, bindingId) {
           return Effect.sync(() => {
             const key = `${namespace}:${bindingId}`;
@@ -78,4 +113,4 @@ export const layer = (
         }),
       );
     }),
-  );
+  ).pipe(Layer.provide(NodeCrypto.layer));

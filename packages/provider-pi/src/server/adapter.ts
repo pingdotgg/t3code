@@ -7,6 +7,7 @@ import {
   ProviderDriverKind,
   type ChatAttachment,
   type ModelSelection,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderFailure,
@@ -29,9 +30,11 @@ import * as Deferred from "effect/Deferred";
 import * as Option from "effect/Option";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Base64 from "effect/encoding/Base64";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -2818,29 +2821,69 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             const messagesData = yield* request({ type: "get_messages" });
             const activeMessages = recordField(messagesData, "messages");
             const threadId = state.providerThread.appThreadId ?? input.threadId;
-            const messages = (Array.isArray(activeMessages) ? activeMessages : []).flatMap(
-              (message, index) => {
+            const messages = yield* Effect.forEach(
+              Array.isArray(activeMessages) ? activeMessages : [],
+              Effect.fnUntraced(function* (message, index) {
                 const role = recordString(message, "role");
                 if (role !== "user" && role !== "assistant") return [];
-                const text = contentText(recordField(message, "content"));
-                if (text.length === 0) return [];
-                const timestamp = recordNumber(message, "timestamp");
+                const content = recordField(message, "content");
+                const text = contentText(content);
+                const id = idAllocator.derive.messageFromProviderItem({
+                  driver: PI_PROVIDER,
+                  nativeItemId: `${wantedNativeId}:snapshot-message:${index}`,
+                });
+                // Pi only accepts images on user messages.
+                const images = (role === "user" && Array.isArray(content) ? content : []).flatMap(
+                  (block) => {
+                    const data = recordString(block, "data");
+                    const mimeType = recordString(block, "mimeType");
+                    if (
+                      recordField(block, "type") !== "image" ||
+                      !data ||
+                      !mimeType ||
+                      data.length > Math.ceil(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / 3) * 4
+                    )
+                      return [];
+                    const bytes = Base64.decode(data);
+                    return Result.isSuccess(bytes) && bytes.success.byteLength > 0
+                      ? [{ bytes: bytes.success, mimeType }]
+                      : [];
+                  },
+                );
+                const attachments = (yield* Effect.forEach(
+                  images,
+                  ({ bytes, mimeType }, imageIndex) =>
+                    host
+                      .persistImageAttachment({
+                        threadId,
+                        messageId: id,
+                        index: imageIndex,
+                        mimeType,
+                        bytes,
+                      })
+                      .pipe(
+                        // One unwritable image must not cost the rest of the history.
+                        Effect.catch((cause) =>
+                          Effect.logWarning("Pi snapshot image could not be stored", {
+                            reason: cause.reason._tag,
+                          }).pipe(Effect.as(null)),
+                        ),
+                      ),
+                )).filter((attachment) => attachment !== null);
+                if (text.length === 0 && attachments.length === 0) return [];
                 const at = Option.getOrElse(
-                  DateTime.make(timestamp ?? Number.NaN),
+                  DateTime.make(recordNumber(message, "timestamp") ?? Number.NaN),
                   () => state.providerThread.createdAt,
                 );
                 return [
                   {
-                    id: idAllocator.derive.messageFromProviderItem({
-                      driver: PI_PROVIDER,
-                      nativeItemId: `${wantedNativeId}:snapshot-message:${index}`,
-                    }),
+                    id,
                     threadId,
                     runId: null,
                     nodeId: null,
                     role: role as "user" | "assistant",
                     text,
-                    attachments: [],
+                    attachments,
                     streaming: false,
                     createdBy: role === "user" ? ("user" as const) : ("agent" as const),
                     creationSource: "provider" as const,
@@ -2848,8 +2891,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     updatedAt: at,
                   },
                 ];
-              },
-            );
+              }),
+            ).pipe(Effect.map((messages) => messages.flat()));
             return {
               providerThread: state.providerThread,
               providerTurns: [],

@@ -1,12 +1,16 @@
 import type {
   BackgroundScope,
   ChatAttachment,
+  ChatImageAttachment,
+  MessageId,
   ServerSettings,
   ServerSettingsError,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
+import type * as PlatformError from "effect/PlatformError";
 import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
 
@@ -46,6 +50,17 @@ export class ProviderHost extends Context.Service<
     readonly shouldRunBackgroundWork: (scope: BackgroundScope) => Effect.Effect<boolean>;
     /** Absolute attachment path, or null if the ID does not resolve inside attachmentsDir. */
     readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
+    /**
+     * Stores provider-held image bytes as a thread attachment. The same thread, message, index
+     * and bytes always yield the same attachment. Null for a type T3 cannot send or over 10 MiB.
+     */
+    readonly persistImageAttachment: (input: {
+      readonly threadId: ThreadId;
+      readonly messageId: MessageId;
+      readonly index: number;
+      readonly mimeType: string;
+      readonly bytes: Uint8Array;
+    }) => Effect.Effect<ChatImageAttachment | null, PlatformError.PlatformError>;
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly credentials: (
       namespace: string,
