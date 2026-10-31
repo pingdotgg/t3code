@@ -76,10 +76,11 @@ id returned by `/.well-known/t3/environment`. Environments stay the source of tr
 details; the record only adds what the provider needs to act on the machine: provider, sandbox id,
 size, credential environment, and the deadline.
 
-`ttlMinutes` defaults to 480. The server sweeps deadlines once a minute and calls the driver's
-`stop` when one passes; `logs` shows the stop attempt when it fails, and the record stays so the
-next sweep retries. Stop clears the deadline because a stopped machine cannot bill for running
-time, and resume starts a fresh window from the resume time.
+`ttlMinutes` defaults to 480 and is the sandbox's lifetime, not a window that each resume refreshes:
+stopping and resuming can never hand back another eight hours, or the limit would never bind.
+`hardDeadlineAt` is fixed at create time, resume refuses a sandbox that is already past it, and the
+server sweeps deadlines once a minute and calls the driver's `stop` when one passes. A failed stop
+is logged and retried on the next sweep; the record stays so the machine is never forgotten.
 
 `stop` and `resume` are optional on the driver. A provider without them still provisions and
 connects; the settings UI hides the controls and the RPC returns a configuration error instead of

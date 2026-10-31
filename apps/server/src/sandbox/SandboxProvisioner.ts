@@ -355,8 +355,6 @@ const make = Effect.gen(function* () {
     const updated: SandboxRecord = {
       ...record,
       state: "stopped",
-      // A stopped machine cannot overrun a deadline; resuming starts a new one.
-      hardDeadlineAt: null,
       updatedAt: yield* nowIso,
     };
     yield* records.put(updated).pipe(Effect.orDie);
@@ -373,6 +371,20 @@ const make = Effect.gen(function* () {
         detail: "This provider cannot resume a sandbox.",
       });
     }
+    // The deadline is the sandbox's lifetime, not a per-resume window: stopping and resuming must
+    // not hand back another full TTL, or the hard limit would never bind.
+    const now = yield* nowIso;
+    if (
+      record.hardDeadlineAt !== null &&
+      DateTime.toEpochMillis(DateTime.makeUnsafe(record.hardDeadlineAt)) <=
+        DateTime.toEpochMillis(DateTime.makeUnsafe(now))
+    ) {
+      return yield* new SandboxProviderError({
+        provider: record.provider,
+        stage: "start",
+        detail: `This sandbox reached its ${Math.round((record.ttlMinutes / 60) * 10) / 10}-hour limit. Delete it and create a new one.`,
+      });
+    }
     const apiKey = yield* resolveApiKey(record.provider, undefined);
     const resumed = yield* onHttp(
       driver.resume({
@@ -381,14 +393,10 @@ const make = Effect.gen(function* () {
         ttlMinutes: record.ttlMinutes,
       }),
     );
-    const now = yield* nowIso;
     const updated: SandboxRecord = {
       ...record,
       state: "running",
       updatedAt: now,
-      hardDeadlineAt: DateTime.formatIso(
-        DateTime.add(DateTime.makeUnsafe(now), { minutes: record.ttlMinutes }),
-      ),
       httpBaseUrl: resumed.publicUrl ?? record.httpBaseUrl,
     };
     yield* records.put(updated).pipe(Effect.orDie);

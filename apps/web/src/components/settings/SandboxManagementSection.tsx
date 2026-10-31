@@ -104,7 +104,7 @@ export function SandboxManagementSection() {
                   {sandbox.provider} · {sandbox.size} · {stateLabel(sandbox)}
                   {sandbox.hardDeadlineAt === null
                     ? ""
-                    : ` · stops ${DEADLINE.format(new Date(sandbox.hardDeadlineAt))}`}
+                    : ` · expires ${DEADLINE.format(new Date(sandbox.hardDeadlineAt))}`}
                 </p>
               </div>
             </div>
