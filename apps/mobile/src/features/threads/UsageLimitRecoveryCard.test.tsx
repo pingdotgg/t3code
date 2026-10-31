@@ -27,9 +27,10 @@ import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function failedThread(resetAt: string): EnvironmentThreadShell {
+function failedThread(resetAt: string, settled = false): EnvironmentThreadShell {
   return {
     id: "thread-1",
+    settledOverride: settled ? "settled" : null,
     updatedAt: new Date(0).toISOString(),
     snoozedUntil: null,
     latestRun: { runId: "run-1", completedAt: new Date(0).toISOString() },
@@ -39,6 +40,24 @@ function failedThread(resetAt: string): EnvironmentThreadShell {
 }
 
 describe("UsageLimitRecoveryCard", () => {
+  it("offers no recovery on a settled thread and points at Un-settle", () => {
+    using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
+    vi.useFakeTimers({ now: 0 });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+    act(() =>
+      root.render(
+        <UsageLimitRecoveryCard
+          thread={failedThread(new Date(DAY_MS).toISOString(), true)}
+          environmentId={"env-1" as EnvironmentId}
+        />,
+      ),
+    );
+    expect(container.querySelectorAll("button")).toHaveLength(0);
+    expect(container.textContent).toContain("Un-settle to resume at reset.");
+  });
+
   it("disables Snooze once a reset more than 24.8 days away passes", () => {
     using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
     vi.useFakeTimers({ now: 0 });
