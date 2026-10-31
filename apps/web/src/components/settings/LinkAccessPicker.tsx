@@ -18,7 +18,7 @@ export function LinkAccessPicker({
   const selected = accessConfig[value];
   return (
     <div className="space-y-1.5">
-      <span id={labelId} className="block text-xs font-medium">
+      <span id={labelId} className="block text-caption">
         What agents here may do there
       </span>
       <Select
@@ -42,18 +42,18 @@ export function LinkAccessPicker({
             return (
               <SelectItem key={option} value={option} hideIndicator>
                 <span className="grid min-w-0 gap-0.5 py-0.5">
-                  <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                  <span className="inline-flex items-center gap-1.5 text-label text-foreground">
                     <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
                     {label}
                   </span>
-                  <span className="text-xs leading-4 text-muted-foreground">{description}</span>
+                  <span className="text-meta leading-4 text-muted-foreground">{description}</span>
                 </span>
               </SelectItem>
             );
           })}
         </SelectPopup>
       </Select>
-      <p className="text-xs text-muted-foreground">
+      <p className="text-meta text-muted-foreground">
         {selected.description} An agent never gets more access there than its own mode here. Below
         full access, it can change only threads this link started, not that machine's own threads,
         projects or settings.

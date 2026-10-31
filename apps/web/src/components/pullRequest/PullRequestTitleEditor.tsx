@@ -70,7 +70,7 @@ export function PullRequestTitleEditor({
         <Tooltip>
           <TooltipTrigger
             render={
-              <h1 className="min-w-0 flex-1 truncate text-base font-semibold leading-snug">
+              <h1 className="min-w-0 flex-1 truncate text-base font-semibold leading-snug text-foreground">
                 {detail.title}
               </h1>
             }
@@ -117,7 +117,7 @@ export function PullRequestTitleEditor({
         </Button>
         <Button
           size="xs"
-          variant="outline"
+          variant="secondary"
           disabled={!canWriteSourceControl || titleSaving || titleDraft.trim().length === 0}
           onClick={() => void saveTitle(titleDraft)}
         >

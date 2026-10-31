@@ -2,7 +2,6 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ContextMenuSource } from "@t3tools/contracts";
 import { ChevronDownIcon, SquarePenIcon } from "lucide-react";
-import { memo } from "react";
 
 import { cn } from "~/lib/utils";
 import { contextMenuSourceOf } from "../../contextMenuSource";
@@ -12,6 +11,7 @@ import { resolveSidebarFolderDot, resolveThreadLastVisitedAt } from "../Sidebar.
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SidebarMenuButton } from "../ui/sidebar";
 
 const FOLDER_DOT_CLASS_NAME = {
   attention: "bg-warning",
@@ -37,7 +37,7 @@ export function sidebarFolderRowId(projectKey: string) {
  * count and chevron, with the count and a status dot only while it is closed, so a
  * closed folder still says when a hidden thread needs you.
  */
-export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHeader(props: {
+export function SidebarProjectFolderHeader(props: {
   group: SidebarProjectSnapshot;
   collapsed: boolean;
   hiddenThreads: readonly EnvironmentThreadShell[];
@@ -70,7 +70,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
       data-testid="sidebar-project-folder"
       className="group/project-folder relative mt-2 list-none first:mt-0"
     >
-      <button
+      <SidebarMenuButton
         type="button"
         data-sidebar-row={rowId}
         aria-expanded={!collapsed}
@@ -83,10 +83,9 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
             contextMenuSourceOf(event),
           );
         }}
-        className="flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-(--sidebar-row-content-inset) text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         <ProjectFavicon project={group} className="size-4 shrink-0" />
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-foreground/90">
+        <span className="min-w-0 flex-1 truncate text-label text-strong-foreground">
           {group.displayName}
         </span>
         {dot ? (
@@ -95,18 +94,18 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
           </span>
         ) : null}
         {collapsed && hiddenThreads.length > 0 ? (
-          <span className="shrink-0 text-xs tabular-nums text-sidebar-muted-foreground group-hover/project-folder:invisible group-has-[[data-sidebar-action-for]:focus]/project-folder:invisible pointer-coarse:invisible">
+          <span className="shrink-0 text-meta tabular-nums text-dim-foreground group-hover/project-folder:invisible group-has-[[data-sidebar-action-for]:focus]/project-folder:invisible pointer-coarse:invisible">
             {hiddenThreads.length}
           </span>
         ) : null}
         <ChevronDownIcon
           aria-hidden
           className={cn(
-            "size-3 shrink-0 text-sidebar-muted-foreground transition-transform",
+            "size-3 shrink-0 text-dim-foreground transition-transform",
             collapsed && "-rotate-90",
           )}
         />
-      </button>
+      </SidebarMenuButton>
       {/* Sits over the count, which hides on hover or focus, and left of the chevron. */}
       <span className="absolute inset-y-0 right-6 flex items-center opacity-0 focus-within:opacity-100 group-hover/project-folder:opacity-100 pointer-coarse:opacity-100">
         <Tooltip>
@@ -128,4 +127,4 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
       </span>
     </li>
   );
-});
+}

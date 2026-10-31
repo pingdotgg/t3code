@@ -164,13 +164,14 @@ export function BrowserDocumentFrame(props: {
 // URL renewals must not discard form input or scroll; a new key mounts a fresh document.
 function FileDocument(props: { readonly src: string; readonly title: string }) {
   const [src] = useState(props.src);
+  const [loaded, setLoaded] = useState(false);
   return (
     <iframe
       src={src}
       title={props.title}
-      className="min-h-0 flex-1 border-0"
-      style={{ backgroundColor: "Canvas" }}
+      className={cn("min-h-0 flex-1 border-0", loaded && "bg-background")}
       sandbox="allow-scripts allow-forms allow-popups allow-downloads"
+      onLoad={() => setLoaded(true)}
     />
   );
 }

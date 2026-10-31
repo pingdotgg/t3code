@@ -98,7 +98,7 @@ export function ThreadRelationshipIcon({
               ? "bg-destructive"
               : status === "completed"
                 ? "bg-success"
-                : "bg-muted-foreground/45",
+                : "bg-dim-foreground",
         )}
         aria-hidden="true"
       />

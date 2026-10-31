@@ -11,14 +11,14 @@ export function PanelAnimationsPreview({ durationMs }: { durationMs: number }) {
     <button
       type="button"
       aria-label="Replay panel animation preview"
-      className="flex h-10 w-full cursor-pointer overflow-hidden rounded-lg border border-border bg-background p-1 shadow-xs/5 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+      className="flex h-10 w-full cursor-pointer overflow-hidden rounded-control surface-well p-1 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
       onClick={() => setPanelsOpen((open) => !open)}
       style={{ "--preview-duration": `${durationMs}ms` } as CSSProperties}
     >
       <span
         aria-hidden
         className={cn(
-          "h-full shrink-0 overflow-hidden rounded-md bg-sidebar",
+          "h-full shrink-0 overflow-hidden rounded-row bg-sidebar",
           transitionClass,
           panelsOpen ? "w-4" : "w-0",
         )}
@@ -42,7 +42,7 @@ export function PanelAnimationsPreview({ durationMs }: { durationMs: number }) {
       <span
         aria-hidden
         className={cn(
-          "h-full shrink-0 overflow-hidden rounded-md bg-muted",
+          "h-full shrink-0 overflow-hidden rounded-row bg-muted",
           transitionClass,
           panelsOpen ? "w-5" : "w-0",
         )}

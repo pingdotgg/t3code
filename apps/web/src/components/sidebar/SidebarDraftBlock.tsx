@@ -6,7 +6,6 @@ import { replaceComposerContextReferences } from "@t3tools/shared/composerContex
 import { SquarePenIcon, XIcon } from "lucide-react";
 import {
   memo,
-  useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
@@ -98,8 +97,8 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
         aria-current={accessibility.current}
         data-testid="sidebar-draft-row"
         className={cn(
-          "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left text-sidebar-foreground outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-          props.isActive ? "bg-sidebar-row-active" : draftSurfaceClassName,
+          "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-control active:surface-sidebar-row-active text-left text-sidebar-foreground outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          props.isActive ? "surface-sidebar-row-selected" : draftSurfaceClassName,
         )}
         onClick={handleActivate}
         onContextMenu={handleContextMenu}
@@ -111,7 +110,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
             {props.project ? (
               <ProjectFavicon project={props.project} className="size-4 shrink-0" />
             ) : null}
-            <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
+            <span className="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground">
               {props.projectDisplayName}
             </span>
             <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
@@ -132,7 +131,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
               </Tooltip>
             </span>
           </div>
-          <div className="mt-0.5 truncate text-sm font-medium text-foreground/90">{preview}</div>
+          <div className="mt-0.5 truncate text-sm font-medium text-foreground">{preview}</div>
         </div>
       </div>
     </li>
@@ -145,11 +144,23 @@ interface SidebarDraftRowData {
   composer: ComposerThreadDraftState;
 }
 
+export function readDraftRow(draftId: string | null): SidebarDraftRowData | null {
+  if (draftId === null) return null;
+  const id = DraftId.make(draftId);
+  const store = useComposerDraftStore.getState();
+  const session = store.getDraftSession(id);
+  const composer = store.getComposerDraft(id);
+  return session && session.promotedTo == null && composer && composerDraftHasUserContent(composer)
+    ? { draftId: id, session, composer }
+    : null;
+}
+
 export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   projectByKey: ReadonlyMap<string, EnvironmentProject>;
   projectDisplayNameByKey: ReadonlyMap<string, string>;
   scopedProjectKeys: ReadonlySet<string> | null;
   routeDraftId: string | null;
+  routeDraftRow: SidebarDraftRowData | null;
   onNavigateToDraft: (draftId: DraftId) => void;
   onDraftContextMenu: (
     draftId: DraftId,
@@ -167,23 +178,6 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
       ),
     ),
   );
-  const [frozenActive, setFrozenActive] = useState<{
-    routeDraftId: string | null;
-    row: SidebarDraftRowData | null;
-  }>({ routeDraftId: null, row: null });
-  if (frozenActive.routeDraftId !== props.routeDraftId) {
-    let row: SidebarDraftRowData | null = null;
-    if (props.routeDraftId !== null) {
-      const draftId = DraftId.make(props.routeDraftId);
-      const session = draftThreadsByThreadKey[draftId];
-      const composer = draftsByThreadKey[draftId];
-      row =
-        session && session.promotedTo == null && composer && composerDraftHasUserContent(composer)
-          ? { draftId, session, composer }
-          : null;
-    }
-    setFrozenActive({ routeDraftId: props.routeDraftId, row });
-  }
   const drafts = (() => {
     const rows: SidebarDraftRowData[] = [];
     for (const [draftKey, session] of Object.entries(draftThreadsByThreadKey)) {
@@ -197,8 +191,8 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
         continue;
       }
       if (draftKey === props.routeDraftId) {
-        if (frozenActive.routeDraftId === draftKey && frozenActive.row !== null) {
-          rows.push(frozenActive.row);
+        if (props.routeDraftRow !== null) {
+          rows.push(props.routeDraftRow);
         }
         continue;
       }

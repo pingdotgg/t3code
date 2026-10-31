@@ -1,18 +1,31 @@
 <svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Orbital Sunrise: deep space over a planet limb, city lights on the night side and the
+       sun cresting bottom-right. No filters: Icon Composer ignores them. -->
   <defs>
-    <linearGradient id="night" x1="12" y1="6" x2="116" y2="124" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#07152F"/>
-      <stop offset="0.5" stop-color="#151443"/>
-      <stop offset="1" stop-color="#32155B"/>
+    <linearGradient id="sky" x1="64" y1="0" x2="64" y2="110" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#04071A"/>
+      <stop offset="0.5" stop-color="#0A1238"/>
+      <stop offset="0.82" stop-color="#16307F"/>
+      <stop offset="1" stop-color="#2B5AD0"/>
     </linearGradient>
-    <radialGradient id="skyGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(90 28) rotate(137) scale(78 70)">
-      <stop stop-color="#5165D8" stop-opacity="0.4"/>
-      <stop offset="0.5" stop-color="#283075" stop-opacity="0.16"/>
-      <stop offset="1" stop-color="#111635" stop-opacity="0"/>
+    <radialGradient id="milkyWay" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(78 40) rotate(-28) scale(70 11)">
+      <stop stop-color="#B9C6FF" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#B9C6FF" stop-opacity="0"/>
     </radialGradient>
-    <radialGradient id="horizonGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(42 127) rotate(-70) scale(68 96)">
-      <stop stop-color="#6646B6" stop-opacity="0.34"/>
-      <stop offset="1" stop-color="#352066" stop-opacity="0"/>
+    <radialGradient id="dawn" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(96 110) scale(54 26)">
+      <stop stop-color="#FFE2B0" stop-opacity="0.9"/>
+      <stop offset="0.18" stop-color="#FF9F5A" stop-opacity="0.62"/>
+      <stop offset="0.5" stop-color="#C45C9A" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#5A3AA8" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="planet" x1="64" y1="104" x2="64" y2="128" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1F2E66"/>
+      <stop offset="1" stop-color="#0A1031"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(96 110) scale(3.2 1.6)">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="0.5" stop-color="#FFF1D2" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#FFD08A" stop-opacity="0"/>
     </radialGradient>
     <clipPath id="frame">
       <rect width="128" height="128" rx="10"/>
@@ -20,24 +33,105 @@
   </defs>
 
   <g clip-path="url(#frame)">
-    <rect width="128" height="128" fill="url(#night)"/>
-    <rect width="128" height="128" fill="url(#skyGlow)"/>
-    <rect width="128" height="128" fill="url(#horizonGlow)"/>
+    <rect width="128" height="128" fill="url(#sky)"/>
+    <rect width="128" height="128" fill="url(#milkyWay)"/>
 
-
-    <!-- A few tiny stars kept to the perimeter so the wordmark stays clear. -->
-    <g fill="#E4EAFF">
-      <circle cx="17" cy="18" r="0.55" fill-opacity="0.82"/>
-      <circle cx="54" cy="14" r="0.4" fill-opacity="0.65"/>
-      <circle cx="116" cy="42" r="0.45" fill-opacity="0.72"/>
-      <circle cx="10" cy="70" r="0.35" fill-opacity="0.56"/>
-      <circle cx="117" cy="88" r="0.4" fill-opacity="0.6"/>
+    <!-- Stars kept off the wordmark (x 15-110, y 37-94). -->
+    <g fill="#E8EDFF">
+      <circle cx="2" cy="94.1" r="0.37" fill-opacity="0.56"/>
+      <circle cx="103.3" cy="26.2" r="0.4" fill-opacity="0.8"/>
+      <circle cx="88.6" cy="7.4" r="0.52" fill-opacity="0.68"/>
+      <circle cx="116.4" cy="82.7" r="0.3" fill-opacity="0.71"/>
+      <circle cx="116.5" cy="70.9" r="0.51" fill-opacity="0.74"/>
+      <circle cx="115.1" cy="92.8" r="0.4" fill-opacity="0.62"/>
+      <circle cx="20.9" cy="31.8" r="0.42" fill-opacity="0.6"/>
+      <circle cx="118.2" cy="57.7" r="0.54" fill-opacity="0.89"/>
+      <circle cx="9.3" cy="29.3" r="0.47" fill-opacity="0.7"/>
+      <circle cx="54.3" cy="21.3" r="0.61" fill-opacity="0.48"/>
+      <circle cx="65.8" cy="18.6" r="0.41" fill-opacity="0.59"/>
+      <circle cx="78.1" cy="25.3" r="0.61" fill-opacity="0.68"/>
+      <circle cx="118.5" cy="41.7" r="0.53" fill-opacity="0.58"/>
+      <circle cx="11.6" cy="42.7" r="0.31" fill-opacity="0.49"/>
+      <circle cx="125.5" cy="24" r="0.5" fill-opacity="0.52"/>
+      <circle cx="96.4" cy="29.5" r="0.25" fill-opacity="0.57"/>
+      <circle cx="11.4" cy="2.2" r="0.5" fill-opacity="0.57"/>
+      <circle cx="87.3" cy="25.8" r="0.6" fill-opacity="0.57"/>
+      <circle cx="2.4" cy="93.3" r="0.5" fill-opacity="0.91"/>
+      <circle cx="4.6" cy="92" r="0.33" fill-opacity="0.93"/>
+      <circle cx="35" cy="24.3" r="0.33" fill-opacity="0.73"/>
+      <circle cx="8.5" cy="78.9" r="0.53" fill-opacity="0.81"/>
+      <circle cx="63.8" cy="5.3" r="0.29" fill-opacity="0.91"/>
+      <circle cx="112.7" cy="5.7" r="0.6" fill-opacity="0.88"/>
+      <circle cx="125.1" cy="97.4" r="0.56" fill-opacity="0.66"/>
+      <circle cx="112" cy="57.9" r="0.39" fill-opacity="0.76"/>
+      <circle cx="26.6" cy="33.2" r="0.64" fill-opacity="0.95"/>
+      <circle cx="115.9" cy="22" r="0.51" fill-opacity="0.52"/>
+      <circle cx="61.8" cy="20.7" r="0.43" fill-opacity="0.53"/>
+      <circle cx="95.1" cy="4.6" r="0.37" fill-opacity="0.72"/>
+      <circle cx="38.1" cy="25.6" r="0.51" fill-opacity="0.66"/>
+      <circle cx="11.3" cy="79.3" r="0.58" fill-opacity="0.91"/>
+      <circle cx="114.8" cy="70.1" r="0.63" fill-opacity="0.46"/>
+      <circle cx="6.6" cy="15.6" r="0.28" fill-opacity="0.5"/>
     </g>
-    <path d="M31 22V24.8M29.6 23.4H32.4" stroke="#EEF2FF" stroke-width="0.5" stroke-linecap="round" opacity="0.72"/>
-    <path d="M111 58V60M110 59H112" stroke="#CBD8FF" stroke-width="0.45" stroke-linecap="round" opacity="0.58"/>
 
-    <!-- Broad horizon remains below the T3 baseline (y=94). -->
-    <path d="M-12 119C14 99 39 99 63 110C87 121 110 116 140 96V140H-12V119Z" fill="#20184E" fill-opacity="0.42"/>
-    <path d="M-12 129C15 111 42 112 66 122C91 132 114 124 140 107V140H-12V129Z" fill="#6946B8" fill-opacity="0.22"/>
+    <rect width="128" height="128" fill="url(#dawn)"/>
+
+    <!-- The planet: a 260-unit circle whose limb crests at y=106, below the T3 baseline. -->
+    <circle cx="50" cy="366" r="264" fill="#3E7BFF" fill-opacity="0.16"/>
+    <circle cx="50" cy="366" r="261.5" fill="#6FA8FF" fill-opacity="0.22"/>
+    <circle cx="50" cy="366" r="260" fill="url(#planet)"/>
+    <circle cx="50" cy="366" r="260" fill="none" stroke="#9CCBFF" stroke-width="0.7" stroke-opacity="0.9"/>
+
+    <g fill="#FFD9A0">
+      <circle cx="1" cy="119.5" r="0.27" fill-opacity="0.37"/>
+      <circle cx="109.4" cy="120.2" r="0.34" fill-opacity="0.61"/>
+      <circle cx="60.5" cy="113.8" r="0.25" fill-opacity="0.74"/>
+      <circle cx="18.7" cy="116.8" r="0.36" fill-opacity="0.8"/>
+      <circle cx="49.2" cy="109.7" r="0.25" fill-opacity="0.75"/>
+      <circle cx="75.6" cy="119.7" r="0.32" fill-opacity="0.48"/>
+      <circle cx="39.8" cy="124" r="0.18" fill-opacity="0.46"/>
+      <circle cx="73.6" cy="122.6" r="0.18" fill-opacity="0.56"/>
+      <circle cx="112.8" cy="122.1" r="0.21" fill-opacity="0.69"/>
+      <circle cx="121.8" cy="121.3" r="0.45" fill-opacity="0.36"/>
+      <circle cx="91.4" cy="124.8" r="0.46" fill-opacity="0.51"/>
+      <circle cx="22" cy="124.3" r="0.46" fill-opacity="0.75"/>
+      <circle cx="127" cy="126.3" r="0.31" fill-opacity="0.49"/>
+      <circle cx="78.6" cy="110" r="0.47" fill-opacity="0.81"/>
+      <circle cx="45.3" cy="125.5" r="0.18" fill-opacity="0.72"/>
+      <circle cx="120.8" cy="123.4" r="0.38" fill-opacity="0.63"/>
+      <circle cx="108.5" cy="120.4" r="0.46" fill-opacity="0.9"/>
+      <circle cx="54.6" cy="124.2" r="0.33" fill-opacity="0.47"/>
+      <circle cx="7" cy="112.4" r="0.43" fill-opacity="0.41"/>
+      <circle cx="45.2" cy="119" r="0.29" fill-opacity="0.61"/>
+      <circle cx="14.4" cy="117.1" r="0.23" fill-opacity="0.67"/>
+      <circle cx="70.4" cy="126.6" r="0.21" fill-opacity="0.89"/>
+      <circle cx="126.2" cy="126.1" r="0.35" fill-opacity="0.55"/>
+      <circle cx="109.5" cy="123.4" r="0.33" fill-opacity="0.52"/>
+      <circle cx="68.1" cy="113.6" r="0.47" fill-opacity="0.66"/>
+      <circle cx="115.7" cy="118.1" r="0.23" fill-opacity="0.88"/>
+      <circle cx="88.1" cy="115.8" r="0.43" fill-opacity="0.55"/>
+      <circle cx="111.7" cy="121.5" r="0.33" fill-opacity="0.48"/>
+      <circle cx="13.7" cy="124.5" r="0.44" fill-opacity="0.49"/>
+      <circle cx="96.4" cy="117.6" r="0.44" fill-opacity="0.59"/>
+      <circle cx="1.1" cy="113" r="0.19" fill-opacity="0.66"/>
+      <circle cx="38.3" cy="124.2" r="0.28" fill-opacity="0.7"/>
+      <circle cx="125.7" cy="123.6" r="0.41" fill-opacity="0.44"/>
+      <circle cx="83.4" cy="119" r="0.25" fill-opacity="0.5"/>
+      <circle cx="63.6" cy="120.6" r="0.32" fill-opacity="0.52"/>
+      <circle cx="62.9" cy="118.3" r="0.22" fill-opacity="0.7"/>
+      <circle cx="103.9" cy="120.8" r="0.35" fill-opacity="0.47"/>
+      <circle cx="98.4" cy="118.3" r="0.21" fill-opacity="0.66"/>
+      <circle cx="49.7" cy="111.9" r="0.33" fill-opacity="0.86"/>
+      <circle cx="50.6" cy="111.3" r="0.43" fill-opacity="0.81"/>
+      <circle cx="92.5" cy="115.5" r="0.26" fill-opacity="0.48"/>
+      <circle cx="40.3" cy="126.4" r="0.39" fill-opacity="0.66"/>
+      <circle cx="54.2" cy="118.3" r="0.31" fill-opacity="0.76"/>
+      <circle cx="2.8" cy="124.6" r="0.41" fill-opacity="0.36"/>
+      <circle cx="99.7" cy="120.2" r="0.36" fill-opacity="0.35"/>
+      <circle cx="107.4" cy="127.7" r="0.45" fill-opacity="0.49"/>
+    </g>
+
+    <ellipse cx="96" cy="110" rx="3.2" ry="1.6" fill="url(#sun)"/>
+    <path d="M89 110.1H103" stroke="#FFF4DC" stroke-width="0.3" stroke-linecap="round" stroke-opacity="0.45"/>
   </g>
 </svg>

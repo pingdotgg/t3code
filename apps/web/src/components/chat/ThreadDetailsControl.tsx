@@ -6,26 +6,16 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import {
   THREAD_DETAILS_PANEL_ROW_CLASS,
-  THREAD_DETAILS_PANEL_SELECT_ROW_CLASS,
-  THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS,
-  THREAD_DETAILS_PANEL_SPLIT_SECONDARY_CLASS,
+  THREAD_DETAILS_PANEL_CHOICE_ROW_CLASS,
   THREAD_DETAILS_PANEL_ICON_ACTION_CLASS,
   THREAD_DETAILS_PANEL_META_ACTION_CLASS,
   THREAD_DETAILS_PANEL_CHEVRON_CLASS,
-  THREAD_DETAILS_PANEL_SELECT_LABEL_CLASS,
-  THREAD_DETAILS_PANEL_SELECT_ICON_CLASS,
 } from "./threadDetailsPanelStyles";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronRightIcon } from "lucide-react";
 
 const parts = {
   row: THREAD_DETAILS_PANEL_ROW_CLASS,
-  title: cn(
-    THREAD_DETAILS_PANEL_ROW_CLASS,
-    "h-auto min-h-8 items-start pt-1.5 pb-0 disabled:opacity-100 sm:h-auto [&>svg]:mt-px",
-  ),
-  select: THREAD_DETAILS_PANEL_SELECT_ROW_CLASS,
-  primary: THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS,
-  secondary: THREAD_DETAILS_PANEL_SPLIT_SECONDARY_CLASS,
+  choice: THREAD_DETAILS_PANEL_CHOICE_ROW_CLASS,
   icon: THREAD_DETAILS_PANEL_ICON_ACTION_CLASS,
   meta: THREAD_DETAILS_PANEL_META_ACTION_CLASS,
 };
@@ -53,37 +43,24 @@ export function ThreadDetailsControl({
     props: mergeProps<"button">(
       {
         type: render ? undefined : "button",
+        ...({ "data-part": part } as Record<string, string>),
         className: cn(
-          "relative inline-flex shrink-0 cursor-pointer items-center whitespace-nowrap border outline-none transition-[box-shadow,scale] [&:not([aria-haspopup]):not(:disabled):not([aria-disabled=true])]:will-change-[scale] [&:active:not([aria-haspopup])]:scale-[0.97] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 disabled:pointer-events-none disabled:opacity-64 aria-disabled:cursor-not-allowed aria-disabled:opacity-64 [&_svg]:shrink-0",
           parts[part],
           multiline && "h-auto min-h-8 py-1.5 disabled:opacity-100 sm:h-auto",
-          tone === "muted" && "text-muted-foreground hover:text-foreground/80",
-          tone === "primary" &&
-            // The row surface forces a faint hover fill with !important; the pill keeps its own.
-            "bg-black/[0.035] text-foreground/80 hover:text-foreground hover:!bg-black/[0.06] data-pressed:!bg-black/[0.06] dark:bg-white/[0.08] dark:hover:!bg-white/[0.12] dark:data-pressed:!bg-white/[0.12]",
+          tone === "muted" && "text-dim-foreground hover:text-foreground",
+          tone === "primary" && "text-primary hover:text-primary",
           tone === "destructive" &&
-            "text-destructive hover:text-destructive data-pressed:text-destructive",
-          // Keep the inset focus ring clear of the 20px PR action label.
-          part === "meta" &&
-            (tone === "primary" || tone === "destructive") &&
-            "h-5 focus-visible:ring-1 focus-visible:ring-offset-0",
-          part === "meta" &&
-            tone === "destructive" &&
-            "bg-destructive/10 hover:!bg-destructive/16 data-pressed:!bg-destructive/16 dark:hover:!bg-destructive/16 dark:data-pressed:!bg-destructive/16",
+            "text-destructive-foreground hover:text-destructive-foreground data-pressed:text-destructive-foreground",
           className,
         ),
       },
       props,
       {
         children:
-          part === "select" ? (
+          part === "choice" ? (
             <>
-              <span data-slot="select-label" className={THREAD_DETAILS_PANEL_SELECT_LABEL_CLASS}>
-                {children}
-              </span>
-              <span data-slot="select-icon" className={THREAD_DETAILS_PANEL_SELECT_ICON_CLASS}>
-                <ChevronDownIcon className={THREAD_DETAILS_PANEL_CHEVRON_CLASS} />
-              </span>
+              {children}
+              <ChevronRightIcon className={THREAD_DETAILS_PANEL_CHEVRON_CLASS} />
             </>
           ) : (
             children

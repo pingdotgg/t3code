@@ -63,6 +63,9 @@ export function createTerminalEnvironmentAtoms<R, E>(
           ),
         ),
     }),
+    // Attach opens a missing session, so it lives only while a view shows the
+    // terminal: kept idle, a closed terminal's attach would re-subscribe on
+    // the next reconnect and spawn a hidden shell.
     attach: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:terminal:attach",
       // The server sizes the PTY to every attached viewer, so a closed view must detach now.
