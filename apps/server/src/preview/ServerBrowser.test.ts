@@ -989,6 +989,49 @@ it.live(
     ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a navigation that fails while a load reads its title keeps its failure", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      const page = contexts[0]!.page;
+      const heldTitle = Promise.withResolvers<string>();
+      page.title.mockImplementationOnce(() => heldTitle.promise);
+      yield* Effect.promise(() => page.goto("https://example.com/first"));
+      const failing = {
+        url: () => "https://example.com/missing",
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => page,
+        failure: () => ({ errorText: "net::ERR_NAME_NOT_RESOLVED" }),
+      };
+      page.emit("request", failing);
+      page.emit("requestfailed", failing);
+      heldTitle.resolve("Held");
+      // A load at the same await depth reports after the held one, so its Success marks the end.
+      page.emit("load");
+
+      const statuses: Array<string> = [];
+      while (!statuses.at(-1)?.startsWith("Success")) {
+        const event = yield* PubSub.take(events);
+        if (event.type === "failed" && event.tabId === tabId) {
+          statuses.push(`LoadFailed ${event.url}`);
+        } else if (event.type === "navigated" && event.tabId === tabId) {
+          const status = event.snapshot.navStatus;
+          if (status._tag === "Success") statuses.push(`Success ${status.title}`);
+          else if (status._tag === "Loading") statuses.push(`Loading ${status.url}`);
+        }
+      }
+      expect(statuses).toEqual([
+        "Loading https://example.com/missing",
+        "LoadFailed https://example.com/missing",
+        "Success test page",
+      ]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect.each([
   {
     name: "hover burst before a click",
