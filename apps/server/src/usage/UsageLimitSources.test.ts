@@ -31,6 +31,13 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
         payload: { sources: snapshots },
       }),
     ).not.toThrow();
+    expect(snapshots.map((source) => source.routesClients)).toEqual([
+      false,
+      false,
+      true,
+      false,
+      false,
+    ]);
     expect(snapshots.every((source) => source.error === "No management key configured.")).toBe(
       true,
     );
@@ -56,6 +63,7 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
             label: "Named hub",
             managementKey: "",
             enabled: true,
+            routesClients: true,
           },
           [UsageLimitSourceId.make("valid-hub")]: {
             kind: "cliproxy",
