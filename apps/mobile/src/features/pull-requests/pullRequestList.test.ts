@@ -28,6 +28,7 @@ import {
   withShownPullRequestStats,
   withoutScratchProjectScope,
   pullRequestProjectChoices,
+  type PullRequestListControls,
 } from "./pullRequestList";
 
 function entry(number: number, patch: Partial<PullRequestListEntry> = {}): PullRequestListEntry {
@@ -244,6 +245,20 @@ describe("all-environment PR list", () => {
 });
 
 describe("mobile PR scan and filters", () => {
+  it("sorts by instant when host timestamps mix offsets and fractional seconds", () => {
+    const rows = [
+      entry(1, { updatedAt: "2026-07-05T01:00:00+02:00", createdAt: "2026-07-05T00:30:00.5Z" }),
+      entry(2, { updatedAt: "2026-07-05T00:30:00Z", createdAt: "2026-07-05T00:30:00Z" }),
+      entry(3, { updatedAt: "2026-07-05T00:30:00.5Z", createdAt: "2026-07-05T01:00:00+02:00" }),
+    ];
+    const order = (sort: PullRequestListControls["sort"]) =>
+      filterPullRequestList(rows, { ...DEFAULT_PR_LIST_CONTROLS, sort }, {}, "", new Set()).map(
+        (row) => row.number,
+      );
+    expect(order("updated")).toEqual([3, 2, 1]);
+    expect(order("oldest")).toEqual([1, 2, 3]);
+    expect(order("created")).toEqual([1, 2, 3]);
+  });
   it("resolves authored and author:me per host rather than mixing account identities", () => {
     const rows = [entry(1), entry(2, { host: "enterprise.test" })];
     const viewers = { "github.com": "Octocat", "enterprise.test": "someone-else" };
