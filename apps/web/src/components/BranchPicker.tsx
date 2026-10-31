@@ -20,6 +20,10 @@ import {
 } from "./ui/combobox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
+function BranchPickerSeparator() {
+  return <div className="h-px" />;
+}
+
 export function BranchPicker({
   items,
   filteredItems,
@@ -151,7 +155,7 @@ export function BranchPicker({
                     </>
                   );
                 }}
-                ItemSeparatorComponent={() => <div className="h-px" />}
+                ItemSeparatorComponent={BranchPickerSeparator}
                 estimatedItemSize={33}
                 drawDistance={336}
                 onScroll={updateBranchListScrollFades}
