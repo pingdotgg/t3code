@@ -184,6 +184,9 @@ export function usePullRequestDetail(
           reviewThreads: activity?.reviewThreads ?? [],
           commits: activity?.commits ?? [],
           reactions: activity?.reactions ?? [],
+          ...(activity?.reviewRequests === undefined
+            ? {}
+            : { reviewRequests: activity.reviewRequests }),
         };
   return {
     canWriteSourceControl,

@@ -41,15 +41,18 @@ export function PullRequestLabelChip({
   size = "sm",
   className,
   children,
+  ...props
 }: {
   label: Pick<PullRequestLabel, "name" | "color">;
   size?: "sm" | "default";
   className?: string;
   children?: ReactNode;
+  "data-row-label"?: string;
 }) {
   const color = pullRequestLabelColor(label.color);
   return (
     <Badge
+      {...props}
       size={size}
       variant={color ? "label" : "secondary"}
       className={cn("min-w-0 max-w-40 shrink justify-start", className)}
@@ -504,7 +507,9 @@ export function PullRequestMetaLine({
   className?: string;
 }) {
   return (
-    <span className={cn("flex min-w-0 flex-col items-start gap-1", className)}>{children}</span>
+    <span className={cn("flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-0.5", className)}>
+      {children}
+    </span>
   );
 }
 
