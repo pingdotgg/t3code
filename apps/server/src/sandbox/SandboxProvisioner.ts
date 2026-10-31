@@ -30,6 +30,27 @@ import * as SandboxRecords from "../persistence/SandboxRecords.ts";
 import { requestJson, shellQuote, type SandboxProviderDriver } from "./SandboxProvider.ts";
 import { SANDBOX_PROVIDER_DRIVERS } from "./providers/index.ts";
 
+// Starts `t3 serve` only when nothing answers on its port, then waits for it. Shared by install and
+// resume because providers without systemd do not bring the server back after a stop.
+const SERVE_SCRIPT = `if ! curl -fsS http://127.0.0.1:3773/.well-known/t3/environment >/dev/null 2>&1; then
+  if command -v systemctl >/dev/null 2>&1 && t3 service install >/dev/null 2>&1; then
+    sudo -n loginctl enable-linger "$(id -un)" >/dev/null 2>&1 || true
+    t3 service restart >/dev/null 2>&1 || true
+  else
+    nohup t3 serve --host 0.0.0.0 --port 3773 >"$HOME/.t3/sandbox-server.log" 2>&1 &
+  fi
+fi
+i=0
+while [ "$i" -lt 90 ]; do
+  if curl -fsS http://127.0.0.1:3773/.well-known/t3/environment >/dev/null 2>&1; then
+    exit 0
+  fi
+  i=$((i + 1))
+  sleep 1
+done
+tail -50 "$HOME/.t3/sandbox-server.log" >&2 || true
+exit 1`;
+
 const installScript = (label: string) => `set -eu
 export PATH="$HOME/.local/bin:$PATH"
 # The label file is read by \`t3 serve\` itself, so it works on providers without sudo, systemd,
@@ -52,24 +73,15 @@ if ! command -v t3 >/dev/null 2>&1; then
   echo "The t3 CLI did not install." >&2
   exit 1
 fi
-if ! curl -fsS http://127.0.0.1:3773/.well-known/t3/environment >/dev/null 2>&1; then
-  if command -v systemctl >/dev/null 2>&1 && t3 service install >/dev/null 2>&1; then
-    sudo -n loginctl enable-linger "$(id -un)" >/dev/null 2>&1 || true
-    t3 service restart >/dev/null 2>&1 || true
-  else
-    nohup t3 serve --host 0.0.0.0 --port 3773 >"$HOME/.t3/sandbox-server.log" 2>&1 &
-  fi
+${SERVE_SCRIPT}`;
+
+const RESUME_SCRIPT = `set -eu
+export PATH="$HOME/.local/bin:$PATH"
+if ! command -v t3 >/dev/null 2>&1; then
+  echo "The t3 CLI is missing." >&2
+  exit 1
 fi
-i=0
-while [ "$i" -lt 90 ]; do
-  if curl -fsS http://127.0.0.1:3773/.well-known/t3/environment >/dev/null 2>&1; then
-    exit 0
-  fi
-  i=$((i + 1))
-  sleep 1
-done
-tail -50 "$HOME/.t3/sandbox-server.log" >&2 || true
-exit 1`;
+${SERVE_SCRIPT}`;
 
 const PAIR_SCRIPT = `set -eu
 export PATH="$HOME/.local/bin:$PATH"
@@ -405,11 +417,36 @@ const make = Effect.gen(function* () {
         ttlMinutes: remainingMinutes,
       }),
     );
+    const httpBaseUrl = resumed.publicUrl ?? record.httpBaseUrl;
+    yield* onHttp(
+      driver.execute({
+        config: { apiKey },
+        sandboxId: record.sandboxId,
+        command: RESUME_SCRIPT,
+        timeoutSeconds: 180,
+      }),
+    ).pipe(
+      Effect.catch((cause) =>
+        records.put({ ...record, state: "error", updatedAt: now, httpBaseUrl }).pipe(
+          Effect.orDie,
+          Effect.andThen(
+            Effect.fail(
+              new SandboxProviderError({
+                provider: record.provider,
+                stage: "start",
+                detail: "The sandbox resumed, but T3 Code did not start on it.",
+                cause,
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
     const updated: SandboxRecord = {
       ...record,
       state: "running",
       updatedAt: now,
-      httpBaseUrl: resumed.publicUrl ?? record.httpBaseUrl,
+      httpBaseUrl,
     };
     yield* records.put(updated).pipe(Effect.orDie);
     return { sandbox: updated, httpBaseUrl: updated.httpBaseUrl } satisfies SandboxResumeResult;
@@ -420,7 +457,9 @@ const make = Effect.gen(function* () {
     const nowMillis = DateTime.toEpochMillis(now);
     const all = yield* records.list.pipe(Effect.orDie);
     for (const record of all) {
-      if (record.state !== "running" || record.hardDeadlineAt === null) continue;
+      // A resume that could not start T3 leaves the machine running (and billing) as `error`.
+      if (record.state !== "running" && record.state !== "error") continue;
+      if (record.hardDeadlineAt === null) continue;
       if (DateTime.toEpochMillis(DateTime.makeUnsafe(record.hardDeadlineAt)) > nowMillis) continue;
       const driver = findDriver(record.provider);
       if (driver.stop === undefined) continue;

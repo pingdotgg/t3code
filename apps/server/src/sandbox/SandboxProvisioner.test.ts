@@ -310,13 +310,29 @@ describe("SandboxProvisioner lifecycle", () => {
     return { layer, records };
   };
 
-  const lifecycleClient = (requests: Array<string>) =>
+  const lifecycleClient = (
+    requests: Array<string>,
+    options: { readonly commands?: Array<string>; readonly commandExitCode?: number } = {},
+  ) =>
     HttpClient.make((request) => {
       requests.push(`${request.method} ${request.url}`);
       if (request.url.endsWith("/.well-known/t3/environment")) {
         return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(descriptor)));
       }
       if (request.url.endsWith("/commands")) {
+        options.commands?.push(
+          request.body._tag === "Uint8Array"
+            ? JSON.parse(new TextDecoder().decode(request.body.body)).command
+            : "",
+        );
+        if (options.commandExitCode !== undefined && options.commandExitCode !== 0) {
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({ exitCode: options.commandExitCode, stdout: "", stderr: "boom" }),
+            ),
+          );
+        }
         return Effect.succeed(
           HttpClientResponse.fromWeb(
             request,
@@ -344,6 +360,7 @@ describe("SandboxProvisioner lifecycle", () => {
 
   it.effect("stores a record, stops it, and resumes it", () => {
     const requests: Array<string> = [];
+    const commands: Array<string> = [];
     const repository = memoryRepository();
     return Effect.gen(function* () {
       const result = yield* SandboxProvisioner.SandboxProvisioner.pipe(
@@ -370,7 +387,7 @@ describe("SandboxProvisioner lifecycle", () => {
             Layer.provide(repository.layer),
           ),
         ),
-        Effect.provideService(HttpClient.HttpClient, lifecycleClient(requests)),
+        Effect.provideService(HttpClient.HttpClient, lifecycleClient(requests, { commands })),
       );
 
       expect(result.created.environmentId).toBe(testEnvironmentId);
@@ -385,6 +402,58 @@ describe("SandboxProvisioner lifecycle", () => {
       expect(result.resumed.sandbox.state).toBe("running");
       expect(result.resumed.sandbox.hardDeadlineAt).toBe(deadline);
       expect(requests.some((request) => request.endsWith("/stop"))).toBe(true);
+      expect(requests.some((request) => request.endsWith("/resume"))).toBe(true);
+      // Providers without systemd come back without `t3 serve`, so resume restarts it and only
+      // then reports the sandbox as running.
+      expect(requests.findLastIndex((request) => request.endsWith("/commands"))).toBeGreaterThan(
+        requests.findIndex((request) => request.endsWith("/resume")),
+      );
+      expect(commands.at(-1)).toContain("nohup t3 serve --host 0.0.0.0 --port 3773");
+    });
+  });
+
+  it.effect("marks a resumed sandbox as errored when T3 does not start on it", () => {
+    const stopped: SandboxRecord = {
+      environmentId: testEnvironmentId,
+      provider: "boat",
+      sandboxId: boatSandboxId,
+      label: "Stopped sandbox",
+      size: "small",
+      state: "stopped",
+      createdAt: "1970-01-01T00:00:00.000Z",
+      updatedAt: "1970-01-01T00:00:00.000Z",
+      httpBaseUrl: "https://boat.example/t3",
+      hardDeadlineAt: "2100-01-01T00:00:00.000Z",
+      ttlMinutes: 480,
+    };
+    const repository = memoryRepository([stopped]);
+    const requests: Array<string> = [];
+    return Effect.gen(function* () {
+      const failure = yield* SandboxProvisioner.SandboxProvisioner.pipe(
+        Effect.flatMap((provisioner) =>
+          provisioner.resume({ environmentId: testEnvironmentId }).pipe(Effect.flip),
+        ),
+        Effect.provide(
+          SandboxProvisioner.layer.pipe(
+            Layer.provide(
+              ServerSettings.layerTest({
+                sandboxProviders: { boat: { apiKey: "boat_test" } },
+              }),
+            ),
+            Layer.provide(repository.layer),
+          ),
+        ),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          lifecycleClient(requests, { commandExitCode: 1 }),
+        ),
+      );
+
+      expect(failure.stage).toBe("start");
+      expect(failure.detail).toBe("The sandbox resumed, but T3 Code did not start on it.");
+      expect(failure.message).not.toContain("boom");
+      // The machine is running and billing, so the record must not claim it is still stopped.
+      expect(repository.records.get(testEnvironmentId)?.state).toBe("error");
       expect(requests.some((request) => request.endsWith("/resume"))).toBe(true);
     });
   });
@@ -443,7 +512,13 @@ describe("SandboxProvisioner lifecycle", () => {
       hardDeadlineAt: "1960-01-01T00:00:00.000Z",
       ttlMinutes: 480,
     };
-    const repository = memoryRepository([expired]);
+    // A resume that could not start T3 leaves the machine running under an `error` record.
+    const errored: SandboxRecord = {
+      ...expired,
+      environmentId: EnvironmentId.make("22222222-2222-4222-8222-222222222222"),
+      state: "error",
+    };
+    const repository = memoryRepository([expired, errored]);
     const requests: Array<string> = [];
     return Effect.gen(function* () {
       yield* SandboxProvisioner.SandboxProvisioner.pipe(
@@ -462,7 +537,8 @@ describe("SandboxProvisioner lifecycle", () => {
       );
 
       expect(repository.records.get(testEnvironmentId)?.state).toBe("stopped");
-      expect(requests.some((request) => request.endsWith("/stop"))).toBe(true);
+      expect(repository.records.get(errored.environmentId)?.state).toBe("stopped");
+      expect(requests.filter((request) => request.endsWith("/stop"))).toHaveLength(2);
     });
   });
 });
