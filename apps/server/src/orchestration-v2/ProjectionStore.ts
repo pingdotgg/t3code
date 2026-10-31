@@ -1,6 +1,6 @@
 import { pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
-import { projectTurnItemForWire } from "./WireProjection.ts";
+import { projectTurnItemForWire } from "@t3tools/shared/wireProjection";
 import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeThreadFind } from "./ThreadFind.ts";

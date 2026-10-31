@@ -2,7 +2,7 @@ import type { ComponentProps } from "react";
 
 import { cn } from "~/lib/utils";
 
-/** One composer surface until a top attachment needs the composer to cover its overlap. */
+/** Notices and the context row share the composer tray. */
 function Shell({
   contextRow = false,
   className,
@@ -13,10 +13,8 @@ function Shell({
       data-slot="composer-shell"
       data-context-row={contextRow || undefined}
       className={cn(
-        "@container/composer-surface group/composer-surface relative isolate mx-auto w-full max-w-(--chat-content-max-width)",
-        "[--chat-composer-drawer-inset:1.375rem] [--chat-composer-surface:var(--popover)] [--chat-composer-glass-surface:var(--popover)] [--chat-composer-outline:var(--tray-stroke)]",
-        "before:pointer-events-none before:absolute before:inset-0 before:z-0 before:rounded-pane before:surface-composer before:shadow-none!",
-        "has-data-[composer-banner-surface=attached]:before:hidden data-context-row:before:hidden",
+        "@container/composer-surface group/composer-surface relative isolate mx-auto flex w-full max-w-(--chat-content-max-width) flex-col rounded-2xl surface-tray",
+        "[--chat-composer-surface:var(--popover)] [--chat-composer-outline:var(--tray-stroke)]",
         className,
       )}
       {...props}
@@ -26,26 +24,17 @@ function Shell({
 
 function Host({ className, ...props }: ComponentProps<"div">) {
   return (
-    <div
-      data-slot="composer-host"
-      className={cn(
-        "relative z-10 w-full rounded-pane shadow-(--composer-shadow) group-data-context-row/composer-surface:surface-composer",
-        "group-has-data-[composer-banner-surface=attached]/composer-surface:shadow-none group-has-data-[composer-banner-surface=attached]/composer-surface:before:hidden",
-        className,
-      )}
-      {...props}
-    />
+    <div data-slot="composer-host" className={cn("relative z-10 w-full", className)} {...props} />
   );
 }
 
+/** Its top corners sit 1px inside the r18 tray, so they take 18 - 1 to stay concentric. */
 function Main({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       data-chat-composer-main-surface="true"
       className={cn(
-        "group relative z-10 rounded-pane p-px",
-        "group-has-data-[composer-banner-surface=attached]/composer-surface:surface-composer",
-        "group-has-data-[composer-banner-surface=attached]/composer-surface:**:data-[chat-composer-mobile-collapsed=true]:min-h-[calc(1rem+1px)]",
+        "group relative z-10 rounded-b-pane rounded-t-composer surface-composer",
         className,
       )}
       {...props}
@@ -57,9 +46,10 @@ function Main({ className, ...props }: ComponentProps<"div">) {
 function ContextStrip({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
-      data-slot="composer-context-strip"
+      data-slot="composer-tray-row"
+      // 8px on the right, so a trailing chip's hover fill ends on the send pill's edge.
       className={cn(
-        "group/composer-context relative flex w-full items-center gap-2 overflow-x-clip px-2 pt-2 text-dim-foreground",
+        "group/composer-context relative flex min-h-7.5 min-w-0 items-center gap-1 ps-1.5 pe-2 py-1 text-meta text-muted-foreground",
         className,
       )}
       {...props}
