@@ -31,12 +31,12 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 
 const driver = ProviderDriverKind.make("codex");
 const instanceId = ProviderInstanceId.make("codex");
-const modelSelection = { instanceId, model: "test-model" };
 
 it.effect.each(
   (
     [
       [false, "during delivery"],
+      [false, "during delivery", "claudeAgent"],
       [false, "before dispatch"],
       [true, "after delivery"],
       [true, "without native steering"],
@@ -44,14 +44,18 @@ it.effect.each(
       [true, "settled only"],
       [false, "during continuation"],
     ] as const
-  ).map(([mailbox, timing]) => ({
+  ).map(([mailbox, timing, provider = "codex"]) => ({
     mailbox,
     timing,
+    provider,
     label: mailbox ? "mailbox notification" : "steering",
   })),
-)("delivers $label when completion wins $timing", ({ mailbox, timing }) =>
+)("delivers $label when completion wins $timing ($provider)", ({ mailbox, timing, provider }) =>
   Effect.scoped(
     Effect.gen(function* () {
+      const driver = ProviderDriverKind.make(provider);
+      const instanceId = ProviderInstanceId.make(provider);
+      const modelSelection = { instanceId, model: "test-model" };
       const cwd = yield* checkpointWorkspace(`steering-completion-${timing.replaceAll(" ", "-")}`);
       const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
       const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
@@ -340,6 +344,13 @@ it.effect.each(
           yield* Deferred.succeed(rejectSteer, undefined);
           yield* Fiber.join(delivery);
           const requeued = yield* orchestrator.getThreadProjection(threadId);
+          assert.isTrue(requeued.runs.some((run) => run.status === "queued"));
+          assert.isFalse(
+            requeued.visibleTurnItems.some(
+              ({ item }) => item.type === "user_message" && item.messageId === messageId,
+            ),
+            "a steer that fell back to the queue must not appear delivered",
+          );
           const item = requeued.turnItems.find(
             (item) => item.type === "user_message" && item.messageId === messageId,
           );
@@ -419,6 +430,14 @@ it.effect.each(
           ).length,
           1,
         );
+        if (!mailbox) {
+          assert.equal(
+            final.visibleTurnItems.filter(
+              ({ item }) => item.type === "user_message" && item.messageId === messageId,
+            ).length,
+            1,
+          );
+        }
         yield* worker.drain();
         assert.equal(started.length, 2);
       }).pipe(

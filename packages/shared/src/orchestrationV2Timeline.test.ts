@@ -53,11 +53,11 @@ describe.each([
     ).toBe(true);
   });
 
-  it("hides queued user messages once their run is cancelled", () => {
+  it.each(["queued", "cancelled"] as const)("hides queued user messages on %s runs", (status) => {
     expect(
       isVisible({
         item: { type: "user_message", inputIntent: "queued_turn", runId, nodeId },
-        runs: [{ id: runId, status: "cancelled" }],
+        runs: [{ id: runId, status }],
         attempts: [],
         items: [{ type: "user_message", inputIntent: "queued_turn", runId, nodeId }],
       }),
