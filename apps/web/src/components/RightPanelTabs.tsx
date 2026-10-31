@@ -280,11 +280,13 @@ function tabAudioState(overlay: DesktopPreviewOverlay | null): TabAudioState {
 function PanelTabStrip({
   notched,
   noDrag,
+  embedded,
   ref,
   children,
 }: {
   notched: boolean;
   noDrag: boolean;
+  embedded: boolean;
   ref: Ref<HTMLDivElement>;
   children: ReactNode;
 }) {
@@ -294,7 +296,7 @@ function PanelTabStrip({
       // so a narrow pane never squeezes its shown tab away.
       <div
         ref={ref}
-        className="flex min-w-0 flex-auto items-center gap-1"
+        className={cn("flex items-center gap-1", embedded ? "shrink-0" : "min-w-0 flex-auto")}
         data-right-panel-tab-list
       >
         {children}
@@ -1474,6 +1476,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             : null}
           <PanelTabStrip
             notched={notched}
+            embedded={layoutTabId !== null}
             // A scrolling strip in the title bar leaves the drag region, so trackpad scrolls reach it.
             noDrag={ownsDesktopTitleBar && tabScrollState.hasOverflow}
             ref={attachTabList}
