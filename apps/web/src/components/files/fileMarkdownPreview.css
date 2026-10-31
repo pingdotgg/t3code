@@ -1,0 +1,21 @@
+/* Rendered file documents use the preview frame's hierarchy, independent of chat. */
+[data-file-markdown-preview] .chat-markdown {
+  font-size: 0.84375rem;
+  line-height: 1.55;
+}
+
+[data-file-markdown-preview] .chat-markdown h1 {
+  font-size: var(--type-title);
+}
+
+[data-file-markdown-preview] .chat-markdown h2 {
+  font-size: 1rem;
+}
+
+[data-file-markdown-preview] .chat-markdown :is(h1, h2, h3, h4, h5, h6) {
+  margin-block: 0.75rem;
+}
+
+[data-file-markdown-preview] .chat-markdown > :first-child {
+  margin-top: 0;
+}
