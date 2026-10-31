@@ -16,8 +16,13 @@ import * as ServerSettings from "../serverSettings.ts";
 import type { SandboxProviderDriver } from "./SandboxProvider.ts";
 import { SANDBOX_PROVIDER_DRIVERS } from "./providers/index.ts";
 
-const INSTALL_SCRIPT = `set -eu
+const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+
+const installScript = (label: string) => `set -eu
 export PATH="$HOME/.local/bin:$PATH"
+if command -v hostnamectl >/dev/null 2>&1; then
+  sudo -n hostnamectl set-hostname --pretty ${shellQuote(label)} 2>/dev/null || true
+fi
 if ! command -v t3 >/dev/null 2>&1; then
   curl -fsSL https://t3.codes/install.sh | sh
 fi
@@ -43,8 +48,6 @@ exit 1`;
 const PAIR_SCRIPT = `set -eu
 export PATH="$HOME/.local/bin:$PATH"
 t3 pair --ttl 30m`;
-
-const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
 const cloneScript = (repositoryUrl: string) => `set -eu
 mkdir -p "$HOME/workspace"
@@ -173,7 +176,7 @@ const make = Effect.gen(function* () {
       driver.execute({
         config,
         sandboxId: sandbox.id,
-        command: INSTALL_SCRIPT,
+        command: installScript(label),
         timeoutSeconds: 600,
       }),
     );
