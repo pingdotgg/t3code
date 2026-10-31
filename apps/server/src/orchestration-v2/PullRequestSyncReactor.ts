@@ -588,8 +588,9 @@ export const make = Effect.gen(function* () {
           ),
         );
       },
-      // Match summary batch width so GitHub reads coalesce into one request.
-      { concurrency: 25, discard: true },
+      // Wider than one summary batch, so reads that finish their cache checks at different times
+      // still share batches; the cap bounds hosts that read each pull request on its own.
+      { concurrency: 100, discard: true },
     );
     for (const [reason, { count, key }] of skips) {
       yield* Effect.logWarning("pull request sync skipped", { count, key, reason });

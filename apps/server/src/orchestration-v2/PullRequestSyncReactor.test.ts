@@ -1101,6 +1101,45 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 
+  it.effect("has every due read of a sweep wider than one summary batch in flight at once", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const numbers = Array.from({ length: 30 }, (_, index) => index + 1);
+        const inFlight = yield* Ref.make({ active: 0, peak: 0 });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot(
+            numbers.map((number) =>
+              makeThread(`thread-${number}`, { pullRequests: [makeLink(number)] }),
+            ),
+          ),
+          summary: (input) =>
+            Ref.update(inFlight, ({ active, peak }) => ({
+              active: active + 1,
+              peak: Math.max(peak, active + 1),
+            })).pipe(
+              Effect.andThen(Effect.sleep("1 second")),
+              Effect.andThen(
+                Ref.update(inFlight, (state) => ({ ...state, active: state.active - 1 })),
+              ),
+              Effect.as(makeSummary(input)),
+            ),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* PullRequestSyncReactor.PullRequestSyncReactor;
+          yield* reactor.start();
+          yield* Deferred.succeed(fixture.activation, undefined);
+          yield* TestClock.adjust("1 second");
+          // A narrower sweep reads the rest in a second wave.
+          yield* TestClock.adjust("1 second");
+          yield* reactor.drain;
+          assert.strictEqual((yield* Ref.get(inFlight)).peak, numbers.length);
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, numbers.length);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("skips the stack read for a pull request the summary places in no stack", () =>
     Effect.scoped(
       Effect.gen(function* () {
