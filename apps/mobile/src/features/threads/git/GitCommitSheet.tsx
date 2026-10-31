@@ -78,14 +78,18 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           options={{ sheetCornerRadius: 28, sheetAllowedDetents: "fitToContents" }}
         />
       ) : null}
-      <SheetHeader
-        presentation={Platform.OS === "android" ? "inline" : "native"}
-        title="Commit changes"
-        subtitle={gitStatus.data?.refName ?? "(detached HEAD)"}
-        onCancel={() => navigation.goBack()}
-        accessibilityLabel="Cancel commit"
-      />
-      <ScreenContent fitToContents>
+      <ScreenContent
+        fitToContents
+        header={
+          <SheetHeader
+            presentation={Platform.OS === "android" ? "inline" : "native"}
+            title="Commit changes"
+            subtitle={gitStatus.data?.refName ?? "(detached HEAD)"}
+            onCancel={() => navigation.goBack()}
+            accessibilityLabel="Cancel commit"
+          />
+        }
+      >
         <ScrollView
           nestedScrollEnabled
           contentInsetAdjustmentBehavior="automatic"

@@ -76,20 +76,24 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
           }}
         />
       ) : null}
-      {Platform.OS === "android" ? (
-        <AndroidSheetHeader
-          title="Branches & worktrees"
-          onBack={() => navigation.goBack()}
-          hideBottomBorder
-        />
-      ) : (
-        <SheetHeader
-          presentation="native"
-          title="Branches & worktrees"
-          onClose={() => navigation.goBack()}
-        />
-      )}
-      <ScreenContent fitToContents>
+      <ScreenContent
+        fitToContents
+        header={
+          Platform.OS === "android" ? (
+            <AndroidSheetHeader
+              title="Branches & worktrees"
+              onBack={() => navigation.goBack()}
+              hideBottomBorder
+            />
+          ) : (
+            <SheetHeader
+              presentation="native"
+              title="Branches & worktrees"
+              onClose={() => navigation.goBack()}
+            />
+          )
+        }
+      >
         <ScrollView
           nestedScrollEnabled
           className="android:shrink android:grow-0 ios:flex-1"
