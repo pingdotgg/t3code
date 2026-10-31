@@ -432,8 +432,10 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
       filesContent.refresh();
     });
   const jumpToFiles = () => {
-    scrollViews.current.overview?.scrollToOffset({
-      offset: bodyY.current + filesY.current - barInsets.top,
+    scrollViews.current.overview?.scrollToIndex({
+      index: 0,
+      viewPosition: 0,
+      viewOffset: -filesY.current,
       animated: true,
     });
     pendingFilesJump.current = false;
@@ -707,10 +709,10 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                     )
                       return;
                     pendingDescriptionJump.current = false;
-                    scrollViews.current.overview?.scrollToKey({
-                      key: "overview:body",
+                    scrollViews.current.overview?.scrollToIndex({
+                      index: 0,
                       viewPosition: 0,
-                      viewOffset: barInsets.top - descriptionY.current,
+                      viewOffset: -descriptionY.current,
                       animated: false,
                     });
                   }}
