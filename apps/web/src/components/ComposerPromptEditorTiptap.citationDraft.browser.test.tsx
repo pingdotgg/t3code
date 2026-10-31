@@ -1,10 +1,12 @@
-import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
 import {
+  formatAssistantCitationHref,
+  parseAssistantCitationHref,
   serializeAssistantCitation,
   withAssistantCitationComment,
 } from "@t3tools/shared/assistantCitations";
 import { createRef, useState } from "react";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -31,19 +33,23 @@ const promptBefore = `See ${serializeAssistantCitation(citation)} `;
 function Composer({
   question,
   editorRef,
+  sourceCitation = citation,
+  onSend = () => {},
 }: {
   question: boolean;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
+  sourceCitation?: AssistantCitation;
+  onSend?: () => void;
 }) {
-  const [prompt, setPrompt] = useState(promptBefore);
+  const [prompt, setPrompt] = useState(() => `See ${serializeAssistantCitation(sourceCitation)} `);
   const [answer, setAnswer] = useState("");
   return (
     <>
       <div data-assistant-citation-viewport="">
         <p
-          data-assistant-citation-source={citation.messageId}
-          data-assistant-citation-environment={citation.environmentId}
-          data-assistant-citation-thread={citation.threadId}
+          data-assistant-citation-source={sourceCitation.messageId}
+          data-assistant-citation-environment={sourceCitation.environmentId}
+          data-assistant-citation-thread={sourceCitation.threadId}
         >
           hello world
         </p>
@@ -58,6 +64,7 @@ function Composer({
         disabled={false}
         placeholder=""
         onChange={(next) => (question ? setAnswer(next) : setPrompt(next))}
+        onCitationSubmitAndSend={onSend}
         onCitationDraftSave={(replacedValue, savedValue) => {
           if (replacedValue === prompt) setPrompt(savedValue);
         }}
@@ -97,3 +104,67 @@ it("keeps an unsaved citation comment when a question takes the composer", async
   );
   await expect.element(page.getByLabelText("Edit citation comment")).toBeInTheDocument();
 });
+
+it.each(["save", "send", "question"] as const)(
+  "rejects a comment exceeding the complete citation URL budget on %s",
+  async (action) => {
+    const sourceCitation = { ...citation, messageId: MessageId.make("界".repeat(17_750)) };
+    const oversizedComment = "界".repeat(100);
+    const prompt = `See ${serializeAssistantCitation(sourceCitation)} `;
+    expect(parseAssistantCitationHref(formatAssistantCitationHref(sourceCitation))).toEqual(
+      sourceCitation,
+    );
+    expect(
+      parseAssistantCitationHref(
+        formatAssistantCitationHref(withAssistantCitationComment(sourceCitation, oversizedComment)),
+      ),
+    ).toBeNull();
+
+    const editorRef = createRef<ComposerPromptEditorHandle>();
+    const onSend = vi.fn();
+    await using screen = await render(
+      <Composer
+        question={false}
+        editorRef={editorRef}
+        sourceCitation={sourceCitation}
+        onSend={onSend}
+      />,
+    );
+    const sourceAnchor = findAssistantCitationSourceAnchor(document, sourceCitation);
+    if (!sourceAnchor) throw new Error("Citation source did not resolve");
+    await act(async () =>
+      editorRef.current?.requestCitationComment({
+        previousValue: "See ",
+        value: prompt,
+        citationStart: "See ".length,
+        sourceAnchor,
+        insertedSpaces: { before: false, after: true },
+      }),
+    );
+    const comment = page.getByLabelText("Comment on selected text");
+    await expect.element(comment).toBeVisible();
+    await comment.fill(oversizedComment);
+
+    if (action === "question") {
+      await screen.rerender(
+        <Composer question editorRef={editorRef} sourceCitation={sourceCitation} onSend={onSend} />,
+      );
+    } else {
+      await userEvent.keyboard(action === "send" ? "{Control>}{Enter}{/Control}" : "{Enter}");
+    }
+    const savedPrompt = screen.container.querySelector("output")?.dataset.prompt;
+    expect(savedPrompt === prompt, "Rejected comments must leave the saved prompt unchanged").toBe(
+      true,
+    );
+    expect(onSend).not.toHaveBeenCalled();
+    if (action !== "question") {
+      await expect.element(comment).toHaveValue(oversizedComment);
+      await comment.fill("ok");
+      await userEvent.keyboard(action === "send" ? "{Control>}{Enter}{/Control}" : "{Enter}");
+      expect(screen.container.querySelector("output")?.dataset.prompt).toBe(
+        `See ${serializeAssistantCitation(withAssistantCitationComment(sourceCitation, "ok"))} `,
+      );
+      expect(onSend).toHaveBeenCalledTimes(action === "send" ? 1 : 0);
+    }
+  },
+);
