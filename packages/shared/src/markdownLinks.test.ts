@@ -28,6 +28,12 @@ describe("inlineCodeFilePathCandidate", () => {
     ["share/man/ls.1", "share/man/ls.1"],
     ["src/main.ts/", null],
     ["./patches/", "./patches/"],
+    // regression: #22181 a `:line` suffix does not make an extensionless basename a file
+    ["I/W217:220", null],
+    ["foo/TODO:12", null],
+    ["bin/run:12", null],
+    ["docs/README:12", "docs/README:12"],
+    ["./bin/run:12", "./bin/run:12"],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });
