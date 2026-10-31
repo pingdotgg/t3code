@@ -1,6 +1,15 @@
 import type { PullRequestBodySegment } from "@t3tools/client-runtime/pull-request-markdown";
 import type { MarkdownNode } from "../../lib/markdownDocument";
 
+function isWebUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 export function pullRequestDescriptionContent(
   document: MarkdownNode,
   media: readonly PullRequestBodySegment[] = [],
@@ -12,7 +21,7 @@ export function pullRequestDescriptionContent(
   const text: string[] = [];
   const visit = (node: MarkdownNode) => {
     if (node.type === "image") {
-      if (node.url && /^https?:\/\//i.test(node.url) && !attachments.has(node.url)) {
+      if (node.url && isWebUrl(node.url) && !attachments.has(node.url)) {
         attachments.set(node.url, {
           uri: node.url,
           caption: node.alt || node.title || "Image",
