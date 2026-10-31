@@ -14,6 +14,7 @@ import { useComposerDraftStore } from "../composerDraftStore";
 import { environmentCatalog } from "../connection/catalog";
 import { effectiveShortcutsForCommand, resolveShortcutCommand } from "../keybindings";
 import { isEditableFocused } from "../lib/editableFocus";
+import { isModalDialogOpen } from "../lib/modalDialog";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
@@ -190,6 +191,7 @@ export function ReopenClosedViewShortcut() {
       if (
         event.defaultPrevented ||
         isCommandPaletteOpen() ||
+        isModalDialogOpen() ||
         useClosedViewStore.getState().entries.length === 0 ||
         (event.target instanceof HTMLElement && event.target.closest("[data-keybinding-capture]"))
       )
@@ -211,7 +213,8 @@ export function ReopenClosedViewShortcut() {
     };
     window.addEventListener("keydown", onKeyDown, true);
     const unsubscribe = window.desktopBridge?.onMenuAction((action) => {
-      if (action === "view.reopenClosed" && !isCommandPaletteOpen()) enqueueReopen();
+      if (action === "view.reopenClosed" && !isCommandPaletteOpen() && !isModalDialogOpen())
+        enqueueReopen();
     });
     return () => {
       window.removeEventListener("keydown", onKeyDown, true);
