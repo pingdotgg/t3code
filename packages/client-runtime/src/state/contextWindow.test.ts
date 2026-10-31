@@ -40,6 +40,7 @@ function sendInput(
     readonly heldQueue?: boolean;
     readonly pendingRequest?: boolean;
     readonly onlyCompactMessages?: boolean;
+    readonly promptOutsideWindow?: boolean;
     readonly text?: string;
     readonly threadIdle?: boolean;
   } = {},
@@ -67,15 +68,19 @@ function sendInput(
     contextUsage: null,
     updatedAt: DateTime.makeUnsafe(lastTurnAt),
   });
-  const visibleTurnItems = [
-    {
-      item: {
-        type: "user_message",
-        text: overrides.onlyCompactMessages === true ? "/compact" : "Fix the build",
-        attachments: [],
-      },
-    },
-  ];
+  const visibleTurnItems =
+    overrides.promptOutsideWindow === true
+      ? [{ item: { type: "assistant_message", text: "Build fixed" } }]
+      : [
+          {
+            item: {
+              type: "user_message",
+              runId: RunId.make("run-1"),
+              text: overrides.onlyCompactMessages === true ? "/compact" : "Fix the build",
+              attachments: [],
+            },
+          },
+        ];
   const projection = {
     ...v2Projection,
     thread: {
@@ -179,6 +184,11 @@ function sendInput(
 describe("shouldCompactBeforeSend", () => {
   it.each([
     { name: "a stale Claude thread over 200K", expected: true },
+    {
+      name: "when the original prompt is outside the loaded window",
+      promptOutsideWindow: true,
+      expected: true,
+    },
     {
       name: "when the environment compacts before the cache expires",
       settings: { idleCompaction: "beforeCacheExpires" },

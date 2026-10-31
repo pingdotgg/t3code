@@ -271,11 +271,19 @@ export function shouldCompactBeforeSend(input: {
     resolvePendingHandoff(projection, input.selection, input.providers) !== null ||
     projection.runtimeRequests.some((request) => request.status === "pending") ||
     projection.runs.some((run) => run.status === "queued" && run.queueHeld === true) ||
-    !input.visibleTurnItems.some(
+    (!input.visibleTurnItems.some(
       ({ item }) =>
         item.type === "user_message" &&
         (item.text.trim().toLowerCase() !== "/compact" || item.attachments.length > 0),
-    ) ||
+    ) &&
+      !projection.runs.some(
+        (run) =>
+          run.status !== "rolled_back" &&
+          run.startedAt !== null &&
+          !input.visibleTurnItems.some(
+            ({ item }) => item.type === "user_message" && item.runId === run.id,
+          ),
+      )) ||
     hasDismissedResumeCompaction(
       projection.runtimeRequests
         .filter((request) => request.kind === "user_input" && request.status === "resolved")
