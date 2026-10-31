@@ -1,7 +1,10 @@
 import { type ComposerThreadTarget, useComposerDraftStore } from "../../composerDraftStore";
 import { cn } from "../../lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { linearMoveHint } from "@t3tools/client-runtime/linear/launch-plan";
+import {
+  attachedLinearDraftIssue,
+  linearMoveHint,
+} from "@t3tools/client-runtime/linear/launch-plan";
 
 function HintToggle({
   label,
@@ -46,8 +49,12 @@ function HintToggle({
  * Linear. Each part toggles for this launch only; the saved defaults live in Linear settings.
  */
 export function LinearLaunchHint({ draftTarget }: { readonly draftTarget: ComposerThreadTarget }) {
-  const launch = useComposerDraftStore(
-    (state) => state.getDraftThread(draftTarget)?.linearIssue ?? null,
+  // Removing the issue chip opts out of the launch, so the hint goes with it.
+  const launch = useComposerDraftStore((state) =>
+    attachedLinearDraftIssue(
+      state.getDraftThread(draftTarget)?.linearIssue,
+      state.getComposerDraft(draftTarget)?.linearContexts ?? [],
+    ),
   );
   const setDraftLinearIssue = useComposerDraftStore((state) => state.setDraftLinearIssue);
   if (launch === null) return null;
