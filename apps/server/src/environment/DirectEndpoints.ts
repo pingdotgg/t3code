@@ -1,16 +1,11 @@
 import type { ServerDirectEndpoint } from "@t3tools/contracts";
-import {
-  buildTailscaleHttpsBaseUrl,
-  probeTailscaleHttpsEndpoint,
-  readTailscaleStatus,
-} from "@t3tools/tailscale";
+import { buildTailscaleHttpsBaseUrl, probeTailscaleHttpsEndpoint } from "@t3tools/tailscale";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { HttpClient } from "effect/http";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
@@ -25,6 +20,7 @@ import {
   isWildcardHost,
   VIRTUAL_INTERFACE,
 } from "../startupAccess.ts";
+import * as TailscaleStatusReader from "./TailscaleStatusReader.ts";
 
 type NetworkInterfacesMap = ReturnType<typeof NodeOS.networkInterfaces>;
 
@@ -117,7 +113,7 @@ const probeCloudMetadata = Effect.callback<boolean>((resume) => {
 /** @public */
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const tailscaleStatus = yield* TailscaleStatusReader.TailscaleStatusReader;
   const httpClient = yield* HttpClient.HttpClient;
   const platform = yield* HostProcess.Platform;
   // Only the service default listens on every interface without being asked,
@@ -140,7 +136,7 @@ export const make = Effect.gen(function* () {
     ];
     // Serve setup can fail without stopping startup; advertise only after it answers as this server.
     if (config.tailscaleServeEnabled) {
-      const servedUrl = yield* readTailscaleStatus.pipe(
+      const servedUrl = yield* tailscaleStatus.read().pipe(
         Effect.map((status) => status.magicDnsName),
         Effect.flatMap((magicDnsName) => {
           if (magicDnsName === null) return Effect.succeed(null);
@@ -155,7 +151,6 @@ export const make = Effect.gen(function* () {
         Effect.timeoutOption(TAILSCALE_ENDPOINT_TIMEOUT),
         Effect.map(Option.flatMap(Option.fromNullishOr)),
         Effect.orElseSucceed(() => Option.none<string>()),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(HttpClient.HttpClient, httpClient),
       );
       if (Option.isSome(servedUrl)) {
