@@ -481,6 +481,11 @@ const CODEX_TEST_MODEL_SELECTION = {
   instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
   model: "gpt-5.4",
 } satisfies ModelSelection;
+const CODEX_TEST_HIGH_EFFORT_MODEL_SELECTION = {
+  instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+  model: "gpt-6.1-sol",
+  options: [{ id: "reasoningEffort", value: "high" }],
+} satisfies ModelSelection;
 const CODEX_TEST_RUNTIME_POLICY = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
   runtimeMode: "full-access",
   interactionMode: "default",
@@ -2410,6 +2415,120 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(resumed.nativeThreadRef?.nativeId, nativeThreadId);
         assert.equal(resumed.status, "idle");
         assert.equal(DateTime.toEpochMillis(resumed.updatedAt), 1782622450000);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  // regression: #26863 Codex 0.165 also sends the session effort over WebSocket
+  it.effect("starts a thread with the selected reasoning effort", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-start-reasoning-effort";
+        const preamble = codexReplayPreamble({
+          nativeThreadId: `native-${scenario}-thread`,
+          nativeTurnId: "unused-turn",
+          prompt: "unused-prompt",
+        }).slice(0, 5);
+        const effortThreadId = `native-${scenario}-effort-thread`;
+        const effortThreadStarted = codexReplayPreamble({
+          nativeThreadId: effortThreadId,
+          nativeTurnId: "unused-turn",
+          prompt: "unused-prompt",
+        })
+          .slice(4, 5)
+          .map((entry) =>
+            entry.type === "runtime_exit"
+              ? entry
+              : { ...entry, frame: { ...(entry.frame as Record<string, unknown>), id: 3 } },
+          );
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...preamble,
+              {
+                type: "expect_outbound",
+                label: "thread/start",
+                frame: {
+                  id: 3,
+                  method: "thread/start",
+                  params: {
+                    config: {
+                      ...CodexAdapterV2.CODEX_THREAD_CONFIG,
+                      model_reasoning_effort: "high",
+                    },
+                  },
+                },
+              },
+              ...effortThreadStarted,
+            ],
+          }),
+        );
+        const started = yield* harness.runtime.ensureThread({
+          threadId: ThreadId.make(`thread-${scenario}-effort`),
+          modelSelection: CODEX_TEST_HIGH_EFFORT_MODEL_SELECTION,
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        });
+
+        assert.equal(started.nativeThreadRef?.nativeId, effortThreadId);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  // regression: #26863 Codex 0.165 also sends the session effort over WebSocket
+  it.effect("resumes a thread with the selected reasoning effort", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-resume-reasoning-effort";
+        const nativeThreadId = `native-${scenario}-thread`;
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId: "unused-turn",
+                prompt: "unused-prompt",
+              }).slice(0, 5),
+              {
+                type: "expect_outbound",
+                label: "thread/resume",
+                frame: {
+                  id: 3,
+                  method: "thread/resume",
+                  params: {
+                    threadId: nativeThreadId,
+                    excludeTurns: true,
+                    config: {
+                      ...CodexAdapterV2.CODEX_THREAD_CONFIG,
+                      model_reasoning_effort: "high",
+                    },
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "thread/resume",
+                frame: { id: 3, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
+              },
+            ],
+          }),
+        );
+        const resumed = yield* harness.runtime.resumeThread({
+          providerThread: harness.providerThread,
+          modelSelection: CODEX_TEST_HIGH_EFFORT_MODEL_SELECTION,
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        });
+
+        assert.equal(resumed.nativeThreadRef?.nativeId, nativeThreadId);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
