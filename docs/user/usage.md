@@ -153,6 +153,12 @@ environment that will connect to the hub and enter its URL and management key.
 The accounts appear under **Usage → Limits**. Codex accounts show banked reset credits; select an
 account and choose **Use reset** to redeem one. No hub plugin is required.
 
+When an instance cannot read its own limits and your connected hubs have exactly one account for
+that provider between them, the thread details card shows that account's limits, and hovering a row
+shows which hub they come from. A hub account signed in with a different email or workspace than the
+instance is skipped. With several hub accounts, or while a hub cannot be read, the card keeps its notice, so
+check **Usage → Limits**.
+
 This connection supplies usage information; configure
 the provider separately to send agent requests through the hub. Remove the hub from the same
 settings section when you no longer need it.

@@ -232,6 +232,17 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
   };
 }
 
+/** Keys one environment's accounts, learning workspaces from its enabled instances and hubs. */
+export function environmentAccountKeyResolver(
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+) {
+  return accountKeyResolver([
+    ...providers.filter((provider) => provider.enabled).map(nativeReport),
+    ...sources.flatMap((source) => source.accounts),
+  ]);
+}
+
 export interface LimitAccount {
   readonly key: string;
   readonly driver: ServerProvider["driver"];
@@ -746,10 +757,7 @@ export function collectProviderUsageLimits(
 ): UsageLimitsReport | null {
   const selected = providers.find((provider) => provider.instanceId === instanceId);
   if (!selected || !hasProviderUsageLimits(selected.driver, providers, sources)) return null;
-  const resolveKey = accountKeyResolver([
-    ...providers.filter((provider) => provider.enabled).map(nativeReport),
-    ...sources.flatMap((source) => source.accounts),
-  ]);
+  const resolveKey = environmentAccountKeyResolver(providers, sources);
   type NativeSnapshot = { provider: ServerProvider; limits: ServerProviderUsageLimits };
   const nativeByAccount = new Map<
     string,
