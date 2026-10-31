@@ -387,7 +387,7 @@ export function ShimmeringWorkContent(props: {
 function workRowSymbolName(icon: ThreadFeedActivity["icon"]): WorkContentIcon {
   switch (icon) {
     case "agent":
-      return { ios: "sparkles", android: "auto_awesome" };
+      return "robot";
     case "alert":
       return { ios: "exclamationmark.triangle", android: "error" };
     case "browser":
@@ -1581,7 +1581,7 @@ function toolGroupSummarySymbolName(kind: ToolGroupSummaryKind): AppSymbolName {
     case "reasoning":
       return { ios: "brain", android: "psychology" };
     case "agent-tool":
-      return { ios: "sparkles", android: "auto_awesome" };
+      return "robot";
     case "tone-tool":
       return { ios: "bolt", android: "bolt" };
     case "dynamic-tool":
