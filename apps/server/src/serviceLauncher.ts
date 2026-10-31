@@ -6,6 +6,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 import * as NodeUtil from "node:util";
 
 import type {
@@ -38,6 +39,7 @@ const PREPARED_TIMEOUT_MS = 30 * 60_000;
 const TERMINATE_GRACE_MS = 5_000;
 // Match contracts' SERVER_EXIT_CODE_STATE_DIR_OWNED without depending on Effect.
 const STATE_DIR_OWNED_EXIT_CODE = 78;
+const STATE_DIR_OWNER_POLL_MS = 30_000;
 
 type TerminalStatus = "committed" | "rolled-back" | "failed";
 type ChildRole = "active" | "trial";
@@ -429,6 +431,44 @@ async function terminateChild(
   }
 }
 
+const isSqliteBusy = (cause: unknown) =>
+  cause instanceof Error &&
+  (("errcode" in cause && cause.errcode === 5) ||
+    ("code" in cause && cause.code === "SQLITE_BUSY"));
+
+// Mirror acquireServerOwnership: the lock, then a live pre-lock server-runtime.json PID.
+// Skip its PID-reuse check so a reused PID waits instead of restarting a refused server;
+// leave other failures for server startup to report.
+export function stateDirOwned(baseDir: string): boolean {
+  const stateDir = NodePath.join(baseDir, "userdata");
+  let db: NodeSqlite.DatabaseSync | undefined;
+  try {
+    db = new NodeSqlite.DatabaseSync(NodePath.join(stateDir, "server-owner.sqlite"));
+    db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE; ROLLBACK;");
+  } catch (cause) {
+    return isSqliteBusy(cause);
+  } finally {
+    db?.close();
+  }
+  let record: unknown;
+  try {
+    record = JSON.parse(
+      NodeFS.readFileSync(NodePath.join(stateDir, "server-runtime.json"), "utf8"),
+    );
+  } catch {
+    return false;
+  }
+  if (typeof record !== "object" || record === null || "ownerId" in record) return false;
+  const pid = "pid" in record ? record.pid : undefined;
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "EPERM";
+  }
+}
+
 const stopMarkerPath = (baseDir: string) =>
   NodePath.join(baseDir, "runtime", SERVICE_STOP_MARKER_FILE);
 const restartPendingPath = (baseDir: string) =>
@@ -447,6 +487,7 @@ export class Launcher {
   readonly #completion = Promise.withResolvers<void>();
   readonly #backupSpaceProbe: Partial<BackupSpaceProbe> | undefined;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
+  readonly #stateDirOwnerPollMs: number;
 
   constructor(
     baseDir: string,
@@ -454,9 +495,11 @@ export class Launcher {
     options: {
       readonly backupSpaceProbe?: Partial<BackupSpaceProbe>;
       readonly environment?: Readonly<NodeJS.ProcessEnv>;
+      readonly stateDirOwnerPollMs?: number;
     } = {},
   ) {
     this.#baseDir = baseDir;
+    this.#stateDirOwnerPollMs = options.stateDirOwnerPollMs ?? STATE_DIR_OWNER_POLL_MS;
     this.#backupSpaceProbe = options.backupSpaceProbe;
     this.#environment = { ...(options.environment ?? process.env) };
     this.#statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
@@ -772,7 +815,7 @@ export class Launcher {
     throw new Error(`Active child exited unexpectedly (${String(code ?? signal ?? "unknown")}).`);
   }
 
-  // Stay idle to avoid supervisor restart loops; never restore backups over another owner's possible writes.
+  // Stay idle until the lock frees to avoid supervisor restart loops; never restore backups over another owner's possible writes.
   async #idleWhileStateDirOwned(): Promise<void> {
     this.#clearTimer();
     const pending = this.#state.update;
@@ -786,11 +829,22 @@ export class Launcher {
       this.#state = next;
       await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
     }
-    // Signal listeners alone do not keep Node alive.
-    this.#timer = setInterval(() => {}, 2_147_483_647);
     process.stderr.write(
-      "[service-launcher] Another T3 Code server owns this T3 home. Stop it, then restart this service.\n",
+      "[service-launcher] Another T3 Code server owns this T3 home. This service starts again once it stops.\n",
     );
+    // The interval also keeps Node alive: signal listeners alone do not.
+    this.#timer = setInterval(
+      () => this.#enqueue(() => this.#reclaimStateDir()),
+      this.#stateDirOwnerPollMs,
+    );
+  }
+
+  async #reclaimStateDir(): Promise<void> {
+    if (this.#timer === undefined || this.#child !== null || this.#stopRequested) return;
+    if (stateDirOwned(this.#baseDir)) return;
+    this.#clearTimer();
+    process.stderr.write("[service-launcher] The T3 home is free again. Starting the server.\n");
+    await this.#startChild(this.#state.activeVersion, "active", this.#state.update);
   }
 
   async #returnToPrevious(
