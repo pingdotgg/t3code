@@ -10,6 +10,17 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import { vi } from "vite-plus/test";
+
+import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as ElectronShell from "../electron/ElectronShell.ts";
+import * as DesktopClerk from "./DesktopClerk.ts";
+import * as DesktopPreReadyFileSystem from "./DesktopPreReadyFileSystem.ts";
+import { resolveEarlyMacKeychainName } from "./DesktopEarlyElectronStartup.ts";
+
+const { clerkStorage } = vi.hoisted(() => ({ clerkStorage: vi.fn() }));
+vi.mock("@clerk/electron/storage", () => ({ storage: clerkStorage }));
+vi.mock("@clerk/electron", () => ({ createClerkBridge: () => ({ cleanup: () => {} }) }));
 
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.ts";
@@ -27,9 +38,16 @@ const encodeLegacySavedEnvironments = Schema.encodeEffect(
     Schema.Struct({ version: Schema.Literal(1), records: Schema.Array(Schema.Unknown) }),
   ),
 );
-function layerSafeStorageFor(available: boolean, failDecrypt: Ref.Ref<boolean> | null = null) {
+type EncryptionAvailability =
+  | boolean
+  | Effect.Effect<boolean, ElectronSafeStorage.ElectronSafeStorageAvailabilityError>;
+
+function layerSafeStorageFor(
+  available: EncryptionAvailability,
+  failDecrypt: Ref.Ref<boolean> | null = null,
+) {
   return Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
-    isEncryptionAvailable: Effect.succeed(available),
+    isEncryptionAvailable: typeof available === "boolean" ? Effect.succeed(available) : available,
     encryptString: (value) => Effect.succeed(textEncoder.encode(`encrypted:${value}`)),
     decryptString: (value) => {
       return Effect.gen(function* () {
@@ -51,9 +69,15 @@ function layerSafeStorageFor(available: boolean, failDecrypt: Ref.Ref<boolean> |
 
 function layerFor(
   baseDir: string,
-  encryptionAvailable = true,
+  encryptionAvailable: EncryptionAvailability = true,
   failDecrypt: Ref.Ref<boolean> | null = null,
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
+  runtime: {
+    readonly dirname?: string;
+    readonly platform?: NodeJS.Platform;
+    readonly isPackaged?: boolean;
+    readonly isDevelopment?: boolean;
+  } = {},
 ) {
   const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
@@ -65,9 +89,16 @@ function layerFor(
     isPackaged: true,
     resourcesPath: "/missing/resources",
     runningUnderArm64Translation: false,
+    ...runtime,
   }).pipe(
     Layer.provide(
-      Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir })),
+      Layer.mergeAll(
+        NodeServices.layer,
+        DesktopConfig.layerTest({
+          T3CODE_HOME: baseDir,
+          VITE_DEV_SERVER_URL: runtime.isDevelopment ? "http://localhost:5173" : undefined,
+        }),
+      ),
     ),
   );
   const layerSafeStorage = layerSafeStorageFor(encryptionAvailable, failDecrypt);
@@ -89,7 +120,7 @@ function layerFor(
 
 const withStore = <A, E, R>(
   effect: Effect.Effect<A, E, R | DesktopConnectionCatalogStore.DesktopConnectionCatalogStore>,
-  encryptionAvailable = true,
+  encryptionAvailable: EncryptionAvailability = true,
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -100,6 +131,125 @@ const withStore = <A, E, R>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopConnectionCatalogStore", () => {
+  it.effect(
+    "isolates local macOS credentials and profiles under the same stable Keychain identity",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-local-keychain-" });
+        const stateDir = path.join(baseDir, "userdata");
+        yield* fs.makeDirectory(stateDir, { recursive: true });
+        for (const file of ["connection-catalog.json", "saved-environments.json"]) {
+          yield* fs.writeFileString(path.join(stateDir, file), "shared legacy credentials");
+        }
+        const start = (dirname: string, isDevelopment = false) =>
+          Effect.gen(function* () {
+            const environment = yield* DesktopEnvironment.DesktopEnvironment;
+            const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+            const name = resolveEarlyMacKeychainName({
+              ...environment,
+              runtimeDirectory: dirname,
+            });
+            assert.isString(name);
+            const profile = path.join(environment.appDataDirectory, name!);
+            const tokens = path.join(stateDir, "local-keychains", name!);
+            const legacyProfile = path.join(
+              environment.appDataDirectory,
+              isDevelopment ? "T3 Code (Dev)" : "t3code-v2",
+            );
+            yield* fs.makeDirectory(legacyProfile, { recursive: true });
+            yield* fs.writeFileString(path.join(legacyProfile, "Cookies"), "shared cookies");
+            const paths = new Map<string, string>();
+            /* oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- Assert synchronous pre-ready initialization. */ // @effect-diagnostics-next-line runEffectInsideEffect:off - Clerk must initialize synchronously before Electron is ready.
+            Effect.runSync(
+              DesktopClerk.make.pipe(
+                Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+                Effect.provideService(ElectronApp.ElectronApp, {
+                  setPath: (key: string, value: string) => Effect.sync(() => paths.set(key, value)),
+                  requestSingleInstanceLock: Effect.sync(() => {
+                    assert.deepEqual(
+                      [...paths],
+                      [
+                        ["userData", profile],
+                        ["sessionData", profile],
+                      ],
+                    );
+                    return true;
+                  }),
+                  on: () => Effect.void,
+                } as unknown as ElectronApp.ElectronApp["Service"]),
+                Effect.provideService(
+                  ElectronShell.ElectronShell,
+                  {} as ElectronShell.ElectronShell["Service"],
+                ),
+                Effect.provideService(Path.Path, path),
+                Effect.provide(DesktopPreReadyFileSystem.layer),
+                Effect.scoped,
+              ),
+            );
+            assert.deepEqual(clerkStorage.mock.lastCall, [{ path: path.join(tokens, "clerk") }]);
+            assert.equal(
+              yield* fs.readFileString(path.join(legacyProfile, "Cookies")),
+              "shared cookies",
+            );
+            return { store, profile, tokens };
+          }).pipe(
+            Effect.provide(
+              layerFor(baseDir, true, null, NodeServices.layer, {
+                dirname,
+                isDevelopment,
+                isPackaged: false,
+              }),
+            ),
+          );
+
+        const a = yield* start("/runtime/a");
+        assert.deepEqual(yield* a.store.get, Option.none());
+        assert.isFalse(yield* fs.exists(a.profile));
+        yield* fs.makeDirectory(a.profile, { recursive: true });
+        yield* fs.writeFileString(path.join(a.profile, "Cookies"), "A cookies");
+        assert.isTrue(yield* a.store.set("A catalog"));
+        assert.isTrue(yield* fs.exists(path.join(a.tokens, "connection-catalog.json")));
+
+        for (const b of [yield* start("/runtime/b"), yield* start("/runtime/a", true)]) {
+          assert.notEqual(b.profile, a.profile);
+          assert.notEqual(b.tokens, a.tokens);
+          assert.deepEqual(yield* b.store.get, Option.none());
+          assert.isFalse(yield* fs.exists(b.profile));
+          assert.isTrue(yield* b.store.set("B catalog"));
+        }
+        const reopened = yield* start("/runtime/a/./");
+        assert.equal(reopened.profile, a.profile);
+        assert.equal(reopened.tokens, a.tokens);
+        assert.deepEqual(yield* reopened.store.get, Option.some("A catalog"));
+        assert.equal(yield* fs.readFileString(path.join(reopened.profile, "Cookies")), "A cookies");
+        for (const file of ["connection-catalog.json", "saved-environments.json"]) {
+          assert.equal(
+            yield* fs.readFileString(path.join(stateDir, file)),
+            "shared legacy credentials",
+          );
+        }
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("reads an empty legacy registry without accessing Keychain", () =>
+    withStore(
+      Effect.gen(function* () {
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fs.writeFileString(
+          environment.savedEnvironmentRegistryPath,
+          '{"version":1,"records":[]}',
+        );
+        assert.deepEqual(yield* store.get, Option.none());
+      }),
+      Effect.die("An empty registry must not query Keychain"),
+    ),
+  );
+
   it.effect("persists and reads an encrypted connection catalog", () =>
     withStore(
       Effect.gen(function* () {

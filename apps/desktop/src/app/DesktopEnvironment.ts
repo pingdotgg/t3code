@@ -13,7 +13,10 @@ import * as Path from "effect/Path";
 
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
-import { resolveLinuxDesktopEntryName } from "./DesktopEarlyElectronStartup.ts";
+import {
+  resolveEarlyMacKeychainName,
+  resolveLinuxDesktopEntryName,
+} from "./DesktopEarlyElectronStartup.ts";
 import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
 import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
 import type { OtlpProtocol } from "@t3tools/shared/observability";
@@ -39,6 +42,7 @@ export class DesktopEnvironment extends Context.Service<
     readonly processArch: string;
     readonly isPackaged: boolean;
     readonly isDevelopment: boolean;
+    readonly localMacKeychainName: string | undefined;
     readonly appVersion: string;
     readonly appPath: string;
     readonly resourcesPath: string;
@@ -192,6 +196,13 @@ const make = Effect.fn("desktop.environment.make")(function* (
     processArch: input.processArch,
     isPackaged: input.isPackaged,
     isDevelopment,
+    localMacKeychainName:
+      resolveEarlyMacKeychainName({
+        platform: input.platform,
+        isPackaged: input.isPackaged,
+        runtimeDirectory: input.dirname,
+        isDevelopment,
+      }) ?? undefined,
     appVersion: input.appVersion,
     appPath: input.appPath,
     resourcesPath,
