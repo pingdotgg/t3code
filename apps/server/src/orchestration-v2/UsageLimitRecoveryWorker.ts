@@ -11,6 +11,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as UsageLimitRecovery from "./UsageLimitRecovery.ts";
 
 export function limitRecoveryCommand(
   thread: ProjectionStore.ProjectionLimitRecoveryCandidate,
@@ -32,7 +33,8 @@ export function limitRecoveryCommand(
   // An already-expired window reported with a fresh failure cannot start a retry loop.
   if (
     !Number.isFinite(resetMs) ||
-    resetMs <= DateTime.toEpochMillis(thread.latestRunCompletedAt ?? thread.updatedAt)
+    (resetMs <= DateTime.toEpochMillis(thread.latestRunCompletedAt ?? thread.updatedAt) &&
+      !UsageLimitRecovery.staleResetAllowed(thread))
   )
     return null;
   const identity = `${thread.id}:${thread.latestRunId}:${resetMs}`;
@@ -53,7 +55,7 @@ export function limitRecoveryCommand(
   }
   if (
     !recovery.autoResume ||
-    resetMs > nowMs ||
+    UsageLimitRecovery.dueMs(resetMs, thread.latestRunCompletedAt ?? thread.updatedAt) > nowMs ||
     (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs)
   )
     return null;

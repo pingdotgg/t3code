@@ -283,7 +283,7 @@ const layerTest = Layer.mergeAll(
 ).pipe(
   Layer.provide(McpSessionRegistryTestkit.layer),
   Layer.provide(McpProviderSessions.layer),
-  Layer.provide(SqlitePersistence.layerMemory),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provide(layerCheckpointStoreTest),
   Layer.provide(layerServerConfig),
   Layer.provide(ServerSettings.layerTest()),
@@ -7567,7 +7567,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           const armed = (yield* orchestrator.getShellSnapshot()).threads.find(
             (thread) => thread.id === threadId,
           )!;
-          scheduledResume = limitRecoveryCommand(armed, true, Date.parse(resetAt));
+          scheduledResume = limitRecoveryCommand(armed, true, Date.parse(resetAt) + 120_000);
           assert.isNotNull(scheduledResume);
         }
         const resume = (suffix: string) => ({
@@ -7601,6 +7601,15 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
 
   it.effect.each([
     "resume",
+    "reset-margin",
+    "refused-boundary",
+    "refused-boundary-manual",
+    "refused-boundary-stop-reenable",
+    "refused-boundary-cancel",
+    "refused-boundary-cancel-before-arm",
+    "refused-boundary-off",
+    "refused-boundary-stop",
+    "refused-boundary-stop-armed",
     "queued-resume",
     "rearm",
     "snooze-race",
@@ -7836,6 +7845,266 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         snooze,
         requestId: armCommand.commandId,
       });
+      if (scenario === "reset-margin" || scenario.startsWith("refused-boundary")) {
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const eventStore = yield* OrchestrationEventStore.OrchestrationEventStore.pipe(
+          Effect.provide(OrchestrationEventStore.layer),
+        );
+        const candidate = Effect.fnUntraced(function* (autoResume = true) {
+          const options = { now: yield* DateTime.now, autoResume, snooze: false };
+          const before = yield* projections.getThreadProjection(threadId);
+          const current = (yield* projections.getLimitRecoveryCandidates(options)).find(
+            (row) => row.id === threadId,
+          );
+          const fresh = yield* Effect.gen(function* () {
+            const store = yield* ProjectionStore.ProjectionStoreV2;
+            return yield* store.getLimitRecoveryCandidates(options);
+          }).pipe(Effect.provide(Layer.fresh(ProjectionStore.layer)));
+          const replayed = yield* Effect.gen(function* () {
+            const replay = yield* ProjectionStore.ProjectionStoreV2;
+            assert.lengthOf((yield* replay.getShellSnapshot()).threads, 0);
+            yield* eventStore
+              .readAgentEvents({ threadId })
+              .pipe(Stream.runForEach((stored) => replay.apply(stored.event)));
+            return yield* replay.getLimitRecoveryCandidates(options);
+          }).pipe(
+            Effect.provide(
+              Layer.fresh(ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+            ),
+          );
+          assert.deepEqual(yield* projections.getThreadProjection(threadId), before);
+          for (const candidates of [fresh, replayed]) {
+            const other = candidates.find((row) => row.id === threadId);
+            assert.equal(other?.id, current?.id);
+            if (current) assert.containSubset(other, current);
+          }
+          return current;
+        });
+        yield* TestClock.adjust("61300 millis");
+        if (scenario === "reset-margin") {
+          assert.isNull(
+            limitRecoveryCommand(armedShell, true, DateTime.toEpochMillis(yield* DateTime.now)),
+          );
+          assert.isUndefined(yield* candidate());
+        }
+        yield* TestClock.adjust("118700 millis");
+        let resume = limitRecoveryCommand(
+          armedShell,
+          true,
+          DateTime.toEpochMillis(yield* DateTime.now),
+        );
+        assert(resume?.type === "message.dispatch");
+        yield* orchestrator.dispatch(resume);
+        if (scenario === "reset-margin") {
+          assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+          return;
+        }
+        const error = (yield* orchestrator.getThreadProjection(threadId)).turnItems.find(
+          (item) => item.type === "error",
+        );
+        assert(error?.type === "error");
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          const retry = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+          yield* TestClock.adjust("1500 millis");
+          const refusedAt = yield* DateTime.now;
+          yield* events.write({
+            events: [
+              {
+                id: EventId.make(`recovery:refused:run:${scenario}:${attempt}`),
+                type: "run.updated",
+                threadId,
+                occurredAt: refusedAt,
+                payload: { ...retry, status: "failed", completedAt: refusedAt },
+              },
+              {
+                id: EventId.make(`recovery:refused:error:${scenario}:${attempt}`),
+                type: "turn-item.updated",
+                threadId,
+                occurredAt: refusedAt,
+                payload: {
+                  ...error,
+                  id: TurnItemId.make(`recovery:refused:error:${scenario}:${attempt}`),
+                  runId: retry.id,
+                  nodeId: retry.rootNodeId,
+                  startedAt: refusedAt,
+                  completedAt: refusedAt,
+                  updatedAt: refusedAt,
+                },
+              },
+            ],
+          });
+          if (scenario === "refused-boundary-off" || scenario === "refused-boundary-stop") {
+            if (scenario === "refused-boundary-stop") {
+              yield* orchestrator.dispatch({
+                type: "thread.pull-request.watch",
+                commandId: CommandId.make("recovery:watch:stop"),
+                threadId,
+                host: "github.com",
+                repository: "pingdotgg/t3code",
+                number: 1,
+                watching: true,
+                link: { url: "https://github.com/pingdotgg/t3code/pull/1", source: "agent" },
+              });
+              yield* orchestrator.dispatch({
+                type: "thread.stop",
+                commandId: CommandId.make(`recovery:stop:${scenario}`),
+                threadId,
+              });
+              assert.isUndefined(yield* candidate());
+              const stopped = yield* orchestrator.getThreadShell(threadId);
+              assert.isFalse(stopped?.limitRecovery?.autoResume);
+              assert.isUndefined(stopped?.pullRequests?.[0]?.watch);
+            } else {
+              assert.isUndefined(yield* candidate(false));
+              const enabled = yield* candidate();
+              assert.isDefined(enabled);
+              assert.isNull(
+                limitRecoveryCommand(enabled!, false, DateTime.toEpochMillis(refusedAt)),
+              );
+            }
+            return;
+          }
+          if (attempt === 2) {
+            assert.isUndefined(yield* candidate());
+            if (scenario === "refused-boundary-manual") {
+              const shell = yield* orchestrator.getThreadShell(threadId);
+              assert(shell);
+              assert.isNull(limitRecoveryCommand(shell, true, DateTime.toEpochMillis(refusedAt)));
+              yield* TestClock.adjust("120 seconds");
+              assert.isUndefined(yield* candidate());
+              assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 3);
+            }
+            if (scenario === "refused-boundary-stop-reenable") {
+              yield* orchestrator.dispatch({
+                type: "thread.stop",
+                commandId: CommandId.make(`recovery:stop-cap:${scenario}`),
+                threadId,
+              });
+              for (const patch of [{ autoResume: false }, { snooze: false }]) {
+                yield* orchestrator.dispatch({
+                  type: "thread.metadata.update",
+                  commandId: CommandId.make(`recovery:patch-cap:${"autoResume" in patch}`),
+                  threadId,
+                  limitRecovery: { runId: retry.id, resetAt, ...patch },
+                });
+              }
+            }
+            const rejected = yield* orchestrator
+              .dispatch({
+                type: "thread.metadata.update",
+                commandId: CommandId.make(`recovery:over-cap:${scenario}`),
+                threadId,
+                limitRecovery: { runId: retry.id, resetAt, autoResume: true },
+              })
+              .pipe(Effect.exit);
+            if (scenario === "refused-boundary-stop-reenable") {
+              yield* TestClock.adjust("120 seconds");
+              assert.isUndefined(yield* candidate());
+              const stopped = (yield* orchestrator.getThreadShell(threadId))!;
+              assert.isNull(
+                limitRecoveryCommand(stopped, true, DateTime.toEpochMillis(yield* DateTime.now)),
+              );
+            }
+            assert.equal(rejected._tag, "Failure");
+            return;
+          }
+          if (scenario === "refused-boundary-manual") {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("recovery:manual-after-refusal"),
+              threadId,
+              messageId: MessageId.make("recovery:manual-after-refusal"),
+              manualContinuationOfRunId: retry.id,
+              text: "Continue where you left off.",
+              attachments: [],
+              dispatchMode: { type: "start_immediately" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            continue;
+          }
+          const refused = yield* candidate();
+          assert.isDefined(refused);
+          const rearm = limitRecoveryCommand(refused!, true, DateTime.toEpochMillis(refusedAt));
+          assert(rearm?.type === "thread.metadata.update");
+          if (scenario === "refused-boundary-cancel-before-arm") {
+            yield* orchestrator.dispatch({
+              type: "thread.metadata.update",
+              commandId: CommandId.make("recovery:cancel-before-arm"),
+              threadId,
+              limitRecovery: { runId: retry.id, resetAt, autoResume: false },
+            });
+          }
+          yield* orchestrator.autoArmLimitRecovery({
+            commandId: rearm.commandId,
+            threadId,
+            limitRecovery: rearm.limitRecovery!,
+          });
+          if (scenario === "refused-boundary-cancel-before-arm") {
+            yield* TestClock.adjust("120 seconds");
+            assert.isUndefined(yield* candidate());
+            assert.isFalse(
+              (yield* orchestrator.getThreadShell(threadId))?.limitRecovery?.autoResume,
+            );
+            assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+            return;
+          }
+          const rearmed = (yield* orchestrator.getThreadShell(threadId))!;
+          assert.equal(rearmed.limitRecovery?.runId, retry.id);
+          assert.isUndefined(yield* candidate());
+          resume = limitRecoveryCommand(rearmed, true, DateTime.toEpochMillis(refusedAt) + 120_000);
+          assert(resume?.type === "message.dispatch");
+          yield* orchestrator.dispatch(resume);
+          assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+          if (
+            scenario === "refused-boundary-cancel" ||
+            scenario === "refused-boundary-stop-armed"
+          ) {
+            resume = limitRecoveryCommand(
+              (yield* orchestrator.getThreadShell(threadId))!,
+              true,
+              DateTime.toEpochMillis(refusedAt) + 120_000,
+            )!;
+            yield* orchestrator.dispatch(
+              scenario === "refused-boundary-stop-armed"
+                ? {
+                    type: "thread.stop",
+                    commandId: CommandId.make(`recovery:cancel-boundary:${scenario}`),
+                    threadId,
+                  }
+                : {
+                    type: "thread.metadata.update",
+                    commandId: CommandId.make(`recovery:cancel-boundary:${scenario}`),
+                    threadId,
+                    limitRecovery: { runId: retry.id, resetAt, autoResume: false },
+                  },
+            );
+          }
+          yield* TestClock.adjust("120 seconds");
+          if (
+            scenario === "refused-boundary-cancel" ||
+            scenario === "refused-boundary-stop-armed"
+          ) {
+            yield* orchestrator.dispatch(resume);
+            assert.isUndefined(yield* candidate());
+            assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+            return;
+          }
+          const due = yield* candidate();
+          assert.isDefined(due);
+          const delivery = limitRecoveryCommand(
+            due!,
+            true,
+            DateTime.toEpochMillis(yield* DateTime.now),
+          );
+          assert(delivery?.type === "message.dispatch");
+          assert.notEqual(delivery.commandId, resume.commandId);
+          yield* orchestrator.dispatch(delivery);
+          yield* orchestrator.dispatch(delivery);
+          assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 3);
+        }
+        return;
+      }
       if (snooze)
         assert.equal(DateTime.toEpochMillis(armedShell.snoozedUntil!), Date.parse(resetAt));
       if (scenario === "cancel-resume-keep-snooze") {
@@ -7952,7 +8221,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         (yield* orchestrator.getThreadProjection(threadId)).runs,
         scenario === "queued-resume" ? 2 : 1,
       );
-      yield* TestClock.adjust("1 minute");
+      yield* TestClock.adjust("3 minutes");
       const resume = limitRecoveryCommand(
         armedShell,
         true,

@@ -28,8 +28,7 @@ export function UsageLimitRecoveryCard({
   const resetPassed = useDeadlinePassed(resetAt === null ? null : Date.parse(resetAt));
   const runId = thread.latestRun?.runId;
   const recovery = thread.limitRecovery;
-  const scheduled =
-    recovery?.runId === runId && recovery?.resetAt === resetAt && recovery?.autoResume;
+  const scheduled = recovery?.resetAt === resetAt && recovery?.autoResume;
   if (
     thread.runtime?.status !== "failed" ||
     thread.runtime.lastErrorClass !== "usage_limit" ||
@@ -44,7 +43,7 @@ export function UsageLimitRecoveryCard({
     thread.snoozedUntil !== null &&
     Date.parse(thread.snoozedUntil) === Date.parse(resetAt);
   async function toggle(action: "resume" | "snooze") {
-    if (!resetAt || !runId || !canSchedule) return;
+    if (!resetAt || !runId || (!canSchedule && !(action === "resume" && scheduled))) return;
     if (action === "snooze" && !snoozed && Date.parse(resetAt) <= Date.now()) {
       setError("The reset time has passed. Retry the thread manually.");
       return;
@@ -75,7 +74,7 @@ export function UsageLimitRecoveryCard({
           ? `Usage limit resets ${DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleString()}.`
           : "The provider did not report a reset time. Retry manually when your limit is available."}
       </Text>
-      {canSchedule ? (
+      {canSchedule || scheduled ? (
         <View className="flex-row flex-wrap gap-2">
           <Button
             label={scheduled ? "Cancel auto-resume" : "Resume at reset"}
