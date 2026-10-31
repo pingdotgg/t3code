@@ -189,7 +189,10 @@ interface SurfaceAction {
   onClick: () => void;
 }
 
-type SurfaceActionInputs = Pick<RightPanelTabsProps, "panels" | "pluginViews" | "onAddSideChat" | "sideChatAvailable" | "sideChatDisabledReason">;
+type SurfaceActionInputs = Pick<
+  RightPanelTabsProps,
+  "panels" | "pluginViews" | "onAddSideChat" | "sideChatAvailable" | "sideChatDisabledReason"
+>;
 
 /**
  * The surfaces the empty launcher and the add menu offer, in launcher order.
@@ -220,16 +223,21 @@ export function rightPanelSurfaceActions(props: SurfaceActionInputs): SurfaceAct
     registered("pull-request"),
     registered("pull-requests"),
     registered("device"),
-    ...(props.onAddSideChat ? [{
-      id: "side-chat",
-      label: "Side chat",
-      icon: MessagesSquare,
-      shortcut: "S",
-      available: props.sideChatAvailable === true && !props.sideChatDisabledReason,
-      unavailableHint: props.sideChatDisabledReason ?? "Available after the first message.",
-      unavailableReason: props.sideChatDisabledReason ?? "Side chats start after the first message.",
-      onClick: () => props.onAddSideChat?.(),
-    }] : []),
+    ...(props.onAddSideChat
+      ? [
+          {
+            id: "side-chat",
+            label: "Side chat",
+            icon: MessagesSquare,
+            shortcut: "S",
+            available: props.sideChatAvailable === true && !props.sideChatDisabledReason,
+            unavailableHint: props.sideChatDisabledReason ?? "Available after the first message.",
+            unavailableReason:
+              props.sideChatDisabledReason ?? "Side chats start after the first message.",
+            onClick: () => props.onAddSideChat?.(),
+          },
+        ]
+      : []),
     // Plugin views have no letter: their titles come from plugins and could claim any key.
     ...(props.pluginViews ?? []).map((view): SurfaceAction => ({
       id: view.surfaceId,
@@ -1220,7 +1228,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       workspaceFocusKey={`panel:${props.environmentId}:${props.activeSurfaceId ?? "empty"}`}
       workspaceLabel={
         focusedSurface
-          ? `Workspace panel: ${surfaceTitle(focusedSurface, props.previewSessions, props.terminalLabelsById)}`
+          ? `Workspace panel: ${surfaceTitle(focusedSurface, props.previewSessions, props.terminalLabelsById, props.pluginViews)}`
           : "Workspace panel"
       }
       mode={props.mode}
