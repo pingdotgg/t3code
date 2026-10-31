@@ -14,10 +14,8 @@ import * as Layer from "effect/Layer";
 import { HttpClient } from "effect/http";
 
 import * as ServerSettings from "../serverSettings.ts";
-import type { SandboxProviderDriver } from "./SandboxProvider.ts";
+import { shellQuote, type SandboxProviderDriver } from "./SandboxProvider.ts";
 import { SANDBOX_PROVIDER_DRIVERS } from "./providers/index.ts";
-
-const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
 const installScript = (label: string) => `set -eu
 export PATH="$HOME/.local/bin:$PATH"

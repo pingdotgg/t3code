@@ -116,3 +116,5 @@ export const jsonBody = (
   request: HttpClientRequest.HttpClientRequest,
   value: unknown,
 ): HttpClientRequest.HttpClientRequest => HttpClientRequest.bodyJsonUnsafe(request, value);
+
+export const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;

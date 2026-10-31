@@ -74,24 +74,33 @@ describe("boatDriver", () => {
   it.effect(
     "turns a failed command into a bounded error that keeps output only in the cause",
     () => {
-      const client = HttpClient.make((request) =>
-        Effect.succeed(
+      const bodies: Array<string> = [];
+      const client = HttpClient.make((request) => {
+        bodies.push(
+          request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "",
+        );
+        return Effect.succeed(
           HttpClientResponse.fromWeb(
             request,
             Response.json({ exitCode: 2, stdout: "", stderr: "t3 CLI did not install" }),
           ),
-        ),
-      );
+        );
+      });
 
       return Effect.gen(function* () {
         const error = yield* boatDriver
           .execute({
             config: { apiKey: "boat_test" },
             sandboxId: boatSandboxId,
-            command: "install",
+            command: "echo 'ok'; exit 0",
             timeoutSeconds: 60,
           })
           .pipe(Effect.provideService(HttpClient.HttpClient, client), Effect.flip);
+
+        // The script runs in a child shell so its own exit status is what Boat reports.
+        expect(JSON.parse(bodies[0]!)).toMatchObject({
+          command: `sh -c 'echo '\\''ok'\\''; exit 0'`,
+        });
 
         expect(error).toBeInstanceOf(SandboxProviderError);
         expect(error.stage).toBe("install");

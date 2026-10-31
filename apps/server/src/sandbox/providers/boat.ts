@@ -9,6 +9,7 @@ import {
   jsonBody,
   requestJson,
   type SandboxProviderDriver,
+  shellQuote,
 } from "../SandboxProvider.ts";
 
 const BOAT_API_BASE = "https://boat.dev/api/v1";
@@ -95,7 +96,8 @@ export const boatDriver: SandboxProviderDriver = {
           input.config.apiKey,
         ),
         {
-          command: input.command,
+          // An `exit` in Boat's login shell runs ~/.bash_logout (clear_console), which fails it.
+          command: `sh -c ${shellQuote(input.command)}`,
           timeoutSeconds: Math.min(Math.max(input.timeoutSeconds, 1), 600),
         },
       ),
