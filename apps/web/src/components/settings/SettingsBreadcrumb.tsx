@@ -1,11 +1,11 @@
 import type { MessageKey } from "@t3tools/client-runtime/i18n";
 
-import { useT } from "../../hooks/useI18n";
 import {
   WorkspaceBreadcrumb,
   WorkspaceBreadcrumbItem,
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
+import { useT } from "../../hooks/useI18n";
 import { SETTINGS_SECTION_LABEL_KEYS } from "./settingsSearch";
 
 const SETTINGS_BREADCRUMB_LABEL_KEYS: Readonly<Record<string, MessageKey>> = {

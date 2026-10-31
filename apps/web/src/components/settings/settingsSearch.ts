@@ -3,8 +3,8 @@ import { isElectron, isSecretsFeatureEnabled } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { MessageKey } from "@t3tools/client-runtime/i18n";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import type { MessageKey } from "@t3tools/client-runtime/i18n";
 import {
   sourceControlClients,
   type SourceControlDefinition,
@@ -111,8 +111,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/archived": "Archive",
 };
 
-// English labels above stay the search-matching source; UI chrome renders these
-// translated keys instead.
+/** Display labels as message keys; the English strings above stay the search match source. */
 export const SETTINGS_SECTION_LABEL_KEYS: Readonly<Record<SettingsPath, MessageKey>> = {
   "/settings/diagnostics": "settings.nav.diagnostics",
   "/settings/projects": "settings.nav.projects",

@@ -24,6 +24,7 @@ export const enMessages = {
   "settings.typography.monospaceFont.title": "Monospace font",
   "settings.typography.monospaceFont.description":
     "Code blocks, diffs, file previews, and the terminal.",
+  "settings.typography.monospaceFont.familyA11y": "Monospace font family",
   "settings.typography.terminalFont.title": "Terminal font",
   "settings.typography.terminalFont.description":
     "Terminal output, independent from code blocks and diffs.",
@@ -67,6 +68,7 @@ export const zhHansMessages: Partial<Record<keyof typeof enMessages, string>> = 
   "settings.typography.codeFont.familyA11y": "代码字体",
   "settings.typography.monospaceFont.title": "等宽字体",
   "settings.typography.monospaceFont.description": "代码块、差异、文件预览与终端。",
+  "settings.typography.monospaceFont.familyA11y": "等宽字体",
   "settings.typography.terminalFont.title": "终端字体",
   "settings.typography.terminalFont.description": "终端输出，独立于代码块与差异。",
   "settings.typography.terminalFont.sizeLabel": "终端字体大小",

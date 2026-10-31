@@ -45,19 +45,15 @@ import {
 } from "./settingsSearch";
 
 function useFontDefaultFamilies() {
-  const t = useT();
   const settings = useScopedSettings();
-  // The family resolution probes canvas metrics, so run it once per mount.
-  const [resolved] = useState(() => ({
-    sans: resolveDefaultFamilyLabel(DEFAULT_SANS_FONT_STACK),
-    code: resolveDefaultFamilyLabel(DEFAULT_CODE_FONT_STACK),
+  const [defaults] = useState(() => ({
+    sans: resolveDefaultFamilyLabel(DEFAULT_SANS_FONT_STACK) ?? "System default",
+    code: resolveDefaultFamilyLabel(DEFAULT_CODE_FONT_STACK) ?? "System monospace",
   }));
-  const sans = resolved.sans ?? t("settings.typography.systemDefault");
-  const code = resolved.code ?? t("settings.typography.systemMonospace");
   return {
-    sans,
-    code,
-    interfaceFamily: settings.fontFamilySans.trim() || sans,
+    sans: defaults.sans,
+    code: defaults.code,
+    interfaceFamily: settings.fontFamilySans.trim() || defaults.sans,
   };
 }
 
@@ -71,8 +67,7 @@ function InterfaceFontRow({ preview }: { preview?: ReactNode }) {
       {...searchableSetting("interface-font")}
       title={t("settings.typography.interfaceFont.title")}
       description={t("settings.typography.interfaceFont.description")}
-      familyAriaLabel={t("settings.typography.interfaceFont.familyA11y")}
-      resetLabel="interface font"
+      familyA11yLabel={t("settings.typography.interfaceFont.familyA11y")}
       defaultFamily={defaults.sans}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilySans}
       value={settings.fontFamilySans}
@@ -106,8 +101,7 @@ function PromptFontRow() {
       {...searchableSetting("prompt-font")}
       title={t("settings.typography.promptFont.title")}
       description={t("settings.typography.promptFont.description")}
-      familyAriaLabel={t("settings.typography.promptFont.familyA11y")}
-      resetLabel="prompt font"
+      familyA11yLabel={t("settings.typography.promptFont.familyA11y")}
       defaultFamily={defaults.interfaceFamily}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer}
       value={settings.fontFamilyComposer}
@@ -134,10 +128,12 @@ function PromptFontRow() {
 function CodeFontRow({
   title,
   description,
+  familyA11yLabel,
   preview,
 }: {
   title?: string;
   description?: string;
+  familyA11yLabel?: string;
   preview?: ReactNode;
 }) {
   const t = useT();
@@ -147,10 +143,9 @@ function CodeFontRow({
   return (
     <FontFamilySettingsRow
       {...searchableSetting("code-font")}
-      title={title ?? t("settings.typography.codeFont.title")}
+      {...(title !== undefined ? { title } : {})}
       description={description ?? t("settings.typography.codeFont.description")}
-      familyAriaLabel={t("settings.typography.codeFont.familyA11y")}
-      resetLabel="code font"
+      familyA11yLabel={familyA11yLabel ?? t("settings.typography.codeFont.familyA11y")}
       defaultFamily={defaults.code}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyCode}
       value={settings.fontFamilyCode}
@@ -185,8 +180,7 @@ function TerminalFontRow() {
       {...searchableSetting("terminal-font")}
       title={t("settings.typography.terminalFont.title")}
       description={t("settings.typography.terminalFont.description")}
-      familyAriaLabel={t("settings.typography.terminalFont.familyA11y")}
-      resetLabel="terminal font"
+      familyA11yLabel={t("settings.typography.terminalFont.familyA11y")}
       defaultFamily={defaults.code}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal}
       value={settings.fontFamilyTerminal}
@@ -323,6 +317,7 @@ function SimpleFontRows() {
       <CodeFontRow
         title={t("settings.typography.monospaceFont.title")}
         description={t("settings.typography.monospaceFont.description")}
+        familyA11yLabel={t("settings.typography.monospaceFont.familyA11y")}
         preview={
           <>
             <CodeFontPreview />
@@ -379,9 +374,8 @@ export function TypographySection() {
 function FontFamilySettingsRow({
   id,
   title,
+  familyA11yLabel,
   description,
-  familyAriaLabel,
-  resetLabel,
   defaultFamily,
   defaultValue,
   preview,
@@ -393,9 +387,8 @@ function FontFamilySettingsRow({
 }: {
   id?: string;
   title: string;
+  familyA11yLabel: string;
   description: string;
-  familyAriaLabel: string;
-  resetLabel: string;
   defaultFamily: string;
   defaultValue: string;
   preview?: ReactNode;
@@ -461,14 +454,14 @@ function FontFamilySettingsRow({
   };
   const resetAction =
     value !== defaultValue || size.value !== size.defaultValue ? (
-      <SettingResetButton label={resetLabel} onClick={resetToDefault} />
+      <SettingResetButton label={title.toLowerCase()} onClick={resetToDefault} />
     ) : null;
   const fontEnumeration = useFontEnumeration();
   const [inputFocused, setInputFocused] = useState(false);
   const familyControl =
     fontEnumeration.status === "granted" ? (
       <FontFamilyPicker
-        ariaLabel={familyAriaLabel}
+        ariaLabel={familyA11yLabel}
         defaultFamily={defaultFamily}
         selectedFamily={trimmed}
         requireMonospace={requireMonospace}
@@ -478,7 +471,7 @@ function FontFamilySettingsRow({
     ) : (
       <Input
         size="sm"
-        aria-label={familyAriaLabel}
+        aria-label={familyA11yLabel}
         aria-invalid={draftPending || undefined}
         autoCapitalize="off"
         autoComplete="off"

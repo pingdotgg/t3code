@@ -33,9 +33,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import type { MessageKey, TranslateFn } from "@t3tools/client-runtime/i18n";
 
-import { useT } from "../../hooks/useI18n";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
@@ -57,6 +55,8 @@ import {
   type SettingsPath,
   type SettingsSearchItem,
 } from "./settingsSearch";
+import { useT } from "../../hooks/useI18n";
+import type { MessageKey } from "@t3tools/client-runtime/i18n";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
 import { validateSettingsScopeSearch } from "./settingsScope";
 import { useSettingsSectionNavigation } from "./useSettingsSectionNavigation";
@@ -123,12 +123,6 @@ const SETTINGS_GROUP_HEADING_KEYS: Readonly<Record<string, MessageKey>> = {
   Code: "settings.nav.group.code",
   Connections: "settings.nav.group.connections",
 };
-
-function settingsGroupHeading(heading: string | null, t: TranslateFn): string | undefined {
-  if (heading === null) return undefined;
-  const key = SETTINGS_GROUP_HEADING_KEYS[heading];
-  return key === undefined ? heading : t(key);
-}
 
 // Attached only to the highlighted result, so it runs whenever the highlight lands on a row.
 function scrollResultIntoView(row: HTMLElement | null) {
@@ -395,53 +389,63 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   aria-label={t("settings.nav.sectionsAria")}
                   className="flex flex-col gap-4"
                 >
-                  {SETTINGS_NAV_GROUPS.map((group, index) => (
-                    <div
-                      key={group.heading ?? index}
-                      role="group"
-                      aria-label={settingsGroupHeading(group.heading, t)}
-                      className="flex flex-col gap-1 max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0"
-                    >
-                      {group.heading ? (
-                        // The group carries this label; a heading is not a valid tree child.
-                        <h3
-                          aria-hidden="true"
-                          className={cn(
-                            "px-2 text-xs font-medium text-sidebar-muted-foreground/80",
-                            !compactSearchOpen && "max-md:hidden",
-                          )}
-                        >
-                          {settingsGroupHeading(group.heading, t)}
-                        </h3>
-                      ) : null}
-                      <SidebarMenu role="presentation">
-                        {group.paths.map((to) => {
-                          const Icon = SETTINGS_SECTION_ICONS[to];
-                          const isActive = activePath === to || activePath.startsWith(`${to}/`);
-                          return (
-                            <SidebarMenuItem key={to} role="presentation">
-                              <SidebarMenuButton
-                                data-settings-section={to}
-                                role="treeitem"
-                                tabIndex={sectionNavigation.tabIndexFor(to)}
-                                aria-selected={isActive}
-                                aria-current={isActive ? "page" : undefined}
-                                isActive={isActive}
-                                onClick={() => handleSectionClick(to)}
-                              >
-                                <Icon />
-                                <span
-                                  className={cn("truncate", !compactSearchOpen && "max-md:sr-only")}
+                  {SETTINGS_NAV_GROUPS.map((group, index) => {
+                    const heading =
+                      group.heading === null
+                        ? undefined
+                        : SETTINGS_GROUP_HEADING_KEYS[group.heading];
+                    const headingLabel = heading ? t(heading) : group.heading;
+                    return (
+                      <div
+                        key={group.heading ?? index}
+                        role="group"
+                        aria-label={headingLabel ?? undefined}
+                        className="flex flex-col gap-1 max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0"
+                      >
+                        {headingLabel ? (
+                          // The group carries this label; a heading is not a valid tree child.
+                          <h3
+                            aria-hidden="true"
+                            className={cn(
+                              "px-2 text-xs font-medium text-sidebar-muted-foreground/80",
+                              !compactSearchOpen && "max-md:hidden",
+                            )}
+                          >
+                            {headingLabel}
+                          </h3>
+                        ) : null}
+                        <SidebarMenu role="presentation">
+                          {group.paths.map((to) => {
+                            const Icon = SETTINGS_SECTION_ICONS[to];
+                            const isActive = activePath === to || activePath.startsWith(`${to}/`);
+                            return (
+                              <SidebarMenuItem key={to} role="presentation">
+                                <SidebarMenuButton
+                                  data-settings-section={to}
+                                  role="treeitem"
+                                  tabIndex={sectionNavigation.tabIndexFor(to)}
+                                  aria-selected={isActive}
+                                  aria-current={isActive ? "page" : undefined}
+                                  isActive={isActive}
+                                  onClick={() => handleSectionClick(to)}
                                 >
-                                  {t(SETTINGS_SECTION_LABEL_KEYS[to])}
-                                </span>
-                              </SidebarMenuButton>
-                            </SidebarMenuItem>
-                          );
-                        })}
-                      </SidebarMenu>
-                    </div>
-                  ))}
+                                  <Icon />
+                                  <span
+                                    className={cn(
+                                      "truncate",
+                                      !compactSearchOpen && "max-md:sr-only",
+                                    )}
+                                  >
+                                    {t(SETTINGS_SECTION_LABEL_KEYS[to])}
+                                  </span>
+                                </SidebarMenuButton>
+                              </SidebarMenuItem>
+                            );
+                          })}
+                        </SidebarMenu>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}

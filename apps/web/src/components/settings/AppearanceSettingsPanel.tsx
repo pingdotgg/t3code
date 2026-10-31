@@ -469,8 +469,8 @@ export function AppearanceSettingsPanel() {
             title={t("settings.interface.environmentIdentification.title")}
             description={
               environmentStageVariant
-                ? t("settings.interface.environmentIdentification.description.stages")
-                : t("settings.interface.environmentIdentification.description.header")
+                ? "Choose how Dev and Nightly environments are identified."
+                : "Show Dev or Nightly artwork in the sidebar header."
             }
             resetAction={
               settings.environmentIdentificationMode !== DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE ? (
