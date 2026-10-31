@@ -289,6 +289,7 @@ export function pullRequestChecksState(
 const REVIEW_OUTCOME_PRESENTATION = {
   approved: {
     label: "Approved",
+    verb: "approved",
     Icon: CircleCheckIcon,
     toneClassName: "text-success-foreground",
     ringClassName: "ring-2 ring-success",
@@ -298,6 +299,7 @@ const REVIEW_OUTCOME_PRESENTATION = {
   },
   "changes-requested": {
     label: "Changes requested",
+    verb: "requested changes",
     Icon: CircleXIcon,
     toneClassName: "text-destructive",
     ringClassName: "ring-2 ring-destructive",
@@ -307,6 +309,7 @@ const REVIEW_OUTCOME_PRESENTATION = {
   },
   dismissed: {
     label: "Review dismissed",
+    verb: "had a review dismissed",
     Icon: CircleDashedIcon,
     toneClassName: "text-dim-foreground",
     ringClassName: "ring-2 ring-muted-foreground/60",
@@ -319,6 +322,7 @@ const REVIEW_OUTCOME_PRESENTATION = {
   PullRequestReviewOutcome,
   {
     label: string;
+    verb: string;
     Icon: typeof CircleCheckIcon;
     toneClassName: string;
     ringClassName: string;
@@ -381,6 +385,10 @@ export function PullRequestReviewOutcomeAvatarBadge({
       )}
     />
   );
+}
+
+export function pullRequestReviewOutcomeVerb(outcome: PullRequestReviewOutcome): string {
+  return REVIEW_OUTCOME_PRESENTATION[outcome].verb;
 }
 
 export function pullRequestReviewOutcomeLabel(outcome: PullRequestReviewOutcome): string {
