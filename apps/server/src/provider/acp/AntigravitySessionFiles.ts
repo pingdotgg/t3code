@@ -41,14 +41,3 @@ export const removeAntigravitySessionFiles = Effect.fn("removeAntigravitySession
   },
   Effect.catch(() => Effect.logWarning("Could not remove temporary Antigravity session files.")),
 );
-
-/** Sweep only private runtimes before launch; Windows does not protect live extracted data files from deletion. */
-export const removeAntigravityRuntimeTempDirs = Effect.fn("removeAntigravityRuntimeTempDirs")(
-  function* (tempDirectory: string) {
-    const fs = yield* FileSystem.FileSystem;
-    yield* fs.remove(tempDirectory, { recursive: true, force: true });
-  },
-  Effect.catch(() =>
-    Effect.logWarning("Could not remove leftover Antigravity runtime temp files."),
-  ),
-);
