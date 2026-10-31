@@ -7,6 +7,8 @@ import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
 import { AppRoot } from "~/AppRoot";
+// Transforms the lazy chat route's module graph at import time, outside the test timeout.
+import "~/components/ThreadRouteView";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { getRouter } from "~/router";
