@@ -325,11 +325,12 @@ export function useThreadActionMenu(input: {
           if (confirmThreadDelete) {
             const confirmed = await settlePromise(() =>
               api.dialogs.confirm(
-                [
-                  `Delete thread "${thread.title}"?`,
-                  "This permanently clears conversation history for this thread.",
-                ].join("\n"),
-                { variant: "destructive" },
+                `This deletes "${thread.title}" and its chat history. You can't undo this.`,
+                {
+                  variant: "destructive",
+                  title: "Delete thread?",
+                  confirmLabel: "Delete thread",
+                },
               ),
             );
             if (confirmed._tag === "Failure" || !confirmed.value) return;

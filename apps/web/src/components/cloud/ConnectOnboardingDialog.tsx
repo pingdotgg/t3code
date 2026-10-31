@@ -299,7 +299,7 @@ function ConfiguredConnectOnboardingDialog() {
         </WizardPanel>
         <WizardFooter
           leading={
-            <label className="flex cursor-pointer items-center gap-2 self-start text-xs text-muted-foreground sm:self-center">
+            <label className="flex cursor-pointer items-center gap-2 self-start text-meta text-muted-foreground sm:self-center">
               <Checkbox
                 checked={dontShowAgain}
                 onCheckedChange={(checked) => setDontShowAgain(checked === true)}
@@ -391,7 +391,9 @@ function PublishStep({
           />
         ) : null}
       </div>
-      {operationError ? <p className="text-xs text-destructive">{operationError}</p> : null}
+      {operationError ? (
+        <p className="text-meta text-destructive-foreground">{operationError}</p>
+      ) : null}
       {tunnelLimit !== null ? (
         <OnboardingTunnelLimitAlert onOpenAccountPage={onOpenAccountPage} />
       ) : null}
@@ -430,8 +432,8 @@ function OnboardingToggleRow({
   return (
     <div className="flex items-start justify-between gap-4 border-t border-border px-4 py-3 first:border-t-0">
       <div className="min-w-0">
-        <p className="text-sm font-medium text-strong-foreground">{title}</p>
-        <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+        <p className="text-label text-strong-foreground">{title}</p>
+        <p className="mt-1 text-meta text-muted-foreground">{description}</p>
       </div>
       <Switch
         aria-label={title}
@@ -457,7 +459,7 @@ function DevicesStep() {
         savedEnvironments={savedEnvironments}
         showSavedEnvironments
         empty={
-          <p className="px-4 py-6 text-center text-sm text-muted-foreground">
+          <p className="px-4 py-6 text-center text-body text-muted-foreground">
             No other environments are published to your account yet. Publish one from another device
             and it will show up here.
           </p>
