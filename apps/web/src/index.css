@@ -2445,6 +2445,10 @@ code {
   padding: 0.05em 0.25em;
 }
 
+.composer-tiptap .composer-link {
+  color: var(--info-foreground);
+}
+
 .composer-rich-marker {
   color: var(--muted-foreground);
   opacity: 0.75;
