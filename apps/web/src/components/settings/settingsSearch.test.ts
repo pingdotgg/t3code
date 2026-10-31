@@ -207,6 +207,23 @@ describe("searchSettings", () => {
     const ids = SETTINGS_SEARCH_ITEMS.map((item) => item.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
+
+  it("keeps voice settings on the voice page", () => {
+    expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "local-voice-input")?.to).toBe(
+      "/settings/voice",
+    );
+    expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "microphone")?.to).toBe(
+      "/settings/voice",
+    );
+    for (const id of [
+      "speech-post-processing",
+      "speech-post-processing-model",
+      "speech-correction-word",
+      "speech-post-processing-prompt",
+    ]) {
+      expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === id)?.to).toBe("/settings/voice");
+    }
+  });
 });
 
 describe("settings search targets", () => {
