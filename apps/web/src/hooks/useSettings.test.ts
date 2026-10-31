@@ -39,8 +39,7 @@ describe("client settings hydration", () => {
     timestampFormat: "12-hour" as const,
     favorites: [{ provider: ProviderInstanceId.make("codex_work"), model: "gpt-5.6" }],
   };
-  const onboardingCompletedAt = "2026-09-05T12:00:00.000Z";
-  const complete = (current: ClientSettings) => ({ ...current, onboardingCompletedAt });
+  const complete = (current: ClientSettings) => ({ ...current, fontSmoothing: false });
 
   it("waits for saved model preferences before applying the first server edit", async () => {
     const provider = ProviderInstanceId.make("codex_work");
@@ -92,7 +91,7 @@ describe("client settings hydration", () => {
     expect(persistenceMocks.setClientSettings).not.toHaveBeenCalled();
     expect(getClientSettings()).toBe(DEFAULT_CLIENT_SETTINGS);
 
-    const completedSettings = { ...savedSettings, onboardingCompletedAt };
+    const completedSettings = { ...savedSettings, fontSmoothing: false };
     await expect(persistClientSettingsUpdate(complete)).resolves.toEqual(completedSettings);
     expect(persistenceMocks.setClientSettings).toHaveBeenCalledExactlyOnceWith(completedSettings);
     expect(persistenceMocks.getClientSettings).toHaveBeenCalledTimes(2);
@@ -160,7 +159,7 @@ describe("client settings hydration", () => {
     await completion;
     await finalWrite;
 
-    const expected = { ...savedSettings, onboardingCompletedAt, wordWrap: true };
+    const expected = { ...savedSettings, fontSmoothing: false, wordWrap: true };
     expect(getClientSettings()).toEqual(expected);
     expect(durableSettings).toEqual(expected);
   });
@@ -283,8 +282,8 @@ describe("mergeEnvironmentSettings", () => {
   });
 });
 
-describe("onboarding completion persistence", () => {
-  it("keeps onboarding incomplete after a failed save and preserves preferences on retry", async () => {
+describe("client settings update persistence", () => {
+  it("keeps the old value after a failed save and preserves preferences on retry", async () => {
     const failure = new Error("disk full");
     const persist = vi
       .fn<(settings: typeof DEFAULT_CLIENT_SETTINGS) => Promise<void>>()
@@ -301,17 +300,16 @@ describe("onboarding completion persistence", () => {
       ],
     };
     __setClientSettingsForTests(existingSettings);
-    const onboardingCompletedAt = "2026-09-01T12:00:00.000Z";
     const complete = (current: typeof DEFAULT_CLIENT_SETTINGS) => ({
       ...current,
-      onboardingCompletedAt,
+      fontSmoothing: false,
     });
 
     await expect(persistClientSettingsUpdate(complete, persist)).rejects.toBe(failure);
     expect(getClientSettings()).toBe(existingSettings);
-    expect(getClientSettings().onboardingCompletedAt).toBeNull();
+    expect(getClientSettings().fontSmoothing).toBe(true);
 
-    const completedSettings = { ...existingSettings, onboardingCompletedAt };
+    const completedSettings = { ...existingSettings, fontSmoothing: false };
     await expect(persistClientSettingsUpdate(complete, persist)).resolves.toEqual(
       completedSettings,
     );
