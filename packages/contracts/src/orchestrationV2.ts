@@ -675,13 +675,8 @@ export const OrchestrationV2RunFinalizedOutcome = Schema.Literals([
 ]);
 export type OrchestrationV2RunFinalizedOutcome = typeof OrchestrationV2RunFinalizedOutcome.Type;
 
-/**
- * A run and its follow-up work are done: checkpoint capture and workspace
- * refresh succeeded for runs that capture; the terminal write is the
- * finalization for runs that never enqueue a capture. A run records this or
- * `run.finalization-failed`, never both, at most once. The event's
- * `occurredAt` is the finalization time.
- */
+// Finalization follows capture/workspace refresh, or the terminal write for runs without capture.
+// Each run records either this or finalization-failed once; occurredAt is the finalization time.
 export const OrchestrationV2RunFinalized = Schema.Struct({
   runId: RunId,
   outcome: OrchestrationV2RunFinalizedOutcome,
