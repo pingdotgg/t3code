@@ -293,6 +293,7 @@ const diagnose = (
       FileSystem.FileSystem,
       FileSystem.makeNoop({
         exists: (file) => Effect.succeed(files.includes(file)),
+        readFileString: () => Effect.succeed('JAVA_VERSION="17.0.1"'),
       }),
     ),
     Effect.provide(platform === "win32" ? NodePath.layerWin32 : NodePath.layerPosix),
@@ -383,6 +384,7 @@ describe("Android SDK availability", () => {
           "/sdk/emulator/emulator",
           "/sdk/tools/bin/avdmanager",
           "/sdk/cmdline-tools/latest/bin/avdmanager",
+          "/jdk/bin/java",
         ],
         { ANDROID_HOME: "/sdk", JAVA_HOME: "/jdk" },
       );
@@ -429,6 +431,7 @@ describe("Android SDK availability", () => {
         files: ReadonlyArray<string>,
         environment: NodeJS.ProcessEnv,
         platform: NodeJS.Platform,
+        version = "17.0.1",
       ) =>
         LocalDeviceHost.__testing.androidJava.pipe(
           Effect.provideService(HostProcess.Environment, { PATH: "", ...environment }),
@@ -437,20 +440,41 @@ describe("Android SDK availability", () => {
             FileSystem.FileSystem,
             FileSystem.makeNoop({
               exists: (file) => Effect.succeed(files.includes(file)),
+              realPath: (file) => Effect.succeed(file),
+              readFileString: () => Effect.succeed(`JAVA_VERSION="${version}"`),
               readDirectory: (directory) =>
                 Effect.succeed(
                   files
                     .filter((file) => file.startsWith(`${directory}/`))
-                    .map((file) => file.slice(directory.length + 1)),
+                    .map((file) => file.slice(directory.length + 1).split("/")[0]!),
                 ),
             }),
           ),
           Effect.provide(platform === "win32" ? NodePath.layerWin32 : NodePath.layerPosix),
         );
+      expect(yield* javaHome([], { JAVA_HOME: "/removed" }, "linux")).toBeNull();
+      expect(
+        yield* javaHome(["/old/bin/java"], { JAVA_HOME: "/old" }, "linux", "1.8.0"),
+      ).toBeNull();
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      yield* fs.makeDirectory(`${directory}/bin`);
+      yield* fs.writeFileString(`${directory}/bin/java`, "#!/bin/sh\nexit 0\n");
+      yield* fs.chmod(`${directory}/bin/java`, 0o755);
+      yield* fs.writeFileString(`${directory}/release`, 'JAVA_VERSION="11.0.1"');
+      expect(
+        yield* LocalDeviceHost.__testing.androidJava.pipe(
+          Effect.provideService(HostProcess.Environment, {
+            HOME: directory,
+            PATH: `${directory}/bin`,
+          }),
+          Effect.provideService(HostProcess.Platform, "linux"),
+        ),
+      ).toBeNull();
       const studio = "/opt/android-studio/jbr";
-      expect(yield* javaHome([`${studio}/bin/java`], { JAVA_HOME: " /jdk " }, "linux")).toBe(
-        "/jdk",
-      );
+      expect(
+        yield* javaHome(["/jdk/bin/java", `${studio}/bin/java`], { JAVA_HOME: " /jdk " }, "linux"),
+      ).toBe("/jdk");
       expect(yield* javaHome([`${studio}/bin/java`], { HOME: "/test/home" }, "linux")).toBe(studio);
       expect(
         yield* javaHome(
@@ -466,12 +490,15 @@ describe("Android SDK availability", () => {
       );
       expect(
         yield* javaHome(
-          [`${macStudio}/bin/java`, "/Library/Java/JavaVirtualMachines/temurin-17.jdk"],
+          [
+            `${macStudio}/bin/java`,
+            "/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home/bin/java",
+          ],
           { HOME: "/Users/test" },
           "darwin",
         ),
-      ).toBeUndefined();
-    }),
+      ).toBe("/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports an absent SDK without running or installing tools", () =>
@@ -641,6 +668,9 @@ it.effect("keeps local Android and iOS available without ffmpeg", () =>
     yield* fs.makeDirectory(`${baseDir}/bin`);
     yield* fs.writeFileString(`${baseDir}/bin/xcrun`, "#!/bin/sh\nexit 0\n");
     yield* fs.chmod(`${baseDir}/bin/xcrun`, 0o755);
+    yield* fs.makeDirectory(`${baseDir}/jdk/bin`, { recursive: true });
+    yield* fs.writeFileString(`${baseDir}/jdk/bin/java`, "");
+    yield* fs.writeFileString(`${baseDir}/jdk/release`, 'JAVA_VERSION="17.0.1"');
     for (const [directory, tool] of [
       ["platform-tools", "adb"],
       ["emulator", "emulator"],
@@ -655,7 +685,7 @@ it.effect("keeps local Android and iOS available without ffmpeg", () =>
           HOME: baseDir,
           PATH: `${baseDir}/bin`,
           ANDROID_HOME: `${baseDir}/sdk`,
-          JAVA_HOME: "/jdk",
+          JAVA_HOME: `${baseDir}/jdk`,
         }),
         Effect.provideService(HostProcess.Platform, "darwin"),
       );

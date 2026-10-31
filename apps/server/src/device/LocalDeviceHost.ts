@@ -137,10 +137,23 @@ const androidJava = Effect.gen(function* () {
   const path = yield* Path.Path;
   const environment = yield* HostProcess.Environment;
   const platform = yield* HostProcess.Platform;
+  // JDK release metadata avoids spawning Java on every device command.
+  const supported = Effect.fn("LocalDeviceHost.supportedJava")(function* (directory: string) {
+    const executable = path.join(directory, "bin", platform === "win32" ? "java.exe" : "java");
+    if (!(yield* fs.exists(executable).pipe(Effect.orElseSucceed(() => false)))) return false;
+    const release = yield* fs
+      .readFileString(path.join(directory, "release"))
+      .pipe(Effect.orElseSucceed(() => ""));
+    return Number(/^JAVA_VERSION="(\d+)/m.exec(release)?.[1] ?? 0) >= 17;
+  });
   const javaHome = environment.JAVA_HOME?.trim();
-  if (javaHome) return javaHome;
+  if (javaHome) return (yield* supported(javaHome)) ? javaHome : null;
   const home = environment.HOME ?? environment.USERPROFILE ?? "";
   const java = yield* resolveCommandPath("java");
+  if (java && !(platform === "darwin" && java === "/usr/bin/java")) {
+    const resolved = yield* fs.realPath(java).pipe(Effect.orElseSucceed(() => java));
+    if (yield* supported(path.dirname(path.dirname(resolved)))) return undefined;
+  }
   if (platform === "darwin") {
     // /usr/bin/java is a launcher stub that fails unless a JDK is registered here.
     for (const directory of [
@@ -148,11 +161,11 @@ const androidJava = Effect.gen(function* () {
       path.join(home, "Library", "Java", "JavaVirtualMachines"),
     ]) {
       const installed = yield* fs.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
-      if (installed.length > 0) return undefined;
+      for (const name of installed) {
+        const candidate = path.join(directory, name, "Contents", "Home");
+        if (yield* supported(candidate)) return candidate;
+      }
     }
-    if (java && java !== "/usr/bin/java") return undefined;
-  } else if (java) {
-    return undefined;
   }
   const candidates =
     platform === "win32"
@@ -176,8 +189,7 @@ const androidJava = Effect.gen(function* () {
             "/snap/android-studio/current/jbr",
           ];
   for (const candidate of candidates) {
-    const executable = path.join(candidate, "bin", platform === "win32" ? "java.exe" : "java");
-    if (yield* fs.exists(executable).pipe(Effect.orElseSucceed(() => false))) return candidate;
+    if (yield* supported(candidate)) return candidate;
   }
   return null;
 });
