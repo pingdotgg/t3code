@@ -173,7 +173,7 @@ export const make = Effect.gen(function* () {
         (thread.branch !== null || thread.branchPullRequest != null),
     );
     const groups = Map.groupBy(threads, (thread) =>
-      JSON.stringify([thread.projectId, thread.worktreePath, thread.branch]),
+      JSON.stringify([thread.projectId, thread.workspaceRoot, thread.worktreePath, thread.branch]),
     );
 
     yield* Effect.forEach(
@@ -183,17 +183,20 @@ export const make = Effect.gen(function* () {
           const first = group[0]!;
           const project = projects.get(first.projectId);
           if (project === undefined) return finishBackfill(group);
+          const workspaceRoot = first.workspaceRoot ?? project.workspaceRoot;
           const { project: resolvedProject, repository } =
-            yield* resolveProjectForPullRequestDiscovery(project, repositoryIdentities, {
-              refresh: request.refresh,
-            });
+            yield* resolveProjectForPullRequestDiscovery(
+              { ...project, workspaceRoot },
+              repositoryIdentities,
+              {
+                refresh: request.refresh,
+              },
+            );
           if (first.branch !== null && repository === null) return finishBackfill(group);
           const worktreeExists =
             first.worktreePath !== null && (yield* fileSystem.exists(first.worktreePath));
           const cwd =
-            worktreeExists && first.worktreePath !== null
-              ? first.worktreePath
-              : project.workspaceRoot;
+            worktreeExists && first.worktreePath !== null ? first.worktreePath : workspaceRoot;
           const detected =
             first.branch === null
               ? null
@@ -279,7 +282,7 @@ export const make = Effect.gen(function* () {
               { cwd, branch: first.branch },
               { freshGitState: true },
             );
-            const currentIdentity = yield* repositoryIdentities.resolve(project.workspaceRoot, {
+            const currentIdentity = yield* repositoryIdentities.resolve(workspaceRoot, {
               refresh: true,
             });
             if (

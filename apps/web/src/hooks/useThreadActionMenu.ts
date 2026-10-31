@@ -162,9 +162,7 @@ export function useThreadActionMenu(input: {
               project.environmentId === thread.environmentId &&
               project.id !== thread.projectId &&
               !project.archivedAt &&
-              (thread.worktreePath !== null ||
-                (currentProject !== undefined &&
-                  project.workspaceRoot === currentProject.workspaceRoot)),
+              currentProject !== undefined,
           )
           .map((project) => ({ id: project.id, title: project.title })),
       });
@@ -311,7 +309,7 @@ export function useThreadActionMenu(input: {
           return;
         }
         case "copy-path": {
-          const workspacePath = thread.worktreePath ?? projectCwd;
+          const workspacePath = thread.worktreePath ?? thread.workspaceRoot ?? projectCwd;
           if (!workspacePath) {
             toastManager.add(
               stackedThreadToast({

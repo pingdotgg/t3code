@@ -56,6 +56,7 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  orchestrationV2ThreadWorkspacePath,
   latestProviderTurnForAttempt,
   parseGoalCommand,
   orchestrationV2RunWorkStartedAt,
@@ -1910,7 +1911,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 runId: queuedRun.id,
                 rootNodeId: rootNode.id,
                 providerThreadId: queuedProviderThread.id,
-                cwd: resolvedRuntimePolicy.cwd ?? projection.thread.worktreePath ?? process.cwd(),
+                cwd:
+                  resolvedRuntimePolicy.cwd ??
+                  projection.thread.worktreePath ??
+                  projection.thread.workspaceRoot ??
+                  process.cwd(),
                 createdAt: now,
               }),
             ),
@@ -4195,7 +4200,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return yield* reject(`cannot move to missing project ${command.projectId}.`);
     }
     // The thread always lands in the project root, so the move must not change its cwd.
-    const cwd = thread.worktreePath ?? Option.getOrUndefined(current)?.workspaceRoot;
+    const cwd = orchestrationV2ThreadWorkspacePath(
+      thread,
+      Option.getOrUndefined(current)?.workspaceRoot,
+    );
     if (cwd !== target.value.workspaceRoot) {
       return yield* reject(`does not work in ${target.value.workspaceRoot}.`);
     }
@@ -4246,14 +4254,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (Option.isNone(current)) {
         return yield* reject(`cannot move from missing project ${thread.projectId}.`);
       }
-      if (
-        thread.worktreePath === null &&
-        current.value.workspaceRoot !== target.value.workspaceRoot
-      ) {
-        return yield* reject(
-          `cannot move from a root workspace to project ${command.projectId} with a different workspace root.`,
-        );
-      }
       if (thread.worktreePath !== null) {
         if (Option.isNone(vcsDriverRegistry)) {
           return yield* reject("cannot verify the source repository for its worktree.");
@@ -4279,6 +4279,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           );
         }
       }
+      const workspaceRoot =
+        thread.worktreePath === null
+          ? (thread.workspaceRoot ?? current.value.workspaceRoot)
+          : undefined;
       const now = yield* DateTime.now;
       yield* emit(
         events,
@@ -4291,6 +4295,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: {
           ...thread,
           projectId: command.projectId,
+          ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
           updatedAt: now,
         },
       });
@@ -5147,6 +5152,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cwd:
           resolvedRuntimePolicy.cwd ??
           input.projection.thread.worktreePath ??
+          input.projection.thread.workspaceRoot ??
           session.providerSession.cwd,
         createdAt: now,
       })
@@ -5937,6 +5943,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     resolvedRuntimePolicy.cwd ??
                     selectedProviderSession?.cwd ??
                     projection.thread.worktreePath ??
+                    projection.thread.workspaceRoot ??
                     process.cwd(),
                   createdAt: now,
                 }),
@@ -6311,7 +6318,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     rootNodeId,
                     providerThreadId,
                     cwd:
-                      resolvedRuntimePolicy.cwd ?? projection.thread.worktreePath ?? process.cwd(),
+                      resolvedRuntimePolicy.cwd ??
+                      projection.thread.worktreePath ??
+                      projection.thread.workspaceRoot ??
+                      process.cwd(),
                     createdAt: now,
                   }),
                 ),
@@ -7053,6 +7063,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           resolvedRuntimePolicy.cwd ??
           existingProviderSession?.cwd ??
           projection.thread.worktreePath ??
+          projection.thread.workspaceRoot ??
           process.cwd(),
         createdAt: now,
       })
@@ -9955,7 +9966,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           runId: state.run.id,
           rootNodeId: state.rootNode.id,
           providerThreadId: state.providerThread.id,
-          cwd: resolvedRuntimePolicy.cwd ?? projection.thread.worktreePath ?? process.cwd(),
+          cwd:
+            resolvedRuntimePolicy.cwd ??
+            projection.thread.worktreePath ??
+            projection.thread.workspaceRoot ??
+            process.cwd(),
           createdAt: now,
         })
         .pipe(mapDispatchError(command));

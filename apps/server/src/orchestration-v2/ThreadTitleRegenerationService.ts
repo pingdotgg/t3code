@@ -9,6 +9,7 @@ import {
   type RunId,
   type ServerSettingsError,
   type ThreadId,
+  orchestrationV2ThreadWorkspacePath,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -161,7 +162,9 @@ const make = Effect.gen(function* () {
         projection.thread.projectId,
       ).settings;
       const result = yield* textGeneration.generateThreadTitle({
-        cwd: projection.thread.worktreePath ?? project.value.workspaceRoot,
+        cwd:
+          orchestrationV2ThreadWorkspacePath(projection.thread, project.value.workspaceRoot) ??
+          project.value.workspaceRoot,
         message: context.message,
         attachments: context.attachments,
         ...(input.kind.type === "regenerate" ? { previousTitle: projection.thread.title } : {}),

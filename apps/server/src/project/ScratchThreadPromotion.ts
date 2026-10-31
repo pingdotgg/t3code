@@ -67,7 +67,8 @@ const make = Effect.gen(function* () {
     const project = yield* projects
       .getById(thread.projectId)
       .pipe(Effect.mapError(fail("Could not read the thread's project.")));
-    const folder = thread.worktreePath ?? Option.getOrUndefined(project)?.workspaceRoot;
+    const folder =
+      thread.worktreePath ?? thread.workspaceRoot ?? Option.getOrUndefined(project)?.workspaceRoot;
     const scratchRoot = Option.getOrUndefined(yield* managedFolders.scratchRoot);
     const isScratch = yield* managedFolders.isScratchProject(thread.projectId);
     // A thread already rooted at its folder is a partial earlier promotion; finish it.

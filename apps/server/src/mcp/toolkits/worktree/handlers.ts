@@ -32,7 +32,10 @@ const handlers = {
         });
       const git = yield* GitWorkflow.GitWorkflowService;
       return yield* git
-        .listRefs({ ...refs, cwd: thread.worktreePath ?? project.value.workspaceRoot })
+        .listRefs({
+          ...refs,
+          cwd: thread.worktreePath ?? thread.workspaceRoot ?? project.value.workspaceRoot,
+        })
         .pipe(Effect.mapError(unavailable));
     }),
   ),

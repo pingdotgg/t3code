@@ -331,6 +331,7 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
     threadId: threadRef.threadId,
   });
   const threadWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
+  const threadWorkspaceRoot = serverThread?.workspaceRoot ?? project?.workspaceRoot;
   const activeSummary =
     knownTerminalSessions?.find((session) => session.target.terminalId === surface.activeTerminalId)
       ?.state.summary ?? null;
@@ -342,9 +343,14 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
   const cwd =
     launchContext?.cwd ??
     activeSummary?.cwd ??
-    (project ? projectScriptCwd({ project: { cwd: project.workspaceRoot }, worktreePath }) : null);
+    (project && threadWorkspaceRoot
+      ? projectScriptCwd({ project: { cwd: threadWorkspaceRoot }, worktreePath })
+      : null);
   const runtimeEnv = project
-    ? projectScriptRuntimeEnv({ project: { cwd: project.workspaceRoot }, worktreePath })
+    ? projectScriptRuntimeEnv({
+        project: { cwd: threadWorkspaceRoot ?? project.workspaceRoot },
+        worktreePath,
+      })
     : {};
   const terminalLabelsById = new Map<string, string>();
   const terminalLaunchLocationsById = new Map<string, TerminalLaunchLocationWithEnv>();
@@ -364,7 +370,7 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
         launchContext?.cwd ??
         summary?.cwd ??
         projectScriptCwd({
-          project: { cwd: project.workspaceRoot },
+          project: { cwd: threadWorkspaceRoot ?? project.workspaceRoot },
           worktreePath: terminalWorktreePath,
         }),
       worktreePath: terminalWorktreePath,

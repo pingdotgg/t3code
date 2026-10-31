@@ -195,6 +195,7 @@ export type ProjectionSettlementCandidate = Pick<
   | "projectId"
   | "branch"
   | "worktreePath"
+  | "workspaceRoot"
   | "pullRequests"
   | "linkedPullRequest"
   | "branchPullRequest"
@@ -1497,6 +1498,9 @@ export function threadShellFromProjection(
     interactionMode: projection.thread.interactionMode,
     branch: projection.thread.branch,
     worktreePath: projection.thread.worktreePath,
+    ...(projection.thread.workspaceRoot === undefined
+      ? {}
+      : { workspaceRoot: projection.thread.workspaceRoot }),
     pullRequests: threadPullRequestsOf(projection.thread),
     ...(projection.thread.linkedPullRequest === undefined
       ? {}
@@ -1778,6 +1782,9 @@ function shellFromState(input: {
     interactionMode: input.state.thread.interactionMode,
     branch: input.state.thread.branch,
     worktreePath: input.state.thread.worktreePath,
+    ...(input.state.thread.workspaceRoot === undefined
+      ? {}
+      : { workspaceRoot: input.state.thread.workspaceRoot }),
     pullRequests: threadPullRequestsOf(input.state.thread),
     ...(input.state.thread.linkedPullRequest === undefined
       ? {}

@@ -245,10 +245,12 @@ export default function DiffPanel({
         }
       : null,
   );
-  const activeCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot;
-  const activeRepositoryRoot = activeThread?.worktreePath
-    ? undefined
-    : activeProject?.repositoryIdentity?.rootPath;
+  const activeCwd =
+    activeThread?.worktreePath ?? activeThread?.workspaceRoot ?? activeProject?.workspaceRoot;
+  const activeRepositoryRoot =
+    activeThread?.worktreePath || activeThread?.workspaceRoot
+      ? undefined
+      : activeProject?.repositoryIdentity?.rootPath;
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(activeThread?.environmentId ?? null),
   );

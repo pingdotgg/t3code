@@ -1,6 +1,7 @@
 import {
   ModelSelection,
   OrchestrationV2AppThread,
+  orchestrationV2ThreadWorkspacePath,
   ProjectId,
   ProviderInstanceId,
   type RuntimeMode,
@@ -87,31 +88,33 @@ export const layerFromProjectStore: Layer.Layer<
           instance === undefined
             ? undefined
             : (yield* instance.snapshot.getSnapshot).supportedRuntimeModes;
-        const cwd =
-          input.thread.worktreePath ??
-          (yield* projects.get(input.thread.projectId).pipe(
-            Effect.mapError(
-              (cause) =>
-                new RuntimePolicyResolveError({
-                  projectId: input.thread.projectId,
-                  providerInstanceId: input.modelSelection.instanceId,
-                  cause,
-                }),
-            ),
-            Effect.flatMap(
-              Option.match({
-                onNone: () =>
-                  Effect.fail(
+        const projectWorkspaceRoot =
+          input.thread.worktreePath === null && input.thread.workspaceRoot === undefined
+            ? yield* projects.get(input.thread.projectId).pipe(
+                Effect.mapError(
+                  (cause) =>
                     new RuntimePolicyResolveError({
                       projectId: input.thread.projectId,
                       providerInstanceId: input.modelSelection.instanceId,
-                      cause: "Project not found.",
+                      cause,
                     }),
-                  ),
-                onSome: (project) => Effect.succeed(project.workspaceRoot),
-              }),
-            ),
-          ));
+                ),
+                Effect.flatMap(
+                  Option.match({
+                    onNone: () =>
+                      Effect.fail(
+                        new RuntimePolicyResolveError({
+                          projectId: input.thread.projectId,
+                          providerInstanceId: input.modelSelection.instanceId,
+                          cause: "Project not found.",
+                        }),
+                      ),
+                    onSome: (project) => Effect.succeed(project.workspaceRoot),
+                  }),
+                ),
+              )
+            : undefined;
+        const cwd = orchestrationV2ThreadWorkspacePath(input.thread, projectWorkspaceRoot);
         return ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,

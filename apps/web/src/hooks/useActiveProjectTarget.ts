@@ -23,7 +23,7 @@ export function useActiveProjectTarget(): ActiveProjectTarget | null {
           candidate.environmentId === thread.environmentId && candidate.id === thread.projectId,
       )
     : null;
-  const cwd = thread?.worktreePath ?? project?.workspaceRoot;
+  const cwd = thread?.worktreePath ?? activeThread?.workspaceRoot ?? project?.workspaceRoot;
 
   if (!thread || !threadId || !project || !cwd) return null;
 

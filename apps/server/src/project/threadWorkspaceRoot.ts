@@ -1,4 +1,4 @@
-import type { ThreadId } from "@t3tools/contracts";
+import { orchestrationV2ThreadWorkspacePath, type ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -12,8 +12,8 @@ export const threadWorkspaceRoot = Effect.fn("threadWorkspaceRoot")(
     const projects = yield* ProjectService.ProjectService;
     const shell = yield* threads.getThreadShell(threadId);
     if (shell === null) return undefined;
-    if (shell.worktreePath) return shell.worktreePath;
-    return Option.getOrUndefined(yield* projects.getById(shell.projectId))?.workspaceRoot;
+    const project = Option.getOrUndefined(yield* projects.getById(shell.projectId));
+    return orchestrationV2ThreadWorkspacePath(shell, project?.workspaceRoot) ?? undefined;
   },
   Effect.orElseSucceed(() => undefined),
 );

@@ -12,7 +12,7 @@ export const SHARED_WORKSPACE_RESTORE_MESSAGE =
 // Check isolation at admission and rollback; checkpoints restore whole checkouts, which may become shared.
 export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpointRestoreIsolated")(
   function* (
-    thread: Pick<OrchestrationV2AppThread, "id" | "worktreePath">,
+    thread: Pick<OrchestrationV2AppThread, "id" | "worktreePath" | "workspaceRoot">,
     scope: Pick<OrchestrationV2CheckpointScope, "cwd">,
     dependencies: {
       readonly fileSystem: FileSystem.FileSystem;
@@ -81,7 +81,7 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
           if (otherThread.worktreePath === null) {
             const project = yield* projects.get(otherThread.projectId, { includeDeleted: true });
             if (Option.isNone(project)) return false;
-            paths.push(project.value.workspaceRoot);
+            paths.push(otherThread.workspaceRoot ?? project.value.workspaceRoot);
           }
           for (const candidate of paths) {
             if (checkedPaths.has(candidate)) continue;

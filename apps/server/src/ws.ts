@@ -2932,7 +2932,10 @@ export const layerWsRpc = (
             }
             return yield* issueAssetUrl({
               resource: input.resource,
-              workspaceRoot: thread.thread.worktreePath ?? project.value.workspaceRoot,
+              workspaceRoot:
+                thread.thread.worktreePath ??
+                thread.thread.workspaceRoot ??
+                project.value.workspaceRoot,
             });
           }),
         [WS_METHODS.assetsPersistChatAttachments]: (input) =>

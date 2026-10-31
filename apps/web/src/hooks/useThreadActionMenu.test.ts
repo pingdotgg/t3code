@@ -30,12 +30,6 @@ const state = vi.hoisted(() => ({
       workspaceRoot: "/project",
     },
     {
-      id: "same-root",
-      environmentId: "secondary",
-      title: "Same root",
-      workspaceRoot: "/project",
-    },
-    {
       id: "other-root",
       environmentId: "secondary",
       title: "Other root",
@@ -51,7 +45,7 @@ const state = vi.hoisted(() => ({
       id: "archived",
       environmentId: "secondary",
       title: "Archived",
-      workspaceRoot: "/project",
+      workspaceRoot: "/archived",
       archivedAt: "2026-01-01T00:00:00.000Z",
     },
   ],
@@ -231,11 +225,11 @@ describe("thread menu permissions", () => {
 });
 
 describe("thread project destinations", () => {
-  it("limits root-thread destinations to the current workspace root", () => {
+  it("offers root threads destinations with a distinct workspace root", () => {
     createMenu().openMenu(position);
 
     const moveOptions = state.show.mock.calls[0]![0].find((item) => item.id === "move-to-project");
-    expect(moveOptions?.children?.map((item) => item.id)).toEqual(["move-to-project:same-root"]);
+    expect(moveOptions?.children?.map((item) => item.id)).toEqual(["move-to-project:other-root"]);
   });
 
   it("keeps different-root destinations available for worktree threads", () => {
@@ -243,9 +237,6 @@ describe("thread project destinations", () => {
     createMenu().openMenu(position);
 
     const moveOptions = state.show.mock.calls[0]![0].find((item) => item.id === "move-to-project");
-    expect(moveOptions?.children?.map((item) => item.id)).toEqual([
-      "move-to-project:same-root",
-      "move-to-project:other-root",
-    ]);
+    expect(moveOptions?.children?.map((item) => item.id)).toEqual(["move-to-project:other-root"]);
   });
 });

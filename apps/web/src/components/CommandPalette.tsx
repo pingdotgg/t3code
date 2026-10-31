@@ -1425,7 +1425,7 @@ function OpenCommandPaletteDialog(props: {
           environmentId,
           input: {
             instanceId: thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId,
-            cwd: thread.worktreePath ?? project.workspaceRoot,
+            cwd: thread.worktreePath ?? thread.workspaceRoot ?? project.workspaceRoot,
             fresh: true,
           },
         });

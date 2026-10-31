@@ -2559,6 +2559,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         if (!thread) return;
         const threadWorkspacePath =
           thread.worktreePath ??
+          thread.workspaceRoot ??
           projectByKey.get(`${thread.environmentId}:${thread.projectId}`)?.workspaceRoot ??
           null;
         const configLoaded = serverConfigs.has(thread.environmentId);

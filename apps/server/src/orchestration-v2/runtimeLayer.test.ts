@@ -6911,16 +6911,12 @@ it.layer(layerSharedApplicationDataPlaneTest)("moving threads between projects",
       yield* createThread(busyThreadId);
       yield* createThread(deletedThreadId);
 
-      const rootMove = yield* move(rootThreadId, otherRootProjectId, "move-root-rejected").pipe(
-        Effect.flip,
-      );
-      assert.equal(
-        rootMove.cause,
-        `Thread ${rootThreadId} cannot move from a root workspace to project ${otherRootProjectId} with a different workspace root.`,
-      );
-      const unchangedRootThread = (yield* orchestrator.getThreadProjection(rootThreadId)).thread;
-      assert.equal(unchangedRootThread.projectId, sourceProjectId);
-      assert.isNull(unchangedRootThread.worktreePath);
+      yield* move(rootThreadId, otherRootProjectId, "move-root-success");
+      const movedRootThread = (yield* orchestrator.getThreadProjection(rootThreadId)).thread;
+      assert.equal(movedRootThread.projectId, otherRootProjectId);
+      assert.equal(movedRootThread.workspaceRoot, sourceRoot);
+      assert.isNull(movedRootThread.worktreePath);
+      assert.equal((yield* orchestrator.getThreadShell(rootThreadId))?.workspaceRoot, sourceRoot);
       assert.equal(sourceProject.workspaceRoot, sourceRoot);
       const missing = yield* move(
         rootThreadId,
@@ -6984,7 +6980,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("moving threads between projects",
       assert.equal(unchangedWorktreeThread.projectId, sourceProjectId);
       assert.equal(unchangedWorktreeThread.worktreePath, worktreePath);
 
-      const noOp = yield* move(rootThreadId, sourceProjectId, "move-same-project-no-op");
+      const noOp = yield* move(rootThreadId, otherRootProjectId, "move-same-project-no-op");
       assert.equal(noOp.storedEvents.length, 0);
     }),
   );

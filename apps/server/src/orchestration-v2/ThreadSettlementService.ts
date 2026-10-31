@@ -383,7 +383,7 @@ export const make = Effect.gen(function* () {
             thread.id,
             worktreeExists && thread.worktreePath !== null
               ? thread.worktreePath
-              : project.workspaceRoot,
+              : (thread.workspaceRoot ?? project.workspaceRoot),
           );
         }),
       { concurrency: 8, discard: true },

@@ -2285,7 +2285,7 @@ const make = Effect.gen(function* () {
         const project = yield* requireProject(parent.thread.projectId);
         const base = yield* gitDriver
           .resolveCommit({
-            cwd: parent.thread.worktreePath ?? project.workspaceRoot,
+            cwd: parent.thread.worktreePath ?? parent.thread.workspaceRoot ?? project.workspaceRoot,
             revision: "HEAD",
           })
           .pipe(
