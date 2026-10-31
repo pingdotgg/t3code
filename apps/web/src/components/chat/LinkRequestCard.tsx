@@ -113,10 +113,11 @@ function PendingLinkRequest(props: {
   return (
     <div
       data-v2-item-type={item.type}
-      className="flex min-w-0 flex-col gap-3 rounded-xl border border-border/60 bg-card p-4"
+      className="flex min-w-0 flex-col rounded-xl surface-tray p-1"
     >
-      <div className="flex min-w-0 flex-col gap-1">
-        <p className="text-label text-foreground">
+      <div className="flex min-w-0 flex-col gap-1 px-3 py-2.5">
+        <p className="flex items-center gap-2 text-label text-foreground">
+          <LinkIcon aria-hidden className="size-4 shrink-0 text-info-foreground" />
           {picksMachine(item)
             ? "Link a machine to this environment"
             : `Link ${target} to this environment`}
@@ -128,31 +129,33 @@ function PendingLinkRequest(props: {
           <p className="truncate text-meta text-muted-foreground/80">{item.url}</p>
         ) : null}
       </div>
-      {error !== null ? (
-        <p role="alert" className="text-meta text-destructive">
-          {error}
-        </p>
-      ) : null}
-      {canAnswer ? (
-        <div className="flex min-w-0 items-center justify-end gap-2">
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost-muted"
-            disabled={declining}
-            onClick={() => void decline()}
-          >
-            Decline
-          </Button>
-          <Button type="button" size="xs" disabled={declining} onClick={() => setOpen(true)}>
-            {picksMachine(item) ? "Choose machine…" : "Review link…"}
-          </Button>
-        </div>
-      ) : (
-        <p className="text-meta text-muted-foreground">
-          Only a session that manages access here can answer this.
-        </p>
-      )}
+      <div className="flex min-w-0 flex-col gap-2 rounded-lg bg-card p-2.5">
+        {error !== null ? (
+          <p role="alert" className="text-meta text-destructive">
+            {error}
+          </p>
+        ) : null}
+        {canAnswer ? (
+          <div className="flex min-w-0 items-center justify-end gap-2">
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost-muted"
+              disabled={declining}
+              onClick={() => void decline()}
+            >
+              Decline
+            </Button>
+            <Button type="button" size="xs" disabled={declining} onClick={() => setOpen(true)}>
+              {picksMachine(item) ? "Choose machine…" : "Review link…"}
+            </Button>
+          </div>
+        ) : (
+          <p className="text-meta text-muted-foreground">
+            Only a session that manages access here can answer this.
+          </p>
+        )}
+      </div>
       <LinkRequestDialog
         environmentId={props.environmentId}
         item={item}
