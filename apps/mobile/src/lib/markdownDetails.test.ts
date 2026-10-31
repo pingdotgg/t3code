@@ -67,5 +67,14 @@ describe("splitMarkdownDetails", () => {
     expect(splitMarkdownDetails("<details>\n<summary>Plan</summary>\n\nStep one")).toEqual([
       { kind: "details", summary: "Plan", body: "\n\nStep one", open: false, sourceOffset: 0 },
     ]);
+    expect(
+      splitMarkdownDetails("<details>\n<summary>Plan</summary>\n\n```html\n</details>"),
+    ).toMatchObject([{ kind: "details", body: "\n\n```html\n</details>" }]);
+  });
+
+  it("reads open only as an attribute name", () => {
+    expect(
+      splitMarkdownDetails('<details title="is open">\n<summary>Plan</summary>\n</details>'),
+    ).toMatchObject([{ kind: "details", open: false }]);
   });
 });

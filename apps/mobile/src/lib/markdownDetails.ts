@@ -22,13 +22,13 @@ const SUMMARY = /^\s*<summary\b[^>]*>([\s\S]*?)<\/summary\s*>/i;
 
 /**
  * Splits top-level `<details>` blocks out of chat Markdown so they can render as folds.
- * Tags inside code, or a fold opened inline in a paragraph, stay Markdown. A fold whose closing tag has
- * not streamed yet runs to the end.
+ * Tags inside code, or a fold opened inline in a paragraph, stay Markdown. A fold whose
+ * closing tag has not streamed yet runs to the end.
  */
 export function splitMarkdownDetails(markdown: string): ReadonlyArray<MarkdownDetailsSegment> {
   if (!/<details\b/i.test(markdown)) return [{ kind: "markdown", markdown, sourceOffset: 0 }];
 
-  const folds: Array<OpenFold & { end: number }> = [];
+  const folds: Array<OpenFold & { end: number; closeTagLength: number }> = [];
   let depth = 0;
   // Asserted so the scan closure's writes are not narrowed away after the loop.
   let current = null as OpenFold | null;
@@ -48,20 +48,26 @@ export function splitMarkdownDetails(markdown: string): ReadonlyArray<MarkdownDe
       const start = nodeStart + tag.index;
       if (details[1] !== "/") {
         if (depth === 0) {
-          current = { start, openTagEnd: start + tag[0].length, open: /\sopen\b/i.test(tag[0]) };
+          // Quoted values are blanked so `title="is open"` does not count as the attribute.
+          const attributes = tag[0].replace(/"[^"]*"|'[^']*'/g, '""');
+          current = {
+            start,
+            openTagEnd: start + tag[0].length,
+            open: /\sopen\b/i.test(attributes),
+          };
         }
         depth += 1;
       } else if (depth > 0) {
         depth -= 1;
         if (depth === 0 && current) {
-          folds.push({ ...current, end: start + tag[0].length });
+          folds.push({ ...current, end: start + tag[0].length, closeTagLength: tag[0].length });
           current = null;
         }
       }
     }
   };
   for (const node of parser.parse(markdown).children) scan(node, false);
-  if (current) folds.push({ ...current, end: markdown.length });
+  if (current) folds.push({ ...current, end: markdown.length, closeTagLength: 0 });
   if (folds.length === 0) return [{ kind: "markdown", markdown, sourceOffset: 0 }];
 
   const segments: MarkdownDetailsSegment[] = [];
@@ -74,8 +80,7 @@ export function splitMarkdownDetails(markdown: string): ReadonlyArray<MarkdownDe
         sourceOffset: cursor,
       });
     }
-    const closed = markdown.slice(fold.start, fold.end).match(/<\/details\s*>$/i);
-    let body = markdown.slice(fold.openTagEnd, fold.end - (closed?.[0].length ?? 0));
+    let body = markdown.slice(fold.openTagEnd, fold.end - fold.closeTagLength);
     const summary = SUMMARY.exec(body);
     if (summary) body = body.slice(summary[0].length);
     const label = summary ? decodeHtmlEntities(summary[1]!.replace(/<[^>]*>/g, "")).trim() : "";
