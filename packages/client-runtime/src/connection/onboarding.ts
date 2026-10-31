@@ -159,7 +159,7 @@ const registerPairingConnection = Effect.fn(
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   const knownAddressOnly = input.expectedEnvironmentId === undefined;
   if (!(yield* registry.register(registration, { knownAddressOnly }))) {
-    return registration.target.environmentId;
+    return yield* EnvironmentRegistry.ownEnvironmentError();
   }
   yield* registry.setCompatibility(registration.target.environmentId, null);
   yield* registry
