@@ -156,7 +156,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-titlebar-control-size: 1.75rem;
   --workspace-titlebar-control-gap: 0.75rem;
   --workspace-titlebar-scroll-fade-height: 1.5rem;
-  --chat-content-max-width: 46rem;
+  --chat-content-max-width: 45rem;
   /* How far a timeline control's hover fill may reach past the text column:
      a 24px icon button whose 12px glyph sits on the column edge. */
   --chat-lane-reach: 0.375rem;
@@ -2290,10 +2290,10 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --card-bottom: #171717;
   --card-fill: linear-gradient(180deg, #191919, var(--card-bottom));
   --card-settings-fill: linear-gradient(#191919, #191919);
-  --tray-fill: linear-gradient(180deg, #202020, #1c1c1c);
+  --tray-fill: linear-gradient(#191919, #191919);
   --tray-stroke: #ffffff0d;
   --tray-shadow: 0 1px 2px #00000029, 0 3px 10px #00000014;
-  --composer-fill: linear-gradient(180deg, #272727, #212121);
+  --composer-fill: linear-gradient(180deg, #202020, #1c1c1c);
   --composer-shadow: 0 1px 2px #0000004d, 0 3px 10px #00000038;
   --bubble-fill: linear-gradient(180deg, #272727, #222222);
   --kbd-lit-fill: #1111111a;
