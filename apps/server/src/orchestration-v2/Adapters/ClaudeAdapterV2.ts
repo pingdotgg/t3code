@@ -4080,6 +4080,8 @@ interface ClaudeLiveQueryContext {
   permissionMode: PermissionMode;
   stopping: boolean;
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
+  // Subagents this process still ran when a replacement took over; only its exit can end them.
+  handedOffSubagents: ReadonlySet<ActiveClaudeSubagent>;
   // Per process, not per session: a relative temp dir follows the cwd this CLI
   // was launched in, and a later turn's cwd can differ.
   readonly taskOutputRoot: string | undefined;
@@ -7737,12 +7739,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         ) {
           const context = closedQuery.lastTurn;
           if (context === null) return;
-          const live = yield* Ref.get(queryContext);
           yield* endSubagentsOfClosedQuery({
             closedQuery,
             context,
-            subagents: [...(yield* Ref.get(sessionSubagentsByTaskId))].filter(
-              ([, subagent]) => live === null || live.subagentsFromEarlierProcesses.has(subagent),
+            subagents: [...(yield* Ref.get(sessionSubagentsByTaskId))].filter(([, subagent]) =>
+              closedQuery.handedOffSubagents.has(subagent),
             ),
             buffered: (yield* Ref.get(wakeBuffers)).get(closedQuery.nativeThreadId)?.messages,
             interrupted:
@@ -10337,6 +10338,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             receivedInit: false,
             permissionMode: queryOptions.permissionMode,
             stopping: false,
+            handedOffSubagents: new Set(),
             subagentsFromEarlierProcesses: new Set(
               [...(yield* Ref.get(sessionSubagentsByTaskId)).values()].filter(
                 (subagent) => subagent.task.status === "running",
@@ -10349,7 +10351,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               hostPlatform,
             ),
           };
-          yield* Ref.set(queryContext, context);
+          const replaced = yield* Ref.getAndSet(queryContext, context);
+          if (replaced !== null) {
+            replaced.handedOffSubagents = new Set(
+              [...context.subagentsFromEarlierProcesses].filter(
+                (subagent) => !replaced.subagentsFromEarlierProcesses.has(subagent),
+              ),
+            );
+          }
           yield* querySession.messages.pipe(
             Stream.runForEach((message) =>
               sdkMessageLock.withPermits(1)(

@@ -10857,7 +10857,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         prefix: `t3-claude-v2-${label}-`,
       });
       const processQueues: Array<Queue.Queue<SDKMessage>> = [];
-      const firstCloseRequested = yield* Deferred.make<void>();
+      // The first two processes exit only when the test ends their streams.
+      const closeRequested = [yield* Deferred.make<void>(), yield* Deferred.make<void>()];
       const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
       const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
         instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
@@ -10874,7 +10875,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           open: () =>
             Effect.gen(function* () {
               const sdkMessages = yield* Queue.unbounded<SDKMessage>();
-              const isFirstProcess = processQueues.length === 0;
+              const closeSignal = closeRequested[processQueues.length];
               processQueues.push(sdkMessages);
               return {
                 messages: Stream.fromQueue(sdkMessages),
@@ -10885,9 +10886,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 backgroundTasks: () => Effect.succeed(false),
                 stopTask: () => Effect.void,
                 interrupt: Effect.void,
-                close: isFirstProcess
-                  ? Deferred.succeed(firstCloseRequested, undefined).pipe(Effect.asVoid)
-                  : Queue.shutdown(sdkMessages),
+                close:
+                  closeSignal === undefined
+                    ? Queue.shutdown(sdkMessages)
+                    : Deferred.succeed(closeSignal, undefined).pipe(Effect.asVoid),
               };
             }),
           forkSession: () => Effect.die("unused forkSession"),
@@ -10961,7 +10963,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           requestRuntimeRestart: true,
         })
         .pipe(Effect.forkScoped);
-      yield* Deferred.await(firstCloseRequested);
+      yield* Deferred.await(closeRequested[0]!);
       yield* runtime.startTurn(
         makeClaudeTestTurnInput({
           threadId,
@@ -10983,17 +10985,30 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
       );
       yield* changes.until(() => subagentStatus("own-agent") === "running");
-      yield* Queue.shutdown(processQueues[0]!);
-      yield* Fiber.join(stop);
-      return { runtime, providerThread, processQueues, changes, terminals, subagentStatus };
+      const exitProcess = <E>(index: number, stopping: Fiber.Fiber<void, E>) =>
+        Queue.shutdown(processQueues[index]!).pipe(Effect.andThen(Fiber.join(stopping)));
+      return {
+        runtime,
+        threadId,
+        providerThread,
+        processQueues,
+        closeRequested,
+        changes,
+        terminals,
+        subagentStatus,
+        exitFirstProcess: exitProcess(0, stop),
+        exitProcess,
+        now,
+      };
     });
 
   // regression: #28331 a subagent whose process is gone must not stay running forever
   it.effect("ends a subagent whose process a Stop closed while a new turn replaced it", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { processQueues, changes, terminals, subagentStatus } =
+        const { processQueues, changes, terminals, subagentStatus, exitFirstProcess } =
           yield* stopRacedByReplacementTurn("raced-stop-replacement-close");
+        yield* exitFirstProcess;
         // The replacement's result follows the stopped process's exit on the event stream.
         yield* Queue.offer(
           processQueues[1]!,
@@ -11026,9 +11041,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   it.effect("stops a subagent whose process a Stop closed while a new turn replaced it", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { runtime, providerThread } = yield* stopRacedByReplacementTurn(
+        const { runtime, providerThread, exitFirstProcess } = yield* stopRacedByReplacementTurn(
           "raced-stop-replacement-stop-subagent",
         );
+        yield* exitFirstProcess;
         const stopped = yield* runtime.stopSubagent!({
           providerThread: { ...providerThread, status: "active" },
           nativeTaskId: "raced-agent",
@@ -11040,6 +11056,82 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
 
         assert.strictEqual(stopped, "cancelled", "Stop of a subagent whose process is gone");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  // regression: #28331 a process that exits late ends only the subagents it ran
+  it.effect("leaves a stopping replacement's subagent to that replacement's exit", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const {
+          runtime,
+          threadId,
+          providerThread,
+          processQueues,
+          closeRequested,
+          changes,
+          terminals,
+          subagentStatus,
+          exitFirstProcess,
+          exitProcess,
+          now,
+        } = yield* stopRacedByReplacementTurn("raced-stop-replacement-chain");
+        const activeThread = { ...providerThread, status: "active" as const };
+        const finishTurn = (index: number, turns: number, uuid: string) =>
+          Queue.offer(processQueues[index]!, makeResultFrame({ uuid, result: "Done." })).pipe(
+            Effect.andThen(changes.until(() => terminals().length === turns)),
+          );
+        const startTurn = (label: string, providerTurnOrdinal: number) =>
+          runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread: activeThread,
+              now,
+              attemptId: RunAttemptId.make(`attempt-claude-raced-stop-replacement-chain-${label}`),
+              text: "Carry on.",
+              attachments: [],
+              providerTurnOrdinal,
+            }),
+          );
+
+        yield* finishTurn(1, 2, "00000000-0000-4000-8000-000000002805");
+        const stopSecond = yield* runtime
+          .interruptTurn({
+            providerThread: activeThread,
+            providerTurnId: terminals()[1]!.providerTurnId,
+            requestRuntimeRestart: true,
+          })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(closeRequested[1]!);
+        yield* startTurn("c", 3);
+        assert.lengthOf(processQueues, 3);
+
+        yield* exitFirstProcess;
+        yield* finishTurn(2, 3, "00000000-0000-4000-8000-000000002806");
+        assert.strictEqual(
+          subagentStatus("raced-agent"),
+          "cancelled",
+          "the first process exited after a Stop, but its subagent is not cancelled",
+        );
+        assert.strictEqual(
+          subagentStatus("own-agent"),
+          "running",
+          "the first process ended a subagent the second process still ran",
+        );
+
+        yield* exitProcess(1, stopSecond);
+        yield* startTurn("d", 4);
+        yield* finishTurn(2, 4, "00000000-0000-4000-8000-000000002807");
+        assert.strictEqual(
+          subagentStatus("own-agent"),
+          "cancelled",
+          "the second process exited after a Stop, but its subagent is not cancelled",
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
