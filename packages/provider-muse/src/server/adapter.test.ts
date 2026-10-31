@@ -1448,6 +1448,62 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("keeps loading a long saved session past the command deadline", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const loaded = {
+        session: { sessionId: "saved-session", modelId: MODEL, activeTurnId: null },
+        history: { items: [] },
+      };
+      const resume = pendingPromise<Record<string, unknown>>();
+      fake.queueResponse("session/resume", resume.promise);
+      const opening = yield* makeHarness(fake, INSTANCE_ID, "saved-session").pipe(
+        Effect.forkScoped,
+      );
+      yield* fake.takeCall("session/resume");
+      yield* TestClock.adjust("1 minute");
+      resume.resolve(loaded);
+      const harness = yield* Fiber.join(opening);
+      assert.strictEqual(harness.providerThread.nativeThreadRef?.nativeId, "saved-session");
+
+      const read = pendingPromise<Record<string, unknown>>();
+      fake.queueResponse("session/read", read.promise);
+      const reading = yield* harness.runtime.readThreadSnapshot!({
+        providerThread: harness.providerThread,
+      }).pipe(Effect.forkScoped);
+      yield* fake.takeCall("session/read");
+      yield* TestClock.adjust("1 minute");
+      read.resolve(loaded);
+      yield* Fiber.join(reading);
+      assert.strictEqual(fake.closeCount(), 0);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect.each(["session/resume", "session/read", "session/start"])(
+    "closes the host when %s exceeds its deadline",
+    (method) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakeMuse();
+        const harness = method === "session/read" ? yield* makeHarness(fake) : undefined;
+        fake.queueResponse(method, pendingPromise<Record<string, unknown>>().promise);
+        const operation = harness
+          ? harness.runtime.readThreadSnapshot!({ providerThread: harness.providerThread }).pipe(
+              Effect.asVoid,
+            )
+          : makeHarness(
+              fake,
+              INSTANCE_ID,
+              method === "session/resume" ? "saved-session" : undefined,
+            ).pipe(Effect.asVoid);
+        const opening = yield* operation.pipe(Effect.exit, Effect.forkScoped);
+        yield* fake.takeCall(method);
+        yield* TestClock.adjust(method === "session/start" ? "30 seconds" : "10 minutes");
+        const result = yield* Fiber.join(opening);
+        assert.strictEqual(result._tag, "Failure");
+        assert.strictEqual(fake.closeCount(), 1);
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect.each([
     { resume: true, label: "resumes the saved session" },
     { resume: false, label: "starts a fresh session" },

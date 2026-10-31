@@ -257,6 +257,8 @@ const INFORMATIONAL_NOTIFICATIONS = new Set([
   "usage/changed",
 ]);
 const TOOLS_WITH_NATIVE_ROWS = new Set(["write_todos", "request_user_input", "workflow"]);
+// Loading saved history can exceed the ordinary command deadline.
+const SESSION_LOAD_TIMEOUT_MS = 10 * 60_000;
 const responseAnswerSchema = Schema.Union([Schema.String, Schema.Array(Schema.String)]);
 
 export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
@@ -379,7 +381,11 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               cause,
             ),
         }).pipe(
-          Effect.timeout(options.requestTimeoutMs ?? 30_000),
+          Effect.timeout(
+            method === "session/resume" || method === "session/read"
+              ? SESSION_LOAD_TIMEOUT_MS
+              : (options.requestTimeoutMs ?? 30_000),
+          ),
           Effect.catchTags({
             // The enclosing operation owns the span for this inline handler.
             TimeoutError: Effect.fnUntraced(function* (cause) {
