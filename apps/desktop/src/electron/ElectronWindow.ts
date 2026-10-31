@@ -185,7 +185,10 @@ export const make = Effect.gen(function* () {
     }
 
     const first = Option.fromNullishOr(
-      (yield* listWindows).find((window) => !auxiliaryWindows.has(window)) ?? null,
+      (yield* listWindows).find(
+        (window) =>
+          !auxiliaryWindows.has(window) && (platform !== "darwin" || window.isFocusable()),
+      ) ?? null,
     );
     if (Option.isNone(first) || (yield* isWindowDestroyed(first.value))) {
       return Option.none<Electron.BrowserWindow>();
