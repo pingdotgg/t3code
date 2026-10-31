@@ -210,9 +210,8 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
                 ProviderInstanceId.make("codex")
               ]?.environment,
           );
-        // On Windows the pin is upper case, which sorts first and so wins any inherited spelling.
         assert.deepEqual(yield* environmentOn("win32"), [
-          variable("HTTPS_PROXY", "http://gateway"),
+          variable("Https_Proxy", "http://gateway"),
         ]);
         assert.deepEqual(yield* environmentOn("linux"), [
           variable("HTTPS_PROXY", "http://mine"),
@@ -235,6 +234,34 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
             ? (saved.settings.providerInstances[codexId]?.environment ?? [])
             : [];
         assert.isTrue(savedEnvironment.some((entry) => entry.name === "T3CODE_CODEX_LAUNCH_ARGS"));
+        // A home path setting would rewrite a locked home variable at launch, so the lock owns it.
+        const claude = ProviderDriverKind.make("claudeAgent");
+        const homeLocked = yield* ManagedPolicy.fromDocument("/test/policy.json", {
+          schemaVersion: 1,
+          organization: "Example Corp",
+          limits: {
+            providers: {
+              instances: {
+                [claude]: {
+                  locked: true,
+                  environment: [{ name: "CLAUDE_CONFIG_DIR", value: "/opt/claude-home" }],
+                },
+              },
+            },
+          },
+        });
+        const claudeId = ProviderInstanceId.make("claudeAgent");
+        const claudeConfig = homeLocked.providers.applyLimits({
+          ...DEFAULT_SERVER_SETTINGS,
+          providerInstances: {
+            [claudeId]: { driver: claude, config: { homePath: "/home/me/.other-claude" } },
+          },
+        }).providerInstances[claudeId]?.config;
+        assert.deepEqual(claudeConfig, {});
+        assert.include(
+          homeLocked.summary?.limits?.providers?.lockedInstanceFields?.[claude] ?? [],
+          "config.homePath",
+        );
         // The same override from the environment that starts the server is ignored too.
         const host = { PATH: "/usr/bin", T3CODE_CODEX_LAUNCH_ARGS: "--yolo" };
         assert.deepEqual(providerHostEnvironment((yield* policyOn("linux")).summary, host), {

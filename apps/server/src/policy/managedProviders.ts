@@ -157,6 +157,12 @@ export const providerHostEnvironment = (
   return next;
 };
 
+/** The variable each driver's `homePath` setting sets at launch. */
+const HOME_VARIABLES: ReadonlyMap<ProviderDriverKind, string> = new Map([
+  [ProviderDriverKind.make("claudeAgent"), "CLAUDE_CONFIG_DIR"],
+  [ProviderDriverKind.make("codex"), "CODEX_HOME"],
+]);
+
 const configRecord = (instance: ProviderInstanceConfig | undefined): Record<string, unknown> =>
   instance?.config !== null &&
   typeof instance?.config === "object" &&
@@ -289,20 +295,7 @@ export function makeManagedProviders(
     if (new Set(names).size !== names.length) {
       return { _tag: "Invalid", reason: `instances.${driver}.environment repeats a variable` };
     }
-    // A child on Windows gets the first spelling in sort order, and upper case sorts first, so the
-    // pinned value wins over any spelling inherited at launch.
-    pins.set(
-      driver,
-      platform === "win32" && pin.environment !== undefined
-        ? {
-            ...pin,
-            environment: pin.environment.map((variable) => ({
-              ...variable,
-              name: variableKey(variable.name),
-            })),
-          }
-        : pin,
-    );
+    pins.set(driver, pin);
   }
 
   const rules = new Map<ProviderDriverKind, DriverRule>();
@@ -320,9 +313,19 @@ export function makeManagedProviders(
         environment: "all",
       });
     } else if (pin !== undefined) {
+      // A home path setting rewrites the provider's home variable at launch, so a lock on that
+      // variable owns the setting too.
+      const home = HOME_VARIABLES.get(driver);
+      const homeLocked =
+        home !== undefined &&
+        (pin.environment ?? []).some(
+          (variable) => variableKey(variable.name) === variableKey(home),
+        );
       rules.set(driver, {
         pin,
-        config: pin.locked ? [...pinnedFields(pin), ...bypasses] : [],
+        config: pin.locked
+          ? [...pinnedFields(pin), ...bypasses, ...(homeLocked ? ["homePath"] : [])]
+          : [],
         fill: pin.locked ? [] : pinnedFields(pin),
         environment: pin.locked ? "locked" : "fill",
       });

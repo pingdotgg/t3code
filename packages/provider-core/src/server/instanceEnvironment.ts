@@ -17,15 +17,15 @@ export const mergeProviderInstanceEnvironment = Effect.fn(function* (
   const next: NodeJS.ProcessEnv = { ...baseEnv };
   for (const variable of environment) {
     // Windows reads names without regard to case, and a child gets the first spelling in sort
-    // order, so an inherited HTTPS_PROXY would win over a configured Https_Proxy.
+    // order. Upper case sorts first, so the configured value wins even where a spawn merges the
+    // parent environment back in.
+    const name = windows ? variable.name.toUpperCase() : variable.name;
     if (windows) {
-      for (const name of Object.keys(next)) {
-        if (name !== variable.name && name.toUpperCase() === variable.name.toUpperCase()) {
-          delete next[name];
-        }
+      for (const inherited of Object.keys(next)) {
+        if (inherited.toUpperCase() === name) delete next[inherited];
       }
     }
-    next[variable.name] =
+    next[name] =
       variable.name === "CODEX_HOME" || variable.name === "CLAUDE_CONFIG_DIR"
         ? expandHomePath(variable.value, home)
         : variable.value;

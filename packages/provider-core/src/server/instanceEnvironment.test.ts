@@ -79,7 +79,8 @@ describe("mergeProviderInstanceEnvironment", () => {
           [{ name: "Https_Proxy", value: "http://gateway", sensitive: false }],
           { HTTPS_PROXY: "http://mine", PATH: "/bin" },
         ).pipe(Effect.provideService(HostProcess.Platform, platform));
-      expect(yield* merge("win32")).toEqual({ Https_Proxy: "http://gateway", PATH: "/bin" });
+      // Upper case sorts first, so it also wins where a spawn merges the parent environment back.
+      expect(yield* merge("win32")).toEqual({ HTTPS_PROXY: "http://gateway", PATH: "/bin" });
       expect(yield* merge("linux")).toEqual({
         HTTPS_PROXY: "http://mine",
         Https_Proxy: "http://gateway",
