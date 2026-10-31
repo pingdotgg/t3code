@@ -88,14 +88,30 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       yield* provide(installCli());
       assert.equal(yield* fs.readLink(link), executable);
 
-      // A failed link leaves a staging path it did not create alone.
+      // A failed swap over our own link leaves a staging path it did not create alone.
       yield* fs.remove(link);
+      yield* fs.symlink(older, link);
       const staging = `${link}.${process.pid}.tmp`;
       yield* fs.writeFileString(staging, "someone else's\n");
       const linkFailed = yield* provide(installCli()).pipe(Effect.flip);
       assert.include(linkFailed.message, "Could not link");
       assert.equal(yield* fs.readFileString(staging), "someone else's\n");
       yield* fs.remove(staging);
+
+      // An empty spot is created exclusively: a file that appears first is kept.
+      yield* fs.remove(link);
+      const racing = installCli().pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          symlink: (target, path) =>
+            fs
+              .writeFileString(path, "#!/bin/sh\necho raced\n")
+              .pipe(Effect.andThen(fs.symlink(target, path))),
+        }),
+      );
+      assert.include((yield* provide(racing).pipe(Effect.flip)).message, "Could not link");
+      assert.equal(yield* fs.readFileString(link), "#!/bin/sh\necho raced\n");
+      yield* fs.remove(link);
 
       // Windows writes a t3.cmd: only over its own, and only for paths cmd can run.
       const shim = path.join(root, "bin", "t3.cmd");

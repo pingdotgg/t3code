@@ -110,8 +110,8 @@ export const make = Effect.gen(function* () {
 
   // PATH can reach the regular launcher directly; removal still requires isOurLink.
   const runsOurLauncher = Effect.fn("DesktopCliCommand.runsOurLauncher")(
+    // Another T3 home's link is marked too, so compare where it leads, not the marker alone.
     function* (candidate: string) {
-      if (yield* isOurLink(candidate)) return true;
       const [resolved, ours] = yield* Effect.all([fs.realPath(candidate), fs.realPath(launcher)]);
       if (resolved !== ours) return false;
       const info = yield* fs.stat(candidate);
@@ -230,8 +230,8 @@ export const make = Effect.gen(function* () {
     const onPath = windows
       ? Option.isSome(installed)
       : Option.isSome(first) && (yield* runsOurLauncher(first.value));
-    // Only a folder missing from PATH, with no other t3 first: prepending it would change which
-    // t3 runs.
+    // Only a folder missing from PATH, with no other t3 first: with one, the added folder (last
+    // on PATH) would still not run this t3.
     const setup =
       onPath ||
       Option.isSome(shadowedBy) ||
