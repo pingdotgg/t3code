@@ -3,6 +3,7 @@ import type {
   StorageCleanupSettings,
   WorktreeCleanupRules,
 } from "@t3tools/contracts";
+import { resolvePastedPath } from "@t3tools/shared/path";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import { useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
@@ -91,7 +92,8 @@ export function WorktreesDirectoryRow() {
             edited.current = true;
           }}
           onBlur={(event) => {
-            const value = event.target.value.trim();
+            const value = resolvePastedPath("", event.target.value).trim();
+            event.target.value = value;
             if (edited.current && (mixed || value !== settings.worktreesDirectory))
               updateSettings({ worktreesDirectory: value });
             edited.current = false;

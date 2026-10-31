@@ -23,6 +23,7 @@ import {
 } from "@t3tools/contracts/settings";
 import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
 import { createModelSelection } from "@t3tools/shared/model";
+import { resolvePastedPath } from "@t3tools/shared/path";
 import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
@@ -1551,7 +1552,9 @@ export function ThreadsSettingsPanel() {
               size="sm"
               className="w-full sm:w-72"
               value={mixedAddProjectBaseDirectory ? "" : settings.addProjectBaseDirectory}
-              onCommit={(next) => updateSettings({ addProjectBaseDirectory: next })}
+              onCommit={(next) =>
+                updateSettings({ addProjectBaseDirectory: resolvePastedPath("", next) })
+              }
               placeholder={mixedAddProjectBaseDirectory ? "Mixed" : "~/"}
               spellCheck={false}
               aria-label="Add project base directory"
