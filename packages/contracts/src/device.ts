@@ -68,7 +68,32 @@ export const EasDeviceHostConfig = Schema.Struct({
 );
 export type EasDeviceHostConfig = typeof EasDeviceHostConfig.Type;
 
-export type DeviceHostConfig = SshDeviceHostConfig | EasDeviceHostConfig;
+/**
+ * Alpha: devices leased from a Simlock gateway (https://incubator.callstack.com/simlock).
+ * T3 never installs Simlock; the gateway and its workers are the user's own.
+ */
+export const SimlockDeviceHostConfig = Schema.Struct({
+  kind: Schema.Literal("simlock"),
+  id: ConfiguredDeviceHostId,
+  label: TrimmedNonEmptyString,
+  /** The gateway's origin, such as https://gateway.example.ts.net:4700. */
+  gatewayUrl: TrimmedNonEmptyString.check(Schema.isPattern(/^https?:\/\/[^\s/]+\/?$/)),
+  /** Leases, drives, watches, and takes input on its own leases. Kept in the secret store. */
+  agentToken: TrimmedString.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed("")),
+    Schema.annotateKey({ settingsSecret: true }),
+  ),
+  maxLeases: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 })).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(2)),
+  ),
+  /** A lease the Device panel keeps alive ends this long after it started. */
+  maxLeaseMinutes: Schema.Int.check(Schema.isBetween({ minimum: 5, maximum: 240 })).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(60)),
+  ),
+});
+export type SimlockDeviceHostConfig = typeof SimlockDeviceHostConfig.Type;
+
+export type DeviceHostConfig = SshDeviceHostConfig | EasDeviceHostConfig | SimlockDeviceHostConfig;
 
 const uniqueHostIds = Schema.makeFilter(
   (hosts: ReadonlyArray<{ readonly id: string }>) =>
@@ -85,6 +110,9 @@ export const SshDeviceHostConfigs = Schema.Array(SshDeviceHostConfig).check(uniq
  */
 export const EasDeviceHostConfigs = Schema.Array(EasDeviceHostConfig).check(uniqueHostIds);
 
+/** Kept apart from the other host lists for the same reason as EAS hosts. */
+export const SimlockDeviceHostConfigs = Schema.Array(SimlockDeviceHostConfig).check(uniqueHostIds);
+
 export const DeviceEasAccountInput = Schema.Struct({
   /** A saved EAS host whose stored token is checked when no new token is given. */
   hostId: Schema.optional(DeviceHostId),
@@ -98,6 +126,33 @@ export const DeviceEasAccount = Schema.Struct({
   apps: Schema.Array(Schema.Struct({ id: Schema.String, fullName: Schema.String })),
 });
 export type DeviceEasAccount = typeof DeviceEasAccount.Type;
+
+export const DeviceSimlockIdentityInput = Schema.Struct({
+  /** Without one, the gateway this machine's agent-device points at. */
+  gatewayUrl: Schema.optional(TrimmedString),
+  /** A saved Simlock host whose stored token is checked when no new token is given. */
+  hostId: Schema.optional(DeviceHostId),
+  agentToken: Schema.optional(TrimmedString),
+});
+export type DeviceSimlockIdentityInput = typeof DeviceSimlockIdentityInput.Type;
+
+export const DeviceSimlockIdentity = Schema.Struct({
+  gatewayUrl: Schema.String,
+  /** The label the gateway gave the token. */
+  signedInAs: Schema.String,
+  /** `env`: this machine's AGENT_DEVICE_DAEMON_AUTH_TOKEN, used because it targets this gateway. */
+  tokenSource: Schema.Literals(["entered", "settings", "env"]),
+});
+export type DeviceSimlockIdentity = typeof DeviceSimlockIdentity.Type;
+
+export class DeviceSimlockIdentityError extends Schema.TaggedError<DeviceSimlockIdentityError>()(
+  "DeviceSimlockIdentityError",
+  { reason: Schema.String },
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
 
 /** Checking an Expo credential failed; no device host is involved yet. */
 export class DeviceEasAccountError extends Schema.TaggedError<DeviceEasAccountError>()(
@@ -161,7 +216,15 @@ const EasDeviceHostSummary = Schema.Struct({
   ...deviceHostSummaryFields,
   kind: Schema.Literal("eas"),
 });
-export const DeviceHostSummary = Schema.Union([MachineDeviceHostSummary, EasDeviceHostSummary]);
+const SimlockDeviceHostSummary = Schema.Struct({
+  ...deviceHostSummaryFields,
+  kind: Schema.Literal("simlock"),
+});
+export const DeviceHostSummary = Schema.Union([
+  MachineDeviceHostSummary,
+  EasDeviceHostSummary,
+  SimlockDeviceHostSummary,
+]);
 export type DeviceHostSummary = typeof DeviceHostSummary.Type;
 
 export const DeviceHostStatus = Schema.Literals([
@@ -198,6 +261,8 @@ const deviceServiceStateFields = {
   supportsToolInspection: Schema.optional(Schema.Boolean),
   /** Servers from before EAS hosts ignore `easDeviceHosts`, so clients offer them only when set. */
   supportsEasHosts: Schema.optional(Schema.Boolean),
+  /** Servers from before Simlock hosts ignore `simlockDeviceHosts`. */
+  supportsSimlockHosts: Schema.optional(Schema.Boolean),
   hostStatus: DeviceHostStatus,
   hostStatusDetail: Schema.optional(Schema.String),
   hostStatuses: DeviceHostStatuses,
@@ -221,6 +286,7 @@ const DeviceServiceStateWire = Schema.Struct({
   ...deviceServiceStateFields,
   hosts: Schema.Array(MachineDeviceHostSummary),
   easHosts: Schema.optional(Schema.Array(EasDeviceHostSummary)),
+  simlockHosts: Schema.optional(Schema.Array(SimlockDeviceHostSummary)),
 });
 const DeviceServiceStateDecoded = Schema.Struct({
   ...deviceServiceStateFields,
@@ -234,17 +300,21 @@ export const DeviceServiceState = DeviceServiceStateWire.pipe(
       typeof DeviceServiceStateDecoded.Type,
       typeof DeviceServiceStateWire.Type
     >({
-      decode: ({ easHosts, ...state }) => ({
+      decode: ({ easHosts, simlockHosts, ...state }) => ({
         ...state,
-        hosts: [...state.hosts, ...(easHosts ?? [])],
+        hosts: [...state.hosts, ...(easHosts ?? []), ...(simlockHosts ?? [])],
       }),
       encode: (state) => ({
         ...state,
         hosts: state.hosts.filter(
-          (host): host is typeof MachineDeviceHostSummary.Type => host.kind !== "eas",
+          (host): host is typeof MachineDeviceHostSummary.Type =>
+            host.kind === "local" || host.kind === "ssh",
         ),
         easHosts: state.hosts.filter(
           (host): host is typeof EasDeviceHostSummary.Type => host.kind === "eas",
+        ),
+        simlockHosts: state.hosts.filter(
+          (host): host is typeof SimlockDeviceHostSummary.Type => host.kind === "simlock",
         ),
       }),
     }),

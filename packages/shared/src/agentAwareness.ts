@@ -1,8 +1,9 @@
-import type {
-  EnvironmentId,
-  OrchestrationV2ThreadShell,
-  Project,
-  ThreadId,
+import {
+  isListedThreadLineage,
+  type EnvironmentId,
+  type OrchestrationV2ThreadShell,
+  type Project,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
@@ -72,7 +73,7 @@ export function projectThreadAwarenessV2(
 ): AgentAwarenessState | null {
   const { environmentId, project, thread } = input;
   if (
-    thread.lineage.relationshipToParent === "subagent" ||
+    !isListedThreadLineage(thread.lineage) ||
     thread.archivedAt != null ||
     thread.settledOverride === "settled"
   )

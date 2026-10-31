@@ -30,16 +30,28 @@ export function agentDeviceQuickStart(
   device: DeviceSummary,
   targetArgs = agentDeviceTargetArgs(device),
   command = "agent-device",
-  cloud = false,
+  host?:
+    | { readonly kind: "eas" }
+    | { readonly kind: "simlock"; readonly installDirectory?: string },
 ): string {
   const executable = shellWord(command);
   const target = targetArgs.map(shellWord).join(" ");
   const run = (args: string) => [executable, args, target].filter(Boolean).join(" ");
-  const platformNotes = cloud
-    ? "This is an EAS Simulator session in the cloud. It bills the Expo account per minute until it stops, so call device_close with shutdown: true when you are done. It starts with no apps installed: install-from-source <url> installs a build from a URL (iOS needs a .tar.gz containing a .app), and install uploads one from this machine."
-    : device.platform === "ios"
-      ? "First use builds an XCTest runner and can take a couple of minutes; later commands are fast."
-      : "The Android snapshot helper installs itself on first use.";
+  const platformNotes =
+    host?.kind === "simlock"
+      ? [
+          "This device is leased from a Simlock pool (alpha in T3 Code). The lease returns it to the pool, wiped, when it ends, so call device_close with shutdown: true when you are done. It starts with no apps installed.",
+          host.installDirectory
+            ? `agent-device accepts install for this lease only when run from ${host.installDirectory}.`
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" ")
+      : host?.kind === "eas"
+        ? "This is an EAS Simulator session in the cloud. It bills the Expo account per minute until it stops, so call device_close with shutdown: true when you are done. It starts with no apps installed: install-from-source <url> installs a build from a URL (iOS needs a .tar.gz containing a .app), and install uploads one from this machine."
+        : device.platform === "ios"
+          ? "First use builds an XCTest runner and can take a couple of minutes; later commands are fast."
+          : "The Android snapshot helper installs itself on first use.";
   return [
     `The user is watching ${device.name} (${device.version}) in the Device panel.`,
     target === ""
@@ -222,9 +234,11 @@ const handlers = {
         deviceId: session.deviceId,
       };
       const agent = yield* devices.agentTarget(opened);
-      const cloud = after.hosts.some((host) => host.id === device.hostId && host.kind === "eas");
+      const hostKind = after.hosts.find((host) => host.id === device.hostId)?.kind;
       const targetArgs = [
-        ...agentDeviceTargetArgs({ ...device, id: agent.agentDeviceId }),
+        ...(agent.agentDeviceId === null
+          ? []
+          : agentDeviceTargetArgs({ ...device, id: agent.agentDeviceId })),
         ...agent.args,
       ];
       const launcher = yield* devices.agentLauncher({ ...opened, targetArgs });
@@ -238,7 +252,19 @@ const handlers = {
       return {
         device,
         agentDevice: { command, targetArgs, session: agent.session },
-        quickStart: agentDeviceQuickStart(device, [], command, cloud),
+        quickStart: agentDeviceQuickStart(
+          device,
+          [],
+          command,
+          hostKind === "simlock"
+            ? {
+                kind: "simlock",
+                ...(agent.installDirectory ? { installDirectory: agent.installDirectory } : {}),
+              }
+            : hostKind === "eas"
+              ? { kind: "eas" }
+              : undefined,
+        ),
       };
     }).pipe(Effect.mapError(toolError)),
   ),
