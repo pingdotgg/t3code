@@ -2162,84 +2162,135 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("compacts Codex with the native RPC and completes the compaction turn", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const nativeThreadId = "compact-thread";
-        const nativeTurnId = "compact-turn";
-        const item = { type: "contextCompaction", id: "compact-item" };
-        const transcript = makeCodexReplayTranscript({
-          scenario: "native-compaction",
-          entries: [
-            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "unused" }).slice(0, 5),
-            {
-              type: "expect_outbound",
-              label: "compact",
-              frame: {
-                id: 3,
-                method: "thread/compact/start",
-                params: { threadId: nativeThreadId },
-              },
-            },
-            { type: "emit_inbound", label: "compact", frame: { id: 3, result: {} } },
-            {
-              type: "emit_inbound",
-              label: "start",
-              frame: {
-                method: "turn/started",
-                params: {
-                  threadId: nativeThreadId,
-                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+  it.effect.each(["reset", "billable-only", "missing", "other-turn-reset", "late-reset"] as const)(
+    "compacts Codex with %s token telemetry",
+    (usageKind) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = "compact-thread";
+          const nativeTurnId = "compact-turn";
+          const item = { type: "contextCompaction", id: "compact-item" };
+          const usageFrame = (tokens: number, inputTokens: number, turnId = nativeTurnId) => ({
+            type: "emit_inbound" as const,
+            label: "usage",
+            frame: {
+              method: "thread/tokenUsage/updated",
+              params: {
+                threadId: nativeThreadId,
+                turnId,
+                tokenUsage: {
+                  total: {
+                    totalTokens: 9437579,
+                    inputTokens: 9408294,
+                    cachedInputTokens: 8982400,
+                    outputTokens: 29285,
+                    reasoningOutputTokens: 8756,
+                  },
+                  last: {
+                    totalTokens: tokens,
+                    inputTokens,
+                    cachedInputTokens: 0,
+                    outputTokens: 0,
+                    reasoningOutputTokens: 0,
+                  },
+                  modelContextWindow: 258400,
                 },
               },
             },
-            ...(["item/started", "item/completed"] as const).map((method) => ({
-              type: "emit_inbound" as const,
-              label: method,
-              frame: { method, params: { threadId: nativeThreadId, turnId: nativeTurnId, item } },
-            })),
-            {
-              type: "emit_inbound",
-              label: "complete",
-              frame: {
-                method: "turn/completed",
-                params: {
-                  threadId: nativeThreadId,
-                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+          });
+          const transcript = makeCodexReplayTranscript({
+            scenario: "native-compaction",
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "unused" }).slice(
+                0,
+                5,
+              ),
+              {
+                type: "expect_outbound",
+                label: "compact",
+                frame: {
+                  id: 3,
+                  method: "thread/compact/start",
+                  params: { threadId: nativeThreadId },
                 },
               },
-            },
-          ],
-        });
-        const harness = yield* makeCodexReplayHarness(transcript);
-        assert.isDefined(harness.runtime.compactThread);
-        yield* harness.runtime.compactThread!(
-          makeCodexTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("compact-attempt"),
-            text: "/compact",
-          }),
-        );
-        yield* harness.firstTerminal;
-        const items = harness.events.flatMap((event) =>
-          event.type === "turn_item.updated" && event.turnItem.type === "compaction"
-            ? [event.turnItem]
-            : [],
-        );
-        assert.deepEqual(
-          items.map((entry) => entry.status),
-          ["running", "completed"],
-        );
-        assert.equal(items[0]?.id, items[1]?.id);
-        assert.equal(harness.terminalEvents()[0]?.status, "completed");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+              { type: "emit_inbound", label: "compact", frame: { id: 3, result: {} } },
+              {
+                type: "emit_inbound",
+                label: "start",
+                frame: {
+                  method: "turn/started",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+                  },
+                },
+              },
+              ...(usageKind === "missing" ? [] : [usageFrame(223313, 222435)]),
+              {
+                type: "emit_inbound",
+                label: "compaction-start",
+                frame: {
+                  method: "item/started",
+                  params: { threadId: nativeThreadId, turnId: nativeTurnId, item },
+                },
+              },
+              ...(usageKind === "missing" ? [] : [usageFrame(226619, 223200)]),
+              ...(usageKind === "reset" ? [usageFrame(21607, 0)] : []),
+              ...(usageKind === "other-turn-reset" ? [usageFrame(21607, 0, "other-turn")] : []),
+              {
+                type: "emit_inbound",
+                label: "compaction-complete",
+                frame: {
+                  method: "item/completed",
+                  params: { threadId: nativeThreadId, turnId: nativeTurnId, item },
+                },
+              },
+              ...(usageKind === "late-reset" ? [usageFrame(21607, 0)] : []),
+              {
+                type: "emit_inbound",
+                label: "complete",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          assert.isDefined(harness.runtime.compactThread);
+          yield* harness.runtime.compactThread!(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("compact-attempt"),
+              text: "/compact",
+            }),
+          );
+          yield* harness.firstTerminal;
+          const items = harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "compaction"
+              ? [event.turnItem]
+              : [],
+          );
+          assert.deepEqual(
+            items.map((entry) => entry.status),
+            ["running", "completed"],
+          );
+          assert.equal(items[0]?.id, items[1]?.id);
+          assert.equal(items[1]?.beforeTokenCount, usageKind === "missing" ? undefined : 223313);
+          assert.equal(items[1]?.afterTokenCount, usageKind === "reset" ? 21607 : undefined);
+          assert.equal(harness.terminalEvents()[0]?.status, "completed");
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
         ),
       ),
-    ),
   );
 
   it.effect.each(["failed", "interrupted", "Stop"] as const)(

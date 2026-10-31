@@ -28,9 +28,11 @@ import {
   getProviderSlashCommandsForSlashMenu,
 } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
-import { useThreadShells } from "~/state/entities";
+import { useProjects, useThreadShells } from "~/state/entities";
+import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/environments";
 import { offersLinkedEnvironmentsAtom } from "~/state/peerLinks";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import {
   pullRequestEnvironment,
   usePullRequestList,
@@ -52,6 +54,19 @@ const COMPOSER_PULL_REQUEST_LIST_LIMIT = 99;
 const COMPOSER_PULL_REQUEST_RESULT_LIMIT = 12;
 const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>> =
   [];
+
+/** Describes thread matches during render without retaining the composer's render scope. */
+function makeComposerThreadDescription(projects: ReturnType<typeof useProjects>, nowMs: number) {
+  return (shell: ReturnType<typeof useThreadShells>[number]) => {
+    const project = projects.find(
+      (candidate) =>
+        candidate.environmentId === shell.environmentId && candidate.id === shell.projectId,
+    );
+    return [project?.title, formatRelativeTimeLabel(shell.updatedAt, nowMs)]
+      .filter(Boolean)
+      .join(" · ");
+  };
+}
 
 /** Builds the @, /, $ and # suggestion lists, running the searches each trigger needs. */
 export function useComposerMenuItems({
@@ -109,9 +124,15 @@ export function useComposerMenuItems({
   const settledPullRequestTextQuery =
     pullRequestTextQuery === debouncedPullRequestTextQuery ? pullRequestTextQuery : null;
   const isPathTrigger = composerTriggerKind === "path";
-  const environmentThreadShells = useThreadShells(isPathTrigger);
+  // Both `@` and `#` offer thread matches, so subscribe while either menu is open.
+  const isThreadTrigger = isPathTrigger || composerTriggerKind === "pull-request";
+  const environmentThreadShells = useThreadShells(isThreadTrigger);
   // Mounts older settled threads matching the mention, which shells may leave out.
-  useThreadSearch(isPathTrigger ? [environmentId] : [], pathTriggerQuery, { titlesOnly: true });
+  useThreadSearch(
+    isThreadTrigger ? [environmentId, ...linkedEnvironments.keys()] : [],
+    isPathTrigger ? pathTriggerQuery : pullRequestTriggerQuery,
+    { titlesOnly: true },
+  );
   // The user's machines feed `@` machine matches; the catalog summary is cheap and stable.
   const environmentIdentities = useEnvironmentIdentities();
   const environmentMachines = useEnvironmentMachines();
@@ -120,6 +141,13 @@ export function useComposerMenuItems({
     ...identity,
     machine: environmentMachines.get(identity.environmentId) ?? ("server" as const),
   }));
+  const environmentProjects = useProjects();
+  const nowMinute = useNowMinute();
+  // Thread rows read "project · 2h ago", like the sidebar.
+  const describeComposerThread = makeComposerThreadDescription(
+    environmentProjects,
+    Date.parse(`${nowMinute}:00.000Z`),
+  );
   const workspaceEntries = useComposerPathSearch({
     environmentId,
     cwd: isPathTrigger ? gitCwd : null,
@@ -195,6 +223,7 @@ export function useComposerMenuItems({
           excludeThreadId: activeThreadId,
           query: composerTrigger.query,
           now,
+          describe: describeComposerThread,
         }),
         // An answer to an agent's question carries thread links, not machines.
         ...(questionAttachmentTarget === null && offersMachines
@@ -310,11 +339,20 @@ export function useComposerMenuItems({
           (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
       }));
     }
-    if (
-      composerTrigger.kind === "pull-request" &&
-      pullRequestProjectId !== null &&
-      pullRequestRepository !== null
-    ) {
+    if (composerTrigger.kind === "pull-request") {
+      // `#` lists pull requests, then threads. Threads need no git host, so a project without
+      // pull requests still gets them, and a bare `#` shows the most recent ones.
+      const threadItems = matchComposerThreadItems({
+        shells: environmentThreadShells,
+        environmentId,
+        linkedEnvironments,
+        excludeThreadId: activeThreadId,
+        query: composerTrigger.query,
+        allowEmptyQuery: true,
+        now,
+        describe: describeComposerThread,
+      });
+      if (pullRequestProjectId === null || pullRequestRepository === null) return threadItems;
       const exactPullRequest =
         exactPullRequestLookup.data?.number === pullRequestTriggerNumber
           ? [exactPullRequestLookup.data]
@@ -352,9 +390,9 @@ export function useComposerMenuItems({
             query: composerTrigger.query,
             limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
           });
-      return matches.map((pullRequest) => ({
+      const pullRequestItems = matches.map((pullRequest) => ({
         id: `pull-request:${pullRequest.projectId}:${pullRequest.repository}:${pullRequest.number}`,
-        type: "pull-request",
+        type: "pull-request" as const,
         pullRequest: {
           number: pullRequest.number,
           title: pullRequest.title,
@@ -370,9 +408,11 @@ export function useComposerMenuItems({
             ? pullRequest.title
             : `${pullRequest.repository} · ${pullRequest.title}`,
       }));
+      return [...pullRequestItems, ...threadItems];
     }
     return [];
   })();
+
   const isLoading =
     (composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
     ((composerTriggerKind === "skill" || composerTriggerKind === "slash-command") &&
@@ -390,7 +430,7 @@ export function useComposerMenuItems({
     }
     if (composerTriggerKind === "pull-request") {
       if (pullRequestProjectId === null || pullRequestRepository === null) {
-        return "Pull requests are not available for this project.";
+        return "No matching threads. Pull requests are not available for this project.";
       }
       if (
         pullRequestLookup.error !== null ||

@@ -15,36 +15,47 @@ import {
   dedupeTurnItemBodies,
 } from "@t3tools/shared/orchestrationV2DedupedBodies";
 import {
+  commandRunsTests,
   compactDynamicToolOutput,
+  countFailedTests,
   omitToolOutputImageData,
   toolOutputImages,
   toolOutputIndicatesFailure,
-} from "@t3tools/shared/toolOutput";
+} from "./toolOutput.ts";
+
+/**
+ * What a turn item looks like on the wire. The server strips heavy payloads
+ * (command output, full diffs, handoff history) before sending, so clients
+ * render only what survives here. Shared so client fixtures pass through the
+ * same projection the server applies.
+ */
 
 // A checkpoint over vendored or generated trees can list 15k+ files; the card needs a prefix.
 const MAX_WIRE_CHECKPOINT_FILES = 200;
 const MAX_DETAIL_STRING_BYTES = 32_768;
 const MAX_DYNAMIC_VALUE_BYTES = 16_384;
 const MAX_ON_DEMAND_BYTES = 256 * 1024;
+const utf8 = new TextEncoder();
+const utf8Decoder = new TextDecoder();
+
+function utf8ByteLength(value: string): number {
+  return utf8.encode(value).byteLength;
+}
 const TRUNCATION_MARKER = "\n… output truncated for transport";
-const TRUNCATION_MARKER_BYTES = Buffer.byteLength(TRUNCATION_MARKER, "utf8");
+const TRUNCATION_MARKER_BYTES = utf8ByteLength(TRUNCATION_MARKER);
 
 function truncateDetail(
   value: string | undefined,
   maxBytes = MAX_DETAIL_STRING_BYTES,
 ): string | undefined {
-  if (
-    value === undefined ||
-    (value.length <= maxBytes && Buffer.byteLength(value, "utf8") <= maxBytes)
-  ) {
+  if (value === undefined || (value.length <= maxBytes && utf8ByteLength(value) <= maxBytes)) {
     return value;
   }
   // The marker counts toward the cap, so projecting truncated text again leaves it unchanged.
   const budget = maxBytes - TRUNCATION_MARKER_BYTES;
   // UTF-8 needs at least one byte per UTF-16 unit; encode only a potentially fitting prefix.
-  const prefix = Buffer.from(value.slice(0, budget), "utf8")
-    .subarray(0, budget)
-    .toString("utf8")
+  const prefix = utf8Decoder
+    .decode(utf8.encode(value.slice(0, budget)).subarray(0, budget))
     .replace(/\uFFFD$/u, "");
   return `${prefix}${TRUNCATION_MARKER}`;
 }
@@ -71,7 +82,7 @@ function summarizeDynamicValue(value: unknown): unknown {
       serialized = value;
     } else {
       const json = JSON.stringify(value) ?? String(value);
-      if (Buffer.byteLength(json, "utf8") <= MAX_DYNAMIC_VALUE_BYTES) {
+      if (utf8ByteLength(json) <= MAX_DYNAMIC_VALUE_BYTES) {
         return value;
       }
       serialized = typeof value === "string" ? value : json;
@@ -100,6 +111,128 @@ function summarizeDynamicValue(value: unknown): unknown {
     summary: firstLine.length <= 160 ? firstLine : `${firstLine.slice(0, 159).trimEnd()}…`,
     truncated: true,
   };
+}
+
+interface LineCounts {
+  readonly additions: number;
+  readonly deletions: number;
+}
+
+function countTextLines(text: string): number {
+  if (text.length === 0) return 0;
+  const lines = text.split("\n").length;
+  return text.endsWith("\n") ? lines - 1 : lines;
+}
+
+function countPatchLines(lines: ReadonlyArray<unknown>): LineCounts {
+  let additions = 0;
+  let deletions = 0;
+  for (const line of lines) {
+    if (typeof line !== "string") continue;
+    if (line.startsWith("+") && !line.startsWith("+++")) additions += 1;
+    else if (line.startsWith("-") && !line.startsWith("---")) deletions += 1;
+  }
+  return { additions, deletions };
+}
+
+/** Counts lines outside the unchanged head and tail, exact for one contiguous edit. */
+function countReplacementLines(oldText: string, newText: string): LineCounts {
+  const before = oldText.length === 0 ? [] : oldText.split("\n");
+  const after = newText.length === 0 ? [] : newText.split("\n");
+  let head = 0;
+  while (head < before.length && head < after.length && before[head] === after[head]) head += 1;
+  let tail = 0;
+  while (
+    tail < before.length - head &&
+    tail < after.length - head &&
+    before[before.length - 1 - tail] === after[after.length - 1 - tail]
+  ) {
+    tail += 1;
+  }
+  return { additions: after.length - head - tail, deletions: before.length - head - tail };
+}
+
+/**
+ * Counts the `lines` of a JSON `structuredPatch` in place. Claude's Edit result
+ * also carries the whole original file, so parsing the full JSON per item
+ * would cost far more than scanning the patch array.
+ */
+function countStructuredPatchLines(json: string): LineCounts | null {
+  const key = json.indexOf('"structuredPatch":');
+  if (key < 0) return null;
+  let index = json.indexOf("[", key);
+  if (index < 0) return null;
+  let additions = 0;
+  let deletions = 0;
+  let depth = 0;
+  let lines = 0;
+  for (; index < json.length; index += 1) {
+    const char = json[index];
+    if (char === '"') {
+      // Strings at depth 3 are the elements of a hunk's `lines` array.
+      if (depth === 3) {
+        const marker = json[index + 1];
+        if (marker === "+") additions += 1;
+        else if (marker === "-") deletions += 1;
+        lines += 1;
+      }
+      for (index += 1; index < json.length && json[index] !== '"'; index += 1) {
+        if (json[index] === "\\") index += 1;
+      }
+    } else if (char === "[" || char === "{") {
+      depth += 1;
+    } else if (char === "]" || char === "}") {
+      depth -= 1;
+      if (depth === 0) break;
+    }
+  }
+  return lines === 0 ? null : { additions, deletions };
+}
+
+/**
+ * Line counts for providers that report a diff without counts: unified hunks
+ * (Codex, ACP, OpenCode), the JSON Edit/Write result Claude returns (a
+ * structured patch, or the content of a created file), and old/new text.
+ */
+function fileChangeLineCounts(
+  item: Extract<OrchestrationV2TurnItem, { readonly type: "file_change" }>,
+): LineCounts | null {
+  const diff = item.diffStr?.trim();
+  // Codex reports added/deleted file contents directly, including blank lines.
+  const operation = item.changes?.length === 1 ? item.changes[0]?.operation : undefined;
+  if (
+    item.diffStr !== undefined &&
+    (operation === "add" || operation === "delete") &&
+    !/^@@ /m.test(item.diffStr)
+  ) {
+    const lines = countTextLines(item.diffStr);
+    return operation === "add"
+      ? { additions: lines, deletions: 0 }
+      : { additions: 0, deletions: lines };
+  }
+  if (diff) {
+    if (!diff.startsWith("{")) {
+      return /^@@ /m.test(diff) ? countPatchLines(diff.split("\n")) : null;
+    }
+    const patch = countStructuredPatchLines(diff);
+    if (patch !== null) return patch;
+    if (!diff.startsWith('{"type":"create"')) return null;
+    try {
+      const parsed: unknown = JSON.parse(diff);
+      return typeof parsed === "object" &&
+        parsed !== null &&
+        "content" in parsed &&
+        typeof parsed.content === "string"
+        ? { additions: countTextLines(parsed.content), deletions: 0 }
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  if (item.oldStr !== undefined || item.newStr !== undefined) {
+    return countReplacementLines(item.oldStr ?? "", item.newStr ?? "");
+  }
+  return null;
 }
 
 type CheckpointFiles = Pick<OrchestrationV2Checkpoint, "files" | "filesTotal">;
@@ -169,17 +302,28 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
             (output !== undefined &&
               toolOutputIndicatesFailure(output.slice(0, MAX_DETAIL_STRING_BYTES)))
           : item.exitCode !== 0;
+      const outputPresence = output?.trim() ? { outputOmitted: true } : {};
+      if (!failed) return { ...projected, ...outputPresence };
+      // Runner summaries sit at the end of the output the wire drops.
+      const failedTestCount =
+        output !== undefined && commandRunsTests(item.input)
+          ? countFailedTests(output.slice(-MAX_DETAIL_STRING_BYTES))
+          : undefined;
       return {
         ...projected,
-        ...(failed ? { outputIndicatesFailure: true } : {}),
-        ...(output?.trim() ? { outputOmitted: true } : {}),
+        outputIndicatesFailure: true,
+        ...outputPresence,
+        ...(failedTestCount === undefined ? {} : { failedTestCount }),
       };
     }
     case "file_change": {
       const { diffStr, oldStr: _old, newStr: _new, ...projected } = item;
-      return item.status === "failed" && diffStr?.trim()
-        ? { ...projected, diffStr: truncateDetail(diffStr) }
-        : projected;
+      if (item.status === "failed" && diffStr?.trim()) {
+        return { ...projected, diffStr: truncateDetail(diffStr) };
+      }
+      if (item.additions !== undefined || item.deletions !== undefined) return projected;
+      const counts = fileChangeLineCounts(item);
+      return counts === null ? projected : { ...projected, ...counts };
     }
     case "subagent":
       return {
@@ -219,7 +363,7 @@ function boundDynamicValue(value: unknown): unknown {
   } catch {
     return "Unserializable tool value";
   }
-  return Buffer.byteLength(json, "utf8") <= MAX_ON_DEMAND_BYTES
+  return utf8ByteLength(json) <= MAX_ON_DEMAND_BYTES
     ? value
     : truncateDetail(json, MAX_ON_DEMAND_BYTES);
 }

@@ -189,67 +189,33 @@ const BADGE_VARIANTS = [
 const BADGE_SIZES = ["sm", "default", "lg", "control"] as const;
 const ALERT_VARIANTS = ["default", "info", "warning", "error"] as const;
 
-const SECTIONS = [
-  { id: "foundations", label: "Foundations" },
-  { id: "buttons", label: "Buttons" },
-  { id: "controls", label: "Controls" },
-  { id: "inputs", label: "Inputs" },
-  { id: "badges", label: "Badges and chips" },
-  { id: "status", label: "Status and loading" },
-  { id: "groups", label: "Groups" },
-  { id: "overlays", label: "Menus and overlays" },
-  { id: "palette", label: "Command palette" },
-  { id: "feedback", label: "Feedback" },
-  { id: "worklog", label: "Work log" },
-  { id: "composer", label: "Composer parts" },
-] as const;
-
-/** A dev-only catalog of the design system, one section per layer of primitives. */
+/**
+ * A dev-only catalog of the design system, one section per layer of
+ * primitives. The sidebar (DesignSystemSidebarNav) links to each section.
+ */
 export function DesignSystemPage() {
   return (
-    <div className="flex h-dvh min-h-0 bg-background text-foreground">
-      <nav
-        aria-label="Sections"
-        className="hidden w-52 shrink-0 flex-col gap-0.5 border-e border-divider p-3 md:flex"
-      >
-        <p className="px-2 pt-1 pb-3 text-sm font-semibold text-strong-foreground">Design system</p>
-        {SECTIONS.map((section) => (
-          <Button
-            key={section.id}
-            variant="ghost-muted"
-            size="sm"
-            className="justify-start"
-            render={<a href={`#${section.id}`} />}
-          >
-            {section.label}
-          </Button>
-        ))}
-      </nav>
-      <ScrollArea className="min-h-0 flex-1">
-        <main className="mx-auto flex w-full max-w-6xl flex-col gap-16 px-6 pt-10 pb-24">
-          <header className="flex flex-col gap-2">
-            <h1 className="text-2xl font-semibold text-strong-foreground">Design system</h1>
-            <p className="max-w-2xl text-sm text-muted-foreground">
-              Every primitive, composed primitive and shared component, live. Screens are built from
-              these; a new need becomes a variant here, not a one-off style. Only dev builds serve
-              this page.
-            </p>
-          </header>
-          <FoundationsSection />
-          <ButtonsSection />
-          <ControlsSection />
-          <InputsSection />
-          <BadgesSection />
-          <StatusSection />
-          <GroupsSection />
-          <OverlaysSection />
-          <PaletteSection />
-          <FeedbackSection />
-          <WorkLogSection />
-          <ComposerSection />
-        </main>
-      </ScrollArea>
-    </div>
+    <ScrollArea className="min-h-0 flex-1">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-16 px-6 pt-6 pb-24">
+        <Text variant="body" tone="muted" render={<p />}>
+          Every primitive, composed primitive and shared component, live. Screens are built from
+          these; a new need becomes a variant here, not a one-off style. Only dev builds serve this
+          page.
+        </Text>
+        <FoundationsSection />
+        <ButtonsSection />
+        <ControlsSection />
+        <InputsSection />
+        <BadgesSection />
+        <StatusSection />
+        <GroupsSection />
+        <OverlaysSection />
+        <PaletteSection />
+        <FeedbackSection />
+        <WorkLogSection />
+        <ComposerSection />
+      </div>
+    </ScrollArea>
   );
 }
 

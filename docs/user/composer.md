@@ -80,6 +80,12 @@ running the send button shows which action it will take. Long-press it to use th
 other action for a single message, or hold `Cmd` while sending from a hardware
 keyboard. The button only offers Steer when the running agent supports it.
 
+## Retry a failed run
+
+On web and desktop, when a run fails its error appears above the composer. Choose
+**Retry** to send the same message again, with its attachments, using the model
+selected in the composer.
+
 ## Queue messages offline on mobile
 
 Mobile keeps local copies of draft attachments, so you can preview them and queue
@@ -119,14 +125,14 @@ Leaving reasoning level or service tier unset uses the provider's own configurat
 ## Quote an assistant response
 
 On web and desktop, select text within one assistant response and choose
-**Cite in composer**. You can add a comment about the quote and write instructions
-around it.
+**Cite in composer**, or press `Mod+Shift+L`. You can add a comment about the quote and write
+instructions around it.
 
 Select the quote in a draft or sent message to return to its source. If the source
 is unavailable or has changed, the saved quote remains readable.
 
-The chip shows your comment when it has one, or a short quote preview otherwise. Use the pencil
-button to add or change the comment. To remove the citation, place the caret beside its chip and
+The chip shows your comment when it has one, or a short quote preview otherwise. Use the comment
+button to add or change the comment; press `Esc` to close it. To remove the citation, place the caret beside its chip and
 delete it like other inline context. Copying, reloading, and restoring a
 [stashed prompt](#prompt-stash) keep each comment
 with its quote, and sending tells the agent which words were quoted and which comment you wrote.
@@ -170,7 +176,7 @@ memory. The action is available only when the provider supports rewind.
 On web and desktop, press `Cmd+S` on macOS or `Ctrl+S` on Windows and Linux to save
 the current prompt and its attachments for later. Wait for uploads to finish first.
 With an empty composer, the same shortcut restores a single stash or opens the
-stash menu when there are several.
+stash menu when there are several. The **Stash** chip under the composer opens the menu too.
 
 Stashes containing uploaded files must be restored in their original environment.
 Those files are retained for 24 hours. After an upload expires, restore the prompt
@@ -290,10 +296,11 @@ the repository by text. Choose a result to insert it as a chip.
 
 Another thread can be context too. Type `@` followed by part of its title to pick one from
 the same server, or from a machine it links to while the Linked environments beta is on; those
-show the machine's name. On web and desktop you can also drag a thread out of the sidebar and
-drop it on the composer; a multi-selection drops together. On any client, **Copy thread** puts a
-thread on the clipboard that pastes into a composer as its chip. The chip shows the thread's
-current title and opens it when selected. Your prompt only carries a reference: the agent reads the thread's
+show the machine's name. Type `#` to list recent threads below pull requests. On web and desktop
+you can also drag a thread out of the sidebar and drop it on the composer; a multi-selection drops
+together. On any client, **Copy thread** puts a thread on the clipboard that pastes into a composer
+as its chip. The chip shows the thread's current title and opens it when selected. Your prompt only
+carries a reference: the agent reads the thread's
 history on demand, so attaching a long thread costs nothing until the agent looks. Attaching a
 thread does not change it, and the agent cannot send messages to it unless you ask.
 
