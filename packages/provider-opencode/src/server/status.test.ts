@@ -8,7 +8,9 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
+import * as Tracer from "effect/Tracer";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { beforeEach } from "vite-plus/test";
@@ -224,6 +226,75 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("prefers the selected stored Go key over the auth.json key OpenCode 2 imported", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const dataHome = yield* fs.makeTempDirectoryScoped();
+    yield* fs.makeDirectory(`${dataHome}/opencode`);
+    yield* fs.writeFileString(
+      `${dataHome}/opencode/auth.json`,
+      JSON.stringify({ "opencode-go": { type: "api", key: "imported-key" } }),
+    );
+    const database = yield* Effect.acquireRelease(
+      Effect.sync(() => new NodeSqlite.DatabaseSync(`${dataHome}/opencode/opencode.db`)),
+      (database) => Effect.sync(() => database.close()),
+    );
+    database.exec(
+      "CREATE TABLE credential (id text PRIMARY KEY, integration_id text, value text, active integer, time_created integer, time_updated integer)",
+    );
+    const insert = database.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?, ?)");
+    insert.run(
+      "cred_imported",
+      "opencode-go",
+      JSON.stringify({ type: "key", key: "imported-key" }),
+      0,
+      1,
+      2,
+    );
+    insert.run(
+      "cred_replaced",
+      "opencode-go",
+      JSON.stringify({ type: "key", key: "replaced-key" }),
+      1,
+      2,
+      2,
+    );
+    const window = { percent: 1, resetsAt: "2026-09-17T12:00:00.000Z" };
+    for (const { replacedStatus, requested } of [
+      { replacedStatus: 200, requested: ["replaced-key"] },
+      { replacedStatus: 401, requested: ["replaced-key", "imported-key"] },
+    ]) {
+      const authorizations: string[] = [];
+      const limits = yield* readOpenCodeGoUsageLimits({
+        enabled: true,
+        serverUrl: "",
+        environment: { XDG_DATA_HOME: dataHome },
+      }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            const key = (request.headers.authorization ?? "").replace("Bearer ", "");
+            authorizations.push(key);
+            const status = key === "replaced-key" ? replacedStatus : 200;
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  { usage: { rolling: window, weekly: window, monthly: window } },
+                  { status },
+                ),
+              ),
+            );
+          }),
+        ),
+      );
+      NodeAssert.deepEqual(authorizations, requested);
+      NodeAssert.equal(limits.unavailable, undefined);
+      NodeAssert.equal(limits.windows.length, 3);
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("does not read local credentials for external or disabled OpenCode instances", () =>
   Effect.gen(function* () {
     for (const settings of [
@@ -398,20 +469,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
           }),
         )
       : Effect.succeed(runtimeMock.state.inventory as OpenCodeRuntime.OpenCodeInventory),
-  loadInventoryFromCli: ({ cwd }) => {
-    runtimeMock.state.inventoryCwd = cwd;
-    return runtimeMock.state.inventoryError
-      ? Effect.fail(
-          new OpenCodeRuntime.OpenCodeRuntimeError({
-            operation: "loadInventoryFromCli",
-            detail: runtimeMock.state.inventoryError.message,
-            cause: runtimeMock.state.inventoryError,
-          }),
-        )
-      : Effect.succeed(runtimeMock.state.inventory as OpenCodeRuntime.OpenCodeInventory);
-  },
   loadOpenCodeSkills: () => Effect.succeed([]),
-  loadSkillsFromCli: () => Effect.succeed([]),
 };
 
 beforeEach(() => {
@@ -462,6 +520,110 @@ const checkProvider = Effect.fn("checkProvider")(function* (
 });
 
 it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
+  it.effect.each(["version", "inventory", "models", "empty-v1", "empty-v2"] as const)(
+    "records %s discovery failures in the existing trace and logger",
+    (failure) =>
+      Effect.gen(function* () {
+        const cause = new Error("discovery connection reset");
+        const v2 = failure === "models" || failure === "empty-v2";
+        runtimeMock.state.versionStdout = v2 ? "opencode v2.0.18\n" : DEFAULT_VERSION_STDOUT;
+        if (failure === "version") runtimeMock.state.runVersionError = cause;
+        if (failure === "inventory") runtimeMock.state.inventoryError = cause;
+        if (failure === "empty-v1") {
+          runtimeMock.state.inventory = {
+            providerList: {
+              connected: ["openai"],
+              all: [{ id: "openai", name: "OpenAI", models: {} }],
+              default: {},
+            },
+            agents: [],
+            skills: [],
+          };
+        }
+        const spans: Array<Tracer.NativeSpan> = [];
+        yield* checkProvider(
+          makeOpenCodeSettings({ serverPassword: "private-password" }),
+          process.cwd(),
+          undefined,
+          undefined,
+          failure === "models"
+            ? Effect.fail(
+                new OpenCodeRuntime.OpenCodeRuntimeError({
+                  operation: "model.list",
+                  detail: "model list failed",
+                  cause,
+                }),
+              )
+            : Effect.succeed([]),
+        ).pipe(
+          Effect.provideService(
+            Tracer.Tracer,
+            Tracer.make({
+              span: (options) => {
+                const span = new Tracer.NativeSpan(options);
+                spans.push(span);
+                return span;
+              },
+            }),
+          ),
+          Effect.provide(Logger.layer([Logger.tracerLogger], { mergeWithExisting: false })),
+        );
+
+        const diagnostics = spans.flatMap((span) =>
+          span.events
+            .filter(([name]) => name === "OpenCode discovery failed")
+            .map((event) => ({ span, event })),
+        );
+        NodeAssert.equal(diagnostics.length, 1);
+        const {
+          span,
+          event: [, timestamp, attributes],
+        } = diagnostics[0]!;
+        NodeAssert.equal(attributes.provider, "opencode");
+        NodeAssert.equal(
+          attributes.phase,
+          failure.startsWith("empty") ? (v2 ? "models" : "inventory") : failure,
+        );
+        NodeAssert.equal(attributes.outcome, failure.startsWith("empty") ? "empty" : "failed");
+        NodeAssert.equal(attributes.serverMode, "managed");
+        NodeAssert.equal(attributes["effect.logLevel"], "WARN");
+        NodeAssert.ok(timestamp >= 0n);
+        NodeAssert.ok(span.traceId.length > 0);
+        NodeAssert.equal(span.attributes.get("discovery.outcome"), attributes.outcome);
+        if (!failure.startsWith("empty")) {
+          NodeAssert.match(String(attributes["effect.cause"]), /discovery connection reset/);
+        }
+        NodeAssert.ok(!JSON.stringify(attributes).includes("private-password"));
+      }),
+  );
+
+  it.effect("keeps an empty legacy catalog retryable until connected providers list models", () =>
+    Effect.gen(function* () {
+      const upstream = { id: "openai", name: "OpenAI", models: {} };
+      runtimeMock.state.inventory = {
+        providerList: { connected: ["openai"], all: [upstream], default: {} },
+        agents: [],
+        skills: [],
+      };
+      const settings = makeOpenCodeSettings();
+      const empty = yield* checkProvider(settings);
+      NodeAssert.equal(empty.status, "warning");
+      NodeAssert.equal(empty.auth.status, "unknown");
+      NodeAssert.deepEqual(empty.models, []);
+
+      upstream.models = {
+        "gpt-5.4": { id: "gpt-5.4", name: "GPT-5.4", variants: {} },
+      };
+      const ready = yield* checkProvider(settings);
+      NodeAssert.equal(ready.status, "ready");
+      NodeAssert.equal(ready.auth.status, "authenticated");
+      NodeAssert.deepEqual(
+        ready.models.map((model) => model.slug),
+        ["openai/gpt-5.4"],
+      );
+    }),
+  );
+
   it.effect("emits OpenCode variant defaults so trait picker can resolve a visible selection", () =>
     Effect.gen(function* () {
       runtimeMock.state.inventory = {
@@ -776,6 +938,48 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
 });
 
 it.layer(layerTest)("checkOpenCodeProviderStatus with configured server URL", (it) => {
+  it.effect.each([
+    "401 Unauthorized",
+    "403 Forbidden",
+    "status=401 body={}",
+    "status=403 body={}",
+    "HTTP 401",
+    "HTTP/1.1 403",
+    "Response status code: 401",
+    "Response status code: 403",
+    "Request failed with status code 401",
+    "Request failed with status code 403",
+  ])("keeps explicit authentication rejection actionable: %s", (detail) =>
+    Effect.gen(function* () {
+      runtimeMock.state.connectionError = new Error(detail);
+      const snapshot = yield* checkProvider(
+        makeOpenCodeSettings({ serverUrl: "http://127.0.0.1:9999" }),
+      );
+
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.equal(snapshot.auth.status, "unauthenticated");
+      NodeAssert.equal(
+        snapshot.message,
+        "OpenCode server rejected authentication. Check the server URL and password.",
+      );
+    }),
+  );
+
+  it.effect.each([401, 403, 4010, 4030])("keeps connection failures on port %s retryable", (port) =>
+    Effect.gen(function* () {
+      const serverUrl = `http://127.0.0.1:${port}`;
+      runtimeMock.state.connectionError = new Error(`connect ECONNREFUSED 127.0.0.1:${port}`);
+      const snapshot = yield* checkProvider(makeOpenCodeSettings({ serverUrl }));
+
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.equal(snapshot.auth.status, "unknown");
+      NodeAssert.equal(
+        snapshot.message,
+        `Couldn't reach the configured OpenCode server at ${serverUrl}. Check that the server is running and the URL is correct.`,
+      );
+    }),
+  );
+
   it.effect("routes a configured OpenCode 2 server to the 2.x check, never via 1.x", () =>
     Effect.gen(function* () {
       const settings = makeOpenCodeSettings({

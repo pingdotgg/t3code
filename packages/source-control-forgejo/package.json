@@ -3,33 +3,13 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./client/definition": {
-      "types": "./src/client/definition.ts",
-      "import": "./src/client/definition.ts"
+    "./shared/definition": {
+      "types": "./src/shared/definition.ts",
+      "import": "./src/shared/definition.ts"
     },
     "./server/driver": {
       "types": "./src/server/driver.ts",
       "import": "./src/server/driver.ts"
-    },
-    "./server/ForgejoCli": {
-      "types": "./src/server/ForgejoCli.ts",
-      "import": "./src/server/ForgejoCli.ts"
-    },
-    "./server/forgejoPullRequestJson": {
-      "types": "./src/server/forgejoPullRequestJson.ts",
-      "import": "./src/server/forgejoPullRequestJson.ts"
-    },
-    "./server/ForgejoPullRequestProvider": {
-      "types": "./src/server/ForgejoPullRequestProvider.ts",
-      "import": "./src/server/ForgejoPullRequestProvider.ts"
-    },
-    "./server/forgejoPullRequests": {
-      "types": "./src/server/forgejoPullRequests.ts",
-      "import": "./src/server/forgejoPullRequests.ts"
-    },
-    "./server/ForgejoSourceControlProvider": {
-      "types": "./src/server/ForgejoSourceControlProvider.ts",
-      "import": "./src/server/ForgejoSourceControlProvider.ts"
     }
   },
   "scripts": {
@@ -44,6 +24,7 @@
     "effect": "catalog:"
   },
   "devDependencies": {
+    "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@t3tools/source-control-testing": "workspace:*",
     "@types/node": "catalog:",
