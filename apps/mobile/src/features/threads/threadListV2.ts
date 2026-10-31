@@ -1,3 +1,4 @@
+import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import {
   canSnooze,
   effectiveSnoozed,
@@ -199,14 +200,14 @@ export function resolveThreadListV2WokeAt(
     : null;
 }
 
-/**
- * Past a first connection attempt the environment is not answering, so its threads' last run
- * states are stale. Matches `threadRouteIsHydrating`.
- */
+// A connected socket can still hold cached run states until shell synchronization finishes.
 export function isThreadListV2EnvironmentDisconnected(
   connectionState: EnvironmentConnectionPhase,
+  shellStatus: EnvironmentShellStatus,
 ): boolean {
-  return connectionState !== "connected" && connectionState !== "connecting";
+  return (
+    (connectionState !== "connected" && connectionState !== "connecting") || shellStatus !== "live"
+  );
 }
 
 export function resolveThreadListV2Status(

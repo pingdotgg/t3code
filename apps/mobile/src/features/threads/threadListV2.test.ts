@@ -163,16 +163,25 @@ describe("resolveThreadListV2Status", () => {
 
 describe("isThreadListV2EnvironmentDisconnected", () => {
   it.each([
-    ["connected", false],
-    ["connecting", false],
-    ["reconnecting", true],
-    ["offline", true],
-    ["error", true],
-    ["unsupported", true],
-    ["available", true],
-  ] as const)("treats %s as disconnected: %s", (connectionState, disconnected) => {
-    expect(isThreadListV2EnvironmentDisconnected(connectionState)).toBe(disconnected);
-  });
+    ["connected", "live", false],
+    ["connected", "cached", true],
+    ["connected", "synchronizing", true],
+    ["connected", "empty", true],
+    ["connecting", "live", false],
+    ["connecting", "cached", true],
+    ["reconnecting", "live", true],
+    ["offline", "live", true],
+    ["error", "live", true],
+    ["unsupported", "live", true],
+    ["available", "live", true],
+  ] as const)(
+    "treats %s with a %s shell as disconnected: %s",
+    (connectionState, shellStatus, disconnected) => {
+      expect(isThreadListV2EnvironmentDisconnected(connectionState, shellStatus)).toBe(
+        disconnected,
+      );
+    },
+  );
 });
 
 describe("queued messages keep a settled thread active", () => {

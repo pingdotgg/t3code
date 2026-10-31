@@ -1,11 +1,14 @@
+import { useAtomValue } from "@effect/atom-react";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
 import { useMemo, useSyncExternalStore } from "react";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
-import { useWorkspaceEnvironments } from "../../state/workspace";
+import { environmentShell } from "../../state/shell";
+import { workspaceConnections } from "../../state/workspace";
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
@@ -15,6 +18,17 @@ import {
 } from "./threadListV2";
 import { computeThreadMoveAvailability } from "./threadOrder";
 import { useKeySet } from "./useKeySet";
+
+const disconnectedEnvironmentIdsAtom = Atom.make((get) =>
+  get(workspaceConnections.environmentsAtom)
+    .filter((environment) =>
+      isThreadListV2EnvironmentDisconnected(
+        environment.connectionState,
+        get(environmentShell.statusAtom(environment.environmentId)),
+      ),
+    )
+    .map((environment) => environment.environmentId),
+);
 
 type LayoutInput = Parameters<typeof buildThreadListV2Items>[0];
 
@@ -57,11 +71,7 @@ export function useThreadListV2(input: {
     // oxlint-disable-next-line react/memo-dependencies -- the version signals an expired grace
     [threads, workingShelfEnabled, inboxVersion],
   );
-  const disconnectedEnvironmentIds = useKeySet(
-    useWorkspaceEnvironments()
-      .filter((environment) => isThreadListV2EnvironmentDisconnected(environment.connectionState))
-      .map((environment) => environment.environmentId),
-  );
+  const disconnectedEnvironmentIds = useKeySet(useAtomValue(disconnectedEnvironmentIdsAtom));
   // Up/down menu availability for every card, computed once per section per
   // rebuild (see computeThreadMoveAvailability): per-thread planner calls made
   // list construction quadratic, and this list rebuilds on every minute tick.
