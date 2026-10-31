@@ -1,5 +1,6 @@
 import {
   ModelCapabilities,
+  OptionalModelBenchmarks,
   TrimmedNonEmptyString,
   type ProviderDriverKind,
 } from "@t3tools/contracts";
@@ -70,6 +71,11 @@ const ModelManifestEnvelopeSchema = Schema.Struct({
   compatibility: Schema.optional(Schema.Array(ProviderCompatibilityPolicy)),
   currentModels: Schema.Record(Schema.String, Schema.Array(Schema.String)),
   providers: Schema.optional(Schema.Record(Schema.String, ManifestProviderCatalog)),
+  /**
+   * Optional like `providers`; older servers ignore the unknown key. A bad
+   * block decodes to `undefined` so it cannot hold back the rest of the file.
+   */
+  benchmarks: OptionalModelBenchmarks,
 });
 
 const hasValidProviderCatalogReferences = (
