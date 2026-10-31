@@ -17,7 +17,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { Fragment, useRef, useState, type ReactNode } from "react";
+import { Fragment, useRef, useState, type ReactNode, type ComponentProps } from "react";
 import type {
   ServerProcessDiagnosticsEntry,
   ServerProcessResourceHistorySummary,
@@ -235,7 +235,7 @@ function SpanName({ name }: { name: string }) {
 }
 
 /** The muted second line of a table row's first cell. */
-function RowDetail({ className, ...props }: import("react").ComponentProps<"div">) {
+function RowDetail({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       {...props}
