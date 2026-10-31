@@ -15,10 +15,7 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
 import { resolveLinuxDesktopEntryName } from "./DesktopEarlyElectronStartup.ts";
 import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
-import {
-  isNightlyDesktopVersion,
-  resolveDefaultDesktopUpdateChannel,
-} from "../updates/updateChannels.ts";
+import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
 import type { OtlpProtocol } from "@t3tools/shared/observability";
 
 export interface MakeDesktopEnvironmentInput {
@@ -80,6 +77,7 @@ export class DesktopEnvironment extends Context.Service<
     readonly linuxDesktopEntryName: string;
     readonly linuxWmClass: string;
     readonly linuxApplicationsDir: string;
+    readonly desktopLauncherPath: Option.Option<string>;
     readonly appImagePath: Option.Option<string>;
     readonly defaultDesktopSettings: DesktopAppSettings.DesktopSettings;
     readonly runtimeInfo: DesktopRuntimeInfo;
@@ -111,13 +109,6 @@ export function resolveDesktopAppBranding(input: {
     stageLabel,
     displayName: `${APP_BASE_NAME} (${stageLabel})`,
   };
-}
-
-// Keep Chromium's encryption identity on the names shipped before branding changed.
-export function resolveDesktopSafeStorageName(appVersion: string): string {
-  return resolveDefaultDesktopUpdateChannel(appVersion) === "nightly"
-    ? "T3 Code (Nightly)"
-    : "T3 Code (Alpha)";
 }
 
 function normalizeDesktopArch(arch: string): DesktopRuntimeArch {
@@ -243,6 +234,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
     linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
     linuxApplicationsDir,
+    desktopLauncherPath: config.desktopLauncherPath,
     appImagePath: config.appImagePath,
     defaultDesktopSettings: DesktopAppSettings.resolveDefaultDesktopSettings(input.appVersion),
     runtimeInfo: resolveDesktopRuntimeInfo({

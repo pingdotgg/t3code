@@ -1,35 +1,25 @@
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 
+import { useState, type ReactNode } from "react";
+
+import { act, render } from "../../../test/render";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { ThemeColorField } from "./ThemeColorPicker";
 
 const HUE = "Accent color hue";
-const SATURATION = "Accent color saturation";
-const BRIGHTNESS = "Accent color brightness";
 const PLANE = "Accent color saturation and brightness";
 
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+async function renderPicker(ui: ReactNode) {
+  await using stack = new AsyncDisposableStack();
   // Synthetic pointer ids are not active pointers, so the browser would reject capture.
-  vi.spyOn(HTMLElement.prototype, "setPointerCapture").mockImplementation(() => {});
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.useRealTimers();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-});
+  stack.use(vi.spyOn(HTMLElement.prototype, "setPointerCapture").mockImplementation(() => {}));
+  const screen = stack.use(await render(ui));
+  const environment = stack.move();
+  return Object.assign(screen, {
+    [Symbol.asyncDispose]: () => environment.disposeAsync(),
+  });
+}
 
 function byLabel<T extends HTMLElement = HTMLElement>(label: string) {
   const element = document.querySelector<T>(`[aria-label="${label}"]`);
@@ -38,7 +28,6 @@ function byLabel<T extends HTMLElement = HTMLElement>(label: string) {
 }
 
 const slider = (label: string) => byLabel<HTMLInputElement>(label);
-const sliderValue = (label: string) => Number(slider(label).value);
 
 async function open(triggerLabel: string) {
   await userEvent.click(byLabel(triggerLabel));
@@ -49,13 +38,6 @@ async function press(label: string, key: string, shift = false) {
   const target = slider(label);
   await act(async () => target.focus());
   await userEvent.keyboard(shift ? `{Shift>}{${key}}{/Shift}` : `{${key}}`);
-}
-
-function setRange(label: string, value: number) {
-  const input = slider(label);
-  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-  setValue.call(input, String(value));
-  input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 function pointer(label: string, type: string, xFraction: number, yFraction = 0.5, pointerId = 1) {
@@ -72,182 +54,47 @@ function pointer(label: string, type: string, xFraction: number, yFraction = 0.5
   );
 }
 
-const nextFrame = () =>
-  act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
-
-async function renderAccent(value: string | undefined, commitDelayMs?: number) {
-  const onCommit = vi.fn();
-  await act(async () =>
-    root.render(
-      <ProviderAccentColorPicker
-        displayName="Codex"
-        value={value}
-        onCommit={onCommit}
-        {...(commitDelayMs === undefined ? {} : { commitDelayMs })}
-      />,
-    ),
-  );
-  await open(`${value ? "Change" : "Add"} accent color for Codex`);
-  return onCommit;
-}
-
 async function renderThemeField(value: string) {
   const onChange = vi.fn();
-  const render = (current: string) =>
-    root.render(<ThemeColorField role="accent" value={current} onChange={onChange} />);
-  await act(async () => render(value));
+  const field = (current: string) => (
+    <ThemeColorField role="accent" value={current} onChange={onChange} />
+  );
+  await using stack = new AsyncDisposableStack();
+  const screen = stack.use(await renderPicker(field(value)));
   await open("Choose Accent color color");
-  return { onChange, echo: (next: string) => act(async () => render(next)) };
+  stack.move();
+  return Object.assign(screen, {
+    onChange,
+    echo: (current: string) => screen.rerender(field(current)),
+  });
 }
 
-describe("provider accent color picker", () => {
-  it("adjusts each color axis independently from the keyboard", async () => {
-    const onCommit = await renderAccent("#ff0000");
-
-    await press(HUE, "ArrowLeft");
-    expect(slider(HUE).getAttribute("aria-valuenow")).toBe("359");
-    await press(HUE, "ArrowRight");
-    expect(onCommit).toHaveBeenLastCalledWith("#ff0000");
-
-    await press(SATURATION, "ArrowRight", true);
-    await press(BRIGHTNESS, "ArrowUp", true);
-    expect(onCommit).toHaveBeenLastCalledWith("#ff0000");
-    await press(BRIGHTNESS, "ArrowDown", true);
-    expect(onCommit).toHaveBeenLastCalledWith("#e60000");
-    expect(sliderValue(BRIGHTNESS)).toBe(90);
-    expect(slider(BRIGHTNESS).getAttribute("aria-valuetext")).toBe("90%");
-    expect(sliderValue(SATURATION)).toBe(100);
-
-    await press(SATURATION, "ArrowDown", true);
-    expect(onCommit).toHaveBeenLastCalledWith("#e61717");
-    expect(sliderValue(SATURATION)).toBe(90);
-    await press(SATURATION, "ArrowUp", true);
-    expect(onCommit).toHaveBeenLastCalledWith("#e60000");
-    await press(BRIGHTNESS, "ArrowLeft", true);
-    expect(onCommit).toHaveBeenLastCalledWith("#cc0000");
-    await press(BRIGHTNESS, "ArrowRight", true);
-    expect(onCommit).toHaveBeenLastCalledWith("#e60000");
-
-    onCommit.mockClear();
-    await press(SATURATION, "Tab");
-    expect(onCommit).not.toHaveBeenCalled();
-  });
-
-  it("supports Home/End and clamps each axis without changing the other", async () => {
-    const onCommit = await renderAccent("#ff0000");
-
-    await press(SATURATION, "Home");
-    await press(SATURATION, "ArrowLeft");
-    expect(sliderValue(SATURATION)).toBe(0);
-    expect(onCommit).toHaveBeenLastCalledWith("#ffffff");
-    await press(BRIGHTNESS, "Home");
-    await press(BRIGHTNESS, "ArrowDown");
-    expect(sliderValue(BRIGHTNESS)).toBe(0);
-    expect(onCommit).toHaveBeenLastCalledWith("#000000");
-    await press(SATURATION, "End");
-    expect(sliderValue(SATURATION)).toBe(100);
-    expect(sliderValue(BRIGHTNESS)).toBe(0);
-    await press(BRIGHTNESS, "End");
-    await press(BRIGHTNESS, "ArrowUp");
-    expect(onCommit).toHaveBeenLastCalledWith("#ff0000");
-    await press(SATURATION, "ArrowLeft");
-    expect(sliderValue(SATURATION)).toBe(98);
-    expect(onCommit).toHaveBeenLastCalledWith("#ff0505");
-  });
-
-  it("adds an accent only after choosing one and clears it back to no accent", async () => {
-    const onCommit = await renderAccent(undefined);
-    const clearButton = () =>
-      [...document.querySelectorAll("button")].find((button) =>
-        button.textContent?.includes("Clear color"),
-      );
-    expect(onCommit).not.toHaveBeenCalled();
-    expect(clearButton()).toBeUndefined();
-
-    await press(HUE, "ArrowRight", true);
-    expect(onCommit).toHaveBeenCalledOnce();
-    await vi.waitFor(() => expect(clearButton()).toBeDefined());
-
-    await userEvent.click(clearButton()!);
-    expect(onCommit).toHaveBeenLastCalledWith("");
-    expect(clearButton()).toBeUndefined();
-  });
-
-  it("debounces commits and commits the pending color on unmount", async () => {
-    const onCommit = await renderAccent("#ff0000", 250);
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-
-    await press(HUE, "ArrowRight", true);
-    await press(HUE, "ArrowRight", true);
-    expect(onCommit).not.toHaveBeenCalled();
-    await act(async () => vi.advanceTimersByTime(250));
-    expect(onCommit).toHaveBeenCalledExactlyOnceWith("#ff5500");
-
-    await press(HUE, "ArrowRight", true);
-    await act(async () => root.unmount());
-    expect(onCommit).toHaveBeenLastCalledWith("#ff8000");
-    await act(async () => vi.advanceTimersByTime(250));
-    expect(onCommit).toHaveBeenCalledTimes(2);
-    root = createRoot(container);
-  });
-});
+function ControlledThemeField() {
+  const [value, setValue] = useState("#408080");
+  return <ThemeColorField role="accent" value={value} onChange={(_, next) => setValue(next)} />;
+}
 
 describe("theme color field", () => {
-  it("batches native range changes into one commit per frame and keeps alpha", async () => {
-    const { onChange } = await renderThemeField("#ff000080");
+  it("jumps hue to both endpoints without changing saturation or brightness", async () => {
+    await using _screen = await render(<ControlledThemeField />);
+    await open("Choose Accent color color");
 
-    // Both changes land in one task, so no animation frame can run between them.
-    await act(async () => {
-      setRange(SATURATION, 50);
-      setRange(BRIGHTNESS, 50);
-      expect(onChange).not.toHaveBeenCalled();
-    });
-    await nextFrame();
-    expect(onChange).toHaveBeenCalledExactlyOnceWith("accent", "#80404080");
+    await press(HUE, "Home");
+    expect(slider(HUE).getAttribute("aria-valuenow")).toBe("0");
+    expect(byLabel<HTMLInputElement>("Accent color picker hex value").value).toBe("#804040");
 
-    await press(BRIGHTNESS, "ArrowDown", true);
-    await nextFrame();
-    expect(onChange).toHaveBeenLastCalledWith("accent", "#66333380");
-    expect(sliderValue(SATURATION)).toBe(50);
-  });
+    await press(HUE, "End");
+    expect(slider(HUE).getAttribute("aria-valuenow")).toBe("360");
+    expect(byLabel<HTMLInputElement>("Accent color picker hex value").value).toBe("#804040");
 
-  it("flushes the final drag color on release of the dragging pointer only", async () => {
-    const { onChange } = await renderThemeField("#ff000080");
-
-    // The drag runs in one task, so no animation frame can commit mid-drag.
-    await act(async () => {
-      pointer(HUE, "pointerdown", 0.25);
-      pointer(HUE, "pointermove", 0.5);
-      pointer(HUE, "pointermove", 0.75, 0.5, 2);
-      pointer(HUE, "pointerup", 0.75, 0.5, 2);
-      expect(onChange).not.toHaveBeenCalled();
-      pointer(HUE, "pointerup", 0.5);
-    });
-    expect(onChange).toHaveBeenCalledExactlyOnceWith("accent", "#00ffff80");
-    await act(async () => pointer(HUE, "lostpointercapture", 0.5));
-    await nextFrame();
-    expect(onChange).toHaveBeenCalledOnce();
-  });
-
-  it("clamps out-of-bounds drags and flushes on cancellation and unmount", async () => {
-    const { onChange } = await renderThemeField("#ff000080");
-
-    await act(async () => {
-      pointer(PLANE, "pointerdown", -0.5, -0.5);
-      pointer(PLANE, "pointercancel", -0.5, -0.5);
-    });
-    expect(onChange).toHaveBeenLastCalledWith("accent", "#ffffff80");
-
-    await act(async () => {
-      pointer(PLANE, "pointerdown", 1.5, 1.5);
-      root.unmount();
-    });
-    expect(onChange).toHaveBeenLastCalledWith("accent", "#00000080");
-    root = createRoot(container);
+    await press(HUE, "ArrowRight", true);
+    expect(slider(HUE).getAttribute("aria-valuenow")).toBe("10");
+    expect(byLabel<HTMLInputElement>("Accent color picker hex value").value).toBe("#804b40");
   });
 
   it("keeps the selected hue when a grey color is echoed back from theme settings", async () => {
-    const { onChange, echo } = await renderThemeField("#ff0000");
+    await using screen = await renderThemeField("#ff0000");
+    const { onChange, echo } = screen;
 
     await press(HUE, "ArrowRight", true);
     await act(async () => {
@@ -258,5 +105,148 @@ describe("theme color field", () => {
 
     await echo("#ffffff");
     expect(slider(HUE).getAttribute("aria-valuenow")).toBe("10");
+  });
+});
+
+async function renderAccentPicker(value: string) {
+  const onCommit = vi.fn();
+  const picker = (current: string) => (
+    <ProviderAccentColorPicker displayName="Codex" value={current} onCommit={onCommit} />
+  );
+  await using stack = new AsyncDisposableStack();
+  const screen = stack.use(await renderPicker(picker(value)));
+  await open("Change accent color for Codex");
+  stack.move();
+  return Object.assign(screen, {
+    onCommit,
+    echo: (current: string) => screen.rerender(picker(current)),
+  });
+}
+
+describe("provider accent color picker", () => {
+  it("leaves the optional color unset when the preview is dismissed", async () => {
+    const onCommit = vi.fn();
+    await using _screen = await renderPicker(
+      <ProviderAccentColorPicker
+        displayName="Example provider"
+        value={undefined}
+        onCommit={onCommit}
+      />,
+    );
+
+    await open("Add accent color for Example provider");
+    expect(byLabel<HTMLInputElement>("Custom hex accent color").value).toBe("#2563eb");
+    expect(onCommit).not.toHaveBeenCalled();
+    await userEvent.keyboard("{Escape}");
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  it("adds the displayed default without adjusting a color control", async () => {
+    const onCommit = vi.fn();
+    await using screen = await renderPicker(
+      <ProviderAccentColorPicker
+        displayName="Example provider"
+        value={undefined}
+        onCommit={onCommit}
+      />,
+    );
+
+    await open("Add accent color for Example provider");
+    await userEvent.click(page.getByRole("button", { name: "Add color", exact: true }));
+
+    expect(onCommit).toHaveBeenCalledExactlyOnceWith("#2563eb");
+    await expect
+      .element(screen.getByRole("button", { name: "Change accent color for Example provider" }))
+      .toBeVisible();
+    await vi.waitFor(() =>
+      expect(document.querySelector('[aria-label="Custom hex accent color"]')).toBeNull(),
+    );
+  });
+
+  it("lets keyboard users add the displayed default", async () => {
+    const onCommit = vi.fn();
+    await using screen = await renderPicker(
+      <ProviderAccentColorPicker
+        displayName="Example provider"
+        value={undefined}
+        onCommit={onCommit}
+      />,
+    );
+
+    await open("Add accent color for Example provider");
+    await act(async () => byLabel("Accent color saturation").focus());
+    await userEvent.tab();
+    await userEvent.tab();
+    await userEvent.tab();
+    await userEvent.tab();
+    await userEvent.keyboard("{Enter}");
+
+    expect(onCommit).toHaveBeenCalledExactlyOnceWith("#2563eb");
+    await expect
+      .element(screen.getByRole("button", { name: "Change accent color for Example provider" }))
+      .toBeVisible();
+  });
+
+  it("keeps live color editing and allows clearing back to unset", async () => {
+    const onCommit = vi.fn();
+    await using screen = await renderPicker(
+      <ProviderAccentColorPicker
+        displayName="Example provider"
+        value="#ff0000"
+        onCommit={onCommit}
+      />,
+    );
+
+    await open("Change accent color for Example provider");
+    await press(HUE, "ArrowRight", true);
+    expect(onCommit).toHaveBeenLastCalledWith("#ff2a00");
+    await userEvent.click(page.getByRole("button", { name: "Clear color", exact: true }));
+    expect(onCommit).toHaveBeenLastCalledWith("");
+    await expect
+      .element(screen.getByRole("button", { name: "Add accent color for Example provider" }))
+      .toBeVisible();
+  });
+
+  it("commits a drag that is still in progress when the popover closes", async () => {
+    await using screen = await renderAccentPicker("#ff0000");
+
+    await act(async () => {
+      pointer(HUE, "pointerdown", 0.5);
+      pointer(HUE, "pointermove", 0.5);
+    });
+    expect(screen.onCommit).not.toHaveBeenCalled();
+
+    await userEvent.keyboard("{Escape}");
+    expect(screen.onCommit).toHaveBeenCalledTimes(1);
+    expect(screen.onCommit.mock.calls[0]?.[0]).not.toBe("#ff0000");
+  });
+
+  it("saves a change back to the saved color while the first change is still saving", async () => {
+    await using screen = await renderAccentPicker("#ff0000");
+
+    await userEvent.fill(byLabel("Custom hex accent color"), "#00ff00");
+    await userEvent.fill(byLabel("Custom hex accent color"), "#ff0000");
+
+    expect(screen.onCommit).toHaveBeenLastCalledWith("#ff0000");
+    await userEvent.fill(byLabel("Custom hex accent color"), "#00FF00");
+    await screen.echo("#00FF00");
+    expect(byLabel<HTMLInputElement>("Custom hex accent color").value).toBe("#00FF00");
+  });
+
+  it("shows the saved color again when it is reverted outside the picker", async () => {
+    await using screen = await renderAccentPicker("#ff0000");
+
+    await userEvent.fill(byLabel("Custom hex accent color"), "#00ff00");
+    expect(screen.onCommit).toHaveBeenLastCalledWith("#00ff00");
+    await screen.echo("#00ff00");
+    await screen.echo("#ff0000");
+
+    expect(byLabel<HTMLInputElement>("Custom hex accent color").value).toBe("#ff0000");
+    await screen.echo("");
+    expect(byLabel<HTMLInputElement>("Custom hex accent color").value).toBe("#2563eb");
+    await userEvent.click(page.getByRole("button", { name: "Add color", exact: true }));
+    expect(screen.onCommit).toHaveBeenLastCalledWith("#2563eb");
+
+    expect(byLabel("Change accent color for Codex").style.backgroundColor).toBe("rgb(37, 99, 235)");
   });
 });

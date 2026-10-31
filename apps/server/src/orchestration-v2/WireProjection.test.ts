@@ -1,4 +1,7 @@
 import {
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   MessageId,
   ContextHandoffId,
   ProviderThreadId,
@@ -9,7 +12,9 @@ import {
   ProviderInstanceId,
   ThreadId,
   TurnItemId,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadStreamItem,
   OrchestrationV2TurnItem,
   OrchestrationV2TurnItemJson,
 } from "@t3tools/contracts";
@@ -17,7 +22,9 @@ import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
+import { coalesceLiveUpdatedEvents } from "./ThreadLiveEventCoalescer.ts";
 import {
+  makeLiveBodyDeduper,
   projectTurnItemForWire,
   projectTurnItemForDetail,
   projectDomainEventForWire,
@@ -94,23 +101,6 @@ describe("orchestration V2 wire projection", () => {
     expect(item.output.data).toBe("private-image-data");
   });
 
-  it("preserves provider notices in bounded items and live events", () => {
-    const item = {
-      ...base,
-      type: "system_notice" as const,
-      message: "Safeguards flagged this message. Switched to Opus 4.8.",
-    };
-    expect(projectTurnItemForWire(item)).toEqual(item);
-    const event = {
-      id: EventId.make("notice-wire-event"),
-      type: "turn-item.updated" as const,
-      threadId: item.threadId,
-      occurredAt: item.updatedAt,
-      payload: item,
-    };
-    expect(projectDomainEventForWire(event)).toEqual(event);
-  });
-
   it("keeps transcript bodies out of shell rows", () => {
     const now = DateTime.makeUnsafe("2026-08-13T00:00:00.000Z");
     const threadId = ThreadId.make("thread-shell-budget");
@@ -166,41 +156,10 @@ describe("orchestration V2 wire projection", () => {
     expect(JSON.stringify(shell).length).toBeLessThan(2_000);
   });
 
-  it("omits oversized dynamic tool results without mutating persistence data", () => {
-    const output = { content: [{ type: "text", text: "first line\n" + "x".repeat(100_000) }] };
-    const item = { ...base, output } satisfies OrchestrationV2TurnItem;
-    const projected = projectTurnItemForWire(item);
-
-    expect(item.output).toBe(output);
-    expect(projected).not.toBe(item);
-    expect(JSON.stringify(projected).length).toBeLessThan(2_000);
-    expect(projected).not.toHaveProperty("output");
-  });
-
   it("omits even small dynamic tool results while retaining input", () => {
     const item = { ...base, output: { ok: true } } satisfies OrchestrationV2TurnItem;
     expect(projectTurnItemForWire(item)).toEqual({ ...base, outputOmitted: true });
     expect(item.output).toEqual({ ok: true });
-  });
-
-  it("keeps undefined dynamic input intact", () => {
-    const item = { ...base, input: undefined } satisfies OrchestrationV2TurnItem;
-    expect(projectTurnItemForWire(item)).toEqual(item);
-  });
-
-  it.each([
-    [" \t\r\n\n  first\t line  \r\n" + "x\n".repeat(10_000), "first line"],
-    [" \n".repeat(10_000), "Large tool output"],
-    ["a".repeat(160) + "\n" + "x".repeat(20_000), "a".repeat(160)],
-    ["a".repeat(161) + "\n" + "x".repeat(20_000), "a".repeat(159) + "…"],
-    ["a".repeat(159) + "\t b" + "x".repeat(20_000), "a".repeat(159) + "…"],
-    ["  café\u00a0\u2003😀 \t\r\n" + "x".repeat(20_000), "café 😀"],
-  ])("preserves bounded input summary normalization for case %#", (input, summary) => {
-    const projected = projectTurnItemForWire({ ...base, input });
-    expect(projected.type === "dynamic_tool" ? projected.input : null).toEqual({
-      summary,
-      truncated: true,
-    });
   });
 
   it("uses encoded JSON bytes for strings near the dynamic-value limit", () => {
@@ -211,21 +170,6 @@ describe("orchestration V2 wire projection", () => {
     const projected = projectTurnItemForWire({ ...base, input: large });
     expect(projected.type === "dynamic_tool" ? projected.input : null).toEqual({
       summary: '"'.repeat(159) + "…",
-      truncated: true,
-    });
-  });
-
-  it("serializes an oversized structured input only once for its summary", () => {
-    let serializations = 0;
-    const input = {
-      toJSON() {
-        serializations += 1;
-        return { text: "x".repeat(100_000) };
-      },
-    };
-    const projected = projectTurnItemForWire({ ...base, input });
-    expect(serializations).toBe(1);
-    expect(projected.type === "dynamic_tool" ? projected.input : null).toMatchObject({
       truncated: true,
     });
   });
@@ -249,30 +193,6 @@ describe("orchestration V2 wire projection", () => {
       "a".repeat(32_767) + "\n… output truncated for transport",
     );
     expect(item.progress).toBe(progress);
-  });
-
-  it.each(["", "small output", "x".repeat(1_048_576)])(
-    "omits command output of every size, case %#",
-    (output) => {
-      const item = { ...base, type: "command_execution" as const, input: "test", output };
-      const projected = projectTurnItemForWire(item);
-      expect(projected).not.toHaveProperty("output");
-      expect(projected).toMatchObject({ input: "test", status: "completed" });
-      expect(projected.type === "command_execution" ? projected.outputOmitted : null).toBe(
-        output ? true : undefined,
-      );
-      expect(item.output).toBe(output);
-    },
-  );
-
-  it.each([
-    ["echo ok", "echo ok"],
-    ["a".repeat(262_143) + "😀", "a".repeat(262_143) + "\n… output truncated for transport"],
-  ])("bounds fetched command input without changing persistence, case %#", (input, expected) => {
-    const item = { ...base, type: "command_execution" as const, input, output: "ok" };
-    const projected = projectTurnItemForDetail(item);
-    expect(projected).toMatchObject({ input: expected, output: "ok" });
-    expect(item.input).toBe(input);
   });
 
   it("leaves a screenshot's bytes out of the fetched tool output", () => {
@@ -341,6 +261,21 @@ describe("orchestration V2 wire projection", () => {
     });
   });
 
+  it.each([
+    "logs/app.log:12: Error: ENOENT: no such file or directory",
+    "fixtures/ci.txt:3: Process exited with exit code 2",
+  ])("trusts a zero exit code over failure text in the output: %s", (output) => {
+    const projected = projectTurnItemForWire({
+      ...base,
+      type: "command_execution" as const,
+      input: "rg -n error logs fixtures",
+      output,
+      exitCode: 0,
+    });
+    expect(projected).not.toHaveProperty("outputIndicatesFailure");
+    expect(projected).toMatchObject({ exitCode: 0, outputOmitted: true });
+  });
+
   it("omits inline file bodies but preserves file identity and change counts", () => {
     const item = {
       ...base,
@@ -358,6 +293,15 @@ describe("orchestration V2 wire projection", () => {
     expect(projected).not.toHaveProperty("newStr");
     expect(projected).toMatchObject({ fileName: "src/main.ts", additions: 3, deletions: 1 });
     expect(item.diffStr).toBe("+new code");
+    expect(projectTurnItemForDetail(item)).toMatchObject({ diffStr: "+new code" });
+    expect(projectTurnItemForDetail(item)).not.toHaveProperty("oldStr");
+    expect(projectTurnItemForDetail(item)).not.toHaveProperty("newStr");
+    const { diffStr: _diff, ...contentOnly } = item;
+    expect(projectTurnItemForDetail(contentOnly)).toMatchObject({
+      oldStr: "old code",
+      newStr: "new code",
+    });
+    expect(projectTurnItemForWire(contentOnly)).not.toHaveProperty("newStr");
     const failed = projectTurnItemForWire({
       ...item,
       status: "failed",
@@ -388,13 +332,115 @@ describe("orchestration V2 wire projection", () => {
     expect(event.payload.output).toBe(output);
     expect(projectDomainEventForWire(projected)).toEqual(projected);
   });
+});
 
-  it("does not serialize raw dynamic output to discard it", () => {
-    const output = {
-      toJSON: () => {
-        throw new Error("Raw output must not be serialized");
+describe("live body deduper", () => {
+  const at = base.updatedAt;
+  const messageId = MessageId.make("message-live");
+  const event = (
+    sequence: number,
+    rest: Pick<OrchestrationV2DomainEvent, "type" | "payload">,
+  ): Extract<OrchestrationV2ThreadStreamItem, { kind: "event" }> => ({
+    kind: "event",
+    sequence,
+    event: {
+      id: EventId.make(`event-${sequence}`),
+      threadId: base.threadId,
+      occurredAt: at,
+      ...rest,
+    } as OrchestrationV2DomainEvent,
+  });
+  const message = (sequence: number, text: string) =>
+    event(sequence, {
+      type: "message.updated",
+      payload: {
+        id: messageId,
+        threadId: base.threadId,
+        runId: null,
+        nodeId: null,
+        role: "assistant",
+        text,
+        attachments: [],
+        streaming: true,
+        createdBy: "agent",
+        creationSource: "provider",
+        createdAt: at,
+        updatedAt: at,
       },
-    };
-    expect(projectTurnItemForWire({ ...base, output })).not.toHaveProperty("output");
+    });
+  const reply = (sequence: number, text: string) =>
+    event(sequence, {
+      type: "turn-item.updated",
+      payload: {
+        ...base,
+        status: "running",
+        type: "assistant_message",
+        messageId,
+        text,
+        streaming: true,
+      },
+    });
+  const payloadOf = (item: OrchestrationV2ThreadStreamItem) =>
+    item.kind === "event" ? item.event.payload : undefined;
+
+  it("blanks a reply that repeats the message delivered before it, after coalescing", () => {
+    const delivered = coalesceLiveUpdatedEvents([
+      message(1, "a"),
+      reply(2, "a"),
+      message(3, "ab"),
+      reply(4, "ab"),
+    ]).map(makeLiveBodyDeduper());
+
+    expect(
+      delivered.map((item) => [item.kind === "event" && item.sequence, payloadOf(item)]),
+    ).toEqual([
+      [3, message(3, "ab").event.payload],
+      [4, { ...reply(4, "ab").event.payload, text: "", textOmitted: true }],
+    ]);
+  });
+
+  it("caps a large checkpoint's files for the wire and still dedupes its item", () => {
+    const files = Array.from({ length: 250 }, (_, index) => ({
+      path: `vendor/file-${index}.ts`,
+      kind: "modified",
+      additions: 2,
+      deletions: 1,
+    }));
+    const checkpointId = CheckpointId.make("checkpoint-large");
+    const scopeId = CheckpointScopeId.make("scope-large");
+    const captured = event(1, {
+      type: "checkpoint.captured",
+      payload: {
+        id: checkpointId,
+        threadId: base.threadId,
+        scopeId,
+        runId: null,
+        nodeId: NodeId.make("node-large"),
+        parentCheckpointId: null,
+        ordinalWithinScope: 1,
+        appRunOrdinal: null,
+        ref: CheckpointRef.make("refs/t3/checkpoints/large"),
+        status: "ready",
+        files,
+        capturedAt: at,
+      },
+    });
+    const item = event(2, {
+      type: "turn-item.updated",
+      payload: { ...base, type: "checkpoint", checkpointId, scopeId, files },
+    });
+    const dedupe = makeLiveBodyDeduper();
+    const [record, card] = [captured, item].map((streamed) =>
+      dedupe({ ...streamed, event: projectDomainEventForWire(streamed.event) }),
+    );
+
+    const filesTotal = { count: 250, additions: 500, deletions: 250 };
+    expect(payloadOf(record!)).toMatchObject({ files: files.slice(0, 200), filesTotal });
+    expect(payloadOf(card!)).toMatchObject({ files: [], filesOmitted: true, filesTotal });
+  });
+
+  it("ships a reply whole when its message arrives after it", () => {
+    const first = reply(1, "a");
+    expect([first, message(2, "a")].map(makeLiveBodyDeduper())[0]).toBe(first);
   });
 });

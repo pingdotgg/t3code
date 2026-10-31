@@ -26,13 +26,6 @@ export interface UpdatesHarnessOptions {
   readonly setUpdateChannelError?: DesktopAppSettings.DesktopSettingsWriteError;
   readonly setDisableDifferentialDownload?: Effect.Effect<void>;
   readonly downloadUpdate?: Effect.Effect<void>;
-  /** sha512 of a download an earlier launch left in electron-updater's cache. */
-  readonly cachedDownloadSha512?: string;
-  readonly cachedDownloadInfo?: string;
-  readonly cachedFileExists?: boolean;
-  readonly updater?: ElectronUpdater.ElectronUpdater["Service"];
-  readonly fileSystem?: FileSystem.FileSystem;
-  readonly runningUnderArm64Translation?: boolean;
   readonly quitAndInstall?: Effect.Effect<void, ElectronUpdater.ElectronUpdaterQuitAndInstallError>;
   readonly stopBackend?: Effect.Effect<void>;
   readonly startBackend?: Effect.Effect<void>;
@@ -42,15 +35,19 @@ export interface UpdatesHarnessOptions {
   readonly platform?: NodeJS.Platform;
   readonly packageType?: string | undefined;
   readonly installRecord?: string | undefined;
+  readonly appVersion?: string;
+  /** Starts from in-memory settings with this track saved, as after a restart. */
+  readonly savedChannel?: DesktopAppSettings.DesktopSettings["updateChannel"];
+  /** Adds a WSL backend beside the primary, as on a Windows host with WSL enabled. */
+  readonly wslBackend?: boolean;
 }
-
-const PENDING_DOWNLOAD_DIRECTORY = "/cache/t3code-updater/pending";
 
 export function makeHarness(options: UpdatesHarnessOptions = {}) {
   let checkCount = 0;
   let quitAndInstallCount = 0;
   let downloadCount = 0;
   let allowDowngrade = false;
+  const checkAllowedDowngrade: boolean[] = [];
   let fullChangelog = false;
   const feedUrls: ElectronUpdater.ElectronUpdaterFeedUrl[] = [];
   const listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>();
@@ -74,7 +71,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     }
   };
 
-  const stubUpdater = {
+  const layerUpdater = Layer.succeed(ElectronUpdater.ElectronUpdater, {
     setFeedURL: (options) =>
       Effect.sync(() => {
         feedUrls.push(options);
@@ -93,13 +90,9 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         fullChangelog = value;
       }),
     setDisableDifferentialDownload: () => options.setDisableDifferentialDownload ?? Effect.void,
-    pendingDownloadDirectory: Effect.succeed(
-      options.cachedDownloadSha512 === undefined
-        ? Option.none()
-        : Option.some(PENDING_DOWNLOAD_DIRECTORY),
-    ),
     checkForUpdates: Effect.sync(() => {
       checkCount += 1;
+      checkAllowedDowngrade.push(allowDowngrade);
     }).pipe(Effect.andThen(options.checkForUpdates ?? Effect.void)),
     downloadUpdate: Effect.sync(() => {
       downloadCount += 1;
@@ -119,11 +112,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
             removeListener(eventName, listener as unknown as (...args: readonly unknown[]) => void);
           }),
       ).pipe(Effect.asVoid),
-  } satisfies ElectronUpdater.ElectronUpdater["Service"];
-  const layerUpdater = Layer.succeed(
-    ElectronUpdater.ElectronUpdater,
-    options.updater ?? stubUpdater,
-  );
+  } satisfies ElectronUpdater.ElectronUpdater["Service"]);
 
   const layerWindow = Layer.succeed(ElectronWindow.ElectronWindow, {
     create: () => Effect.die("unexpected BrowserWindow creation"),
@@ -167,7 +156,17 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     waitForReady: () => Effect.succeed(true),
   };
   const layerBackend = DesktopBackendPool.layerTest(
-    options.backendInstances ?? [stubBackendInstance],
+    options.backendInstances ??
+      (options.wslBackend
+        ? [
+            stubBackendInstance,
+            {
+              ...stubBackendInstance,
+              id: DesktopBackendPool.BackendInstanceId("wsl:Ubuntu"),
+              label: Effect.succeed("Ubuntu"),
+            },
+          ]
+        : [stubBackendInstance]),
   );
 
   const layerEnvironment = DesktopEnvironment.layer({
@@ -175,11 +174,11 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     homeDirectory: `/tmp/t3-desktop-updates-home-${process.pid}`,
     platform: options.platform ?? "darwin",
     processArch: "x64",
-    appVersion: "1.2.3",
+    appVersion: options.appVersion ?? "1.2.3",
     appPath: "/repo",
     isPackaged: true,
     resourcesPath: "/missing/resources",
-    runningUnderArm64Translation: options.runningUnderArm64Translation ?? false,
+    runningUnderArm64Translation: false,
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -196,10 +195,13 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
 
   let testSettings: DesktopAppSettings.DesktopSettings = {
     ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+    ...(options.savedChannel === undefined
+      ? {}
+      : { updateChannel: options.savedChannel, updateChannelConfiguredByUser: true }),
   };
   const setUpdateChannelError = options.setUpdateChannelError;
   const layerSettings =
-    setUpdateChannelError || options.beforeSetUpdateChannel
+    setUpdateChannelError || options.beforeSetUpdateChannel || options.savedChannel
       ? Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
           get: Effect.sync(() => testSettings),
           load: Effect.sync(() => testSettings),
@@ -236,7 +238,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   let previousInstallRecord = options.installRecord;
   const isInstallRecord = (path: string) =>
     path.endsWith(DesktopUpdates.DESKTOP_UPDATE_INSTALL_RECORD_FILE);
-  const stubFileSystem = FileSystem.layerNoop({
+  const layerFileSystem = FileSystem.layerNoop({
     readFileString: (path) => {
       const installRecord = isInstallRecord(path)
         ? (installRecords.get(path) ?? previousInstallRecord)
@@ -244,28 +246,15 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       if (installRecord !== undefined) return Effect.succeed(installRecord);
       return path === "/missing/resources/package-type" && options.packageType !== undefined
         ? Effect.succeed(options.packageType)
-        : path === `${PENDING_DOWNLOAD_DIRECTORY}/update-info.json` &&
-            options.cachedDownloadSha512 !== undefined
-          ? Effect.succeed(
-              options.cachedDownloadInfo ??
-                JSON.stringify({
-                  fileName: "update.zip",
-                  sha512: options.cachedDownloadSha512,
-                }),
-            )
-          : Effect.fail(
-              PlatformError.systemError({
-                module: "FileSystem",
-                method: "readFileString",
-                _tag: "NotFound",
-                pathOrDescriptor: path,
-              }),
-            );
+        : Effect.fail(
+            PlatformError.systemError({
+              module: "FileSystem",
+              method: "readFileString",
+              _tag: "NotFound",
+              pathOrDescriptor: path,
+            }),
+          );
     },
-    exists: (path) =>
-      Effect.succeed(
-        options.cachedFileExists !== false && path === `${PENDING_DOWNLOAD_DIRECTORY}/update.zip`,
-      ),
     makeDirectory: () => Effect.void,
     writeFileString: (path, data) =>
       Effect.sync(() => {
@@ -280,9 +269,6 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       }),
   });
 
-  const layerFileSystem = options.fileSystem
-    ? Layer.succeed(FileSystem.FileSystem, options.fileSystem)
-    : stubFileSystem;
   const layer = DesktopUpdates.layer.pipe(
     Layer.provide(layerFileSystem),
     Layer.provideMerge(layerUpdater),
@@ -313,6 +299,9 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     downloadCount: () => downloadCount,
     feedUrls: (): ElectronUpdater.ElectronUpdaterFeedUrl[] => feedUrls,
     fullChangelog: () => fullChangelog,
+    /** Whether each feed check could offer an older release, and the flag now. */
+    checkAllowedDowngrade,
+    allowDowngrade: () => allowDowngrade,
     listenerCount: () =>
       Array.from(listeners.values()).reduce(
         (total, eventListeners) => total + eventListeners.size,

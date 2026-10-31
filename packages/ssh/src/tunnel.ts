@@ -2,10 +2,7 @@ import type {
   DesktopSshEnvironmentBootstrap,
   DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
-import {
-  describeReadinessCause,
-  waitForHttpReady as waitForHttpReadyShared,
-} from "@t3tools/shared/httpReadiness";
+import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
 import { cliReleaseDownloadBaseUrl } from "@t3tools/shared/cliRelease";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as NetService from "@t3tools/shared/Net";
@@ -34,6 +31,7 @@ import {
   resolveSshCommand,
   resolveSshTarget,
   runSshCommand,
+  sshTargetLogFields,
   targetConnectionKey,
 } from "./command.ts";
 import {
@@ -54,12 +52,9 @@ const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const TUNNEL_STDERR_TAIL_CHARS = 16_384;
 const REMOTE_READY_TIMEOUT_MS = 60_000;
 const REMOTE_LAUNCH_TIMEOUT_MS = 90_000;
-// A cold archive launch also downloads and unpacks a ~70 MB release archive
-// and may wait on another installer's lock. The budgets nest: the checksum
-// file is tiny and the archive download is bounded; a waiter outlasts both
-// downloads plus extraction so it can reuse the result; and the SSH command
-// outlasts an install (own or waited-for) plus readiness, with slack for
-// verification and extraction, which have no timeout of their own.
+// Cold archive launches download and extract ~70 MB and may wait on an install lock.
+// Lock waits must outlast both downloads and extraction; SSH must outlast install or wait plus readiness.
+// Leave slack for verification and extraction, which have no timeout.
 const REMOTE_ARCHIVE_CHECKSUMS_SECONDS = 30;
 const REMOTE_ARCHIVE_DOWNLOAD_SECONDS = 240;
 const REMOTE_ARCHIVE_LOCK_WAIT_SECONDS = 360;
@@ -106,15 +101,6 @@ type SshEnvironmentEffectError =
   | SshReadinessError
   | SshPasswordPromptError
   | NetService.NetError;
-
-function sshTargetLogFields(target: DesktopSshEnvironmentTarget) {
-  return {
-    alias: target.alias,
-    hostname: target.hostname,
-    username: target.username,
-    port: target.port,
-  };
-}
 
 function isNodeScriptRunner(runner: RemoteT3RunnerOptions | undefined): boolean {
   return Boolean(runner?.nodeScriptPath?.trim());
@@ -238,9 +224,7 @@ function applyScriptPlaceholders(
   return result;
 }
 
-export { describeReadinessCause };
-
-export const REMOTE_PICK_PORT_SCRIPT = `const fs = require("node:fs");
+const REMOTE_PICK_PORT_SCRIPT = `const fs = require("node:fs");
 const net = require("node:net");
 const filePath = process.argv[2] ?? "";
 const defaultPort = Number.parseInt(process.argv[3] ?? "", 10);
@@ -841,7 +825,7 @@ export function buildRemoteNodeEnvScript(input?: RemoteT3RunnerOptions): string 
   );
 }
 
-export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
+function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_LAUNCH_SCRIPT, {
     T3_ARCHIVE_MODE: isNodeScriptRunner(input) ? "0" : "1",
     T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
@@ -856,14 +840,14 @@ export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   });
 }
 
-export function buildRemotePairingScript(stateKey: string, input?: RemoteT3RunnerOptions): string {
+function buildRemotePairingScript(stateKey: string, input?: RemoteT3RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_PAIRING_SCRIPT, {
     T3_STATE_KEY: stateKey,
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
   });
 }
 
-export function buildRemoteStopScript(stateKey: string): string {
+function buildRemoteStopScript(stateKey: string): string {
   return applyScriptPlaceholders(REMOTE_STOP_SCRIPT, {
     T3_STATE_KEY: stateKey,
   });
@@ -1036,7 +1020,7 @@ const readRemoteServerLogTail = Effect.fn("ssh/tunnel.readRemoteServerLogTail")(
   return result.stdout.trim();
 });
 
-export const waitForHttpReady = (input: {
+const waitForHttpReady = (input: {
   readonly baseUrl: string;
   readonly timeoutMs?: number;
   readonly intervalMs?: number;

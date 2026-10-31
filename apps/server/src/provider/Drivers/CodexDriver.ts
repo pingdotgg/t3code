@@ -37,7 +37,6 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeCachedProviderMaintenanceResolution,
   makePackageManagedProviderMaintenanceResolver,
-  normalizeCommandPath,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
@@ -53,30 +52,43 @@ import {
 import { makeManagedCodexProvider } from "./CodexManagedProvider.ts";
 import { codexUsageReader } from "./codexUsage.ts";
 import * as CodexInstallation from "../CodexInstallation.ts";
+import * as CodexManagedTokenBroker from "../CodexManagedTokenBroker.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
-function isCodexStandaloneCommandPath(commandPath: string): boolean {
-  return normalizeCommandPath(commandPath).includes("/packages/standalone/");
+const CODEX_STANDALONE_HOME_PATTERN = /^(.*)\/packages\/standalone\//is;
+
+function codexStandaloneHome(commandPath: string): string | null {
+  // Slash replacement preserves indices; Unicode lowercasing can change the path length.
+  const match = CODEX_STANDALONE_HOME_PATTERN.exec(commandPath.replaceAll("\\", "/"));
+  if (!match) {
+    return null;
+  }
+  const home = match[1]!;
+  // Keep root separators: `C:` is drive-relative, and an empty home is not `/`.
+  const isRoot = home === "" || /^[a-z]:$/i.test(home);
+  return commandPath.slice(0, home.length + (isRoot ? 1 : 0));
 }
 
-/**
- * `codex update` replaces the standalone tree under `CODEX_HOME`. That tree
- * lives in the shared home even when an auth-overlay shadow home is in use
- * (the overlay only carries auth and a few local entries), so the updater
- * runs against `sharedHomePath` rather than the instance's effective home.
- */
+// Standalone updates locate their install through CODEX_HOME. Account and auth-overlay
+// homes can share an executable, so only the updater uses the executable's owning home.
 function makeCodexMaintenanceResolver(sharedHomePath: string) {
   return makePackageManagedProviderMaintenanceResolver({
     provider: DRIVER_KIND,
     npmPackageName: "@openai/codex",
     nativeUpdate: {
       args: ["update"],
-      isCommandPath: isCodexStandaloneCommandPath,
-      env: { CODEX_HOME: sharedHomePath },
+      isCommandPath: (commandPath) => codexStandaloneHome(commandPath) !== null,
+      requiresCommandPath: true,
+      env: (context) => ({
+        CODEX_HOME:
+          codexStandaloneHome(context.realCommandPath) ??
+          codexStandaloneHome(context.resolvedCommandPath) ??
+          sharedHomePath,
+      }),
     },
   });
 }
@@ -96,7 +108,8 @@ export type CodexDriverEnv =
   | ServerConfig.ServerConfig
   | ServerSecretStore.ServerSecretStore
   | ServerEnvironment.ServerEnvironmentIdentity
-  | CodexInstallation.CodexInstallation;
+  | CodexInstallation.CodexInstallation
+  | CodexManagedTokenBroker.CodexManagedTokenBroker;
 
 export const CodexDriver: ProviderDriver<
   CodexSettings,
@@ -134,6 +147,7 @@ export const CodexDriver: ProviderDriver<
     const pathService = yield* Path.Path;
     const httpClient = yield* HttpClient.HttpClient;
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+    const installation = yield* CodexInstallation.CodexInstallation;
     const modelCatalog = yield* ModelCatalog.ModelCatalog;
     const currentCatalog = modelCatalog.current(DRIVER_KIND);
     const processEnv = yield* mergeProviderInstanceEnvironment(environment);
@@ -186,7 +200,10 @@ export const CodexDriver: ProviderDriver<
         enabled,
         config,
       },
-      { onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
+      {
+        onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+        compatibility: installation.compatibility,
+      },
     ).pipe(
       Effect.mapError(
         (cause) =>
@@ -283,13 +300,9 @@ export const CodexDriver: ProviderDriver<
             ),
           );
 
-    // Redemption spends something on the user's account. It serialises on
-    // the account (instances sharing a Codex home share the credit), keeps
-    // one idempotency key until Codex reports an outcome, and is bounded so
-    // a hung app-server cannot hold the account lock.
-    // Keyed on the directory holding auth.json: an auth-overlay instance has
-    // its own account under `effectiveHomePath`, while plain instances share
-    // the common home. The continuation key would conflate the two.
+    // Redemption spends account credit; serialize by the auth.json directory, keep one idempotency key
+    // until the outcome, and bound the wait so a hung app-server cannot hold the account lock.
+    // Auth overlays use effectiveHomePath; the continuation key would conflate them with shared homes.
     const accountKey = homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath;
     const consumeResetCredit: NonNullable<ProviderInstance["consumeResetCredit"]> = () =>
       resetCreditCoordinator

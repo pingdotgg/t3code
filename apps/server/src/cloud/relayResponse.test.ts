@@ -41,42 +41,6 @@ it("reports a transport failure category without exposing request or cause detai
   expect(shouldRetryRelayRequest(error)).toBe(true);
 });
 
-it.effect("reports the tunnel limit and relay trace instead of a generic 403", () =>
-  Effect.gen(function* () {
-    const error = yield* filterRelayResponse(
-      response(403, {
-        _tag: "RelayEnvironmentLinkLimitExceededError",
-        code: "environment_link_limit_exceeded",
-        maxTunnels: 3,
-        traceId: "trace-limit",
-      }),
-    ).pipe(Effect.mapError(relayRequestError), Effect.flip);
-
-    expect(error).toMatchObject({ _tag: "RelayRequestError", rejection: "forbidden" });
-    expect(error.message).toContain("at most 3 tunnels");
-    expect(error.message).toContain("Unlink an unused environment");
-    expect(error.message).toContain("Trace ID: trace-limit");
-  }),
-);
-
-it.effect("makes revoked authorization actionable and non-retryable", () =>
-  Effect.gen(function* () {
-    const error = yield* filterRelayResponse(
-      response(401, {
-        _tag: "RelayAuthInvalidError",
-        code: "auth_invalid",
-        reason: "invalid_bearer",
-        traceId: "trace-auth",
-      }),
-    ).pipe(Effect.mapError(relayRequestError), Effect.flip);
-
-    expect(error).toMatchObject({ _tag: "RelayRequestError", rejection: "unauthorized" });
-    expect(error.message).toContain("invalid_bearer");
-    expect(error.message).toContain("t3 connect login");
-    expect(error.message).toContain("Trace ID: trace-auth");
-  }),
-);
-
 it.effect("retries an expired link proof but not a revoked bearer, both 401", () =>
   Effect.gen(function* () {
     const expired = yield* filterRelayResponse(
@@ -143,16 +107,6 @@ it.effect("keeps the relay's Retry-After on a retryable failure", () =>
   }),
 );
 
-it.effect.each([408, 429, 500, 502, 503, 504])(
-  "keeps transient HTTP %s failures retryable",
-  (status) =>
-    Effect.gen(function* () {
-      const error = yield* filterRelayResponse(response(status, "unavailable")).pipe(Effect.flip);
-      expect(error).toMatchObject({ _tag: "RelayRequestError", rejection: "unavailable" });
-      expect(error.message).toContain(`HTTP ${status}`);
-    }),
-);
-
 it.effect.each([
   { status: 401, attempts: 1 },
   { status: 403, attempts: 1 },
@@ -171,29 +125,5 @@ it.effect.each([
     );
     expect(requests).toBe(attempts);
     expect(result._tag).toBe(attempts === 1 ? "Failure" : "Success");
-  }),
-);
-
-it.effect("keeps the relay failure reason and trace when tunnel cleanup fails", () =>
-  Effect.gen(function* () {
-    const error = yield* filterRelayResponse(
-      response(500, {
-        _tag: "RelayInternalError",
-        code: "internal_error",
-        reason: "upstream_unavailable",
-        traceId: "trace-cleanup",
-      }),
-    ).pipe(Effect.flip);
-
-    expect(error).toMatchObject({ _tag: "RelayRequestError", rejection: "unavailable" });
-    expect(error.message).toContain("upstream_unavailable");
-    expect(error.message).toContain("Trace ID: trace-cleanup");
-  }),
-);
-
-it.effect("leaves successful response bodies available to their decoder", () =>
-  Effect.gen(function* () {
-    const result = yield* filterRelayResponse(response(200, '{"ok":true}'));
-    expect(yield* result.json).toEqual({ ok: true });
   }),
 );

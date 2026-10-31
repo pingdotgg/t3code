@@ -78,7 +78,7 @@ export const MAX_REPORTED_DEPTH = 5;
  * Who started the work that made this call. Scheduled runs keep the task
  * creator's provenance, so the run's message marks them instead.
  */
-export function callerOrigin(input: {
+function callerOrigin(input: {
   readonly thread: Pick<AgentThread, "createdBy">;
   readonly scheduledRun: boolean;
 }) {
