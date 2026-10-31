@@ -749,7 +749,7 @@ function spanStyle(pen: string, palette: ReadonlyArray<string>): TerminalSpanSty
       background !== undefined &&
       (foreground === undefined || contrastRatio(foreground, background) < 3)
     ) {
-      color = luminance(background) > 0.35 ? "#1f2328" : "#ffffff";
+      color = luminance(background) > 0.3 ? "#1f2328" : "#ffffff";
     }
   }
   const textDecorationLine = attributes.underline
