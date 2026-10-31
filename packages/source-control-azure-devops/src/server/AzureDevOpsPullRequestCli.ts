@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -95,8 +96,26 @@ export class AzureDevOpsReviewerNameError extends Schema.TaggedError<AzureDevOps
   }
 }
 
+export class AzureDevOpsDescriptionFileError extends Schema.TaggedError<AzureDevOpsDescriptionFileError>()(
+  "AzureDevOpsDescriptionFileError",
+  {
+    command: Schema.Literal("az"),
+    cwd: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  get detail(): string {
+    return "Could not write the pull request description to a temporary file.";
+  }
+
+  override get message(): string {
+    return `Azure CLI failed in updatePullRequest: ${this.detail}`;
+  }
+}
+
 export type AzureDevOpsPullRequestCliError =
   | AzureDevOpsCli.AzureDevOpsCliError
+  | AzureDevOpsDescriptionFileError
   | AzureDevOpsPullRequestReadError
   | AzureDevOpsPullRequestIncompleteError
   | AzureDevOpsReviewerNameError
@@ -276,6 +295,7 @@ function isReviewerName(value: string): boolean {
 /** @public */
 export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   // Let `az` parse all three remote formats.
   const detectArgs = ["--detect", "true"] as const;
@@ -334,6 +354,14 @@ export const make = Effect.gen(function* () {
               }),
             );
       }),
+    );
+
+  const writeDescriptionFile = (cwd: string, body: string) =>
+    fileSystem.makeTempFileScoped({ prefix: "t3code-pr-body-", suffix: ".md" }).pipe(
+      Effect.tap((file) => fileSystem.writeFileString(file, body)),
+      Effect.mapError(
+        (cause) => new AzureDevOpsDescriptionFileError({ command: "az", cwd, cause }),
+      ),
     );
 
   /** Azure's items route requires a leading slash. */
@@ -667,27 +695,28 @@ export const make = Effect.gen(function* () {
       },
     ),
 
-    updatePullRequest: Effect.fn("AzureDevOpsPullRequestCli.updatePullRequest")(function (input) {
-      return azure
-        .execute({
-          cwd: input.cwd,
-          args: [
-            "repos",
-            "pr",
-            "update",
-            ...detectArgs,
-            "--id",
-            String(input.number),
-            // One argv entry preserves leading dashes and multi-string descriptions.
-            ...(input.title === undefined ? [] : [`--title=${input.title}`]),
-            ...(input.body === undefined ? [] : [`--description=${input.body}`]),
-            "--only-show-errors",
-            "--output",
-            "json",
-          ],
-        })
-        .pipe(Effect.asVoid);
-    }),
+    updatePullRequest: Effect.fn("AzureDevOpsPullRequestCli.updatePullRequest")(function* (input) {
+      const descriptionFile =
+        input.body === undefined ? undefined : yield* writeDescriptionFile(input.cwd, input.body);
+      yield* azure.execute({
+        cwd: input.cwd,
+        args: [
+          "repos",
+          "pr",
+          "update",
+          ...detectArgs,
+          "--id",
+          String(input.number),
+          // `--flag=value` keeps a leading-dash title one value.
+          ...(input.title === undefined ? [] : [`--title=${input.title}`]),
+          // cmd.exe ends a Windows az.cmd line at a newline, so the description goes by file.
+          ...(descriptionFile === undefined ? [] : [`--description=@${descriptionFile}`]),
+          "--only-show-errors",
+          "--output",
+          "json",
+        ],
+      });
+    }, Effect.scoped),
   });
 });
 
